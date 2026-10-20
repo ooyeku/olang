@@ -202,7 +202,8 @@ pub fn kmeans(x: &Matrix, p: &KMeansParams, par: bool) -> KMeans {
                         .max_by(|x, y| x.1.total_cmp(y.1))
                         .map(|(i, _)| i)
                         .unwrap_or(0);
-                    new[c * dims..(c + 1) * dims].copy_from_slice(&rows[far * dims..(far + 1) * dims]);
+                    new[c * dims..(c + 1) * dims]
+                        .copy_from_slice(&rows[far * dims..(far + 1) * dims]);
                     a.dist[far] = 0.0;
                 }
             }
@@ -250,7 +251,12 @@ pub fn silhouette(x: &Matrix, labels: &[usize], rows: &[usize], par: bool) -> f6
     let dims = x.k();
     let all = x.row_major();
     let m = rows.len();
-    let n_labels = rows.iter().map(|&i| labels[i]).max().map(|v| v + 1).unwrap_or(0);
+    let n_labels = rows
+        .iter()
+        .map(|&i| labels[i])
+        .max()
+        .map(|v| v + 1)
+        .unwrap_or(0);
     let mut sizes = vec![0usize; n_labels];
     for &i in rows {
         sizes[labels[i]] += 1;
@@ -263,7 +269,11 @@ pub fn silhouette(x: &Matrix, labels: &[usize], rows: &[usize], par: bool) -> f6
         }
         let mut sums = vec![0.0; n_labels];
         for &j in rows {
-            sums[labels[j]] += sqdist(&all[i * dims..(i + 1) * dims], &all[j * dims..(j + 1) * dims]).sqrt();
+            sums[labels[j]] += sqdist(
+                &all[i * dims..(i + 1) * dims],
+                &all[j * dims..(j + 1) * dims],
+            )
+            .sqrt();
         }
         let ai = sums[li] / (sizes[li] - 1) as f64;
         let bi = (0..n_labels)
@@ -316,13 +326,18 @@ pub struct Pca {
 pub fn pca(x: &Matrix, n_components: usize, scale: bool, par: bool) -> Pca {
     let n = x.n;
     let dims = x.k();
-    let mean: Vec<f64> = x.cols.iter().map(|c| c.iter().sum::<f64>() / n as f64).collect();
+    let mean: Vec<f64> = x
+        .cols
+        .iter()
+        .map(|c| c.iter().sum::<f64>() / n as f64)
+        .collect();
     let sd: Vec<f64> = if scale {
         x.cols
             .iter()
             .zip(&mean)
             .map(|(c, m)| {
-                let v = c.iter().map(|v| (v - m) * (v - m)).sum::<f64>() / (n as f64 - 1.0).max(1.0);
+                let v =
+                    c.iter().map(|v| (v - m) * (v - m)).sum::<f64>() / (n as f64 - 1.0).max(1.0);
                 if v > 0.0 { v.sqrt() } else { 1.0 }
             })
             .collect()
@@ -360,7 +375,10 @@ pub fn pca(x: &Matrix, n_components: usize, scale: bool, par: bool) -> Pca {
     Pca {
         mean,
         scale: sd,
-        explained_variance_ratio: ev.iter().map(|v| if total > 0.0 { v / total } else { 0.0 }).collect(),
+        explained_variance_ratio: ev
+            .iter()
+            .map(|v| if total > 0.0 { v / total } else { 0.0 })
+            .collect(),
         explained_variance: ev,
         components,
         n_components: nc,
@@ -417,7 +435,8 @@ fn log_resp(rows: &[f64], n: usize, d: usize, g: &Gmm) -> Vec<Vec<f64>> {
     for c in 0..g.k {
         let (l, _) = cholesky_jittered(&g.covariances[c], d).expect("covariance is regularized");
         let logdet = chol_logdet(&l, d);
-        let base = g.weights[c].max(1e-300).ln() - 0.5 * (d as f64 * (2.0 * std::f64::consts::PI).ln() + logdet);
+        let base = g.weights[c].max(1e-300).ln()
+            - 0.5 * (d as f64 * (2.0 * std::f64::consts::PI).ln() + logdet);
         let mu = &g.means[c * d..(c + 1) * d];
         let mut z = vec![0.0; d];
         for i in 0..n {
@@ -453,7 +472,13 @@ fn normalize(lr: &mut [Vec<f64>], n: usize) -> f64 {
     total / n as f64
 }
 
-fn m_step(rows: &[f64], n: usize, d: usize, resp: &[Vec<f64>], reg: f64) -> (Vec<f64>, Vec<f64>, Vec<Vec<f64>>) {
+fn m_step(
+    rows: &[f64],
+    n: usize,
+    d: usize,
+    resp: &[Vec<f64>],
+    reg: f64,
+) -> (Vec<f64>, Vec<f64>, Vec<Vec<f64>>) {
     let k = resp.len();
     let mut weights = vec![0.0; k];
     let mut means = vec![0.0; k * d];
@@ -593,7 +618,17 @@ mod tests {
     #[test]
     fn kmeans_finds_three_blobs() {
         let x = blobs();
-        let km = kmeans(&x, &KMeansParams { k: 3, n_init: 4, max_iter: 100, tol: 1e-4, seed: 1 }, false);
+        let km = kmeans(
+            &x,
+            &KMeansParams {
+                k: 3,
+                n_init: 4,
+                max_iter: 100,
+                tol: 1e-4,
+                seed: 1,
+            },
+            false,
+        );
         for c in 0..3 {
             let l = km.labels[c * 100];
             assert!(km.labels[c * 100..(c + 1) * 100].iter().all(|&v| v == l));
@@ -606,7 +641,17 @@ mod tests {
     #[test]
     fn gmm_separates_blobs() {
         let x = blobs();
-        let g = gmm(&x, &GmmParams { k: 3, max_iter: 100, tol: 1e-6, reg_covar: 1e-6, seed: 2 }, false);
+        let g = gmm(
+            &x,
+            &GmmParams {
+                k: 3,
+                max_iter: 100,
+                tol: 1e-6,
+                reg_covar: 1e-6,
+                seed: 2,
+            },
+            false,
+        );
         assert!(g.converged);
         let w: f64 = g.weights.iter().sum();
         assert!((w - 1.0).abs() < 1e-9);
@@ -618,7 +663,11 @@ mod tests {
         let n = 200;
         let t: Vec<f64> = (0..n).map(|i| i as f64 / 10.0).collect();
         let a: Vec<f64> = t.iter().map(|v| 2.0 * v).collect();
-        let b: Vec<f64> = t.iter().enumerate().map(|(i, v)| v + if i % 2 == 0 { 0.1 } else { -0.1 }).collect();
+        let b: Vec<f64> = t
+            .iter()
+            .enumerate()
+            .map(|(i, v)| v + if i % 2 == 0 { 0.1 } else { -0.1 })
+            .collect();
         let x = Matrix::new(n, vec![a, b]);
         let p = pca(&x, 2, false, false);
         assert!(p.explained_variance_ratio[0] > 0.999);

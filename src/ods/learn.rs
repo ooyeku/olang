@@ -27,7 +27,9 @@ use olang_ods::learn::data::{Labels, NO_CLASS, binary_target, numeric};
 use olang_ods::learn::metrics::{self, Average};
 use olang_ods::learn::model::{self as lm, default_boost};
 use olang_ods::learn::tree::Criterion;
-use olang_ods::learn::{Algo, ClassWeight, Common, MaxFeatures, Model, Output, Pcg, PredictKind, TaskHint, TreeOpts};
+use olang_ods::learn::{
+    Algo, ClassWeight, Common, MaxFeatures, Model, Output, Pcg, PredictKind, TaskHint, TreeOpts,
+};
 use olang_ods::learn::{preprocess, rng::splitmix64};
 use olang_ods::{Frame, Scalar, Series};
 use std::any::Any;
@@ -61,7 +63,11 @@ impl NativeObject for LearnModel {
             m.algo,
             m.n,
             m.design.features.len(),
-            if m.design.features.len() == 1 { "" } else { "s" }
+            if m.design.features.len() == 1 {
+                ""
+            } else {
+                "s"
+            }
         )
     }
 
@@ -188,18 +194,29 @@ fn e(err: olang_ods::OdsError) -> String {
 }
 
 fn tname(v: Option<&Value>) -> String {
-    v.map(|v| v.type_name().to_string()).unwrap_or_else(|| "nothing".to_string())
+    v.map(|v| v.type_name().to_string())
+        .unwrap_or_else(|| "nothing".to_string())
 }
 
 fn want_frame<'a>(func: &str, args: &'a [Value], idx: usize) -> R<&'a Frame> {
     args.get(idx).and_then(frame_of).ok_or_else(|| {
-        format!("learn.{}: argument {} must be a Frame, got {}", func, idx + 1, tname(args.get(idx)))
+        format!(
+            "learn.{}: argument {} must be a Frame, got {}",
+            func,
+            idx + 1,
+            tname(args.get(idx))
+        )
     })
 }
 
 fn want_series<'a>(func: &str, args: &'a [Value], idx: usize) -> R<&'a Series> {
     args.get(idx).and_then(series_of).ok_or_else(|| {
-        format!("learn.{}: argument {} must be a Series, got {}", func, idx + 1, tname(args.get(idx)))
+        format!(
+            "learn.{}: argument {} must be a Series, got {}",
+            func,
+            idx + 1,
+            tname(args.get(idx))
+        )
     })
 }
 
@@ -217,7 +234,12 @@ fn want_model<'a>(func: &str, args: &'a [Value], idx: usize) -> R<&'a Arc<Model>
 fn want_str(func: &str, args: &[Value], idx: usize) -> R<String> {
     match args.get(idx) {
         Some(Value::String(s)) => Ok(s.as_ref().clone()),
-        other => Err(format!("learn.{}: argument {} must be a String, got {}", func, idx + 1, tname(other))),
+        other => Err(format!(
+            "learn.{}: argument {} must be a String, got {}",
+            func,
+            idx + 1,
+            tname(other)
+        )),
     }
 }
 
@@ -230,7 +252,11 @@ fn names_arg(func: &str, v: Option<&Value>) -> R<Vec<String>> {
             .iter()
             .map(|v| match v {
                 Value::String(s) => Ok(s.as_ref().clone()),
-                other => Err(format!("learn.{}: column names must be Strings, got {}", func, other.type_name())),
+                other => Err(format!(
+                    "learn.{}: column names must be Strings, got {}",
+                    func,
+                    other.type_name()
+                )),
             })
             .collect(),
         Some(other) => Err(format!(
@@ -242,7 +268,12 @@ fn names_arg(func: &str, v: Option<&Value>) -> R<Vec<String>> {
 }
 
 fn map_value(entries: Vec<(&str, Value)>) -> Value {
-    Value::Map(Arc::new(entries.into_iter().map(|(k, v)| (k.to_string(), v)).collect()))
+    Value::Map(Arc::new(
+        entries
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect(),
+    ))
 }
 
 fn frame_value(f: Frame) -> Value {
@@ -250,7 +281,11 @@ fn frame_value(f: Frame) -> Value {
 }
 
 fn strings(v: &[String]) -> Value {
-    Value::List(Arc::new(v.iter().map(|s| Value::String(Arc::new(s.clone()))).collect()))
+    Value::List(Arc::new(
+        v.iter()
+            .map(|s| Value::String(Arc::new(s.clone())))
+            .collect(),
+    ))
 }
 
 fn int_series(idx: &[usize]) -> Series {
@@ -297,16 +332,25 @@ impl<'a> Opts<'a> {
                         "learn.{}: unknown option '{}' — the options are {}",
                         func,
                         k,
-                        if allowed.is_empty() { "none".to_string() } else { allowed.join(", ") }
+                        if allowed.is_empty() {
+                            "none".to_string()
+                        } else {
+                            allowed.join(", ")
+                        }
                     ));
                 }
             }
         }
-        Ok(Opts { func: func.to_string(), map })
+        Ok(Opts {
+            func: func.to_string(),
+            map,
+        })
     }
 
     fn get(&self, k: &str) -> Option<&'a Value> {
-        self.map.and_then(|m| m.get(k)).filter(|v| !matches!(v, Value::Unit))
+        self.map
+            .and_then(|m| m.get(k))
+            .filter(|v| !matches!(v, Value::Unit))
     }
 
     fn f64(&self, k: &str, d: f64) -> R<f64> {
@@ -318,7 +362,12 @@ impl<'a> Opts<'a> {
             None => Ok(None),
             Some(Value::Float(x)) => Ok(Some(*x)),
             Some(Value::Integer(x)) => Ok(Some(*x as f64)),
-            Some(other) => Err(format!("learn.{}: option '{}' must be a number, got {}", self.func, k, other.type_name())),
+            Some(other) => Err(format!(
+                "learn.{}: option '{}' must be a number, got {}",
+                self.func,
+                k,
+                other.type_name()
+            )),
         }
     }
 
@@ -346,7 +395,12 @@ impl<'a> Opts<'a> {
         match self.get(k) {
             None => Ok(d),
             Some(Value::Boolean(b)) => Ok(*b),
-            Some(other) => Err(format!("learn.{}: option '{}' must be a Bool, got {}", self.func, k, other.type_name())),
+            Some(other) => Err(format!(
+                "learn.{}: option '{}' must be a Bool, got {}",
+                self.func,
+                k,
+                other.type_name()
+            )),
         }
     }
 
@@ -354,7 +408,12 @@ impl<'a> Opts<'a> {
         match self.get(k) {
             None => Ok(None),
             Some(Value::String(s)) => Ok(Some(s.as_ref().clone())),
-            Some(other) => Err(format!("learn.{}: option '{}' must be a String, got {}", self.func, k, other.type_name())),
+            Some(other) => Err(format!(
+                "learn.{}: option '{}' must be a String, got {}",
+                self.func,
+                k,
+                other.type_name()
+            )),
         }
     }
 
@@ -371,7 +430,11 @@ impl<'a> Opts<'a> {
                 "learn.{}: option '{}' must be one of {}, got \"{}\"",
                 self.func,
                 k,
-                choices.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", "),
+                choices
+                    .iter()
+                    .map(|c| format!("\"{}\"", c))
+                    .collect::<Vec<_>>()
+                    .join(", "),
                 v
             ))
         }
@@ -382,7 +445,11 @@ impl<'a> Opts<'a> {
         match self.get("seed") {
             Some(Value::Integer(s)) => Ok(*s as u64),
             None => Ok(draw_seed()),
-            Some(other) => Err(format!("learn.{}: option 'seed' must be an Int, got {}", self.func, other.type_name())),
+            Some(other) => Err(format!(
+                "learn.{}: option 'seed' must be an Int, got {}",
+                self.func,
+                other.type_name()
+            )),
         }
     }
 }
@@ -416,9 +483,21 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> R<Value> {
     let max = max_args(func);
     if args.len() < min || args.len() > max {
         return Err(if min == max {
-            format!("learn.{} expects {} argument{}, got {}", func, min, if min == 1 { "" } else { "s" }, args.len())
+            format!(
+                "learn.{} expects {} argument{}, got {}",
+                func,
+                min,
+                if min == 1 { "" } else { "s" },
+                args.len()
+            )
         } else {
-            format!("learn.{} expects {} to {} arguments, got {}", func, min, max, args.len())
+            format!(
+                "learn.{} expects {} to {} arguments, got {}",
+                func,
+                min,
+                max,
+                args.len()
+            )
         });
     }
     match func {
@@ -433,8 +512,8 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> R<Value> {
             m.transform(f).map(frame_value).map_err(e)
         }
         "poly" => poly(&args),
-        "linear" | "ridge" | "lasso" | "elastic_net" | "logistic" | "tree" | "forest" | "boost" | "knn"
-        | "naive_bayes" => supervised(func, &args),
+        "linear" | "ridge" | "lasso" | "elastic_net" | "logistic" | "tree" | "forest" | "boost"
+        | "knn" | "naive_bayes" => supervised(func, &args),
         "kmeans" | "gmm" | "pca" => unsupervised(func, &args),
         "silhouette" => silhouette(&args),
         "predict" => predict(&args),
@@ -455,7 +534,9 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> R<Value> {
             let m = want_model(func, &args, 0)?;
             let f = want_frame(func, &args, 1)?;
             let metric = want_str(func, &args, 2)?;
-            m.score(f, &metric, par(f.n_rows())).map(Value::Float).map_err(e)
+            m.score(f, &metric, par(f.n_rows()))
+                .map(Value::Float)
+                .map_err(e)
         }
         "spec" => spec(&args),
         "fit" => {
@@ -476,10 +557,12 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> R<Value> {
 /// options map (and the optional middle arguments some have).
 fn max_args(func: &str) -> usize {
     match func {
-        "transform" | "params" | "importance" => FUNCTIONS.iter().find(|(n, _)| *n == func).unwrap().1,
+        "transform" | "params" | "importance" => {
+            FUNCTIONS.iter().find(|(n, _)| *n == func).unwrap().1
+        }
         "split" | "scaler" | "one_hot" | "imputer" | "pca" => 3,
-        "linear" | "ridge" | "lasso" | "elastic_net" | "logistic" | "tree" | "forest" | "boost" | "knn"
-        | "naive_bayes" => 4,
+        "linear" | "ridge" | "lasso" | "elastic_net" | "logistic" | "tree" | "forest" | "boost"
+        | "knn" | "naive_bayes" => 4,
         "spec" => 4,
         "fit" | "score" => FUNCTIONS.iter().find(|(n, _)| *n == func).unwrap().1,
         _ => FUNCTIONS.iter().find(|(n, _)| *n == func).unwrap().1 + 1,
@@ -515,14 +598,21 @@ fn strata(f: &Frame, col: &str) -> R<Vec<usize>> {
     if codes.contains(&NO_CLASS) {
         // Nulls form their own stratum.
         let k = labels.len();
-        return Ok(codes.into_iter().map(|c| if c == NO_CLASS { k } else { c }).collect());
+        return Ok(codes
+            .into_iter()
+            .map(|c| if c == NO_CLASS { k } else { c })
+            .collect());
     }
     Ok(codes)
 }
 
 fn split(args: &[Value]) -> R<Value> {
     let f = want_frame("split", args, 0)?;
-    let o = Opts::new("split", args.get(1), &["test", "stratify", "shuffle", "seed"])?;
+    let o = Opts::new(
+        "split",
+        args.get(1),
+        &["test", "stratify", "shuffle", "seed"],
+    )?;
     let n = f.n_rows();
     let n_test = test_count(&o, n)?;
     let shuffle = o.bool("shuffle", true)?;
@@ -532,13 +622,22 @@ fn split(args: &[Value]) -> R<Value> {
         None => None,
     };
     let (tr, te) = preprocess::split(n, n_test, shuffle, st.as_deref(), &mut rng);
-    Ok(map_value(vec![("train", frame_value(take(f, &tr)?)), ("test", frame_value(take(f, &te)?))]))
+    Ok(map_value(vec![
+        ("train", frame_value(take(f, &tr)?)),
+        ("test", frame_value(take(f, &te)?)),
+    ]))
 }
 
 fn fold_ids(func: &str, args: &[Value]) -> R<(Vec<usize>, usize)> {
     let k = match args.get(1) {
         Some(Value::Integer(k)) if *k >= 2 => *k as usize,
-        other => return Err(format!("learn.{}: k must be an Int >= 2, got {}", func, tname(other))),
+        other => {
+            return Err(format!(
+                "learn.{}: k must be an Int >= 2, got {}",
+                func,
+                tname(other)
+            ));
+        }
     };
     let o = Opts::new(func, args.get(2), &["shuffle", "seed", "stratify"])?;
     let shuffle = o.bool("shuffle", true)?;
@@ -547,7 +646,11 @@ fn fold_ids(func: &str, args: &[Value]) -> R<(Vec<usize>, usize)> {
         Value::Integer(n) if *n >= 0 => (*n as usize, None),
         v => {
             let f = frame_of(v).ok_or_else(|| {
-                format!("learn.{}: argument 1 must be a Frame or a row count, got {}", func, v.type_name())
+                format!(
+                    "learn.{}: argument 1 must be a Frame or a row count, got {}",
+                    func,
+                    v.type_name()
+                )
             })?;
             let st = match o.opt_str("stratify")? {
                 Some(c) => Some(strata(f, &c)?),
@@ -557,10 +660,16 @@ fn fold_ids(func: &str, args: &[Value]) -> R<(Vec<usize>, usize)> {
         }
     };
     if o.opt_str("stratify")?.is_some() && st.is_none() {
-        return Err(format!("learn.{}: 'stratify' needs a Frame, not a row count", func));
+        return Err(format!(
+            "learn.{}: 'stratify' needs a Frame, not a row count",
+            func
+        ));
     }
     if k > n {
-        return Err(format!("learn.{}: {} folds need at least {} rows, got {}", func, k, k, n));
+        return Err(format!(
+            "learn.{}: {} folds need at least {} rows, got {}",
+            func, k, k, n
+        ));
     }
     Ok((
         match st {
@@ -593,27 +702,48 @@ fn folds(args: &[Value]) -> R<Value> {
 }
 
 fn time_splits(args: &[Value]) -> R<Value> {
-    let o = Opts::new("time_splits", args.get(2), &["test_size", "gap", "max_train"])?;
+    let o = Opts::new(
+        "time_splits",
+        args.get(2),
+        &["test_size", "gap", "max_train"],
+    )?;
     let n_splits = match args.get(1) {
         Some(Value::Integer(k)) if *k >= 1 => *k as usize,
-        other => return Err(format!("learn.time_splits: n_splits must be an Int >= 1, got {}", tname(other))),
+        other => {
+            return Err(format!(
+                "learn.time_splits: n_splits must be an Int >= 1, got {}",
+                tname(other)
+            ));
+        }
     };
     let (n, frame) = match &args[0] {
         Value::Integer(n) if *n >= 0 => (*n as usize, None),
         v => {
             let f = frame_of(v).ok_or_else(|| {
-                format!("learn.time_splits: argument 1 must be a Frame or a row count, got {}", v.type_name())
+                format!(
+                    "learn.time_splits: argument 1 must be a Frame or a row count, got {}",
+                    v.type_name()
+                )
             })?;
             (f.n_rows(), Some(f))
         }
     };
-    let splits = preprocess::time_splits(n, n_splits, o.opt_usize("test_size")?, o.usize("gap", 0)?, o.opt_usize("max_train")?)?;
+    let splits = preprocess::time_splits(
+        n,
+        n_splits,
+        o.opt_usize("test_size")?,
+        o.usize("gap", 0)?,
+        o.opt_usize("max_train")?,
+    )?;
     let mut out = Vec::new();
     for ((a, b), (c, d)) in splits {
         let tr: Vec<usize> = (a..b).collect();
         let te: Vec<usize> = (c..d).collect();
         out.push(match frame {
-            Some(f) => map_value(vec![("train", frame_value(take(f, &tr)?)), ("test", frame_value(take(f, &te)?))]),
+            Some(f) => map_value(vec![
+                ("train", frame_value(take(f, &tr)?)),
+                ("test", frame_value(take(f, &te)?)),
+            ]),
             None => map_value(vec![
                 ("train", make_series_value(int_series(&tr))),
                 ("test", make_series_value(int_series(&te))),
@@ -633,7 +763,11 @@ fn transformer(func: &str, args: &[Value]) -> R<Value> {
     let m = match func {
         "scaler" => {
             let o = Opts::new(func, args.get(2), &["method"])?;
-            lm::fit_scaler(f, &cols, &o.one_of("method", "standard", &["standard", "minmax", "robust"])?)
+            lm::fit_scaler(
+                f,
+                &cols,
+                &o.one_of("method", "standard", &["standard", "minmax", "robust"])?,
+            )
         }
         "one_hot" => {
             let o = Opts::new(func, args.get(2), &["drop_first"])?;
@@ -641,13 +775,22 @@ fn transformer(func: &str, args: &[Value]) -> R<Value> {
         }
         _ => {
             let o = Opts::new(func, args.get(2), &["strategy", "fill"])?;
-            let strategy = o.one_of("strategy", "mean", &["mean", "median", "most_frequent", "constant"])?;
+            let strategy = o.one_of(
+                "strategy",
+                "mean",
+                &["mean", "median", "most_frequent", "constant"],
+            )?;
             let fill = o.get("fill").and_then(value_to_scalar);
             lm::fit_imputer(f, &cols, &strategy, fill)
         }
     }
     .map_err(e)?;
-    let spec = spec_value(func, Value::Unit, args.get(1).cloned().unwrap_or(Value::Unit), args.get(2).cloned().unwrap_or(Value::Unit));
+    let spec = spec_value(
+        func,
+        Value::Unit,
+        args.get(1).cloned().unwrap_or(Value::Unit),
+        args.get(2).cloned().unwrap_or(Value::Unit),
+    );
     Ok(model_value(m, spec))
 }
 
@@ -656,10 +799,17 @@ fn poly(args: &[Value]) -> R<Value> {
     let cols = names_arg("poly", args.get(1))?;
     let degree = match args.get(2) {
         Some(Value::Integer(d)) if *d >= 1 => *d as usize,
-        other => return Err(format!("learn.poly: degree must be an Int >= 1, got {}", tname(other))),
+        other => {
+            return Err(format!(
+                "learn.poly: degree must be an Int >= 1, got {}",
+                tname(other)
+            ));
+        }
     };
     let o = Opts::new("poly", args.get(3), &["interaction_only"])?;
-    lm::poly(f, &cols, degree, o.bool("interaction_only", false)?).map(frame_value).map_err(e)
+    lm::poly(f, &cols, degree, o.bool("interaction_only", false)?)
+        .map(frame_value)
+        .map_err(e)
 }
 
 // ---------------------------------------------------------------------
@@ -675,7 +825,15 @@ fn allowed(func: &str) -> Vec<&'static str> {
         "lasso" => &["alpha", "intercept", "max_iter", "tol"],
         "elastic_net" => &["alpha", "l1_ratio", "intercept", "max_iter", "tol"],
         "logistic" => &["penalty", "C", "max_iter", "tol"],
-        "tree" => &["criterion", "max_depth", "min_samples_split", "min_samples_leaf", "max_features", "min_impurity_decrease", "seed"],
+        "tree" => &[
+            "criterion",
+            "max_depth",
+            "min_samples_split",
+            "min_samples_leaf",
+            "max_features",
+            "min_impurity_decrease",
+            "seed",
+        ],
         "forest" => &[
             "criterion",
             "max_depth",
@@ -739,7 +897,13 @@ fn tree_opts(o: &Opts) -> R<TreeOpts> {
         },
         Some(Value::Integer(k)) if *k >= 1 => MaxFeatures::Count(*k as usize),
         Some(Value::Float(f)) if *f > 0.0 && *f <= 1.0 => MaxFeatures::Fraction(*f),
-        Some(other) => return Err(format!("learn.{}: bad max_features {}", o.func, other.type_name())),
+        Some(other) => {
+            return Err(format!(
+                "learn.{}: bad max_features {}",
+                o.func,
+                other.type_name()
+            ));
+        }
     };
     Ok(TreeOpts {
         criterion,
@@ -760,7 +924,11 @@ fn class_weight(o: &Opts) -> R<ClassWeight> {
             .map(|(k, v)| match v {
                 Value::Float(x) => Ok((k.clone(), *x)),
                 Value::Integer(x) => Ok((k.clone(), *x as f64)),
-                other => Err(format!("learn.{}: class weights must be numbers, got {}", o.func, other.type_name())),
+                other => Err(format!(
+                    "learn.{}: class weights must be numbers, got {}",
+                    o.func,
+                    other.type_name()
+                )),
             })
             .collect::<R<Vec<_>>>()
             .map(ClassWeight::Given),
@@ -807,14 +975,20 @@ fn supervised(func: &str, args: &[Value]) -> R<Value> {
         },
         "lasso" | "elastic_net" => Algo::ElasticNet {
             alpha: o.f64("alpha", 1.0)?,
-            l1_ratio: if func == "lasso" { 1.0 } else { o.f64("l1_ratio", 0.5)? },
+            l1_ratio: if func == "lasso" {
+                1.0
+            } else {
+                o.f64("l1_ratio", 0.5)?
+            },
             intercept,
             max_iter: o.usize("max_iter", 10_000)?,
             tol: o.f64("tol", 1e-8)?,
         },
         "logistic" => {
             let lambda = match (o.opt_f64("penalty")?, o.opt_f64("C")?) {
-                (Some(_), Some(_)) => return Err("learn.logistic: give 'penalty' or 'C', not both".to_string()),
+                (Some(_), Some(_)) => {
+                    return Err("learn.logistic: give 'penalty' or 'C', not both".to_string());
+                }
                 (Some(l), None) => l,
                 (None, Some(c)) if c > 0.0 => 1.0 / c,
                 (None, Some(_)) => return Err("learn.logistic: C must be > 0".to_string()),
@@ -826,7 +1000,10 @@ fn supervised(func: &str, args: &[Value]) -> R<Value> {
                 tol: o.f64("tol", 1e-10)?,
             }
         }
-        "tree" => Algo::Tree { opts: tree_opts(&o)?, seed },
+        "tree" => Algo::Tree {
+            opts: tree_opts(&o)?,
+            seed,
+        },
         "forest" => Algo::Forest {
             opts: tree_opts(&o)?,
             n_trees: o.usize("n_trees", 100)?,
@@ -870,8 +1047,17 @@ fn supervised(func: &str, args: &[Value]) -> R<Value> {
         _ => unreachable!(),
     };
     let model = lm::fit(f, &common, &algo, par(f.n_rows())).map_err(e)?;
-    let opts = if needs_seed { with_seed(args.get(3), seed) } else { args.get(3).cloned().unwrap_or(Value::Unit) };
-    let spec = spec_value(func, Value::String(Arc::new(y)), args.get(2).cloned().unwrap_or(Value::Unit), opts);
+    let opts = if needs_seed {
+        with_seed(args.get(3), seed)
+    } else {
+        args.get(3).cloned().unwrap_or(Value::Unit)
+    };
+    let spec = spec_value(
+        func,
+        Value::String(Arc::new(y)),
+        args.get(2).cloned().unwrap_or(Value::Unit),
+        opts,
+    );
     Ok(model_value(model, spec))
 }
 
@@ -883,14 +1069,26 @@ fn unsupervised(func: &str, args: &[Value]) -> R<Value> {
         "pca" => {
             let o = Opts::new(func, args.get(2), &["n_components", "scale"])?;
             (
-                lm::fit_pca(f, &cols, o.opt_usize("n_components")?, o.bool("scale", false)?, p),
+                lm::fit_pca(
+                    f,
+                    &cols,
+                    o.opt_usize("n_components")?,
+                    o.bool("scale", false)?,
+                    p,
+                ),
                 args.get(2).cloned().unwrap_or(Value::Unit),
             )
         }
         _ => {
             let k = match args.get(2) {
                 Some(Value::Integer(k)) if *k >= 1 => *k as usize,
-                other => return Err(format!("learn.{}: k must be an Int >= 1, got {}", func, tname(other))),
+                other => {
+                    return Err(format!(
+                        "learn.{}: k must be an Int >= 1, got {}",
+                        func,
+                        tname(other)
+                    ));
+                }
             };
             if func == "kmeans" {
                 let o = Opts::new(func, args.get(3), &["n_init", "max_iter", "tol", "seed"])?;
@@ -932,7 +1130,12 @@ fn unsupervised(func: &str, args: &[Value]) -> R<Value> {
         }
     };
     let model = model.map_err(e)?;
-    let spec = spec_value(func, Value::Unit, args.get(1).cloned().unwrap_or(Value::Unit), opts);
+    let spec = spec_value(
+        func,
+        Value::Unit,
+        args.get(1).cloned().unwrap_or(Value::Unit),
+        opts,
+    );
     Ok(model_value(model, spec))
 }
 
@@ -951,9 +1154,17 @@ fn silhouette(args: &[Value]) -> R<Value> {
     let labels = want_series("silhouette", args, 2)?;
     let o = Opts::new("silhouette", args.get(3), &["sample", "seed"])?;
     if labels.len() != f.n_rows() {
-        return Err(format!("learn.silhouette: {} labels for {} rows", labels.len(), f.n_rows()));
+        return Err(format!(
+            "learn.silhouette: {} labels for {} rows",
+            labels.len(),
+            f.n_rows()
+        ));
     }
-    let cols = if cols.is_empty() { f.names().to_vec() } else { cols };
+    let cols = if cols.is_empty() {
+        f.names().to_vec()
+    } else {
+        cols
+    };
     let design = olang_ods::learn::Design::learn(f, &cols, false).map_err(e)?;
     let (x, mut valid) = design.encode(f).map_err(e)?;
     let (_, codes) = Labels::learn(labels).map_err(e)?;
@@ -973,7 +1184,12 @@ fn silhouette(args: &[Value]) -> R<Value> {
     if rows.len() < 2 {
         return Err("learn.silhouette: needs at least two labelled rows".to_string());
     }
-    Ok(Value::Float(olang_ods::learn::cluster::silhouette(&x, &codes, &rows, par(rows.len()))))
+    Ok(Value::Float(olang_ods::learn::cluster::silhouette(
+        &x,
+        &codes,
+        &rows,
+        par(rows.len()),
+    )))
 }
 
 // ---------------------------------------------------------------------
@@ -991,7 +1207,9 @@ fn spec_value(kind: &str, y: Value, x: Value, opts: Value) -> Value {
 
 fn params_value(m: &Model) -> Value {
     match m.params() {
-        Some(p) => Value::Map(Arc::new(p.into_iter().map(|(k, v)| (k, Value::Float(v))).collect())),
+        Some(p) => Value::Map(Arc::new(
+            p.into_iter().map(|(k, v)| (k, Value::Float(v))).collect(),
+        )),
         None => Value::Map(Arc::new(ValueMap::default())),
     }
 }
@@ -1004,7 +1222,10 @@ fn model_value(model: Model, spec: Value) -> Value {
     use olang_ods::learn::Body;
     let m = Arc::new(model);
     let mut out: Vec<(&str, Value)> = vec![
-        ("model", Value::Native(NativeHandle::new(LearnModel { model: m.clone() }))),
+        (
+            "model",
+            Value::Native(NativeHandle::new(LearnModel { model: m.clone() })),
+        ),
         ("kind", Value::String(Arc::new(m.algo.to_string()))),
     ];
     if let Some(y) = &m.y {
@@ -1089,13 +1310,24 @@ fn model_value(model: Model, spec: Value) -> Value {
             let names = m.classes().map(|l| l.names()).unwrap_or_default();
             out.push((
                 "priors",
-                Value::Map(Arc::new(names.into_iter().zip(&nb.prior).map(|(k, v)| (k, Value::Float(*v))).collect())),
+                Value::Map(Arc::new(
+                    names
+                        .into_iter()
+                        .zip(&nb.prior)
+                        .map(|(k, v)| (k, Value::Float(*v)))
+                        .collect(),
+                )),
             ));
             out.push(("table", summary(0.95)));
         }
         Body::KMeans(k) => {
             out.push(("k", Value::Integer(k.k as i64)));
-            out.push(("labels", make_series_value(Series::from_i64(k.labels.iter().map(|&l| l as i64).collect()))));
+            out.push((
+                "labels",
+                make_series_value(Series::from_i64(
+                    k.labels.iter().map(|&l| l as i64).collect(),
+                )),
+            ));
             out.push(("centers", summary(0.95)));
             out.push(("inertia", Value::Float(k.inertia)));
             out.push(("n_iter", Value::Integer(k.n_iter as i64)));
@@ -1103,7 +1335,10 @@ fn model_value(model: Model, spec: Value) -> Value {
         Body::Pca(p) => {
             out.push(("n_components", Value::Integer(p.n_components as i64)));
             out.push(("explained_variance", floats(&p.explained_variance)));
-            out.push(("explained_variance_ratio", floats(&p.explained_variance_ratio)));
+            out.push((
+                "explained_variance_ratio",
+                floats(&p.explained_variance_ratio),
+            ));
             out.push(("components", summary(0.95)));
         }
         Body::Gmm(g) => {
@@ -1186,15 +1421,26 @@ const KINDS: &[&str] = &[
 fn spec(args: &[Value]) -> R<Value> {
     let kind = want_str("spec", args, 0)?;
     if !KINDS.contains(&kind.as_str()) {
-        return Err(format!("learn.spec: unknown kind \"{}\" — the kinds are {}", kind, KINDS.join(", ")));
+        return Err(format!(
+            "learn.spec: unknown kind \"{}\" — the kinds are {}",
+            kind,
+            KINDS.join(", ")
+        ));
     }
     let y = args.get(1).cloned().unwrap_or(Value::Unit);
     let x = args.get(2).cloned().unwrap_or(Value::Unit);
     let opts = args.get(3).cloned().unwrap_or(Value::Unit);
-    let needs_seed = matches!(kind.as_str(), "tree" | "forest" | "boost" | "kmeans" | "gmm");
+    let needs_seed = matches!(
+        kind.as_str(),
+        "tree" | "forest" | "boost" | "kmeans" | "gmm"
+    );
     let opts = if needs_seed {
         let has = matches!(&opts, Value::Map(m) if m.get("seed").is_some_and(|v| !matches!(v, Value::Unit)));
-        if has { opts } else { with_seed(Some(&opts), draw_seed()) }
+        if has {
+            opts
+        } else {
+            with_seed(Some(&opts), draw_seed())
+        }
     } else {
         opts
     };
@@ -1251,7 +1497,9 @@ fn fit_spec(s: &Spec, f: &Frame) -> R<Value> {
             o.shift_remove("k");
             dispatch(&s.kind, vec![fv, s.x.clone(), k, Value::Map(Arc::new(o))])
         }
-        "pca" | "scaler" | "one_hot" | "imputer" => dispatch(&s.kind, vec![fv, s.x.clone(), s.opts.clone()]),
+        "pca" | "scaler" | "one_hot" | "imputer" => {
+            dispatch(&s.kind, vec![fv, s.x.clone(), s.opts.clone()])
+        }
         _ => dispatch(&s.kind, vec![fv, s.y.clone(), s.x.clone(), s.opts.clone()]),
     }
 }
@@ -1273,7 +1521,9 @@ fn with_opts(s: &Spec, overrides: &[(String, Value)]) -> Spec {
 }
 
 fn fitted(v: &Value) -> R<Arc<Model>> {
-    model_of(v).cloned().ok_or_else(|| "learn: the fit returned no model".to_string())
+    model_of(v)
+        .cloned()
+        .ok_or_else(|| "learn: the fit returned no model".to_string())
 }
 
 // ---------------------------------------------------------------------
@@ -1296,7 +1546,12 @@ fn cv_folds(s: &Spec, f: &Frame, k: usize, seed: u64, shuffle: bool) -> R<Vec<us
     let mut rng = Pcg::new(seed, 0);
     let classify = classification_spec(s, f);
     if classify && let Value::String(y) = &s.y {
-        return Ok(preprocess::stratified_kfold(&strata(f, y)?, k, shuffle, &mut rng));
+        return Ok(preprocess::stratified_kfold(
+            &strata(f, y)?,
+            k,
+            shuffle,
+            &mut rng,
+        ));
     }
     Ok(preprocess::kfold(f.n_rows(), k, shuffle, &mut rng))
 }
@@ -1325,7 +1580,11 @@ fn classification_spec(s: &Spec, f: &Frame) -> bool {
 fn default_metrics(s: &Spec, f: &Frame) -> Vec<String> {
     if classification_spec(s, f) {
         let binary = match &s.y {
-            Value::String(y) => f.column(y).ok().and_then(|c| Labels::learn(c).ok()).is_some_and(|(l, _)| l.len() == 2),
+            Value::String(y) => f
+                .column(y)
+                .ok()
+                .and_then(|c| Labels::learn(c).ok())
+                .is_some_and(|(l, _)| l.len() == 2),
             _ => false,
         };
         if binary {
@@ -1351,7 +1610,11 @@ fn metric_list(o: &Opts, s: &Spec, f: &Frame) -> R<Vec<String>> {
 
 /// Run `jobs` (independent fits) in parallel when allowed; results in
 /// job order either way.
-fn run_jobs<T: Send>(n_jobs: usize, rows: usize, job: impl Fn(usize) -> R<T> + Sync + Send) -> R<Vec<T>> {
+fn run_jobs<T: Send>(
+    n_jobs: usize,
+    rows: usize,
+    job: impl Fn(usize) -> R<T> + Sync + Send,
+) -> R<Vec<T>> {
     #[cfg(feature = "native")]
     {
         if par(rows) && n_jobs > 1 {
@@ -1365,10 +1628,17 @@ fn run_jobs<T: Send>(n_jobs: usize, rows: usize, job: impl Fn(usize) -> R<T> + S
 fn cross_validate(args: &[Value]) -> R<Value> {
     let s = spec_of("cross_validate", &args[0])?;
     let f = want_frame("cross_validate", args, 1)?;
-    let o = Opts::new("cross_validate", args.get(2), &["folds", "metrics", "metric", "seed", "shuffle"])?;
+    let o = Opts::new(
+        "cross_validate",
+        args.get(2),
+        &["folds", "metrics", "metric", "seed", "shuffle"],
+    )?;
     let k = o.usize("folds", 5)?;
     if k < 2 || k > f.n_rows() {
-        return Err(format!("learn.cross_validate: folds must be between 2 and the row count, got {}", k));
+        return Err(format!(
+            "learn.cross_validate: folds must be between 2 and the row count, got {}",
+            k
+        ));
     }
     let ms = metric_list(&o, &s, f)?;
     let seed = match o.get("seed") {
@@ -1390,12 +1660,24 @@ fn cross_validate(args: &[Value]) -> R<Value> {
         Ok((tr.len(), te.len(), scores))
     })?;
     let mut cols: Vec<(String, Series)> = vec![
-        ("fold".to_string(), Series::from_i64((0..k as i64).collect())),
-        ("n_train".to_string(), Series::from_i64(results.iter().map(|r| r.0 as i64).collect())),
-        ("n_test".to_string(), Series::from_i64(results.iter().map(|r| r.1 as i64).collect())),
+        (
+            "fold".to_string(),
+            Series::from_i64((0..k as i64).collect()),
+        ),
+        (
+            "n_train".to_string(),
+            Series::from_i64(results.iter().map(|r| r.0 as i64).collect()),
+        ),
+        (
+            "n_test".to_string(),
+            Series::from_i64(results.iter().map(|r| r.1 as i64).collect()),
+        ),
     ];
     for (j, m) in ms.iter().enumerate() {
-        cols.push((m.clone(), Series::from_f64(results.iter().map(|r| r.2[j]).collect())));
+        cols.push((
+            m.clone(),
+            Series::from_f64(results.iter().map(|r| r.2[j]).collect()),
+        ));
     }
     Frame::new(cols).map(frame_value).map_err(e)
 }
@@ -1403,7 +1685,11 @@ fn cross_validate(args: &[Value]) -> R<Value> {
 fn permutation_importance(args: &[Value]) -> R<Value> {
     let m = want_model("permutation_importance", args, 0)?;
     let f = want_frame("permutation_importance", args, 1)?;
-    let o = Opts::new("permutation_importance", args.get(2), &["metric", "repeats", "seed"])?;
+    let o = Opts::new(
+        "permutation_importance",
+        args.get(2),
+        &["metric", "repeats", "seed"],
+    )?;
     let metric = match o.opt_str("metric")? {
         Some(mm) => mm,
         None => match m.classes() {
@@ -1422,18 +1708,28 @@ fn partial_dependence(args: &[Value]) -> R<Value> {
     let m = want_model("partial_dependence", args, 0)?;
     let f = want_frame("partial_dependence", args, 1)?;
     let feature = want_str("partial_dependence", args, 2)?;
-    let o = Opts::new("partial_dependence", args.get(3), &["grid", "points", "sample", "seed"])?;
+    let o = Opts::new(
+        "partial_dependence",
+        args.get(3),
+        &["grid", "points", "sample", "seed"],
+    )?;
     let grid = match o.get("grid") {
         None => None,
         Some(Value::List(items)) => Some(
             items
                 .iter()
-                .map(|v| value_to_scalar(v).ok_or_else(|| "learn.partial_dependence: grid values must be scalars".to_string()))
+                .map(|v| {
+                    value_to_scalar(v).ok_or_else(|| {
+                        "learn.partial_dependence: grid values must be scalars".to_string()
+                    })
+                })
                 .collect::<R<Vec<Scalar>>>()?,
         ),
         Some(v) => match series_of(v) {
             Some(s) => Some((0..s.len()).map(|i| s.scalar_at(i)).collect()),
-            None => return Err("learn.partial_dependence: grid must be a list or Series".to_string()),
+            None => {
+                return Err("learn.partial_dependence: grid must be a list or Series".to_string());
+            }
         },
     };
     let frame = match o.opt_usize("sample")? {
@@ -1444,15 +1740,25 @@ fn partial_dependence(args: &[Value]) -> R<Value> {
         }
         _ => f.clone(),
     };
-    m.partial_dependence(&frame, &feature, grid, o.usize("points", 50)?.max(2), par(frame.n_rows()))
-        .map(frame_value)
-        .map_err(e)
+    m.partial_dependence(
+        &frame,
+        &feature,
+        grid,
+        o.usize("points", 50)?.max(2),
+        par(frame.n_rows()),
+    )
+    .map(frame_value)
+    .map_err(e)
 }
 
 fn learning_curve(args: &[Value]) -> R<Value> {
     let s = spec_of("learning_curve", &args[0])?;
     let f = want_frame("learning_curve", args, 1)?;
-    let o = Opts::new("learning_curve", args.get(2), &["sizes", "folds", "metric", "seed"])?;
+    let o = Opts::new(
+        "learning_curve",
+        args.get(2),
+        &["sizes", "folds", "metric", "seed"],
+    )?;
     let sizes: Vec<f64> = match o.get("sizes") {
         None => vec![0.1, 0.325, 0.55, 0.775, 1.0],
         Some(Value::List(items)) => items
@@ -1460,7 +1766,9 @@ fn learning_curve(args: &[Value]) -> R<Value> {
             .map(|v| match v {
                 Value::Float(x) if *x > 0.0 && *x <= 1.0 => Ok(*x),
                 Value::Integer(x) if *x >= 1 => Ok(*x as f64),
-                _ => Err("learn.learning_curve: sizes are fractions in (0, 1] or row counts".to_string()),
+                _ => Err(
+                    "learn.learning_curve: sizes are fractions in (0, 1] or row counts".to_string(),
+                ),
             })
             .collect::<R<_>>()?,
         Some(_) => return Err("learn.learning_curve: sizes must be a list".to_string()),
@@ -1477,24 +1785,43 @@ fn learning_curve(args: &[Value]) -> R<Value> {
     };
     let ids = cv_folds(&s, f, k, seed, true)?;
     let rows = f.n_rows();
-    let jobs: Vec<(usize, usize)> = (0..sizes.len()).flat_map(|si| (0..k).map(move |fold| (si, fold))).collect();
+    let jobs: Vec<(usize, usize)> = (0..sizes.len())
+        .flat_map(|si| (0..k).map(move |fold| (si, fold)))
+        .collect();
     let results = run_jobs(jobs.len(), rows, |j| {
         let (si, fold) = jobs[j];
         // Shuffled train order, so a prefix is a random subset.
-        let mut tr: Vec<usize> = Pcg::new(seed, 2 + fold as u64).permutation(rows).into_iter().filter(|&i| ids[i] != fold).collect();
+        let mut tr: Vec<usize> = Pcg::new(seed, 2 + fold as u64)
+            .permutation(rows)
+            .into_iter()
+            .filter(|&i| ids[i] != fold)
+            .collect();
         let te: Vec<usize> = (0..rows).filter(|&i| ids[i] == fold).collect();
-        let want = if sizes[si] <= 1.0 { (sizes[si] * tr.len() as f64).round() as usize } else { sizes[si] as usize };
+        let want = if sizes[si] <= 1.0 {
+            (sizes[si] * tr.len() as f64).round() as usize
+        } else {
+            sizes[si] as usize
+        };
         tr.truncate(want.clamp(2, tr.len()));
         tr.sort_unstable();
         let train = take(f, &tr)?;
         let test = take(f, &te)?;
         let m = fitted(&fit_spec(&s, &train)?)?;
-        Ok((tr.len(), m.score(&train, &metric, false).map_err(e)?, m.score(&test, &metric, false).map_err(e)?))
+        Ok((
+            tr.len(),
+            m.score(&train, &metric, false).map_err(e)?,
+            m.score(&test, &metric, false).map_err(e)?,
+        ))
     })?;
     let mut n_train = Vec::new();
     let (mut trm, mut trs, mut tem, mut tes) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for si in 0..sizes.len() {
-        let part: Vec<&(usize, f64, f64)> = results.iter().enumerate().filter(|(j, _)| jobs[*j].0 == si).map(|(_, r)| r).collect();
+        let part: Vec<&(usize, f64, f64)> = results
+            .iter()
+            .enumerate()
+            .filter(|(j, _)| jobs[*j].0 == si)
+            .map(|(_, r)| r)
+            .collect();
         n_train.push((part.iter().map(|r| r.0).sum::<usize>() / part.len()) as i64);
         let (m1, s1) = mean_sd(&part.iter().map(|r| r.1).collect::<Vec<_>>());
         let (m2, s2) = mean_sd(&part.iter().map(|r| r.2).collect::<Vec<_>>());
@@ -1526,7 +1853,12 @@ fn grid_search(args: &[Value]) -> R<Value> {
     let f = want_frame("grid_search", args, 1)?;
     let grid = match &args[2] {
         Value::Map(m) => m.clone(),
-        other => return Err(format!("learn.grid_search: the grid must be a map of option to values, got {}", other.type_name())),
+        other => {
+            return Err(format!(
+                "learn.grid_search: the grid must be a map of option to values, got {}",
+                other.type_name()
+            ));
+        }
     };
     let o = Opts::new("grid_search", args.get(3), &["folds", "metric", "seed"])?;
     let k = o.usize("folds", 5)?;
@@ -1541,7 +1873,10 @@ fn grid_search(args: &[Value]) -> R<Value> {
         .values()
         .map(|v| match v {
             Value::List(items) if !items.is_empty() => Ok(items.as_ref().clone()),
-            other => Err(format!("learn.grid_search: each grid entry must be a non-empty list, got {}", other.type_name())),
+            other => Err(format!(
+                "learn.grid_search: each grid entry must be a non-empty list, got {}",
+                other.type_name()
+            )),
         })
         .collect::<R<_>>()?;
     let mut combos: Vec<Vec<Value>> = vec![Vec::new()];
@@ -1563,10 +1898,16 @@ fn grid_search(args: &[Value]) -> R<Value> {
     };
     let ids = cv_folds(&s, f, k, seed, true)?;
     let rows = f.n_rows();
-    let jobs: Vec<(usize, usize)> = (0..combos.len()).flat_map(|c| (0..k).map(move |fold| (c, fold))).collect();
+    let jobs: Vec<(usize, usize)> = (0..combos.len())
+        .flat_map(|c| (0..k).map(move |fold| (c, fold)))
+        .collect();
     let scores = run_jobs(jobs.len(), rows, |j| {
         let (c, fold) = jobs[j];
-        let over: Vec<(String, Value)> = keys.iter().cloned().zip(combos[c].iter().cloned()).collect();
+        let over: Vec<(String, Value)> = keys
+            .iter()
+            .cloned()
+            .zip(combos[c].iter().cloned())
+            .collect();
         let sp = with_opts(&s, &over);
         let tr: Vec<usize> = (0..rows).filter(|&i| ids[i] != fold).collect();
         let te: Vec<usize> = (0..rows).filter(|&i| ids[i] == fold).collect();
@@ -1584,7 +1925,11 @@ fn grid_search(args: &[Value]) -> R<Value> {
     let best = (0..combos.len())
         .max_by(|&a, &b| {
             let (x, y) = (means[a], means[b]);
-            let ord = if higher { x.total_cmp(&y) } else { y.total_cmp(&x) };
+            let ord = if higher {
+                x.total_cmp(&y)
+            } else {
+                y.total_cmp(&x)
+            };
             ord.then(b.cmp(&a))
         })
         .unwrap_or(0);
@@ -1592,15 +1937,35 @@ fn grid_search(args: &[Value]) -> R<Value> {
     for (ki, key) in keys.iter().enumerate() {
         let items: Vec<Value> = combos.iter().map(|c| c[ki].clone()).collect();
         let s = series_from_list(&items).unwrap_or_else(|_| {
-            Series::from_str_values(items.iter().map(|v| value_to_scalar(v).and_then(super::table::scalar_text).unwrap_or_default()).collect())
+            Series::from_str_values(
+                items
+                    .iter()
+                    .map(|v| {
+                        value_to_scalar(v)
+                            .and_then(super::table::scalar_text)
+                            .unwrap_or_default()
+                    })
+                    .collect(),
+            )
         });
         cols.push((key.clone(), s));
     }
     cols.push((format!("{}_mean", metric), Series::from_f64(means.clone())));
     cols.push((format!("{}_sd", metric), Series::from_f64(sds)));
     let results = Frame::new(cols).map_err(e)?;
-    let best_params: ValueMap = keys.iter().cloned().zip(combos[best].iter().cloned()).collect();
-    let best_spec = with_opts(&s, &keys.iter().cloned().zip(combos[best].iter().cloned()).collect::<Vec<_>>());
+    let best_params: ValueMap = keys
+        .iter()
+        .cloned()
+        .zip(combos[best].iter().cloned())
+        .collect();
+    let best_spec = with_opts(
+        &s,
+        &keys
+            .iter()
+            .cloned()
+            .zip(combos[best].iter().cloned())
+            .collect::<Vec<_>>(),
+    );
     let model = fit_spec(&best_spec, f)?;
     Ok(map_value(vec![
         ("results", frame_value(results)),
@@ -1617,7 +1982,12 @@ fn grid_search(args: &[Value]) -> R<Value> {
 
 fn same_len(func: &str, a: &Series, b: &Series) -> R<()> {
     if a.len() != b.len() {
-        return Err(format!("learn.{}: y has {} rows, the predictions {}", func, a.len(), b.len()));
+        return Err(format!(
+            "learn.{}: y has {} rows, the predictions {}",
+            func,
+            a.len(),
+            b.len()
+        ));
     }
     Ok(())
 }
@@ -1661,11 +2031,17 @@ fn class_pairs(func: &str, y: &Series, p: &Series) -> R<(Labels, Vec<usize>, Vec
     };
     let cy = labels.encode(y);
     let cp = labels.encode(p);
-    let keep: Vec<usize> = (0..cy.len()).filter(|&i| cy[i] != NO_CLASS && cp[i] != NO_CLASS).collect();
+    let keep: Vec<usize> = (0..cy.len())
+        .filter(|&i| cy[i] != NO_CLASS && cp[i] != NO_CLASS)
+        .collect();
     if keep.is_empty() {
         return Err(format!("learn.{}: no rows where both are present", func));
     }
-    Ok((labels, keep.iter().map(|&i| cy[i]).collect(), keep.iter().map(|&i| cp[i]).collect()))
+    Ok((
+        labels,
+        keep.iter().map(|&i| cy[i]).collect(),
+        keep.iter().map(|&i| cp[i]).collect(),
+    ))
 }
 
 fn union<T: Ord + Clone>(mut a: Vec<T>, b: Vec<T>) -> Vec<T> {
@@ -1748,15 +2124,24 @@ fn metric(func: &str, args: &[Value]) -> R<Value> {
         let names = labels.names();
         let mut probs = Vec::new();
         for n in &names {
-            let (v, _) = numeric(pf.column(n).map_err(|_| {
-                format!("learn.log_loss: the probability frame has no column for class '{}'", n)
-            })?, "log_loss")
+            let (v, _) = numeric(
+                pf.column(n).map_err(|_| {
+                    format!(
+                        "learn.log_loss: the probability frame has no column for class '{}'",
+                        n
+                    )
+                })?,
+                "log_loss",
+            )
             .map_err(e)?;
             probs.push(v);
         }
         let keep: Vec<usize> = (0..codes.len()).filter(|&i| codes[i] != NO_CLASS).collect();
         let yk: Vec<usize> = keep.iter().map(|&i| codes[i]).collect();
-        let pk: Vec<Vec<f64>> = probs.iter().map(|c| keep.iter().map(|&i| c[i]).collect()).collect();
+        let pk: Vec<Vec<f64>> = probs
+            .iter()
+            .map(|c| keep.iter().map(|&i| c[i]).collect())
+            .collect();
         return Ok(Value::Float(metrics::log_loss_multi(&yk, &pk)));
     }
     let p = want_series(func, args, 1)?;
@@ -1801,7 +2186,10 @@ fn metric(func: &str, args: &[Value]) -> R<Value> {
             let names = labels.names();
             let mut cols = vec![("actual".to_string(), Series::from_str_values(names.clone()))];
             for (c, n) in names.iter().enumerate() {
-                cols.push((n.clone(), Series::from_i64((0..k).map(|t| m[t][c] as i64).collect())));
+                cols.push((
+                    n.clone(),
+                    Series::from_i64((0..k).map(|t| m[t][c] as i64).collect()),
+                ));
             }
             Frame::new(cols).map(frame_value).map_err(e)
         }
@@ -1810,10 +2198,22 @@ fn metric(func: &str, args: &[Value]) -> R<Value> {
             let pc = metrics::per_class(&a, &b, labels.len());
             Frame::new(vec![
                 ("class".to_string(), Series::from_str_values(labels.names())),
-                ("precision".to_string(), Series::from_f64(pc.iter().map(|v| v.0).collect())),
-                ("recall".to_string(), Series::from_f64(pc.iter().map(|v| v.1).collect())),
-                ("f1".to_string(), Series::from_f64(pc.iter().map(|v| v.2).collect())),
-                ("support".to_string(), Series::from_i64(pc.iter().map(|v| v.3 as i64).collect())),
+                (
+                    "precision".to_string(),
+                    Series::from_f64(pc.iter().map(|v| v.0).collect()),
+                ),
+                (
+                    "recall".to_string(),
+                    Series::from_f64(pc.iter().map(|v| v.1).collect()),
+                ),
+                (
+                    "f1".to_string(),
+                    Series::from_f64(pc.iter().map(|v| v.2).collect()),
+                ),
+                (
+                    "support".to_string(),
+                    Series::from_i64(pc.iter().map(|v| v.3 as i64).collect()),
+                ),
             ])
             .map(frame_value)
             .map_err(e)
@@ -1824,7 +2224,8 @@ fn metric(func: &str, args: &[Value]) -> R<Value> {
                 "log_loss" => metrics::log_loss(&a, &b),
                 "brier" => metrics::brier(&a, &b),
                 "average_precision" => metrics::average_precision(&a, &b),
-                _ => metrics::roc_auc(&a, &b).ok_or("learn.auc: y has one class only; AUC needs both")?,
+                _ => metrics::roc_auc(&a, &b)
+                    .ok_or("learn.auc: y has one class only; AUC needs both")?,
             }))
         }
         "roc" => {
@@ -1864,9 +2265,21 @@ fn metric(func: &str, args: &[Value]) -> R<Value> {
                     (false, false) => tn += 1,
                 }
             }
-            let prec = if tp + fp > 0 { tp as f64 / (tp + fp) as f64 } else { 0.0 };
-            let rec = if tp + fnn > 0 { tp as f64 / (tp + fnn) as f64 } else { 0.0 };
-            let f1 = if prec + rec > 0.0 { 2.0 * prec * rec / (prec + rec) } else { 0.0 };
+            let prec = if tp + fp > 0 {
+                tp as f64 / (tp + fp) as f64
+            } else {
+                0.0
+            };
+            let rec = if tp + fnn > 0 {
+                tp as f64 / (tp + fnn) as f64
+            } else {
+                0.0
+            };
+            let f1 = if prec + rec > 0.0 {
+                2.0 * prec * rec / (prec + rec)
+            } else {
+                0.0
+            };
             let n = a.len() as f64;
             Ok(map_value(vec![
                 ("threshold", Value::Float(t)),
@@ -1889,7 +2302,8 @@ fn metric(func: &str, args: &[Value]) -> R<Value> {
             let np = a.iter().filter(|v| **v).count() as f64;
             let n = a.len() as f64;
             let (mut tp, mut fp) = (0.0, 0.0);
-            let (mut th, mut pr, mut rc, mut f1, mut acc, mut fl) = (vec![], vec![], vec![], vec![], vec![], vec![]);
+            let (mut th, mut pr, mut rc, mut f1, mut acc, mut fl) =
+                (vec![], vec![], vec![], vec![], vec![], vec![]);
             for (pos, &i) in idx.iter().enumerate() {
                 if a[i] {
                     tp += 1.0;
@@ -1902,7 +2316,11 @@ fn metric(func: &str, args: &[Value]) -> R<Value> {
                     th.push(b[i]);
                     pr.push(p_);
                     rc.push(r_);
-                    f1.push(if p_ + r_ > 0.0 { 2.0 * p_ * r_ / (p_ + r_) } else { 0.0 });
+                    f1.push(if p_ + r_ > 0.0 {
+                        2.0 * p_ * r_ / (p_ + r_)
+                    } else {
+                        0.0
+                    });
                     acc.push((tp + (n - np - fp)) / n);
                     fl.push((tp + fp) / n);
                 }
@@ -1924,11 +2342,26 @@ fn metric(func: &str, args: &[Value]) -> R<Value> {
             let q = o.one_of("strategy", "uniform", &["uniform", "quantile"])? == "quantile";
             let rows = metrics::calibration(&a, &b, bins, q);
             Frame::new(vec![
-                ("lo".to_string(), Series::from_f64(rows.iter().map(|r| r.0).collect())),
-                ("hi".to_string(), Series::from_f64(rows.iter().map(|r| r.1).collect())),
-                ("predicted".to_string(), Series::from_f64(rows.iter().map(|r| r.2).collect())),
-                ("observed".to_string(), Series::from_f64(rows.iter().map(|r| r.3).collect())),
-                ("count".to_string(), Series::from_i64(rows.iter().map(|r| r.4 as i64).collect())),
+                (
+                    "lo".to_string(),
+                    Series::from_f64(rows.iter().map(|r| r.0).collect()),
+                ),
+                (
+                    "hi".to_string(),
+                    Series::from_f64(rows.iter().map(|r| r.1).collect()),
+                ),
+                (
+                    "predicted".to_string(),
+                    Series::from_f64(rows.iter().map(|r| r.2).collect()),
+                ),
+                (
+                    "observed".to_string(),
+                    Series::from_f64(rows.iter().map(|r| r.3).collect()),
+                ),
+                (
+                    "count".to_string(),
+                    Series::from_i64(rows.iter().map(|r| r.4 as i64).collect()),
+                ),
             ])
             .map(frame_value)
             .map_err(e)
@@ -1936,4 +2369,3 @@ fn metric(func: &str, args: &[Value]) -> R<Value> {
         _ => Err(format!("unknown learn function: learn.{}", func)),
     }
 }
-

@@ -20,7 +20,13 @@ pub fn quantile_sorted(s: &[f64], q: f64) -> f64 {
 /// each side in the rows' original order. With `strata` the test rows
 /// are allocated to each class in proportion (largest remainder), so
 /// both sides keep the class balance.
-pub fn split(n: usize, n_test: usize, shuffle: bool, strata: Option<&[usize]>, rng: &mut Pcg) -> (Vec<usize>, Vec<usize>) {
+pub fn split(
+    n: usize,
+    n_test: usize,
+    shuffle: bool,
+    strata: Option<&[usize]>,
+    rng: &mut Pcg,
+) -> (Vec<usize>, Vec<usize>) {
     let n_test = n_test.min(n);
     let mut is_test = vec![false; n];
     match strata {
@@ -42,11 +48,18 @@ pub fn split(n: usize, n_test: usize, shuffle: bool, strata: Option<&[usize]>, r
                 groups[c].push(i);
             }
             // Largest-remainder allocation of n_test over the classes.
-            let exact: Vec<f64> = groups.iter().map(|g| g.len() as f64 * n_test as f64 / n as f64).collect();
+            let exact: Vec<f64> = groups
+                .iter()
+                .map(|g| g.len() as f64 * n_test as f64 / n as f64)
+                .collect();
             let mut alloc: Vec<usize> = exact.iter().map(|e| e.floor() as usize).collect();
             let mut left = n_test - alloc.iter().sum::<usize>();
             let mut order: Vec<usize> = (0..k).collect();
-            order.sort_by(|&a, &b| (exact[b] - exact[b].floor()).total_cmp(&(exact[a] - exact[a].floor())).then(a.cmp(&b)));
+            order.sort_by(|&a, &b| {
+                (exact[b] - exact[b].floor())
+                    .total_cmp(&(exact[a] - exact[a].floor()))
+                    .then(a.cmp(&b))
+            });
             for &c in &order {
                 if left == 0 {
                     break;
@@ -77,7 +90,11 @@ pub fn split(n: usize, n_test: usize, shuffle: bool, strata: Option<&[usize]>, r
 /// sklearn's `KFold`: fold ids 0..k, the first n % k folds one larger,
 /// over a shuffled order when `shuffle`.
 pub fn kfold(n: usize, k: usize, shuffle: bool, rng: &mut Pcg) -> Vec<usize> {
-    let order: Vec<usize> = if shuffle { rng.permutation(n) } else { (0..n).collect() };
+    let order: Vec<usize> = if shuffle {
+        rng.permutation(n)
+    } else {
+        (0..n).collect()
+    };
     let mut ids = vec![0usize; n];
     let base = n / k;
     let extra = n % k;
@@ -123,6 +140,9 @@ pub fn stratified_kfold(cls: &[usize], k: usize, shuffle: bool, rng: &mut Pcg) -
     ids
 }
 
+/// One time split: half-open (train, test) row ranges.
+pub type Window = ((usize, usize), (usize, usize));
+
 /// Rolling-origin splits (sklearn's `TimeSeriesSplit`): `n_splits`
 /// consecutive test windows of `test_size` rows at the end of the
 /// series; each train window is everything before its test window less
@@ -134,7 +154,7 @@ pub fn time_splits(
     test_size: Option<usize>,
     gap: usize,
     max_train: Option<usize>,
-) -> Result<Vec<((usize, usize), (usize, usize))>, String> {
+) -> Result<Vec<Window>, String> {
     let test_size = test_size.unwrap_or(n / (n_splits + 1));
     if test_size == 0 || n_splits == 0 || n_splits * test_size + gap >= n {
         return Err(format!(
@@ -158,7 +178,14 @@ pub fn time_splits(
 /// `PolynomialFeatures` (by degree, then combinations with replacement).
 pub fn poly_terms(k: usize, degree: usize, interaction_only: bool) -> Vec<Vec<usize>> {
     let mut out = Vec::new();
-    fn rec(start: usize, k: usize, left: usize, inter: bool, cur: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
+    fn rec(
+        start: usize,
+        k: usize,
+        left: usize,
+        inter: bool,
+        cur: &mut Vec<usize>,
+        out: &mut Vec<Vec<usize>>,
+    ) {
         if left == 0 {
             out.push(cur.clone());
             return;
@@ -185,7 +212,11 @@ pub fn poly_name(term: &[usize], names: &[String]) -> String {
             j += 1;
         }
         let pw = j - i + 1;
-        parts.push(if pw == 1 { names[term[i]].clone() } else { format!("{}^{}", names[term[i]], pw) });
+        parts.push(if pw == 1 {
+            names[term[i]].clone()
+        } else {
+            format!("{}^{}", names[term[i]], pw)
+        });
         i = j + 1;
     }
     parts.join("*")
@@ -225,15 +256,24 @@ mod tests {
     fn time_splits_match_sklearn() {
         // TimeSeriesSplit(n_splits=3) on 10 rows: test sizes 2, starts 4, 6, 8.
         let s = time_splits(10, 3, None, 0, None).unwrap();
-        assert_eq!(s, vec![((0, 4), (4, 6)), ((0, 6), (6, 8)), ((0, 8), (8, 10))]);
+        assert_eq!(
+            s,
+            vec![((0, 4), (4, 6)), ((0, 6), (6, 8)), ((0, 8), (8, 10))]
+        );
     }
 
     #[test]
     fn poly_order() {
         let names = vec!["a".to_string(), "b".to_string()];
-        let t: Vec<String> = poly_terms(2, 2, false).iter().map(|t| poly_name(t, &names)).collect();
+        let t: Vec<String> = poly_terms(2, 2, false)
+            .iter()
+            .map(|t| poly_name(t, &names))
+            .collect();
         assert_eq!(t, vec!["a", "b", "a^2", "a*b", "b^2"]);
-        let t: Vec<String> = poly_terms(2, 3, true).iter().map(|t| poly_name(t, &names)).collect();
+        let t: Vec<String> = poly_terms(2, 3, true)
+            .iter()
+            .map(|t| poly_name(t, &names))
+            .collect();
         assert_eq!(t, vec!["a", "b", "a*b"]);
     }
 }

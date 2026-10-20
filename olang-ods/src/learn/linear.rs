@@ -176,13 +176,19 @@ pub fn ols(x: &Matrix, y: &[f64], w: Option<&[f64]>, intercept: bool, par: bool)
     }
     let df_resid = (n - p) as f64;
     let sigma2 = sse / df_resid;
-    let se: Vec<f64> = (0..p).map(|i| (sigma2 * xtx_inv[i * p + i]).sqrt()).collect();
+    let se: Vec<f64> = (0..p)
+        .map(|i| (sigma2 * xtx_inv[i * p + i]).sqrt())
+        .collect();
     let t: Vec<f64> = coef.iter().zip(&se).map(|(c, s)| c / s).collect();
     let pv = t
         .iter()
         .map(|&tv| t_two_sided(tv, df_resid))
         .collect::<Result<Vec<f64>>>()?;
-    let r2 = if sst == 0.0 { f64::NAN } else { 1.0 - sse / sst };
+    let r2 = if sst == 0.0 {
+        f64::NAN
+    } else {
+        1.0 - sse / sst
+    };
     let dfm = if intercept { n as f64 - 1.0 } else { n as f64 };
     let adj_r2 = 1.0 - (1.0 - r2) * dfm / df_resid;
     let nf = n as f64;
@@ -289,7 +295,12 @@ pub fn ridge(x: &Matrix, y: &[f64], alpha: f64, intercept: bool, par: bool) -> R
 
 /// The centred Gram matrix XcᵀXc and Xcᵀyc, from one uncentred pass:
 /// XcᵀXc = XᵀX − n·x̄x̄ᵀ.
-fn centred_gram(x: &Matrix, y: &[f64], intercept: bool, par: bool) -> (Vec<f64>, Vec<f64>, Vec<f64>, f64) {
+fn centred_gram(
+    x: &Matrix,
+    y: &[f64],
+    intercept: bool,
+    par: bool,
+) -> (Vec<f64>, Vec<f64>, Vec<f64>, f64) {
     let k = x.k();
     let n = x.n as f64;
     let g = weighted_gram(x, None, false, par);
@@ -312,6 +323,8 @@ fn centred_gram(x: &Matrix, y: &[f64], intercept: bool, par: bool) -> (Vec<f64>,
 /// minimizes 1/(2n)‖y − Xβ − β₀‖² + α·ρ‖β‖₁ + α(1−ρ)/2‖β‖² (sklearn's
 /// `ElasticNet`; ρ = 1 is the lasso). Each sweep is O(k²), independent
 /// of the row count.
+// The solver's knobs are its arguments, as sklearn's are.
+#[allow(clippy::too_many_arguments)]
 pub fn elastic_net(
     x: &Matrix,
     y: &[f64],
@@ -430,9 +443,7 @@ pub fn logistic(
     let penalty = |beta: &[f64]| lambda / 2.0 * beta[1..].iter().map(|b| b * b).sum::<f64>();
     // The negative log-likelihood at a linear predictor, summed in fixed
     // pieces so it is the same number on any thread count.
-    let nll = |eta: &[f64]| -> f64 {
-        piece_sum(n, par, |i| wt(i) * log1pexp_loss(eta[i], y[i]))
-    };
+    let nll = |eta: &[f64]| -> f64 { piece_sum(n, par, |i| wt(i) * log1pexp_loss(eta[i], y[i])) };
     let mut beta = vec![0.0f64; p];
     // Start the intercept at the weighted log-odds: one Newton step fewer.
     let wsum: f64 = (0..n).map(wt).sum();
@@ -459,8 +470,9 @@ pub fn logistic(
             grad[j] += lambda * beta[j];
             h[j * p + j] += lambda;
         }
-        let (l, _) = cholesky_jittered(&h, p)
-            .ok_or_else(|| bad("logistic: the Hessian is singular (separable or constant columns?)"))?;
+        let (l, _) = cholesky_jittered(&h, p).ok_or_else(|| {
+            bad("logistic: the Hessian is singular (separable or constant columns?)")
+        })?;
         let step = chol_solve(&l, p, &grad);
         // Step-halving keeps Newton monotone on separable data.
         let mut t = 1.0;
@@ -519,6 +531,7 @@ pub fn logistic(
 /// piece order whether or not the pieces ran in parallel.
 const PIECE: usize = 8192;
 /// Rows above which elementwise passes fan out.
+#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
 const PAR_ROWS: usize = 32_768;
 
 /// Σ f(i) over 0..n in fixed pieces (deterministic on any thread count).
@@ -544,7 +557,13 @@ fn piece_sum(n: usize, par: bool, f: impl Fn(usize) -> f64 + Sync) -> f64 {
 }
 
 /// (a[i], b[i]) = f(i, src[i]).
-fn elementwise(src: &[f64], a: &mut [f64], b: &mut [f64], par: bool, f: impl Fn(usize, f64) -> (f64, f64) + Sync) {
+fn elementwise(
+    src: &[f64],
+    a: &mut [f64],
+    b: &mut [f64],
+    par: bool,
+    f: impl Fn(usize, f64) -> (f64, f64) + Sync,
+) {
     let one = |(c, (ac, bc)): (usize, (&mut [f64], &mut [f64]))| {
         for k in 0..ac.len() {
             let i = c * PIECE + k;
@@ -556,12 +575,18 @@ fn elementwise(src: &[f64], a: &mut [f64], b: &mut [f64], par: bool, f: impl Fn(
     #[cfg(feature = "parallel")]
     {
         if par && src.len() >= PAR_ROWS {
-            a.par_chunks_mut(PIECE).zip(b.par_chunks_mut(PIECE)).enumerate().for_each(one);
+            a.par_chunks_mut(PIECE)
+                .zip(b.par_chunks_mut(PIECE))
+                .enumerate()
+                .for_each(one);
             return;
         }
     }
     let _ = par;
-    a.chunks_mut(PIECE).zip(b.chunks_mut(PIECE)).enumerate().for_each(one);
+    a.chunks_mut(PIECE)
+        .zip(b.chunks_mut(PIECE))
+        .enumerate()
+        .for_each(one);
 }
 
 /// −[y log σ(η) + (1−y) log(1−σ(η))], computed without overflow.
@@ -592,7 +617,9 @@ pub fn softmax_predict(x: &Matrix, coef: &[Vec<f64>]) -> Vec<Vec<f64>> {
     let kc = coef.len();
     let mut out = vec![vec![0.0; x.n]; kc];
     for i in 0..x.n {
-        let m = (0..kc).map(|c| etas[c][i]).fold(f64::NEG_INFINITY, f64::max);
+        let m = (0..kc)
+            .map(|c| etas[c][i])
+            .fold(f64::NEG_INFINITY, f64::max);
         let mut s = 0.0;
         for c in 0..kc {
             let e = (etas[c][i] - m).exp();
@@ -612,6 +639,7 @@ pub fn softmax_predict(x: &Matrix, coef: &[Vec<f64>]) -> Vec<Vec<f64>> {
 /// a vanishing ridge removes it and the result is centred, which leaves
 /// every probability unchanged (statsmodels' MNLogit up to its choice of
 /// reference class).
+#[allow(clippy::too_many_arguments)]
 pub fn softmax(
     x: &Matrix,
     y: &[usize],
@@ -633,7 +661,11 @@ pub fn softmax(
         for i in 0..n {
             l -= wt(i) * probs[y[i]][i].max(1e-300).ln();
         }
-        l + lambda / 2.0 * coef.iter().map(|b| b[1..].iter().map(|v| v * v).sum::<f64>()).sum::<f64>()
+        l + lambda / 2.0
+            * coef
+                .iter()
+                .map(|b| b[1..].iter().map(|v| v * v).sum::<f64>())
+                .sum::<f64>()
     };
     let mut coef = vec![vec![0.0f64; p]; kc];
     let mut cur = objective(&coef);
@@ -767,11 +799,19 @@ mod tests {
 
     #[test]
     fn logistic_converges_and_softmax_agrees_on_two_classes() {
-        let x1: Vec<f64> = (0..200).map(|i| ((i * 37) % 101) as f64 / 50.0 - 1.0).collect();
+        let x1: Vec<f64> = (0..200)
+            .map(|i| ((i * 37) % 101) as f64 / 50.0 - 1.0)
+            .collect();
         let y: Vec<f64> = x1
             .iter()
             .enumerate()
-            .map(|(i, v)| if v * 2.0 + ((i * 13) % 7) as f64 / 7.0 - 0.5 > 0.0 { 1.0 } else { 0.0 })
+            .map(|(i, v)| {
+                if v * 2.0 + ((i * 13) % 7) as f64 / 7.0 - 0.5 > 0.0 {
+                    1.0
+                } else {
+                    0.0
+                }
+            })
             .collect();
         let m = mat(vec![x1]);
         let fit = logistic(&m, &y, None, 0.0, 100, 1e-10, false).unwrap();

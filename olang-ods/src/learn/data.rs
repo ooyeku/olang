@@ -314,11 +314,18 @@ impl Labels {
                         seen[values[i] as usize] = true;
                     }
                 }
-                Labels::Bool([false, true].into_iter().filter(|b| seen[*b as usize]).collect())
+                Labels::Bool(
+                    [false, true]
+                        .into_iter()
+                        .filter(|b| seen[*b as usize])
+                        .collect(),
+                )
             }
             Series::I64 { values, .. } => {
-                let set: std::collections::BTreeSet<i64> =
-                    (0..s.len()).filter(|&i| is_valid(s, i)).map(|i| values[i]).collect();
+                let set: std::collections::BTreeSet<i64> = (0..s.len())
+                    .filter(|&i| is_valid(s, i))
+                    .map(|i| values[i])
+                    .collect();
                 Labels::Int(set.into_iter().collect())
             }
             Series::F64 { values, .. } => {

@@ -100,7 +100,11 @@ pub fn bin(x: &Matrix, max_bins: usize, rng: &mut Pcg, par: bool) -> Binned {
         }
     };
     let (edges, codes) = parts.into_iter().unzip();
-    Binned { n: x.n, codes, edges }
+    Binned {
+        n: x.n,
+        codes,
+        edges,
+    }
 }
 
 /// Re-bin new rows with trained edges.
@@ -155,6 +159,7 @@ const MAXB: usize = 256;
 /// Rows × features above which histogram building fans out over the
 /// features (measured: below it the pool's hand-off costs more than the
 /// pass).
+#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
 const PAR_HIST_CELLS: usize = 64_000;
 
 fn build_hist(b: &Binned, rows: &[u32], g: &[f64], h: &[f64], par: bool) -> Vec<Cell> {
@@ -253,9 +258,9 @@ pub fn grow_hist(
         bin_thr.push(u16::MAX);
         id
     };
-    let (g0, h0) = rows
-        .iter()
-        .fold((0.0, 0.0), |(a, c), &r| (a + g[r as usize], c + h[r as usize]));
+    let (g0, h0) = rows.iter().fold((0.0, 0.0), |(a, c), &r| {
+        (a + g[r as usize], c + h[r as usize])
+    });
     let root = new_node(&mut tree, &mut bin_thr, g0, h0, rows.len());
     let hist = build_hist(b, &rows, g, h, par);
     let can_split = |depth: usize| p.max_depth.is_none_or(|d| depth < d);
@@ -284,7 +289,11 @@ pub fn grow_hist(
             .enumerate()
             .filter(|(_, l)| l.split.is_some())
             .max_by(|a, b| {
-                a.1.split.as_ref().unwrap().gain.total_cmp(&b.1.split.as_ref().unwrap().gain)
+                a.1.split
+                    .as_ref()
+                    .unwrap()
+                    .gain
+                    .total_cmp(&b.1.split.as_ref().unwrap().gain)
             })
             .map(|(i, _)| i)
         else {
@@ -304,9 +313,9 @@ pub fn grow_hist(
             }
         }
         let mid = leaf.start + lo;
-        let (gl, hl) = rows[leaf.start..mid]
-            .iter()
-            .fold((0.0, 0.0), |(a, c), &r| (a + g[r as usize], c + h[r as usize]));
+        let (gl, hl) = rows[leaf.start..mid].iter().fold((0.0, 0.0), |(a, c), &r| {
+            (a + g[r as usize], c + h[r as usize])
+        });
         let (gr, hr) = (leaf.g - gl, leaf.h - hl);
         let nl = mid - leaf.start;
         let nr = leaf.end - mid;
@@ -326,7 +335,11 @@ pub fn grow_hist(
         // Histogram of the smaller child built, the larger's by
         // subtraction from the parent's.
         let left_small = nl <= nr;
-        let (s_start, s_end) = if left_small { (leaf.start, mid) } else { (mid, leaf.end) };
+        let (s_start, s_end) = if left_small {
+            (leaf.start, mid)
+        } else {
+            (mid, leaf.end)
+        };
         let small = build_hist(b, &rows[s_start..s_end], g, h, par);
         let mut large = leaf.hist;
         for (l, s) in large.iter_mut().zip(&small) {
@@ -334,7 +347,11 @@ pub fn grow_hist(
             l.h -= s.h;
             l.c -= s.c;
         }
-        let (lh, rh) = if left_small { (small, large) } else { (large, small) };
+        let (lh, rh) = if left_small {
+            (small, large)
+        } else {
+            (large, small)
+        };
         let ls = best_split(b, &lh, gl, hl, nl as f64, p);
         let rs = best_split(b, &rh, gr, hr, nr as f64, p);
         leaves.push(Leaf {
@@ -431,6 +448,7 @@ pub struct Booster {
 /// added in piece order, so a loss is bit-identical on any thread count.
 const PIECE: usize = 8192;
 /// Rows above which the elementwise passes fan out.
+#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
 const PAR_ROWS: usize = 32_768;
 
 fn loss_of(loss: Loss, y: &[f64], raw: &[f64], w: Option<&[f64]>, par: bool) -> f64 {
@@ -446,7 +464,11 @@ fn loss_of(loss: Loss, y: &[f64], raw: &[f64], w: Option<&[f64]>, par: bool) -> 
                 }
                 Loss::LogLoss => {
                     let z = raw[i];
-                    let sp = if z > 0.0 { z + (-z).exp().ln_1p() } else { z.exp().ln_1p() };
+                    let sp = if z > 0.0 {
+                        z + (-z).exp().ln_1p()
+                    } else {
+                        z.exp().ln_1p()
+                    };
                     sp - y[i] * z
                 }
             };
@@ -480,7 +502,15 @@ fn loss_of(loss: Loss, y: &[f64], raw: &[f64], w: Option<&[f64]>, par: bool) -> 
 }
 
 /// Gradients and Hessians of the loss at `raw`, into `g` and `h`.
-fn gradients(loss: Loss, y: &[f64], raw: &[f64], w: Option<&[f64]>, g: &mut [f64], h: &mut [f64], par: bool) {
+fn gradients(
+    loss: Loss,
+    y: &[f64],
+    raw: &[f64],
+    w: Option<&[f64]>,
+    g: &mut [f64],
+    h: &mut [f64],
+    par: bool,
+) {
     let one = |(c, (gc, hc)): (usize, (&mut [f64], &mut [f64]))| {
         let base = c * PIECE;
         for k in 0..gc.len() {
@@ -502,12 +532,18 @@ fn gradients(loss: Loss, y: &[f64], raw: &[f64], w: Option<&[f64]>, g: &mut [f64
     #[cfg(feature = "parallel")]
     {
         if par && y.len() >= PAR_ROWS {
-            g.par_chunks_mut(PIECE).zip(h.par_chunks_mut(PIECE)).enumerate().for_each(one);
+            g.par_chunks_mut(PIECE)
+                .zip(h.par_chunks_mut(PIECE))
+                .enumerate()
+                .for_each(one);
             return;
         }
     }
     let _ = par;
-    g.chunks_mut(PIECE).zip(h.chunks_mut(PIECE)).enumerate().for_each(one);
+    g.chunks_mut(PIECE)
+        .zip(h.chunks_mut(PIECE))
+        .enumerate()
+        .for_each(one);
 }
 
 pub fn fit(x: &Matrix, y: &[f64], w: Option<&[f64]>, p: &BoostParams, par: bool) -> Booster {
@@ -537,7 +573,11 @@ pub fn fit(x: &Matrix, y: &[f64], w: Option<&[f64]>, p: &BoostParams, par: bool)
     } else {
         ((0..n_all).collect(), Vec::new())
     };
-    let xt = if valid_idx.is_empty() { x.clone() } else { x.take(&train_idx) };
+    let xt = if valid_idx.is_empty() {
+        x.clone()
+    } else {
+        x.take(&train_idx)
+    };
     let yt: Vec<f64> = train_idx.iter().map(|&i| y[i]).collect();
     let wt: Option<Vec<f64>> = w.map(|w| train_idx.iter().map(|&i| w[i]).collect());
     let binned = bin(&xt, p.max_bins, &mut rng, par);
@@ -657,7 +697,9 @@ mod tests {
     fn boosting_fits_a_smooth_function() {
         let n = 2000;
         let a: Vec<f64> = (0..n).map(|i| i as f64 / n as f64 * 6.0).collect();
-        let b: Vec<f64> = (0..n).map(|i| ((i * 7919) % 1000) as f64 / 1000.0).collect();
+        let b: Vec<f64> = (0..n)
+            .map(|i| ((i * 7919) % 1000) as f64 / 1000.0)
+            .collect();
         let y: Vec<f64> = a.iter().zip(&b).map(|(a, b)| a.sin() + 2.0 * b).collect();
         let x = Matrix::new(n, vec![a, b]);
         let p = BoostParams {
@@ -681,7 +723,12 @@ mod tests {
         };
         let m = fit(&x, &y, None, &p, false);
         let pred = m.raw(&x, false);
-        let mse: f64 = pred.iter().zip(&y).map(|(p, y)| (p - y) * (p - y)).sum::<f64>() / n as f64;
+        let mse: f64 = pred
+            .iter()
+            .zip(&y)
+            .map(|(p, y)| (p - y) * (p - y))
+            .sum::<f64>()
+            / n as f64;
         assert!(mse < 0.01, "{mse}");
         assert!(m.train_loss.windows(2).all(|w| w[1] <= w[0] + 1e-12));
     }

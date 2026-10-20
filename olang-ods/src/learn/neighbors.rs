@@ -52,7 +52,11 @@ impl Knn {
     /// the earlier training row.
     fn fold_in(&self, best: &mut Vec<(f64, usize)>, dist: impl Iterator<Item = f64>, base: usize) {
         let k = self.k;
-        let mut worst = if best.len() == k { best[k - 1].0 } else { f64::INFINITY };
+        let mut worst = if best.len() == k {
+            best[k - 1].0
+        } else {
+            f64::INFINITY
+        };
         for (j, d) in dist.enumerate() {
             if best.len() < k || d < worst {
                 let pos = best.partition_point(|b| b.0 <= d);
@@ -85,7 +89,8 @@ impl Knn {
         let block = |b: usize| -> Vec<Vec<(f64, usize)>> {
             let lo = b * QUERY_BLOCK;
             let hi = ((b + 1) * QUERY_BLOCK).min(q.n);
-            let mut best: Vec<Vec<(f64, usize)>> = (lo..hi).map(|_| Vec::with_capacity(self.k + 1)).collect();
+            let mut best: Vec<Vec<(f64, usize)>> =
+                (lo..hi).map(|_| Vec::with_capacity(self.k + 1)).collect();
             // A register-blocked distance kernel: 4 queries × 2 training
             // rows of dot products per inner loop over the features (row-
             // major on both sides), 8 accumulators fed by 6 loads.
@@ -123,7 +128,8 @@ impl Knn {
                         for r in 0..w {
                             dist[(a + r) * TRAIN_CHUNK + j] = tnorm[start + j] - 2.0 * acc[r];
                             if j1 != j {
-                                dist[(a + r) * TRAIN_CHUNK + j1] = tnorm[start + j1] - 2.0 * acc[4 + r];
+                                dist[(a + r) * TRAIN_CHUNK + j1] =
+                                    tnorm[start + j1] - 2.0 * acc[4 + r];
                             }
                         }
                         j += 2;
@@ -143,7 +149,12 @@ impl Knn {
                     let mut exact: Vec<(f64, usize)> = v
                         .into_iter()
                         .map(|(_, j)| {
-                            let s: f64 = self.cols.iter().zip(row).map(|(c, x)| (c[j] - x) * (c[j] - x)).sum();
+                            let s: f64 = self
+                                .cols
+                                .iter()
+                                .zip(row)
+                                .map(|(c, x)| (c[j] - x) * (c[j] - x))
+                                .sum();
                             (s.sqrt(), j)
                         })
                         .collect();
@@ -178,13 +189,22 @@ impl Knn {
             return vec![1.0; nb.len()];
         }
         if nb.iter().any(|(d, _)| *d == 0.0) {
-            return nb.iter().map(|(d, _)| if *d == 0.0 { 1.0 } else { 0.0 }).collect();
+            return nb
+                .iter()
+                .map(|(d, _)| if *d == 0.0 { 1.0 } else { 0.0 })
+                .collect();
         }
         nb.iter().map(|(d, _)| 1.0 / d).collect()
     }
 
     /// Class probabilities: `out[c][i]`.
-    pub fn predict_proba(&self, q: &Matrix, y: &[usize], n_classes: usize, par: bool) -> Vec<Vec<f64>> {
+    pub fn predict_proba(
+        &self,
+        q: &Matrix,
+        y: &[usize],
+        n_classes: usize,
+        par: bool,
+    ) -> Vec<Vec<f64>> {
         let nbs = self.neighbours(q, par);
         let mut out = vec![vec![0.0; q.n]; n_classes];
         for (i, nb) in nbs.iter().enumerate() {
@@ -203,7 +223,11 @@ impl Knn {
             .map(|nb| {
                 let w = self.weights(nb);
                 let total: f64 = w.iter().sum();
-                nb.iter().zip(&w).map(|((_, j), wj)| y[*j] * wj).sum::<f64>() / total
+                nb.iter()
+                    .zip(&w)
+                    .map(|((_, j), wj)| y[*j] * wj)
+                    .sum::<f64>()
+                    / total
             })
             .collect()
     }
@@ -224,7 +248,13 @@ pub struct GaussianNb {
 
 /// sklearn's `GaussianNB`: per-class means and (biased) variances, each
 /// variance plus `var_smoothing ×` the largest feature variance.
-pub fn gaussian_nb(x: &Matrix, y: &[usize], n_classes: usize, w: Option<&[f64]>, var_smoothing: f64) -> GaussianNb {
+pub fn gaussian_nb(
+    x: &Matrix,
+    y: &[usize],
+    n_classes: usize,
+    w: Option<&[f64]>,
+    var_smoothing: f64,
+) -> GaussianNb {
     let k = x.k();
     let n = x.n as f64;
     let max_var = x
@@ -306,5 +336,3 @@ impl GaussianNb {
         jll
     }
 }
-
-

@@ -205,20 +205,35 @@ pub enum Task {
 #[derive(Clone, Debug)]
 pub enum Body {
     Ols(OlsFit),
-    Penalized { coef: Vec<f64>, intercept: bool, n_iter: usize },
+    Penalized {
+        coef: Vec<f64>,
+        intercept: bool,
+        n_iter: usize,
+    },
     Logit(LogitFit),
     Softmax(SoftmaxFit),
     Tree(Tree),
     Forest(Forest),
     Boost(Booster),
-    Knn { knn: Knn, y_cls: Vec<usize>, y_reg: Vec<f64> },
+    Knn {
+        knn: Knn,
+        y_cls: Vec<usize>,
+        y_reg: Vec<f64>,
+    },
     NaiveBayes(GaussianNb),
     KMeans(KMeans),
     Pca(Pca),
     Gmm(Gmm),
-    Scaler { method: String, center: Vec<f64>, scale: Vec<f64> },
+    Scaler {
+        method: String,
+        center: Vec<f64>,
+        scale: Vec<f64>,
+    },
     OneHot,
-    Imputer { fills: Vec<Scalar>, strategy: String },
+    Imputer {
+        fills: Vec<Scalar>,
+        strategy: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -270,7 +285,12 @@ fn null_where(vals: Vec<f64>, valid: &[bool]) -> Series {
     if valid.iter().all(|v| *v) {
         Series::from_f64(vals)
     } else {
-        Series::from_f64_options(vals.into_iter().zip(valid).map(|(v, ok)| ok.then_some(v)).collect())
+        Series::from_f64_options(
+            vals.into_iter()
+                .zip(valid)
+                .map(|(v, ok)| ok.then_some(v))
+                .collect(),
+        )
     }
 }
 
@@ -310,14 +330,22 @@ fn other_columns(frame: &Frame, c: &Common) -> Vec<String> {
 }
 
 fn prepare(frame: &Frame, c: &Common, drop_first: bool, task_hint: TaskHint) -> Result<Prepared> {
-    let x_names = if c.x.is_empty() { other_columns(frame, c) } else { c.x.clone() };
-    if x_names.iter().any(|n| *n == c.y) {
+    let x_names = if c.x.is_empty() {
+        other_columns(frame, c)
+    } else {
+        c.x.clone()
+    };
+    if x_names.contains(&c.y) {
         return Err(bad(format!("learn: the target '{}' is also an input", c.y)));
     }
     let design = Design::learn(frame, &x_names, drop_first)?;
     let (x_all, mut valid) = design.encode(frame)?;
     let ys = frame.column(&c.y)?;
-    let hint = if task_hint == TaskHint::Auto { c.task } else { task_hint };
+    let hint = if task_hint == TaskHint::Auto {
+        c.task
+    } else {
+        task_hint
+    };
     let classify = match hint {
         TaskHint::Classification => true,
         TaskHint::Regression => false,
@@ -357,9 +385,21 @@ fn prepare(frame: &Frame, c: &Common, drop_first: bool, task_hint: TaskHint) -> 
     if n == 0 {
         return Err(bad("learn: no complete rows to fit on"));
     }
-    let x = if dropped == 0 { x_all } else { x_all.take(&rows) };
-    let y_reg = if classify { Vec::new() } else { rows.iter().map(|&i| y_reg[i]).collect() };
-    let y_cls: Vec<usize> = if classify { rows.iter().map(|&i| codes[i]).collect() } else { Vec::new() };
+    let x = if dropped == 0 {
+        x_all
+    } else {
+        x_all.take(&rows)
+    };
+    let y_reg = if classify {
+        Vec::new()
+    } else {
+        rows.iter().map(|&i| y_reg[i]).collect()
+    };
+    let y_cls: Vec<usize> = if classify {
+        rows.iter().map(|&i| codes[i]).collect()
+    } else {
+        Vec::new()
+    };
     let mut w: Option<Vec<f64>> = w_all.map(|w| rows.iter().map(|&i| w[i]).collect());
     if let Task::Classification(labels) = &task {
         let cw: Option<Vec<f64>> = match &c.class_weight {
@@ -370,14 +410,29 @@ fn prepare(frame: &Frame, c: &Common, drop_first: bool, task_hint: TaskHint) -> 
                 for &c in &y_cls {
                     counts[c] += 1.0;
                 }
-                Some(counts.iter().map(|&cnt| if cnt > 0.0 { n as f64 / (k as f64 * cnt) } else { 0.0 }).collect())
+                Some(
+                    counts
+                        .iter()
+                        .map(|&cnt| {
+                            if cnt > 0.0 {
+                                n as f64 / (k as f64 * cnt)
+                            } else {
+                                0.0
+                            }
+                        })
+                        .collect(),
+                )
             }
             ClassWeight::Given(pairs) => {
                 let names = labels.names();
                 let mut v = vec![1.0; names.len()];
                 for (l, wgt) in pairs {
                     let pos = names.iter().position(|n| n == l).ok_or_else(|| {
-                        bad(format!("learn: class_weight names '{}', which is not a class ({})", l, names.join(", ")))
+                        bad(format!(
+                            "learn: class_weight names '{}', which is not a class ({})",
+                            l,
+                            names.join(", ")
+                        ))
                     })?;
                     v[pos] = *wgt;
                 }
@@ -406,8 +461,14 @@ pub fn fit(frame: &Frame, c: &Common, algo: &Algo, par: bool) -> Result<Model> {
     let drop_first = matches!(
         algo,
         Algo::Linear { intercept: true }
-            | Algo::Ridge { intercept: true, .. }
-            | Algo::ElasticNet { intercept: true, .. }
+            | Algo::Ridge {
+                intercept: true,
+                ..
+            }
+            | Algo::ElasticNet {
+                intercept: true,
+                ..
+            }
             | Algo::Logistic { .. }
     );
     let hint = match algo {
@@ -440,23 +501,42 @@ pub fn fit(frame: &Frame, c: &Common, algo: &Algo, par: bool) -> Result<Model> {
             if w.is_some() {
                 return Err(bad("elastic_net: weights are not supported"));
             }
-            let r = linear::elastic_net(&p.x, &p.y_reg, *alpha, *l1_ratio, *intercept, *max_iter, *tol, par)?;
+            let r = linear::elastic_net(
+                &p.x, &p.y_reg, *alpha, *l1_ratio, *intercept, *max_iter, *tol, par,
+            )?;
             Body::Penalized {
                 coef: r.coef,
                 intercept: *intercept,
                 n_iter: r.n_iter,
             }
         }
-        Algo::Logistic { lambda, max_iter, tol } => {
-            let Task::Classification(labels) = &p.task else { unreachable!() };
+        Algo::Logistic {
+            lambda,
+            max_iter,
+            tol,
+        } => {
+            let Task::Classification(labels) = &p.task else {
+                unreachable!()
+            };
             if labels.len() < 2 {
                 return Err(bad("logistic: the target has one class"));
             }
             if labels.len() == 2 {
                 let y: Vec<f64> = p.y_cls.iter().map(|&c| c as f64).collect();
-                Body::Logit(linear::logistic(&p.x, &y, w, *lambda, *max_iter, *tol, par)?)
+                Body::Logit(linear::logistic(
+                    &p.x, &y, w, *lambda, *max_iter, *tol, par,
+                )?)
             } else {
-                Body::Softmax(linear::softmax(&p.x, &p.y_cls, labels.len(), w, *lambda, *max_iter, *tol, par)?)
+                Body::Softmax(linear::softmax(
+                    &p.x,
+                    &p.y_cls,
+                    labels.len(),
+                    w,
+                    *lambda,
+                    *max_iter,
+                    *tol,
+                    par,
+                )?)
             }
         }
         Algo::Tree { opts, seed } => {
@@ -471,7 +551,14 @@ pub fn fit(frame: &Frame, c: &Common, algo: &Algo, par: bool) -> Result<Model> {
                 }
             };
             let _ = n_out_cls;
-            let t = tree::grow(&p.x, &target, wv, (0..p.n).collect(), &params, &mut Pcg::new(*seed, 0));
+            let t = tree::grow(
+                &p.x,
+                &target,
+                wv,
+                (0..p.n).collect(),
+                &params,
+                &mut Pcg::new(*seed, 0),
+            );
             Body::Tree(t)
         }
         Algo::Forest {
@@ -530,7 +617,9 @@ pub fn fit(frame: &Frame, c: &Common, algo: &Algo, par: bool) -> Result<Model> {
             y_reg: p.y_reg.clone(),
         },
         Algo::NaiveBayes { var_smoothing } => {
-            let Task::Classification(labels) = &p.task else { unreachable!() };
+            let Task::Classification(labels) = &p.task else {
+                unreachable!()
+            };
             Body::NaiveBayes(gaussian_nb(&p.x, &p.y_cls, labels.len(), w, *var_smoothing))
         }
     };
@@ -561,7 +650,11 @@ fn target_of(p: &Prepared) -> (Target<'_>, usize) {
 fn tree_params(o: &TreeOpts, k: usize, task: &Task, forest_classifier: bool) -> TreeParams {
     let classify = matches!(task, Task::Classification(_));
     TreeParams {
-        criterion: o.criterion.unwrap_or(if classify { Criterion::Gini } else { Criterion::Mse }),
+        criterion: o.criterion.unwrap_or(if classify {
+            Criterion::Gini
+        } else {
+            Criterion::Mse
+        }),
         max_depth: o.max_depth,
         min_samples_split: o.min_samples_split.max(2),
         min_samples_leaf: o.min_samples_leaf.max(1),
@@ -575,7 +668,11 @@ fn tree_params(o: &TreeOpts, k: usize, task: &Task, forest_classifier: bool) -> 
 // ---------------------------------------------------------------------
 
 fn complete(frame: &Frame, cols: &[String], drop_first: bool) -> Result<(Design, Matrix, usize)> {
-    let cols: Vec<String> = if cols.is_empty() { frame.names().to_vec() } else { cols.to_vec() };
+    let cols: Vec<String> = if cols.is_empty() {
+        frame.names().to_vec()
+    } else {
+        cols.to_vec()
+    };
     let design = Design::learn(frame, &cols, drop_first)?;
     let (x, valid) = design.encode(frame)?;
     let rows = kept(&valid);
@@ -602,26 +699,56 @@ fn unsupervised(algo: &'static str, design: Design, n: usize, dropped: usize, bo
 pub fn fit_kmeans(frame: &Frame, cols: &[String], p: &KMeansParams, par: bool) -> Result<Model> {
     let (design, x, dropped) = complete(frame, cols, false)?;
     if p.k == 0 || p.k > x.n {
-        return Err(bad(format!("kmeans: k must be between 1 and the row count ({})", x.n)));
+        return Err(bad(format!(
+            "kmeans: k must be between 1 and the row count ({})",
+            x.n
+        )));
     }
     let n = x.n;
-    Ok(unsupervised("kmeans", design, n, dropped, Body::KMeans(cluster::kmeans(&x, p, par))))
+    Ok(unsupervised(
+        "kmeans",
+        design,
+        n,
+        dropped,
+        Body::KMeans(cluster::kmeans(&x, p, par)),
+    ))
 }
 
-pub fn fit_pca(frame: &Frame, cols: &[String], n_components: Option<usize>, scale: bool, par: bool) -> Result<Model> {
+pub fn fit_pca(
+    frame: &Frame,
+    cols: &[String],
+    n_components: Option<usize>,
+    scale: bool,
+    par: bool,
+) -> Result<Model> {
     let (design, x, dropped) = complete(frame, cols, false)?;
     let nc = n_components.unwrap_or(x.k()).min(x.k());
     let n = x.n;
-    Ok(unsupervised("pca", design, n, dropped, Body::Pca(cluster::pca(&x, nc, scale, par))))
+    Ok(unsupervised(
+        "pca",
+        design,
+        n,
+        dropped,
+        Body::Pca(cluster::pca(&x, nc, scale, par)),
+    ))
 }
 
 pub fn fit_gmm(frame: &Frame, cols: &[String], p: &GmmParams, par: bool) -> Result<Model> {
     let (design, x, dropped) = complete(frame, cols, false)?;
     if p.k == 0 || p.k > x.n {
-        return Err(bad(format!("gmm: k must be between 1 and the row count ({})", x.n)));
+        return Err(bad(format!(
+            "gmm: k must be between 1 and the row count ({})",
+            x.n
+        )));
     }
     let n = x.n;
-    Ok(unsupervised("gmm", design, n, dropped, Body::Gmm(cluster::gmm(&x, p, par))))
+    Ok(unsupervised(
+        "gmm",
+        design,
+        n,
+        dropped,
+        Body::Gmm(cluster::gmm(&x, p, par)),
+    ))
 }
 
 /// A fitted scaler over numeric columns: "standard" (mean, population
@@ -633,7 +760,11 @@ pub fn fit_scaler(frame: &Frame, cols: &[String], method: &str) -> Result<Model>
     let mut scale = Vec::new();
     for name in &cols {
         let (v, ok) = numeric(frame.column(name)?, name)?;
-        let mut vals: Vec<f64> = v.into_iter().zip(ok).filter_map(|(x, o)| o.then_some(x)).collect();
+        let mut vals: Vec<f64> = v
+            .into_iter()
+            .zip(ok)
+            .filter_map(|(x, o)| o.then_some(x))
+            .collect();
         if vals.is_empty() {
             return Err(bad(format!("scaler: column '{}' has no values", name)));
         }
@@ -652,7 +783,8 @@ pub fn fit_scaler(frame: &Frame, cols: &[String], method: &str) -> Result<Model>
             "robust" => {
                 vals.sort_unstable_by(f64::total_cmp);
                 let med = preprocess::quantile_sorted(&vals, 0.5);
-                let iqr = preprocess::quantile_sorted(&vals, 0.75) - preprocess::quantile_sorted(&vals, 0.25);
+                let iqr = preprocess::quantile_sorted(&vals, 0.75)
+                    - preprocess::quantile_sorted(&vals, 0.25);
                 (med, iqr)
             }
             other => {
@@ -712,7 +844,10 @@ pub fn fit_one_hot(frame: &Frame, cols: &[String], drop_first: bool) -> Result<M
     };
     for c in &cols {
         if !matches!(frame.column(c)?, Series::Str { .. }) {
-            return Err(bad(format!("one_hot: column '{}' is not a String column", c)));
+            return Err(bad(format!(
+                "one_hot: column '{}' is not a String column",
+                c
+            )));
         }
     }
     let design = Design::learn(frame, &cols, drop_first)?;
@@ -722,13 +857,24 @@ pub fn fit_one_hot(frame: &Frame, cols: &[String], drop_first: bool) -> Result<M
 
 /// A fitted imputer: "mean", "median", "most_frequent" or "constant"
 /// (with `fill`). Strings take most_frequent or constant.
-pub fn fit_imputer(frame: &Frame, cols: &[String], strategy: &str, fill: Option<Scalar>) -> Result<Model> {
-    let cols: Vec<String> = if cols.is_empty() { frame.names().to_vec() } else { cols.to_vec() };
+pub fn fit_imputer(
+    frame: &Frame,
+    cols: &[String],
+    strategy: &str,
+    fill: Option<Scalar>,
+) -> Result<Model> {
+    let cols: Vec<String> = if cols.is_empty() {
+        frame.names().to_vec()
+    } else {
+        cols.to_vec()
+    };
     let mut fills = Vec::new();
     for name in &cols {
         let s = frame.column(name)?;
         let f = match strategy {
-            "constant" => fill.clone().ok_or_else(|| bad("imputer: strategy \"constant\" needs a fill value"))?,
+            "constant" => fill
+                .clone()
+                .ok_or_else(|| bad("imputer: strategy \"constant\" needs a fill value"))?,
             "most_frequent" => most_frequent(s),
             "mean" | "median" => {
                 if matches!(s, Series::Str { .. } | Series::Bool { .. }) {
@@ -740,7 +886,11 @@ pub fn fit_imputer(frame: &Frame, cols: &[String], strategy: &str, fill: Option<
                     )));
                 }
                 let (v, ok) = numeric(s, name)?;
-                let mut vals: Vec<f64> = v.into_iter().zip(ok).filter_map(|(x, o)| o.then_some(x)).collect();
+                let mut vals: Vec<f64> = v
+                    .into_iter()
+                    .zip(ok)
+                    .filter_map(|(x, o)| o.then_some(x))
+                    .collect();
                 if vals.is_empty() {
                     Scalar::Null
                 } else if strategy == "mean" {
@@ -778,7 +928,8 @@ pub fn fit_imputer(frame: &Frame, cols: &[String], strategy: &str, fill: Option<
 
 /// The most common non-null value (the smallest on a tie, as sklearn).
 fn most_frequent(s: &Series) -> Scalar {
-    let mut counts: std::collections::BTreeMap<String, (usize, Scalar)> = std::collections::BTreeMap::new();
+    let mut counts: std::collections::BTreeMap<String, (usize, Scalar)> =
+        std::collections::BTreeMap::new();
     let mut nums: Vec<(f64, Scalar)> = Vec::new();
     for i in 0..s.len() {
         let v = s.scalar_at(i);
@@ -821,7 +972,12 @@ fn most_frequent(s: &Series) -> Scalar {
 
 /// Polynomial features of numeric `cols` up to `degree`, appended to (or
 /// replacing, when `!keep`) the inputs. Stateless.
-pub fn poly(frame: &Frame, cols: &[String], degree: usize, interaction_only: bool) -> Result<Frame> {
+pub fn poly(
+    frame: &Frame,
+    cols: &[String],
+    degree: usize,
+    interaction_only: bool,
+) -> Result<Frame> {
     if degree == 0 {
         return Err(bad("poly: degree must be >= 1"));
     }
@@ -866,15 +1022,25 @@ impl Model {
     }
 
     pub fn inputs(&self) -> Vec<String> {
-        self.design.inputs.iter().map(|i| i.name().to_string()).collect()
+        self.design
+            .inputs
+            .iter()
+            .map(|i| i.name().to_string())
+            .collect()
     }
 
     /// Raw predictions for an encoded matrix.
     pub fn raw(&self, x: &Matrix, par: bool) -> Result<Raw> {
         Ok(match &self.body {
             Body::Ols(f) => Raw::Values(linear::linear_predict(x, &f.coef, f.intercept)),
-            Body::Penalized { coef, intercept, .. } => {
-                let c = if *intercept { coef.clone() } else { coef[1..].to_vec() };
+            Body::Penalized {
+                coef, intercept, ..
+            } => {
+                let c = if *intercept {
+                    coef.clone()
+                } else {
+                    coef[1..].to_vec()
+                };
                 Raw::Values(linear::linear_predict(x, &c, *intercept))
             }
             Body::Logit(f) => {
@@ -933,11 +1099,20 @@ impl Model {
             Body::Ols(f) => Ok(linear::linear_predict(x, &f.coef, f.intercept)),
             Body::Logit(f) => Ok(linear::linear_predict(x, &f.coef, true)),
             Body::Boost(b) => Ok(b.raw(x, false)),
-            Body::Penalized { coef, intercept, .. } => {
-                let c = if *intercept { coef.clone() } else { coef[1..].to_vec() };
+            Body::Penalized {
+                coef, intercept, ..
+            } => {
+                let c = if *intercept {
+                    coef.clone()
+                } else {
+                    coef[1..].to_vec()
+                };
                 Ok(linear::linear_predict(x, &c, *intercept))
             }
-            _ => Err(bad(format!("predict: kind \"link\" needs a linear or logistic model, not {}", self.algo))),
+            _ => Err(bad(format!(
+                "predict: kind \"link\" needs a linear or logistic model, not {}",
+                self.algo
+            ))),
         }
     }
 
@@ -946,14 +1121,23 @@ impl Model {
         let (x, valid) = self.design.encode(frame)?;
         if let PredictKind::Interval(prediction, level) = kind {
             let Body::Ols(f) = &self.body else {
-                return Err(bad(format!("predict: intervals need a linear (OLS) model, not {}", self.algo)));
+                return Err(bad(format!(
+                    "predict: intervals need a linear (OLS) model, not {}",
+                    self.algo
+                )));
             };
             let fit = linear::linear_predict(&x, &f.coef, f.intercept);
             let se_mean = f.mean_se(&x);
             let tq = dist::t_ppf(0.5 + level / 2.0, f.df_resid)?;
             let half: Vec<f64> = se_mean
                 .iter()
-                .map(|s| tq * if prediction { (s * s + f.sigma2).sqrt() } else { *s })
+                .map(|s| {
+                    tq * if prediction {
+                        (s * s + f.sigma2).sqrt()
+                    } else {
+                        *s
+                    }
+                })
                 .collect();
             let lo: Vec<f64> = fit.iter().zip(&half).map(|(a, b)| a - b).collect();
             let hi: Vec<f64> = fit.iter().zip(&half).map(|(a, b)| a + b).collect();
@@ -971,12 +1155,19 @@ impl Model {
         Ok(match raw {
             Raw::Values(v) => {
                 if matches!(kind, PredictKind::Prob | PredictKind::ProbFrame) {
-                    return Err(bad(format!("predict: kind \"prob\" needs a classifier; {} is a regression", self.algo)));
+                    return Err(bad(format!(
+                        "predict: kind \"prob\" needs a classifier; {} is a regression",
+                        self.algo
+                    )));
                 }
                 Output::Series(null_where(v, &valid))
             }
             Raw::Clusters(c) => {
-                let opts: Vec<Option<i64>> = c.iter().zip(&valid).map(|(c, ok)| ok.then_some(*c as i64)).collect();
+                let opts: Vec<Option<i64>> = c
+                    .iter()
+                    .zip(&valid)
+                    .map(|(c, ok)| ok.then_some(*c as i64))
+                    .collect();
                 Output::Series(Series::from_i64_options(opts))
             }
             Raw::Scores(s) => {
@@ -994,7 +1185,9 @@ impl Model {
                     _ => (0..p.len()).map(|c| c.to_string()).collect(),
                 };
                 match kind {
-                    PredictKind::Prob if p.len() == 2 => Output::Series(null_where(p[1].clone(), &valid)),
+                    PredictKind::Prob if p.len() == 2 => {
+                        Output::Series(null_where(p[1].clone(), &valid))
+                    }
                     PredictKind::Prob | PredictKind::ProbFrame => {
                         let cols = p
                             .into_iter()
@@ -1013,7 +1206,9 @@ impl Model {
                         match &self.task {
                             Task::Classification(l) => Output::Series(l.series(&cls)),
                             _ => Output::Series(Series::from_i64_options(
-                                cls.iter().map(|&c| (c != NO_CLASS).then_some(c as i64)).collect(),
+                                cls.iter()
+                                    .map(|&c| (c != NO_CLASS).then_some(c as i64))
+                                    .collect(),
                             )),
                         }
                     }
@@ -1067,7 +1262,10 @@ impl Model {
                 Output::Frame(f) => Ok(f),
                 Output::Series(_) => unreachable!(),
             },
-            _ => Err(bad(format!("transform: a {} model predicts (learn.predict) rather than transforming", self.algo))),
+            _ => Err(bad(format!(
+                "transform: a {} model predicts (learn.predict) rather than transforming",
+                self.algo
+            ))),
         }
     }
 }
@@ -1079,7 +1277,9 @@ fn fill_nan_and_null(s: &Series, fill: &Scalar) -> Result<Series> {
             let opts: Vec<Option<f64>> = values
                 .iter()
                 .enumerate()
-                .map(|(i, v)| (validity.as_ref().is_none_or(|b| b.get(i)) && !v.is_nan()).then_some(*v))
+                .map(|(i, v)| {
+                    (validity.as_ref().is_none_or(|b| b.get(i)) && !v.is_nan()).then_some(*v)
+                })
                 .collect();
             Series::from_f64_options(opts)
         }
@@ -1135,7 +1335,9 @@ impl Model {
         let terms = self.terms();
         let coef: Vec<f64> = match &self.body {
             Body::Ols(f) => f.coef.clone(),
-            Body::Penalized { coef, intercept, .. } => {
+            Body::Penalized {
+                coef, intercept, ..
+            } => {
                 if *intercept {
                     coef.clone()
                 } else {
@@ -1164,7 +1366,9 @@ impl Model {
                     }
                 }
                 let total: f64 = raw.iter().sum();
-                raw.iter().map(|v| if total > 0.0 { v / total } else { 0.0 }).collect()
+                raw.iter()
+                    .map(|v| if total > 0.0 { v / total } else { 0.0 })
+                    .collect()
             }
             Body::Ols(_) | Body::Penalized { .. } | Body::Logit(_) => {
                 let p = self.params().unwrap();
@@ -1186,8 +1390,19 @@ impl Model {
         let mut order: Vec<usize> = (0..k).collect();
         order.sort_by(|&a, &b| imp[b].total_cmp(&imp[a]).then(a.cmp(&b)));
         frame_of(vec![
-            ("feature", Series::from_str_values(order.iter().map(|&i| self.design.features[i].clone()).collect())),
-            ("importance", Series::from_f64(order.iter().map(|&i| imp[i]).collect())),
+            (
+                "feature",
+                Series::from_str_values(
+                    order
+                        .iter()
+                        .map(|&i| self.design.features[i].clone())
+                        .collect(),
+                ),
+            ),
+            (
+                "importance",
+                Series::from_f64(order.iter().map(|&i| imp[i]).collect()),
+            ),
         ])
     }
 
@@ -1205,8 +1420,18 @@ impl Model {
                     ("se", Series::from_f64(f.se.clone())),
                     ("t", Series::from_f64(f.t.clone())),
                     ("p", Series::from_f64(f.p.clone())),
-                    ("lo", Series::from_f64(f.coef.iter().zip(&f.se).map(|(c, s)| c - tq * s).collect())),
-                    ("hi", Series::from_f64(f.coef.iter().zip(&f.se).map(|(c, s)| c + tq * s).collect())),
+                    (
+                        "lo",
+                        Series::from_f64(
+                            f.coef.iter().zip(&f.se).map(|(c, s)| c - tq * s).collect(),
+                        ),
+                    ),
+                    (
+                        "hi",
+                        Series::from_f64(
+                            f.coef.iter().zip(&f.se).map(|(c, s)| c + tq * s).collect(),
+                        ),
+                    ),
                 ])
             }
             Body::Logit(f) => frame_of(vec![
@@ -1215,15 +1440,30 @@ impl Model {
                 ("se", Series::from_f64(f.se.clone())),
                 ("z", Series::from_f64(f.z.clone())),
                 ("p", Series::from_f64(f.p.clone())),
-                ("lo", Series::from_f64(f.coef.iter().zip(&f.se).map(|(c, s)| c - z * s).collect())),
-                ("hi", Series::from_f64(f.coef.iter().zip(&f.se).map(|(c, s)| c + z * s).collect())),
-                ("odds_ratio", Series::from_f64(f.coef.iter().map(|c| c.exp()).collect())),
+                (
+                    "lo",
+                    Series::from_f64(f.coef.iter().zip(&f.se).map(|(c, s)| c - z * s).collect()),
+                ),
+                (
+                    "hi",
+                    Series::from_f64(f.coef.iter().zip(&f.se).map(|(c, s)| c + z * s).collect()),
+                ),
+                (
+                    "odds_ratio",
+                    Series::from_f64(f.coef.iter().map(|c| c.exp()).collect()),
+                ),
             ]),
             Body::Penalized { .. } => {
                 let p = self.params().unwrap();
                 frame_of(vec![
-                    ("term", Series::from_str_values(p.iter().map(|v| v.0.clone()).collect())),
-                    ("estimate", Series::from_f64(p.iter().map(|v| v.1).collect())),
+                    (
+                        "term",
+                        Series::from_str_values(p.iter().map(|v| v.0.clone()).collect()),
+                    ),
+                    (
+                        "estimate",
+                        Series::from_f64(p.iter().map(|v| v.1).collect()),
+                    ),
                 ])
             }
             Body::Softmax(f) => {
@@ -1276,9 +1516,18 @@ impl Model {
                 let nc = p.n_components;
                 let mut cum = 0.0;
                 let mut cols: Vec<(String, Series)> = vec![
-                    ("component".to_string(), Series::from_str_values((1..=nc).map(|c| format!("pc{}", c)).collect())),
-                    ("explained_variance".to_string(), Series::from_f64(p.explained_variance.clone())),
-                    ("ratio".to_string(), Series::from_f64(p.explained_variance_ratio.clone())),
+                    (
+                        "component".to_string(),
+                        Series::from_str_values((1..=nc).map(|c| format!("pc{}", c)).collect()),
+                    ),
+                    (
+                        "explained_variance".to_string(),
+                        Series::from_f64(p.explained_variance.clone()),
+                    ),
+                    (
+                        "ratio".to_string(),
+                        Series::from_f64(p.explained_variance_ratio.clone()),
+                    ),
                     (
                         "cumulative".to_string(),
                         Series::from_f64(
@@ -1293,13 +1542,22 @@ impl Model {
                     ),
                 ];
                 for (j, fname) in self.design.features.iter().enumerate() {
-                    cols.push((fname.clone(), Series::from_f64((0..nc).map(|c| p.components[c * p.dims + j]).collect())));
+                    cols.push((
+                        fname.clone(),
+                        Series::from_f64((0..nc).map(|c| p.components[c * p.dims + j]).collect()),
+                    ));
                 }
                 Frame::new(cols)
             }
-            Body::Knn { .. } => frame_of(vec![("feature", Series::from_str_values(self.design.features.clone()))]),
+            Body::Knn { .. } => frame_of(vec![(
+                "feature",
+                Series::from_str_values(self.design.features.clone()),
+            )]),
             Body::Scaler { center, scale, .. } => frame_of(vec![
-                ("column", Series::from_str_values(self.design.features.clone())),
+                (
+                    "column",
+                    Series::from_str_values(self.design.features.clone()),
+                ),
                 ("center", Series::from_f64(center.clone())),
                 ("scale", Series::from_f64(scale.clone())),
             ]),
@@ -1308,11 +1566,20 @@ impl Model {
                 let mut lvl = Vec::new();
                 let mut feat = Vec::new();
                 for input in &self.design.inputs {
-                    if let Input::Categorical { name, levels, drop_first } = input {
+                    if let Input::Categorical {
+                        name,
+                        levels,
+                        drop_first,
+                    } = input
+                    {
                         for (i, l) in levels.iter().enumerate() {
                             col.push(name.clone());
                             lvl.push(l.clone());
-                            feat.push(if i == 0 && *drop_first { None } else { Some(format!("{}_{}", name, l)) });
+                            feat.push(if i == 0 && *drop_first {
+                                None
+                            } else {
+                                Some(format!("{}_{}", name, l))
+                            });
                         }
                     }
                 }
@@ -1323,10 +1590,13 @@ impl Model {
                 ])
             }
             Body::Imputer { fills, .. } => frame_of(vec![
-                ("column", Series::from_str_values(self.design.features.clone())),
+                (
+                    "column",
+                    Series::from_str_values(self.design.features.clone()),
+                ),
                 (
                     "fill",
-                    Series::from_str_options(fills.iter().map(|f| scalar_string(f)).collect()),
+                    Series::from_str_options(fills.iter().map(scalar_string).collect()),
                 ),
             ]),
         }
@@ -1334,7 +1604,10 @@ impl Model {
 
     fn centers_frame(&self, centers: &[f64], k: usize, labels: Option<&[usize]>) -> Result<Frame> {
         let d = self.design.features.len();
-        let mut cols: Vec<(String, Series)> = vec![("cluster".to_string(), Series::from_i64((0..k as i64).collect()))];
+        let mut cols: Vec<(String, Series)> = vec![(
+            "cluster".to_string(),
+            Series::from_i64((0..k as i64).collect()),
+        )];
         if let Some(l) = labels {
             let mut size = vec![0i64; k];
             for &c in l {
@@ -1343,7 +1616,10 @@ impl Model {
             cols.push(("size".to_string(), Series::from_i64(size)));
         }
         for (j, fname) in self.design.features.iter().enumerate() {
-            cols.push((fname.clone(), Series::from_f64((0..k).map(|c| centers[c * d + j]).collect())));
+            cols.push((
+                fname.clone(),
+                Series::from_f64((0..k).map(|c| centers[c * d + j]).collect()),
+            ));
         }
         Frame::new(cols)
     }
@@ -1366,7 +1642,8 @@ fn scalar_string(s: &Scalar) -> Option<String> {
 /// Whether a larger value of `metric` is better.
 pub fn greater_is_better(metric: &str) -> Result<bool> {
     Ok(match metric {
-        "r2" | "accuracy" | "precision" | "recall" | "f1" | "auc" | "roc_auc" | "average_precision" => true,
+        "r2" | "accuracy" | "precision" | "recall" | "f1" | "auc" | "roc_auc"
+        | "average_precision" => true,
         "rmse" | "mse" | "mae" | "mape" | "log_loss" | "brier" => false,
         other => {
             return Err(bad(format!(
@@ -1382,7 +1659,10 @@ impl Model {
     /// Score the model on `frame` (which carries the target column).
     pub fn score(&self, frame: &Frame, metric: &str, par: bool) -> Result<f64> {
         greater_is_better(metric)?;
-        let yname = self.y.as_ref().ok_or_else(|| bad("score: an unsupervised model has no target"))?;
+        let yname = self
+            .y
+            .as_ref()
+            .ok_or_else(|| bad("score: an unsupervised model has no target"))?;
         let (x, mut valid) = self.design.encode(frame)?;
         let ys = frame.column(yname)?;
         let raw = self.raw(&x, par)?;
@@ -1404,7 +1684,12 @@ impl Model {
                     "mae" => metrics::mae(&y, &p),
                     "mape" => metrics::mape(&y, &p),
                     "r2" => metrics::r2(&y, &p),
-                    other => return Err(bad(format!("score: \"{}\" is a classification metric; this is a regression", other))),
+                    other => {
+                        return Err(bad(format!(
+                            "score: \"{}\" is a classification metric; this is a regression",
+                            other
+                        )));
+                    }
                 })
             }
             (Task::Classification(labels), Raw::Probs(p)) => {
@@ -1417,10 +1702,17 @@ impl Model {
                     return Err(bad("score: no complete rows with a known class"));
                 }
                 let y: Vec<usize> = rows.iter().map(|&i| codes[i]).collect();
-                let probs: Vec<Vec<f64>> = p.iter().map(|c| rows.iter().map(|&i| c[i]).collect()).collect();
+                let probs: Vec<Vec<f64>> = p
+                    .iter()
+                    .map(|c| rows.iter().map(|&i| c[i]).collect())
+                    .collect();
                 let pred = argmax_rows(&probs, rows.len());
                 let k = labels.len();
-                let avg = if k == 2 { metrics::Average::Binary(1) } else { metrics::Average::Macro };
+                let avg = if k == 2 {
+                    metrics::Average::Binary(1)
+                } else {
+                    metrics::Average::Macro
+                };
                 Ok(match metric {
                     "accuracy" => metrics::accuracy(&y, &pred),
                     "precision" => metrics::prf(&y, &pred, k, avg).0,
@@ -1436,7 +1728,10 @@ impl Model {
                     }
                     "auc" | "roc_auc" | "average_precision" | "brier" => {
                         if k != 2 {
-                            return Err(bad(format!("score: \"{}\" needs a binary classifier", metric)));
+                            return Err(bad(format!(
+                                "score: \"{}\" needs a binary classifier",
+                                metric
+                            )));
                         }
                         let yb: Vec<bool> = y.iter().map(|&c| c == 1).collect();
                         match metric {
@@ -1445,10 +1740,18 @@ impl Model {
                             _ => metrics::roc_auc(&yb, &probs[1]).unwrap_or(f64::NAN),
                         }
                     }
-                    other => return Err(bad(format!("score: \"{}\" is a regression metric; this is a classifier", other))),
+                    other => {
+                        return Err(bad(format!(
+                            "score: \"{}\" is a regression metric; this is a classifier",
+                            other
+                        )));
+                    }
                 })
             }
-            _ => Err(bad(format!("score: a {} model is not scored against a target", self.algo))),
+            _ => Err(bad(format!(
+                "score: a {} model is not scored against a target",
+                self.algo
+            ))),
         }
     }
 
@@ -1456,8 +1759,19 @@ impl Model {
     /// (sign-adjusted so larger is more important) when that column's
     /// values are shuffled, `repeats` times. Shuffles come from stream
     /// (column, repeat) of `seed`.
-    pub fn permutation_importance(&self, frame: &Frame, metric: &str, repeats: usize, seed: u64, par: bool) -> Result<Frame> {
-        let sign = if greater_is_better(metric)? { 1.0 } else { -1.0 };
+    pub fn permutation_importance(
+        &self,
+        frame: &Frame,
+        metric: &str,
+        repeats: usize,
+        seed: u64,
+        par: bool,
+    ) -> Result<Frame> {
+        let sign = if greater_is_better(metric)? {
+            1.0
+        } else {
+            -1.0
+        };
         let base = self.score(frame, metric, par)?;
         let inputs = self.inputs();
         let n = frame.n_rows();
@@ -1495,9 +1809,18 @@ impl Model {
         let mut order: Vec<usize> = (0..inputs.len()).collect();
         order.sort_by(|&a, &b| results[b].0.total_cmp(&results[a].0).then(a.cmp(&b)));
         frame_of(vec![
-            ("feature", Series::from_str_values(order.iter().map(|&i| inputs[i].clone()).collect())),
-            ("importance", Series::from_f64(order.iter().map(|&i| results[i].0).collect())),
-            ("std", Series::from_f64(order.iter().map(|&i| results[i].1).collect())),
+            (
+                "feature",
+                Series::from_str_values(order.iter().map(|&i| inputs[i].clone()).collect()),
+            ),
+            (
+                "importance",
+                Series::from_f64(order.iter().map(|&i| results[i].0).collect()),
+            ),
+            (
+                "std",
+                Series::from_f64(order.iter().map(|&i| results[i].1).collect()),
+            ),
         ])
     }
 
@@ -1505,16 +1828,30 @@ impl Model {
     /// positive-class probability for a binary classifier, one column
     /// per class otherwise) with `feature` set to each grid value for
     /// every row.
-    pub fn partial_dependence(&self, frame: &Frame, feature: &str, grid: Option<Vec<Scalar>>, points: usize, par: bool) -> Result<Frame> {
+    pub fn partial_dependence(
+        &self,
+        frame: &Frame,
+        feature: &str,
+        grid: Option<Vec<Scalar>>,
+        points: usize,
+        par: bool,
+    ) -> Result<Frame> {
         let col = frame.column(feature)?;
         let grid: Vec<Scalar> = match grid {
             Some(g) => g,
             None => match col {
-                Series::Str { .. } => super::data::levels_of(col).into_iter().map(Scalar::Str).collect(),
+                Series::Str { .. } => super::data::levels_of(col)
+                    .into_iter()
+                    .map(Scalar::Str)
+                    .collect(),
                 Series::Bool { .. } => vec![Scalar::Bool(false), Scalar::Bool(true)],
                 _ => {
                     let (v, ok) = numeric(col, feature)?;
-                    let mut vals: Vec<f64> = v.into_iter().zip(ok).filter_map(|(x, o)| o.then_some(x)).collect();
+                    let mut vals: Vec<f64> = v
+                        .into_iter()
+                        .zip(ok)
+                        .filter_map(|(x, o)| o.then_some(x))
+                        .collect();
                     vals.sort_unstable_by(f64::total_cmp);
                     let mut d = vals.clone();
                     d.dedup();
@@ -1525,7 +1862,9 @@ impl Model {
                         let lo = preprocess::quantile_sorted(&vals, 0.05);
                         let hi = preprocess::quantile_sorted(&vals, 0.95);
                         (0..points)
-                            .map(|i| Scalar::F64(lo + (hi - lo) * i as f64 / (points - 1).max(1) as f64))
+                            .map(|i| {
+                                Scalar::F64(lo + (hi - lo) * i as f64 / (points - 1).max(1) as f64)
+                            })
                             .collect()
                     }
                 }
@@ -1540,7 +1879,8 @@ impl Model {
             let (x, valid) = self.design.encode(&f)?;
             let raw = self.raw(&x, par)?;
             let rows = kept(&valid);
-            let mean = |v: &[f64]| rows.iter().map(|&i| v[i]).sum::<f64>() / rows.len().max(1) as f64;
+            let mean =
+                |v: &[f64]| rows.iter().map(|&i| v[i]).sum::<f64>() / rows.len().max(1) as f64;
             let vals: Vec<f64> = match &raw {
                 Raw::Values(v) => {
                     names = vec!["mean".to_string()];
@@ -1554,13 +1894,20 @@ impl Model {
                     names = self.classes().map(|l| l.names()).unwrap_or_default();
                     p.iter().map(|c| mean(c)).collect()
                 }
-                _ => return Err(bad("partial_dependence: needs a regression or a classifier")),
+                _ => {
+                    return Err(bad(
+                        "partial_dependence: needs a regression or a classifier",
+                    ));
+                }
             };
             outs.push(vals);
         }
         let mut cols: Vec<(String, Series)> = vec![(feature.to_string(), scalars_series(&grid))];
         for (c, name) in names.iter().enumerate() {
-            cols.push((name.clone(), Series::from_f64(outs.iter().map(|o| o[c]).collect())));
+            cols.push((
+                name.clone(),
+                Series::from_f64(outs.iter().map(|o| o[c]).collect()),
+            ));
         }
         Frame::new(cols)
     }
@@ -1573,7 +1920,11 @@ fn constant_like(col: &Series, v: &Scalar, n: usize) -> Result<Series> {
         (Series::I64 { .. }, Scalar::I64(i)) => Series::from_i64(vec![*i; n]),
         (_, Scalar::F64(f)) => Series::from_f64(vec![*f; n]),
         (_, Scalar::I64(i)) => Series::from_f64(vec![*i as f64; n]),
-        _ => return Err(bad("partial_dependence: a grid value does not fit the column's type")),
+        _ => {
+            return Err(bad(
+                "partial_dependence: a grid value does not fit the column's type",
+            ));
+        }
     })
 }
 
@@ -1581,11 +1932,23 @@ fn scalars_series(v: &[Scalar]) -> Series {
     match v.first() {
         Some(Scalar::Str(_)) => Series::from_str_values(
             v.iter()
-                .map(|s| if let Scalar::Str(t) = s { t.clone() } else { String::new() })
+                .map(|s| {
+                    if let Scalar::Str(t) = s {
+                        t.clone()
+                    } else {
+                        String::new()
+                    }
+                })
                 .collect(),
         ),
-        Some(Scalar::Bool(_)) => Series::from_bool(v.iter().map(|s| matches!(s, Scalar::Bool(true))).collect()),
-        Some(Scalar::I64(_)) => Series::from_i64(v.iter().map(|s| if let Scalar::I64(i) = s { *i } else { 0 }).collect()),
+        Some(Scalar::Bool(_)) => {
+            Series::from_bool(v.iter().map(|s| matches!(s, Scalar::Bool(true))).collect())
+        }
+        Some(Scalar::I64(_)) => Series::from_i64(
+            v.iter()
+                .map(|s| if let Scalar::I64(i) = s { *i } else { 0 })
+                .collect(),
+        ),
         _ => Series::from_f64(
             v.iter()
                 .map(|s| match s {

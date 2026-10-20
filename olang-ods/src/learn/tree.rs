@@ -160,7 +160,11 @@ impl Stats {
         }
         match crit {
             Criterion::Gini => {
-                1.0 - self.counts.iter().map(|c| (c / self.w) * (c / self.w)).sum::<f64>()
+                1.0 - self
+                    .counts
+                    .iter()
+                    .map(|c| (c / self.w) * (c / self.w))
+                    .sum::<f64>()
             }
             Criterion::Entropy => -self
                 .counts
@@ -212,7 +216,8 @@ pub fn grow(
     let mut rows = rows;
     let total_w: f64 = rows.iter().map(|&i| w[i]).sum();
     // (start, end, depth, parent, is_left)
-    let mut stack: Vec<(usize, usize, usize, usize, bool)> = vec![(0, rows.len(), 0, usize::MAX, false)];
+    let mut stack: Vec<(usize, usize, usize, usize, bool)> =
+        vec![(0, rows.len(), 0, usize::MAX, false)];
     let mut node_stats = Stats::new(n_out);
     let mut left = Stats::new(n_out);
     let mut right = Stats::new(n_out);
@@ -406,7 +411,10 @@ mod tests {
         let x = Matrix::new(8, vec![a, b]);
         let t = grow(
             &x,
-            &Target::Classes { y: &y, n_classes: 2 },
+            &Target::Classes {
+                y: &y,
+                n_classes: 2,
+            },
             &[1.0; 8],
             (0..8).collect(),
             &params(Criterion::Gini),
@@ -422,12 +430,30 @@ mod tests {
     #[test]
     fn regression_tree_fits_steps() {
         let a: Vec<f64> = (0..100).map(|i| i as f64).collect();
-        let y: Vec<f64> = a.iter().map(|v| if *v < 30.0 { 1.0 } else if *v < 70.0 { 5.0 } else { -2.0 }).collect();
+        let y: Vec<f64> = a
+            .iter()
+            .map(|v| {
+                if *v < 30.0 {
+                    1.0
+                } else if *v < 70.0 {
+                    5.0
+                } else {
+                    -2.0
+                }
+            })
+            .collect();
         let x = Matrix::new(100, vec![a]);
         let mut p = params(Criterion::Mse);
         p.max_features = 1;
         p.max_depth = Some(2);
-        let t = grow(&x, &Target::Values(&y), &[1.0; 100], (0..100).collect(), &p, &mut Pcg::new(1, 0));
+        let t = grow(
+            &x,
+            &Target::Values(&y),
+            &[1.0; 100],
+            (0..100).collect(),
+            &p,
+            &mut Pcg::new(1, 0),
+        );
         for i in 0..100 {
             assert_eq!(t.leaf_values(t.leaf_of(&x, i))[0], y[i]);
         }

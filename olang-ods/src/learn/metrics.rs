@@ -72,7 +72,11 @@ pub fn per_class(y: &[usize], p: &[usize], k: usize) -> Vec<(f64, f64, f64, usiz
             let actual: usize = m[c].iter().sum();
             let prec = if pred > 0.0 { tp / pred } else { 0.0 };
             let rec = if actual > 0 { tp / actual as f64 } else { 0.0 };
-            let f1 = if prec + rec > 0.0 { 2.0 * prec * rec / (prec + rec) } else { 0.0 };
+            let f1 = if prec + rec > 0.0 {
+                2.0 * prec * rec / (prec + rec)
+            } else {
+                0.0
+            };
             (prec, rec, f1, actual)
         })
         .collect()
@@ -94,7 +98,9 @@ pub fn prf(y: &[usize], p: &[usize], k: usize, avg: Average) -> (f64, f64, f64) 
         }
         Average::Weighted => {
             let total: f64 = pc.iter().map(|v| v.3 as f64).sum();
-            let w = |f: fn(&(f64, f64, f64, usize)) -> f64| pc.iter().map(|v| f(v) * v.3 as f64).sum::<f64>() / total;
+            let w = |f: fn(&(f64, f64, f64, usize)) -> f64| {
+                pc.iter().map(|v| f(v) * v.3 as f64).sum::<f64>() / total
+            };
             (w(|v| v.0), w(|v| v.1), w(|v| v.2))
         }
         Average::Micro => {
@@ -237,7 +243,9 @@ pub fn pr_curve(y: &[bool], s: &[f64]) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
             if ps > 0.0 { tps[i] / ps } else { 0.0 }
         })
         .collect();
-    let mut rec: Vec<f64> = (0..m).map(|i| if np > 0.0 { tps[i] / np } else { 1.0 }).collect();
+    let mut rec: Vec<f64> = (0..m)
+        .map(|i| if np > 0.0 { tps[i] / np } else { 1.0 })
+        .collect();
     let mut th = thr;
     prec.reverse();
     rec.reverse();
@@ -261,7 +269,12 @@ pub fn average_precision(y: &[bool], s: &[f64]) -> f64 {
 /// Calibration bins: (bin lower edge, upper edge, mean predicted, fraction
 /// positive, count) for each non-empty bin. `quantile` puts equal counts
 /// in each bin; otherwise bins are equal-width on [0, 1].
-pub fn calibration(y: &[bool], p: &[f64], bins: usize, quantile: bool) -> Vec<(f64, f64, f64, f64, usize)> {
+pub fn calibration(
+    y: &[bool],
+    p: &[f64],
+    bins: usize,
+    quantile: bool,
+) -> Vec<(f64, f64, f64, f64, usize)> {
     let bins = bins.max(1);
     let edges: Vec<f64> = if quantile {
         let mut s = p.to_vec();
@@ -329,7 +342,12 @@ mod tests {
         for i in 0..5 {
             assert!((p[i] - want_p[i]).abs() < 1e-12 && (r[i] - want_r[i]).abs() < 1e-12);
         }
-        assert!((average_precision(&[false, false, true, true], &[0.1, 0.4, 0.35, 0.8]) - 0.8333333333333333).abs() < 1e-12);
+        assert!(
+            (average_precision(&[false, false, true, true], &[0.1, 0.4, 0.35, 0.8])
+                - 0.8333333333333333)
+                .abs()
+                < 1e-12
+        );
     }
 
     #[test]

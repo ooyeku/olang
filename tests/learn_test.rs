@@ -43,7 +43,8 @@ fn eval(source: &str) -> Value {
 }
 
 fn reference() -> Json {
-    let text = std::fs::read_to_string(format!("{}/reference.json", fixtures())).expect("reference.json");
+    let text =
+        std::fs::read_to_string(format!("{}/reference.json", fixtures())).expect("reference.json");
     serde_json::from_str(&text).expect("json")
 }
 
@@ -85,7 +86,13 @@ fn close(got: f64, want: f64, tol: f64, what: &str) {
 }
 
 fn all_close(got: &[f64], want: &[f64], tol: f64, what: &str) {
-    assert_eq!(got.len(), want.len(), "{what}: length {} vs {}", got.len(), want.len());
+    assert_eq!(
+        got.len(),
+        want.len(),
+        "{what}: length {} vs {}",
+        got.len(),
+        want.len()
+    );
     for (i, (g, w)) in got.iter().zip(want).enumerate() {
         close(*g, *w, tol, &format!("{what}[{i}]"));
     }
@@ -194,8 +201,16 @@ fn est(m) = col(learn.summary(m), "estimate")
     }
     all_close(&nums(&v[3]), &jnums(&o["prob"]), 1e-7, "probabilities");
     all_close(&nums(&v[4]), &jnums(&r["logit_c"]), 1e-6, "C = 0.5");
-    all_close(&nums(&v[5]), &jnums(&r["logit_bal"]), 1e-5, "balanced class weights");
-    assert_eq!(format!("{:?}", v[6]), format!("{:?}", eval(r#"["no", "yes"]"#)));
+    all_close(
+        &nums(&v[5]),
+        &jnums(&r["logit_bal"]),
+        1e-5,
+        "balanced class weights",
+    );
+    assert_eq!(
+        format!("{:?}", v[6]),
+        format!("{:?}", eval(r#"["no", "yes"]"#))
+    );
     assert_eq!(v[7], Value::Boolean(true));
 }
 
@@ -210,8 +225,18 @@ let pc = learn.predict(learn.logistic(multi, "label", x, #{ "C": 0.3 }), ods.hea
 fn rows(f) = flat_map(range(0, 10), (i) => [col(f, "a")[i], col(f, "b")[i], col(f, "c")[i]])
 [rows(pf), col(fit.coef, "estimate"), rows(pc)]
 "#));
-    all_close(&nums(&v[0]), &jnums(&r["softmax_prob"]), 1e-6, "probabilities");
-    all_close(&nums(&v[1]), &jnums(&r["softmax_coef"]), 1e-5, "centred coefficients");
+    all_close(
+        &nums(&v[0]),
+        &jnums(&r["softmax_prob"]),
+        1e-6,
+        "probabilities",
+    );
+    all_close(
+        &nums(&v[1]),
+        &jnums(&r["softmax_coef"]),
+        1e-5,
+        "centred coefficients",
+    );
     all_close(&nums(&v[2]), &jnums(&r["softmax_c_prob"]), 1e-6, "C = 0.3");
 }
 
@@ -246,15 +271,55 @@ let cte = ods.tail(cls, 100)
  l(learn.predict(learn.knn(ctr, "churn", cx, #{ "k": 9 }), cte, #{ "kind": "prob" }))]
 "#));
     all_close(&nums(&v[0]), &jnums(&r["nb_prob"]), 1e-9, "naive Bayes");
-    all_close(&nums(&v[1]), &jnums(&r["nb_multi_prob"]), 1e-9, "naive Bayes, 3 classes");
-    all_close(&nums(&v[2]), &jnums(&r["tree_cls"]["prob"]), 1e-12, "gini tree");
-    all_close(&nums(&v[3]), &jnums(&r["tree_cls"]["imp"]), 1e-9, "gini tree importances");
-    all_close(&nums(&v[4]), &jnums(&r["tree_cls_entropy"]), 1e-12, "entropy tree");
-    all_close(&nums(&v[5]), &jnums(&r["tree_reg"]["pred"]), 1e-12, "regression tree");
-    all_close(&nums(&v[6]), &jnums(&r["tree_reg"]["imp"]), 1e-9, "regression tree importances");
+    all_close(
+        &nums(&v[1]),
+        &jnums(&r["nb_multi_prob"]),
+        1e-9,
+        "naive Bayes, 3 classes",
+    );
+    all_close(
+        &nums(&v[2]),
+        &jnums(&r["tree_cls"]["prob"]),
+        1e-12,
+        "gini tree",
+    );
+    all_close(
+        &nums(&v[3]),
+        &jnums(&r["tree_cls"]["imp"]),
+        1e-9,
+        "gini tree importances",
+    );
+    all_close(
+        &nums(&v[4]),
+        &jnums(&r["tree_cls_entropy"]),
+        1e-12,
+        "entropy tree",
+    );
+    all_close(
+        &nums(&v[5]),
+        &jnums(&r["tree_reg"]["pred"]),
+        1e-12,
+        "regression tree",
+    );
+    all_close(
+        &nums(&v[6]),
+        &jnums(&r["tree_reg"]["imp"]),
+        1e-9,
+        "regression tree importances",
+    );
     all_close(&nums(&v[7]), &jnums(&r["knn_reg"]), 1e-12, "kNN regression");
-    all_close(&nums(&v[8]), &jnums(&r["knn_reg_dist"]), 1e-12, "kNN, distance weights");
-    all_close(&nums(&v[9]), &jnums(&r["knn_cls_prob"]), 1e-12, "kNN classifier");
+    all_close(
+        &nums(&v[8]),
+        &jnums(&r["knn_reg_dist"]),
+        1e-12,
+        "kNN, distance weights",
+    );
+    all_close(
+        &nums(&v[9]),
+        &jnums(&r["knn_cls_prob"]),
+        1e-12,
+        "kNN classifier",
+    );
 }
 
 #[test]
@@ -277,20 +342,45 @@ let g = learn.gmm(blobs, ["p", "q"], 4, #{ "seed": 1 })
  sort(l(g.weights))]
 "#));
     let s = &r["scalers"];
-    all_close(&nums(&v[0]), &jnums(&s["standard"]), 1e-12, "standard scaler");
+    all_close(
+        &nums(&v[0]),
+        &jnums(&s["standard"]),
+        1e-12,
+        "standard scaler",
+    );
     all_close(&nums(&v[1]), &jnums(&s["minmax"]), 1e-12, "min-max scaler");
     all_close(&nums(&v[2]), &jnums(&s["robust"]), 1e-12, "robust scaler");
     let p = &r["pca"];
     all_close(&nums(&v[3]), &jnums(&p["ev"]), 1e-10, "explained variance");
-    all_close(&nums(&v[4]), &jnums(&p["ratio"]), 1e-10, "explained variance ratio");
-    all_close(&nums(&v[5]), &jnums(&p["components"]), 1e-8, "components (sklearn's sign)");
+    all_close(
+        &nums(&v[4]),
+        &jnums(&p["ratio"]),
+        1e-10,
+        "explained variance ratio",
+    );
+    all_close(
+        &nums(&v[5]),
+        &jnums(&p["components"]),
+        1e-8,
+        "components (sklearn's sign)",
+    );
     all_close(&nums(&v[6]), &jnums(&p["scores"]), 1e-8, "scores");
     let c = nums(&v[7]);
     close(c[0], jnum(&r["kmeans_inertia"]), 1e-9, "k-means inertia");
     close(c[1], jnum(&r["silhouette"]), 1e-9, "silhouette");
-    close(c[2], jnum(&r["gmm"]["score"]), 1e-4, "mixture log-likelihood per row");
+    close(
+        c[2],
+        jnum(&r["gmm"]["score"]),
+        1e-4,
+        "mixture log-likelihood per row",
+    );
     close(c[3], jnum(&r["gmm"]["bic"]), 1e-4, "mixture BIC");
-    all_close(&nums(&v[8]), &jnums(&r["gmm"]["weights"]), 5e-3, "mixture weights");
+    all_close(
+        &nums(&v[8]),
+        &jnums(&r["gmm"]["weights"]),
+        5e-3,
+        "mixture weights",
+    );
 }
 
 #[test]
@@ -316,7 +406,12 @@ let yb = y == 1
 "#));
     all_close(
         &nums(&v[0]),
-        &[jnum(&b["auc"]), jnum(&b["logloss"]), jnum(&b["brier"]), jnum(&b["ap"])],
+        &[
+            jnum(&b["auc"]),
+            jnum(&b["logloss"]),
+            jnum(&b["brier"]),
+            jnum(&b["ap"]),
+        ],
         1e-12,
         "auc, log loss, brier, average precision",
     );
@@ -326,11 +421,36 @@ let yb = y == 1
     all_close(&nums(&v[4]), &jnums(&b["pr_p"]), 1e-12, "pr precision");
     all_close(&nums(&v[5]), &jnums(&b["pr_r"]), 1e-12, "pr recall");
     all_close(&nums(&v[6]), &jnums(&b["pr_th"]), 1e-12, "pr thresholds");
-    all_close(&nums(&v[7]), &jnums(&b["cal_true"]), 1e-12, "calibration observed");
-    all_close(&nums(&v[8]), &jnums(&b["cal_pred"]), 1e-12, "calibration predicted");
-    all_close(&nums(&v[9]), &jnums(&b["calq_true"]), 1e-12, "quantile calibration observed");
-    all_close(&nums(&v[10]), &jnums(&b["calq_pred"]), 1e-12, "quantile calibration predicted");
-    let want = [jnum(&b["acc"]), jnum(&b["prec"]), jnum(&b["rec"]), jnum(&b["f1"])];
+    all_close(
+        &nums(&v[7]),
+        &jnums(&b["cal_true"]),
+        1e-12,
+        "calibration observed",
+    );
+    all_close(
+        &nums(&v[8]),
+        &jnums(&b["cal_pred"]),
+        1e-12,
+        "calibration predicted",
+    );
+    all_close(
+        &nums(&v[9]),
+        &jnums(&b["calq_true"]),
+        1e-12,
+        "quantile calibration observed",
+    );
+    all_close(
+        &nums(&v[10]),
+        &jnums(&b["calq_pred"]),
+        1e-12,
+        "quantile calibration predicted",
+    );
+    let want = [
+        jnum(&b["acc"]),
+        jnum(&b["prec"]),
+        jnum(&b["rec"]),
+        jnum(&b["f1"]),
+    ];
     all_close(&nums(&v[11]), &want, 1e-12, "at_threshold");
     all_close(&nums(&v[12]), &want, 1e-12, "label metrics");
 }
@@ -363,7 +483,12 @@ let c = learn.confusion(y, p)
         1e-9,
         "multiclass metrics",
     );
-    all_close(&nums(&v[1]), &jnums(&m["confusion"]), 0.0, "confusion matrix");
+    all_close(
+        &nums(&v[1]),
+        &jnums(&m["confusion"]),
+        0.0,
+        "confusion matrix",
+    );
 }
 
 #[test]
@@ -430,7 +555,10 @@ let folds = learn.folds(reg, 4, #{ "seed": 1 })
     assert_eq!(nums(&v[5]), (0..8).map(|i| i as f64).collect::<Vec<_>>());
     assert_eq!(nums(&v[6]), vec![8.0, 9.0]);
     assert_eq!(nums(&v[7]), vec![100.0; 4]);
-    assert_eq!(nums(&v[8]), vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0]);
+    assert_eq!(
+        nums(&v[8]),
+        vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0]
+    );
 }
 
 #[test]
@@ -443,15 +571,27 @@ let mf = learn.transform(learn.imputer(f, ["s"], #{ "strategy": "most_frequent" 
 let p = learn.poly(f, ["a", "n"], 2)
 [ods.columns(oh), col(oh, "s_x"), col(im, "a"), col(mf, "s"), ods.columns(p), col(p, "a*n")]
 "#));
-    assert_eq!(format!("{:?}", v[0]), format!("{:?}", eval(r#"["a", "n", "s_x", "s_y"]"#)));
-    assert_eq!(format!("{:?}", v[1]), format!("{:?}", eval("[1.0, (), 0.0, 1.0]")));
+    assert_eq!(
+        format!("{:?}", v[0]),
+        format!("{:?}", eval(r#"["a", "n", "s_x", "s_y"]"#))
+    );
+    assert_eq!(
+        format!("{:?}", v[1]),
+        format!("{:?}", eval("[1.0, (), 0.0, 1.0]"))
+    );
     assert_eq!(nums(&v[2]), vec![1.0, 3.0, 3.0, 4.0]);
-    assert_eq!(format!("{:?}", v[3]), format!("{:?}", eval(r#"["x", "x", "y", "x"]"#)));
+    assert_eq!(
+        format!("{:?}", v[3]),
+        format!("{:?}", eval(r#"["x", "x", "y", "x"]"#))
+    );
     assert_eq!(
         format!("{:?}", v[4]),
         format!("{:?}", eval(r#"["a", "s", "n", "a^2", "a*n", "n^2"]"#))
     );
-    assert_eq!(format!("{:?}", v[5]), format!("{:?}", eval("[1.0, (), 9.0, 16.0]")));
+    assert_eq!(
+        format!("{:?}", v[5]),
+        format!("{:?}", eval("[1.0, (), 9.0, 16.0]"))
+    );
 }
 
 #[test]
@@ -472,16 +612,31 @@ let lc = ml.learning_curve(lr, cls, sizes: [0.2, 1.0], metric: "accuracy")
 "#));
     assert_eq!(
         format!("{:?}", v[0]),
-        format!("{:?}", eval(r#"["fold", "n_train", "n_test", "accuracy", "auc"]"#))
+        format!(
+            "{:?}",
+            eval(r#"["fold", "n_train", "n_test", "accuracy", "auc"]"#)
+        )
     );
     assert_eq!(num(&v[1]), 5.0);
-    assert!(nums(&v[2]).iter().all(|a| *a > 0.7 && *a < 0.95), "{:?}", v[2]);
+    assert!(
+        nums(&v[2]).iter().all(|a| *a > 0.7 && *a < 0.95),
+        "{:?}",
+        v[2]
+    );
     assert_eq!(num(&v[3]), 5.0);
-    assert_eq!(num(&v[4]), 3.0, "depth 3 beats a stump and an overgrown tree");
+    assert_eq!(
+        num(&v[4]),
+        3.0,
+        "depth 3 beats a stump and an overgrown tree"
+    );
     assert_eq!(num(&v[5]), 3.0);
     assert_eq!(v[6], Value::String(std::sync::Arc::new("a".to_string())));
     let pd = nums(&v[7]);
-    assert!(pd.windows(2).all(|w| w[1] > w[0]), "a's coefficient is positive: {:?}", pd);
+    assert!(
+        pd.windows(2).all(|w| w[1] > w[0]),
+        "a's coefficient is positive: {:?}",
+        pd
+    );
     assert_eq!(nums(&v[8]), vec![80.0, 400.0]);
 }
 
@@ -513,9 +668,15 @@ let fit = learn.linear(f, "y", ["x"])
 
 #[test]
 fn misuse_is_named() {
-    let unknown = eval_tier(&format!("{READ}\nlearn.forest(cls, \"churn\", (), #{{ \"trees\": 10 }})"), None)
-        .expect_err("unknown option");
-    assert!(unknown.contains("unknown option 'trees'") && unknown.contains("n_trees"), "{unknown}");
+    let unknown = eval_tier(
+        &format!("{READ}\nlearn.forest(cls, \"churn\", (), #{{ \"trees\": 10 }})"),
+        None,
+    )
+    .expect_err("unknown option");
+    assert!(
+        unknown.contains("unknown option 'trees'") && unknown.contains("n_trees"),
+        "{unknown}"
+    );
     let metric = eval_tier(
         &format!("{READ}\nlearn.score(learn.linear(reg, \"y\", [\"x1\"]), reg, \"auc\")"),
         None,

@@ -34,7 +34,13 @@ pub struct ForestParams {
     pub seed: u64,
 }
 
-fn one_tree(x: &Matrix, target: &Target, base_w: &[f64], p: &ForestParams, t: usize) -> (Tree, Vec<f64>) {
+fn one_tree(
+    x: &Matrix,
+    target: &Target,
+    base_w: &[f64],
+    p: &ForestParams,
+    t: usize,
+) -> (Tree, Vec<f64>) {
     let n = x.n;
     let mut rng = Pcg::child(p.seed, t as u64);
     let mut counts = vec![0.0f64; n];
@@ -100,7 +106,9 @@ pub fn fit(x: &Matrix, target: &Target, base_w: &[f64], p: &ForestParams, par: b
                 let hits = rows
                     .iter()
                     .filter(|&&i| {
-                        let best = (0..acc.len()).max_by(|&a, &b| acc[a][i].total_cmp(&acc[b][i]).then(b.cmp(&a))).unwrap();
+                        let best = (0..acc.len())
+                            .max_by(|&a, &b| acc[a][i].total_cmp(&acc[b][i]).then(b.cmp(&a)))
+                            .unwrap();
                         best == y[i]
                     })
                     .count();

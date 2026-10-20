@@ -86,7 +86,10 @@ pub fn cholesky_jittered(a: &[f64], n: usize) -> Option<(Vec<f64>, f64)> {
     if let Some(l) = cholesky(a, n) {
         return Some((l, 0.0));
     }
-    let scale = (0..n).map(|i| a[i * n + i].abs()).fold(0.0f64, f64::max).max(1e-300);
+    let scale = (0..n)
+        .map(|i| a[i * n + i].abs())
+        .fold(0.0f64, f64::max)
+        .max(1e-300);
     let mut jitter = scale * 1e-12;
     for _ in 0..12 {
         let mut b = a.to_vec();
