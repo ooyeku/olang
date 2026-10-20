@@ -66,8 +66,12 @@ a file system, a network, or a browser.
 **Modules are always in scope.** `str.trim(...)`, `json.parse(...)`, and the
 rest work without any `use`. The exception is the code written in olang
 itself and embedded in the binary: the modules `colx` and `mathx` and
-the packages `cli`, `term`, `ui`, `viz`, and `dash` are imported with a
-bare `use colx` / `use term`. The one embedded module that needs no
+the packages `cli`, `term`, `ui`, `viz`, `dash`, `ml` and `gg` are
+imported with a bare `use colx` / `use term`, which binds the namespace
+alone: `term.bold(...)`, `gg.plot(...)`. List names for short ones
+(`use gg { aes, labs }`, `use gg { plot as ggplot }`); an import never
+rebinds a stdlib module's name (`plot` stays the plot module) unless it
+lists it. The one embedded module that needs no
 `use` is [`collections`](#collections-in-olang), which loads on first
 touch. A `use str` is accepted, and keeps a file's import list
 explicit, but is never required for the native modules.
@@ -896,7 +900,9 @@ is `2026-01-02`. Fallible operations return `Result`.
 The rule for kinds: **what reads the clock answers text** (`now`,
 `utc_now`, `today`, `stamp`, `stamp_ms`: Strings, to store and print),
 **what builds or parses a day answers a `Date`** (`date`, `parse`,
-`from_epoch_day`), and a function that takes a day takes either and
+`from_epoch_day` — each inside a `Result`, since `date(2026, 2, 30)`,
+`parse("soon")` and a day past the calendar's range are no day; and
+`epoch_day`'s Int likewise, for text that names no day), and a function that takes a day takes either and
 answers in kind. `dates.parse` answers the day a text names, as written:
 a time in it is dropped (`dates.parse("2026-01-02T23:30:00-05:00")` is
 2026-01-02); keep the text, or `timestamp` it, when the time matters.
@@ -904,12 +910,12 @@ a time in it is dropped (`dates.parse("2026-01-02T23:30:00-05:00")` is
 | Group | Functions |
 |---|---|
 | Now | `now` `utc_now` `today` · `stamp` — the storage form: UTC, second precision, `Z` suffix (`2026-08-31T23:40:06Z`), sortable as text · `stamp_ms` — the same at millisecond precision (`…06.503Z`), the one to key a row's version on: two edits inside one second are identical under `stamp` |
-| Build | `date(y, m, d)` → `Date` · `datetime(y, m, d, h, mi, s)` → a UTC moment's text · `time(h, mi, s)` |
-| Parse/format | `parse(s)` → `Date` · `parse_date` `parse_datetime` `parse_time` · `format_date(d, fmt)` `format_datetime(dt, fmt)` `format_time(t, fmt)` — `fmt` in strftime's `%` form (`"%B %d, %Y"`); a specifier it does not know, a trailing `%`, or a field the value lacks (`%H` of a date) is an `Err` |
+| Build | `date(y, m, d)` → `Result` of a `Date` · `datetime(y, m, d, h, mi, s)` → a UTC moment's text · `time(h, mi, s)` |
+| Parse/format | `parse(s)` → `Result` of a `Date` · `parse_date` `parse_datetime` `parse_time` · `format_date(d, fmt)` `format_datetime(dt, fmt)` `format_time(t, fmt)` — `fmt` in strftime's `%` form (`"%B %d, %Y"`); a specifier it does not know, a trailing `%`, or a field the value lacks (`%H` of a date) is an `Err` |
 | Fields | `year` `month` `day` `hour` `minute` `second` (a moment's own, in its offset) · `weekday` — 0 Sunday, 1 Monday, … 6 Saturday |
 | Arithmetic | `add_days` `add_weeks` `add_months` `add_years` · `diff_days(a, b)` — `a` minus `b` in days, positive when `a` is later (`d2 - d1` the same) |
 | Calendar | `start_of_week(d)` — the Monday on or before `d` · `start_of_month(d)` — its first day |
-| Day numbers | `epoch_day(d)` — days since 1970-01-01 (a stamp's day is the one it is written in) · `from_epoch_day(n)` → `Date` |
+| Day numbers | `epoch_day(d)` → `Result` of the Int days since 1970-01-01 (a stamp's day is the one it is written in; `Err` for text that is no day) · `from_epoch_day(n)` → `Result` of a `Date` (`Err` past the calendar's range) |
 | Epoch | `timestamp(dt)` — Unix milliseconds, the unit of every other clock (`time.now_ms`, `modified_ms`); an offset is honoured, a bare day is its midnight UTC · `timestamp_s(dt)` — Unix seconds · `from_timestamp(ms)` / `from_timestamp_s(s)` → the UTC moment's text |
 | Facts | `is_leap_year(y)` `days_in_month(y, m)` |
 
@@ -3100,7 +3106,9 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 | Comparisons | `eq(a, b)` · `ne(a, b)` — elementwise masks between two Series (against a *scalar*, use the `s == v` / `s != v` operators) |
 | Nulls | `is_null(s)` (mask) · `fill_null(s, v)` · `null_count(s)` |
 | Reductions | `sum` `mean` `var` `std` `min` `max` `median` (skip nulls; `var`/`std` are sample) · `quantile(s, q)` · `cumsum(s)` · `dot(a, b)` |
-| Windows | `shift(s, by)` (nulls at the edge) · `cum_max` · `cum_min` · `rank(s, method = "min")` — min/max/average/ordinal/dense · `rolling(s, window, agg)`, null until the window fills |
+| Windows | `shift(s, by)` (nulls at the edge) · `cum_max` · `cum_min` · `rank(s, method = "min")` — min/max/average/ordinal/dense · `rolling(s, window, agg)` — `agg` one of count, sum, mean, min, max, median, std, var — null until the window fills |
+| Text | `a + b` on String Series, or a String Series and a String on either side — elementwise concatenation, a null cell staying null |
+| Head / tail | `head(s, n)` · `tail(s, n)` — the first or last `n` values (the Frame verbs, on a Series) |
 | Distinct | `unique(s)` (first-seen order) · `n_unique(s)` · `value_counts(s)` → a value/count Frame, most frequent first |
 | Dates | `date_part(s, "year"\|"month"\|"day")` — the prefix of an ISO date or timestamp String Series, as a String Series: the derived key for a by-month `group_by` |
 | Convert type | `cast(s, "Float"\|"Int"\|"Bool"\|"String")` — what the target cannot hold becomes null, so `null_count` reports what was lost |
@@ -3123,7 +3131,7 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 | Whole rows | `distinct(f, names = all)` · `drop_null(f, names = all)` — duplicates and missing data, first occurrence kept |
 | Reshape | `pivot(f, index, columns, values, agg)` long→wide · `unpivot(f, ids, value_columns = the rest)` wide→long, emitting `name`/`value` |
 | Sample | `sample(f, n)` (also on a Series) — n random rows, without replacement, in original order; seeded by `random.seed` |
-| Aggregate / join | `group_by(f, key, aggs)` · `join` (inner) · `join_left` · `join_full` · `join_semi` · `join_anti` — all `(a, b, on, on_b = on)` · `concat(frames)` |
+| Aggregate / join | `group_by(f, key, aggs)` — each agg `[name, op, column]`, op one of count, sum, mean, min, max, median, std, var, first, last, n_unique (`[name, "count"]` counts rows) · `join` (inner) · `join_left` · `join_full` · `join_semi` · `join_anti` — all `(a, b, on, on_b = on)` · `concat(frames)` |
 | Masks | `eq(s, v)` · `ne(s, v)` · `is_in(s, values)` · `contains(s, text)` · `all_of(masks)` · `any_of(masks)` · `not(mask)` — three-valued, like SQL |
 
 The stack has its own chapter, **[The data stack](ods.md)**: the

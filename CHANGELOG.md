@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`ods`: more grouped aggregations, text `+`, and `head`/`tail` of a
+  Series.** `group_by` (and so `pivot`) takes `median`, `std`, `var`,
+  `first`, `last` and `n_unique` beside count/sum/mean/min/max — native,
+  each group reduced on its own so one thread or many agree to the bit;
+  `rolling` takes `median`, `std` and `var`. `+` on a String Series joins
+  text with a String Series or a String on either side
+  (`f["city"] + ", " + f["state"]`), a null staying null. `ods.head` and
+  `ods.tail` take a Series. tests/ods_frame_test.rs,
+  tests/data_stack_parallel_test.rs.
+- **`olang check` knows each stdlib module's members.** A member a
+  module lacks (`math.pi` — it is `math.PI`; `str.trimm`; `gg.plott`
+  after `use gg`) is an error naming the nearest; a read compared with
+  `()` (asking whether this build has it) is left alone. It found
+  `str.slice` (no such function) in examples/gui/l0.ol, now
+  `str.substring`. tests/import_clash_test.rs.
+
 - **`learn` and `use ml`: machine learning over Frames.** A native
   `learn` module (positional arguments, one trailing options map) and
   its keyword layer `use ml`. It covers seeded and stratified splits,
@@ -456,6 +472,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **An import binds only what it was asked for.** A bare `use` of a
+  stdlib module (`use gg`, `use ml`, `use term`, `use str`) binds its
+  namespace alone — `gg.plot(...)`; it used to import every shared name,
+  so `use gg` turned `plot` (the plot module, which Studio's chart
+  templates call) into gg's function and `use ml` replaced a notebook
+  param `folds`. `use m {}` binds the namespace alone (it parsed as
+  `use m` and an empty map). A wildcard (`use m { * }`, a bare `use` of a
+  file or package) skips a stdlib module's name and a name the program
+  already binds in that scope; a listed name the program already binds
+  is an error naming it (alias it). `olang check` warns on each skipped
+  export and errors on the refused listing. A listed stdlib module name
+  still binds (Loom's `use lib.effects { task }`). docs/language.md,
+  docs/packages.md, tests/import_clash_test.rs.
+- docs/stdlib.md: `dates.date`, `parse`, `from_epoch_day` and
+  `epoch_day` say they answer a `Result` (each can fail: a day that is no
+  day, text that names none, a day past the calendar's range).
+
 - **`gui`: text drawn as macOS draws it.** Glyph outlines grow and their
   coverage takes a curve as Core Graphics' font smoothing does — light
   text on dark the most, by the text colour's lightness in four steps —
@@ -580,6 +613,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `impl`, `error` and `catch` before a `(`, `[` or `.`).
 
 ### Fixed
+
+- **`olang notebook export` no longer panics on a chart with text beyond
+  ASCII** (`gg.labs(x: "°C")`, a title in 温度): the SVG check walked
+  bytes and sliced a word starting inside a character. A unit test in
+  src/notebook_export.rs runs `°`, `ï`, CJK, `²` and an emoji through it.
 
 - **`gui`: a code field's caret is never left under its sticky rows.**
   Moved onto the line at the view's top, the view scrolled only to the
