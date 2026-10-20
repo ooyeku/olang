@@ -176,6 +176,11 @@ fn stat_name(s: &str) -> Option<String> {
     None
 }
 
+/// `constant(text)`: a String constant mapping (gg.constant).
+fn constant_text(s: &str) -> Option<String> {
+    s.trim().strip_prefix("constant(").and_then(|r| r.strip_suffix(')')).map(str::to_string)
+}
+
 fn mapping_of(v: Option<&Value>, n_hint: usize) -> Result<Vec<(Aes, Source)>, String> {
     let mut out = Vec::new();
     let Some(v) = v else { return Ok(out) };
@@ -193,10 +198,15 @@ fn mapping_of(v: Option<&Value>, n_hint: usize) -> Result<Vec<(Aes, Source)>, St
             )
         })?;
         let src = match v {
-            Value::String(s) => match stat_name(s) {
-                Some(n) => Source::Stat(n),
-                None => Source::Col(s.as_ref().clone()),
+            Value::String(s) => match (stat_name(s), constant_text(s)) {
+                (Some(n), _) => Source::Stat(n),
+                (None, Some(c)) => Source::Const(k.clone(), Column::Str(vec![Some(c)])),
+                (None, None) => Source::Col(s.as_ref().clone()),
             },
+            // a number or a Bool: one value for every row (ggplot's aes(group = 1))
+            Value::Integer(i) => Source::Const(k.clone(), Column::Num(vec![*i as f64])),
+            Value::Float(f) => Source::Const(k.clone(), Column::Num(vec![*f])),
+            Value::Boolean(b) => Source::Const(k.clone(), Column::Str(vec![Some(b.to_string())])),
             other => match series_of(other) {
                 Some(series) => Source::Values(k.clone(), column_of(series)),
                 None => match other {
@@ -206,7 +216,7 @@ fn mapping_of(v: Option<&Value>, n_hint: usize) -> Result<Vec<(Aes, Source)>, St
                     }
                     _ => {
                         return Err(format!(
-                            "gg: aesthetic {} maps a column name (a String), a Series or after_stat(\"…\"), got {} (a constant goes to the geom: gg.point(color: \"red\"))",
+                            "gg: aesthetic {} maps a column name (a String), a Series, after_stat(\"…\") or a constant (a number, a Bool, gg.constant(…)), got {} (a constant look goes to the geom: gg.point(color: \"red\"))",
                             k,
                             other.type_name()
                         ));

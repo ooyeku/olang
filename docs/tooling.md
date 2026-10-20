@@ -1306,15 +1306,21 @@ carried.
 
 **A gg plot (scene).** A value that is a plot `use gg` built is said as a
 `str` of type `Plot`: its SVG (`svg`, as above) and `chart` its scene —
-`{"type":"scene","width","height","theme","title","alt","zoomable","n",
+`{"v":2,"type":"scene","width","height","theme","title","alt","zoomable","n",
 "palettes","layers":[{geom,fields}],"panels":[…],"ops":[…],"cut"}`
 (`plot.gg_scene`'s JSON). `ops` are drawn in order, in plot pixels:
-`rect`, `line`, `path` (`pts` flat), `points` (`x`, `y`, `r`, `fill` an
+`rect`, `line`, `path` (`d`: its vertices in tenths of a pixel, flat,
+each after the first as its step from the one before; a path no pointer
+reads drops the vertices that land where the last did; v1 sent `pts`,
+flat pixels), `points` (`x`, `y`, `r`, `fill` an
 index or one each into `pal`, `shape`), `text` (`y` the line's middle,
 `align`), `clip`/`unclip`; a frame colour is a role (`@ink`, `@ink2`,
 `@grid`, `@axis`, `@surface`, `@strip`, `@panel`), a data colour
 `#rrggbb[aa]`. A mark a pointer reads says its layer (`L`) and its
-values: `tips` (by field, one per point or vertex) or `tip` (a bar's).
+values: `tips` (by field: a list, one per point or vertex; a String, the
+same for every one; or `{"lv": [values], "ix": [each one's index]}` for
+a field of few values) or `tip` (a bar's). A brush over a gg plot
+(`ui.brush(p)`) says this scene as its control's `chart`, and its SVG.
 Points are thinned for the screen (one a pixel and colour, then an even
 stride; 12,000 at most): `n` and `cut` say so. Each panel says its box
 and its axes (`kind` `continuous`, `discrete` or `time`; `trans`; `lo`

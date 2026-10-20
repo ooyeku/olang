@@ -128,11 +128,15 @@ share fn toggle(value) = {
     runtime.bind(control("toggle", value, #{}), value)
 }
 
-/// A range of a chart's x (`chart` a plot chart's SVG): `()` for none,
-/// or `[x0, x1]`.
+fn is_gg(v) = typeof(v) == "Map" && map_has_key(v, "$gg")
+
+/// A range of a chart's x (`chart` a plot chart's SVG, or a gg plot:
+/// the range along its horizontal axis in data units, a log10, sqrt or
+/// reversed scale undone, in the panel dragged): `()` for none, or
+/// `[x0, x1]`.
 share fn brush(chart, value = ()) = {
-    if typeof(chart) != "String" || is_err(plot.describe(chart)) =>
-        raise("ui.brush: the chart is a plot chart's SVG (one that carries its description)")
+    if !is_gg(chart) && (typeof(chart) != "String" || is_err(plot.describe(chart))) =>
+        raise("ui.brush: the chart is a gg plot or a plot chart's SVG (one that carries its description)")
     if value != () && !(typeof(value) == "List" && len(value) == 2 && is_num(value[0]) &&
         is_num(value[1]) && value[0] <= value[1]) =>
         raise("ui.brush: the value is () or [x0, x1], x0 <= x1")

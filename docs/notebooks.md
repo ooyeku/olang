@@ -253,7 +253,9 @@ rather than run with a grant it cannot honour.
 
 A cell that binds a control makes the notebook a small app. `ui`'s
 controls — `ui.slider`, `ui.select`, `ui.date`, `ui.text`, `ui.toggle`
-and `ui.brush` over a chart — each answer their value:
+and `ui.brush` over a chart (a `plot` chart's SVG, or a `gg` plot: a
+range dragged in one of its panels, in that panel's data units) — each
+answer their value:
 
 ```olang
 use ui

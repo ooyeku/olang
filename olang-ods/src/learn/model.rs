@@ -185,6 +185,8 @@ pub fn default_boost(seed: u64) -> BoostParams {
         max_bins: 255,
         early_stopping: false,
         validation_fraction: 0.1,
+        validation_rows: None,
+        validation_tail: None,
         n_iter_no_change: 10,
         tol: 1e-7,
         seed,
@@ -318,6 +320,8 @@ struct Prepared {
     w: Option<Vec<f64>>,
     n: usize,
     dropped: usize,
+    /// the frame's row of each row fitted (complete rows, in order)
+    rows: Vec<usize>,
 }
 
 fn other_columns(frame: &Frame, c: &Common) -> Vec<String> {
@@ -453,6 +457,7 @@ fn prepare(frame: &Frame, c: &Common, drop_first: bool, task_hint: TaskHint) -> 
         w,
         n,
         dropped,
+        rows,
     })
 }
 
@@ -609,6 +614,36 @@ pub fn fit(frame: &Frame, c: &Common, algo: &Algo, par: bool) -> Result<Model> {
                 }
                 Task::Unsupervised => unreachable!(),
             };
+            // an explicit validation set: the frame's rows held out, as rows
+            // fitted (a row dropped for a null holds nothing out)
+            if let Some(t) = bp.validation_tail {
+                if t == 0 || t >= p.n {
+                    return Err(bad(format!(
+                        "boost: validation_tail {} of {} rows fitted",
+                        t, p.n
+                    )));
+                }
+                bp.validation_rows = Some(p.rows[p.n - t..].to_vec());
+            }
+            if let Some(v) = &bp.validation_rows {
+                let held: Vec<usize> = v
+                    .iter()
+                    .filter_map(|r| p.rows.binary_search(r).ok())
+                    .collect();
+                if held.is_empty() {
+                    return Err(bad(
+                        "boost: the validation rows are none of the rows fitted (each an index into the data, complete)",
+                    ));
+                }
+                if p.n - held.len() < 2 {
+                    return Err(bad(format!(
+                        "boost: the validation rows leave {} rows to train on",
+                        p.n - held.len()
+                    )));
+                }
+                bp.validation_rows = Some(held);
+                bp.early_stopping = true;
+            }
             Body::Boost(boost::fit(&p.x, &y, w, &bp, par))
         }
         Algo::Knn { k, distance } => Body::Knn {
@@ -1114,6 +1149,29 @@ impl Model {
                 self.algo
             ))),
         }
+    }
+
+    /// A boosted model at an earlier stage: its first `k` trees (staged
+    /// predictions, a curve of error by round on any rows).
+    pub fn with_trees(&self, k: usize) -> Result<Model> {
+        let Body::Boost(b) = &self.body else {
+            return Err(bad(format!(
+                "predict: trees is a boosted model's stage, not a {}'s",
+                self.algo
+            )));
+        };
+        if k > b.trees.len() {
+            return Err(bad(format!(
+                "predict: trees {} of {} the model kept",
+                k,
+                b.trees.len()
+            )));
+        }
+        let mut m = self.clone();
+        if let Body::Boost(bb) = &mut m.body {
+            bb.trees.truncate(k);
+        }
+        Ok(m)
     }
 
     /// Predict on a Frame.

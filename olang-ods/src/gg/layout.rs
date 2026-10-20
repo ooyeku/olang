@@ -79,6 +79,8 @@ struct KeyVis {
     shape: Option<Shape>,
     alpha: Option<f64>,
     dash: Option<Option<Vec<f64>>>,
+    /// a line's width in pixels (a linewidth scale's key)
+    lw: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -137,6 +139,7 @@ fn layer_defaults(vis: &Vis) -> KeyVis {
         shape: vis.shape.first().copied(),
         alpha: vis.alpha.first().copied().filter(|a| a.is_finite()),
         dash: vis.dash.first().cloned(),
+        lw: None,
     }
 }
 
@@ -185,6 +188,7 @@ fn guides(b: &Built) -> Vec<Guide> {
                             Aes::Alpha => k.alpha = Some(sc.alpha_of(c, 0.0)),
                             Aes::Shape => k.shape = Some(sc.shape_of(c)),
                             Aes::Linetype => k.dash = Some(sc.dash_of(c)),
+                            Aes::Linewidth => k.lw = Some(sc.linewidth_of(c, 0.0) * 2.8),
                             _ => {}
                         }
                         k
@@ -204,6 +208,7 @@ fn guides(b: &Built) -> Vec<Guide> {
                         if k.dash.is_none() {
                             k.dash = n.dash;
                         }
+                        k.lw = k.lw.or(n.lw);
                     }
                     a2.push(*aes);
                     for l in layers {
@@ -241,6 +246,7 @@ fn guides(b: &Built) -> Vec<Guide> {
                             match aes {
                                 Aes::Size => k.size = Some(sc.size_of(None, *v)),
                                 Aes::Alpha => k.alpha = Some(sc.alpha_of(None, *v)),
+                                Aes::Linewidth => k.lw = Some(sc.linewidth_of(None, *v) * 2.8),
                                 _ => {}
                             }
                             k
@@ -344,7 +350,7 @@ fn draw_key(items: &mut Vec<Item>, x: f64, y: f64, bx: f64, k: &KeyVis, layers: 
                     x2: x + bx - 1.0,
                     y2: cy,
                     stroke: Paint::Rgba(color.with_alpha(alpha)),
-                    sw: lw.max(1.2).min(4.0),
+                    sw: k.lw.unwrap_or(lw.clamp(1.2, 4.0)).min(bx / 2.0),
                     dash: k.dash.clone().or(d.dash.clone()).flatten(),
                 });
             }

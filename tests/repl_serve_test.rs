@@ -1118,6 +1118,27 @@ fn a_gg_plot_is_drawn_as_its_scene_and_zooms_by_rendering_again() {
 }
 
 #[test]
+fn a_brush_over_a_gg_plot_says_its_scene_and_takes_a_range_in_data_units() {
+    let dir = project();
+    let (mut r, _) = Repl::start(dir.path());
+    let d = r.ask(json!({ "op": "eval", "cell": "c0", "code": "use gg\nuse ui\nlet f = ods.frame([[\"x\", ods.series([1.0, 10.0, 100.0, 1000.0])], [\"y\", ods.series([1.0, 2.0, 3.0, 4.0])]])" }));
+    assert_eq!(d["ok"], json!(true), "{d}");
+    let a = r.ask(json!({ "op": "eval", "cell": "c1", "code": "let window = ui.brush(gg.plot(f, gg.aes(x: \"x\", y: \"y\")) |> gg.point() |> gg.scale_x_log10())" }));
+    assert_eq!(a["ok"], json!(true), "{a}");
+    let c = &a["control"];
+    assert_eq!(c["kind"], json!("brush"), "{a}");
+    assert_eq!(c["name"], json!("window"));
+    assert_eq!(c["chart"]["type"], json!("scene"), "{c}");
+    assert_eq!(c["chart"]["panels"][0]["h_axis"]["trans"], json!("log10"));
+    assert!(c["svg"]["text"].as_str().unwrap().contains("olang-chart"));
+    // a range set as an editor sets it (data units), then read
+    let set = r.ask(json!({ "op": "set", "cell": "c1", "value": "[10.0, 100.0]" }));
+    assert_eq!(set["ok"], json!(true), "{set}");
+    let w = r.eval("window");
+    assert_eq!(w["value"]["s"], json!("[10.0, 100.0]"), "{w}");
+}
+
+#[test]
 fn a_cells_control_is_said_set_by_the_host_and_kept_while_it_fits() {
     let dir = project();
     let (mut r, hello) = Repl::start(dir.path());

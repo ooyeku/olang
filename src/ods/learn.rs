@@ -858,6 +858,8 @@ fn allowed(func: &str) -> Vec<&'static str> {
             "max_bins",
             "early_stopping",
             "validation_fraction",
+            "validation_rows",
+            "validation_tail",
             "n_iter_no_change",
             "tol",
             "seed",
@@ -1033,6 +1035,28 @@ fn supervised(func: &str, args: &[Value]) -> R<Value> {
             p.max_bins = o.usize("max_bins", 255)?.clamp(2, 256);
             p.early_stopping = o.bool("early_stopping", false)?;
             p.validation_fraction = o.f64("validation_fraction", 0.1)?;
+            p.validation_rows = match o.get("validation_rows") {
+                None => None,
+                Some(Value::List(items)) => Some(
+                    items
+                        .iter()
+                        .map(|v| match v {
+                            Value::Integer(i) if *i >= 0 => Ok(*i as usize),
+                            other => Err(format!(
+                                "learn.boost: option 'validation_rows' lists row indices (non-negative Ints), got {}",
+                                other
+                            )),
+                        })
+                        .collect::<R<Vec<usize>>>()?,
+                ),
+                Some(other) => {
+                    return Err(format!(
+                        "learn.boost: option 'validation_rows' must be a list of row indices, got {}",
+                        other.type_name()
+                    ));
+                }
+            };
+            p.validation_tail = o.opt_usize("validation_tail")?;
             p.n_iter_no_change = o.usize("n_iter_no_change", 10)?;
             p.tol = o.f64("tol", 1e-7)?;
             Algo::Boost { params: p }
@@ -1368,7 +1392,13 @@ fn model_value(model: Model, spec: Value) -> Value {
 fn predict(args: &[Value]) -> R<Value> {
     let m = want_model("predict", args, 0)?;
     let f = want_frame("predict", args, 1)?;
-    let o = Opts::new("predict", args.get(2), &["kind", "level"])?;
+    let o = Opts::new("predict", args.get(2), &["kind", "level", "trees"])?;
+    // a boosted model's stage: its first `trees` trees
+    let staged = match o.opt_usize("trees")? {
+        Some(k) => Some(m.with_trees(k).map_err(e)?),
+        None => None,
+    };
+    let m = staged.as_ref().unwrap_or(m);
     let level = o.f64("level", 0.95)?;
     if !(level > 0.0 && level < 1.0) {
         return Err("learn.predict: level must lie in (0, 1)".to_string());

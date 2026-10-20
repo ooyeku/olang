@@ -3710,6 +3710,7 @@ version = "0.77.0"
 dependencies = [
  "criterion",
  "rayon",
+ "serde_json",
  "statrs",
 ]
 

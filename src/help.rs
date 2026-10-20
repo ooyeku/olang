@@ -3711,11 +3711,11 @@ let parts = ods.split(f, 0.8)   // [train, test]"##],
         self.doc_ex("ml.forest", "ml.forest(data, y:, trees: 100, ...)", "Map", "ml", "random forest with keywords",
             &[r##"ml.forest(f, y: "churn", trees: 300, seed: 1)"##],
         );
-        self.doc_ex("ml.boost", "ml.boost(data, y:, trees: 100, learning_rate: 0.1, ...)", "Map", "ml", "gradient boosting with keywords",
-            &[r##"ml.boost(f, y: "y", trees: 500, early_stopping: true)"##],
+        self.doc_ex("ml.boost", "ml.boost(data, y:, trees: 100, learning_rate: 0.1, ...)", "Map", "ml", "gradient boosting with keywords; early stopping on a random `validation` fraction, or on an explicit set: `validation` a Frame, `validation_rows`, `validation_tail: n` (a time series' last n rows); `m.valid_loss` each round's loss there",
+            &[r##"ml.boost(f, y: "y", trees: 500, early_stopping: true)"##, r##"ml.boost(f, y: "y", trees: 500, validation_tail: 168)"##],
         );
-        self.doc_ex("ml.predict", "ml.predict(model, data, kind: \"auto\")", "Series", "ml", "predictions with keywords",
-            &[r##"ml.predict(fit, test, kind: "prob")"##],
+        self.doc_ex("ml.predict", "ml.predict(model, data, kind: \"auto\", trees: ())", "Series", "ml", "predictions with keywords; `trees: k` a boosted model's from its first k trees (staged)",
+            &[r##"ml.predict(fit, test, kind: "prob")"##, r##"ml.predict(gb, recent, trees: 50)"##],
         );
         self.doc_ex("ml.cross_validate", "ml.cross_validate(fit, data, folds: 5, metrics: ())", "Frame", "ml", "cross-validation of a model, a spec or a (train) => model function",
             &[r##"ml.cross_validate((d) => ml.linear(d, y: "y"), f, folds: 5)"##],
@@ -4791,7 +4791,7 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             "ui.brush(chart, value = ())",
             "Any",
             "ui",
-            "A range of a plot chart's x a host binds: () for none, or [x0, x1] (Floats). With no host, the value.",
+            "A range of a chart's x a host binds: () for none, or [x0, x1] (Floats). The chart is a plot chart's SVG or a gg plot (the range along the dragged panel's horizontal axis, in data units). With no host, the value.",
             &[r##"let span = ui.brush(chart)"##],
         );
         self.doc_ex(

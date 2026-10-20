@@ -317,6 +317,33 @@ pub fn solve(a: &[f64], b: &[f64], k: usize) -> Option<Vec<f64>> {
 }
 
 /// The inverse of a k×k matrix (row-major), None when singular.
+/// log det of a symmetric positive-definite `k`×`k` matrix (Cholesky), or
+/// None when it is not positive definite.
+pub fn logdet_spd(a: &[f64], k: usize) -> Option<f64> {
+    let mut l = vec![0.0; k * k];
+    let mut out = 0.0;
+    for j in 0..k {
+        let mut d = a[j * k + j];
+        for t in 0..j {
+            d -= l[j * k + t] * l[j * k + t];
+        }
+        if d.is_nan() || d <= 0.0 {
+            return None;
+        }
+        let dj = d.sqrt();
+        l[j * k + j] = dj;
+        out += 2.0 * dj.ln();
+        for i in j + 1..k {
+            let mut v = a[i * k + j];
+            for t in 0..j {
+                v -= l[i * k + t] * l[j * k + t];
+            }
+            l[i * k + j] = v / dj;
+        }
+    }
+    Some(out)
+}
+
 pub fn inverse(a: &[f64], k: usize) -> Option<Vec<f64>> {
     let mut out = vec![0.0; k * k];
     for j in 0..k {

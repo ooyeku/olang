@@ -86,12 +86,15 @@ fn stack(f: &mut LFrame, fill: bool, reverse: bool) -> super::Result<()> {
     Ok(())
 }
 
-/// Side by side at each x: the groups there share its width.
+/// Side by side at each x: the groups there share the dodge's width
+/// (`dodge_width`, `gg.position_dodge(width:)`; else the mark's own),
+/// each mark its own width shared among them (ggplot's dodge).
 fn dodge(f: &mut LFrame, p: &Params) -> super::Result<()> {
     let n = f.n;
     let Some(x) = f.num(Aes::X).cloned() else { return Ok(()) };
     let res = resolution(&x);
     let width = p_num(p, "width");
+    let dodge_width = p_num(p, "dodge_width");
     let xmin = f.num(Aes::Xmin).cloned();
     let xmax = f.num(Aes::Xmax).cloned();
     // the groups at each (panel, x)
@@ -115,19 +118,22 @@ fn dodge(f: &mut LFrame, p: &Params) -> super::Result<()> {
         if !x[i].is_finite() {
             continue;
         }
-        let w = match (width, &xmin, &xmax) {
-            (Some(w), _, _) => w,
-            (None, Some(a), Some(b)) if a[i].is_finite() && b[i].is_finite() => b[i] - a[i],
+        // the mark's own width, and the width the groups spread over
+        let own = match (&xmin, &xmax, width) {
+            (Some(a), Some(b), _) if a[i].is_finite() && b[i].is_finite() => b[i] - a[i],
+            (_, _, Some(w)) => w,
             _ => 0.9 * res,
         };
+        let w = dodge_width.unwrap_or(own);
         let gs = &at[&(f.panel[i], key(x[i]))];
         let k = gs.iter().position(|g| *g == f.group[i]).unwrap_or(0);
         let m = gs.len().max(1) as f64;
         let slot = w / m;
         let left = x[i] - w / 2.0 + k as f64 * slot;
         nx[i] = left + slot / 2.0;
-        nmin[i] = left + slot * gap / 2.0;
-        nmax[i] = left + slot * (1.0 - gap / 2.0);
+        let half = own / m * (1.0 - gap) / 2.0;
+        nmin[i] = nx[i] - half;
+        nmax[i] = nx[i] + half;
     }
     f.set_num(Aes::X, nx);
     f.set_num(Aes::Xmin, nmin);
@@ -206,6 +212,27 @@ mod tests {
         assert!((x[0] - 0.775).abs() < 1e-9 && (x[1] - 1.225).abs() < 1e-9);
         // alone at x = 2: the whole width
         assert!((x[2] - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_dodge_width_spreads_the_groups_and_each_mark_keeps_its_share_of_its_own() {
+        // error bars 0.2 wide, dodged over 0.6 (ggplot's errorbar(width = 0.2,
+        // position = position_dodge(0.6)))
+        let mut f = bars(vec![1.0, 1.0], vec![1.0, 1.0], vec![0, 1]);
+        f.set_num(Aes::Xmin, vec![0.9, 0.9]);
+        f.set_num(Aes::Xmax, vec![1.1, 1.1]);
+        let mut p = Params::new();
+        p.insert("dodge_width".into(), super::super::Param::Num(0.6));
+        apply("dodge", &mut f, &p).unwrap();
+        let x = f.num(Aes::X).unwrap();
+        assert!((x[0] - 0.85).abs() < 1e-9 && (x[1] - 1.15).abs() < 1e-9, "{x:?}");
+        let (a, b) = (f.num(Aes::Xmin).unwrap(), f.num(Aes::Xmax).unwrap());
+        assert!((b[0] - a[0] - 0.1).abs() < 1e-9, "each bar its half of 0.2");
+        // a point range (no box): its width the dodge's
+        let mut g = bars(vec![2.0, 2.0, 2.0], vec![1.0; 3], vec![0, 1, 2]);
+        apply("dodge", &mut g, &p).unwrap();
+        let x = g.num(Aes::X).unwrap();
+        assert!((x[0] - 1.8).abs() < 1e-9 && (x[1] - 2.0).abs() < 1e-9 && (x[2] - 2.2).abs() < 1e-9, "{x:?}");
     }
 
     #[test]

@@ -131,16 +131,29 @@ share fn forest(data, y, x = (), trees = 100, max_depth = (), max_features = (),
 
 /// Gradient-boosted trees over binned features (squared loss, or log
 /// loss for a binary target). `early_stopping` holds out `validation`
-/// of the rows and stops after `patience` rounds without improvement.
+/// of the rows at random and stops after `patience` rounds without
+/// improvement. An explicit validation set stops on it instead (and
+/// turns early stopping on): `validation` a Frame (its rows appended to
+/// the data's to fit, held out), `validation_rows` (row indices of the
+/// data), or `validation_tail: n` (the last n rows: a time series' most
+/// recent). `m.valid_loss` is the loss on them each round (`m.best_iter` the least).
 share fn boost(data, y, x = (), trees = 100, learning_rate = 0.1, max_depth = 3, max_leaf_nodes = (),
                min_samples_leaf = (), l2 = (), subsample = 1.0, bins = 255, early_stopping = false,
-               validation = 0.1, patience = 10, task = (), weights = (), seed = ()) =
-    learn.boost(data, y, x, opts(#{ "n_trees": trees, "learning_rate": learning_rate, "max_depth": max_depth,
-                                    "max_leaf_nodes": max_leaf_nodes, "min_samples_leaf": min_samples_leaf,
-                                    "l2": l2, "subsample": subsample, "max_bins": bins,
-                                    "early_stopping": early_stopping, "validation_fraction": validation,
-                                    "n_iter_no_change": patience, "task": task, "weights": weights,
-                                    "seed": seed }))
+               validation = 0.1, validation_rows = (), validation_tail = (), patience = 10, task = (),
+               weights = (), seed = ()) = {
+    let held_frame = typeof(validation) == "Frame"
+    let fit_on = if held_frame => ods.concat([data, validation]) else => data
+    let rows = if held_frame => range(ods.n_rows(data), ods.n_rows(fit_on)) else => validation_rows
+    let explicit = held_frame || validation_rows != () || validation_tail != ()
+    learn.boost(fit_on, y, x, opts(#{ "n_trees": trees, "learning_rate": learning_rate, "max_depth": max_depth,
+                                      "max_leaf_nodes": max_leaf_nodes, "min_samples_leaf": min_samples_leaf,
+                                      "l2": l2, "subsample": subsample, "max_bins": bins,
+                                      "early_stopping": early_stopping || explicit,
+                                      "validation_fraction": if held_frame => () else => validation,
+                                      "validation_rows": rows, "validation_tail": validation_tail,
+                                      "n_iter_no_change": patience, "task": task, "weights": weights,
+                                      "seed": seed }))
+}
 
 // ── other models ───────────────────────────────────────────────────────
 
@@ -174,9 +187,10 @@ share fn silhouette(data, labels, cols = (), sample = (), seed = ()) =
 /// Predictions for `data`: values, class labels or clusters by default;
 /// `kind: "prob"` (positive-class probability, or a Frame for 3+
 /// classes), `"probs"`, `"link"`, `"confidence"` / `"prediction"` (an
-/// OLS interval Frame at `level`).
-share fn predict(model, data, kind = "auto", level = 0.95) =
-    learn.predict(model, data, #{ "kind": kind, "level": level })
+/// OLS interval Frame at `level`). `trees: k`: a boosted model's
+/// prediction from its first k trees (staged predictions).
+share fn predict(model, data, kind = "auto", level = 0.95, trees = ()) =
+    learn.predict(model, data, opts(#{ "kind": kind, "level": level, "trees": trees }))
 
 /// The positive-class probability (binary) or a Frame of class
 /// probabilities.

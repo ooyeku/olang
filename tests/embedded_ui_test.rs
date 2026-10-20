@@ -132,6 +132,23 @@ let chart = plot.line(ods.series([1, 2]), ods.series([3, 4]), #{})
 }
 
 #[test]
+fn a_brush_takes_a_gg_plot_and_keeps_it_as_its_chart() {
+    let v = eval(
+        r#"
+use ui
+use gg
+let p = gg.plot(ods.frame([["x", ods.series([1.0, 2.0])], ["y", ods.series([3.0, 4.0])]]), gg.aes(x: "x", y: "y")) |> gg.point()
+let node = ui.control("brush", [1.0, 1.5], #{ "chart": p })
+[ui.brush(p), ui.brush(p, [1, 1.5]), node.spec.chart == p, ui.html(node)]
+"#,
+    );
+    assert_eq!(
+        v.to_string(),
+        "[(), [1.0, 1.5], true, \"<div class=\\\"brush\\\" data-x0=\\\"1.0\\\" data-x1=\\\"1.5\\\"></div>\"]"
+    );
+}
+
+#[test]
 fn a_control_refuses_a_value_it_cannot_hold() {
     for (src, says) in [
         ("ui.slider(0.5, 0.0, 0.3)", "outside [0.0, 0.3]"),
@@ -144,6 +161,7 @@ fn a_control_refuses_a_value_it_cannot_hold() {
         ("ui.text(3)", "is a String"),
         ("ui.toggle(1)", "is a Bool"),
         ("ui.brush(\"<svg></svg>\")", "carries its description"),
+        ("ui.brush(#{ \"x\": 1 })", "a gg plot or a plot chart's SVG"),
         ("ui.control(\"knob\", 1, #{})", "no control is a knob"),
     ] {
         let err = eval_err(&format!("use ui\n{}", src));
