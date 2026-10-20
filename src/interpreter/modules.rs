@@ -1675,7 +1675,7 @@ already binds — an import never replaces a program's own name. Alias the impor
     pub(crate) fn eval_use_decl(&mut self, use_decl: UseDecl) -> Result<Value, InterpreterError> {
         let module_path = use_decl.path.join(".");
         let module = self.load_module_from_file(&module_path)?;
-        self.bind_module_imports(&module, &Some(use_decl.items))?;
+        self.bind_module_imports(&module, &Some(use_decl.items.clone()))?;
 
         // Also bind the module's own name as a namespace, so an imported
         // module is inspectable and callable as `name.fn(...)` — matching the
@@ -1692,12 +1692,18 @@ already binds — an import never replaces a program's own name. Alias the impor
             let shadows_ambient_module = use_decl.path.len() >= 2
                 && matches!(&existing, Some(Value::Struct { type_name, .. }) if type_name == "Module")
                 && crate::stdlib::get_stdlib().contains_key(leaf.as_str());
-            // A re-run `use` refreshes the namespace it bound.
-            let refresh = existing.as_ref().is_some_and(|v| {
-                self.imported
-                    .get(leaf)
-                    .is_some_and(|mine| same_binding(mine, v))
-            });
+            // A re-run `use` refreshes the namespace it bound — never an
+            // item this `use` just bound under the same name
+            // (`use lib.theme { theme }`).
+            let listed = use_decl.items.iter().any(|i| i.bound_name() == Some(leaf.as_str()));
+            let refresh = !listed
+                && existing.as_ref().is_some_and(|v| {
+                    is_module_value(v)
+                        && self
+                            .imported
+                            .get(leaf)
+                            .is_some_and(|mine| same_binding(mine, v))
+                });
             if existing.is_none() || shadows_ambient_module || refresh {
                 self.define_imported(leaf.clone(), module.clone());
             }

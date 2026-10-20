@@ -178,3 +178,20 @@ fn check_knows_each_stdlib_module_s_members() {
     let (out, rc) = run_in(&dir, &["check", "good.ol"]);
     assert_eq!(rc, 0, "{out}");
 }
+
+#[test]
+fn an_item_named_as_its_module_stays_the_item() {
+    // Loom's `use lib.theme { theme }`: the namespace never replaces the
+    // item, on the first run nor a second.
+    let dir = project(&[
+        ("lib/theme.ol", "share fn theme(x) = \"themed \" + x\n"),
+        (
+            "main.ol",
+            "use lib.theme { theme }\nprintln(theme(\"a\"))\nuse lib.theme { theme }\nprintln(theme(\"b\"))\n\
+             use lib.theme\nprintln(theme(\"c\"))\n",
+        ),
+    ]);
+    let (out, rc) = tiers(&dir, "main.ol");
+    assert_eq!(rc, 0, "{out}");
+    assert_eq!(out.lines().collect::<Vec<_>>(), ["themed a", "themed b", "themed c"], "{out}");
+}
