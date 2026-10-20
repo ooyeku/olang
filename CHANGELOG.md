@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Names, methods and operators for native values (the data
+  ergonomics prerequisites L1–L6).** A native builtin registers its
+  parameters (`src/native_sig.rs`): `ods.rolling(s, window: 2, agg:
+  "max")`, `ods.sort_by(f, "x", descending: true)`, `learn.split(f,
+  test: 0.25, seed: 7)`, `plot.line(x, y, title: "t")` — names map onto
+  positions before dispatch (the interpreter at the call, the bytecode
+  compiler at compile time, so a named call costs what the positional one
+  does), a short call takes the registered defaults (`ods.head(f)`,
+  `stats.norm.cdf(1.96)`), a name that is no parameter goes into the
+  trailing options map, and an unknown name raises listing the ones
+  taken. The data stack, a Date's functions and every stdlib function
+  with an options map (`proc.spawn`, `gui.open`, `fs.scan`, …) are
+  registered; a chart's options map may be left off. A native value's
+  methods are its module's functions (`s.fill_null(0.0).sum()`,
+  `f.sort_by("x").head(2)`, `d.weekday()`), a Series borrowing `stats`
+  and `plot`, a `learn` fit taking the model's (`fit.predict(test)`); an
+  `impl` for the type wins. `f.price` reads a column (a method's name
+  always means the method). `len` of a Series or a Frame. Unary `-`/`!`
+  and `& | ^` reach the owning module (`OvmModule::unary_op`,
+  `bitwise_op`); `@` is the matrix product, resolved only by native
+  values (two Series: their dot product), at `*`'s level and never
+  starting a line. A method call compiles on the bytecode tier whatever
+  its receiver (the interpreter now evaluates a receiver once), names
+  included. `olang check` follows Series, Frames and Dates through
+  bindings and reports an unknown method or name; the editor completes
+  a value's methods after `s.` and a call's names, and signature help
+  shows them. tests/native_ergonomics_test.rs, src/native_sig.rs's
+  tests; language.md (Operators on native values, Methods of native
+  values), ods.md (Methods, names and fields).
+
 - **`ods`: more grouped aggregations, text `+`, and `head`/`tail` of a
   Series.** `group_by` (and so `pivot`) takes `median`, `std`, `var`,
   `first`, `last` and `n_unique` beside count/sum/mean/min/max — native,

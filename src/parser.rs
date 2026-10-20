@@ -129,6 +129,7 @@ fn humanize_rule(rule: Rule) -> &'static str {
         Rule::identifier => "a name",
         Rule::add_op
         | Rule::mul_op
+        | Rule::matmul_op
         | Rule::bitwise_op
         | Rule::or_op
         | Rule::and_op
@@ -155,13 +156,21 @@ pub const SPREAD_BUILTIN: &str = "__spread";
 /// the list, as `col.set`'s assignment is). Never written.
 pub const INDEX_SET_BUILTIN: &str = "__index_set";
 
+/// The builtin `a @ b` is built by: `__matmul(a, b)`, the product, offered
+/// to the operands' native module (`native::matmul`). A call, so every
+/// tier runs it the one way a builtin runs. Never written.
+pub const MATMUL_BUILTIN: &str = "__matmul";
+
 /// The builtin `m.k[i] = v` is built by: `m = __index_set_in(m, "k", i,
 /// v)`, the record with its list at `k` written as `xs[i] = v` writes.
 pub const INDEX_SET_IN_BUILTIN: &str = "__index_set_in";
 
 /// The builtins the parser builds forms with, which no program names.
 pub fn is_hidden_builtin(name: &str) -> bool {
-    name == SPREAD_BUILTIN || name == INDEX_SET_BUILTIN || name == INDEX_SET_IN_BUILTIN
+    name == SPREAD_BUILTIN
+        || name == INDEX_SET_BUILTIN
+        || name == INDEX_SET_IN_BUILTIN
+        || name == MATMUL_BUILTIN
 }
 
 /// One item of a `#{ }` or `{ }` literal: a written entry, or `...e`.
@@ -1842,6 +1851,10 @@ impl Parser {
                         inclusive: text == "..=",
                     }
                 }
+                Rule::matmul_op => Expr::Call {
+                    callee: Box::new(Expr::Identifier(MATMUL_BUILTIN.to_string())),
+                    arguments: vec![Argument::Positional(left), Argument::Positional(right)],
+                },
                 Rule::bitwise_op => Expr::BitwiseOp {
                     left: Box::new(left),
                     op: match text.as_str() {

@@ -513,6 +513,7 @@ impl BuiltinFunctions {
             (crate::parser::SPREAD_BUILTIN, 0),
             (crate::parser::INDEX_SET_BUILTIN, 3),
             (crate::parser::INDEX_SET_IN_BUILTIN, 4),
+            (crate::parser::MATMUL_BUILTIN, 2),
         ] {
             functions.insert(
                 name.to_string(),
@@ -750,7 +751,7 @@ impl BuiltinFunctions {
     fn call_internal_inner(
         builtins: &BuiltinFunctions,
         name: &str,
-        arguments: Vec<Value>,
+        mut arguments: Vec<Value>,
         interpreter: &mut crate::interpreter::Interpreter,
     ) -> Result<Value, InterpreterError> {
         // Handle filesystem functions
@@ -1157,6 +1158,9 @@ impl BuiltinFunctions {
         if let Some((module_name, module_function)) = name.split_once('.')
             && let Some(module) = crate::native::module_named(module_name)
         {
+            // A short call takes its trailing defaults (`ods.head(f)`,
+            // `stats.norm.cdf(1.96)`): the signature's, on both tiers.
+            crate::native_sig::fill_defaults(name, &mut arguments);
             return module
                 .dispatch(module_function, arguments)
                 .map_err(|message| InterpreterError::RuntimeError { message });
@@ -1360,6 +1364,14 @@ impl BuiltinFunctions {
             crate::parser::SPREAD_BUILTIN => builtins.spread(arguments),
             crate::parser::INDEX_SET_BUILTIN => Self::index_set(arguments),
             crate::parser::INDEX_SET_IN_BUILTIN => Self::index_set_in(arguments),
+            crate::parser::MATMUL_BUILTIN => match arguments.as_slice() {
+                [a, b] => crate::native::matmul(a, b)
+                    .map_err(|message| InterpreterError::RuntimeError { message }),
+                _ => Err(InterpreterError::ArityMismatch {
+                    expected: 2,
+                    got: arguments.len(),
+                }),
+            },
             "map_set" => builtins.map_set(arguments),
             "map_has_key" => builtins.map_has_key(arguments),
             "map_keys" => builtins.map_keys(arguments),

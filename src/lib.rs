@@ -34,6 +34,7 @@ pub mod interrupt; // Stopping a running evaluation (`olang repl --serve`)
 pub mod log;
 pub mod memory; // The accounting behind `runtime.memory()`
 pub mod native;
+pub mod native_sig; // Native builtins' parameter names, defaults and methods (L1, L2)
 pub mod notebook; // A `.olmd` file read as a program
 #[cfg(feature = "native")]
 pub mod notebook_export; // A notebook's outputs as a page, an app's fragment, a pinned output

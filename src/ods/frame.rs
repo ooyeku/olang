@@ -51,6 +51,24 @@ impl NativeObject for OdsFrame {
         self
     }
 
+    /// `len(f)`: the row count, as pandas' `len(df)`.
+    fn length(&self) -> Option<usize> {
+        Some(self.0.n_rows())
+    }
+
+    /// `f.price` is `f["price"]` (L6), for a column whose name is no
+    /// method of a Frame (`f["sum"]` reads a column named `sum`).
+    fn field(&self, name: &str) -> Option<Result<Value, String>> {
+        Some(match self.0.column(name) {
+            Ok(col) => Ok(super::series::make_series_value(col.clone())),
+            Err(_) => Err(format!(
+                "a Frame has no column '{}' — its columns are {}",
+                name,
+                self.0.names().join(", ")
+            )),
+        })
+    }
+
     /// `f["amount"]` is the column; `f[mask]` is the rows the mask keeps.
     ///
     /// Two meanings, disjoint by the key's type, which is what keeps this

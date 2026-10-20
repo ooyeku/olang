@@ -1831,3 +1831,57 @@ fn a_comment_completes_nothing_and_a_large_file_is_checked_in_linear_time() {
     let _ = c.child.kill();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A native value's methods complete after `s.`, a native call's names
+/// inside its parentheses, and signature help names a method's
+/// parameters (L1, L2).
+#[test]
+fn native_methods_and_names_complete() {
+    let dir = std::env::temp_dir().join(format!("olang-lsp-native-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.ol");
+    let text = "let s = ods.series([1.0, 2.0])\nlet f = ods.frame([[\"price\", s]])\nlet t = s.ro\nlet u = f.\nlet v = learn.split(f, \nlet w = s.rolling(2, \n";
+    std::fs::write(&main, text).unwrap();
+    let uri = format!("file://{}", main.display());
+    let mut c = Client::start();
+    c.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}));
+    c.recv_until(|m| m["id"] == 1);
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    c.send(
+        &serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+        "textDocument":{"uri":uri,"languageId":"olang","version":1,"text":text}}}),
+    );
+    let labels = |r: &serde_json::Value| -> Vec<String> {
+        r["result"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["label"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let complete = |c: &mut Client, id: i64, line: u32, ch: u32| {
+        c.send(&serde_json::json!({"jsonrpc":"2.0","id":id,"method":"textDocument/completion","params":{
+            "textDocument":{"uri":uri},"position":{"line":line,"character":ch}}}));
+        c.recv_until(|m| m["id"] == id)
+    };
+    let series = labels(&complete(&mut c, 2, 2, 12));
+    assert!(series.contains(&"rolling".to_string()) && series.contains(&"fill_null".to_string()), "{series:?}");
+    assert!(!series.contains(&"sort_by".to_string()), "a Frame verb is no Series method");
+    let frame = labels(&complete(&mut c, 3, 3, 10));
+    assert!(frame.contains(&"sort_by".to_string()) && frame.contains(&"price".to_string()), "{frame:?}");
+    let names = labels(&complete(&mut c, 4, 4, 23));
+    assert_eq!(names[..4], ["test:", "stratify:", "shuffle:", "seed:"]);
+    c.send(
+        &serde_json::json!({"jsonrpc":"2.0","id":5,"method":"textDocument/signatureHelp","params":{
+        "textDocument":{"uri":uri},"position":{"line":5,"character":21}}}),
+    );
+    let r = c.recv_until(|m| m["id"] == 5);
+    assert_eq!(r["result"]["signatures"][0]["label"], ".rolling(window, agg)", "{r}");
+    assert_eq!(r["result"]["activeParameter"], 1);
+    c.send(&serde_json::json!({"jsonrpc":"2.0","id":9,"method":"shutdown","params":null}));
+    c.recv_until(|m| m["id"] == 9);
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"exit","params":null}));
+    drop(c.stdin);
+    assert!(c.child.wait().unwrap().success());
+    let _ = std::fs::remove_dir_all(&dir);
+}

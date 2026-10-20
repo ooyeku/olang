@@ -32,7 +32,7 @@ pub fn frame_from_bytes(b: &[u8]) -> Result<Value, String> {
     columns::decode(b, None).map(OdsFrame::into_value)
 }
 
-use crate::ast::{BinaryOp, BuiltinFunction, Value};
+use crate::ast::{BinaryOp, BitwiseOp, BuiltinFunction, UnaryOp, Value};
 use crate::native::{NativeHandle, NativeObject, OvmModule};
 use std::any::Any;
 use std::sync::Arc;
@@ -164,6 +164,17 @@ impl OvmModule for OdsModule {
     }
 
     fn binary_op(&self, op: &BinaryOp, lhs: &Value, rhs: &Value) -> Option<Result<Value, String>> {
+        // `a @ b` on two Series: their dot product (a Matrix's product
+        // joins this when the Matrix does).
+        if matches!(op, BinaryOp::MatMul) {
+            if series_of(lhs).is_some() && series_of(rhs).is_some() {
+                return Some(self.dispatch("dot", vec![lhs.clone(), rhs.clone()]));
+            }
+            if let (Some(a), Some(b)) = (probe_of(lhs), probe_of(rhs)) {
+                return Some(Ok(Value::Integer(a.tag * b.tag)));
+            }
+            return None;
+        }
         if let Some(result) = series::binary_op(op, lhs, rhs) {
             return Some(result);
         }
@@ -188,6 +199,34 @@ impl OvmModule for OdsModule {
             // native_eq fallback; everything else is a type error.
             _ => None,
         }
+    }
+
+    fn unary_op(&self, op: &UnaryOp, value: &Value) -> Option<Result<Value, String>> {
+        if let Some(result) = series::unary_op(op, value) {
+            return Some(result);
+        }
+        // The probe pins the hook's plumbing in every tier: `-p` negates
+        // its tag, `!p` flips its lowest bit.
+        let probe = probe_of(value)?;
+        let tag = match op {
+            UnaryOp::Negate => probe.tag.checked_neg()?,
+            UnaryOp::Not => probe.tag ^ 1,
+        };
+        Some(Ok(Value::Native(NativeHandle::new(OdsProbe { tag }))))
+    }
+
+    fn bitwise_op(&self, op: &BitwiseOp, lhs: &Value, rhs: &Value) -> Option<Result<Value, String>> {
+        if let Some(result) = series::bitwise_op(op, lhs, rhs) {
+            return Some(result);
+        }
+        let (a, b) = (probe_of(lhs)?, probe_of(rhs)?);
+        let tag = match op {
+            BitwiseOp::And => a.tag & b.tag,
+            BitwiseOp::Or => a.tag | b.tag,
+            BitwiseOp::Xor => a.tag ^ b.tag,
+            _ => return None,
+        };
+        Some(Ok(Value::Native(NativeHandle::new(OdsProbe { tag }))))
     }
 }
 

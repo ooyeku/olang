@@ -439,6 +439,10 @@ pub enum BinaryOp {
     Or,
     /// `a ?? b`: `b` when `a` is `()`, else `a` — `b` evaluated only then.
     Coalesce,
+    /// `a @ b`: the matrix product, defined only by native values (the
+    /// parser builds it as a call of `parser::MATMUL_BUILTIN`, which offers
+    /// it to the operands' module through `native::matmul`).
+    MatMul,
 }
 
 impl BinaryOp {
@@ -460,6 +464,7 @@ impl BinaryOp {
             BinaryOp::And => "&&",
             BinaryOp::Or => "||",
             BinaryOp::Coalesce => "??",
+            BinaryOp::MatMul => "@",
         }
     }
 }

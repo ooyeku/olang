@@ -282,14 +282,23 @@ A function is eligible when its body uses only the subset the VM implements:
 - the bitwise operators (`& | ^ << >>`), natively on Ints
 - map and object spreads (`#{ ...m, "k": v }`)
 - `raise(message)`
-- method calls (`value.m(..)`) on pure receiver expressions — locals,
-  field chains, literals. A `CallMethod` instruction mirrors the
-  interpreter's dispatch exactly: struct fields take precedence (called
-  without self), then a direct `impl` for the receiver's runtime type,
-  then the type's traits in registration order for a default; the
+- method calls (`value.m(..)`) on any receiver expression, evaluated
+  once before the arguments as the interpreter evaluates it (chains like
+  `s.fill_null(0.0).sum()` included). A `CallMethod` instruction mirrors
+  the interpreter's dispatch exactly: struct fields take precedence
+  (called without self), then a direct `impl` for the receiver's runtime
+  type, then the type's traits in registration order for a default, then
+  a native value's module function (`s.sum()` is `ods.sum(s)`); the
   resolved method runs compiled when its body compiles and bridges
-  otherwise. Late `impl` declarations invalidate compiled functions so
-  new types dispatch correctly
+  otherwise. Named arguments ride in the instruction and bind when the
+  receiver says what the method is. Late `impl` declarations invalidate
+  compiled functions so new types dispatch correctly
+- named arguments to a native builtin (`ods.rolling(s, window: 2, agg:
+  "mean")`): the signature's plan (`native_sig::plan`, the interpreter's
+  own binding) lays them out as the positional call at compile time —
+  defaults as constants, named options as one map — so a named call
+  costs what the positional one does. A name the plan refuses refuses
+  the function, and the interpreter raises its error
 - calls through function *values*: parameters and locals holding
   functions (`f(x)` where `f` is a parameter — locals shadow builtins,
   exactly as interpreted), curried calls (`g(a)(b)`), immediately invoked
@@ -313,10 +322,8 @@ Anything else causes the function to stay interpreted:
 
 - *assigning* to a global (reads bake as snapshot constants; a write
   would need the interpreter's environment)
-- method calls on *effectful* receiver expressions (`make_thing().m(..)`):
-  the interpreter's dispatch fallthrough re-evaluates the receiver, which
-  the VM will not replicate for an expression with side effects — pure
-  receivers compile (see above)
+- named arguments to a user function, or to a builtin with no
+  registered parameters
 - a free identifier absent from the function's closure — the interpreter
   would resolve it through the caller's runtime scope chain, which no
   compile-time snapshot can represent
@@ -901,11 +908,10 @@ the differential suites when changing the VM.
 
 These are real boundaries, stated so you can predict them:
 
-1. **Method calls on *effectful* receiver expressions stay interpreted.**
-   `make_thing().m(..)` refuses because the interpreter's dispatch
-   fallthrough re-evaluates the receiver, which the VM will not replicate
-   for an expression with side effects. Pure receivers — locals, field
-   chains, literals — compile.
+1. **Named arguments to a user function stay interpreted.** A call
+   naming a user function's parameters runs on the interpreter, which
+   binds names and evaluates defaults in the callee's scope; a native
+   builtin's names compile (above).
 2. ***Assigning* to a global is uncompiled** (reads bake as snapshot
    constants). Background tasks (`spawn`) and
    `par for` stay interpreted — the compiler refuses the parallel loop

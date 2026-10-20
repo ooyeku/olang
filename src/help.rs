@@ -127,6 +127,13 @@ impl HelpSystem {
         };
         help_system.initialize_documentation();
         help_system.initialize_tutorials();
+        // A native builtin's signature names its parameters, defaults and
+        // options as a call may name them (L1): shown as registered.
+        for sig in crate::native_sig::all() {
+            if let Some(doc) = help_system.functions.get_mut(sig.full) {
+                doc.syntax = sig.display();
+            }
+        }
         help_system
     }
 

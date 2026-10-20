@@ -407,6 +407,14 @@ impl Interpreter {
         op: UnaryOp,
         operand: Value,
     ) -> Result<Value, InterpreterError> {
+        // A native value (a Series, a column expression) gets first
+        // refusal, as on a binary operator; the VM's Neg and Not ask the
+        // same hook.
+        if let Value::Native(_) = operand
+            && let Some(result) = crate::native::unary_op_hook(&op, &operand)
+        {
+            return result.map_err(|message| InterpreterError::RuntimeError { message });
+        }
         match (op, operand) {
             (UnaryOp::Negate, Value::Integer(n)) => {
                 n.checked_neg()

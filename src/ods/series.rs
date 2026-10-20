@@ -110,6 +110,15 @@ impl NativeObject for OdsSeries {
         self
     }
 
+    /// `len(s)`: the element count, without forcing a pending chain.
+    fn length(&self) -> Option<usize> {
+        Some(match (&self.pending, self.cell.get()) {
+            (_, Some(s)) => s.len(),
+            (Some((_, len, _)), None) => *len,
+            (None, None) => self.series().len(),
+        })
+    }
+
     /// `s[3]` is the element, `s[-1]` counts from the end — the same rule
     /// lists and strings already follow, so a column reads like the list
     /// it stands in for. Nulls come back as unit.
@@ -1181,6 +1190,22 @@ pub fn binary_op(
         }
         _ => None,
     }
+}
+
+/// `-s`, `!mask` on a Series (L3). The hook's seam: D1's expression
+/// engine defines the operators (negation, mask negation with nulls kept).
+pub fn unary_op(_op: &crate::ast::UnaryOp, _v: &Value) -> Option<Result<Value, String>> {
+    None
+}
+
+/// `a & b`, `a | b`, `a ^ b` on Bool Series (L3). The hook's seam: D1's
+/// expression engine defines the mask algebra (Kleene nulls).
+pub fn bitwise_op(
+    _op: &crate::ast::BitwiseOp,
+    _lhs: &Value,
+    _rhs: &Value,
+) -> Option<Result<Value, String>> {
+    None
 }
 
 /// Convenience used by tests: wrap a series value.

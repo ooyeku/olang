@@ -352,12 +352,16 @@ fn want_row(func: &str, row: &Value) -> Result<Vec<f64>, String> {
     }
 }
 
-pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
+pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
     let expected = FUNCTIONS
         .iter()
         .find(|(n, _)| *n == func)
         .map(|(_, a)| *a)
         .expect("caller checked membership");
+    // The options map may be left off: the defaults (`plot.line(x, y)`).
+    if args.len() + 1 == expected && !matches!(func, "ramp" | "describe") {
+        args.push(Value::Map(std::sync::Arc::new(crate::ast::ValueMap::default())));
+    }
     if args.len() != expected {
         return Err(format!(
             "plot.{} expects {} arguments, got {}",

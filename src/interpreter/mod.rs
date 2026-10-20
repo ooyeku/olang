@@ -1460,6 +1460,10 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     /// Resolve a method for `type_name`: a concrete impl first, then any
     /// default from a trait that type implements.
     fn lookup_method(&self, type_name: &str, method: &str) -> Option<Function> {
+        // No impls at all (most data code): no keys to build.
+        if self.trait_impls.is_empty() && self.trait_defaults.is_empty() {
+            return None;
+        }
         if let Some(f) = self
             .trait_impls
             .get(&(type_name.to_string(), method.to_string()))
@@ -1871,6 +1875,11 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 // the receiver's runtime type, with the receiver passed as
                 // `self`. Struct fields take precedence, preserving field
                 // access that happens to hold a callable.
+                //
+                // The receiver is evaluated once: the field read that is
+                // the callee comes from the same value (it was evaluated a
+                // second time, which an effectful receiver could observe).
+                let mut read_callee = None;
                 if let Expr::FieldAccess { object, field } = callee.as_ref() {
                     // A receiver that is a module's member the module
                     // lacks (`collections.headp.new()`) raises naming the
@@ -1896,6 +1905,27 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                         }
                         return self.call_function(Value::Function(Arc::new(method)), arg_values);
                     }
+                    // A native value's method (L2): `s.exp()` is
+                    // `ods.exp(s)`, with no `impl` of the name for its type.
+                    if !is_struct_field
+                        && let Some((home, type_name)) = crate::native_sig::method_receiver(&receiver)
+                    {
+                        let Some(full) = crate::native_sig::method_target(home, type_name, field)
+                        else {
+                            if matches!(receiver, Value::Native(_)) {
+                                return Err(InterpreterError::TypeError {
+                                    message: crate::native_sig::no_method(type_name, field),
+                                });
+                            }
+                            // A fit (a map) without the method: the map's
+                            // own error below.
+                            return Err(InterpreterError::TypeError {
+                                message: crate::ast::no_key_or_method(&receiver.type_name(), field),
+                            });
+                        };
+                        let args = self.native_method_args(full, receiver, arguments)?;
+                        return self.call_builtin_named(full, args);
+                    }
                     // A map without the key, and no method of the name:
                     // reading the key would give `()`, and calling that
                     // would blame the call, not the missing key.
@@ -1912,9 +1942,13 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                             message: module_member_miss(field, fields.keys().map(|k| k.as_str())),
                         });
                     }
+                    read_callee = Some(self.field_of(receiver, field)?);
                 }
 
-                let callee_value = self.eval_expr(callee)?;
+                let callee_value = match read_callee {
+                    Some(v) => v,
+                    None => self.eval_expr(callee)?,
+                };
 
                 // The name being called, for the "is an Int, not a
                 // function" message — resolving the argument slots is
@@ -1925,6 +1959,14 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     Expr::LocalRef { name, .. } => Some(name.clone()),
                     _ => None,
                 };
+                // A builtin called with names (L1): bound to positions by
+                // its signature, then called as the positional call.
+                if let Value::Builtin(b) = &callee_value
+                    && arguments.iter().any(|a| matches!(a, Argument::Named { .. }))
+                {
+                    let args = self.bind_builtin_args(&b.name, Vec::new(), arguments)?;
+                    return self.call_builtin_named(&b.name, args);
+                }
                 let arg_slots = self
                     .resolve_argument_slots(&callee_value, arguments)
                     .map_err(|e| Self::name_uncallable(e, callee_name.as_deref()))?;
@@ -1990,6 +2032,15 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                         // The piped value fills the first parameter, so resolve
                         // the explicit arguments against the remaining ones —
                         // otherwise `5 |> add(3)` errors on "missing" param.
+                        // A builtin called with names: its names bind
+                        // with the piped value first (L1).
+                        if let Value::Builtin(b) = &callee_value
+                            && arguments.iter().any(|a| matches!(a, Argument::Named { .. }))
+                        {
+                            let name = b.name.clone();
+                            let args = self.bind_builtin_args(&name, vec![left_value], arguments)?;
+                            return self.call_function(callee_value, args);
+                        }
                         let resolve_target = match &callee_value {
                             Value::Function(func) if !func.parameters.is_empty() => {
                                 let mut shifted = (**func).clone();
@@ -2233,6 +2284,13 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             Expr::BitwiseOp { left, op, right } => {
                 let left_val = self.eval_expr(left)?;
                 let right_val = self.eval_expr(right)?;
+                // Masks: `a & b` on Bool Series, through the owning
+                // module (the VM's Bitwise asks the same hook).
+                if (matches!(left_val, Value::Native(_)) || matches!(right_val, Value::Native(_)))
+                    && let Some(result) = crate::native::bitwise_op_hook(op, &left_val, &right_val)
+                {
+                    return result.map_err(|message| InterpreterError::RuntimeError { message });
+                }
 
                 match (left_val, right_val) {
                     (Value::Integer(l), Value::Integer(r)) => {
@@ -4707,6 +4765,10 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             // A field of `()` is `()`: an absent record's field is absent
             // too, so `s.pp.cur` reads `()` when `s.pp` is.
             Value::Unit => Ok(Value::Unit),
+            // A native value's field (a Frame's column), unless the name
+            // is one of its methods (L6).
+            Value::Native(ref h) => crate::native::field_hook(h, field)
+                .map_err(|message| InterpreterError::RuntimeError { message }),
             _ => Err(InterpreterError::TypeError {
                 message: format!("Cannot access field '{}' on non-struct value", field),
             }),
@@ -5505,6 +5567,86 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         }
     }
 
+    /// A builtin call's arguments with names bound to positions: `lead`
+    /// (a piped value, a method's receiver) first, then the written ones,
+    /// evaluated in the order written.
+    fn bind_builtin_args(
+        &mut self,
+        full: &str,
+        lead: Vec<Value>,
+        arguments: &[Argument],
+    ) -> Result<Vec<Value>, InterpreterError> {
+        let mut vals = lead;
+        vals.reserve(arguments.len());
+        let mut first_named = None;
+        for (k, arg) in arguments.iter().enumerate() {
+            match arg {
+                Argument::Positional(expr) => {
+                    if first_named.is_some() {
+                        return Err(InterpreterError::RuntimeError {
+                            message: "Positional arguments cannot come after named arguments"
+                                .to_string(),
+                        });
+                    }
+                    vals.push(self.eval_expr(expr)?);
+                }
+                Argument::Named { value, .. } => {
+                    first_named.get_or_insert(k);
+                    vals.push(self.eval_expr(value)?);
+                }
+            }
+        }
+        let Some(first) = first_named else {
+            return Ok(vals);
+        };
+        let n_pos = vals.len() - (arguments.len() - first);
+        let name_at = |j: usize| match &arguments[first + j] {
+            Argument::Named { name, .. } => name.as_str(),
+            Argument::Positional(_) => "",
+        };
+        crate::native_sig::bind_values(full, vals, n_pos, &name_at)
+            .map_err(|message| InterpreterError::RuntimeError { message })
+    }
+
+    /// A native method's arguments: the receiver, then the call's.
+    fn native_method_args(
+        &mut self,
+        full: &str,
+        receiver: Value,
+        arguments: &[Argument],
+    ) -> Result<Vec<Value>, InterpreterError> {
+        if arguments.iter().all(|a| matches!(a, Argument::Positional(_))) {
+            let mut args = Vec::with_capacity(arguments.len() + 1);
+            args.push(receiver);
+            for arg in arguments {
+                if let Argument::Positional(e) = arg {
+                    args.push(self.eval_expr(e)?);
+                }
+            }
+            return Ok(args);
+        }
+        self.bind_builtin_args(full, vec![receiver], arguments)
+    }
+
+    /// Call a builtin by its full name: what calling its value does,
+    /// without building the value.
+    pub(crate) fn call_builtin_named(
+        &mut self,
+        full: &str,
+        args: Vec<Value>,
+    ) -> Result<Value, InterpreterError> {
+        if self.call_depth >= self.max_call_depth {
+            return Err(InterpreterError::RuntimeError {
+                message: format!(
+                    "Maximum call depth ({}) exceeded - possible infinite recursion or very deep call stack",
+                    self.max_call_depth
+                ),
+            });
+        }
+        let builtin_functions = self.builtin_functions.clone();
+        BuiltinFunctions::call(&builtin_functions, full, args, self)
+    }
+
     /// Resolve arguments (both positional and named) for function calls.
     /// Produces one slot per parameter position: `Given` for provided
     /// values (named arguments moved to their positions), `FromDefault`
@@ -5516,17 +5658,10 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         callee: &Value,
         arguments: &[Argument],
     ) -> Result<Vec<ArgSlot>, InterpreterError> {
-        // Get function parameter information if available
-        let parameters = match callee {
-            Value::Function(func) => Some(&func.parameters),
-            _ => None, // For builtin functions and other callables, use positional-only
-        };
-
-        let mut resolved_args: Vec<ArgSlot> = Vec::new();
+        let mut positional: Vec<Value> = Vec::new();
         // Vec keeps source order — a HashMap would append named args to
         // builtins in nondeterministic order
         let mut named_args: Vec<(String, Value)> = Vec::new();
-        let mut positional_count = 0;
 
         // First pass: collect positional and named arguments
         for arg in arguments {
@@ -5538,8 +5673,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                                 .to_string(),
                         });
                     }
-                    resolved_args.push(ArgSlot::Given(self.eval_expr(expr)?));
-                    positional_count += 1;
+                    positional.push(self.eval_expr(expr)?);
                 }
                 Argument::Named { name, value } => {
                     let evaluated_value = self.eval_expr(value)?;
@@ -5552,6 +5686,43 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 }
             }
         }
+        Self::slots_for(callee, positional, named_args)
+    }
+
+    /// Call `callee` with positional and named values: a named call whose
+    /// arguments are already evaluated (the bytecode tier's method call
+    /// with names, through the bridge).
+    pub fn call_value_named(
+        &mut self,
+        callee: Value,
+        positional: Vec<Value>,
+        named: Vec<(String, Value)>,
+    ) -> Result<Value, InterpreterError> {
+        if let Value::Builtin(b) = &callee
+            && !named.is_empty()
+        {
+            let args = crate::native_sig::bind(&b.name, positional, named)
+                .map_err(|message| InterpreterError::RuntimeError { message })?;
+            return self.call_builtin_named(&b.name.clone(), args);
+        }
+        let slots = Self::slots_for(&callee, positional, named)?;
+        self.call_function_slots(callee, slots)
+    }
+
+    /// The slots of a call from its evaluated arguments: named arguments
+    /// moved to their parameters' positions, holes left for defaults.
+    fn slots_for(
+        callee: &Value,
+        positional: Vec<Value>,
+        mut named_args: Vec<(String, Value)>,
+    ) -> Result<Vec<ArgSlot>, InterpreterError> {
+        // Get function parameter information if available
+        let parameters = match callee {
+            Value::Function(func) => Some(&func.parameters),
+            _ => None, // For builtin functions and other callables, use positional-only
+        };
+        let positional_count = positional.len();
+        let mut resolved_args: Vec<ArgSlot> = positional.into_iter().map(ArgSlot::Given).collect();
 
         // Second pass: resolve named arguments to correct positions (if we have parameter info)
         if let Some(params) = parameters {
@@ -5599,17 +5770,20 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     ),
                 });
             }
-        } else if let (Value::Builtin(builtin), Some((name, _))) = (callee, named_args.first()) {
-            // A builtin's parameters have no names a call could use; read
-            // as positional, `bogus: "0"` landed in whatever slot came
-            // next. Refused, so honouring names later stays additive.
-            return Err(InterpreterError::RuntimeError {
-                message: format!(
-                    "{} takes its arguments by position: named argument '{}' is not accepted \
-                     by a builtin",
-                    builtin.name, name
-                ),
-            });
+        } else if let (Value::Builtin(builtin), false) = (callee, named_args.is_empty()) {
+            // A builtin's names come from its registered signature
+            // (`native_sig`): they bind to positions before dispatch. One
+            // without a signature takes its arguments by position.
+            let positional = resolved_args
+                .into_iter()
+                .map(|s| match s {
+                    ArgSlot::Given(v) => v,
+                    ArgSlot::FromDefault => Value::Unit,
+                })
+                .collect();
+            return crate::native_sig::bind(&builtin.name, positional, named_args)
+                .map(|args| args.into_iter().map(ArgSlot::Given).collect())
+                .map_err(|message| InterpreterError::RuntimeError { message });
         } else {
             // Other callables (constructors, callable modules) take the
             // values in order.

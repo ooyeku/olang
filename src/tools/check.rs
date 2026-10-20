@@ -3979,6 +3979,128 @@ impl Checker {
         self.scopes.iter().any(|s| s.contains_key(name)) || self.sigs.contains_key(name)
     }
 
+    // ── native values: Series, Frame, Date (L1, L2) ───────────────────
+
+    /// The native type a checker type is, when it is one whose methods
+    /// and signatures `native_sig` knows (and the file declares no type
+    /// of that name).
+    fn native_kind(&self, t: &SType) -> Option<&'static str> {
+        match t {
+            SType::Named(n) if !self.structs.contains_key(n) => match n.as_str() {
+                "Series" => Some("Series"),
+                "Frame" => Some("Frame"),
+                "Date" => Some("Date"),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// The builtin a call names: `module.f(…)` on a stdlib module the file
+    /// does not rebind, or `value.m(…)` on a native value with no `impl`
+    /// of `m` in the file (its method, or Err with the type when it has
+    /// none). `None` when the call is neither.
+    fn native_target(&self, callee: &Expr) -> Option<Result<&'static str, &'static str>> {
+        let Expr::FieldAccess { object, field } = callee else {
+            return None;
+        };
+        if let Expr::Identifier(module) = object.as_ref()
+            && !self.bound(module)
+            && !self.user_bound.contains(module)
+        {
+            let full = format!("{}.{}", module, field);
+            if let Some(s) = crate::native_sig::sig(&full) {
+                return Some(Ok(s.full));
+            }
+        }
+        let kind = self.native_kind(&self.infer(object))?;
+        if self.methods.contains(field) {
+            return None;
+        }
+        let home = crate::native_sig::home_of(kind)?;
+        Some(crate::native_sig::method_target(home, kind, field).ok_or(kind))
+    }
+
+    /// `module.f(…)` on a stdlib module the file does not rebind.
+    fn is_module_call(&self, callee: &Expr) -> bool {
+        matches!(callee, Expr::FieldAccess { object, field }
+            if matches!(object.as_ref(), Expr::Identifier(m)
+                if !self.bound(m)
+                    && !self.user_bound.contains(m)
+                    && crate::native_sig::sig(&format!("{}.{}", m, field)).is_some()))
+    }
+
+    /// The native kind a call answers: `lead` is a piped value's kind
+    /// (`Some` inside a pipeline).
+    fn native_call_kind(
+        &self,
+        callee: &Expr,
+        arguments: &[Argument],
+        lead: Option<Option<&'static str>>,
+    ) -> Option<&'static str> {
+        let full = self.native_target(callee)?.ok()?;
+        let method_receiver = match callee {
+            Expr::FieldAccess { object, .. } if !self.is_module_call(callee) => {
+                self.native_kind(&self.infer(object))
+            }
+            _ => None,
+        };
+        let first = match (method_receiver, lead) {
+            (Some(k), _) => Some(k),
+            (None, Some(k)) => k,
+            (None, None) => match arguments.first() {
+                Some(Argument::Positional(e)) => self.native_kind(&self.infer(e)),
+                _ => None,
+            },
+        };
+        crate::native_sig::returns(full, first).filter(|k| *k != "Model")
+    }
+
+    /// A call of a native builtin or method: an unknown method, and names
+    /// the signature does not take, raise at run time — said here first.
+    fn check_native_call(
+        &mut self,
+        callee: &Expr,
+        arguments: &[Argument],
+        lead: usize,
+        span: (u32, u32),
+    ) {
+        let Some(target) = self.native_target(callee) else {
+            return;
+        };
+        let full = match target {
+            Ok(full) => full,
+            Err(kind) => {
+                if let Expr::FieldAccess { field, .. } = callee {
+                    let message = crate::native_sig::no_method(kind, field);
+                    self.diag(span, true, message);
+                }
+                return;
+            }
+        };
+        let names: Vec<&str> = arguments
+            .iter()
+            .filter_map(|a| match a {
+                Argument::Named { name, .. } => Some(name.as_str()),
+                Argument::Positional(_) => None,
+            })
+            .collect();
+        if names.is_empty()
+            || arguments
+                .iter()
+                .skip_while(|a| matches!(a, Argument::Positional(_)))
+                .any(|a| matches!(a, Argument::Positional(_)))
+        {
+            return;
+        }
+        // A method's receiver is its first argument.
+        let receiver = usize::from(!self.is_module_call(callee));
+        let n_pos = lead + receiver + arguments.len() - names.len();
+        if let Err(message) = crate::native_sig::plan(full, n_pos, &names) {
+            self.diag(span, true, message);
+        }
+    }
+
     // ── inference: conservative, Unknown-biased ────────────────────────
 
     fn infer(&self, expr: &Expr) -> SType {
@@ -4070,7 +4192,40 @@ impl Checker {
                             .unwrap_or(SType::Unknown);
                     }
                 }
-                SType::Unknown
+                self.native_call_kind(callee, arguments, None)
+                    .map(|k| SType::Named(k.to_string()))
+                    .unwrap_or(SType::Unknown)
+            }
+            Expr::Pipeline { left, right } => {
+                let lead = self.infer(left);
+                let lead = self.native_kind(&lead);
+                let found = match right.as_ref() {
+                    Expr::Call { callee, arguments } => {
+                        self.native_call_kind(callee, arguments, Some(lead))
+                    }
+                    callee @ Expr::FieldAccess { .. } => {
+                        self.native_call_kind(callee, &[], Some(lead))
+                    }
+                    _ => None,
+                };
+                found
+                    .map(|k| SType::Named(k.to_string()))
+                    .unwrap_or(SType::Unknown)
+            }
+            // A Frame's column (L6): `f.price`, unless `price` is a method.
+            Expr::FieldAccess { object, field }
+                if self.native_kind(&self.infer(object)) == Some("Frame")
+                    && crate::native_sig::method_target("ods", "Frame", field).is_none() =>
+            {
+                SType::Named("Series".to_string())
+            }
+            Expr::Index { object, index }
+                if self.native_kind(&self.infer(object)) == Some("Frame") =>
+            {
+                match index.as_ref() {
+                    Expr::String(_) => SType::Named("Series".to_string()),
+                    _ => SType::Unknown,
+                }
             }
             Expr::FieldAccess { object, field } => match self.infer(object) {
                 SType::Record(fields) => fields
@@ -4111,6 +4266,16 @@ impl Checker {
             Expr::BinaryOp { left, op, right } => {
                 use crate::ast::BinaryOp as B;
                 let (l, r) = (self.infer(left), self.infer(right));
+                // A Series on either side of arithmetic or a comparison
+                // answers a Series (elementwise; a comparison is a mask) —
+                // `==` between two Series is the structural Bool.
+                let series = |t: &SType| self.native_kind(t) == Some("Series");
+                if (series(&l) || series(&r))
+                    && !matches!(op, B::And | B::Or | B::Coalesce | B::MatMul)
+                    && !(matches!(op, B::Equal | B::NotEqual) && series(&l) && series(&r))
+                {
+                    return SType::Named("Series".to_string());
+                }
                 match op {
                     B::Equal
                     | B::NotEqual
@@ -4120,6 +4285,8 @@ impl Checker {
                     | B::GreaterThanEqual
                     | B::And
                     | B::Or => SType::Bool,
+                    // defined by native values alone
+                    B::MatMul => SType::Unknown,
                     // the left's type when it is not `()`, else the right's
                     B::Coalesce => {
                         if l == r {
@@ -4144,7 +4311,11 @@ impl Checker {
             }
             Expr::UnaryOp { op, operand } => {
                 use crate::ast::UnaryOp as U;
-                match (op, self.infer(operand)) {
+                let t = self.infer(operand);
+                if self.native_kind(&t) == Some("Series") {
+                    return t;
+                }
+                match (op, t) {
                     (U::Negate, SType::Int) => SType::Int,
                     (U::Negate, SType::Float) => SType::Float,
                     (U::Not, _) => SType::Bool,
@@ -4469,6 +4640,7 @@ impl Checker {
         }
         if let Expr::Call { callee, arguments } = expr {
             self.check_builtin_arity(callee, arguments, span);
+            self.check_native_call(callee, arguments, 0, span);
         }
         // Check this node, then walk its children.
         if let Expr::Call { callee, arguments } = expr
@@ -4623,9 +4795,13 @@ impl Checker {
                 // program cannot want: always false (`!=` always true). Int
                 // and Float compare numerically, so they are one kind here.
                 use crate::ast::BinaryOp as B;
+                // A native value defines its own `==` (a Series against a
+                // scalar is a mask), so it is never "always false".
+                let (lt, rt) = (self.infer(left), self.infer(right));
                 if matches!(op, B::Equal | B::NotEqual)
-                    && let (Some(a), Some(b)) =
-                        (self.infer(left).base_name(), self.infer(right).base_name())
+                    && self.native_kind(&lt).is_none()
+                    && self.native_kind(&rt).is_none()
+                    && let (Some(a), Some(b)) = (lt.base_name(), rt.base_name())
                     && a != b
                     && !(matches!(a, "Int" | "Float") && matches!(b, "Int" | "Float"))
                 {
@@ -4652,6 +4828,9 @@ impl Checker {
                 // right-hand call, so that call's arity can't be judged
                 // from its written arguments. Walk into it without the
                 // call-level checks.
+                if let Expr::Call { callee, arguments } = right.as_ref() {
+                    self.check_native_call(callee, arguments, 1, span);
+                }
                 self.walk_children(right, span);
             }
             Expr::UnaryOp { operand, .. } => self.check_expr(operand, span),
@@ -5426,6 +5605,28 @@ mod tests {
         let d = check("fn f(a, b) = a\nf(1)\n");
         assert_eq!(d.len(), 1);
         assert!(d[0].message.contains("Missing required argument: b"));
+    }
+
+    #[test]
+    fn native_methods_and_names_are_checked() {
+        let src = "let s = ods.series([1.0])\nlet f = ods.frame([[\"a\", s]])\n";
+        // a method the value lacks, followed through bindings and chains
+        let d = check(&format!("{src}s.nope()\nf.a.fill_null(0.0).nopes()\n"));
+        assert_eq!(d.len(), 2, "{d:?}");
+        assert!(d[0].message.contains("a Series has no method 'nope'"));
+        // names the signature does not take; a pipeline's left counts
+        let d = check(&format!(
+            "{src}ods.rolling(s, windw: 2, agg: \"m\")\ns |> ods.rolling(window: 2, agg: \"m\")\nf.sort_by(\"a\", descending: true)\n"
+        ));
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert!(d[0].message.contains("no parameter named 'windw'"));
+        // an impl of the name, or a rebound module, is the program's own
+        let d = check(&format!(
+            "{src}trait T {{ fn nope(self) }}\nimpl T for Series {{ fn nope(self) = 1 }}\ns.nope()\n"
+        ));
+        assert!(d.is_empty(), "{d:?}");
+        let d = check("let ods = #{ \"rolling\": (s, w) => s }\nods.rolling(1, w: 2)\n");
+        assert!(d.iter().all(|x| !x.message.contains("no parameter")), "{d:?}");
     }
 
     #[test]

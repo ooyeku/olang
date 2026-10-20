@@ -687,7 +687,7 @@ From loosest to tightest binding:
 | 9 | `&` | bitwise and |
 | 10 | `<<` `>>` | shifts |
 | 11 | `+` `-` | additive |
-| 12 | `*` `/` `%` | multiplicative |
+| 12 | `*` `/` `%` `@` | multiplicative; `@` is the matrix product |
 | 13 | `-` `!` (prefix) | unary |
 | 14 | `f(x)` `.field` `[i]` `?` | call, access, index, try |
 
@@ -907,6 +907,29 @@ On integers: and `&`, or `|`, xor `^`, shifts `<<` `>>`:
 ```olang
 println(`${6 & 3} ${6 | 3} ${6 ^ 3}`)
 println(`${1 << 4} ${32 >> 2}`)
+```
+
+### Operators on native values
+
+A value supplied by a module implemented in Rust (a Series, a Frame, a
+Date) may define what an operator means for it: every binary operator,
+unary `-` and `!`, and `&`, `|` and `^`. The module is asked first,
+whenever an operand is one of its values, on every tier alike; when it
+declines, the operator's ordinary error stands. That is how `s * 2.0`
+scales a column, `-s` negates one, and `a & b` combines two masks.
+
+`@` is the matrix product. No built-in value defines it, so it exists
+only for native values: two Series give their dot product, and a
+Matrix its product. Anything else raises `` `@` needs a Matrix or Series
+on each side ``. It binds like `*`. Unlike every other operator it
+never continues a line: a line that starts with `@` is a macro call or
+a decorator, as it always was.
+
+```olang
+let w = ods.series([0.5, 0.25, 0.25])
+let x = ods.series([4.0, 8.0, 12.0])
+println(to_string(w @ x))          // 7.0
+println(to_string(w @ x * 2.0))    // 14.0: `@` binds like `*`
 ```
 
 ### String and list `+`
@@ -1554,9 +1577,28 @@ println(window(5, label: "custom"))
 
 Parameters without defaults are required; a call must cover them
 positionally or by name, and positional arguments may not follow named
-ones. Names are for functions written in olang: a builtin
-(`str.pad_start`, `map`) takes its arguments by position, and a named
-argument to one is an error naming it. Lambdas take defaults with the same rules. Functions with
+ones. Lambdas take defaults with the same rules.
+
+A builtin takes names when its module registers its parameters: the
+data stack (`ods`, `stats`, `plot`, `learn`), a Date's functions, and
+every stdlib function with an options map (`proc.spawn`, `gui.open`,
+`fs.scan`, …). The names map onto positions before the call, so the
+function itself is unchanged. A short call takes the registered
+defaults (`ods.head(f)` is `ods.head(f, 10)`), and a name that is no
+parameter goes into the function's trailing options map, merged over a
+map given by position. `:help` and the editor show each signature:
+
+```olang
+let s = ods.series([3.0, 1.0, 4.0, 1.0, 5.0])
+println(to_string(ods.rolling(s, window: 2, agg: "max")))
+println(to_string(stats.norm.cdf(1.0, std: 2.0)))     // mean defaults to 0.0
+let chart = plot.line(s, s, title: "doubled", width: 400)   // was #{ "title": … }
+println(to_string(str.contains(chart, "<svg")))
+```
+
+An unknown name raises, naming the ones the function takes; a builtin
+with no registered parameters (`map`, `str.pad_start`) takes its
+arguments by position, and a name given to one is an error naming it. Functions with
 defaults run on every tier: a compiled call site fills literal
 defaults as constants, and any other omitted default is evaluated by
 the reference semantics — the two are indistinguishable by
@@ -1912,6 +1954,47 @@ Field access wins over methods: if a struct has a field `value`, `x.value`
 is the field even if a trait method of the same name exists. A map's
 key wins the same way: `m.value()` calls the function stored under the
 key `"value"` when the map has it, and the method otherwise.
+
+### Methods of native values
+
+A native value's methods are its module's functions: `s.fill_null(0.0)`
+is `ods.fill_null(s, 0.0)`, `d.weekday()` is `dates.weekday(d)`. One
+function, three spellings — `ods.sum(s)`, `s |> ods.sum`, `s.sum()` —
+so the reference, `:help` and the checker describe one thing. A
+function is a method of the values its first parameter takes (a
+Series' methods are the column functions, a Frame's the table verbs),
+and a Series also borrows `stats` and `plot` (`s.describe()`,
+`s.hist()`). A method takes names as its function does:
+
+```olang
+let f = ods.read_csv("city,price\nOslo,4.0\nLima,2.5\nRome,3.5\n")
+println(to_string(f.sort_by("price", descending: true).head(2).n_rows()))
+println(to_string(f["price"].mean()))
+```
+
+The order a method resolves in:
+
+1. a struct's field or a map's key of the name (as above);
+2. an `impl` for the value's type — `impl Summary for Series` wins over
+   the module's function of the same name;
+3. the value's module, then the modules it borrows from.
+
+A fit from `learn` is a map whose `model` is a native model, and it
+takes the model's methods: `fit.predict(test)` is
+`learn.predict(fit, test)`. A method the value does not have raises
+naming its type.
+
+A field read on a native value is the value's own: `f.price` is the
+column `f["price"]`. A method's name always means the method, so a
+column named like one (`sum`, `head`) is read with `f["sum"]`, and
+`f.head` without a call raises saying it is a method.
+
+```olang
+let f = ods.read_csv("price,sum\n4.0,1\n2.5,2\n")
+println(to_string(f.price.max()))     // the column
+println(to_string(f["sum"].max()))    // a column named like a method
+println(to_string(len(f)))            // len counts a Frame's rows, a Series' values
+```
 
 ## Error handling
 

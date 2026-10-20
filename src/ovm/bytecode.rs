@@ -858,14 +858,19 @@ pub enum Instruction {
     /// `m` takes precedence (called without self); otherwise the method
     /// resolves through the trait registries on the receiver's runtime
     /// type and is called with the receiver prepended as self; otherwise
-    /// the field-access error. Only compiled when the receiver expression
-    /// is a plain local, so the interpreter's re-evaluation quirk on the
-    /// field path is unobservable.
+    /// the field-access error. A native value's method (L2) resolves to
+    /// its module's function. The receiver is evaluated once, before the
+    /// arguments, as the interpreter evaluates it.
     CallMethod {
         dst: Register,
         object: Register,
         method: String,
         args: Vec<Register>,
+        /// The names of the last `names.len()` arguments (`f.sort_by("x",
+        /// descending: true)`): bound by the callee's parameters, as the
+        /// interpreter binds them. Empty for a positional call.
+        #[serde(default)]
+        names: Vec<String>,
     },
     /// Call whatever function value the callee register holds — a
     /// parameter, a local, the result of another call. Compiled function
@@ -1949,6 +1954,10 @@ impl BytecodeVm {
     /// `Interpreter::lookup_method`, mirrored: direct impl first, then the
     /// type's traits in registration order for a default.
     fn lookup_method(&self, type_name: &str, method: &str) -> Option<&crate::ast::Function> {
+        // No impls at all (most data code): no keys to build.
+        if self.trait_impls.is_empty() && self.trait_defaults.is_empty() {
+            return None;
+        }
         if let Some(f) = self
             .trait_impls
             .get(&(type_name.to_string(), method.to_string()))
@@ -5184,6 +5193,25 @@ impl BytecodeVm {
                 Instruction::Bitwise { dst, lhs, rhs, op } => {
                     use crate::ovm::value::ValueData;
                     let (left, right) = self.execution_state.register_pair(*lhs, *rhs)?;
+                    // Masks: a native operand's module first, as the
+                    // interpreter asks it.
+                    if matches!(left.data, ValueData::Native(_))
+                        || matches!(right.data, ValueData::Native(_))
+                    {
+                        let l = left
+                            .to_ast()
+                            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
+                        let r = right
+                            .to_ast()
+                            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
+                        if let Some(result) = crate::native::bitwise_op_hook(op, &l, &r) {
+                            let value = result.map_err(BytecodeError::RuntimeError)?;
+                            self.execution_state
+                                .set_register(*dst, OvmValue::from_ast(value))?;
+                            pc += 1;
+                            continue;
+                        }
+                    }
                     let result = match (&left.data, &right.data) {
                         (ValueData::Integer(l), ValueData::Integer(r)) => {
                             let (l, r) = (*l, *r);
@@ -5663,6 +5691,7 @@ impl BytecodeVm {
                     object,
                     method,
                     args,
+                    names,
                 } => {
                     let receiver = self.execution_state.get_register(*object)?;
                     // Struct fields take precedence over methods, exactly as
@@ -5684,7 +5713,11 @@ impl BytecodeVm {
                         for arg_reg in args {
                             arg_values.push(self.execution_state.get_register(*arg_reg)?);
                         }
-                        let r = self.call_function_value(&callee, &arg_values);
+                        let r = if names.is_empty() {
+                            self.call_function_value(&callee, &arg_values)
+                        } else {
+                            self.bridge_call(&callee, &arg_values, names)
+                        };
                         arg_values.clear();
                         if self.arg_pool.len() < 64 {
                             self.arg_pool.push(arg_values);
@@ -5706,6 +5739,47 @@ impl BytecodeVm {
                             self.arg_pool.push(arg_values);
                         }
                         r?
+                    } else if let Some((home, type_name)) = Self::native_method_receiver(&receiver) {
+                        // A native value's method (L2): `s.exp()` is
+                        // `ods.exp(s)` — the interpreter's resolution.
+                        let Some(full) =
+                            crate::native_sig::method_target(home, type_name, method)
+                        else {
+                            return Err(BytecodeError::TypeError(
+                                if matches!(receiver.data, crate::ovm::value::ValueData::Native(_)) {
+                                    crate::native_sig::no_method(type_name, method)
+                                } else {
+                                    crate::ast::no_key_or_method("Map", method)
+                                },
+                            ));
+                        };
+                        let mut arg_values = self.arg_pool.pop().unwrap_or_default();
+                        arg_values.reserve(args.len() + 1);
+                        arg_values.push(receiver);
+                        for arg_reg in args {
+                            arg_values.push(self.execution_state.get_register(*arg_reg)?);
+                        }
+                        let r = if names.is_empty() {
+                            self.execute_builtin_call(full, &arg_values, false)
+                        } else {
+                            // Names bound by the signature, as the
+                            // interpreter binds them.
+                            let n_pos = arg_values.len() - names.len();
+                            match crate::native_sig::bind_values(
+                                full,
+                                std::mem::take(&mut arg_values),
+                                n_pos,
+                                &|j| names[j].as_str(),
+                            ) {
+                                Ok(vals) => self.execute_builtin_call(full, &vals, false),
+                                Err(e) => Err(BytecodeError::RuntimeError(e)),
+                            }
+                        };
+                        arg_values.clear();
+                        if self.arg_pool.len() < 64 {
+                            self.arg_pool.push(arg_values);
+                        }
+                        r?
                     } else {
                         // No field, no method: the interpreter's generic path
                         // evaluates the field access, which raises the
@@ -5714,6 +5788,18 @@ impl BytecodeVm {
                         // object) names the missing key; anything else
                         // raises the field access's own error.
                         use crate::ovm::value::ValueData;
+                        // `()`'s field is `()`, and calling it raises as
+                        // the interpreter's call of the read does.
+                        if let ValueData::Unit = receiver.data {
+                            let mut arg_values = Vec::with_capacity(args.len());
+                            for arg_reg in args {
+                                arg_values.push(self.execution_state.get_register(*arg_reg)?);
+                            }
+                            let r = self.bridge_call(&receiver, &arg_values, names)?;
+                            self.execution_state.set_register(*dst, r)?;
+                            pc += 1;
+                            continue;
+                        }
                         let keyed = match &receiver.data {
                             ValueData::Map(_) | ValueData::AstMap(_) => Some("Map"),
                             ValueData::AstStruct(_, kind) => Some(kind.type_name()),
@@ -7010,8 +7096,39 @@ impl BytecodeVm {
     }
 
     /// Execute unary operation
+    /// The home module and type a receiver takes native methods from:
+    /// `native_sig::method_receiver` over the VM's values.
+    fn native_method_receiver(receiver: &OvmValue) -> Option<(&'static str, &'static str)> {
+        use crate::ovm::value::ValueData;
+        let model = |v: Option<&OvmValue>| match v.map(|v| &v.data) {
+            Some(ValueData::Native(h)) if h.0.type_name() == "Model" => Some(("learn", "Model")),
+            _ => None,
+        };
+        match &receiver.data {
+            ValueData::Native(h) => Some((h.0.module(), h.0.type_name())),
+            ValueData::Map(m) => model(m.get("model")),
+            ValueData::AstMap(m) => match m.get("model") {
+                Some(crate::ast::Value::Native(h)) if h.0.type_name() == "Model" => {
+                    Some(("learn", "Model"))
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     fn execute_unary_op(&self, value: &OvmValue, op: UnaryOp) -> Result<OvmValue, BytecodeError> {
         use crate::ovm::value::ValueData;
+
+        // A native operand: the interpreter's hook, on the same value.
+        if let ValueData::Native(h) = &value.data
+            && let Some(result) =
+                crate::native::unary_op_hook(&op, &crate::ast::Value::Native(h.clone()))
+        {
+            return result
+                .map(OvmValue::from_ast)
+                .map_err(BytecodeError::RuntimeError);
+        }
 
         match (&value.data, &op) {
             (ValueData::Integer(a), UnaryOp::Negate) => {
@@ -7781,6 +7898,19 @@ impl BytecodeVm {
         }
 
         // Interpreter fallback: exact semantics for everything declined
+        self.bridge_call(callee, args, &[])
+    }
+
+    /// Call a function value through the interpreter, its last
+    /// `names.len()` arguments named: the bridge every call the VM
+    /// declines takes, with the run's grant and call depth.
+    fn bridge_call(
+        &mut self,
+        callee: &OvmValue,
+        args: &[OvmValue],
+        names: &[String],
+    ) -> Result<OvmValue, BytecodeError> {
+        use crate::ovm::value::ValueData;
         let _counted = bridge_stats_on().then(|| BridgeCount {
             name: match &callee.data {
                 ValueData::AstFunction(f) => format!("fn {}", f.name.as_deref().unwrap_or("<lambda>")),
@@ -7816,7 +7946,14 @@ impl BytecodeVm {
         let interpreter = self.builtin_interpreter.as_mut().expect("just ensured");
         interpreter.seed_bridge_caps(caps, trace, attributed_to);
         interpreter.set_call_depth_base(depth);
-        let result = match interpreter.call_function(callee_ast, ast_args) {
+        let outcome = if names.is_empty() {
+            interpreter.call_function(callee_ast, ast_args)
+        } else {
+            let named_vals = ast_args.split_off(ast_args.len() - names.len());
+            let named = names.iter().cloned().zip(named_vals).collect();
+            interpreter.call_value_named(callee_ast, ast_args, named)
+        };
+        let result = match outcome {
             Ok(v) => v,
             Err(e) => {
                 self.adopt_bridge_error_trace();
@@ -10259,6 +10396,11 @@ impl BytecodeVm {
             ValueData::Struct(s) if matches!(s.type_name(), "JsonObject" | "Object") => {
                 Ok(s.field(field).cloned().unwrap_or_else(OvmValue::new_unit))
             }
+            // A native value's field (a Frame's column), unless the name
+            // is one of its methods: the interpreter's rule (L6).
+            ValueData::Native(h) => crate::native::field_hook(h, field)
+                .map(OvmValue::from_ast)
+                .map_err(BytecodeError::RuntimeError),
             // A module's member read: `()` when the module lacks it, as
             // `map_get` answers (a call raises; see CallMethod).
             ValueData::Struct(s) if s.type_name() == "Module" => {
@@ -11506,7 +11648,7 @@ impl BytecodeCompiler {
                                 });
                                 return Ok(dst_reg);
                             }
-                            let arg_regs = self.compile_call_args(arguments)?;
+                            let arg_regs = self.compile_builtin_args(&builtin_name, arguments)?;
                             let dst_reg = self.register_allocator.allocate_register();
                             let pregranted = self.pregrant(&builtin_name);
                             self.emitter.instructions.push(Instruction::CallNamed {
@@ -11518,31 +11660,39 @@ impl BytecodeCompiler {
                             });
                             return Ok(dst_reg);
                         }
-                        receiver if Self::receiver_is_pure(receiver) => {
+                        // Any receiver: it is evaluated once, before the
+                        // arguments, on both tiers.
+                        _ => {
                             let object_reg = self.compile_expression(object)?;
                             let object_reg = self.shield_operand(object_reg, args_may_assign);
-                            let arg_regs = self.compile_call_args(arguments)?;
+                            let (arg_regs, names) = self.compile_method_args(arguments)?;
                             let dst_reg = self.register_allocator.allocate_register();
                             self.emitter.instructions.push(Instruction::CallMethod {
                                 dst: dst_reg,
                                 object: object_reg,
                                 method: field.clone(),
                                 args: arg_regs,
+                                names,
                             });
                             return Ok(dst_reg);
-                        }
-                        _ => {
-                            return Err(BytecodeError::CompilationFailed(
-                                "Method calls on effectful receiver expressions are not compiled in the bytecode tier"
-                                    .to_string(),
-                            ))
                         }
                     },
                     _ => Some(self.compile_expression(callee)?),
                 };
                 let callee_reg = callee_reg.map(|reg| self.shield_operand(reg, args_may_assign));
 
-                let arg_regs = self.compile_call_args(arguments)?;
+                // A stdlib module's function called with names binds them
+                // by its signature; any other callee refuses names.
+                let arg_regs = match (callee_reg, callee.as_ref()) {
+                    (None, Expr::FieldAccess { object, field }) => match object.as_ref() {
+                        Expr::Identifier(module) => {
+                            let full = format!("{}.{}", module, field);
+                            self.compile_builtin_args(&full, arguments)?
+                        }
+                        _ => self.compile_call_args(arguments)?,
+                    },
+                    _ => self.compile_call_args(arguments)?,
+                };
 
                 if let Some(callee_reg) = callee_reg {
                     let dst_reg = self.register_allocator.allocate_register();
@@ -13411,25 +13561,6 @@ impl BytecodeCompiler {
         }
     }
 
-    /// True when re-evaluating the expression is unobservable — the
-    /// interpreter's method-dispatch fallthrough re-evaluates the receiver,
-    /// so only receivers in this set may compile to CallMethod. Field
-    /// access can error, but re-evaluating reproduces the same error with
-    /// no side effects.
-    fn receiver_is_pure(expr: &Expr) -> bool {
-        match expr {
-            Expr::Identifier(_)
-            | Expr::LocalRef { .. }
-            | Expr::Integer(_)
-            | Expr::Float(_)
-            | Expr::String(_)
-            | Expr::RawString(_)
-            | Expr::Boolean(_) => true,
-            Expr::FieldAccess { object, .. } => Self::receiver_is_pure(object),
-            _ => false,
-        }
-    }
-
     /// Allocate a register holding Unit.
     /// The register a loop answers with when its body has a `break
     /// value` that ends it (`Unit` until one runs), else `None`: the loop
@@ -13938,6 +14069,129 @@ impl BytecodeCompiler {
             regs.push(reg);
         }
         Ok(regs)
+    }
+
+    /// A builtin's call arguments with names (L1): every value compiled in
+    /// the order written, then laid out as the positional call the
+    /// signature's plan gives (`native_sig::plan`, the interpreter's own
+    /// binding) — defaults as constants, named options as a map. Names are
+    /// static, so the call costs at run time what the positional one does.
+    /// A plan that fails (an unknown name, a missing argument) refuses,
+    /// and the interpreter raises its error.
+    fn compile_builtin_args(
+        &mut self,
+        full: &str,
+        arguments: &[crate::ast::Argument],
+    ) -> Result<Vec<Register>, BytecodeError> {
+        if arguments
+            .iter()
+            .all(|a| matches!(a, crate::ast::Argument::Positional(_)))
+        {
+            return self.compile_call_args(arguments);
+        }
+        let mut exprs = Vec::with_capacity(arguments.len());
+        let mut names = Vec::new();
+        for argument in arguments {
+            match argument {
+                crate::ast::Argument::Positional(e) => {
+                    if !names.is_empty() {
+                        return Err(BytecodeError::CompilationFailed(
+                            "a positional argument after a named one".to_string(),
+                        ));
+                    }
+                    exprs.push(e);
+                }
+                crate::ast::Argument::Named { name, value } => {
+                    names.push(name.as_str());
+                    exprs.push(value);
+                }
+            }
+        }
+        let n_pos = exprs.len() - names.len();
+        let slots = crate::native_sig::plan(full, n_pos, &names)
+            .map_err(BytecodeError::CompilationFailed)?;
+        let regs = self.compile_operands(&exprs)?;
+        let mut out = Vec::with_capacity(slots.len());
+        for slot in slots {
+            out.push(match slot {
+                crate::native_sig::Slot::Arg(i) => regs[i],
+                crate::native_sig::Slot::Lit(l) => {
+                    let idx = self.emitter.add_constant(OvmValue::from_ast(l.value()));
+                    let reg = self.register_allocator.allocate_register();
+                    self.emitter.instructions.push(Instruction::LoadConst {
+                        dst: reg,
+                        const_idx: idx,
+                    });
+                    reg
+                }
+                crate::native_sig::Slot::Options {
+                    base: None,
+                    entries,
+                } => {
+                    let mut pairs = Vec::with_capacity(entries.len());
+                    for (key, i) in entries {
+                        let idx = self
+                            .emitter
+                            .add_constant(OvmValue::new_string(key.to_string()));
+                        let key_reg = self.register_allocator.allocate_register();
+                        self.emitter.instructions.push(Instruction::LoadConst {
+                            dst: key_reg,
+                            const_idx: idx,
+                        });
+                        pairs.push((key_reg, regs[i]));
+                    }
+                    let reg = self.register_allocator.allocate_register();
+                    self.emitter.instructions.push(Instruction::MakeMap {
+                        dst: reg,
+                        entries: pairs,
+                    });
+                    reg
+                }
+                // Options over a map given by position: the interpreter's
+                // merge.
+                crate::native_sig::Slot::Options { base: Some(_), .. } => {
+                    return Err(BytecodeError::CompilationFailed(
+                        "named options over a positional options map".to_string(),
+                    ));
+                }
+            });
+        }
+        Ok(out)
+    }
+
+    /// A method call's arguments, in the order written, and the names of
+    /// its trailing named ones (bound when the call runs, once the
+    /// receiver says what the method is). A positional argument after a
+    /// named one refuses: the interpreter raises it.
+    fn compile_method_args(
+        &mut self,
+        arguments: &[crate::ast::Argument],
+    ) -> Result<(Vec<Register>, Vec<String>), BytecodeError> {
+        let mut exprs = Vec::with_capacity(arguments.len());
+        let mut names = Vec::new();
+        for argument in arguments {
+            match argument {
+                crate::ast::Argument::Positional(e) => {
+                    if !names.is_empty() {
+                        return Err(BytecodeError::CompilationFailed(
+                            "a positional argument after a named one".to_string(),
+                        ));
+                    }
+                    exprs.push(e);
+                }
+                crate::ast::Argument::Named { name, value } => {
+                    if names.contains(name) {
+                        return Err(BytecodeError::CompilationFailed(format!(
+                            "Duplicate named argument: {}",
+                            name
+                        )));
+                    }
+                    names.push(name.clone());
+                    exprs.push(value);
+                }
+            }
+        }
+        Ok((self.compile_operands(&exprs)?, names))
     }
 
     /// Compile positional call arguments via `compile_operands`; named
@@ -15708,5 +15962,31 @@ mod tests {
             result.is_err(),
             "Should fail with wrong number of arguments"
         );
+    }
+}
+
+/// The bytecode tier binds a native method's named arguments over its own
+/// values: no conversion to the interpreter's and back.
+impl crate::native_sig::BindValue for OvmValue {
+    fn unit() -> Self {
+        OvmValue::new_unit()
+    }
+    fn lit(l: &crate::native_sig::Lit) -> Self {
+        OvmValue::from_ast(l.value())
+    }
+    fn options(
+        full: &str,
+        base: Option<Self>,
+        entries: Vec<(&'static str, Self)>,
+    ) -> Result<Self, String> {
+        let base = match base {
+            Some(b) => Some(b.to_ast().map_err(|e| format!("{:?}", e))?),
+            None => None,
+        };
+        let mut ast = Vec::with_capacity(entries.len());
+        for (k, v) in entries {
+            ast.push((k, v.to_ast().map_err(|e| format!("{:?}", e))?));
+        }
+        crate::native_sig::options_map(full, base, ast.into_iter()).map(OvmValue::from_ast)
     }
 }

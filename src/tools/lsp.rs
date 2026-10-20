@@ -540,11 +540,16 @@ fn handle_request(
             } else {
                 // after `t.` on a value whose declared shape is known: the
                 // shape's keys, and nothing else
-                match shape_key_completions(text, position, dir.as_deref())
+                match native_method_completions(text, position)
+                    .or_else(|| shape_key_completions(text, position, dir.as_deref()))
                     .or_else(|| built_key_completions(text, position))
                 {
                     Some(keys) => keys,
-                    None => completions(text, position),
+                    None => {
+                        let mut items = named_arg_completions(text, position);
+                        items.extend(completions(text, position));
+                        items
+                    }
                 }
             };
             respond(connection, id, &CompletionResponse::Array(items))?;
@@ -2801,11 +2806,228 @@ fn rename_checks(
 /// The callee and active-parameter index for the innermost unclosed call
 /// at the cursor, then its signature from a local declaration or the
 /// registry.
+/// The innermost call left open at the cursor on its line: the callee's
+/// text (`ods.rolling`, `s.rolling`) and how many top-level commas the
+/// cursor is past.
+fn open_call(text: &str, pos: Position) -> Option<(String, u32)> {
+    let line = text.lines().nth(pos.line as usize)?;
+    let chars: Vec<char> = line.chars().collect();
+    let cursor = utf16_to_char_col(line, pos.character).min(chars.len());
+    let mut depth = 0i32;
+    let mut commas = 0u32;
+    let mut open = None;
+    let mut in_str = false;
+    for i in (0..cursor).rev() {
+        let c = chars[i];
+        if in_str {
+            if c == '"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => in_str = true,
+            ')' | ']' => depth += 1,
+            '[' => depth -= 1,
+            ',' if depth == 0 => commas += 1,
+            '(' => {
+                if depth == 0 {
+                    open = Some(i);
+                    break;
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    let open = open?;
+    let mut end = open;
+    while end > 0 && chars[end - 1] == ' ' {
+        end -= 1;
+    }
+    let mut start = end;
+    while start > 0
+        && (chars[start - 1].is_alphanumeric() || chars[start - 1] == '_' || chars[start - 1] == '.')
+    {
+        start -= 1;
+    }
+    (start < end).then(|| (chars[start..end].iter().collect(), commas))
+}
+
+/// The native type a receiver expression is (`s`, `f["a"]`,
+/// `f.sort_by("x")`), as the checker infers it from the lines above the
+/// cursor; a `learn` fit is a Model. `(home module, type)`.
+fn receiver_native(text: &str, line: u32, receiver: &str) -> Option<(&'static str, &'static str)> {
+    let above: Vec<&str> = text.lines().take(line as usize).collect();
+    // A fit: `let fit = learn.linear(…)` (a map whose model is native).
+    if receiver.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        let needle = format!("let {} = ", receiver);
+        if let Some(init) = above
+            .iter()
+            .rev()
+            .find_map(|l| l.trim_start().strip_prefix(needle.as_str()))
+            && let Some(call) = init.split('(').next()
+            && crate::native_sig::returns(call.trim(), None) == Some("Model")
+        {
+            return Some(("learn", "Model"));
+        }
+    }
+    let tail = format!("\nlet __lsp_receiver = {}\n", receiver);
+    let parser = OlangParser::new();
+    let program = match parser.parse_raw(&(above.join("\n") + &tail)) {
+        Ok(p) => p,
+        // A line above is being edited too: the lines that parse alone.
+        Err(_) => {
+            let kept: Vec<&str> = above
+                .iter()
+                .copied()
+                .filter(|l| parser.parse_raw(l).is_ok())
+                .collect();
+            parser.parse_raw(&(kept.join("\n") + &tail)).ok()?
+        }
+    };
+    let line = crate::tools::check::hover_types(&program).remove("__lsp_receiver")?;
+    let kind = line.rsplit(": ").next()?.trim();
+    let kind = ["Series", "Frame", "Date", "Reader"].into_iter().find(|k| *k == kind)?;
+    Some((crate::native_sig::home_of(kind)?, kind))
+}
+
+/// After `value.` on a native value: its methods (`s.` lists `fill_null`,
+/// `rolling`, `sum`, …), each with its signature.
+fn native_method_completions(text: &str, pos: Position) -> Option<Vec<CompletionItem>> {
+    let prefix = text_before(text, pos);
+    let ctx = crate::tools::fields::context(&prefix)?;
+    if ctx.quoted {
+        return None;
+    }
+    if MODULES.contains(&ctx.receiver.as_str()) || USE_MODULES.contains(&ctx.receiver.as_str()) {
+        return None;
+    }
+    let (home, kind) = receiver_native(text, pos.line, &ctx.receiver)?;
+    let mut items: Vec<CompletionItem> = crate::native_sig::methods_of(home, kind)
+        .into_iter()
+        .map(|full| {
+            let name = full.rsplit('.').next().unwrap_or(full).to_string();
+            let doc = help().get_function(full);
+            CompletionItem {
+                label: name.clone(),
+                kind: Some(CompletionItemKind::METHOD),
+                detail: Some(method_display(full)),
+                documentation: doc.map(doc_markup),
+                insert_text: Some(name),
+                ..Default::default()
+            }
+        })
+        .collect();
+    // A Frame's columns read as fields too (`f.price`).
+    if kind == "Frame" {
+        let columns = data_completions(
+            text,
+            pos,
+            &crate::tools::fields::Context {
+                want: crate::tools::fields::Want::Columns,
+                ..ctx
+            },
+        );
+        items.extend(columns);
+    }
+    Some(items)
+}
+
+/// A method's signature as its call reads: the receiver left out.
+fn method_display(full: &str) -> String {
+    let Some(sig) = crate::native_sig::sig(full) else {
+        return full.to_string();
+    };
+    let shown = sig.display();
+    let name = full.rsplit('.').next().unwrap_or(full);
+    let params = shown.split_once('(').map(|(_, p)| p).unwrap_or("");
+    let params = params.split_once(", ").map(|(_, rest)| rest.to_string()).unwrap_or_else(|| ")".to_string());
+    format!(".{}({}", name, params)
+}
+
+/// The native builtin an open call names: `module.f(` or `value.m(` on a
+/// native value, with whether the receiver counts as its first argument.
+fn native_callee(text: &str, line: u32, callee: &str) -> Option<(&'static crate::native_sig::Sig, bool)> {
+    if let Some(sig) = crate::native_sig::sig(callee) {
+        return Some((sig, false));
+    }
+    let (receiver, method) = callee.rsplit_once('.')?;
+    let (home, kind) = receiver_native(text, line, receiver)?;
+    let full = crate::native_sig::method_target(home, kind, method)?;
+    Some((crate::native_sig::sig(full)?, true))
+}
+
+/// Inside a native builtin's call: its parameter names as `name:`, those
+/// the call has not given yet.
+fn named_arg_completions(text: &str, pos: Position) -> Vec<CompletionItem> {
+    let Some((callee, commas)) = open_call(text, pos) else {
+        return Vec::new();
+    };
+    let Some((sig, method)) = native_callee(text, pos.line, &callee) else {
+        return Vec::new();
+    };
+    let line = text.lines().nth(pos.line as usize).unwrap_or("");
+    let written: String = line.chars().take(utf16_to_char_col(line, pos.character)).collect();
+    let args = written.rsplit_once(&format!("{}(", callee)).map(|(_, a)| a).unwrap_or("");
+    // the parameters before the cursor's position were given by position
+    // (unless a name came first)
+    let by_position = if args.contains(':') { 0 } else { commas as usize };
+    sig.names()
+        .into_iter()
+        .skip(usize::from(method) + by_position)
+        .filter(|n| !args.contains(&format!("{}:", n)))
+        .map(|n| CompletionItem {
+            label: format!("{}:", n),
+            kind: Some(CompletionItemKind::PROPERTY),
+            detail: Some(sig.display()),
+            insert_text: Some(format!("{}: ", n)),
+            sort_text: Some(format!("0{}", n)),
+            ..Default::default()
+        })
+        .collect()
+}
+
 fn signature_help(
     text: &str,
     pos: Position,
     doc_dir: Option<&std::path::Path>,
 ) -> Option<lsp_types::SignatureHelp> {
+    // A native builtin, or a native value's method: its signature names
+    // every parameter and option (`native_sig`).
+    if let Some((callee, commas)) = open_call(text, pos)
+        && let Some((sig, method)) = native_callee(text, pos.line, &callee)
+    {
+        let label = if method {
+            method_display(sig.full)
+        } else {
+            sig.display()
+        };
+        let names: Vec<&str> = sig.names().into_iter().skip(usize::from(method)).collect();
+        let params = names
+            .iter()
+            .map(|n| lsp_types::ParameterInformation {
+                label: lsp_types::ParameterLabel::Simple(n.to_string()),
+                documentation: None,
+            })
+            .collect();
+        let doc = help().get_function(sig.full).map(|d| {
+            lsp_types::Documentation::MarkupContent(lsp_types::MarkupContent {
+                kind: lsp_types::MarkupKind::Markdown,
+                value: d.description.clone(),
+            })
+        });
+        return Some(lsp_types::SignatureHelp {
+            signatures: vec![lsp_types::SignatureInformation {
+                label,
+                documentation: doc,
+                parameters: Some(params),
+                active_parameter: Some(commas),
+            }],
+            active_signature: Some(0),
+            active_parameter: Some(commas),
+        });
+    }
     let line = text.lines().nth(pos.line as usize)?;
     let chars: Vec<char> = line.chars().collect();
     let cursor = utf16_to_char_col(line, pos.character).min(chars.len());

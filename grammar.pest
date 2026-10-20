@@ -212,6 +212,10 @@ expr        = { assignment_expr | par_for_loop | for_loop | while_loop | loop_ex
 
 add_op        = { "+" | "-" }
 mul_op        = { "*" | "/" | "%" }
+// `a @ b`, the matrix product, at `*`'s level. Unlike the other operators
+// it never continues a line: a line that starts with `@` is a macro call
+// or a decorator (`@json`), as it always was.
+matmul_op     = { "@" }
 // `&` must not eat the first character of `&&` (logical-and lives at its
 // own, looser level now), and `|` must not eat the start of `||` or `|>`.
 // Atomic (`@`): the rule must span exactly the operator text — implicit
@@ -227,7 +231,7 @@ unary_op      = { "-" | "!" }
 // Precedence ladder, loosest → tightest (0.68's, with the bitwise
 // operators in Rust's order since the 1.0 freeze pass):
 //   ||  <  &&  <  comparison  <  ??  <  |>  <  ranges  <  |  <  ^  <  &
-//       <  << >>  <  + -  <  * / %
+//       <  << >>  <  + -  <  * / % @
 // A comparison does not chain: `a < b < c` is refused by the builder.
 // so `a || b && c` is `a || (b && c)`, `x + 1 |> f` pipes the sum, and
 // `0..n-1` is `0..(n-1)`. `|>` sits between comparison and ranges
@@ -258,6 +262,7 @@ unary_op      = { "-" | "!" }
 binary_expr   = { unary_expr ~ binary_tail* }
 binary_tail   = _{
     (NL* ~ (or_op | and_op | coalesce_op | pipe_op | bitwise_op | mul_op) ~ NL* ~ unary_expr)
+  | (matmul_op ~ NL* ~ unary_expr)
   | (add_op ~ NL* ~ unary_expr)
   | (NL+ ~ &lead_add_op ~ add_op ~ NL* ~ unary_expr)
   | (NL* ~ comp_op ~ NL* ~ cmp_rhs)

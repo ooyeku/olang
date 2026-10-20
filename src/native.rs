@@ -12,7 +12,7 @@
 //! conversion, so the lossy-round-trip failure mode that once kept maps
 //! and enums off the bytecode tier is unrepresentable for native values.
 
-use crate::ast::{BinaryOp, Value};
+use crate::ast::{BinaryOp, BitwiseOp, UnaryOp, Value};
 use std::any::Any;
 use std::fmt;
 use std::sync::Arc;
@@ -79,6 +79,15 @@ pub trait NativeObject: fmt::Debug + Send + Sync {
     /// no matching `index_set`, because native values here are immutable
     /// and a `f["a"] = x` that silently returned a copy would be a trap.
     fn index(&self, _key: &Value) -> Option<Result<Value, String>> {
+        None
+    }
+
+    /// A field read: what `value.name` evaluates to, when `name` is not
+    /// one of the value's methods (a method's name always means the
+    /// method, so `f.sum` never reads a column called `sum`: `f["sum"]`
+    /// does). `None` — the default — is the "has no field" error; a
+    /// Frame answers with its column.
+    fn field(&self, _name: &str) -> Option<Result<Value, String>> {
         None
     }
 }
@@ -154,6 +163,23 @@ pub trait OvmModule: Send + Sync {
     /// module. `None` means "not mine" and falls through to the normal
     /// type-error path — identically in both tiers.
     fn binary_op(&self, op: &BinaryOp, lhs: &Value, rhs: &Value) -> Option<Result<Value, String>>;
+
+    /// First refusal on `-v` and `!v` with `v` a Native of this module.
+    /// `None` falls through to the language's own type error.
+    fn unary_op(&self, _op: &UnaryOp, _value: &Value) -> Option<Result<Value, String>> {
+        None
+    }
+
+    /// First refusal on `a & b`, `a | b`, `a ^ b` (and the shifts) with a
+    /// Native operand of this module: a Bool Series' masks combine here.
+    fn bitwise_op(
+        &self,
+        _op: &BitwiseOp,
+        _lhs: &Value,
+        _rhs: &Value,
+    ) -> Option<Result<Value, String>> {
+        None
+    }
 }
 
 /// Every compiled-in module. Cargo features decide the set; registration
@@ -208,4 +234,65 @@ pub fn binary_op_hook(op: &BinaryOp, lhs: &Value, rhs: &Value) -> Option<Result<
         }
     }
     None
+}
+
+/// The module owning a Native operand of a binary form, left first.
+fn owner_of<'a>(lhs: &'a Value, rhs: &'a Value) -> Option<&'static str> {
+    match (lhs, rhs) {
+        (Value::Native(h), _) => Some(h.0.module()),
+        (_, Value::Native(h)) => Some(h.0.module()),
+        _ => None,
+    }
+}
+
+/// Offer `-v` / `!v` to the module owning a Native operand. Both tiers
+/// call this, the interpreter from `eval_unary_op` and the VM from its
+/// Neg and Not instructions, on the same Arc-shared value.
+pub fn unary_op_hook(op: &UnaryOp, value: &Value) -> Option<Result<Value, String>> {
+    let Value::Native(h) = value else { return None };
+    module_named(h.0.module())?.unary_op(op, value)
+}
+
+/// Offer a bitwise operator to the module owning a Native operand.
+pub fn bitwise_op_hook(op: &BitwiseOp, lhs: &Value, rhs: &Value) -> Option<Result<Value, String>> {
+    module_named(owner_of(lhs, rhs)?)?.bitwise_op(op, lhs, rhs)
+}
+
+/// `a @ b`: the product, which only a native value defines (a Matrix, or
+/// two Series for their dot product). Plain values have no product.
+pub fn matmul(lhs: &Value, rhs: &Value) -> Result<Value, String> {
+    if let Some(owner) = owner_of(lhs, rhs)
+        && let Some(module) = module_named(owner)
+        && let Some(result) = module.binary_op(&BinaryOp::MatMul, lhs, rhs)
+    {
+        return result;
+    }
+    Err(format!(
+        "`@` needs a Matrix or Series on each side, got {} and {}",
+        lhs.type_name(),
+        rhs.type_name()
+    ))
+}
+
+/// `value.name` on a native value: its field, unless `name` is one of its
+/// methods (then the read is a mistake for the call, and says so).
+pub fn field_hook(h: &NativeHandle, name: &str) -> Result<Value, String> {
+    let type_name = h.0.type_name();
+    if let Some(full) = crate::native_sig::method_target(h.0.module(), type_name, name) {
+        let column = match h.0.field(name) {
+            Some(Ok(_)) => format!(
+                " — a column of that name is read as `value[\"{}\"]`",
+                name
+            ),
+            _ => String::new(),
+        };
+        return Err(format!(
+            "'{}' is a method of a {} ({}): call it, `value.{}(…)`{}",
+            name, type_name, full, name, column
+        ));
+    }
+    match h.0.field(name) {
+        Some(result) => result,
+        None => Err(format!("a {} has no field '{}'", type_name, name)),
+    }
 }

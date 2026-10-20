@@ -197,6 +197,29 @@ express per-element logic in olang functions, keep bulk transformation
 in `Series` and `Frame` operations, and cross between the two at the
 edges rather than inside loops.
 
+### Methods and names cost nothing
+
+`s.rank(method: "min")`, `ods.rank(s, method: "min")` and `ods.rank(s,
+"min")` are one call. The bytecode compiler lays a named call out as the
+positional one at compile time, and a method resolves through one table
+built at startup (two hashes of short strings). Per call, on a
+three-element Series so that the dispatch is all there is to measure
+(300,000 calls in a function, best of two runs, Apple M5 Pro):
+
+| Call | Bytecode tier | Interpreter (`--no-ovm`) |
+|---|---:|---:|
+| `ods.len(s)` | 113 ns | 320 ns |
+| `s.len()` | 117 ns | 180 ns |
+| `ods.rank(s, "min")` | 290 ns | 490 ns |
+| `ods.rank(s, method: "min")` | 290 ns | 507 ns |
+| `s.rank(method: "min")` | 353 ns | 427 ns |
+
+A method is as cheap as the module call on the bytecode tier and cheaper
+in the interpreter (it calls the function by name rather than reading it
+from the module first). A method with names binds them when it runs,
+once its receiver says which function it is: one small vector more. On a
+column of any size the kernel is the cost.
+
 ## Automatic parallelism in ods
 
 A `Series` or `Frame` operation fans out across the thread pool on its

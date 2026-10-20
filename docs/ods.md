@@ -1555,6 +1555,41 @@ verb takes its data first; results come back as maps and lists the
 rest of the program consumes; and the parallelism constructs fan
 statistical work across cores exactly as they fan any other work.
 
+### Methods, names and fields
+
+Every function is also a method of the values it takes first, every
+parameter has a name, and a Frame's columns read as fields
+([Methods of native values](language.md#methods-of-native-values)).
+The three spellings are one function:
+
+```olang
+let sales = ods.read_csv("region,amount\neast,25.5\nwest,320.0\neast,80.0\nwest,12.0\n")
+let a = ods.head(ods.sort_by(sales, "amount", true), 2)
+let b = sales |> ods.sort_by("amount", descending: true) |> ods.head(2)
+let c = sales.sort_by("amount", descending: true).head(2)
+println(to_string(a == b && b == c))                          // true
+println(to_string(sales.amount.rolling(2, agg: "mean").to_list()))
+println(to_string(len(sales)))                                // 4 rows
+```
+
+- **Names.** `ods`, `stats`, `plot` and `learn` register their
+  parameters, so a call names what it means and skips what it does not:
+  `stats.norm.cdf(x, std: 2.0)` takes the mean's default.
+  The options a function keeps in a trailing map are names too —
+  `learn.split(f, test: 0.25, seed: 7)`, `plot.hist(s, bins: 30,
+  title: "draws")` — and a chart's options map may be left off
+  altogether. An unknown name raises, listing the ones the function
+  takes; `olang check` reports it before the run.
+- **Methods.** A Series has the column functions and borrows `stats`
+  and `plot` (`s.describe()`, `s.hist()`); a Frame has the table verbs;
+  a `learn` fit has the model's (`fit.predict(test)`). An `impl` for
+  `Series` or `Frame` wins over the module's function of the same name.
+  The editor completes a value's methods after `s.`.
+- **Fields.** `f.amount` is `f["amount"]`. A method's name always means
+  the method: a column called `sum` is `f["sum"]`.
+- **`len`** counts a Series' values and a Frame's rows.
+- **`@`** is the dot product of two Series (and a Matrix's product).
+
 That last point deserves a demonstration, because Monte Carlo methods
 are the natural meeting place of the two: each resample is independent
 CPU-bound work — precisely what [`par_map`](stdlib.md#higher-order-functions)
