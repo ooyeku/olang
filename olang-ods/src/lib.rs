@@ -28,6 +28,9 @@ pub mod category;
 #[cfg(feature = "stats")]
 pub mod dist;
 pub mod frame;
+pub mod group;
+pub mod time;
+pub mod window;
 pub mod fuse;
 pub mod column;
 #[cfg(feature = "stats")]
@@ -40,7 +43,7 @@ pub mod temporal;
 pub mod text;
 
 pub use bitmap::{Bitmap, merge_validity};
-pub use frame::{AggOp, AggSpec, ColumnSummary, Frame, JoinHow, RankMethod};
+pub use frame::{AggOp, AggSpec, AsOf, ColumnSummary, Frame, JoinHow, JoinSpec, RankMethod, Validate};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;

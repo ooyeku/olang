@@ -57,6 +57,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   civil arithmetic, ISO and `strptime` reading, truncation, the text
   kernels); ods.md (Text, Dates and datetimes, Categories; reading CSV
   with options; the native format), stdlib.md.
+- **Frames: shape, group, join and time (data ergonomics §4).** A
+  GroupBy value: `f.group_by(keys)` with no aggregations computes the
+  group ids once (`olang_ods::group::Grouping`, the parallel dictionary
+  encoding) and its verbs reuse them — `by.agg({ total:
+  col("amount").sum(), orders: ods.count(), p90:
+  col("amount").quantile(0.9), share: col("a").sum() / col("b").sum() })`
+  (aggregations of any column expression, arithmetic over them per
+  group, a key column as its group's key; the expressions read in one
+  fused plan), `by.mean()`/`sum()`/`median()`/… over every column,
+  `by.size()`, `by.transform(expr)`, `by.apply((g) => …)` (one olang
+  call per group on the caller's tier — Frames stacked under their keys,
+  records a row each, values a `value` column — the interpreter and the
+  bytecode VM each run the calls), `by.groups()` (`(key, frame)` pairs)
+  and `len(by)`; `ods.group_by(f, keys, { … })` is the same as `agg`, and
+  the `[out, op, col]` triples keep working. New aggregations
+  everywhere they apply (`agg`, `over`, the triples): `quantile(q)`,
+  `any`, `all`, `argmax`/`argmin` (row positions); a Bool column sums
+  and averages. `expr.over(keys)` takes any of them, `ods.count()` (a
+  group's rows) and arithmetic over aggregations. Shape and access:
+  `f[["a", "b"]]`, `ods.slice(x, start, n)`, `ods.row(f, i)` (a map),
+  `ods.lookup(f, key_col, key, value_col)` (a hash index kept with the
+  Frame value; a list of keys gives a Series), `ods.frame({ a: s, b: [..]
+  })`, `ods.rename(f, { old: "new" })`. `ods.crosstab(a, b, values:,
+  agg:, normalize:, name:)`, `ods.runs(mask)` (start, end, length of each
+  run), `ods.run_id(s | [s, …])`, `ods.pivot(…, fill:)`. Joins on a list
+  of keys, `how:` on `ods.join` (inner, left, full, semi, anti),
+  `suffix:`, and `validate: "many_to_one" | "one_to_many" |
+  "one_to_one"` raising on a key's fan-out; `ods.asof_join(left, right,
+  on, by:, direction:, tolerance:)` (the right row in force at each left
+  row: backward, forward or nearest, numbers or ISO text). `ods.resample(f, on, every,
+  aggs, by:)` over ISO date/time text (`"15m"`, `"1h"`, `"1d"`, `"1w"`,
+  `"1mo"`, `"1q"`, `"1y"`; `olang_ods::time::Every` and `buckets`, which
+  a Date column's floor reuses) and `floor(s, every)` on such a column
+  (`col("date").floor("1w")`, the week a join keys on). `ods.rolling(s, w, agg, center:,
+  min_periods:, exact:)`. Methods and keywords for all of it in
+  `src/native_sig.rs` (a `G` receiver kind for the GroupBy; `olang check`
+  and the language server know `group_by` without aggregations is one).
+  At a million rows against pandas 3.0.5: five aggregations 3.2 ms
+  (13.9), transform 0.6 (1.9), apply over 1,000 groups 10.9 (42),
+  crosstab 2.6 (14.6), a two-key join 9.6 (22.6), an as-of join by a
+  key 5.9 (`merge_asof` 39.8; without a key 4.9 against 4.3), daily resample from
+  text 15 (15.6 parsed, 65 from text), lookups 2.0 (5.1).
+  `benchmarks/frames.ol` and `frames_pandas.py`;
+  `tests/frames_ergonomics_test.rs` (three tiers, parallel determinism).
 
 - **Names, methods and operators for native values (the data
   ergonomics prerequisites L1–L6).** A native builtin registers its
@@ -618,6 +662,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   of its own, with how to continue the line instead.
 
 ### Changed
+
+- **`ods.rolling` slides in O(n).** Sums, means, variances and standard
+  deviations keep compensated running totals (Neumaier; a NaN or an
+  infinity counted apart, so it leaves the window with its row), min and
+  max a monotone queue, the median a sorted window: a 365-row mean over a
+  million rows is 3.8 ms (pandas 3.9), where it was a fresh reduction
+  per row. A running sum may differ from a fresh one in the last bits;
+  `exact: true` is the fresh sum. An Int column's sum is exact either
+  way (an i128 total). `over` resolves through the GroupBy's aggregation
+  evaluator, so `col("z").over("x")` of a column that is no key now
+  says to reduce it; a Frame subscripted by a row position names `ods.row`,
+  `ods.slice` and `ods.take`. Joins encode each key column against the
+  right side's values instead of building a hashed key (a String key
+  cloned per row): the same results, one path for one key or several.
 
 - **An import binds only what it was asked for.** A bare `use` of a
   stdlib module (`use gg`, `use ml`, `use term`, `use str`) binds its

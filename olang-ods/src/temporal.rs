@@ -10,7 +10,8 @@
 //! Text comes in through a fixed-width fast path for ISO 8601
 //! (`2024-03-01`, `2024-03-01T12:30[:45[.123456]][Z|±hh:mm]`) and,
 //! given a format, through a small `strptime` (`%Y %m %d %H %M %S %f %y
-//! %b %B %j %p %I %z %a %A %e %F %T %%`). It goes out as ISO 8601.
+//! %b %B %j %p %I %z %a %A %e %F %T %%`). It goes out as ISO 8601. A
+//! truncation's unit is `time::Every`, shared with `resample`.
 
 /// Microseconds in a second, a minute, an hour, a day.
 pub const US_PER_SEC: i64 = 1_000_000;
@@ -627,100 +628,6 @@ impl Format {
     }
 }
 
-// ---------------------------------------------------------------------
-// Truncation
-// ---------------------------------------------------------------------
-
-/// A truncation unit: `floor("1d")`, `"15m"`, `"1w"`, `"3mo"`, `"1y"`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Every {
-    /// A fixed span in microseconds (seconds through days), counted
-    /// from the epoch.
-    Fixed(i64),
-    /// Weeks, starting on Monday.
-    Weeks(i64),
-    /// Calendar months (a quarter is three, a year twelve), counted
-    /// from year 0.
-    Months(i64),
-}
-
-impl Every {
-    /// `<n><unit>`, the unit one of `us`, `ms`, `s`, `m`/`min`, `h`, `d`,
-    /// `w`, `mo`, `q`, `y`; the count defaults to 1.
-    pub fn parse(spec: &str) -> Result<Every, String> {
-        let t = spec.trim();
-        let split = t.find(|c: char| !c.is_ascii_digit()).unwrap_or(t.len());
-        let (n, unit) = t.split_at(split);
-        let n: i64 = if n.is_empty() {
-            1
-        } else {
-            n.parse().map_err(|_| format!("\"{}\" is no duration", spec))?
-        };
-        if n <= 0 {
-            return Err(format!("\"{}\": the count must be positive", spec));
-        }
-        Ok(match unit {
-            "us" => Every::Fixed(n),
-            "ms" => Every::Fixed(n * 1000),
-            "s" => Every::Fixed(n * US_PER_SEC),
-            "m" | "min" => Every::Fixed(n * US_PER_MIN),
-            "h" => Every::Fixed(n * US_PER_HOUR),
-            "d" => Every::Fixed(n * US_PER_DAY),
-            "w" => Every::Weeks(n),
-            "mo" => Every::Months(n),
-            "q" => Every::Months(3 * n),
-            "y" => Every::Months(12 * n),
-            _ => {
-                return Err(format!(
-                    "\"{}\" is no duration: a count and one of us, ms, s, m, h, d, w, mo, q, y (\"1d\", \"15m\", \"3mo\")",
-                    spec
-                ));
-            }
-        })
-    }
-
-    /// Whether it is finer than a day (meaningless for a Date).
-    pub fn below_day(self) -> bool {
-        matches!(self, Every::Fixed(u) if u < US_PER_DAY || u % US_PER_DAY != 0)
-    }
-
-    /// The start of the span holding `day` (a Date).
-    #[inline]
-    pub fn floor_day(self, day: i64) -> i64 {
-        match self {
-            Every::Fixed(u) => {
-                let k = u / US_PER_DAY;
-                day.div_euclid(k) * k
-            }
-            Every::Weeks(n) => {
-                // 1969-12-29 was a Monday: weeks count from it.
-                let monday = day - (iso_weekday(day) as i64 - 1);
-                if n == 1 {
-                    monday
-                } else {
-                    let w = (monday + 3).div_euclid(7);
-                    w.div_euclid(n) * n * 7 - 3
-                }
-            }
-            Every::Months(n) => {
-                let (y, m, _) = civil_from_days(day);
-                let idx = y * 12 + m as i64 - 1;
-                let f = idx.div_euclid(n) * n;
-                days_from_civil(f.div_euclid(12), (f.rem_euclid(12) + 1) as u32, 1)
-            }
-        }
-    }
-
-    /// The start of the span holding `us` (a Datetime).
-    #[inline]
-    pub fn floor_us(self, us: i64) -> i64 {
-        match self {
-            Every::Fixed(u) => us.div_euclid(u) * u,
-            _ => self.floor_day(day_of_us(us)) * US_PER_DAY,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -766,17 +673,5 @@ mod tests {
         assert_eq!(g.parse("Jan 01, 1970 12:15 PM"), Some(12 * US_PER_HOUR + 15 * US_PER_MIN));
         assert!(Format::new("%Q").is_err());
         assert_eq!(Format::new("%Y-%j").unwrap().parse("1970-032"), Some(31 * US_PER_DAY));
-    }
-
-    #[test]
-    fn truncation() {
-        let d = days_from_civil(2024, 5, 17); // a Friday
-        assert_eq!(Every::parse("1w").unwrap().floor_day(d), days_from_civil(2024, 5, 13));
-        assert_eq!(Every::parse("1mo").unwrap().floor_day(d), days_from_civil(2024, 5, 1));
-        assert_eq!(Every::parse("1q").unwrap().floor_day(d), days_from_civil(2024, 4, 1));
-        assert_eq!(Every::parse("1y").unwrap().floor_day(d), days_from_civil(2024, 1, 1));
-        let us = d * US_PER_DAY + 13 * US_PER_HOUR + 47 * US_PER_MIN;
-        assert_eq!(Every::parse("15m").unwrap().floor_us(us), d * US_PER_DAY + 13 * US_PER_HOUR + 45 * US_PER_MIN);
-        assert!(Every::parse("1x").is_err());
     }
 }

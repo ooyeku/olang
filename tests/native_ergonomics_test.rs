@@ -97,7 +97,7 @@ true
 true
 7.0
 [5.0, 3.0, 2.0, 1.0]
-Err("ods.rolling: no parameter named 'windw' — it takes s, window, agg")
+Err("ods.rolling: no parameter named 'windw' — it takes s, window, agg, center, min_periods, exact")
 Err("ods.rolling: argument 'window' is given both by position and by name")
 Err("ods.rolling: missing argument 'window' (argument 2)")
 Err("Duplicate named argument: window")

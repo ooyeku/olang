@@ -101,13 +101,40 @@ pub enum AggOp {
     /// How many distinct values the group holds, as `ods.n_unique`
     /// counts them (null is one value). Any column type. Int.
     NUnique,
+    /// Whether any valid value is true (a Bool column; a number counts
+    /// when it is not zero). Bool.
+    Any,
+    /// Whether no valid value is false. Bool.
+    All,
+    /// The row position (in the whole column) of the group's largest
+    /// valid value, the first on a tie; null when it has none. Int.
+    ArgMax,
+    /// The row position of the smallest valid value. Int.
+    ArgMin,
+    /// The `q` quantile by linear interpolation, as `ods.quantile`. The
+    /// payload is `q`'s bits (`AggOp::quantile(q)`). Float.
+    Quantile(u64),
 }
 
 impl AggOp {
     /// Every aggregation's name, in the order errors list them.
     pub const NAMES: &'static [&'static str] = &[
         "count", "sum", "mean", "min", "max", "median", "std", "var", "first", "last", "n_unique",
+        "any", "all", "argmax", "argmin",
     ];
+
+    /// The `q` quantile.
+    pub fn quantile(q: f64) -> AggOp {
+        AggOp::Quantile(q.to_bits())
+    }
+
+    /// A quantile's `q`.
+    pub fn q(self) -> Option<f64> {
+        match self {
+            AggOp::Quantile(b) => Some(f64::from_bits(b)),
+            _ => None,
+        }
+    }
 
     pub fn parse(name: &str) -> Option<AggOp> {
         Some(match name {
@@ -122,6 +149,10 @@ impl AggOp {
             "first" => AggOp::First,
             "last" => AggOp::Last,
             "n_unique" => AggOp::NUnique,
+            "any" => AggOp::Any,
+            "all" => AggOp::All,
+            "argmax" => AggOp::ArgMax,
+            "argmin" => AggOp::ArgMin,
             _ => return None,
         })
     }
@@ -139,6 +170,11 @@ impl AggOp {
             AggOp::First => "first",
             AggOp::Last => "last",
             AggOp::NUnique => "n_unique",
+            AggOp::Any => "any",
+            AggOp::All => "all",
+            AggOp::ArgMax => "argmax",
+            AggOp::ArgMin => "argmin",
+            AggOp::Quantile(_) => "quantile",
         }
     }
 }
@@ -354,46 +390,19 @@ impl Frame {
             ));
         }
         let key_cols: Vec<&Series> = keys.iter().map(|k| self.column(k)).collect::<Result<_>>()?;
-        let n = self.n_rows();
-
-        // Group ids per row, first-seen order.
-        let (group_ids, n_groups) = if key_cols.len() == 1 {
-            group_ids_single(key_cols[0])
-        } else {
-            group_ids_multi(&key_cols, n)
-        };
-
-        // Key output columns: first row index of each group.
-        let first_row = first_row_per_group(&group_ids, n_groups);
-        let first_idx = Series::from_i64(first_row.clone());
-
-        // Each group's rows, built once for the aggregations that need
-        // a group's values together (a median, a variance, a count of
-        // distinct values) rather than a running total.
-        let mut groups: Option<(Vec<usize>, Vec<u32>)> = None;
+        // Group ids per row, first-seen order; each group's rows are
+        // built once, for the aggregations that need a group's values
+        // together (a median, a variance, a count of distinct values).
+        let g = crate::group::Grouping::new(&key_cols)?;
         let mut pairs: Vec<(String, Series)> = Vec::with_capacity(keys.len() + aggs.len());
         for (k, col) in keys.iter().zip(key_cols.iter()) {
-            pairs.push((k.clone(), col.take(&first_idx)?));
+            pairs.push((k.clone(), g.keys_of(col)?));
         }
         for spec in aggs {
+            // Count here is the group's rows (R's `n()`), nulls included.
             let out = match spec.op {
-                AggOp::Count => {
-                    let mut counts = vec![0i64; n_groups];
-                    for &g in &group_ids {
-                        counts[g as usize] += 1;
-                    }
-                    Series::from_i64(counts)
-                }
-                AggOp::Median | AggOp::Std | AggOp::Var | AggOp::NUnique => {
-                    let rows = groups.get_or_insert_with(|| rows_by_group(&group_ids, n_groups));
-                    aggregate_by_rows(self.column(&spec.col)?, &group_ids, rows, spec.op)?
-                }
-                AggOp::First => self.column(&spec.col)?.take(&first_idx)?,
-                AggOp::Last => {
-                    let last = last_row_per_group(&group_ids, n_groups);
-                    self.column(&spec.col)?.take(&Series::from_i64(last))?
-                }
-                _ => aggregate_column(self.column(&spec.col)?, &group_ids, n_groups, spec.op)?,
+                AggOp::Count => g.size(),
+                op => g.aggregate(self.column(&spec.col)?, op)?,
             };
             pairs.push((spec.out_name.clone(), out));
         }
@@ -415,14 +424,101 @@ impl Frame {
         right_on: &str,
         how: JoinHow,
     ) -> Result<Frame> {
-        let lkey = self.column(left_on)?;
-        let rkey = right.column(right_on)?;
+        self.join_by(
+            right,
+            &JoinSpec {
+                left_on: &[left_on.to_string()],
+                right_on: &[right_on.to_string()],
+                how,
+                suffix: "_right",
+                validate: Validate::None,
+            },
+        )
+    }
 
-        // Right key -> row indices (duplicates multiply, standard SQL).
-        let mut table: FxMap<Key, Vec<usize>> = FxMap::default();
-        for i in 0..rkey.len() {
-            if let Some(k) = key_at(rkey, i) {
-                table.entry(k).or_default().push(i);
+    /// Hash join on one or more key columns per side (`left_on[j]`
+    /// matches `right_on[j]`). Null keys never match. A right column
+    /// whose name the left side has takes `suffix`; the right keys are
+    /// dropped (a full join's left keys carry the right side's value on
+    /// a row only the right side has). `validate` raises when a side
+    /// that should hold each key once holds one twice.
+    pub fn join_by(&self, right: &Frame, spec: &JoinSpec) -> Result<Frame> {
+        let (left_on, right_on, how) = (spec.left_on, spec.right_on, spec.how);
+        if left_on.is_empty() || left_on.len() != right_on.len() {
+            return Err(OdsError::InvalidArgument(format!(
+                "join: {} key column(s) on the left but {} on the right",
+                left_on.len(),
+                right_on.len()
+            )));
+        }
+        let lcols: Vec<&Series> = left_on.iter().map(|k| self.column(k)).collect::<Result<_>>()?;
+        let rcols: Vec<&Series> = right_on.iter().map(|k| right.column(k)).collect::<Result<_>>()?;
+        let (lcodes, rcodes, card) = encode_join_keys(&lcols, &rcols);
+
+        // The right side's rows by key code: group `c`'s rows are
+        // `rrows[offsets[c]..offsets[c + 1]]`, in row order.
+        let mut offsets = vec![0usize; card + 1];
+        for &c in &rcodes {
+            if c != NO_KEY {
+                offsets[c as usize + 1] += 1;
+            }
+        }
+        for c in 0..card {
+            offsets[c + 1] += offsets[c];
+        }
+        let mut next = offsets.clone();
+        let mut rrows = vec![0u32; offsets[card]];
+        for (r, &c) in rcodes.iter().enumerate() {
+            if c != NO_KEY {
+                rrows[next[c as usize]] = r as u32;
+                next[c as usize] += 1;
+            }
+        }
+
+        let describe = |cols: &[&Series], row: usize| -> String {
+            cols.iter()
+                .map(|c| match c.scalar_at(row) {
+                    Scalar::Str(s) => format!("{:?}", s),
+                    Scalar::F64(x) => x.to_string(),
+                    Scalar::I64(x) => x.to_string(),
+                    Scalar::Bool(b) => b.to_string(),
+                    Scalar::Date(d) => crate::temporal::format_date(d as i64),
+                    Scalar::Datetime(t) => crate::temporal::format_datetime(t),
+                    Scalar::Null => "()".to_string(),
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        if matches!(spec.validate, Validate::ManyToOne | Validate::OneToOne)
+            && let Some(c) = (0..card).find(|&c| offsets[c + 1] - offsets[c] > 1)
+        {
+            let r = rrows[offsets[c]] as usize;
+            return Err(OdsError::InvalidArgument(format!(
+                "join: validate \"{}\" wants each key once on the right, but key ({}) is on {} \
+                 rows of it — this join would repeat left rows",
+                spec.validate.name(),
+                describe(&rcols, r),
+                offsets[c + 1] - offsets[c]
+            )));
+        }
+        if matches!(spec.validate, Validate::OneToMany | Validate::OneToOne) {
+            let (ids, n_groups) = group_ids(&lcols)?;
+            let mut seen = vec![u32::MAX; n_groups];
+            for (i, &g) in ids.iter().enumerate() {
+                if lcols.iter().any(|c| c.validity().is_some_and(|v| !v.get(i))) {
+                    continue;
+                }
+                if seen[g as usize] != u32::MAX {
+                    return Err(OdsError::InvalidArgument(format!(
+                        "join: validate \"{}\" wants each key once on the left, but key ({}) is \
+                         on rows {} and {} of it",
+                        spec.validate.name(),
+                        describe(&lcols, i),
+                        seen[g as usize],
+                        i
+                    )));
+                }
+                seen[g as usize] = i as u32;
             }
         }
 
@@ -431,40 +527,35 @@ impl Frame {
         // and no multiplication when a key repeats on the right.
         if matches!(how, JoinHow::Semi | JoinHow::Anti) {
             let want_match = how == JoinHow::Semi;
-            let rows: Vec<i64> = (0..lkey.len())
-                .filter(|&i| {
-                    // A null key matches nothing, which puts a null-keyed
-                    // left row in the anti result and never in the semi
-                    // one — the same rule the other kinds follow.
-                    key_at(lkey, i).is_some_and(|k| table.contains_key(&k)) == want_match
-                })
+            let rows: Vec<i64> = (0..lcodes.len())
+                .filter(|&i| (lcodes[i] != NO_KEY) == want_match)
                 .map(|i| i as i64)
                 .collect();
             return self.take(&Series::from_i64(rows));
         }
 
-        // The probe: each left row is looked up independently in the
-        // read-only table, so the loop parallelizes across left rows on a
-        // large frame — the join's dominant cost. Chunks are concatenated in
-        // row order, so the result is bit-identical to the sequential path.
-        // A full join probes as a left join and then appends what the
-        // right side had left over.
-        let probe_how = if how == JoinHow::Full {
-            JoinHow::Left
-        } else {
-            how
+        // The probe; a full join probes as a left join and then appends
+        // what the right side had left over.
+        let probe_how = if how == JoinHow::Full { JoinHow::Left } else { how };
+        let table = JoinTable { lcodes: &lcodes, offsets: &offsets, rrows: &rrows };
+        let (left_idx, right_idx) = join_probe(&table, probe_how, lcodes.len());
+
+        let right_name = |name: &String| -> String {
+            if self.names.contains(name) {
+                format!("{}{}", name, spec.suffix)
+            } else {
+                name.clone()
+            }
         };
-        let (left_idx, right_idx) = join_probe(lkey, &table, probe_how, lkey.len());
 
         if how == JoinHow::Full {
-            let mut matched = vec![false; rkey.len()];
+            let mut matched = vec![false; right.n_rows()];
             for r in right_idx.iter().flatten() {
                 matched[*r] = true;
             }
             // Right rows nothing matched, in row order — including any
             // with a null key, since a null matched nothing.
-            let orphans: Vec<usize> = (0..rkey.len()).filter(|&r| !matched[r]).collect();
-
+            let orphans: Vec<usize> = (0..right.n_rows()).filter(|&r| !matched[r]).collect();
             let left_rows: Vec<Option<usize>> = left_idx
                 .iter()
                 .map(|&i| Some(i as usize))
@@ -475,35 +566,28 @@ impl Frame {
                 .copied()
                 .chain(orphans.iter().map(|&r| Some(r)))
                 .collect();
-
             let mut pairs: Vec<(String, Series)> = Vec::new();
             for (name, col) in self.names.iter().zip(self.cols.iter()) {
-                if name == left_on {
-                    // The key column must carry the right side's value on
-                    // an orphan row. Without this the one column that says
+                match left_on.iter().position(|k| k == name) {
+                    // A key column carries the right side's value on an
+                    // orphan row: without it the one column that says
                     // which row this is would be null exactly where the
                     // reader needs it.
-                    pairs.push((
+                    Some(j) => pairs.push((
                         name.clone(),
                         coalesce(
                             &gather_optional(col, &left_rows),
-                            &gather_optional(rkey, &right_rows),
+                            &gather_optional(rcols[j], &right_rows),
                         )?,
-                    ));
-                } else {
-                    pairs.push((name.clone(), gather_optional(col, &left_rows)));
+                    )),
+                    None => pairs.push((name.clone(), gather_optional(col, &left_rows))),
                 }
             }
             for (name, col) in right.names.iter().zip(right.cols.iter()) {
-                if name == right_on {
+                if right_on.contains(name) {
                     continue;
                 }
-                let out_name = if self.names.contains(name) {
-                    format!("{}_right", name)
-                } else {
-                    name.clone()
-                };
-                pairs.push((out_name, gather_optional(col, &right_rows)));
+                pairs.push((right_name(name), gather_optional(col, &right_rows)));
             }
             return Frame::new(pairs);
         }
@@ -514,18 +598,423 @@ impl Frame {
             pairs.push((name.clone(), col.take(&lidx)?));
         }
         for (name, col) in right.names.iter().zip(right.cols.iter()) {
-            if name == right_on {
+            if right_on.contains(name) {
                 continue;
             }
-            let out_name = if self.names.contains(name) {
-                format!("{}_right", name)
-            } else {
-                name.clone()
-            };
-            pairs.push((out_name, gather_optional(col, &right_idx)));
+            pairs.push((right_name(name), gather_optional(col, &right_idx)));
         }
         Frame::new(pairs)
     }
+}
+
+/// Which right row an as-of join takes for a left row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AsOf {
+    /// The last right row at or before the left row's value.
+    Backward,
+    /// The first right row at or after it.
+    Forward,
+    /// Whichever of those two is closer (backward on a tie).
+    Nearest,
+}
+
+impl AsOf {
+    pub fn parse(name: &str) -> Option<AsOf> {
+        Some(match name {
+            "backward" => AsOf::Backward,
+            "forward" => AsOf::Forward,
+            "nearest" => AsOf::Nearest,
+            _ => return None,
+        })
+    }
+}
+
+impl Frame {
+    /// An as-of join: each left row takes the right row whose `on` value
+    /// is the nearest at or before its own (`direction`), among the right
+    /// rows with equal `by` keys — the last price before each trade, the
+    /// reading in force at each event. `on` is a number or ISO text on
+    /// both sides; `tolerance` (numbers only) bounds the distance. Every
+    /// left row is kept, in order, with nulls where nothing qualifies.
+    /// The right side need not be sorted.
+    pub fn asof_join(
+        &self,
+        right: &Frame,
+        on: &str,
+        by: &[String],
+        direction: AsOf,
+        tolerance: Option<f64>,
+        suffix: &str,
+    ) -> Result<Frame> {
+        let (lon, ron) = (self.column(on)?, right.column(on)?);
+        // A Date or Datetime compares as its integers (a Date against a
+        // Datetime as its midnight); a tolerance is days for a Date,
+        // seconds for a Datetime.
+        let temporal = |s: &Series| matches!(s.dtype(), crate::DType::Date | crate::DType::Datetime);
+        let as_time = |s: &Series| -> Result<Series> {
+            let t = if lon.dtype() != ron.dtype() {
+                s.cast(crate::DType::Datetime, &|x| x.to_string())?
+            } else {
+                s.clone()
+            };
+            Ok(t.physical().expect("temporal"))
+        };
+        let (lphys, rphys);
+        let (lon, ron, tolerance) = if temporal(lon) && temporal(ron) {
+            lphys = as_time(lon)?;
+            rphys = as_time(ron)?;
+            let micros = lon.dtype() == crate::DType::Datetime || ron.dtype() == crate::DType::Datetime;
+            (&lphys, &rphys, tolerance.map(|t| if micros { t * 1e6 } else { t }))
+        } else {
+            (lon, ron, tolerance)
+        };
+        let numeric = |s: &Series| matches!(s, Series::F64 { .. } | Series::I64 { .. });
+        let comparable = (numeric(lon) && numeric(ron))
+            || (lon.dtype() == crate::DType::Str && ron.dtype() == crate::DType::Str);
+        if !comparable {
+            return Err(OdsError::TypeMismatch(format!(
+                "asof_join: '{}' must be numbers or ISO text on both sides, got {} and {}",
+                on,
+                lon.dtype(),
+                ron.dtype()
+            )));
+        }
+        if tolerance.is_some() && !numeric(lon) {
+            return Err(OdsError::InvalidArgument(
+                "asof_join: a tolerance needs a numeric 'on' column".to_string(),
+            ));
+        }
+        let valid = |s: &Series, i: usize| s.validity().is_none_or(|v| v.get(i));
+        // The right rows by `by` key, each group's rows sorted by `on`
+        // (stable, so equal values keep their row order).
+        let (lcodes, rcodes, card) = if by.is_empty() {
+            (vec![0u32; self.n_rows()], vec![0u32; right.n_rows()], 1)
+        } else {
+            let lb: Vec<&Series> = by.iter().map(|k| self.column(k)).collect::<Result<_>>()?;
+            let rb: Vec<&Series> = by.iter().map(|k| right.column(k)).collect::<Result<_>>()?;
+            encode_join_keys(&lb, &rb)
+        };
+        let order = ron.argsort()?;
+        let Series::I64 { values: order, .. } = order else {
+            unreachable!("argsort gives Int positions")
+        };
+        let mut groups: Vec<Vec<u32>> = vec![Vec::new(); card];
+        for &r in order.iter() {
+            let r = r as usize;
+            if rcodes[r] != NO_KEY && valid(ron, r) {
+                groups[rcodes[r] as usize].push(r as u32);
+            }
+        }
+        let lvalid: Vec<bool> = (0..self.n_rows())
+            .map(|l| lcodes[l] != NO_KEY && valid(lon, l))
+            .collect();
+        let t = AsofTable { lvalid: &lvalid, lcodes: &lcodes, groups: &groups, direction, tolerance };
+        let right_idx: Vec<Option<usize>> = match (lon, ron) {
+            (Series::I64 { values: a, .. }, Series::I64 { values: b, .. }) => {
+                t.pick(|l| a[l], |r| b[r], Some(|x: i64, y: i64| (x as f64 - y as f64).abs()))
+            }
+            (Series::Str { col: a, .. }, Series::Str { col: b, .. }) => {
+                t.pick(|l| a.get(l), |r| b.get(r), None::<fn(&str, &str) -> f64>)
+            }
+            _ => {
+                let num = |s: &Series, i: usize| -> f64 {
+                    match s {
+                        Series::F64 { values, .. } => values[i],
+                        Series::I64 { values, .. } => values[i] as f64,
+                        _ => f64::NAN,
+                    }
+                };
+                t.pick(|l| num(lon, l), |r| num(ron, r), Some(|x: f64, y: f64| (x - y).abs()))
+            }
+        };
+
+        let mut pairs: Vec<(String, Series)> = self
+            .names
+            .iter()
+            .cloned()
+            .zip(self.cols.iter().cloned())
+            .collect();
+        for (name, col) in right.names.iter().zip(right.cols.iter()) {
+            if name == on || by.contains(name) {
+                continue;
+            }
+            let out = if self.names.contains(name) {
+                format!("{}{}", name, suffix)
+            } else {
+                name.clone()
+            };
+            pairs.push((out, gather_optional(col, &right_idx)));
+        }
+        Frame::new(pairs)
+    }
+}
+
+/// The built right side of an as-of join.
+struct AsofTable<'a> {
+    lvalid: &'a [bool],
+    lcodes: &'a [u32],
+    /// Each `by` group's right rows, sorted by `on`.
+    groups: &'a [Vec<u32>],
+    direction: AsOf,
+    tolerance: Option<f64>,
+}
+
+impl AsofTable<'_> {
+    /// Each left row's right row. A left side sorted by `on` (the usual
+    /// case: events in time) walks each group's rows once, a cursor per
+    /// group; otherwise each row is two binary searches.
+    fn pick<K: PartialOrd + Copy>(
+        &self,
+        lk: impl Fn(usize) -> K,
+        rk: impl Fn(usize) -> K,
+        dist: Option<impl Fn(K, K) -> f64>,
+    ) -> Vec<Option<usize>> {
+        let n = self.lvalid.len();
+        let mut prev: Option<K> = None;
+        let sorted = (0..n).filter(|&l| self.lvalid[l]).all(|l| {
+            let x = lk(l);
+            let ok = prev.is_none_or(|p| p <= x);
+            prev = Some(x);
+            ok
+        });
+        // Per group: how many rows are at or below the value (`le`), and
+        // how many strictly below (`lt`).
+        let mut le = vec![0usize; self.groups.len()];
+        let mut lt = vec![0usize; self.groups.len()];
+        (0..n)
+            .map(|l| {
+                if !self.lvalid[l] {
+                    return None;
+                }
+                let g = self.lcodes[l] as usize;
+                let rows = &self.groups[g];
+                let x = lk(l);
+                let want_back = self.direction != AsOf::Forward;
+                let want_fwd = self.direction != AsOf::Backward;
+                let (after, at_or_after) = if sorted {
+                    if want_back {
+                        while le[g] < rows.len() && rk(rows[le[g]] as usize) <= x {
+                            le[g] += 1;
+                        }
+                    }
+                    if want_fwd {
+                        while lt[g] < rows.len() && rk(rows[lt[g]] as usize) < x {
+                            lt[g] += 1;
+                        }
+                    }
+                    (le[g], lt[g])
+                } else {
+                    (
+                        if want_back { rows.partition_point(|&r| rk(r as usize) <= x) } else { 0 },
+                        if want_fwd { rows.partition_point(|&r| rk(r as usize) < x) } else { rows.len() },
+                    )
+                };
+                let back = (after > 0).then(|| rows[after - 1] as usize);
+                let fwd = rows.get(at_or_after).map(|&r| r as usize);
+                let d = |r: usize| dist.as_ref().map(|f| f(x, rk(r)));
+                let chosen = match self.direction {
+                    AsOf::Backward => back,
+                    AsOf::Forward => fwd,
+                    AsOf::Nearest => match (back, fwd) {
+                        (Some(b), Some(f)) => Some(match (d(b), d(f)) {
+                            (Some(db), Some(df)) if df < db => f,
+                            _ => b,
+                        }),
+                        (b, f) => b.or(f),
+                    },
+                };
+                chosen.filter(|&r| match (self.tolerance, d(r)) {
+                    (Some(t), Some(dr)) => dr <= t,
+                    _ => true,
+                })
+            })
+            .collect()
+    }
+}
+
+/// A join's keys and options.
+#[derive(Clone, Debug)]
+pub struct JoinSpec<'a> {
+    pub left_on: &'a [String],
+    pub right_on: &'a [String],
+    pub how: JoinHow,
+    /// Appended to a right column's name that the left side has.
+    pub suffix: &'a str,
+    pub validate: Validate,
+}
+
+/// Which side of a join must hold each key once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Validate {
+    None,
+    /// Both sides.
+    OneToOne,
+    /// The right side (a lookup table): the join never repeats a left row.
+    ManyToOne,
+    /// The left side.
+    OneToMany,
+}
+
+impl Validate {
+    /// `"one_to_one"` (`"1:1"`), `"many_to_one"` (`"m:1"`),
+    /// `"one_to_many"` (`"1:m"`), or `"many_to_many"` (`"m:m"`, no check).
+    pub fn parse(name: &str) -> Option<Validate> {
+        Some(match name {
+            "one_to_one" | "1:1" => Validate::OneToOne,
+            "many_to_one" | "m:1" => Validate::ManyToOne,
+            "one_to_many" | "1:m" => Validate::OneToMany,
+            "many_to_many" | "m:m" => Validate::None,
+            _ => return None,
+        })
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Validate::None => "many_to_many",
+            Validate::OneToOne => "one_to_one",
+            Validate::ManyToOne => "many_to_one",
+            Validate::OneToMany => "one_to_many",
+        }
+    }
+}
+
+/// A row whose key is null, or (on the left) matches nothing.
+const NO_KEY: u32 = u32::MAX;
+
+/// One key column per side encoded against the right side's values:
+/// each right row's code (dense, first-seen), each left row's code of
+/// the equal right value (`NO_KEY` when there is none or the key is
+/// null), and the number of codes. The common types encode without a
+/// per-row allocation; the rest through `Key`, whose types never match
+/// across (an Int key never equals a Float one).
+fn encode_join_pair(l: &Series, r: &Series) -> (Vec<u32>, Vec<u32>, usize) {
+    fn run<K: std::hash::Hash + Eq>(
+        nl: usize,
+        nr: usize,
+        lk: impl Fn(usize) -> Option<K>,
+        rk: impl Fn(usize) -> Option<K>,
+    ) -> (Vec<u32>, Vec<u32>, usize) {
+        let mut dict: FxMap<K, u32> = FxMap::default();
+        let mut rcodes = Vec::with_capacity(nr);
+        for i in 0..nr {
+            rcodes.push(match rk(i) {
+                None => NO_KEY,
+                Some(k) => {
+                    let next = dict.len() as u32;
+                    *dict.entry(k).or_insert(next)
+                }
+            });
+        }
+        let lcodes = (0..nl)
+            .map(|i| lk(i).and_then(|k| dict.get(&k).copied()).unwrap_or(NO_KEY))
+            .collect();
+        (lcodes, rcodes, dict.len())
+    }
+    let valid = |s: &Series, i: usize| s.validity().is_none_or(|v| v.get(i));
+    let (nl, nr) = (l.len(), r.len());
+    match (l, r) {
+        // Two categories of one level list match by code; a category
+        // and text (or another list) by text.
+        (
+            Series::Cat {
+                codes: a,
+                levels: la,
+                ..
+            },
+            Series::Cat {
+                codes: b,
+                levels: lb,
+                ..
+            },
+        ) if crate::category::same_levels(la, lb) => {
+            return run(
+                nl,
+                nr,
+                |i| valid(l, i).then(|| a[i]),
+                |i| valid(r, i).then(|| b[i]),
+            );
+        }
+        (Series::Cat { .. }, _) | (_, Series::Cat { .. }) => {
+            return encode_join_pair(&l.key_view(), &r.key_view());
+        }
+        (Series::Date { values: a, .. }, Series::Date { values: b, .. }) => {
+            return run(
+                nl,
+                nr,
+                |i| valid(l, i).then(|| a[i]),
+                |i| valid(r, i).then(|| b[i]),
+            );
+        }
+        (Series::Datetime { values: a, .. }, Series::Datetime { values: b, .. }) => {
+            return run(
+                nl,
+                nr,
+                |i| valid(l, i).then(|| a[i]),
+                |i| valid(r, i).then(|| b[i]),
+            );
+        }
+        _ => {}
+    }
+    match (l, r) {
+        (Series::I64 { values: a, .. }, Series::I64 { values: b, .. }) => run(
+            nl,
+            nr,
+            |i| valid(l, i).then(|| a[i]),
+            |i| valid(r, i).then(|| b[i]),
+        ),
+        (Series::Str { col: a, .. }, Series::Str { col: b, .. }) => run(
+            nl,
+            nr,
+            |i| valid(l, i).then(|| a.get(i)),
+            |i| valid(r, i).then(|| b.get(i)),
+        ),
+        (Series::F64 { values: a, .. }, Series::F64 { values: b, .. }) => {
+            let bits = |x: f64| if x.is_nan() { f64::NAN.to_bits() } else { x.to_bits() };
+            run(
+                nl,
+                nr,
+                |i| valid(l, i).then(|| bits(a[i])),
+                |i| valid(r, i).then(|| bits(b[i])),
+            )
+        }
+        _ => run(nl, nr, |i| key_at(l, i), |i| key_at(r, i)),
+    }
+}
+
+/// Every key column of a join encoded into one code per row: the
+/// columns' codes combined a column at a time and made dense again, so
+/// a code stays a `u32` however many keys there are.
+fn encode_join_keys(lcols: &[&Series], rcols: &[&Series]) -> (Vec<u32>, Vec<u32>, usize) {
+    let (mut lc, mut rc, mut card) = encode_join_pair(lcols[0], rcols[0]);
+    for (l, r) in lcols.iter().zip(rcols).skip(1) {
+        let (l2, r2, c2) = encode_join_pair(l, r);
+        let pair = |a: u32, b: u32| (a as u64) * (c2 as u64) + b as u64;
+        let mut dict: FxMap<u64, u32> = FxMap::default();
+        for (a, b) in rc.iter_mut().zip(&r2) {
+            *a = if *a == NO_KEY || *b == NO_KEY {
+                NO_KEY
+            } else {
+                let next = dict.len() as u32;
+                *dict.entry(pair(*a, *b)).or_insert(next)
+            };
+        }
+        for (a, b) in lc.iter_mut().zip(&l2) {
+            *a = if *a == NO_KEY || *b == NO_KEY {
+                NO_KEY
+            } else {
+                dict.get(&pair(*a, *b)).copied().unwrap_or(NO_KEY)
+            };
+        }
+        card = dict.len();
+    }
+    (lc, rc, card)
+}
+
+/// The built right side of a join, by key code.
+struct JoinTable<'a> {
+    lcodes: &'a [u32],
+    offsets: &'a [usize],
+    rrows: &'a [u32],
 }
 
 // ---------------------------------------------------------------------
@@ -721,115 +1210,7 @@ impl Series {
         })
     }
 
-    /// A trailing-window aggregate: element `i` reduces the `window`
-    /// elements ending at `i`. The first `window - 1` elements are null,
-    /// because the window is not yet full and reporting a partial
-    /// reduction as if it were whole is how a chart lies at its left
-    /// edge.
-    ///
-    /// Nulls inside a window are skipped, exactly as the whole-column
-    /// reductions skip them, so a window with two valid elements of
-    /// three means the mean of two.
-    ///
-    /// Cost is one reduction per element — O(n × window). The
-    /// incremental alternative accumulates float drift that a fresh sum
-    /// does not, which would make a rolling mean disagree with the
-    /// `sum` of the same window. Correctness first; if a large window on
-    /// a large column ever shows up in a measurement, that is the point
-    /// to revisit it.
-    pub fn rolling(&self, window: usize, op: AggOp) -> Result<Series> {
-        if window == 0 {
-            return Err(OdsError::InvalidArgument(
-                "rolling: window must be at least 1".to_string(),
-            ));
-        }
-        let n = self.len();
-        if matches!(op, AggOp::First | AggOp::Last | AggOp::NUnique) {
-            return Err(OdsError::InvalidArgument(format!(
-                "rolling: {} is not a rolling aggregation (count, sum, mean, min, max, median, std, var)",
-                op.name()
-            )));
-        }
-        if op != AggOp::Count && !matches!(self.dtype(), crate::DType::F64 | crate::DType::I64) {
-            return Err(OdsError::InvalidArgument(format!(
-                "rolling: {:?} needs a numeric column, got {}",
-                op,
-                self.dtype()
-            )));
-        }
-        let value_at = |i: usize| match self.scalar_at(i) {
-            Scalar::F64(x) => Some(x),
-            Scalar::I64(x) => Some(x as f64),
-            _ => None,
-        };
-        let reduce = |lo: usize, hi: usize| -> Option<f64> {
-            let vals = (lo..hi).filter_map(value_at);
-            match op {
-                AggOp::Count => Some((lo..hi).filter(|&i| value_at(i).is_some()).count() as f64),
-                AggOp::Sum => {
-                    let mut any = false;
-                    let mut total = 0.0;
-                    for v in vals {
-                        any = true;
-                        total += v;
-                    }
-                    // An all-null window sums to null, not to zero: no
-                    // data is not the same measurement as zero.
-                    any.then_some(total)
-                }
-                AggOp::Mean => {
-                    let (mut total, mut count) = (0.0, 0usize);
-                    for v in vals {
-                        total += v;
-                        count += 1;
-                    }
-                    (count > 0).then(|| total / count as f64)
-                }
-                AggOp::Min => vals.fold(None, |a: Option<f64>, v| Some(a.map_or(v, |x| x.min(v)))),
-                AggOp::Max => vals.fold(None, |a: Option<f64>, v| Some(a.map_or(v, |x| x.max(v)))),
-                AggOp::Median => {
-                    let mut v: Vec<f64> = vals.collect();
-                    if v.is_empty() {
-                        return None;
-                    }
-                    v.sort_unstable_by(f64::total_cmp);
-                    let h = (v.len() - 1) as f64 * 0.5;
-                    let (lo, hi) = (h.floor() as usize, h.ceil() as usize);
-                    Some(v[lo] + (v[hi] - v[lo]) * (h - lo as f64))
-                }
-                AggOp::Std | AggOp::Var => {
-                    let v: Vec<f64> = vals.collect();
-                    if v.len() < 2 {
-                        return None;
-                    }
-                    let mean = v.iter().sum::<f64>() / v.len() as f64;
-                    let ss: f64 = v.iter().map(|x| (x - mean) * (x - mean)).sum();
-                    let var = ss / (v.len() - 1) as f64;
-                    Some(if op == AggOp::Std { var.sqrt() } else { var })
-                }
-                AggOp::First | AggOp::Last | AggOp::NUnique => None,
-            }
-        };
-        let out: Vec<Option<f64>> = (0..n)
-            .map(|i| {
-                (i + 1 >= window)
-                    .then(|| reduce(i + 1 - window, i + 1))
-                    .flatten()
-            })
-            .collect();
-        // Count is always a count; mean is always a fraction; the rest
-        // keep the column's own type, as the whole-column reductions do.
-        Ok(match op {
-            AggOp::Count => {
-                Series::from_i64_options(out.into_iter().map(|o| o.map(|x| x as i64)).collect())
-            }
-            AggOp::Mean | AggOp::Median | AggOp::Std | AggOp::Var => Series::from_f64_options(out),
-            _ if self.dtype() == crate::DType::I64 => {
-                Series::from_i64_options(out.into_iter().map(|o| o.map(|x| x as i64)).collect())
-            }
-            _ => Series::from_f64_options(out),
-        })
-    }
+    // `rolling` lives in window.rs.
 }
 
 /// Value equality for ranking, where two nulls never reach this and NaN
@@ -1109,7 +1490,7 @@ fn stack_same_dtype(cols: &[&Series]) -> Series {
 
 /// A scalar as a column name. Only reached for `pivot`, where the values
 /// of one column become the names of many.
-fn scalar_name(v: Scalar, fmt_f64: &dyn Fn(f64) -> String) -> String {
+pub(crate) fn scalar_name(v: Scalar, fmt_f64: &dyn Fn(f64) -> String) -> String {
     match v {
         Scalar::Str(s) => s,
         Scalar::I64(x) => x.to_string(),
@@ -1138,34 +1519,24 @@ const PAR_JOIN_ROWS: usize = 200_000;
 #[cfg(feature = "parallel")]
 const PAR_TAKE_ROWS: usize = 500_000;
 
-/// Probe left rows `[lo, hi)` against the built right-key table, producing
-/// `(left_idx, right_idx)` match pairs in left-row order (a matched left row
-/// repeats once per right match; an unmatched row is kept with `None` only
-/// for a left join). Pure and read-only over `table`/`lkey`, so it is safe
-/// to run over disjoint ranges on separate threads.
-fn probe_join(
-    lkey: &Series,
-    table: &FxMap<Key, Vec<usize>>,
-    how: JoinHow,
-    lo: usize,
-    hi: usize,
-) -> (Vec<i64>, Vec<Option<usize>>) {
+/// Probe left rows `[lo, hi)` against the built right side, producing
+/// `(left_idx, right_idx)` match pairs in left-row order (a matched left
+/// row repeats once per right match, in right-row order; an unmatched
+/// row is kept with `None` only for a left join). Read-only over the
+/// table, so it runs over disjoint ranges on separate threads.
+fn probe_join(t: &JoinTable, how: JoinHow, lo: usize, hi: usize) -> (Vec<i64>, Vec<Option<usize>>) {
     let mut left_idx: Vec<i64> = Vec::new();
     let mut right_idx: Vec<Option<usize>> = Vec::new();
     for i in lo..hi {
-        match key_at(lkey, i).and_then(|k| table.get(&k)) {
-            Some(matches) => {
-                for &r in matches {
-                    left_idx.push(i as i64);
-                    right_idx.push(Some(r));
-                }
+        let c = t.lcodes[i];
+        if c != NO_KEY {
+            for &r in &t.rrows[t.offsets[c as usize]..t.offsets[c as usize + 1]] {
+                left_idx.push(i as i64);
+                right_idx.push(Some(r as usize));
             }
-            None => {
-                if how == JoinHow::Left {
-                    left_idx.push(i as i64);
-                    right_idx.push(None);
-                }
-            }
+        } else if how == JoinHow::Left {
+            left_idx.push(i as i64);
+            right_idx.push(None);
         }
     }
     (left_idx, right_idx)
@@ -1174,12 +1545,7 @@ fn probe_join(
 /// Probe all `n` left rows, in parallel over row-chunks when the frame is
 /// large and the `parallel` feature is on. Chunks are concatenated in row
 /// order, so the output is identical to the sequential probe.
-fn join_probe(
-    lkey: &Series,
-    table: &FxMap<Key, Vec<usize>>,
-    how: JoinHow,
-    n: usize,
-) -> (Vec<i64>, Vec<Option<usize>>) {
+fn join_probe(t: &JoinTable, how: JoinHow, n: usize) -> (Vec<i64>, Vec<Option<usize>>) {
     #[cfg(feature = "parallel")]
     if n >= PAR_JOIN_ROWS && crate::parallel_enabled() {
         use rayon::prelude::*;
@@ -1191,7 +1557,7 @@ fn join_probe(
             .collect();
         let parts: Vec<(Vec<i64>, Vec<Option<usize>>)> = ranges
             .par_iter()
-            .map(|&(lo, hi)| probe_join(lkey, table, how, lo, hi))
+            .map(|&(lo, hi)| probe_join(t, how, lo, hi))
             .collect();
         let total: usize = parts.iter().map(|(l, _)| l.len()).sum();
         let mut left_idx = Vec::with_capacity(total);
@@ -1202,14 +1568,14 @@ fn join_probe(
         }
         return (left_idx, right_idx);
     }
-    probe_join(lkey, table, how, 0, n)
+    probe_join(t, how, 0, n)
 }
 
 /// The row index where each group first appears, indexed by group id.
 /// `group_ids_single`/`_multi` assign ids in first-seen order, so this is
 /// also sorted ascending — but the verbs below reorder groups, and rely
 /// on being able to ask for a specific group's first row.
-fn first_row_per_group(group_ids: &[u32], n_groups: usize) -> Vec<i64> {
+pub(crate) fn first_row_per_group(group_ids: &[u32], n_groups: usize) -> Vec<i64> {
     let mut first_row: Vec<i64> = vec![0; n_groups];
     let mut seen = vec![false; n_groups];
     for (row, &g) in group_ids.iter().enumerate() {
@@ -1432,8 +1798,8 @@ impl Series {
 
 /// A hashable group/join key. Floats key by bit pattern (all NaNs are
 /// one group).
-#[derive(Clone, PartialEq, Eq, Hash)]
-enum Key {
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Key {
     I(i64),
     F(u64),
     B(bool),
@@ -1442,7 +1808,7 @@ enum Key {
     T(i64),
 }
 
-fn key_at(s: &Series, i: usize) -> Option<Key> {
+pub(crate) fn key_at(s: &Series, i: usize) -> Option<Key> {
     match s.scalar_at(i) {
         Scalar::Null => None,
         Scalar::I64(x) => Some(Key::I(x)),
@@ -1529,7 +1895,7 @@ where
     (ids, next as usize)
 }
 
-fn group_ids_single(key: &Series) -> (Vec<u32>, usize) {
+pub(crate) fn group_ids_single(key: &Series) -> (Vec<u32>, usize) {
     let n = key.len();
     match key {
         // A date groups as its integer.
@@ -1655,7 +2021,7 @@ fn group_ids_single(key: &Series) -> (Vec<u32>, usize) {
 /// below handles the pathological keyspace.
 const COMPOSITE_DENSE_MAX: usize = 1 << 22;
 
-fn group_ids_multi(key_cols: &[&Series], n: usize) -> (Vec<u32>, usize) {
+pub(crate) fn group_ids_multi(key_cols: &[&Series], n: usize) -> (Vec<u32>, usize) {
     // Fast path: dictionary-encode each key column independently (a
     // per-type hash pass, no per-row allocation), then combine the
     // per-row ids arithmetically and densify through an array — the
@@ -1891,7 +2257,7 @@ fn accumulate_i64(
     scatter(0, values.len())
 }
 
-fn aggregate_column(col: &Series, group_ids: &[u32], n_groups: usize, op: AggOp) -> Result<Series> {
+pub(crate) fn aggregate_column(col: &Series, group_ids: &[u32], n_groups: usize, op: AggOp) -> Result<Series> {
     match col {
         // The earliest and latest of a group's dates.
         Series::Date { .. } | Series::Datetime { .. } if matches!(op, AggOp::Min | AggOp::Max) => {
@@ -1981,7 +2347,7 @@ fn finish_f64(
 
 /// Each group's rows, in row order, by a counting sort over the group
 /// ids: group `g`'s rows are `rows[offsets[g]..offsets[g + 1]]`.
-fn rows_by_group(group_ids: &[u32], n_groups: usize) -> (Vec<usize>, Vec<u32>) {
+pub(crate) fn rows_by_group(group_ids: &[u32], n_groups: usize) -> (Vec<usize>, Vec<u32>) {
     let mut offsets = vec![0usize; n_groups + 1];
     for &g in group_ids {
         offsets[g as usize + 1] += 1;
@@ -1999,7 +2365,7 @@ fn rows_by_group(group_ids: &[u32], n_groups: usize) -> (Vec<usize>, Vec<u32>) {
 }
 
 /// The last row index of each group.
-fn last_row_per_group(group_ids: &[u32], n_groups: usize) -> Vec<i64> {
+pub(crate) fn last_row_per_group(group_ids: &[u32], n_groups: usize) -> Vec<i64> {
     let mut last = vec![0i64; n_groups];
     for (i, &g) in group_ids.iter().enumerate() {
         last[g as usize] = i as i64;
@@ -2010,7 +2376,7 @@ fn last_row_per_group(group_ids: &[u32], n_groups: usize) -> Vec<i64> {
 /// One value per group, each computed from that group's rows alone — so
 /// fanning the groups out over threads gives exactly the sequential
 /// answer: no group's arithmetic depends on how the others are split.
-fn per_group<T: Send>(
+pub(crate) fn per_group<T: Send>(
     n_rows: usize,
     n_groups: usize,
     f: impl Fn(usize) -> T + Sync + Send,
@@ -2027,7 +2393,7 @@ fn per_group<T: Send>(
 /// The aggregations that need a group's values together: median, std,
 /// var (numeric columns; nulls skipped) and n_unique (any column; null
 /// is one value, as `Series::n_unique` counts it).
-fn aggregate_by_rows(
+pub(crate) fn aggregate_by_rows(
     col: &Series,
     group_ids: &[u32],
     groups: &(Vec<usize>, Vec<u32>),
@@ -2101,6 +2467,18 @@ fn aggregate_by_rows(
                 };
                 Some(a + (b - a) * (h - lo as f64))
             }
+            AggOp::Quantile(_) => {
+                if vals.is_empty() {
+                    return None;
+                }
+                // `Series::quantile`'s interpolation over the group's
+                // sorted values.
+                let q = op.q().expect("a quantile");
+                vals.sort_unstable_by(f64::total_cmp);
+                let h = (vals.len() - 1) as f64 * q;
+                let (lo, hi) = (h.floor() as usize, h.ceil() as usize);
+                Some(vals[lo] + (vals[hi] - vals[lo]) * (h - lo as f64))
+            }
             _ => {
                 if vals.len() < 2 {
                     return None;
@@ -2116,7 +2494,26 @@ fn aggregate_by_rows(
 }
 
 /// Gather with optional indices (join's right side): None -> null.
-fn gather_optional(col: &Series, idx: &[Option<usize>]) -> Series {
+pub(crate) fn gather_optional(col: &Series, idx: &[Option<usize>]) -> Series {
+    // Values and validity written apart: no Option per row.
+    fn dense<T: Copy + Default>(values: &[T], col: &Series, idx: &[Option<usize>]) -> (Vec<T>, Option<Bitmap>) {
+        let mut out = Vec::with_capacity(idx.len());
+        let mut valid = Vec::with_capacity(idx.len());
+        for o in idx {
+            match o.filter(|&i| col_valid(col, i)) {
+                Some(i) => {
+                    out.push(values[i]);
+                    valid.push(true);
+                }
+                None => {
+                    out.push(T::default());
+                    valid.push(false);
+                }
+            }
+        }
+        let bm = (!valid.iter().all(|&v| v)).then(|| Bitmap::from_bools(&valid));
+        (out, bm)
+    }
     match col {
         Series::Date { .. } | Series::Datetime { .. } | Series::Cat { .. } => {
             let valid: Vec<bool> = idx
@@ -2137,16 +2534,14 @@ fn gather_optional(col: &Series, idx: &[Option<usize>]) -> Series {
             }
             col.gather_under(&rows, validity)
         }
-        Series::F64 { values, .. } => Series::from_f64_options(
-            idx.iter()
-                .map(|o| o.filter(|&i| col_valid(col, i)).map(|i| values[i]))
-                .collect(),
-        ),
-        Series::I64 { values, .. } => Series::from_i64_options(
-            idx.iter()
-                .map(|o| o.filter(|&i| col_valid(col, i)).map(|i| values[i]))
-                .collect(),
-        ),
+        Series::F64 { values, .. } => {
+            let (v, b) = dense(values, col, idx);
+            Series::F64 { values: std::sync::Arc::new(v), validity: b }
+        }
+        Series::I64 { values, .. } => {
+            let (v, b) = dense(values, col, idx);
+            Series::I64 { values: std::sync::Arc::new(v), validity: b }
+        }
         Series::Bool { values, .. } => Series::from_bool_options(
             idx.iter()
                 .map(|o| o.filter(|&i| col_valid(col, i)).map(|i| values[i]))
@@ -2182,7 +2577,7 @@ fn gather_optional(col: &Series, idx: &[Option<usize>]) -> Series {
 /// a Float column never match each other — but a full join returns rows
 /// even when nothing matched, which is exactly when a mismatch would
 /// otherwise be silently papered over.
-fn coalesce(a: &Series, b: &Series) -> Result<Series> {
+pub(crate) fn coalesce(a: &Series, b: &Series) -> Result<Series> {
     if a.dtype() != b.dtype() {
         return Err(OdsError::InvalidArgument(format!(
             "join: a full join needs both key columns to have the same type, \
@@ -2287,33 +2682,8 @@ pub fn group_ids(keys: &[&Series]) -> Result<(Vec<u32>, usize)> {
 /// of the group (pandas' `transform`, Polars' `over`). `Count` counts
 /// the group's valid values, as `ods.count` does.
 pub fn over(col: &Series, keys: &[&Series], op: AggOp) -> Result<Series> {
-    let (ids, n_groups) = group_ids(keys)?;
-    if ids.len() != col.len() {
-        return Err(OdsError::LengthMismatch {
-            left: ids.len(),
-            right: col.len(),
-        });
-    }
-    let per_group = match op {
-        AggOp::Count => {
-            let mut counts = vec![0i64; n_groups];
-            for (i, &g) in ids.iter().enumerate() {
-                if col.validity().is_none_or(|v| v.get(i)) {
-                    counts[g as usize] += 1;
-                }
-            }
-            Series::from_i64(counts)
-        }
-        AggOp::Median | AggOp::Std | AggOp::Var | AggOp::NUnique => {
-            let rows = rows_by_group(&ids, n_groups);
-            aggregate_by_rows(col, &ids, &rows, op)?
-        }
-        AggOp::First => col.take(&Series::from_i64(first_row_per_group(&ids, n_groups)))?,
-        AggOp::Last => col.take(&Series::from_i64(last_row_per_group(&ids, n_groups)))?,
-        _ => aggregate_column(col, &ids, n_groups, op)?,
-    };
-    let idx: Vec<usize> = ids.iter().map(|&g| g as usize).collect();
-    Ok(per_group.gather(&idx))
+    let g = crate::group::Grouping::new(keys)?;
+    g.broadcast(&g.aggregate(col, op)?)
 }
 
 /// A key's dense rank per row: equal values share a rank, nulls rank
@@ -2485,6 +2855,31 @@ fn shifted_validity(v: Option<&Bitmap>, n: usize, by: i64) -> Option<Bitmap> {
 #[cfg(test)]
 mod summary_tests {
     use super::*;
+
+    #[test]
+    fn an_asof_join_takes_the_row_in_force() {
+        let quotes = Frame::new(vec![
+            ("t".into(), Series::from_i64(vec![1, 5, 3, 9])),
+            ("sym".into(), Series::from_str_values(vec!["a".into(), "a".into(), "b".into(), "a".into()])),
+            ("px".into(), Series::from_f64(vec![10.0, 50.0, 30.0, 90.0])),
+        ])
+        .unwrap();
+        let trades = Frame::new(vec![
+            ("t".into(), Series::from_i64(vec![0, 4, 5, 8, 4])),
+            ("sym".into(), Series::from_str_values(vec!["a".into(), "a".into(), "a".into(), "a".into(), "b".into()])),
+        ])
+        .unwrap();
+        let px = |d: AsOf, tol: Option<f64>| -> Vec<Scalar> {
+            let j = trades.asof_join(&quotes, "t", &["sym".to_string()], d, tol, "_right").unwrap();
+            let c = j.column("px").unwrap();
+            (0..c.len()).map(|i| c.scalar_at(i)).collect()
+        };
+        use Scalar::{F64, Null};
+        assert_eq!(px(AsOf::Backward, None), vec![Null, F64(10.0), F64(50.0), F64(50.0), F64(30.0)]);
+        assert_eq!(px(AsOf::Forward, None), vec![F64(10.0), F64(50.0), F64(50.0), F64(90.0), Null]);
+        assert_eq!(px(AsOf::Nearest, None), vec![F64(10.0), F64(50.0), F64(50.0), F64(90.0), F64(30.0)]);
+        assert_eq!(px(AsOf::Backward, Some(1.0)), vec![Null, Null, F64(50.0), Null, F64(30.0)]);
+    }
 
     #[test]
     fn a_columns_summary_counts_ranges_and_ranks() {

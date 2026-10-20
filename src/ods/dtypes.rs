@@ -14,7 +14,8 @@ use super::frame::{OdsFrame, frame_of};
 use super::series::{OdsSeries, series_of};
 use crate::ast::Value;
 use olang_ods::fuse::{BinOp, Expr, Op, TOp};
-use olang_ods::temporal::{Every, US_PER_DAY};
+use olang_ods::temporal::US_PER_DAY;
+use olang_ods::time::Every;
 use olang_ods::{DType, Frame, Scalar, Series, category, text};
 use std::sync::Arc;
 

@@ -13,12 +13,37 @@ use olang_ods::{AggOp, AggSpec, Frame, JoinHow, Scalar, Series};
 use std::any::Any;
 use std::sync::Arc;
 
+/// A Frame value, and the hash indexes `ods.lookup` has built over its
+/// columns: kept with the value, so a lookup repeated against the same
+/// Frame (a loop of quotes against one table) hashes the column once.
 #[derive(Debug)]
-pub struct OdsFrame(pub Frame);
+pub struct OdsFrame(pub Frame, pub(crate) LookupCache);
+
+/// Column name → the index `ods.lookup` built over it.
+pub(crate) type LookupCache =
+    std::sync::Mutex<std::collections::HashMap<String, Arc<olang_ods::group::KeyIndex>>>;
 
 impl OdsFrame {
     pub fn into_value(frame: Frame) -> Value {
-        Value::Native(NativeHandle::new(OdsFrame(frame)))
+        Value::Native(NativeHandle::new(OdsFrame(frame, Default::default())))
+    }
+
+    /// The lookup index over column `name`, built on first use.
+    pub(crate) fn key_index(&self, name: &str) -> Result<Arc<olang_ods::group::KeyIndex>, String> {
+        let mut cache = self.1.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(ix) = cache.get(name) {
+            return Ok(ix.clone());
+        }
+        let col = self.0.column(name).map_err(|_| {
+            format!(
+                "ods.lookup: no column '{}' in this Frame. It has: {}",
+                name,
+                self.0.names().join(", ")
+            )
+        })?;
+        let ix = Arc::new(olang_ods::group::KeyIndex::new(col));
+        cache.insert(name.to_string(), ix.clone());
+        Ok(ix)
     }
 }
 
@@ -101,9 +126,35 @@ impl NativeObject for OdsFrame {
                     key.type_name()
                 )),
             },
+            // `f[["a", "b"]]`: those columns, in that order.
+            Value::List(items) => items
+                .iter()
+                .map(|v| match v {
+                    Value::String(s) => Ok(s.to_string()),
+                    other => Err(format!(
+                        "a Frame's columns are chosen by name, got {} in the list",
+                        other.type_name()
+                    )),
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .and_then(|names| {
+                    for n in &names {
+                        if self.0.column(n).is_err() {
+                            return Err(format!(
+                                "no column '{}' in this Frame. It has: {}",
+                                n,
+                                self.0.names().join(", ")
+                            ));
+                        }
+                    }
+                    self.0
+                        .select(&names)
+                        .map(OdsFrame::into_value)
+                        .map_err(|err| err.to_string())
+                }),
             Value::Integer(_) => Err(
                 "a Frame is indexed by column, not by row position. For rows, \
-                 use ods.head(f, n) or ods.take(f, indices)"
+                 use ods.row(f, i), ods.slice(f, start, n) or ods.take(f, indices)"
                     .to_string(),
             ),
             other => Err(format!(
@@ -174,7 +225,7 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("unpivot", 3),
 ];
 
-fn want_frame<'a>(func: &str, args: &'a [Value], idx: usize) -> Result<&'a Frame, String> {
+pub(crate) fn want_frame<'a>(func: &str, args: &'a [Value], idx: usize) -> Result<&'a Frame, String> {
     args.get(idx).and_then(frame_of).ok_or_else(|| {
         format!(
             "ods.{}: argument {} must be a Frame, got {}",
@@ -197,7 +248,7 @@ fn want_string(func: &str, args: &[Value], idx: usize) -> Result<String, String>
     }
 }
 
-fn string_list(func: &str, args: &[Value], idx: usize) -> Result<Vec<String>, String> {
+pub(crate) fn string_list(func: &str, args: &[Value], idx: usize) -> Result<Vec<String>, String> {
     match args.get(idx) {
         Some(Value::String(s)) => Ok(vec![s.as_ref().clone()]),
         Some(Value::List(items)) => items
@@ -1071,7 +1122,7 @@ pub fn dispatch_shared(func: &str, args: &[Value]) -> Option<Result<Value, Strin
 
 /// Agg specs come as a list of `[out_name, op, col]` triples (or
 /// `[out_name, "count"]` pairs, since count needs no column).
-fn parse_aggs(value: &Value) -> Result<Vec<AggSpec>, String> {
+pub(crate) fn parse_aggs(value: &Value) -> Result<Vec<AggSpec>, String> {
     let items = match value {
         Value::List(items) => items,
         other => {

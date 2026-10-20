@@ -936,7 +936,7 @@ fn a_frame_refuses_a_row_position_and_names_the_verb() {
     // Refusing `f[0]` is the whole reason `[]` stays unambiguous here.
     let err = eval(r#"ods.read_csv("a\n1\n")[0]"#, None).expect_err("must refuse");
     assert!(err.contains("not by row position"), "{err}");
-    assert!(err.contains("ods.head"), "{err}");
+    assert!(err.contains("ods.row"), "{err}");
 }
 
 #[test]

@@ -13,6 +13,7 @@ mod columns;
 pub mod dtypes;
 pub mod expr;
 mod frame;
+mod group;
 mod learn;
 pub mod gg;
 mod plot;
@@ -21,6 +22,7 @@ mod stats;
 mod table;
 
 pub use frame::{OdsFrame, frame_of};
+pub use group::{ApplyState, apply_finish, apply_groups, is_callable as apply_callable};
 pub use series::{OdsSeries, make_series_value, series_of};
 pub use table::scalar_text;
 
@@ -95,6 +97,7 @@ impl OvmModule for OdsModule {
             .chain(frame::FUNCTIONS.iter().copied())
             .chain(colfns::FUNCTIONS.iter().copied())
             .chain(dtypes::FUNCTIONS.iter().copied())
+            .chain(group::FUNCTIONS.iter().copied())
         {
             module.insert(
                 name.to_string(),
@@ -196,6 +199,11 @@ impl OvmModule for OdsModule {
 pub(crate) fn call(func: &str, args: Vec<Value>) -> Result<Value, String> {
     // Exprs and the Frame verbs that take them.
     if let Some(r) = expr::dispatch(func, &args) {
+        return r;
+    }
+    // GroupBy and the shape, group, join and time verbs (`floor` of ISO
+    // text among them).
+    if let Some(r) = group::dispatch(func, &args) {
         return r;
     }
     // Dates' parts and arithmetic: fused expressions too; text and

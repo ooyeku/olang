@@ -5,7 +5,8 @@
 //! pandas side of each row, and docs/performance.md records both.
 
 use olang_ods::fuse::{Expr, Op, Plan, TOp};
-use olang_ods::temporal::{Every, US_PER_SEC, format_date, format_datetime};
+use olang_ods::temporal::{US_PER_SEC, format_date, format_datetime};
+use olang_ods::time::Every;
 use olang_ods::{AggOp, AggSpec, DType, Frame, Series, StrCol, category, text};
 use std::hint::black_box;
 use std::time::Instant;

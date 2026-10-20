@@ -462,3 +462,26 @@ fn a_date_column_is_time_on_a_gg_axis() {
         "true\ntrue",
     );
 }
+
+#[test]
+fn frame_verbs_take_dates_and_categories() {
+    agrees(
+        "frames",
+        r#"
+    use ods { col }
+    let f = ods.read_csv("ts,k,v\n2024-01-01T10:00,a,1\n2024-01-01T11:30,b,2\n2024-01-02T09:00,a,4\n2024-01-09T09:00,b,8\n", dates: ["ts"])
+    let g = f |> ods.with({ c: col("k").to_category(), d: col("ts").date() })
+    let daily = ods.resample(g, "ts", "1d", { total: col("v").sum() })
+    println(ods.schema(daily)["dtype"].to_list())
+    println(daily["total"].to_list())
+    println(ods.resample(g, "d", "1w", { total: col("v").sum() })["d"].to_list())
+    println(g.group_by("c").agg({ n: ods.count(), first: col("d").min() })["first"].to_list())
+    let quotes = ods.frame([["t", ods.series(["2024-01-01T00:00", "2024-01-02T00:00"]).to_datetime()], ["price", [10.0, 20.0]]])
+    println(ods.asof_join(g.with({ t: col("ts") }), quotes, "t")["price"].to_list())
+    println(ods.n_rows(ods.join(g, ods.frame([["c", ods.series(["a"]).to_category()], ["z", [1]]]), "c")))
+    println(ods.run_id(g["c"]).to_list())
+    println(ods.lookup(g, "d", "2024-01-02", "v"))
+"#,
+        "[\"Datetime\", \"Int\"]\n[3, 4, 8]\n[2024-01-01, 2024-01-08]\n[2024-01-01, 2024-01-01]\n[10.0, 10.0, 20.0, 20.0]\n2\n[0, 1, 2, 3]\n4",
+    );
+}

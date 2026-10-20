@@ -411,7 +411,7 @@ pub enum TOp {
     /// An Int of microseconds as a Datetime.
     AsDatetime,
     /// The start of the span holding it.
-    Floor(crate::temporal::Every),
+    Floor(crate::time::Every),
     /// Calendar months later, the day clamped to the month's end.
     AddMonths(i64),
     /// `[a, b]`: whole calendar months from `b` to `a`.
@@ -879,7 +879,7 @@ fn temporal_dtype(op: Op, kids: &[Option<DType>]) -> Result<Option<Option<DType>
                         t.name()
                     )));
                 }
-                TOp::Floor(e) if k == Some(Date) && e.below_day() => {
+                TOp::Floor(e) if k == Some(Date) && !e.is_dated() => {
                     return Err(OdsError::InvalidArgument(
                         "floor: a Date cannot be cut finer than a day".to_string(),
                     ));
@@ -2428,11 +2428,16 @@ fn temporal_op(t: TOp, micros: bool, args: &[Arg<'_>], dst: &mut Dst<'_>, valid:
             }
             map1(x, out, |v| v)
         }
+        // `resample`'s buckets (`time::Every`), on days and seconds; a
+        // Datetime's fraction of a second is below every unit.
         TOp::Floor(e) => {
             if micros {
-                map1(x, out, |v| e.floor_us(v))
+                map1(x, out, |v| {
+                    let (d, s) = e.floor(tm::day_of_us(v), tm::time_of_us(v) / tm::US_PER_SEC);
+                    d * tm::US_PER_DAY + s * tm::US_PER_SEC
+                })
             } else {
-                map1(x, out, |v| e.floor_day(v))
+                map1(x, out, |v| e.floor(v, 0).0)
             }
         }
         TOp::AddMonths(k) => {

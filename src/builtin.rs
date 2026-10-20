@@ -1155,6 +1155,21 @@ impl BuiltinFunctions {
         // OVM extension modules (ods, ...): "<module>.<func>" dispatches
         // through the module registry. After the fixed prefixes above so
         // no existing module name can be shadowed.
+        // `by.apply(fn)`: one call of the function per group, on this
+        // tier; the groups and the combining are the module's.
+        if name == "ods.apply"
+            && arguments.len() == 2
+            && crate::ods::apply_callable(&arguments[1])
+        {
+            let (groups, state) = crate::ods::apply_groups(&arguments)
+                .map_err(|message| InterpreterError::RuntimeError { message })?;
+            let mut results = Vec::with_capacity(groups.len());
+            for g in groups {
+                results.push(interpreter.call_function_optimized(&arguments[1], vec![g])?);
+            }
+            return crate::ods::apply_finish(state, results)
+                .map_err(|message| InterpreterError::RuntimeError { message });
+        }
         if let Some((module_name, module_function)) = name.split_once('.')
             && let Some(module) = crate::native::module_named(module_name)
         {

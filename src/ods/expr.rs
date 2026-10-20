@@ -181,7 +181,7 @@ pub fn render(e: &LExpr) -> String {
                 }
                 Op::Cast(t) => return format!("cast({}, {:?})", args[0], t.to_string()),
                 Op::Temporal(fuse::TOp::Floor(e), _) => {
-                    return format!("floor({}, {:?})", args[0], e);
+                    return format!("floor({}, {:?})", args[0], e.text());
                 }
                 Op::Temporal(fuse::TOp::AddMonths(k), _) => {
                     return format!("add_months({}, {})", args[0], k);
@@ -442,7 +442,7 @@ struct Resolver<'a> {
 }
 
 /// The aggregation an `over` applies, from its call node's function.
-fn agg_of(func: &str) -> Option<AggOp> {
+pub(crate) fn agg_of(func: &str) -> Option<AggOp> {
     Some(match func {
         "sum" => AggOp::Sum,
         "mean" => AggOp::Mean,
@@ -455,6 +455,12 @@ fn agg_of(func: &str) -> Option<AggOp> {
         "first" => AggOp::First,
         "last" => AggOp::Last,
         "n_unique" => AggOp::NUnique,
+        "any" => AggOp::Any,
+        "all" => AggOp::All,
+        "argmax" => AggOp::ArgMax,
+        "argmin" => AggOp::ArgMin,
+        // its q is the call's second argument
+        "quantile" => AggOp::quantile(0.5),
         _ => return None,
     })
 }
@@ -515,6 +521,9 @@ impl Resolver<'_> {
                     .collect::<Result<Vec<_>, _>>()?;
                 Expr::op(*op, super::dtypes::dates_from_text(*op, kids)?)
             }
+            LExpr::Call(func, args) if func == "count" && args.is_empty() => {
+                Expr::lit(Scalar::I64(n as i64))
+            }
             LExpr::Call(func, args) => {
                 let vals = args
                     .iter()
@@ -543,20 +552,17 @@ impl Resolver<'_> {
                 }
             }
             LExpr::Over(inner, keys) => {
-                let (func, arg) = match inner.as_ref() {
-                    LExpr::Call(f, a) if agg_of(f).is_some() && a.len() == 1 => match &a[0] {
-                        LArg::E(x) => (f.clone(), x.clone()),
-                        _ => return Err(over_needs()),
-                    },
-                    _ => return Err(over_needs()),
-                };
-                let col = self.series(&arg)?;
                 let key_cols: Vec<&Series> = keys
                     .iter()
                     .map(|k| self.column(k))
                     .collect::<Result<_, _>>()?;
-                let op = agg_of(&func).expect("checked");
-                Expr::col(olang_ods::frame::over(&col, &key_cols, op).map_err(|e| e.to_string())?)
+                let g = olang_ods::group::Grouping::new(&key_cols).map_err(|e| e.to_string())?;
+                match super::group::agg_value(self.frame, keys, &g, inner)? {
+                    super::group::GVal::Col(s) => {
+                        Expr::col(g.broadcast(&s).map_err(|e| e.to_string())?)
+                    }
+                    super::group::GVal::Lit(s) => Expr::lit(s),
+                }
             }
         };
         self.memo.insert(key, r.clone());
@@ -564,10 +570,29 @@ impl Resolver<'_> {
     }
 }
 
-fn over_needs() -> String {
-    "over takes an aggregation of an expression — sum, mean, min, max, count, median, \
-     std, var, first, last or n_unique — like col(\"x\").mean().over(\"k\")"
-        .to_string()
+/// An Expr evaluated against a Frame: one column of its rows.
+pub(crate) fn eval_on(f: &Frame, e: &Arc<LExpr>) -> Result<Series, String> {
+    if let LExpr::Col(name) = e.as_ref()
+        && let Ok(c) = f.column(name)
+    {
+        return Ok(c.clone());
+    }
+    let mut r = Resolver {
+        frame: f,
+        memo: HashMap::new(),
+    };
+    r.series(e)
+}
+
+/// Several Exprs evaluated against a Frame in one plan (a column they
+/// share is read once).
+pub(crate) fn eval_many(f: &Frame, es: &[Arc<LExpr>]) -> Result<Vec<Series>, String> {
+    let mut r = Resolver {
+        frame: f,
+        memo: HashMap::new(),
+    };
+    let roots = es.iter().map(|e| r.resolve(e)).collect::<Result<Vec<_>, _>>()?;
+    eval_roots(&roots, Some(f.n_rows()))
 }
 
 /// A value in a Frame verb's spec as an engine root: an Expr resolves,
@@ -603,7 +628,7 @@ fn root_of(r: &mut Resolver<'_>, v: &Value, what: &str) -> Result<Arc<Expr>, Str
 }
 
 /// The entries of an object or map literal, in order.
-fn entries(v: &Value) -> Option<Vec<(String, Value)>> {
+pub(crate) fn entries(v: &Value) -> Option<Vec<(String, Value)>> {
     match v {
         Value::Map(m) => Some(m.iter().map(|(k, v)| (k.clone(), v.clone())).collect()),
         Value::Struct { fields, .. } => {
@@ -614,7 +639,7 @@ fn entries(v: &Value) -> Option<Vec<(String, Value)>> {
 }
 
 /// Named outputs from an object, a map, or a list of named Exprs.
-fn named(func: &str, v: &Value) -> Result<Vec<(String, Value)>, String> {
+pub(crate) fn named(func: &str, v: &Value) -> Result<Vec<(String, Value)>, String> {
     if let Some(e) = entries(v) {
         return Ok(e);
     }
