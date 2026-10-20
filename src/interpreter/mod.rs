@@ -143,6 +143,11 @@ pub struct Interpreter {
 
     // Enhanced module system
     module_cache: HashMap<String, ModuleCacheEntry>,
+    /// Each name an import bound, with the value it bound: a binding that
+    /// still holds that value is the import's (a re-run `use` refreshes
+    /// it); any other is the program's own, which an import never
+    /// replaces (`let folds = 3` then `use ml { * }` keeps `folds`).
+    pub(crate) imported: HashMap<String, Value>,
     /// Dotted import name → the file it resolved to, first resolution
     /// wins. The cache itself is keyed by file; this is the name view
     /// the REPL's `:help` needs (`geometry.point` → its index.ol).
@@ -405,6 +410,7 @@ impl Interpreter {
 
             // Enhanced module system
             module_cache: HashMap::new(),
+            imported: HashMap::new(),
             module_name_index: HashMap::new(),
             dependency_tracker: ModuleDependencyTracker::new(),
             current_module_path: None, // For tracking current module during loading
@@ -3904,6 +3910,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
 
             // Enhanced module system
             module_cache: self.module_cache.clone(),
+            imported: self.imported.clone(),
             module_name_index: self.module_name_index.clone(),
             dependency_tracker: self.dependency_tracker.clone(),
             current_module_path: self.current_module_path.clone(), // For tracking current module during loading

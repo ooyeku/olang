@@ -133,13 +133,13 @@ fn check_warns_on_wildcard_shadowing_an_explicit_import() {
         (
             "shadowed.ol",
             "use lib.report { table }\n\
-             use term\n\
+             use term { * }\n\
              println(table([1]))\n",
         ),
         (
             "aliased.ol",
             "use lib.report { table as md_table }\n\
-             use term\n\
+             use term { * }\n\
              println(md_table([1]))\n",
         ),
     ]);

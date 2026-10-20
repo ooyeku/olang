@@ -2297,6 +2297,8 @@ use lib.geometry { area, Shape }       // selective import
 use lib.geometry { area as region }    // aliased: bound as `region`
 use lib.geometry { * }                 // wildcard: everything shared
 use lib.geometry                       // sugar for the wildcard form
+use lib.geometry {}                    // the namespace alone: geometry.area
+use gg                                 // a stdlib module: its namespace alone
 
 // Long import lists may span lines and end with a trailing comma:
 use lib.geometry {
@@ -2313,12 +2315,38 @@ only the alias — `area` itself is not brought into scope by
 Importing a shared **enum type also imports its variant constructors**,
 so `Sq(2)` constructs in the importer. A `use` also binds the module's
 name as a namespace (`geometry.area(3, 4)`), and the bare form imports
-everything shared *and* binds the namespace. A namespace reads like any
-record: calling a member it does not have raises, naming the nearest
+everything shared *and* binds the namespace — except for a stdlib module
+(`use gg`, `use ml`, `use term`, `use str`), whose bare form binds the
+namespace alone (`gg.plot(...)`), as `use m {}` does for any module:
+a stdlib module's short names (`plot`, `summary`, `folds`, `table`)
+would otherwise land on the program's own and on other modules'.
+
+An import never replaces what it was not asked for:
+
+- **A wildcard skips a stdlib module's name** — `use lib.charts { * }`
+  sharing a `plot` leaves `plot` the plot module (reach the export as
+  `charts.plot`) — unless what it binds is itself that kind of module.
+- **A wildcard skips a name the program already binds** in that scope:
+  after `let folds = 3` (or a notebook param `folds`), `use lib.cv { * }`
+  leaves `folds` as 3. A name an earlier import bound is the import's,
+  and a later import (or the same `use` run again) rebinds it.
+- **A listed name the program already binds is an error** naming it:
+  `let x = 1` then `use lib.m { x }` raises — list it under another name
+  (`x as m_x`). A listed stdlib module name binds: listing it is the
+  choice (`use lib.effects { task }` is how Loom wraps `task`).
+
+`olang check` says each of these where it can see both sides: a wildcard
+export it skips (a warning) and a listed name that would replace the
+file's own (an error). It also knows each stdlib module's members: a
+member a module lacks — lowercase `pi` read off `math`, whose constant
+is `PI`; a `trimm` called on `str` — is an error naming the nearest, and `gui.turn == ()` — asking whether this build has a
+member — is left alone.
+
+A namespace reads like any record: calling a member it does not have raises, naming the nearest
 (`geometry.aera(3, 4)` — did you mean `area`?), and reading one is `()`,
 as `map_get` answers — how a program asks a module it loaded at run time
 whether it has a hook (`if plugin.init == () => …`). Because a later wildcard
-import rebinds any earlier explicit import of the same name,
+import rebinds any earlier import of the same name,
 `olang check` warns when it can see the collision; the alias form is
 the resolution that keeps both names.
 

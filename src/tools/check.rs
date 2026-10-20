@@ -399,6 +399,8 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
                 "advisory — the program still runs"
             } else if d.scope {
                 "the program is refused before it runs"
+            } else if d.class == Some("member") {
+                "the module has no such member"
             } else if d.runtime {
                 "this would fail at runtime"
             } else {
@@ -954,6 +956,10 @@ the later binding wins silently for every importer; alias one of them \
             }
         }
     }
+    // The file's own top-level names bound so far, and where: a `let`'s,
+    // a `fn`'s (bound where it stands; a later one rebinds the import).
+    let mut own: Vec<(String, u32)> = Vec::new();
+    let bare = |path: &[String]| path.last().cloned().unwrap_or_default();
     // Explicit imports seen so far: bound name -> declaration line.
     let mut explicit: Vec<(String, u32)> = Vec::new();
     for stmt in &program.statements {
@@ -961,11 +967,38 @@ the later binding wins silently for every importer; alias one of them \
             Statement::Located { line, column, .. } => (*line, *column),
             _ => (0, 0),
         };
+        let mut warn = |message: String, warning: bool| {
+            out.push(CheckDiagnostic {
+                line,
+                column,
+                message,
+                // the refused import raises at run time, as said here
+                runtime: !warning,
+                warning,
+                scope: false,
+                class: None,
+            })
+        };
+        if let Statement::LetDecl(l) | Statement::ShareDecl(crate::ast::ShareDecl::Let(l)) =
+            stmt.unwrapped()
+        {
+            let mut names = std::collections::HashSet::new();
+            crate::resolve::pattern_names_of(&l.pattern, &mut names);
+            own.extend(names.into_iter().map(|n| (n, line)));
+            continue;
+        }
+        if let Statement::FunctionDecl(f) | Statement::ShareDecl(crate::ast::ShareDecl::Function(f)) =
+            stmt.unwrapped()
+        {
+            own.push((f.name.clone(), line));
+            continue;
+        }
         let (Statement::UseDecl(u) | Statement::ShareDecl(crate::ast::ShareDecl::Use(u))) =
             stmt.unwrapped()
         else {
             continue;
         };
+        let module = u.path.join(".");
         let is_wildcard = u
             .items
             .iter()
@@ -974,13 +1007,34 @@ the later binding wins silently for every importer; alias one of them \
             let Some(exports) = exports_of(&u.path, doc_dir) else {
                 continue;
             };
-            let module = u.path.join(".");
+            for name in &exports {
+                // What the import leaves alone (the runtime skips it).
+                if crate::stdlib::is_module_name(name) && module != "collections" {
+                    warn(
+                        format!(
+                            "`use {}` also exports '{}', which names the stdlib module `{}`: \
+the import leaves `{}` the module — reach the export as `{}.{}`, or list it under \
+another name (`{} as other_name`)",
+                            module, name, name, name, bare(&u.path), name, name
+                        ),
+                        true,
+                    );
+                } else if let Some((_, at)) = own.iter().find(|(n, _)| n == name) {
+                    warn(
+                        format!(
+                            "`use {}` also exports '{}', which this file binds on line {}: \
+the import leaves `{}` the file's — reach the export as `{}.{}`, or list it under \
+another name (`{} as other_name`)",
+                            module, name, at, name, bare(&u.path), name, name
+                        ),
+                        true,
+                    );
+                }
+            }
             for (name, decl_line) in &explicit {
                 if exports.iter().any(|e| e == name) {
-                    out.push(CheckDiagnostic {
-                        line,
-                        column,
-                        message: format!(
+                    warn(
+                        format!(
                             "`use {}` also exports '{}', shadowing the explicit import \
 from line {} — call it as `{}.{}`, or alias the earlier import \
 (`{} as other_name`)",
@@ -991,16 +1045,30 @@ from line {} — call it as `{}.{}`, or alias the earlier import \
                             name,
                             name
                         ),
-                        runtime: false,
-                        warning: true,
-                        scope: false,
-                        class: None,
-                    });
+                        true,
+                    );
                 }
             }
         }
         for item in &u.items {
             if let Some(n) = item.bound_name() {
+                // A listed name the file already binds: the runtime refuses
+                // the import rather than replace it.
+                if let Some((_, at)) = own.iter().find(|(o, _)| o == n) {
+                    let listed = match item {
+                        crate::ast::UseItem::Aliased { name, alias } => format!("{name} as {alias}"),
+                        _ => n.to_string(),
+                    };
+                    warn(
+                        format!(
+                            "`use {} {{ {} }}` would replace '{}', which this file binds on line {}: \
+an import never replaces a file's own name — list it under another name \
+(`{} as other_name`) or rename the binding",
+                            module, listed, n, at, item.source_name().unwrap_or(n)
+                        ),
+                        false,
+                    );
+                }
                 explicit.push((n.to_string(), line));
             }
         }
@@ -2816,6 +2884,12 @@ struct Checker {
     /// builtin's.
     user_bound: std::collections::HashSet<String>,
     wildcard_use: bool,
+    /// The embedded modules this file imports by their own name (`use
+    /// gg`, `use ml { split }`): their namespaces' members are known.
+    embedded_uses: std::collections::HashSet<String>,
+    /// `module.member` reads compared with `()` — a presence test, the
+    /// way a program asks whether this build has a member.
+    probed: std::collections::HashSet<(String, String)>,
     /// Every trait method name the file declares or implements: a read of
     /// one off a struct may be the method, not a field.
     methods: std::collections::HashSet<String>,
@@ -2898,6 +2972,40 @@ const GLOBAL_ARITY: &[(&str, usize, usize)] = &[
     ("zip", 2, 2),
 ];
 
+/// The names an embedded module (`gg`, `ml`, `ui`) shares, read from its
+/// source once per process.
+fn embedded_exports(module: &str) -> Option<Vec<String>> {
+    static TABLE: std::sync::OnceLock<std::sync::Mutex<HashMap<String, Option<Vec<String>>>>> =
+        std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(Default::default);
+    if let Some(hit) = table.lock().ok()?.get(module) {
+        return hit.clone();
+    }
+    let names = crate::stdlib::embedded::parsed(module).ok().flatten().map(|p| {
+        let mut names = Vec::new();
+        for stmt in &p.statements {
+            if let Statement::ShareDecl(d) = stmt.unwrapped() {
+                match d {
+                    crate::ast::ShareDecl::Function(f) => names.push(f.name.clone()),
+                    crate::ast::ShareDecl::Type(t) => names.push(t.name.clone()),
+                    crate::ast::ShareDecl::Let(l) => {
+                        let mut found = std::collections::HashSet::new();
+                        crate::resolve::pattern_names_of(&l.pattern, &mut found);
+                        names.extend(found);
+                    }
+                    crate::ast::ShareDecl::Use(u) => {
+                        names.extend(u.items.iter().filter_map(|i| i.bound_name()).map(String::from))
+                    }
+                    _ => {}
+                }
+            }
+        }
+        names
+    });
+    table.lock().ok()?.insert(module.to_string(), names.clone());
+    names
+}
+
 /// The fewest arguments a stdlib module's function takes: the arity its
 /// module registers it with ("the fewest arguments a call takes"), which
 /// its implementation asks for ("str.thousands: missing argument 2").
@@ -2966,6 +3074,11 @@ impl Checker {
             if let Some(u) = use_decl {
                 if let Some(last) = u.path.last() {
                     self.user_bound.insert(last.clone());
+                }
+                if let [one] = u.path.as_slice()
+                    && crate::stdlib::embedded::is_embedded(one)
+                {
+                    self.embedded_uses.insert(one.clone());
                 }
                 for item in &u.items {
                     match item.bound_name() {
@@ -3454,6 +3567,72 @@ impl Checker {
                 key, shape, read, hint
             ),
         );
+    }
+
+    /// A member a stdlib module does not have: `math.pi` (it is
+    /// `math.PI`) reads `()` at run time, and `str.trimm(x)` raises. The
+    /// module is a native one the file does not rebind, or an embedded
+    /// one it imports (`use gg` → `gg.*`). A read compared with `()` is a
+    /// presence test and is left alone.
+    fn check_module_member(&mut self, object: &Expr, field: &str, call: bool, span: (u32, u32)) {
+        let Expr::Identifier(module) = object else {
+            return;
+        };
+        let members: Vec<String> = if self.embedded_uses.contains(module) {
+            match embedded_exports(module) {
+                Some(m) => m,
+                None => return,
+            }
+        } else {
+            let bound = self.sigs.contains_key(module)
+                || self.user_bound.contains(module)
+                || self.scopes.iter().any(|scope| scope.contains_key(module));
+            if bound {
+                return;
+            }
+            match crate::stdlib::native_members().get(module) {
+                Some(m) => m.clone(),
+                None => return,
+            }
+        };
+        if members.iter().any(|m| m == field)
+            || self.probed.contains(&(module.clone(), field.to_string()))
+        {
+            return;
+        }
+        // the same name in another case first (`pi` → `PI`), then the
+        // nearest spelling
+        let lower = field.to_lowercase();
+        let nearest = members
+            .iter()
+            .find(|m| m.to_lowercase() == lower)
+            .or_else(|| {
+                members
+                    .iter()
+                    .filter(|m| {
+                        let d = edit_distance(m, field);
+                        d <= (field.len() / 3).max(1) && d < field.len()
+                    })
+                    .min_by_key(|m| edit_distance(m, field))
+            });
+        let hint = match nearest {
+            Some(n) => format!(" — did you mean `{}.{}`?", module, n),
+            None => String::new(),
+        };
+        let what = if call {
+            "calling it raises at run time"
+        } else {
+            "reading it is () at run time"
+        };
+        self.out.push(CheckDiagnostic {
+            line: span.0,
+            column: span.1,
+            message: format!("`{}` has no member `{}`: {}{}", module, field, what, hint),
+            runtime: call,
+            warning: false,
+            scope: false,
+            class: Some("member"),
+        });
     }
 
     /// A field read off a value of a declared struct type (`type P =
@@ -4369,6 +4548,7 @@ impl Checker {
                 match callee.as_ref() {
                     Expr::FieldAccess { object, field } => {
                         self.check_expr(object, span);
+                        self.check_module_member(object, field, true, span);
                         self.check_shape_key(object, field, "field", span);
                     }
                     _ => self.check_expr(callee, span),
@@ -4425,6 +4605,18 @@ impl Checker {
                 }
             }
             Expr::BinaryOp { left, op, right } => {
+                // `gui.turn == ()`: asking whether this build has it.
+                if matches!(op, crate::ast::BinaryOp::Equal | crate::ast::BinaryOp::NotEqual) {
+                    for (a, b) in [(left, right), (right, left)] {
+                        if let (Expr::FieldAccess { object, field }, Expr::Tuple(t)) =
+                            (a.as_ref(), b.as_ref())
+                            && t.is_empty()
+                            && let Expr::Identifier(m) = object.as_ref()
+                        {
+                            self.probed.insert((m.clone(), field.clone()));
+                        }
+                    }
+                }
                 self.check_expr(left, span);
                 self.check_expr(right, span);
                 // `==` across two provably different types is an answer the
@@ -4600,6 +4792,7 @@ impl Checker {
             }
             Expr::FieldAccess { object, field } => {
                 self.check_expr(object, span);
+                self.check_module_member(object, field, false, span);
                 self.check_shape_key(object, field, "field", span);
                 self.check_struct_field(object, field, span);
             }

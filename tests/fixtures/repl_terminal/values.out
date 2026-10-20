@@ -39,12 +39,10 @@ Core Functions (79):
   zip
   (use :env --full for detailed descriptions)
 
-User Environment (48):
-    alg : struct = Module { ... }
+User Environment (43):
     asset : struct = Module { ... }
     base64 : struct = Module { ... }
     bigint : struct = Module { ... }
-    bitset : struct = Module { ... }
     bytes : struct = Module { ... }
     caps : struct = Module { ... }
     cell : struct = Module { ... }
@@ -56,15 +54,13 @@ User Environment (48):
     csv : struct = Module { ... }
     dates : struct = Module { ... }
     db : struct = Module { ... }
-    deque : struct = Module { ... }
     dom : struct = Module { ... }
-    dsu : struct = Module { ... }
     fs : struct = Module { ... }
     gui : struct = Module { ... }
-    heap : struct = Module { ... }
     http : struct = Module { ... }
     it : int = 6
     json : struct = Module { ... }
+    learn : struct = Module { ... }
     math : struct = Module { ... }
     meta : struct = Module { ... }
     ods : struct = Module { ... }
@@ -77,7 +73,6 @@ User Environment (48):
     runtime : struct = Module { ... }
     stats : struct = Module { ... }
     str : struct = Module { ... }
-    table : struct = Module { ... }
     task : struct = Module { ... }
     testing : struct = Module { ... }
     time : struct = Module { ... }
@@ -92,7 +87,7 @@ User Environment (48):
 
 === Memory ===
   Values are reference-counted and reclaimed deterministically.
-  User bindings: 48
+  User bindings: 43
 Current configuration:
   prompt: olang> 
   show_types: false

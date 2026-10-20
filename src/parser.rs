@@ -4719,16 +4719,32 @@ impl Parser {
             }
         }
 
-        // No `{ ... }` means "import everything the package shares" — a bare
-        // `use foo` is sugar for `use foo { * }`.
-        let list_pair = match pairs.next() {
-            Some(p) => p,
-            None => {
-                return Ok(UseDecl {
-                    path,
-                    items: vec![crate::ast::UseItem::Wildcard],
-                });
-            }
+        // No `{ ... }`: a stdlib module (`use gg`, `use str`) binds its
+        // namespace alone — `gg.plot(...)` — so its many short names
+        // (`plot`, `summary`, `folds`, `text`) never land on a program's
+        // own or on another module's; any other module (a file, a
+        // package) imports everything it shares, `use foo { * }`.
+        let Some(open) = pairs.next() else {
+            let stdlib = match path.as_slice() {
+                [one] => crate::stdlib::embedded::is_embedded(one)
+                    || crate::stdlib::native_members().contains_key(one),
+                [std, one] if std == "std" => crate::stdlib::native_members().contains_key(one),
+                _ => false,
+            };
+            let items = if stdlib {
+                Vec::new()
+            } else {
+                vec![crate::ast::UseItem::Wildcard]
+            };
+            return Ok(UseDecl { path, items });
+        };
+        debug_assert_eq!(open.as_rule(), Rule::use_open);
+        // `use m {}`: the namespace alone.
+        let Some(list_pair) = pairs.next() else {
+            return Ok(UseDecl {
+                path,
+                items: Vec::new(),
+            });
         };
         let mut items = Vec::new();
         for item in list_pair.into_inner() {

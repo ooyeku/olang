@@ -423,7 +423,12 @@ resolves that file's package from anywhere, regardless of your directory.)
 
 An import lists what it binds: `use geometry { circle, area }` brings in
 only those two names; `use geometry { * }` (or bare `use geometry`) imports
-everything the package `share`s.
+everything the package `share`s, and `use geometry {}` only the
+namespace. A wildcard never replaces a name the program already binds
+nor a stdlib module's name — those exports stay reachable as
+`geometry.name` — and a listed name the program already binds is an
+error; [the language guide](language.md#importing-with-use) has the
+rules.
 
 After importing, the module name is a namespace you can inspect and call:
 `geometry.area(...)`, or `:help geometry` in the REPL to list its functions.

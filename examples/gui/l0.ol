@@ -116,7 +116,7 @@ fn update(m, e) = {
     else if kind == "submit" => add_person(m)
     else if kind == "activate" && e.key == "add" => add_person(m)
     else if kind == "activate" && str.starts_with(e.key, "p") =>
-        select(m, to_int(str.slice(e.key, 1, str.length(e.key))))
+        select(m, to_int(str.substring(e.key, 1, str.length(e.key))))
     else if kind == "key" && e.target == "people" && e.key == "down" =>
         select(m, min(m.at + 1, len(m.people) - 1))
     else if kind == "key" && e.target == "people" && e.key == "up" =>

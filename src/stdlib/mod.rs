@@ -52,6 +52,34 @@ pub mod vec;
 #[cfg(feature = "native")]
 pub mod vt;
 
+/// The native modules' names (`str`, `math`, `ods`, `plot`, ...) and each
+/// one's members, built once per process from `get_stdlib`.
+pub fn native_members() -> &'static std::collections::HashMap<String, Vec<String>> {
+    static NAMES: std::sync::OnceLock<std::collections::HashMap<String, Vec<String>>> =
+        std::sync::OnceLock::new();
+    NAMES.get_or_init(|| {
+        get_stdlib()
+            .iter()
+            .map(|(name, module)| {
+                let members = match module {
+                    crate::ast::Value::Struct { fields, .. } => fields.keys().cloned().collect(),
+                    _ => Vec::new(),
+                };
+                (name.clone(), members)
+            })
+            .collect()
+    })
+}
+
+/// Whether `name` names a stdlib module: a native one (`plot`, `str`) or
+/// an embedded one of the advertised surface (`gg`, `ml`, `ui`). An import
+/// never rebinds such a name to anything but the module itself — `use gg`
+/// leaves `plot` the plot module, `use gg { plot }` is refused (alias
+/// it: `use gg { plot as ggplot }`).
+pub fn is_module_name(name: &str) -> bool {
+    native_members().contains_key(name) || embedded::is_public(name)
+}
+
 pub fn get_stdlib() -> crate::ast::ValueMap {
     let mut stdlib = crate::ast::ValueMap::default();
     stdlib.insert("asset".to_string(), asset::create_asset_module());

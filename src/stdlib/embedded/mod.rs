@@ -85,6 +85,19 @@ pub fn is_embedded(name: &str) -> bool {
     MODULES.iter().any(|(n, _)| *n == name)
 }
 
+/// The embedded modules that are collections' parts: `use`-able (that
+/// is how collections.ol and alg.ol import their siblings) but not the
+/// advertised surface, so their names stay free for a program's own
+/// (`use lib.report { table }`).
+const PARTS: &[&str] = &["heap", "deque", "bitset", "dsu", "table", "alg"];
+
+/// Whether `name` is an embedded module of the advertised surface
+/// (`gg`, `ml`, `ui`, `cli`, `collections`, ...): a name an import never
+/// rebinds to something else.
+pub fn is_public(name: &str) -> bool {
+    is_embedded(name) && !PARTS.contains(&name)
+}
+
 /// All embedded module names (for REPL help/completion).
 pub fn names() -> Vec<&'static str> {
     MODULES.iter().map(|(n, _)| *n).collect()

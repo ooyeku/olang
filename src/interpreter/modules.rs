@@ -247,6 +247,51 @@ impl Interpreter {
     }
 
     /// Bind module imports to current environment
+    /// Whether `name` is bound in the current scope by the program itself:
+    /// a `let`, a `fn`, a parameter, a notebook's input — not by an import
+    /// (whose value the binding still holds) and not by the prelude (a
+    /// builtin or a stdlib module, which an import may rebind).
+    fn bound_by_program(&self, name: &str) -> bool {
+        let Some(current) = self.environment.get_here(name) else {
+            return false;
+        };
+        if self
+            .imported
+            .get(name)
+            .is_some_and(|v| same_binding(v, &current))
+        {
+            return false;
+        }
+        if self.environment.parent.is_none()
+            && self
+                .prelude()
+                .get(name)
+                .is_some_and(|v| same_binding(v, &current))
+        {
+            return false;
+        }
+        true
+    }
+
+    /// Bind `name` to an imported `value`, remembering that the import
+    /// made the binding.
+    fn define_imported(&mut self, name: String, value: Value) {
+        self.imported.insert(name.clone(), value.clone());
+        self.environment.define(name, value);
+    }
+
+    /// Bind what a `use` lists. Two rules keep an import from replacing
+    /// a name it was not asked for:
+    ///
+    /// - a wildcard (`use m { * }`, or a bare `use m` of a file or a
+    ///   package) skips a name that names a stdlib module (`plot`, `str`,
+    ///   `gg`) unless what it binds is that kind of module, and skips a
+    ///   name the program itself bound in this scope (`let folds = 3`
+    ///   before `use ml { * }` keeps `folds`) — `olang check` says so;
+    /// - a listed name (`use m { f }`) the program itself bound in this
+    ///   scope is an error naming both: alias it (`use m { f as m_f }`).
+    ///   A listed stdlib module name is the program's explicit choice
+    ///   (Loom's `use lib.effects { task }`) and binds.
     pub(crate) fn bind_module_imports(
         &mut self,
         module: &Value,
@@ -266,7 +311,13 @@ impl Interpreter {
                             if name.starts_with("__") {
                                 continue;
                             }
-                            self.environment.define(name.clone(), value.clone());
+                            if crate::stdlib::is_module_name(name) && !is_module_value(value) {
+                                continue;
+                            }
+                            if self.bound_by_program(name) {
+                                continue;
+                            }
+                            self.define_imported(name.clone(), value.clone());
                             crate::log::get_logger().debug(
                                 "interpreter",
                                 &format!("Wildcard imported {} from module", name),
@@ -298,6 +349,21 @@ impl Interpreter {
                         {
                             continue;
                         }
+                        if self.bound_by_program(bind_name) {
+                            return Err(InterpreterError::RuntimeError {
+                                message: format!(
+                                    "importing `{item}` would replace `{bind}`, which this program \
+already binds — an import never replaces a program's own name. Alias the import \
+(`{item_name} as other_name`) or rename the binding",
+                                    item = match item {
+                                        crate::ast::UseItem::Aliased { name, alias } =>
+                                            format!("{name} as {alias}"),
+                                        _ => item_name.clone(),
+                                    },
+                                    bind = bind_name,
+                                ),
+                            });
+                        }
                         {
                             match self.get_module_export(module, item_name) {
                                 Some(value) => {
@@ -314,11 +380,11 @@ impl Interpreter {
                                             if let Some(ctor) =
                                                 self.get_module_export(module, &variant.name)
                                             {
-                                                self.environment.define(variant.name.clone(), ctor);
+                                                self.define_imported(variant.name.clone(), ctor);
                                             }
                                         }
                                     }
-                                    self.environment.define(bind_name.clone(), value);
+                                    self.define_imported(bind_name.clone(), value);
                                     crate::log::get_logger().debug(
                                         "interpreter",
                                         &format!("Imported {} from module", item_name),
@@ -790,6 +856,7 @@ impl Interpreter {
 
         // Save current environment and module path
         let saved_env = std::mem::replace(&mut self.environment, module_env);
+        let saved_imported = std::mem::take(&mut self.imported);
         let saved_module_path = self.current_module_path.clone();
 
         // Set current module path to the FULL file path (not just module name)
@@ -1070,6 +1137,7 @@ impl Interpreter {
 
         // Restore original environment and module path
         self.environment = saved_env;
+        self.imported = saved_imported;
         self.current_module_path = saved_module_path;
 
         // Feature 7: Clean up loading stack (ensure we only remove the module we added)
@@ -1624,8 +1692,14 @@ impl Interpreter {
             let shadows_ambient_module = use_decl.path.len() >= 2
                 && matches!(&existing, Some(Value::Struct { type_name, .. }) if type_name == "Module")
                 && crate::stdlib::get_stdlib().contains_key(leaf.as_str());
-            if existing.is_none() || shadows_ambient_module {
-                self.environment.define(leaf.clone(), module.clone());
+            // A re-run `use` refreshes the namespace it bound.
+            let refresh = existing.as_ref().is_some_and(|v| {
+                self.imported
+                    .get(leaf)
+                    .is_some_and(|mine| same_binding(mine, v))
+            });
+            if existing.is_none() || shadows_ambient_module || refresh {
+                self.define_imported(leaf.clone(), module.clone());
             }
         }
 
@@ -1672,4 +1746,33 @@ pub(crate) struct FileRead {
     hash: String,
     modified: Option<std::time::SystemTime>,
     len: Option<u64>,
+}
+
+/// A stdlib-style module value (`Module` struct): what a name of a
+/// stdlib module may be bound to by an import (`collections`' `table`).
+fn is_module_value(v: &Value) -> bool {
+    matches!(v, Value::Struct { type_name, .. } if type_name == "Module")
+}
+
+/// Whether two values are the same binding — the one an import made, or
+/// the prelude's — by identity where values are shared, so that no large
+/// value is compared element by element.
+fn same_binding(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Function(x), Value::Function(y)) => std::sync::Arc::ptr_eq(x, y),
+        (Value::Builtin(x), Value::Builtin(y)) => x.name == y.name,
+        (Value::Struct { fields: x, .. }, Value::Struct { fields: y, .. }) => {
+            std::sync::Arc::ptr_eq(x, y)
+        }
+        (Value::TypeInfo(x), Value::TypeInfo(y)) => std::sync::Arc::ptr_eq(x, y),
+        (Value::Native(x), Value::Native(y)) => std::sync::Arc::ptr_eq(&x.0, &y.0),
+        (Value::List(x), Value::List(y)) => std::sync::Arc::ptr_eq(x, y),
+        (Value::Map(x), Value::Map(y)) => std::sync::Arc::ptr_eq(x, y),
+        (Value::String(x), Value::String(y)) => x == y,
+        (Value::Integer(x), Value::Integer(y)) => x == y,
+        (Value::Float(x), Value::Float(y)) => x.to_bits() == y.to_bits(),
+        (Value::Boolean(x), Value::Boolean(y)) => x == y,
+        (Value::Unit, Value::Unit) => true,
+        _ => false,
+    }
 }
