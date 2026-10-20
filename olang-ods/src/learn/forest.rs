@@ -176,3 +176,46 @@ impl Forest {
         out
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::learn::tree::Criterion;
+
+    #[test]
+    fn same_forest_on_one_thread_or_many_and_oob_scores() {
+        let mut r = Pcg::new(4, 0);
+        let n = 400;
+        let a: Vec<f64> = (0..n).map(|_| r.normal()).collect();
+        let b: Vec<f64> = (0..n).map(|_| r.normal()).collect();
+        let y: Vec<usize> = (0..n)
+            .map(|i| usize::from(a[i] + 0.5 * b[i] > 0.0))
+            .collect();
+        let x = Matrix::new(n, vec![a, b]);
+        let p = ForestParams {
+            n_trees: 30,
+            bootstrap: true,
+            max_samples: None,
+            oob: true,
+            tree: TreeParams {
+                criterion: Criterion::Gini,
+                max_depth: None,
+                min_samples_split: 2,
+                min_samples_leaf: 1,
+                max_features: 1,
+                min_impurity_decrease: 0.0,
+            },
+            seed: 11,
+        };
+        let t = Target::Classes {
+            y: &y,
+            n_classes: 2,
+        };
+        let w = vec![1.0; n];
+        let seq = fit(&x, &t, &w, &p, false);
+        let par = fit(&x, &t, &w, &p, true);
+        assert_eq!(seq.predict(&x, false), par.predict(&x, true));
+        let oob = seq.oob_score.unwrap();
+        assert!(oob > 0.85, "{oob}");
+    }
+}

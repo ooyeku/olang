@@ -443,3 +443,41 @@ fn scalar_eq(a: &crate::Scalar, b: &crate::Scalar) -> bool {
         _ => a == b,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encodes_with_training_levels_and_flags_nulls() {
+        let train = Frame::new(vec![
+            (
+                "c".to_string(),
+                Series::from_str_values(vec!["b".into(), "a".into(), "c".into()]),
+            ),
+            ("x".to_string(), Series::from_f64(vec![1.0, 2.0, 3.0])),
+        ])
+        .unwrap();
+        let d = Design::learn(&train, &["c".to_string(), "x".to_string()], true).unwrap();
+        assert_eq!(d.features, vec!["c_b", "c_c", "x"]);
+        let test = Frame::new(vec![
+            (
+                "c".to_string(),
+                Series::from_str_options(vec![Some("c".into()), Some("zz".into()), None]),
+            ),
+            ("x".to_string(), Series::from_f64(vec![5.0, f64::NAN, 1.0])),
+        ])
+        .unwrap();
+        let (m, valid) = d.encode(&test).unwrap();
+        assert_eq!(m.cols[0], vec![0.0, 0.0, 0.0]);
+        assert_eq!(m.cols[1], vec![1.0, 0.0, 0.0]);
+        assert_eq!(valid, vec![true, false, false]);
+    }
+
+    #[test]
+    fn class_labels_sort_like_sklearn() {
+        let (l, codes) = Labels::learn(&Series::from_i64(vec![3, 1, 3, 2])).unwrap();
+        assert_eq!(l, Labels::Int(vec![1, 2, 3]));
+        assert_eq!(codes, vec![2, 0, 2, 1]);
+    }
+}
