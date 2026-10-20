@@ -155,7 +155,7 @@ const MAXB: usize = 256;
 /// Rows × features above which histogram building fans out over the
 /// features (measured: below it the pool's hand-off costs more than the
 /// pass).
-const PAR_HIST_CELLS: usize = 200_000;
+const PAR_HIST_CELLS: usize = 64_000;
 
 fn build_hist(b: &Binned, rows: &[u32], g: &[f64], h: &[f64], par: bool) -> Vec<Cell> {
     let k = b.codes.len();

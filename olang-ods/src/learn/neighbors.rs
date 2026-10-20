@@ -4,8 +4,7 @@
 //! Neighbour search is exact: every query row's distances to every
 //! training row, kept in a bounded best-k list, ties broken by training
 //! order. Distances are computed a block of queries against a cache-
-//! sized chunk of training rows at a time, one contiguous column per
-//! feature, so the inner loop vectorizes and the training data is read
+//! sized chunk of training rows at a time, so the training data is read
 //! once per block rather than once per query. Blocks of queries fan out
 //! across the pool.
 
@@ -22,6 +21,8 @@ pub struct Knn {
     /// Training columns (column-major): a query's distances to every
     /// training row are then one vectorized pass per feature.
     pub cols: Vec<Vec<f64>>,
+    /// The same rows, row-major, for the blocked distance kernel.
+    pub rows: Vec<f64>,
     pub n: usize,
     pub dims: usize,
     pub k: usize,
@@ -32,12 +33,13 @@ pub struct Knn {
 const QUERY_BLOCK: usize = 64;
 /// Training rows per chunk: 1024 rows × a few dozen features stays in L2
 /// while a block of queries passes over it.
-const TRAIN_CHUNK: usize = 1024;
+const TRAIN_CHUNK: usize = 256;
 
 impl Knn {
     pub fn new(x: &Matrix, k: usize, distance_weighted: bool) -> Knn {
         Knn {
             cols: x.cols.clone(),
+            rows: x.row_major(),
             n: x.n,
             dims: x.k(),
             k: k.min(x.n).max(1),
@@ -48,10 +50,10 @@ impl Knn {
     /// Fold one chunk of squared distances (training rows `base..`)
     /// into a query's bounded best list, ascending by distance; ties keep
     /// the earlier training row.
-    fn fold_in(&self, best: &mut Vec<(f64, usize)>, dist: &[f64], base: usize) {
+    fn fold_in(&self, best: &mut Vec<(f64, usize)>, dist: impl Iterator<Item = f64>, base: usize) {
         let k = self.k;
         let mut worst = if best.len() == k { best[k - 1].0 } else { f64::INFINITY };
-        for (j, &d) in dist.iter().enumerate() {
+        for (j, d) in dist.enumerate() {
             if best.len() < k || d < worst {
                 let pos = best.partition_point(|b| b.0 <= d);
                 best.insert(pos, (d, base + j));
@@ -66,37 +68,88 @@ impl Knn {
     }
 
     /// For each query row, its k nearest training rows and their
-    /// distances, nearest first. Queries go in blocks of 64 against
-    /// training chunks small enough to stay in cache across the block.
+    /// distances, nearest first.
+    ///
+    /// Candidates are ranked by ‖t‖² − 2q·t (‖q‖² is the same for every
+    /// candidate), the form sklearn's brute-force search uses. Queries go
+    /// in blocks of 64 against chunks of 256 training rows, computed 4
+    /// queries × 2 rows at a time. The k winners' distances are then
+    /// recomputed exactly, so distance weights carry no cancellation
+    /// error.
     pub fn neighbours(&self, q: &Matrix, par: bool) -> Vec<Vec<(f64, usize)>> {
         let qr = q.row_major();
         let d = self.dims;
+        let tnorm: Vec<f64> = (0..self.n)
+            .map(|j| self.cols.iter().map(|c| c[j] * c[j]).sum())
+            .collect();
         let block = |b: usize| -> Vec<Vec<(f64, usize)>> {
             let lo = b * QUERY_BLOCK;
             let hi = ((b + 1) * QUERY_BLOCK).min(q.n);
             let mut best: Vec<Vec<(f64, usize)>> = (lo..hi).map(|_| Vec::with_capacity(self.k + 1)).collect();
-            let mut dist = vec![0.0f64; TRAIN_CHUNK];
+            // A register-blocked distance kernel: 4 queries × 2 training
+            // rows of dot products per inner loop over the features (row-
+            // major on both sides), 8 accumulators fed by 6 loads.
+            let nq = hi - lo;
+            let mut dist = vec![0.0f64; nq * TRAIN_CHUNK];
             let mut start = 0;
             while start < self.n {
                 let end = (start + TRAIN_CHUNK).min(self.n);
                 let len = end - start;
-                for (qi, i) in (lo..hi).enumerate() {
-                    let row = &qr[i * d..(i + 1) * d];
-                    let dd = &mut dist[..len];
-                    dd.iter_mut().for_each(|v| *v = 0.0);
-                    for (m, col) in self.cols.iter().enumerate() {
-                        let qm = row[m];
-                        for (v, t) in dd.iter_mut().zip(&col[start..end]) {
-                            let e = t - qm;
-                            *v += e * e;
+                let mut a = 0;
+                while a < nq {
+                    let w = (nq - a).min(4);
+                    let qrow = |r: usize| -> &[f64] {
+                        let i = lo + a + r.min(w - 1);
+                        &qr[i * d..(i + 1) * d]
+                    };
+                    let (q0, q1, q2, q3) = (qrow(0), qrow(1), qrow(2), qrow(3));
+                    let mut j = 0;
+                    while j < len {
+                        let j1 = (j + 1).min(len - 1);
+                        let t0 = &self.rows[(start + j) * d..(start + j + 1) * d];
+                        let t1 = &self.rows[(start + j1) * d..(start + j1 + 1) * d];
+                        let mut acc = [0.0f64; 8];
+                        for m in 0..d {
+                            let (x0, x1) = (t0[m], t1[m]);
+                            acc[0] += q0[m] * x0;
+                            acc[1] += q1[m] * x0;
+                            acc[2] += q2[m] * x0;
+                            acc[3] += q3[m] * x0;
+                            acc[4] += q0[m] * x1;
+                            acc[5] += q1[m] * x1;
+                            acc[6] += q2[m] * x1;
+                            acc[7] += q3[m] * x1;
                         }
+                        for r in 0..w {
+                            dist[(a + r) * TRAIN_CHUNK + j] = tnorm[start + j] - 2.0 * acc[r];
+                            if j1 != j {
+                                dist[(a + r) * TRAIN_CHUNK + j1] = tnorm[start + j1] - 2.0 * acc[4 + r];
+                            }
+                        }
+                        j += 2;
                     }
-                    self.fold_in(&mut best[qi], dd, start);
+                    a += w;
+                }
+                for qi in 0..nq {
+                    let dd = &dist[qi * TRAIN_CHUNK..qi * TRAIN_CHUNK + len];
+                    self.fold_in(&mut best[qi], dd.iter().copied(), start);
                 }
                 start = end;
             }
             best.into_iter()
-                .map(|v| v.into_iter().map(|(dd, j)| (dd.sqrt(), j)).collect())
+                .enumerate()
+                .map(|(qi, v)| {
+                    let row = &qr[(lo + qi) * d..(lo + qi + 1) * d];
+                    let mut exact: Vec<(f64, usize)> = v
+                        .into_iter()
+                        .map(|(_, j)| {
+                            let s: f64 = self.cols.iter().zip(row).map(|(c, x)| (c[j] - x) * (c[j] - x)).sum();
+                            (s.sqrt(), j)
+                        })
+                        .collect();
+                    exact.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+                    exact
+                })
                 .collect()
         };
         let nb = q.n.div_ceil(QUERY_BLOCK);
@@ -253,3 +306,5 @@ impl GaussianNb {
         jll
     }
 }
+
+

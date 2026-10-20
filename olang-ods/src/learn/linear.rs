@@ -17,12 +17,18 @@ use crate::dist;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+/// Rows × columns above which a Gram matrix's dot products fan out.
+pub const PAR_GRAM_WORK: usize = 50_000;
+
 /// `XᵀWX` for the columns `cols` (an intercept column of ones prepended
 /// when `intercept`), weights `w` (None = all ones). Row-major p×p.
 pub fn weighted_gram(x: &Matrix, w: Option<&[f64]>, intercept: bool, par: bool) -> Vec<f64> {
     let k = x.k();
     let p = k + usize::from(intercept);
     let n = x.n;
+    // Below about 200k multiply-adds per Gram row the pool's hand-off
+    // costs more than the dot products.
+    let par = par && n * p >= PAR_GRAM_WORK;
     let ones;
     let wcol: &[f64] = match w {
         Some(w) => w,

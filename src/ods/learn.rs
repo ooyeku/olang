@@ -261,10 +261,14 @@ fn take(f: &Frame, idx: &[usize]) -> R<Frame> {
     f.take(&int_series(idx)).map_err(e)
 }
 
-/// Engine policy: the learning kernels fan out past their own measured
-/// thresholds when the program allows parallelism at all.
-fn par(n: usize) -> bool {
-    crate::parallel::should_parallelize(n.max(1000)) && olang_ods::parallel_enabled()
+/// Engine policy: whether the program allows parallelism at all. The
+/// learning kernels then fan out past their own measured thresholds,
+/// which count work (rows × features × trees ...), not rows: the
+/// runtime's list threshold (10,000 elements under `olang run`) is
+/// about per-element olang closures and would keep a 4,000-row kNN
+/// query — 64 million distances — on one core.
+fn par(_n: usize) -> bool {
+    crate::parallel::should_parallelize(usize::MAX) && olang_ods::parallel_enabled()
 }
 
 /// A trailing options map, checked against the keys a function knows.
