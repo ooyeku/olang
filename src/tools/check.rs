@@ -3996,6 +3996,7 @@ impl Checker {
                 "Series" => Some("Series"),
                 "Frame" => Some("Frame"),
                 "Date" => Some("Date"),
+                "GroupBy" => Some("GroupBy"),
                 _ => None,
             },
             _ => None,
@@ -4059,6 +4060,13 @@ impl Checker {
                 _ => None,
             },
         };
+        // `ods.group_by(f, keys)` is a GroupBy; given its aggregations,
+        // the Frame they make.
+        if full == "ods.group_by" {
+            let given =
+                arguments.len() + usize::from(lead.is_some()) + usize::from(method_receiver.is_some());
+            return Some(if given >= 3 { "Frame" } else { "GroupBy" });
+        }
         crate::native_sig::returns(full, first).filter(|k| *k != "Model")
     }
 

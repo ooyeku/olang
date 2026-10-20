@@ -265,8 +265,8 @@ fn expressions_resolve_against_a_frame() {
         "no column 'nope' in this Frame. It has: x",
     );
     raises(
-        "use ods { col }\nlet f = ods.frame([[\"x\", [1]]])\nods.with(f, { y: ods.over(col(\"x\"), \"x\") })",
-        "over takes an aggregation",
+        "use ods { col }\nlet f = ods.frame([[\"x\", [1]], [\"z\", [2]]])\nods.with(f, { y: ods.over(col(\"z\"), \"x\") })",
+        "is not a key, so it has many values in a group; reduce it",
     );
     raises(
         "let f = ods.frame([[\"x\", [1]]])\nods.select(f, [ods.lit(1)])",

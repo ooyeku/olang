@@ -8359,6 +8359,40 @@ impl BytecodeVm {
             args
         };
         match name {
+            // `by.apply(fn)`: the function runs on this VM once per group;
+            // the groups and the combining are the module's.
+            "ods.apply"
+                if args.len() == 2
+                    && matches!(
+                        args[1].data,
+                        ValueData::AstFunction(_) | ValueData::Closure(_) | ValueData::Function(_)
+                    ) =>
+            {
+                let by = match args[0].to_ast() {
+                    Ok(v) => v,
+                    Err(e) => return Some(Err(BytecodeError::RuntimeError(format!("{:?}", e)))),
+                };
+                let (groups, state) = match crate::ods::apply_groups(&[by, Value::Unit]) {
+                    Ok(x) => x,
+                    Err(e) => return Some(Err(BytecodeError::RuntimeError(e))),
+                };
+                let mut results = Vec::with_capacity(groups.len());
+                for g in groups {
+                    let r = match self.call_function_value(&args[1], &[OvmValue::from_ast(g)]) {
+                        Ok(r) => r,
+                        Err(e) => return Some(Err(e)),
+                    };
+                    match r.to_ast() {
+                        Ok(v) => results.push(v),
+                        Err(e) => return Some(Err(BytecodeError::RuntimeError(format!("{:?}", e)))),
+                    }
+                }
+                Some(
+                    crate::ods::apply_finish(state, results)
+                        .map(OvmValue::from_ast)
+                        .map_err(BytecodeError::RuntimeError),
+                )
+            }
             // `attempt` runs its function on this VM, the tiers it would run
             // on bare — bridging it to the interpreter put everything under
             // it on a tree-walk. A runtime error inside becomes the Err;

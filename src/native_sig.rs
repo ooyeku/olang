@@ -27,7 +27,7 @@
 //! | `name = lit` | a default (`10`, `0.5`, `"min"`, `true`, `()`), filled whenever the call stops short of it |
 //! | `**name{k1 k2}` | the trailing options map: named arguments that are no parameter go into it, merged over a map given by position. Listed keys are checked here; an empty list leaves the check to the function |
 //! | `… -> K` | what it returns, when a native kind (`S`, `F`, `M`, `D`, `R`, or `=` for its first argument's): the checker and the language server follow bindings through it |
-//! | `name:SF` | the first parameter's receiver kinds, which make the function a method of those values: `S` Series (and a column expression), `F` Frame, `M` fitted model, `D` Date, `R` streaming reader |
+//! | `name:SF` | the first parameter's receiver kinds, which make the function a method of those values: `S` Series (and a column expression), `F` Frame, `M` fitted model, `D` Date, `R` streaming reader, `G` grouped Frame (`ods.group_by(f, keys)`) |
 //!
 //! **Methods.** `recv.m(args)` on a native value, with no `impl` of `m`
 //! for its type, is `home.m(recv, args)`: the value's own module first,
@@ -102,6 +102,7 @@ pub const RECV_FRAME: u8 = 2;
 pub const RECV_MODEL: u8 = 4;
 pub const RECV_DATE: u8 = 8;
 pub const RECV_READER: u8 = 16;
+pub const RECV_GROUPBY: u8 = 32;
 
 #[derive(Debug, Clone)]
 pub struct Sig {
@@ -128,6 +129,7 @@ pub fn kind_name(bit: u8) -> Option<&'static str> {
         RECV_MODEL => Some("Model"),
         RECV_DATE => Some("Date"),
         RECV_READER => Some("Reader"),
+        RECV_GROUPBY => Some("GroupBy"),
         _ => None,
     }
 }
@@ -135,7 +137,7 @@ pub fn kind_name(bit: u8) -> Option<&'static str> {
 /// The module whose functions a native kind's methods are.
 pub fn home_of(type_name: &str) -> Option<&'static str> {
     match type_name {
-        "Series" | "Expr" | "Frame" | "Reader" => Some("ods"),
+        "Series" | "Expr" | "Frame" | "Reader" | "GroupBy" => Some("ods"),
         "Model" => Some("learn"),
         "Date" => Some("dates"),
         _ => None,
@@ -149,7 +151,7 @@ pub fn returns(full: &str, first: Option<&str>) -> Option<&'static str> {
     let s = sig(full)?;
     if s.ret == RET_SAME {
         let first = first?;
-        return ["Series", "Frame", "Model", "Date", "Reader"]
+        return ["Series", "Frame", "Model", "Date", "Reader", "GroupBy"]
             .into_iter()
             .find(|k| *k == first);
     }
@@ -220,6 +222,7 @@ pub fn recv_bit(type_name: &str) -> u8 {
         "Model" => RECV_MODEL,
         "Date" => RECV_DATE,
         "Reader" => RECV_READER,
+        "GroupBy" => RECV_GROUPBY,
         _ => 0,
     }
 }
@@ -255,6 +258,7 @@ fn parse_spec(full: &'static str, spec: &'static str) -> Sig {
                 "M" => RECV_MODEL,
                 "D" => RECV_DATE,
                 "R" => RECV_READER,
+                "G" => RECV_GROUPBY,
                 "=" => RET_SAME,
                 other => panic!("native_sig: {full}: unknown return kind {other}"),
             },
@@ -313,6 +317,7 @@ fn parse_spec(full: &'static str, spec: &'static str) -> Sig {
                         'M' => RECV_MODEL,
                         'D' => RECV_DATE,
                         'R' => RECV_READER,
+                        'G' => RECV_GROUPBY,
                         other => panic!("native_sig: {full}: unknown receiver kind {other}"),
                     };
                 }
@@ -696,7 +701,7 @@ type FxMap<K, V> = std::collections::HashMap<K, V, rustc_hash::FxBuildHasher>;
 static METHOD_TABLE: LazyLock<FxMap<&'static str, FxMap<&'static str, &'static str>>> =
     LazyLock::new(|| {
         let mut out: FxMap<&'static str, FxMap<&'static str, &'static str>> = FxMap::default();
-        for type_name in ["Series", "Expr", "Frame", "Model", "Date", "Reader"] {
+        for type_name in ["Series", "Expr", "Frame", "Model", "Date", "Reader", "GroupBy"] {
             let home = home_of(type_name).expect("a data type");
             let mut methods = FxMap::default();
             for full in methods_from(home, type_name) {
@@ -803,16 +808,16 @@ pub const TABLE: &[(&str, &str)] = &[
     ("ods.null_count", "s:S"),
     ("ods.is_null", "s:S -> S"),
     ("ods.fill_null", "s:S, value, limit? -> S"),
-    ("ods.sum", "s:S"),
-    ("ods.mean", "s:S"),
-    ("ods.var", "s:S"),
-    ("ods.std", "s:S"),
-    ("ods.min", "s:S"),
-    ("ods.max", "s:S"),
-    ("ods.quantile", "s:S, q"),
-    ("ods.median", "s:S"),
+    ("ods.sum", "s:SG"),
+    ("ods.mean", "s:SG"),
+    ("ods.var", "s:SG"),
+    ("ods.std", "s:SG"),
+    ("ods.min", "s:SG"),
+    ("ods.max", "s:SG"),
+    ("ods.quantile", "s:SG, q"),
+    ("ods.median", "s:SG"),
     ("ods.unique", "s:S -> S"),
-    ("ods.n_unique", "s:S"),
+    ("ods.n_unique", "s:SG"),
     ("ods.value_counts", "s:S -> F"),
     ("ods.cast", "s:S, type -> S"),
     ("ods.sample", "x:SF, n -> ="),
@@ -820,7 +825,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("ods.cum_max", "s:S -> S"),
     ("ods.cum_min", "s:S -> S"),
     ("ods.rank", "s:S, method = \"min\" -> S"),
-    ("ods.rolling", "s:S, window, agg -> S"),
+    ("ods.rolling", "s:S, window, agg, center = false, min_periods?, exact = false -> S"),
     ("ods.cumsum", "s:S -> S"),
     ("ods.map", "s:S, fn -> S"),
     ("ods.dot", "a:S, b"),
@@ -877,18 +882,18 @@ pub const TABLE: &[(&str, &str)] = &[
     ("ods.arange", "start, stop?, step = 1 -> S"),
     ("ods.repeat", "s:S, times -> S"),
     ("ods.tile", "s:S, n -> S"),
-    ("ods.argmax", "s:S"),
-    ("ods.argmin", "s:S"),
+    ("ods.argmax", "s:SG"),
+    ("ods.argmin", "s:SG"),
     ("ods.diff", "s:S, lag = 1 -> S"),
     ("ods.pct_change", "s:S, lag = 1 -> S"),
     ("ods.cumprod", "s:S -> S"),
     ("ods.mode", "s:S"),
-    ("ods.any", "s:S"),
-    ("ods.all", "s:S"),
+    ("ods.any", "s:SG"),
+    ("ods.all", "s:SG"),
     ("ods.searchsorted", "s:S, v, side = \"left\""),
-    ("ods.count", "s:S"),
-    ("ods.first", "s:S"),
-    ("ods.last", "s:S"),
+    ("ods.count", "s:SG?"),
+    ("ods.first", "s:SG"),
+    ("ods.last", "s:SG"),
     // ── ods: column expressions (D1) ──
     ("ods.col", "name -> S"),
     ("ods.lit", "v -> S"),
@@ -938,13 +943,27 @@ pub const TABLE: &[(&str, &str)] = &[
     ("ods.drop_null", "f:F, names? -> F"),
     ("ods.describe", "f:F -> F"),
     ("ods.schema", "f:F -> F"),
-    ("ods.group_by", "f:F, by, aggs -> F"),
-    ("ods.join", "left:F, right, on, right_on? -> F"),
-    ("ods.join_left", "left:F, right, on, right_on? -> F"),
-    ("ods.join_full", "left:F, right, on, right_on? -> F"),
-    ("ods.join_semi", "left:F, right, on, right_on? -> F"),
-    ("ods.join_anti", "left:F, right, on, right_on? -> F"),
-    ("ods.pivot", "f:F, index, columns, values, agg -> F"),
+    ("ods.group_by", "f:F, by, aggs? -> F"),
+    // ── ods: a grouped Frame (D3) ──
+    ("ods.agg", "by:G, aggs -> F"),
+    ("ods.size", "by:G -> F"),
+    ("ods.transform", "by:G, aggs -> S"),
+    ("ods.apply", "by:G, fn"),
+    ("ods.groups", "by:G"),
+    // ── ods: shape, runs and time (D3) ──
+    ("ods.slice", "x:SF, start, n? -> ="),
+    ("ods.row", "f:F, i"),
+    ("ods.lookup", "f:F, key_col, key, value_col"),
+    ("ods.crosstab", "a:S, b, values?, agg = \"count\", normalize?, name? -> F"),
+    ("ods.runs", "s:S -> F"),
+    ("ods.run_id", "s:S -> S"),
+    ("ods.resample", "f:F, on, every, aggs, by? -> F"),
+    ("ods.join", "left:F, right, on, right_on?, how = \"inner\", suffix = \"_right\", validate? -> F"),
+    ("ods.join_left", "left:F, right, on, right_on?, suffix = \"_right\", validate? -> F"),
+    ("ods.join_full", "left:F, right, on, right_on?, suffix = \"_right\", validate? -> F"),
+    ("ods.join_semi", "left:F, right, on, right_on?, suffix = \"_right\", validate? -> F"),
+    ("ods.join_anti", "left:F, right, on, right_on?, suffix = \"_right\", validate? -> F"),
+    ("ods.pivot", "f:F, index, columns, values, agg, fill? -> F"),
     ("ods.unpivot", "f:F, id_columns, value_columns? -> F"),
     // ── stats ──
     ("stats.describe", "s:S"),

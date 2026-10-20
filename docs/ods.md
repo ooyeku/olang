@@ -451,28 +451,47 @@ ranking that "rank" means unqualified:
 Only `"average"` can produce a half, so every other method returns an
 Int column that can be used as indices without a cast.
 
-`ods.rolling(s, window, agg)` is a trailing-window aggregate: element
-`i` reduces the `window` elements ending at `i`, with `agg` one of
-`count`, `sum`, `mean`, `min`, `max`. The first `window - 1` elements
-are null, because the window is not yet full and reporting a partial
-reduction as a whole one is how a chart lies at its left edge. Nulls
-inside a window are skipped, exactly as the whole-column reductions skip
-them, so a window holding two valid values of three gives the mean of
-two:
+`ods.rolling(s, window, agg)` is a window aggregate: element `i` reduces
+the `window` elements ending at `i`, with `agg` one of `count`, `sum`,
+`mean`, `min`, `max`, `median`, `std` or `var`. The first `window - 1`
+elements are null, because the window is not yet full and reporting a
+partial reduction as a whole one is how a chart lies at its left edge.
+Nulls inside a window are skipped, exactly as the whole-column
+reductions skip them, so a window holding two valid values of three
+gives the mean of two:
 
 ```olang
 let s = ods.series([1.0, 2.0, 3.0, 4.0, 5.0])
 println(to_string(ods.to_list(ods.rolling(s, 3, "mean"))))    // [(), (), 2.0, 3.0, 4.0]
 println(to_string(ods.to_list(ods.rolling(s, 3, "max"))))     // [(), (), 3.0, 4.0, 5.0]
+println(to_string(s.rolling(2, "sum", center: true).to_list()))   // [(), 3.0, 5.0, 7.0, 9.0]
+println(to_string(s.rolling(3, "mean", min_periods: 1).to_list()))  // [1.0, 1.5, 2.0, 3.0, 4.0]
 ```
 
-`rolling` computes each window afresh, so it costs one reduction per
-element — O(n × window). The incremental alternative, which keeps a
-running total and subtracts the element leaving the window, accumulates
-float drift a fresh sum does not, and would make a rolling mean disagree
-with the `mean` of the same window. Correctness first; if a wide window
-over a long column shows up in a measurement, that is the point to
-revisit it.
+Three options, all named:
+- `center: true` puts the window around its row rather than behind it,
+  where pandas puts it: rows `i - window/2` to `i - window/2 + window - 1`,
+  so an even window leans back by half a row. (A trailing window moved
+  up with `shift` leans the other way, and is a row off for an even
+  window.)
+- `min_periods: k` reports a window — a partial one at either edge
+  included — once it holds `k` valid values. Without it a window must be
+  whole and hold one valid value.
+- `exact: true` computes each window afresh.
+
+By default a window slides: each step adds the row entering and
+subtracts the row leaving, so a window of any width costs the same —
+O(n) for the column — where a fresh reduction per row costs O(n ×
+window). Sums, means, variances and standard deviations keep running
+totals with Neumaier compensation (a NaN or an infinity counted apart,
+so it leaves the window with its row), the extremes a monotone queue,
+and the median a sorted window. A running sum can differ from a fresh
+one in the last few bits of the window's sum — far below any measured
+quantity's own precision — and `exact: true` is the fresh sum, equal to
+`ods.sum` of the same rows, at O(n × window). An Int column's sum is
+exact either way (its running total is a 128-bit integer). On a
+million rows a 365-row mean is 3.8 ms sliding and about 240 ms exact;
+pandas takes 3.9 ms.
 
 ### Distinct values
 
@@ -640,6 +659,14 @@ let f = ods.frame([
     ["amount", [25.5, 320.0, 80.0]],
 ])
 println(`${ods.n_rows(f)} x ${ods.n_cols(f)}`)
+```
+
+An object (or a map) does the same with less punctuation, its entries
+the columns in order:
+
+```olang
+let f = ods.frame({ region: ["east", "west", "east"], amount: ods.series([25.5, 320.0, 80.0]) })
+println(to_string(ods.columns(f)))    // ["region", "amount"]
 ```
 
 `ods.read_csv` parses CSV *text*, inferring each column's type:
@@ -949,9 +976,13 @@ let big = sales[sales["amount"] > 50.0]
 println(to_string(ods.to_list(big["region"])))
 ```
 
-Two meanings for one subscript, told apart by the key's *type* — a
-String selects a column, a Bool Series selects rows. A row *position* is
-refused outright, naming `ods.head` and `ods.take` instead. That refusal
+A list of names selects those columns, in that order —
+`f[["region", "amount"]]` is `ods.select(f, ["region", "amount"])`.
+
+Three meanings for one subscript, told apart by the key's *type* — a
+String selects a column, a list of Strings selects columns, a Bool
+Series selects rows. A row *position* is refused outright, naming
+`ods.row`, `ods.slice` and `ods.take` instead. That refusal
 is the point: pandas spells column selection, row filtering, positional
 slicing, and an error all `df[x]`, which is why `.loc` and `.iloc` had to
 be invented on top. Here every subscript has exactly one reading.
@@ -1086,6 +1117,28 @@ Asking `tail` for more rows than the Frame holds returns the whole
 Frame rather than an error, which is what makes `ods.tail(f, 1000)` a
 usable way to say "the end of this, however long it is".
 
+`ods.slice(f, start, n)` is `n` rows from `start` (a negative start
+counts from the end; a Series slices the same way), and `ods.row(f, i)`
+is one row as a map of column to value. `ods.rename` takes an object as
+well as a map.
+
+`ods.lookup(f, key_col, key, value_col)` reads one value by key: the
+`value_col` of the first row whose `key_col` is `key`, or `()` when no
+row has it. A list or Series of keys gives a Series, null where a key is
+missing. The first lookup builds a hash of `key_col` and keeps it with
+the Frame, so a loop of lookups against one table hashes it once (10,000
+single lookups against a 50,000-row table: 2 ms, where pandas' `.at`
+takes 5):
+
+```olang
+let hoods = ods.frame({ hood: ["Old Town", "Hillcrest"], km: [1.5, 6.0] })
+println(to_string(ods.lookup(hoods, "hood", "Hillcrest", "km")))      // 6.0
+println(to_string(ods.lookup(hoods, "hood", "Nowhere", "km")))        // ()
+println(to_string(hoods.lookup("hood", ["Old Town", "x"], "km").to_list()))   // [1.5, ()]
+println(to_string(ods.row(hoods, -1)))
+println(to_string(ods.slice(hoods, 1, 1)["hood"].to_list()))           // ["Hillcrest"]
+```
+
 ### Duplicates and missing rows
 
 Two verbs work on whole rows rather than columns. `ods.distinct(f)`
@@ -1128,19 +1181,86 @@ println(to_string(ods.to_list(filled["amount"])))    // [1.0, 0.0, 3.0]
 
 ### Grouped aggregation
 
-`ods.group_by(f, keys, aggs)` is the census verb: partition rows by
-one or more key columns, then compute aggregates within each group.
-The aggregation spec is a list of `[out_name, op, column]` triples,
-with ops `count`, `sum`, `mean`, `min`, `max`, `median`, `std`, `var`,
-`first`, `last` and `n_unique` — and `count` may omit the column, since
-it counts rows. `median`, `std` and `var` are the Series reductions of
-the same names over each group's non-null values (sample `std`/`var`,
-null below two values; all three Float). `first` and `last` take the
-group's first and last row's value as it stands — a null included — on
-a column of any type, and `n_unique` counts a group's distinct values
-the way `ods.n_unique` does, null as one value. Groups keep first-seen
-order, and a null key forms its own group (the R and Polars convention)
-rather than disappearing:
+`ods.group_by(f, keys)` partitions the rows by one or more key columns
+and gives back a **GroupBy**: the group of every row, computed once, for
+the verbs that follow to reuse. `by.agg({ name: expr, … })` aggregates
+with expressions, one output column per entry:
+
+```olang
+use ods { col }
+let sales = ods.frame({
+    region: ["east", "west", "east", "west", "east"],
+    amount: [25.5, 320.0, 80.0, 40.0, 12.0],
+    qty: [10, 3, 4, 2, 6],
+})
+let by = sales |> ods.group_by("region")
+println(len(by))                     // 2 groups
+let summary = by.agg({
+    revenue: col("amount").sum(),
+    orders: ods.count(),
+    typical: col("amount").median(),
+    p90: col("amount").quantile(0.9),
+    per_unit: col("amount").sum() / col("qty").sum(),
+    biggest_row: col("amount").argmax(),
+})
+println(summary)
+```
+
+An aggregation is a reduction of a column expression: `count` (its
+valid values; `ods.count()` alone counts the group's rows), `sum`,
+`mean`, `min`, `max`, `median`, `quantile(q)`, `std`, `var`, `first`,
+`last`, `n_unique`, `any`, `all`, and `argmax`/`argmin` (the row
+position, in the whole Frame, of the group's extreme — `ods.take(f,
+…)` fetches those rows). The column can be any expression
+(`(col("price") * col("qty")).sum()`), and arithmetic over aggregations
+is computed per group, as `per_unit` is above. A key column stands for
+the group's key. The expressions an aggregation reads are evaluated
+together, in one fused pass over the rows, and each group's reduction
+then runs over the group ids already made.
+
+The GroupBy answers more than `agg`:
+- `by.sum()`, `by.mean()`, `by.median()`, `by.std()`, … — the reduction
+  of every numeric column (`count`, `first`, `last` and `n_unique`: of
+  every column; `any` and `all`: of every Bool column), keys first;
+- `by.size()` — the rows in each group, as a `size` column;
+- `by.transform(expr)` — the aggregation given back to every row, the
+  same as `expr.over(keys)` (an object of them gives a Frame);
+- `by.apply((g) => …)` — the function called once per group with the
+  group's rows as a Frame. Frames that come back are stacked under their
+  group's keys; records (an object or map) become one row each beside
+  the keys; plain values a `value` column; anything else, the list of
+  results;
+- `by.groups()` — a list of `(key, frame)` pairs, in group order (a
+  key of several columns is a tuple), for a loop over the groups.
+
+```olang
+use ods { col }
+let sales = ods.frame({ region: ["east", "west", "east"], amount: [25.5, 320.0, 80.0] })
+let by = sales.group_by("region")
+println(by.mean())
+println(by.transform(col("amount").mean()).to_list())     // [52.75, 320.0, 52.75]
+let spans = by.apply((g) => { n: ods.n_rows(g), spread: ods.max(g["amount"]) - ods.min(g["amount"]) })
+println(spans)
+for (region, rows) in by.groups() {
+    println(`${region}: ${ods.n_rows(rows)} rows`)
+}
+```
+
+`ods.group_by(f, keys, aggs)` with an object of aggregations is
+`ods.group_by(f, keys).agg(aggs)`. The older form takes a list of
+`[out_name, op, column]` triples, with ops `count` (the group's rows,
+nulls included, so the column may be left out), `sum`, `mean`, `min`,
+`max`, `median`, `std`, `var`, `first`, `last`, `n_unique`, `any`,
+`all`, `argmax` and `argmin`; it is the same engine. `median`, `std` and
+`var` are the Series reductions of the same names over each group's
+non-null values (sample `std`/`var`, null below two values; all three
+Float). `first` and `last` take the group's first and last row's value
+as it stands — a null included — on a column of any type, and
+`n_unique` counts a group's distinct values the way `ods.n_unique`
+does, null as one value. A Bool column sums to its count of true and
+averages to its share. Groups keep first-seen order, and a null key
+forms its own group (the R and Polars convention) rather than
+disappearing:
 
 ```olang
 let sales = ods.read_csv("region,amount,qty\neast,25.5,10\nwest,320.0,3\neast,80.0,4\n")
@@ -1157,18 +1277,63 @@ let spread = ods.group_by(sales, "region", [
 println(spread)
 ```
 
-On a large frame (100,000+ rows with under a few million groups) the
-aggregation pass runs across every CPU core: each thread accumulates
-`sum`/`count`/`min`/`max` into per-group partials over a fixed range of
-rows, and the partials are merged in chunk order. Integer results are
-bit-identical to the sequential path; float `sum` and `mean` reorder
-their additions, but the order is fixed by the chunk layout, so a given
-input always reproduces the same result. The group-id hashing pass — the
-larger cost — is still sequential; parallelizing it is the next step.
-`median`, `std` and `var` gather each group's rows once (a counting sort
-by group) and reduce each group on its own, the groups spread across the
-cores on a large frame; a group's answer never depends on the split, so
-it is identical on one thread or many.
+On a large frame (500,000+ rows) the group ids come from a parallel
+dictionary encoding, and the aggregation pass runs across every CPU
+core: each thread accumulates `sum`/`count`/`min`/`max` into per-group
+partials over a fixed range of rows, and the partials are merged in
+chunk order. Integer results are bit-identical to the sequential path;
+float `sum` and `mean` reorder their additions, but the order is fixed
+by the chunk layout, so a given input always reproduces the same
+result. `median`, `quantile`, `std` and `var` gather each group's rows
+once (a counting sort by group) and reduce each group on its own, the
+groups spread across the cores on a large frame; a group's answer never
+depends on the split, so it is identical on one thread or many. `apply`
+cuts the Frame into its groups the same way, in parallel on a large one,
+and calls the function once per group in group order. At a million rows
+and 1,000 groups: five aggregations 3.2 ms (pandas `agg` 13.9), a ratio
+of two sums 0.7 ms (6.7), `transform` 0.6 ms (1.9), `apply` 10.9 ms
+(42); [Writing fast olang](performance.md#frames-grouping-joins-and-time)
+has the rest.
+
+### Crosstabs and runs
+
+`ods.crosstab(a, b)` counts the rows of each pair of values: one row per
+value of `a`, one column per value of `b`, both in ascending order
+(nulls left out), and 0 where a pair never occurs. `values:` and `agg:`
+aggregate a third column instead of counting (null where a pair never
+occurs), `normalize:` makes the counts shares — `"all"` (or `true`) of
+the table's total, `"rows"` of each row's, `"columns"` of each column's
+— and `name:` names the first column (default `row`):
+
+```olang
+let cluster = ods.series([0, 1, 0, 1, 1])
+let persona = ods.series(["regular", "lapsed", "regular", "regular", "lapsed"])
+let table = ods.crosstab(cluster, persona, name: "cluster")
+println(table)
+let shares = ods.crosstab(cluster, persona, normalize: "rows")
+println(shares["regular"].to_list())    // [1.0, 0.333333…]
+```
+
+`ods.runs(mask)` finds the runs of consecutive true rows of a Bool
+column: a Frame with each run's `start` and `end` row (inclusive) and
+`length`. Of any other column it gives every run of equal values, with
+its `value`. `ods.run_id(s)` numbers the runs instead — 0 for the first
+row, one more wherever the value changes (wherever any of several
+columns changes, given a list) — which is the key a `group_by` of
+consecutive rows needs:
+
+```olang
+use ods { col }
+let z = ods.series([0.1, 4.2, 5.0, 0.3, -6.1, -4.4, 0.2])
+println(ods.runs(z.abs() > 3.0))
+let kind = ods.select([z > 3.0, z < -3.0], ["spike", "drop"])
+let events = ods.frame({ hour: ods.arange(7), z: z, kind: kind })
+    |> ods.with({ event: ods.run_id(col("kind")) })
+    |> ods.filter(col("kind").not_null())
+    |> ods.group_by("event")
+    |> ods.agg({ kind: col("kind").first(), start: col("hour").first(), hours: ods.count(), peak: col("z").abs().max() })
+println(events)
+```
 
 ### Reshaping between long and wide
 
@@ -1198,7 +1363,9 @@ The aggregation is required rather than defaulted. When a cell has more
 than one row behind it, which reduction applies is the caller's
 decision, and choosing one silently is how a wrong number reaches a
 report. A cell no row reached is null — the combination did not occur,
-which is a different fact from a null value in it.
+which is a different fact from a null value in it — unless `fill:` says
+what it is instead (`ods.pivot(sales, "region", "quarter", "amount",
+"sum", fill: 0.0)`).
 
 Two shapes are refused rather than guessed at. A null in the `columns`
 column cannot name a column, and calling it `"null"` would collide with
@@ -1228,6 +1395,36 @@ The round trip is lossless in one direction and explicit in the other:
 `unpivot` after `pivot` returns the long form with the combinations that
 never occurred present as nulls. Dropping them is then the caller's
 call — `ods.drop_null` — rather than a decision the verb made silently.
+
+### Time buckets: `resample`
+
+`ods.resample(f, on, every, aggs)` groups the rows by the start of the
+time bucket each falls in and aggregates them, sorted by time: the
+`group_by` of a floored time column. `on` is a column of ISO dates or
+date-times as text (`2024-03-01`, `2024-03-01T13:45`,
+`2024-03-01 13:45:10`); `every` is a count and a unit — `"30s"`,
+`"15m"`, `"1h"`, `"1d"`, `"1w"` (weeks start on Monday), `"1mo"`,
+`"1q"`, `"1y"`; `aggs` is what `by.agg` takes. `by:` adds keys to group
+by before the time. The bucket column keeps the name `on` and is
+written in the input's shape — a date for a bucket of a day or more,
+the date and time otherwise:
+
+```olang
+use ods { col }
+let hourly = ods.frame({
+    ts: ["2024-01-01T01:00", "2024-01-01T13:00", "2024-01-02T05:00", "2024-02-03T00:00"],
+    mw: [10.0, 20.0, 30.0, 40.0],
+    site: ["a", "b", "a", "a"],
+})
+println(ods.resample(hourly, "ts", "1d", { energy: col("mw").sum(), hours: ods.count() }))
+println(ods.resample(hourly, "ts", "1mo", { energy: col("mw").sum() }, by: "site"))
+```
+
+Each value is parsed once into an integer bucket (no text per row), the
+grouping and the sort run on those integers, and only the buckets are
+written back as text. A million hourly rows to daily sums and means
+take 15 ms; pandas takes 16 on a column already parsed to datetimes and
+65 from the same text.
 
 ### Joins
 
@@ -1273,6 +1470,34 @@ Every kind follows the same null rule: a null key matches nothing. So a
 null-keyed left row appears in a left, full, or anti join and never in
 an inner or semi one, and semi and anti always partition the left frame
 between them.
+
+`ods.join` takes the kind by name as well — `how:` one of `"inner"`
+(the default), `"left"`, `"full"`, `"semi"` or `"anti"` — and every join
+takes these:
+- `on` a list of names joins on several keys at once (`right_on` a list
+  of the same length when the right side calls them otherwise), where a
+  single key would have needed a concatenated string column;
+- `suffix:` replaces `_right` on a colliding right column;
+- `validate:` says which side holds each key once — `"many_to_one"` (the
+  right: a lookup table), `"one_to_many"` (the left) or `"one_to_one"`
+  (both) — and raises, naming the key, when it does not. A duplicated
+  key in a lookup table multiplies the left rows it matches; the check
+  turns that silent fan-out into an error at the join that caused it.
+
+```olang
+let sales = ods.frame({ region: ["n", "s", "n"], week: [1, 1, 2], units: [5, 7, 9] })
+let promos = ods.frame({ region: ["n", "s"], week: [2, 1], discount: [0.1, 0.2] })
+let j = ods.join(sales, promos, ["region", "week"], how: "left", validate: "many_to_one")
+println(j["discount"].to_list())           // [(), 0.2, 0.1]
+let dup = ods.frame({ region: ["n", "n"], week: [2, 2], discount: [0.1, 0.3] })
+println(attempt(() => ods.join(sales, dup, ["region", "week"], validate: "many_to_one")))
+```
+
+Each side's key columns are encoded against the right side's values (an
+integer per row, a column at a time), so a join on several keys costs
+little more than a join on one, and no row's key is ever built as text.
+A million-row left join on two Int keys against 50,000 rows takes 12 ms
+(pandas `merge`: 23).
 
 On a large left frame (50,000+ rows) the join's probe runs across every
 CPU core — each left row is looked up independently, and the chunks are
@@ -1321,10 +1546,11 @@ The verbs that resolve expressions:
 
 `ods.over(agg, keys)` computes an aggregation within each group of the
 key columns and gives it back to every row of the group — pandas'
-`transform`, Polars' `over`. The aggregation is `ods.sum`, `ods.mean`,
-`ods.min`, `ods.max`, `ods.count`, `ods.median`, `ods.std`, `ods.var`,
-`ods.first`, `ods.last` or `ods.n_unique` of an expression, and the keys
-are a column name or a list of them. A group-wise fill is one line (the
+`transform`, Polars' `over`. The aggregation is any that `by.agg` takes
+(see [Grouped aggregation](#grouped-aggregation)) — `ods.sum`,
+`ods.mean`, `ods.quantile(e, q)`, `ods.count()` for the group's rows,
+or arithmetic over several — and the keys are a column name or a list
+of them. A group-wise fill is one line (the
 filled column is Float, since a group's mean is):
 
 ```olang

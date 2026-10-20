@@ -26,6 +26,7 @@ below made a measured difference of between 2× and several hundred times.
 - [Bulk data belongs in ods](#bulk-data-belongs-in-ods)
 - [Automatic parallelism in ods](#automatic-parallelism-in-ods)
 - [The expression engine](#the-expression-engine)
+- [Frames: grouping, joins and time](#frames-grouping-joins-and-time)
 - [What a program costs in memory](#what-a-program-costs-in-memory)
 
 ## Put hot loops in functions
@@ -236,7 +237,8 @@ caller's thread (`olang_ods::ParClass`, and the frame kernels' own):
 | Reductions (`sum`, `mean`, `var`, `std`, `dot`, a regression's Gram matrix) | 1,000,000 | ~0.09 ms (`sum`) |
 | Sorts (`sort`, `argsort`, `sort_by`) | 100,000 | ~1 ms |
 | `join` probe | 200,000 rows | ~1.7 ms |
-| `group_by` | 500,000 rows | ~1.2 ms |
+| `group_by` (and a GroupBy's ids, `over`) | 500,000 rows | ~1.2 ms |
+| A GroupBy cut into its groups (`apply`, `groups`) | 200,000 rows | ~0.7 ms (1,000 groups) |
 | `filter` and `take` across columns | 500,000 rows | ~1.5 ms |
 
 A kernel already running on a pool worker (inside a `par_map` stage)
@@ -394,6 +396,51 @@ a few pieces a worker (16 to 128 chunks each) and computes what the
 sequential run does, bit for bit; a reduction's pieces have a fixed
 size per plan, and their partial sums are added in order, so its result
 is the same on any number of threads.
+
+## Frames: grouping, joins and time
+
+The Frame verbs of the data-ergonomics round, as a program calls them
+(`benchmarks/frames.ol`), against pandas 3.0.5 on the same data
+(`benchmarks/frames_pandas.py`, which writes it: a million rows of an
+hourly timestamp as ISO text, two Int keys of 1,000 and 50 values, two
+Floats). Milliseconds per call, the fastest of seven, Apple M5 Pro (18
+threads):
+
+| Operation | ods, all threads | ods, one thread | pandas |
+|---|---:|---:|---:|
+| `group_by(k).agg({…})`: sum, mean, std, median, count | 3.18 | 9.32 | 13.9 |
+| `agg({ r: (col("x") * col("y")).sum() / col("y").sum() })` | 0.71 | 2.09 | 6.71 |
+| `by.transform(col("x").mean())` | 0.61 | 1.28 | 1.89 |
+| `with({ d: col("x") - col("x").mean().over("k") })` | 1.22 | 2.35 | 2.17 |
+| `by.apply(fn)`, 1,000 groups (an olang call each) | 10.9 | 16.6 | 42.3 |
+| `crosstab(k2, k % 20)` | 2.55 | 3.76 | 14.6 |
+| `join(f, right, ["k", "k2"], how: "left", validate: "many_to_one")`, 50,000 right rows | 11.6 | 13.0 | 22.6 |
+| `resample(f, "ts", "1d", …)`, sum and mean | 15.1 | 19.0 | 15.6 parsed, 65.5 from text |
+| `resample(f, "ts", "1mo", …)` | 17.6 | 23.2 | 12.6 parsed |
+| `rolling(x, 365, "mean")` | 3.78 | 3.74 | 3.89 |
+| `rolling(x, 365, "mean", exact: true)` | 254 | 223 | |
+| `rolling(x, 365, "std")` | 5.17 | 5.30 | 9.01 |
+| `rolling(x, 365, "max")` | 4.02 | 4.01 | 4.62 |
+| `rolling(x, 24, "median", center: true)` | 31.1 | 31.4 | 136 |
+| `lookup(right, "key", q, "w")`, 10,000 single keys | 1.97 | 2.02 | 5.11 (`.at`) |
+
+A GroupBy computes its group ids once (the parallel dictionary encoding
+of `group_by`, from 500,000 rows) and every aggregation, `transform`,
+`apply` and `groups` reuses them; the columns an `agg` object's
+expressions read are evaluated together in one fused plan. Joins encode
+each key column against the right side's values (an integer per row),
+so several keys cost little more than one and no key is built as text.
+`resample` parses each timestamp into an integer bucket and groups and
+sorts those, writing only the buckets back as text; pandas is faster on
+a column it has already parsed to datetimes, which olang will have when
+columns gain a Date type. Windows slide in O(n) (running sums with
+Neumaier compensation, a monotone queue for the extremes, a sorted
+window for the median); `exact: true` is the O(n × window) fresh sum.
+Rolling windows are sequential: a sliding window's state is a chain.
+Every parallel path joins in a fixed order, so a result is the same run
+to run, and the same on one thread but for a grouped float `sum` or
+`mean`, whose additions the parallel scatter reorders
+(`tests/frames_ergonomics_test.rs` checks both).
 
 ## What a program costs in memory
 
