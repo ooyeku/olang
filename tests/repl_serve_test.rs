@@ -287,7 +287,7 @@ fn a_functions_parameters_are_named_then_bound_for_one_evaluation() {
     assert_eq!(
         hello["features"],
         json!([
-            "bind", "pure", "cell", "caps", "profile", "distinct", "record", "html"
+            "bind", "pure", "cell", "caps", "profile", "distinct", "record", "html", "scene"
         ])
     );
     let f = calc(dir.path());
@@ -1084,6 +1084,37 @@ fn a_chart_says_its_description_decimated_and_zooms_by_range() {
     assert_eq!(s["value"]["chart"]["series"][0]["y"], json!([3.0, 4.0]));
     assert!(s["value"]["h"].is_u64());
     assert_eq!(s["value"]["svg"]["bg"], json!("#fcfcfb"));
+}
+
+#[test]
+fn a_gg_plot_is_drawn_as_its_scene_and_zooms_by_rendering_again() {
+    let dir = project();
+    let (mut r, _) = Repl::start(dir.path());
+    let c = r.eval("use gg\nlet x = ods.series(0..20000) * 0.001\nlet f = ods.frame([[\"x\", x], [\"y\", x * x]])\ngg.plot(f, gg.aes(x: \"x\", y: \"y\")) |> gg.point() |> gg.labs(title: \"sq\")");
+    assert_eq!(c["ok"], json!(true), "{c}");
+    let v = &c["value"];
+    assert_eq!(v["t"], json!("Plot"));
+    assert!(v["h"].is_u64(), "a plot is held: {v}");
+    assert!(v["svg"]["text"].as_str().unwrap().starts_with("<svg"));
+    let chart = &v["chart"];
+    assert_eq!(chart["type"], json!("scene"), "{chart}");
+    assert_eq!(chart["title"], json!("sq"));
+    assert_eq!(chart["zoomable"], json!(true));
+    assert_eq!(chart["n"], json!(20000));
+    let pts = chart["ops"].as_array().unwrap().iter().find(|o| o["op"] == json!("points")).unwrap();
+    // thinned for the screen, its tooltip values beside each point
+    assert!(pts["x"].as_array().unwrap().len() < 20000, "{}", pts["x"].as_array().unwrap().len());
+    assert_eq!(pts["tips"][0].as_array().unwrap().len(), pts["x"].as_array().unwrap().len());
+    // a zoom renders again over the range, the y axis fitted to what shows
+    let h = v["h"].as_u64().unwrap();
+    let z = r.ask(json!({ "op": "expand", "h": h, "chart": { "x0": 1.0, "x1": 2.0, "panel": 0 } }));
+    let p = &z["chart"]["panels"][0];
+    assert_eq!(p["h_axis"]["lo"], json!(1.0), "{z}");
+    assert_eq!(p["h_axis"]["hi"], json!(2.0));
+    assert!(p["v_axis"]["hi"].as_f64().unwrap() < 5.0);
+    // an error is said, the cell's value its words
+    let e = r.eval("gg.plot(f, gg.aes(x: \"nope\")) |> gg.point()");
+    assert!(e["value"]["s"].as_str().unwrap().contains("no such column"), "{e}");
 }
 
 #[test]

@@ -3993,6 +3993,12 @@ let parts = ods.split(f, 0.8)   // [train, test]"##],
         self.doc_ex("plot.describe", "plot.describe(svg)", "Result", "plot", "a chart's description as data: `Ok(map)` — its type (xy, bar, hist, heatmap, box), title, labels, size, theme, palettes, axes' extents and data — read from the `<metadata id=\"olang-chart\">` every plot chart carries; `Err` for text that carries none",
             &[r##"unwrap(plot.describe(plot.line(x, y, #{}))).series[0].y"##],
         );
+        self.doc_ex("plot.gg", "plot.gg(plot)", "String", "plot", "a grammar-of-graphics plot (the map `use gg` builds: gg.plot, layers, scales, facets, coords, labels, a theme) rendered natively — stats, scales, positions, facets, legends, layout — as an SVG string; `gg.svg(p)` is the same",
+            &[r##"plot.gg(gg.plot(f, gg.aes(x: "a", y: "b")) |> gg.point())"##],
+        );
+        self.doc_ex("plot.gg_scene", "plot.gg_scene(plot)", "String", "plot", "a gg plot's scene as JSON: the resolved display list in plot pixels (marks, axes, gridlines, legends, strips), each mark's tooltip values, each panel's scales — what a host draws natively; the SVG is serialized from the same scene",
+            &[r##"json.parse(plot.gg_scene(p))"##],
+        );
     }
 
     fn add_browser_and_toolkit_docs(&mut self) {

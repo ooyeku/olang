@@ -1480,7 +1480,7 @@ impl Session {
             "event": "hello", "protocol": PROTOCOL, "olang": crate::version::VERSION,
             "root": self.root.to_string_lossy(), "pid": std::process::id(),
             "ops": ["hello", "eval", "command", "commands", "complete", "deps", "drop", "expand", "fields", "release", "interrupt", "page", "ping", "record", "reload", "replay", "reread", "render", "reset", "set", "shutdown", "stats", "vars"],
-            "features": ["bind", "pure", "cell", "caps", "profile", "distinct", "record", "html"],
+            "features": ["bind", "pure", "cell", "caps", "profile", "distinct", "record", "html", "scene"],
         });
         if let Some(nb) = &self.notebook {
             v["notebook"] = json!({
@@ -2763,6 +2763,7 @@ impl Session {
                 .max(0);
                 json!({ "k": "range", "t": t, "n": n, "s": v.to_string() })
             }
+            Value::Map(_) if crate::ods::gg::is_spec(v) => self.encode_gg(v, None, held),
             Value::Map(m) => {
                 if let Some(role) = loom_view_role(m) {
                     let h = self.hold(v, held);
@@ -2828,6 +2829,28 @@ impl Session {
     /// columns' names and types, its rows' count, and its first rows'
     /// cells as text (a null as `null`); `expand` with `table` reads the
     /// rest by range, sorted.
+    /// A gg plot (the map `use gg` builds) as a chart: its SVG (`svg`, for
+    /// a picture and an export) and its scene (`chart`, `type: "scene"`,
+    /// what an editor draws natively, thinned for the screen), held by
+    /// handle so a zoom renders it again (`expand` with `chart`).
+    fn encode_gg(&mut self, v: &Value, zoom: Option<(f64, f64, Option<usize>)>, held: &mut Vec<u64>) -> J {
+        let h = self.hold(v, held);
+        match crate::ods::gg::scene_of(v, zoom) {
+            Ok(scene) => {
+                let svg = scene.to_svg();
+                let chart: J = serde_json::from_str(&scene.to_json(&olang_ods::gg::SceneJsonOptions::default()))
+                    .unwrap_or(J::Null);
+                let mut r = json!({ "k": "str", "t": "Plot", "n": svg.chars().count(), "h": h,
+                                    "s": svg.chars().take(TEXT_CHARS).collect::<String>(), "chart": chart });
+                if let Some(sv) = svg_of(&svg) {
+                    r["svg"] = sv;
+                }
+                r
+            }
+            Err(e) => json!({ "k": "str", "t": "Plot", "n": e.chars().count(), "s": e, "h": h }),
+        }
+    }
+
     fn encode_ods(&mut self, v: &Value, held: &mut Vec<u64>) -> J {
         let cols = ods_columns(v).unwrap_or_default();
         let frame = crate::ods::frame_of(v).is_some();
@@ -2889,6 +2912,27 @@ impl Session {
             (msg.get("count").and_then(|s| s.as_u64()).unwrap_or(100) as usize).min(EXPAND_MAX);
         let mut held = Vec::new();
         let reply = match &v {
+            Value::Map(_) if crate::ods::gg::is_spec(&v) && msg.get("chart").is_some() => {
+                let bound = |k: &str| msg["chart"].get(k).and_then(|x| x.as_f64());
+                let zoom = match (bound("x0"), bound("x1")) {
+                    (Some(a), Some(b)) => Some((a, b, msg["chart"].get("panel").and_then(|p| p.as_u64()).map(|p| p as usize))),
+                    _ => None,
+                };
+                match crate::ods::gg::scene_of(&v, zoom) {
+                    Ok(scene) => {
+                        let c: J = serde_json::from_str(&scene.to_json(&olang_ods::gg::SceneJsonOptions::default())).unwrap_or(J::Null);
+                        json!({ "ok": true, "chart": c })
+                    }
+                    Err(e) => json!({ "ok": false, "error": { "kind": "error", "message": e } }),
+                }
+            }
+            Value::Map(_) if crate::ods::gg::is_spec(&v) => match crate::ods::gg::scene_of(&v, None) {
+                Ok(scene) => {
+                    let text: String = scene.to_svg().chars().skip(start).take(count.max(1) * 100).collect();
+                    json!({ "ok": true, "s": text })
+                }
+                Err(e) => json!({ "ok": false, "error": { "kind": "error", "message": e } }),
+            },
             Value::String(s) if msg.get("chart").is_some() => match chart_of(s) {
                 Some(mut c) => {
                     let bound = |k: &str| msg["chart"].get(k).and_then(|x| x.as_f64());

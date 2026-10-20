@@ -401,6 +401,7 @@ fn every_module_is_listed() {
         "ods",
         "stats",
         "plot",
+        "gg",
         "collections.heap",
     ] {
         assert!(

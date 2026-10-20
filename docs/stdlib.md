@@ -59,6 +59,7 @@ a file system, a network, or a browser.
 - [`stats` — statistical inference](#stats--statistical-inference)
 - [`learn` and `ml` — machine learning](#learn-and-ml--machine-learning)
 - [`plot` — charts as SVG text](#plot--charts-as-svg-text)
+- [`gg` — a grammar of graphics](#gg--a-grammar-of-graphics)
 
 ## Conventions
 
@@ -3285,7 +3286,10 @@ colors bar categories individually, `scale` picks a heatmap ramp
 hands the same ramps to your code. Every chart carries its description
 as data (a `<metadata id="olang-chart">` of JSON after its opening
 tag), and `plot.describe(svg)` answers it as a Map — `Err` for text
-that carries none ([the data stack](ods.md#a-charts-description)). In `viz`, `"color_by": "column"`
+that carries none ([the data stack](ods.md#a-charts-description)).
+`plot.gg(p)` renders a [`gg`](#gg--a-grammar-of-graphics) plot to SVG
+and `plot.gg_scene(p)` to its scene as JSON (the display list a host
+draws natively). In `viz`, `"color_by": "column"`
 maps values onto a ramp per point — continuous color encoding on both
 the SVG and canvas targets.
 
@@ -3343,3 +3347,111 @@ SVG-as-text philosophy, each chart type, and null handling per chart.
 
 Next: [Packages](packages.md) for multi-file programs and dependencies, or
 [Internals](internals.md) for how the runtime executes all of this.
+
+## `gg` — a grammar of graphics
+
+**`use gg`** says a plot the way ggplot2 does: data, aesthetic mappings,
+and layers (a geom drawn from a stat's output after a position), then
+scales, a facet, a coordinate system, labels and a theme. A plot is a
+value — a map built in steps, each subject-first so it pipes — and
+nothing in the module computes: `plot.gg` does it all natively (stats,
+scale training, positions, facet layout, legends, text measurement) and
+serializes one scene to SVG. A plot that is a notebook cell's or the
+REPL's value is drawn natively by an editor (the kernel sends its scene:
+[tooling](tooling.md)), with each mark's values on hover and a dragged
+range zoomed; `gg.svg(p)` is its SVG text and `gg.save(p, path)` writes
+it.
+
+```olang
+use gg
+let f = ods.frame([["size", ods.series([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])],
+                   ["price", ods.series([2.1, 3.9, 6.2, 7.8, 10.1, 12.2])],
+                   ["kind", ods.series(["a", "b", "a", "b", "a", "b"])]])
+let p = gg.plot(f, gg.aes(x: "size", y: "price", color: "kind"))
+    |> gg.point(size: 2)
+    |> gg.smooth(method: "lm", se: false)
+    |> gg.scale_y_continuous(labels: "dollar")
+    |> gg.labs(title: "Price by size")
+assert(str.starts_with(gg.svg(p), "<svg"))
+```
+
+A mapping names a column (`"price"`), holds a Series of the frame's
+length, or names a variable the layer's stat computes:
+`gg.aes(y: gg.after_stat("density"))`. A constant goes to the layer
+instead (`gg.point(color: "steelblue", alpha: 0.4, size: 2)`): colours
+are names or `#hex`, sizes are ggplot's units (a point's `size` 1.5, a
+line's `linewidth` 0.5), a text's `size` is pixels. Strings mapped to a
+position that all read as ISO dates (`2024-03-01`, `2024-03-01 14:30`)
+make a date axis; other strings are categories, sorted naturally unless a
+scale's `limits` orders them. Errors say what is wrong and what exists: a
+missing column lists the frame's.
+
+| Building | Purpose |
+|---|---|
+| `plot(data, mapping)` | a plot of a Frame (or records) with a default mapping |
+| `aes(x, y, color, fill, size, shape, alpha, linetype, group, label, xmin, xmax, ymin, ymax, xend, yend, weight, sample, xintercept, yintercept)` | the mappings (`colour` too) |
+| `after_stat(name)` | a stat's variable as a mapping: `count`, `density`, `ncount`, `ndensity`, `scaled`, `prop`, `ecdf`, … |
+| `layer(p, geom, stat, position, mapping, data, params)` | any geom with any stat and position |
+| `svg(p)` · `save(p, path)` · `scene(p)` | the SVG text, written to a file; the scene as JSON (what a host draws) |
+
+Every geom takes `mapping` and `data` (a layer's own, else the plot's;
+`inherit: false` leaves the plot's mapping out), its constants, and
+`legend: false` to keep it out of the legends.
+
+| Geom | Draws |
+|---|---|
+| `point(p, …)` · `jitter(p, width, height, seed, …)` | points; points moved at random (seeded) |
+| `line(p, …)` · `path(p, …)` · `step(p, direction, …)` | lines in x order, in data order, as a staircase (`"hv"`, `"vh"`) |
+| `area(p, …)` · `ribbon(p, …)` | an area from zero (stacked by group), a band from `ymin` to `ymax` |
+| `bar(p, …)` · `col(p, …)` | bars counting each x, bars of height y (stacked; `position: "dodge"` or `"fill"`) |
+| `histogram(p, bins, binwidth, boundary, center, breaks, …)` · `freqpoly(p, …)` | binned counts as bars, as a line |
+| `density(p, bw, adjust, kernel, n, trim, …)` | a kernel density estimate: `bw` `"nrd0"` (Silverman's rule, the default), `"nrd"`, `"scott"` or a number; kernels gaussian, epanechnikov, rectangular, triangular, biweight |
+| `boxplot(p, width, coef, outliers, …)` | median, hinges, whiskers at 1.5 IQR, outliers |
+| `violin(p, scale, trim, bw, adjust, draw_quantiles, …)` | each group's density mirrored (`scale` `"area"`, `"count"`, `"width"`) |
+| `errorbar(p, …)` · `pointrange(p, …)` · `linerange(p, …)` · `crossbar(p, …)` | intervals from `ymin` to `ymax` |
+| `summary(p, fun, level, mult, geom, …)` | y summarised at each x: `fun` `"mean_se"` (default), `"mean_cl_normal"` (a t interval at `level`), `"mean_sdl"`, `"median_hilow"`, `"mean"`, `"median"`, drawn as a point range (or `geom`) |
+| `smooth(p, method, se, level, span, degree, k, n, fullrange, …)` | a smoother and its standard-error band: `"lm"` (a polynomial of `degree`), `"loess"` (local quadratic, `span` 0.75), `"gam"` (penalized cubic regression spline, `k` 10, smoothness by GCV), `"auto"` (loess under 1,000 points, gam over) |
+| `text(p, label, size, hjust, vjust, nudge_x, nudge_y, check_overlap, fontface, …)` · `label(p, …)` | text at each point; text on a box |
+| `tile(p, width, height, …)` · `raster(p, …)` · `rect(p, …)` | heatmap tiles; tiles that abut; rectangles from `xmin`… |
+| `hline(p, yintercept)` · `vline(p, xintercept)` · `abline(p, slope, intercept)` | reference lines (a number or a list) |
+| `rug(p, sides, length, …)` · `segment(p, …)` | ticks along the axes; segments to (`xend`, `yend`) |
+| `hex(p, bins, binwidth)` · `bin2d(p, bins, binwidth)` | 2-D bins filled by count |
+| `ecdf(p, …)` · `qq(p, mean, sd, …)` · `qq_line(p, …)` | the empirical cdf; a normal Q-Q plot of `sample` and its quartile line |
+| `annotate(p, geom, x, y, xend, yend, xmin, xmax, ymin, ymax, label, …)` | one mark from constants: a note, a band, a line |
+
+Positions: a layer's `position` is a name or one of `position_stack(reverse)`,
+`position_fill(reverse)`, `position_dodge(width)`, `position_dodge2(width, padding)`,
+`position_jitter(width, height, seed)`, `position_nudge(x, y)`.
+
+Scales (a later one for the same aesthetic replaces the earlier):
+
+| Scale | Purpose |
+|---|---|
+| `scale_x_continuous(p, name, breaks, labels, limits, expand, trans, prefix, suffix)` · `scale_y_continuous` | an axis: `labels` `"percent"`, `"comma"`, `"dollar"`, `"short"` (1.5k, 2M), `"scientific"`, `"plain"`, or a list; `breaks` a list or a count; `limits` `[lo, hi]` (either `()`); `trans` `"log10"`, `"sqrt"`, `"reverse"` |
+| `scale_x_log10` · `scale_y_log10` · `scale_x_sqrt` · `scale_y_sqrt` · `scale_x_reverse` · `scale_y_reverse` | a transformed axis (log10: breaks at powers of ten) |
+| `scale_x_discrete(p, name, limits, labels, breaks)` · `scale_y_discrete` | categories: `limits` their order, `labels` a list or a map |
+| `scale_x_date(p, name, date_breaks, date_labels, limits, breaks)` · `scale_y_date` · `scale_x_datetime` · `scale_y_datetime` | dates: `date_breaks` `"1 month"`, `"2 weeks"`, `"6 hours"`; `date_labels` strftime (`%Y %m %d %b %B %H %M %S %e %j %a %A`) |
+| `scale_color_manual(p, values, …)` · `scale_fill_manual` | colours by hand: a list, or a map of level to colour |
+| `scale_color_discrete(p, palette, …)` · `scale_fill_discrete` | categories from `"quiet"` (the default: ten hues tuned per appearance) or a viridis option |
+| `scale_color_viridis_d(p, option, begin, end, direction, …)` · `scale_fill_viridis_d` · `scale_color_viridis_c` · `scale_fill_viridis_c` | the viridis family: `option` viridis, magma, inferno, plasma, cividis, mako, rocket |
+| `scale_color_gradient(p, low, high, …)` · `scale_fill_gradient` · `scale_color_gradientn(p, colors)` · `scale_fill_gradientn` | sequential colours |
+| `scale_color_gradient2(p, low, mid, high, midpoint, …)` · `scale_fill_gradient2` | diverging colours centred on `midpoint` (0) |
+| `scale_color_grey(p, start, end)` · `scale_fill_grey` · `scale_color_identity(p)` · `scale_fill_identity` | greys; the column's values as the colours |
+| `scale_size(p, range, …)` · `scale_alpha(p, range, …)` · `scale_shape(p, values, …)` · `scale_linetype(p, values, …)` | sizes by area, opacities, glyphs (circle, triangle, square, diamond, open ones, plus, cross), dashes |
+
+Every colour scale takes `name`, `labels`, `limits`, `breaks` and
+`guide: "none"`. Legends merge: aesthetics mapped to one variable under
+one title (colour and shape, say) share a legend; a continuous colour is a
+colour bar.
+
+| Layout | Purpose |
+|---|---|
+| `facet_wrap(p, facets, ncol, nrow, scales)` | a panel per value of a column (or a list of them); `scales` `"fixed"`, `"free"`, `"free_x"`, `"free_y"` |
+| `facet_grid(p, rows, cols, scales)` | a grid of panels, rows by columns |
+| `coord_flip(p, xlim, ylim)` · `coord_fixed(p, ratio)` · `coord_cartesian(p, xlim, ylim)` | the axes swapped; a fixed aspect; a zoom that drops no data |
+| `labs(p, title, subtitle, caption, x, y, color, fill, size, shape, alpha, linetype)` · `ggtitle(p, title, subtitle)` · `xlab(p, title)` · `ylab(p, title)` | titles (`""` hides an axis's) |
+| `theme(p, name, appearance, base_size, legend_position, width, height, grid, font)` | the look: `"minimal"` (the default — hairline grid, no ticks, one type scale), `"classic"`, `"bw"`, `"gray"`, `"linedraw"`, `"void"`; `appearance` `"light"`, `"dark"`, `"contrast"` (else the host's: a notebook's follows Studio's) |
+
+The vertical axis's title reads across, over its labels; a plot is 720
+pixels wide and as tall as its panels need unless the theme says.
+

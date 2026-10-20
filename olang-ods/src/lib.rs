@@ -29,6 +29,7 @@ pub mod dist;
 pub mod frame;
 #[cfg(feature = "stats")]
 pub mod learn;
+pub mod gg;
 pub mod plot;
 #[cfg(feature = "stats")]
 pub mod stats;
