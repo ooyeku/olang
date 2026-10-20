@@ -816,8 +816,8 @@ fn apply(
                     continue;
                 };
                 let ty = match op.as_str() {
-                    "count" => "Int".to_string(),
-                    "mean" => "Float".to_string(),
+                    "count" | "n_unique" => "Int".to_string(),
+                    "mean" | "median" | "std" | "var" => "Float".to_string(),
                     _ => text(2).map(|c| type_of(&frame, &c)).unwrap_or_default(),
                 };
                 fields.push((out, ty));

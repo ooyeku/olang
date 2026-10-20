@@ -851,7 +851,7 @@ fn dispatch_inner(func: &str, mut args: Vec<Value>, expected: usize) -> Result<V
             let op = AggOp::parse(&op_name).ok_or_else(|| {
                 format!(
                     "ods.rolling: '{}' is not an aggregation. Expected one of \
-                     count, sum, mean, min, max",
+                     count, sum, mean, min, max, median, std, var",
                     op_name
                 )
             })?;
@@ -1001,6 +1001,16 @@ fn dispatch_inner(func: &str, mut args: Vec<Value>, expected: usize) -> Result<V
 // Operators
 // ---------------------------------------------------------------------
 
+/// Whether `v` is a String series. A still-pending fused chain is
+/// numeric by construction, so it is answered without forcing it.
+fn is_str_series(v: &Value) -> bool {
+    let Value::Native(h) = v else { return false };
+    let Some(s) = h.0.as_any().downcast_ref::<OdsSeries>() else {
+        return false;
+    };
+    s.cell.get().is_some_and(|m| m.dtype() == DType::Str)
+}
+
 /// One side of a fusable operator chain: its expression, its length
 /// (None for a broadcast scalar), and its tree depth.
 fn fuse_side(v: &Value) -> Option<(olang_ods::fuse::Expr, Option<usize>, usize)> {
@@ -1064,6 +1074,24 @@ pub fn binary_op(
     rhs: &Value,
 ) -> Option<Result<Value, String>> {
     use crate::ast::BinaryOp as B;
+    // `+` with a String series on a side joins text: `s["a"] + "|" +
+    // s["b"]`, a String on every row or a String series alongside.
+    if matches!(op, B::Add) && (is_str_series(lhs) || is_str_series(rhs)) {
+        let joined = match (series_of(lhs), series_of(rhs), lhs, rhs) {
+            (Some(a), Some(b), _, _) => a.concat_str(b),
+            (Some(a), None, _, Value::String(t)) => a.concat_str_scalar(t, false),
+            (None, Some(b), Value::String(t), _) => b.concat_str_scalar(t, true),
+            (Some(_), None, _, other) | (None, Some(_), other, _) => {
+                return Some(Err(format!(
+                    "+ joins a String series to a String or a String series, not a {} — \
+                     make it text first (`ods.cast(s, \"String\")`, `str(x)`)",
+                    other.type_name()
+                )));
+            }
+            (None, None, _, _) => return None,
+        };
+        return Some(joined.map(OdsSeries::into_value).map_err(|e| e.to_string()));
+    }
     // Elementwise chains fuse lazily: `a * b + 1.0` materializes once,
     // in one pass, instead of once per operator.
     if let Some(fop) = match op {

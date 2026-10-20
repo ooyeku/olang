@@ -218,3 +218,18 @@ fn frame_kernels_past_their_thresholds_are_parallel_transparent() {
          + to_string(ods.get(ods.sort(v), 0))",
     );
 }
+
+#[test]
+fn group_by_s_gathering_aggregations_are_parallel_transparent() {
+    // 600k rows past PAR_GROUPBY_ROWS: median, std and var reduce each
+    // group on its own, so one thread or many give the same bits.
+    assert_parallel_transparent(
+        "let n = 600000\n\
+         let k = ods.cast(ods.map(ods.linspace(0.0, 976.0, n), \"floor\"), \"Int\")\n\
+         let v = ods.map(ods.linspace(0.0, 4000.0, n), \"sin\")\n\
+         let df = ods.frame([[\"k\", k], [\"v\", v]])\n\
+         let g = ods.group_by(df, [\"k\"], [[\"m\", \"median\", \"v\"], [\"s\", \"std\", \"v\"], \
+         [\"q\", \"var\", \"v\"], [\"f\", \"first\", \"v\"], [\"l\", \"last\", \"v\"], [\"u\", \"n_unique\", \"k\"]])\n\
+         ods.to_csv(g)",
+    );
+}

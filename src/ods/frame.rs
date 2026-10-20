@@ -680,6 +680,24 @@ pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
                 .map(OdsFrame::into_value)
                 .map_err(e)
         }
+        // A Series as well as a Frame: its first (or last) n values.
+        "head" | "tail" if super::series::series_of(&args[0]).is_some() => {
+            let s = super::series::series_of(&args[0]).expect("checked");
+            let n = match &args[1] {
+                Value::Integer(n) if *n >= 0 => (*n as usize).min(s.len()),
+                other => {
+                    return Err(format!(
+                        "ods.{}: n must be a non-negative Int, got {}",
+                        func, other
+                    ));
+                }
+            };
+            let start = if func == "head" { 0 } else { s.len() - n };
+            let idx = Series::from_i64((start..start + n).map(|i| i as i64).collect());
+            s.take(&idx)
+                .map(super::series::make_series_value)
+                .map_err(e)
+        }
         "head" => {
             let f = want_frame(func, &args, 0)?;
             let n = match &args[1] {
@@ -850,9 +868,9 @@ pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
             let op_name = want_string(func, &args, 4)?;
             let op = AggOp::parse(&op_name).ok_or_else(|| {
                 format!(
-                    "ods.pivot: '{}' is not an aggregation. Expected one of \
-                     count, sum, mean, min, max",
-                    op_name
+                    "ods.pivot: '{}' is not an aggregation. Expected one of {}",
+                    op_name,
+                    AggOp::NAMES.join(", ")
                 )
             })?;
             f.pivot(&index, &columns, &values, op, &crate::ast::format_float)
@@ -1050,8 +1068,9 @@ fn parse_aggs(value: &Value) -> Result<Vec<AggSpec>, String> {
             let op_name = as_str(&parts[1], "aggregation op")?;
             let op = AggOp::parse(&op_name).ok_or_else(|| {
                 format!(
-                    "ods.group_by: unknown aggregation '{}' (count, sum, mean, min, max)",
-                    op_name
+                    "ods.group_by: unknown aggregation '{}' ({})",
+                    op_name,
+                    AggOp::NAMES.join(", ")
                 )
             })?;
             let col = if parts.len() == 3 {

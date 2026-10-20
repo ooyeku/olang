@@ -86,9 +86,29 @@ pub enum AggOp {
     Mean,
     Min,
     Max,
+    /// The middle value (the mean of the two middles for an even count),
+    /// as `ods.median` answers it. Float.
+    Median,
+    /// Sample standard deviation (ddof = 1), as `ods.std`. Float; null
+    /// with fewer than two values.
+    Std,
+    /// Sample variance (ddof = 1), as `ods.var`. Float.
+    Var,
+    /// The group's first row's value, null included. Any column type.
+    First,
+    /// The group's last row's value, null included. Any column type.
+    Last,
+    /// How many distinct values the group holds, as `ods.n_unique`
+    /// counts them (null is one value). Any column type. Int.
+    NUnique,
 }
 
 impl AggOp {
+    /// Every aggregation's name, in the order errors list them.
+    pub const NAMES: &'static [&'static str] = &[
+        "count", "sum", "mean", "min", "max", "median", "std", "var", "first", "last", "n_unique",
+    ];
+
     pub fn parse(name: &str) -> Option<AggOp> {
         Some(match name {
             "count" => AggOp::Count,
@@ -96,8 +116,30 @@ impl AggOp {
             "mean" => AggOp::Mean,
             "min" => AggOp::Min,
             "max" => AggOp::Max,
+            "median" => AggOp::Median,
+            "std" => AggOp::Std,
+            "var" => AggOp::Var,
+            "first" => AggOp::First,
+            "last" => AggOp::Last,
+            "n_unique" => AggOp::NUnique,
             _ => return None,
         })
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            AggOp::Count => "count",
+            AggOp::Sum => "sum",
+            AggOp::Mean => "mean",
+            AggOp::Min => "min",
+            AggOp::Max => "max",
+            AggOp::Median => "median",
+            AggOp::Std => "std",
+            AggOp::Var => "var",
+            AggOp::First => "first",
+            AggOp::Last => "last",
+            AggOp::NUnique => "n_unique",
+        }
     }
 }
 
@@ -325,6 +367,10 @@ impl Frame {
         let first_row = first_row_per_group(&group_ids, n_groups);
         let first_idx = Series::from_i64(first_row.clone());
 
+        // Each group's rows, built once for the aggregations that need
+        // a group's values together (a median, a variance, a count of
+        // distinct values) rather than a running total.
+        let mut groups: Option<(Vec<usize>, Vec<u32>)> = None;
         let mut pairs: Vec<(String, Series)> = Vec::with_capacity(keys.len() + aggs.len());
         for (k, col) in keys.iter().zip(key_cols.iter()) {
             pairs.push((k.clone(), col.take(&first_idx)?));
@@ -337,6 +383,15 @@ impl Frame {
                         counts[g as usize] += 1;
                     }
                     Series::from_i64(counts)
+                }
+                AggOp::Median | AggOp::Std | AggOp::Var | AggOp::NUnique => {
+                    let rows = groups.get_or_insert_with(|| rows_by_group(&group_ids, n_groups));
+                    aggregate_by_rows(self.column(&spec.col)?, &group_ids, rows, spec.op)?
+                }
+                AggOp::First => self.column(&spec.col)?.take(&first_idx)?,
+                AggOp::Last => {
+                    let last = last_row_per_group(&group_ids, n_groups);
+                    self.column(&spec.col)?.take(&Series::from_i64(last))?
                 }
                 _ => aggregate_column(self.column(&spec.col)?, &group_ids, n_groups, spec.op)?,
             };
@@ -632,6 +687,12 @@ impl Series {
             ));
         }
         let n = self.len();
+        if matches!(op, AggOp::First | AggOp::Last | AggOp::NUnique) {
+            return Err(OdsError::InvalidArgument(format!(
+                "rolling: {} is not a rolling aggregation (count, sum, mean, min, max, median, std, var)",
+                op.name()
+            )));
+        }
         if op != AggOp::Count && matches!(self.dtype(), crate::DType::Str | crate::DType::Bool) {
             return Err(OdsError::InvalidArgument(format!(
                 "rolling: {:?} needs a numeric column, got {}",
@@ -669,6 +730,27 @@ impl Series {
                 }
                 AggOp::Min => vals.fold(None, |a: Option<f64>, v| Some(a.map_or(v, |x| x.min(v)))),
                 AggOp::Max => vals.fold(None, |a: Option<f64>, v| Some(a.map_or(v, |x| x.max(v)))),
+                AggOp::Median => {
+                    let mut v: Vec<f64> = vals.collect();
+                    if v.is_empty() {
+                        return None;
+                    }
+                    v.sort_unstable_by(f64::total_cmp);
+                    let h = (v.len() - 1) as f64 * 0.5;
+                    let (lo, hi) = (h.floor() as usize, h.ceil() as usize);
+                    Some(v[lo] + (v[hi] - v[lo]) * (h - lo as f64))
+                }
+                AggOp::Std | AggOp::Var => {
+                    let v: Vec<f64> = vals.collect();
+                    if v.len() < 2 {
+                        return None;
+                    }
+                    let mean = v.iter().sum::<f64>() / v.len() as f64;
+                    let ss: f64 = v.iter().map(|x| (x - mean) * (x - mean)).sum();
+                    let var = ss / (v.len() - 1) as f64;
+                    Some(if op == AggOp::Std { var.sqrt() } else { var })
+                }
+                AggOp::First | AggOp::Last | AggOp::NUnique => None,
             }
         };
         let out: Vec<Option<f64>> = (0..n)
@@ -684,7 +766,7 @@ impl Series {
             AggOp::Count => {
                 Series::from_i64_options(out.into_iter().map(|o| o.map(|x| x as i64)).collect())
             }
-            AggOp::Mean => Series::from_f64_options(out),
+            AggOp::Mean | AggOp::Median | AggOp::Std | AggOp::Var => Series::from_f64_options(out),
             _ if self.dtype() == crate::DType::I64 => {
                 Series::from_i64_options(out.into_iter().map(|o| o.map(|x| x as i64)).collect())
             }
@@ -1692,18 +1774,12 @@ fn aggregate_column(col: &Series, group_ids: &[u32], n_groups: usize, op: AggOp)
                         .map(|(&c, m)| (c > 0).then_some(m))
                         .collect(),
                 )),
-                AggOp::Count => unreachable!("handled by caller"),
+                _ => unreachable!("handled by caller"),
             }
         }
         _ => Err(OdsError::TypeMismatch(format!(
             "cannot aggregate {} over a {} column",
-            match op {
-                AggOp::Sum => "sum",
-                AggOp::Mean => "mean",
-                AggOp::Min => "min",
-                AggOp::Max => "max",
-                AggOp::Count => "count",
-            },
+            op.name(),
             col.dtype()
         ))),
     }
@@ -1741,9 +1817,135 @@ fn finish_f64(
                 .map(|(&c, m)| (c > 0).then_some(m))
                 .collect(),
         ),
-        AggOp::Count => unreachable!("handled by caller"),
+        _ => unreachable!("handled by caller"),
     };
     Ok(out)
+}
+
+/// Each group's rows, in row order, by a counting sort over the group
+/// ids: group `g`'s rows are `rows[offsets[g]..offsets[g + 1]]`.
+fn rows_by_group(group_ids: &[u32], n_groups: usize) -> (Vec<usize>, Vec<u32>) {
+    let mut offsets = vec![0usize; n_groups + 1];
+    for &g in group_ids {
+        offsets[g as usize + 1] += 1;
+    }
+    for g in 0..n_groups {
+        offsets[g + 1] += offsets[g];
+    }
+    let mut next = offsets.clone();
+    let mut rows = vec![0u32; group_ids.len()];
+    for (i, &g) in group_ids.iter().enumerate() {
+        rows[next[g as usize]] = i as u32;
+        next[g as usize] += 1;
+    }
+    (offsets, rows)
+}
+
+/// The last row index of each group.
+fn last_row_per_group(group_ids: &[u32], n_groups: usize) -> Vec<i64> {
+    let mut last = vec![0i64; n_groups];
+    for (i, &g) in group_ids.iter().enumerate() {
+        last[g as usize] = i as i64;
+    }
+    last
+}
+
+/// One value per group, each computed from that group's rows alone — so
+/// fanning the groups out over threads gives exactly the sequential
+/// answer: no group's arithmetic depends on how the others are split.
+fn per_group<T: Send>(
+    n_rows: usize,
+    n_groups: usize,
+    f: impl Fn(usize) -> T + Sync + Send,
+) -> Vec<T> {
+    #[cfg(feature = "parallel")]
+    if n_rows >= PAR_GROUPBY_ROWS && n_groups > 1 && crate::parallel_enabled() {
+        use rayon::prelude::*;
+        return (0..n_groups).into_par_iter().map(f).collect();
+    }
+    let _ = n_rows;
+    (0..n_groups).map(f).collect()
+}
+
+/// The aggregations that need a group's values together: median, std,
+/// var (numeric columns; nulls skipped) and n_unique (any column; null
+/// is one value, as `Series::n_unique` counts it).
+fn aggregate_by_rows(
+    col: &Series,
+    group_ids: &[u32],
+    groups: &(Vec<usize>, Vec<u32>),
+    op: AggOp,
+) -> Result<Series> {
+    let (offsets, rows) = groups;
+    let n_groups = offsets.len() - 1;
+    let n = group_ids.len();
+    let rows_of = |g: usize| &rows[offsets[g]..offsets[g + 1]];
+    if op == AggOp::NUnique {
+        // Value ids over the whole column, then each group's distinct
+        // ids: a mark per value id says which group last counted it.
+        let (value_ids, n_values) = group_ids_single(col);
+        let mut mark = vec![u32::MAX; n_values];
+        let mut counts = vec![0i64; n_groups];
+        for g in 0..n_groups {
+            for &r in rows_of(g) {
+                let v = value_ids[r as usize] as usize;
+                if mark[v] != g as u32 {
+                    mark[v] = g as u32;
+                    counts[g] += 1;
+                }
+            }
+        }
+        return Ok(Series::from_i64(counts));
+    }
+    let value: Box<dyn Fn(u32) -> Option<f64> + Sync + Send + '_> = match col {
+        Series::F64 { values, validity } => Box::new(move |r: u32| {
+            let r = r as usize;
+            validity
+                .as_ref()
+                .is_none_or(|v| v.get(r))
+                .then(|| values[r])
+        }),
+        Series::I64 { values, validity } => Box::new(move |r: u32| {
+            let r = r as usize;
+            validity
+                .as_ref()
+                .is_none_or(|v| v.get(r))
+                .then(|| values[r] as f64)
+        }),
+        _ => {
+            return Err(OdsError::TypeMismatch(format!(
+                "cannot aggregate {} over a {} column",
+                op.name(),
+                col.dtype()
+            )));
+        }
+    };
+    let out = per_group(n, n_groups, |g| {
+        let mut vals: Vec<f64> = rows_of(g).iter().filter_map(|&r| value(r)).collect();
+        match op {
+            AggOp::Median => {
+                if vals.is_empty() {
+                    return None;
+                }
+                // `Series::quantile(0.5)`'s arithmetic, so a group's
+                // median is the column's median of the same rows.
+                vals.sort_unstable_by(f64::total_cmp);
+                let h = (vals.len() - 1) as f64 * 0.5;
+                let (lo, hi) = (h.floor() as usize, h.ceil() as usize);
+                Some(vals[lo] + (vals[hi] - vals[lo]) * (h - lo as f64))
+            }
+            _ => {
+                if vals.len() < 2 {
+                    return None;
+                }
+                let mean = vals.iter().sum::<f64>() / vals.len() as f64;
+                let ss: f64 = vals.iter().map(|x| (x - mean) * (x - mean)).sum();
+                let var = ss / (vals.len() - 1) as f64;
+                Some(if op == AggOp::Std { var.sqrt() } else { var })
+            }
+        }
+    });
+    Ok(Series::from_f64_options(out))
 }
 
 /// Gather with optional indices (join's right side): None -> null.

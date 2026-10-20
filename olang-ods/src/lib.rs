@@ -614,6 +614,44 @@ impl Series {
 
     /// `self ⊕ other`, elementwise. Nulls propagate; only positions where
     /// both operands are valid compute (so error checks apply only there).
+    /// String concatenation, elementwise: `a + b` over two String
+    /// series. A null on either side is a null cell, as arithmetic's is.
+    pub fn concat_str(&self, other: &Series) -> Result<Series> {
+        if self.len() != other.len() {
+            return Err(OdsError::LengthMismatch {
+                left: self.len(),
+                right: other.len(),
+            });
+        }
+        let (Series::Str { col: a, .. }, Series::Str { col: b, .. }) = (self, other) else {
+            return Err(OdsError::TypeMismatch(format!(
+                "+ joins two String series, got {} and {}",
+                self.dtype(),
+                other.dtype()
+            )));
+        };
+        let validity = merge_validity(self.validity(), other.validity());
+        Ok(concat_cells(self.len(), validity, |i| (a.get(i), b.get(i))))
+    }
+
+    /// String concatenation with one String on every row: `s + "|"`
+    /// (`scalar_first` false) or `"|" + s` (true). A null cell stays null.
+    pub fn concat_str_scalar(&self, text: &str, scalar_first: bool) -> Result<Series> {
+        let Series::Str { col, validity } = self else {
+            return Err(OdsError::TypeMismatch(format!(
+                "+ joins a String to a String series, got a {} series",
+                self.dtype()
+            )));
+        };
+        Ok(concat_cells(self.len(), validity.clone(), |i| {
+            if scalar_first {
+                (text, col.get(i))
+            } else {
+                (col.get(i), text)
+            }
+        }))
+    }
+
     pub fn arith(&self, op: ArithOp, other: &Series, par: bool) -> Result<Series> {
         if self.len() != other.len() {
             return Err(OdsError::LengthMismatch {
@@ -2111,5 +2149,41 @@ pub(crate) fn mask_keep_indices(mask: &Series) -> Result<Vec<usize>> {
             "filter mask must be a Bool series, got Series[{}]",
             mask.dtype()
         ))),
+    }
+}
+
+/// A String series of `n` cells, each the two parts `parts(i)` gives
+/// joined, packed into one buffer; an invalid cell is empty and null.
+fn concat_cells<'a>(
+    n: usize,
+    validity: Option<Bitmap>,
+    parts: impl Fn(usize) -> (&'a str, &'a str),
+) -> Series {
+    let valid = |i: usize| validity.as_ref().is_none_or(|v| v.get(i));
+    let total: usize = (0..n)
+        .filter(|&i| valid(i))
+        .map(|i| {
+            let (x, y) = parts(i);
+            x.len() + y.len()
+        })
+        .sum();
+    assert!(
+        u32::try_from(total).is_ok(),
+        "text column exceeds 4 GB of backing text"
+    );
+    let mut buf = String::with_capacity(total);
+    let mut spans = Vec::with_capacity(n);
+    for i in 0..n {
+        let start = buf.len() as u32;
+        if valid(i) {
+            let (x, y) = parts(i);
+            buf.push_str(x);
+            buf.push_str(y);
+        }
+        spans.push((start, buf.len() as u32 - start));
+    }
+    Series::Str {
+        col: StrCol::from_spans(Arc::from(buf), spans),
+        validity,
     }
 }

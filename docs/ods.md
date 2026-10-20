@@ -145,6 +145,21 @@ println(to_string(ods.to_list(counts / ods.series([2, 4, 4]))))  // [0.5, 0.5, 0
 println(to_string(ods.to_list(ods.cast(counts / 2, "Int"))))     // [0, 1, 1]
 ```
 
+**`+` joins text.** On a String Series, `+` concatenates elementwise —
+with another String Series, or with a String on either side, which every
+row takes. A null cell stays null, as it does in arithmetic. It is the
+way to build a composite key or a label column:
+
+```olang
+let f = ods.read_csv("city,state\nAustin,TX\nReno,NV\n")
+let key = f["city"] + ", " + f["state"]
+println(to_string(ods.to_list(key)))           // ["Austin, TX", "Reno, NV"]
+println(to_string(ods.to_list("<" + f["state"])))   // ["<TX", "<NV"]
+```
+
+Anything else beside a String Series (`s + 1`) is an error naming the
+cast: `ods.cast(s, "String")` turns a number column into text first.
+
 Series arithmetic runs IEEE kernels for throughput: a Float Series
 can hold `inf` or `NaN` after an overflowing multiply, where the
 scalar language raises (language.md, "Floats"). `ods.to_list` hands
@@ -878,7 +893,8 @@ println(to_string(ods.to_list(j["amount"] - j["cost"])))    // [7.0, 16.0]
 On the row axis, `ods.filter(f, mask)` keeps rows where a Bool series
 is true (build the mask from any column), `ods.take(f, idx)` gathers
 rows by index, `ods.head(f, n)` keeps the first `n` and `ods.tail(f, n)`
-the last `n` (both defaulting to ten), and `ods.sort_by(f, col,
+the last `n` (both defaulting to ten, and both taking a Series as well,
+whose first or last `n` values they return), and `ods.sort_by(f, col,
 descending)` sorts the whole table by one column, nulls last either way:
 
 ```olang
@@ -936,10 +952,16 @@ println(to_string(ods.to_list(filled["amount"])))    // [1.0, 0.0, 3.0]
 `ods.group_by(f, keys, aggs)` is the census verb: partition rows by
 one or more key columns, then compute aggregates within each group.
 The aggregation spec is a list of `[out_name, op, column]` triples,
-with ops `count`, `sum`, `mean`, `min`, `max` — and `count` may omit
-the column, since it counts rows. Groups keep first-seen order, and a
-null key forms its own group (the R and Polars convention) rather
-than disappearing:
+with ops `count`, `sum`, `mean`, `min`, `max`, `median`, `std`, `var`,
+`first`, `last` and `n_unique` — and `count` may omit the column, since
+it counts rows. `median`, `std` and `var` are the Series reductions of
+the same names over each group's non-null values (sample `std`/`var`,
+null below two values; all three Float). `first` and `last` take the
+group's first and last row's value as it stands — a null included — on
+a column of any type, and `n_unique` counts a group's distinct values
+the way `ods.n_unique` does, null as one value. Groups keep first-seen
+order, and a null key forms its own group (the R and Polars convention)
+rather than disappearing:
 
 ```olang
 let sales = ods.read_csv("region,amount,qty\neast,25.5,10\nwest,320.0,3\neast,80.0,4\n")
@@ -949,6 +971,11 @@ let summary = sales
 for rec in ods.to_records(summary) {
     println(`${rec.region}: ${rec.total} over ${rec.n} sales`)
 }
+
+let spread = ods.group_by(sales, "region", [
+    ["median", "median", "amount"], ["sd", "std", "amount"],
+    ["first_qty", "first", "qty"], ["qtys", "n_unique", "qty"]])
+println(spread)
 ```
 
 On a large frame (100,000+ rows with under a few million groups) the
@@ -959,6 +986,10 @@ bit-identical to the sequential path; float `sum` and `mean` reorder
 their additions, but the order is fixed by the chunk layout, so a given
 input always reproduces the same result. The group-id hashing pass — the
 larger cost — is still sequential; parallelizing it is the next step.
+`median`, `std` and `var` gather each group's rows once (a counting sort
+by group) and reduce each group on its own, the groups spread across the
+cores on a large frame; a group's answer never depends on the split, so
+it is identical on one thread or many.
 
 ### Reshaping between long and wide
 

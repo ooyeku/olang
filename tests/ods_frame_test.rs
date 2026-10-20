@@ -288,7 +288,7 @@ fn frame_error_paths() {
     let err = eval("ods.frame([[1, 2]])", None).unwrap_err();
     assert!(err.contains("column name must be a String"), "got: {}", err);
     let err = eval(
-        r#"ods.group_by(ods.frame([["x", [1]]]), "x", [["s", "median", "x"]])"#,
+        r#"ods.group_by(ods.frame([["x", [1]]]), "x", [["s", "mode", "x"]])"#,
         None,
     )
     .unwrap_err();
@@ -2595,4 +2595,67 @@ fn is_in_and_contains_refuse_what_cannot_match() {
     );
     let err = eval(r#"ods.is_in(ods.series([1, 2]), 1)"#, None).expect_err("shape");
     assert!(err.contains("list or a Series"), "{err}");
+}
+
+#[test]
+fn group_by_median_std_var_first_last_n_unique() {
+    // Each against the Series reduction of the same rows.
+    let src = "let f = ods.frame([[\"g\", [\"a\", \"a\", \"b\", \"b\", \"b\", \"c\"]], \
+               [\"x\", [1, 3, 2, 4, 9, ()]], [\"s\", [\"p\", \"q\", \"p\", \"p\", (), \"z\"]]])\n\
+               let r = ods.group_by(f, \"g\", [[\"med\", \"median\", \"x\"], [\"sd\", \"std\", \"x\"], \
+               [\"v\", \"var\", \"x\"], [\"fst\", \"first\", \"s\"], [\"lst\", \"last\", \"s\"], \
+               [\"nu\", \"n_unique\", \"s\"], [\"n\", \"count\"]])\n\
+               let b = ods.filter(f, f[\"g\"] == \"b\")\n\
+               [ods.to_list(r[\"med\"]), ods.to_list(r[\"v\"]), ods.to_list(r[\"fst\"]), \
+               ods.to_list(r[\"lst\"]), ods.to_list(r[\"nu\"]), ods.to_list(r[\"n\"]), \
+               ods.get(r[\"sd\"], 1) == ods.std(b[\"x\"]), ods.get(r[\"med\"], 1) == ods.median(b[\"x\"]), \
+               ods.to_list(ods.schema(r)[\"dtype\"])]";
+    let v = assert_tier_transparent(src).expect("group_by");
+    assert_eq!(
+        shown(&v),
+        "[[2.0, 4.0, ()], [2.0, 13.0, ()], [\"p\", \"p\", \"z\"], [\"q\", (), \"z\"], [2, 2, 1], [2, 3, 1], true, true, \
+         [\"String\", \"Float\", \"Float\", \"Float\", \"String\", \"String\", \"Int\", \"Int\"]]"
+    );
+    // pivot reduces through the same ops; rolling takes median/std/var
+    let v = assert_tier_transparent(
+        "let f = ods.read_csv(\"k,c,v\\na,x,1\\na,x,3\\na,y,5\\n\")\n\
+         let p = ods.pivot(f, [\"k\"], \"c\", \"v\", \"median\")\n\
+         [ods.to_list(p[\"x\"]), ods.to_list(ods.rolling(ods.series([1.0, 2.0, 4.0]), 2, \"std\"))]",
+    )
+    .expect("pivot");
+    assert_eq!(shown(&v), "[[2.0], [(), 0.7071067811865476, 1.4142135623730951]]");
+    let err = eval("ods.group_by(ods.frame([[\"g\", [1]]]), \"g\", [[\"m\", \"mode\", \"g\"]])", None)
+        .unwrap_err();
+    assert!(err.contains("n_unique"), "{err}");
+    let err = eval("ods.rolling(ods.series([1.0]), 1, \"first\")", None).unwrap_err();
+    assert!(err.contains("not a rolling aggregation"), "{err}");
+}
+
+#[test]
+fn string_series_join_with_plus() {
+    let v = assert_tier_transparent(
+        "let f = ods.frame([[\"a\", [\"x\", \"y\", ()]], [\"b\", [\"1\", \"2\", \"3\"]]])\n\
+         [ods.to_list(f[\"a\"] + \"|\" + f[\"b\"]), ods.to_list(\"<\" + f[\"b\"]), ods.to_list(f[\"a\"] + f[\"b\"])]",
+    )
+    .expect("concat");
+    assert_eq!(
+        shown(&v),
+        "[[\"x|1\", \"y|2\", ()], [\"<1\", \"<2\", \"<3\"], [\"x1\", \"y2\", ()]]"
+    );
+    let err = eval("ods.series([\"a\"]) + 1", None).unwrap_err();
+    assert!(err.contains("ods.cast"), "{err}");
+    // numeric + stays arithmetic
+    let v = eval("ods.to_list(ods.series([1.0, 2.0]) + 1.0)", None).expect("arith");
+    assert_eq!(shown(&v), "[2.0, 3.0]");
+}
+
+#[test]
+fn head_and_tail_take_a_series() {
+    let v = assert_tier_transparent(
+        "let s = ods.series([5, 6, 7, 8])\n\
+         [ods.to_list(ods.head(s, 2)), ods.to_list(ods.tail(s, 3)), ods.to_list(ods.head(s, 10)), \
+         ods.len(ods.head(s))]",
+    )
+    .expect("head");
+    assert_eq!(shown(&v), "[[5, 6], [6, 7, 8], [5, 6, 7, 8], 4]");
 }
