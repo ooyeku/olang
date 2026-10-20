@@ -2122,7 +2122,7 @@ fn average(func: &str, o: &Opts, labels: &Labels) -> R<Average> {
                         Scalar::I64(i) => i.to_string(),
                         Scalar::Bool(b) => b.to_string(),
                         Scalar::F64(f) => (f as i64).to_string(),
-                        Scalar::Null => String::new(),
+                        other => super::table::scalar_text(other).unwrap_or_default(),
                     };
                     labels
                         .names()

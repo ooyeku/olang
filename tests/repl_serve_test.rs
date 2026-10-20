@@ -287,7 +287,7 @@ fn a_functions_parameters_are_named_then_bound_for_one_evaluation() {
     assert_eq!(
         hello["features"],
         json!([
-            "bind", "pure", "cell", "caps", "profile", "distinct", "record", "html", "scene"
+            "bind", "pure", "cell", "caps", "profile", "distinct", "record", "html", "scene", "dtypes"
         ])
     );
     let f = calc(dir.path());

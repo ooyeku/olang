@@ -42,7 +42,7 @@ fn val(s: &Series, i: usize) -> V {
         Scalar::I64(x) => V::I(x),
         Scalar::Bool(b) => V::B(b),
         Scalar::Null => V::N,
-        Scalar::Str(_) => unreachable!(),
+        _ => unreachable!("random plans are numeric"),
     }
 }
 
@@ -183,6 +183,7 @@ fn reference(e: &Expr, i: usize) -> Result<V, ()> {
                     (V::I(x), DType::Bool) => V::B(x != 0),
                     (v, _) => v,
                 },
+                Op::Temporal(..) => unreachable!("random plans have no dates"),
             }
         }
     })

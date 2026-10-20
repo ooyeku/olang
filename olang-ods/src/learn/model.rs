@@ -863,24 +863,26 @@ fn numeric_columns(frame: &Frame, cols: &[String]) -> Result<Vec<String>> {
         .collect())
 }
 
-/// A fitted one-hot encoder over String columns (every String column
-/// when `cols` is empty).
+/// A fitted one-hot encoder over String and Category columns (every
+/// such column when `cols` is empty). A Category's columns are its
+/// levels, in its order; a String's its sorted values.
 pub fn fit_one_hot(frame: &Frame, cols: &[String], drop_first: bool) -> Result<Model> {
+    let text = |s: &Series| matches!(s, Series::Str { .. } | Series::Cat { .. });
     let cols: Vec<String> = if cols.is_empty() {
         frame
             .names()
             .iter()
             .zip(frame.columns())
-            .filter(|(_, s)| matches!(s, Series::Str { .. }))
+            .filter(|(_, s)| text(s))
             .map(|(n, _)| n.clone())
             .collect()
     } else {
         cols.to_vec()
     };
     for c in &cols {
-        if !matches!(frame.column(c)?, Series::Str { .. }) {
+        if !text(frame.column(c)?) {
             return Err(bad(format!(
-                "one_hot: column '{}' is not a String column",
+                "one_hot: column '{}' is not a String or Category column",
                 c
             )));
         }
@@ -978,6 +980,8 @@ fn most_frequent(s: &Series) -> Scalar {
                 let e = counts.entry(t.clone()).or_insert((0, v.clone()));
                 e.0 += 1;
             }
+            Scalar::Date(d) => nums.push((*d as f64, v.clone())),
+            Scalar::Datetime(t) => nums.push((*t as f64, v.clone())),
         }
     }
     if !nums.is_empty() {
@@ -1690,6 +1694,8 @@ fn scalar_string(s: &Scalar) -> Option<String> {
         Scalar::I64(v) => Some(v.to_string()),
         Scalar::Bool(v) => Some(v.to_string()),
         Scalar::Str(v) => Some(v.clone()),
+        Scalar::Date(d) => Some(crate::temporal::format_date(*d as i64)),
+        Scalar::Datetime(t) => Some(crate::temporal::format_datetime(*t)),
     }
 }
 

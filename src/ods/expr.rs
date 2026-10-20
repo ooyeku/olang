@@ -126,6 +126,8 @@ fn render_scalar(s: &Scalar) -> String {
         Scalar::I64(x) => x.to_string(),
         Scalar::Bool(b) => b.to_string(),
         Scalar::Str(t) => format!("{:?}", t),
+        Scalar::Date(d) => format!("date({:?})", olang_ods::temporal::format_date(*d as i64)),
+        Scalar::Datetime(t) => format!("datetime({:?})", olang_ods::temporal::format_datetime(*t)),
         Scalar::Null => "()".to_string(),
     }
 }
@@ -178,6 +180,13 @@ pub fn render(e: &LExpr) -> String {
                     );
                 }
                 Op::Cast(t) => return format!("cast({}, {:?})", args[0], t.to_string()),
+                Op::Temporal(fuse::TOp::Floor(e), _) => {
+                    return format!("floor({}, {:?})", args[0], e);
+                }
+                Op::Temporal(fuse::TOp::AddMonths(k), _) => {
+                    return format!("add_months({}, {})", args[0], k);
+                }
+                Op::Temporal(t, _) => t.name().to_string(),
                 Op::Bin(_) => unreachable!(),
             };
             format!("{}({})", name, args.join(", "))
@@ -243,6 +252,8 @@ pub fn operand(v: &Value) -> Option<Operand> {
         Value::Float(_) | Value::Integer(_) | Value::Boolean(_) | Value::String(_) | Value::Unit => {
             value_to_scalar(v)?
         }
+        // A Date value.
+        Value::Native(_) => value_to_scalar(v)?,
         _ => return None,
     };
     Some(Operand::Eng(Expr::lit(s), None, 0, vec![]))
@@ -348,8 +359,11 @@ pub fn build(func: &str, op: Op, args: Vec<Operand>) -> Result<Value, String> {
             }
         }
         depth = depth.max(d);
-        types.push(e.dtype().map_err(|e| e.to_string())?);
         kids.push(e);
+    }
+    let kids = super::dtypes::dates_from_text(op, kids).map_err(|m| prefix(func, m))?;
+    for e in &kids {
+        types.push(e.dtype().map_err(|e| e.to_string())?);
     }
     fuse::op_dtype(op, &types).map_err(|e| prefix(func, e.to_string()))?;
     let expr = Expr::op(op, kids);
@@ -361,6 +375,9 @@ fn prefix(func: &str, msg: String) -> String {
     // which function.
     if func.is_empty() {
         msg
+    } else if let Some(rest) = msg.strip_prefix(func).and_then(|r| r.strip_prefix(": ")) {
+        // The kernel named itself already (`year: needs a Date …`).
+        format!("ods.{}: {}", func, rest)
     } else {
         format!("ods.{}: {}", func, msg)
     }
@@ -496,7 +513,7 @@ impl Resolver<'_> {
                     .iter()
                     .map(|k| self.resolve(k))
                     .collect::<Result<Vec<_>, _>>()?;
-                Expr::op(*op, kids)
+                Expr::op(*op, super::dtypes::dates_from_text(*op, kids)?)
             }
             LExpr::Call(func, args) => {
                 let vals = args

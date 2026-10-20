@@ -191,11 +191,27 @@ fn to_cat(c: &Column, order: Option<&Vec<String>>) -> Col {
             let texts: Vec<Option<String>> = v.iter().map(|x| if x.is_finite() { Some(fmt_value(*x)) } else { None }).collect();
             to_cat(&Column::Str(texts), order)
         }
+        Column::Time(..) => to_cat(&as_text(c), order),
+    }
+}
+
+/// A date column's values as their text (`2024-03-01`, or with a time).
+fn as_text(c: &Column) -> Column {
+    match c {
+        Column::Time(v, dt) => Column::Str(
+            v.iter()
+                .map(|t| t.is_finite().then(|| time_text(*t, *dt)))
+                .collect(),
+        ),
+        c => c.clone(),
     }
 }
 
 /// Whether a text column is all ISO dates; their seconds if so.
 fn as_time(c: &Column) -> Option<(Vec<f64>, bool)> {
+    if let Column::Time(v, dt) = c {
+        return Some((v.clone(), *dt));
+    }
     let Column::Str(v) = c else { return None };
     let mut any = false;
     let mut datetime = false;
@@ -375,6 +391,9 @@ pub fn build(spec: &Spec, opts: &RenderOptions) -> super::Result<Built> {
                     Source::Const(_, c) => match c {
                         Column::Num(v) => Column::Num(vec![v.first().copied().unwrap_or(f64::NAN); n]),
                         Column::Str(v) => Column::Str(vec![v.first().cloned().flatten(); n]),
+                        Column::Time(v, dt) => {
+                            Column::Time(vec![v.first().copied().unwrap_or(f64::NAN); n], *dt)
+                        }
                     },
                 };
                 if col.len() != n {
@@ -394,6 +413,8 @@ pub fn build(spec: &Spec, opts: &RenderOptions) -> super::Result<Built> {
                     a if a.scaled() => np.get(a).is_some_and(|s| s.wants_discrete(false)),
                     _ => false,
                 };
+                // a date labels a mark as its text
+                let col = if *a == Aes::Label { as_text(&col) } else { col };
                 let c = match (&col, a.axis()) {
                     (Column::Num(v), None) if *a == Aes::Label => {
                         Col::Cat((0..v.len()).map(|i| i as u32).collect(), Arc::new(v.iter().map(|x| fmt_value(*x)).collect()))
@@ -406,7 +427,7 @@ pub fn build(spec: &Spec, opts: &RenderOptions) -> super::Result<Built> {
                         let order = np.get(a).and_then(|s| super::p_strs(&s.params, "limits"));
                         to_cat(&col, order.as_ref())
                     }
-                    (Column::Str(_), Some(axis)) => {
+                    (Column::Str(_) | Column::Time(..), Some(axis)) => {
                         let ps = if axis == 'x' { &sx } else { &sy };
                         let want_time = matches!(ps.kind, PosKind::Time { .. });
                         let want_disc = ps.kind == PosKind::Discrete;
@@ -418,13 +439,13 @@ pub fn build(spec: &Spec, opts: &RenderOptions) -> super::Result<Built> {
                             None => to_cat(&col, ps.dlimits.as_ref()),
                         }
                     }
-                    (Column::Str(_), None) => {
+                    (Column::Str(_) | Column::Time(..), None) => {
                         let order = np.get(a).and_then(|s| super::p_strs(&s.params, "limits"));
                         to_cat(&col, order.as_ref())
                     }
                 };
                 // time on an axis: the scale learns it is one
-                if let (Column::Str(_), Some(axis), Col::Num(_)) = (&col, a.axis(), &c) {
+                if let (Column::Str(_) | Column::Time(..), Some(axis), Col::Num(_)) = (&col, a.axis(), &c) {
                     let datetime = as_time(&col).map(|t| t.1).unwrap_or(false);
                     let ps = if axis == 'x' { &mut sx } else { &mut sy };
                     match ps.kind {
@@ -1041,6 +1062,7 @@ fn facet_panels(spec: &Spec, raws: &mut [RawLayer]) -> super::Result<FacetLayout
                         .map(|c| match c {
                             Column::Num(v) => fmt_value(v[i]),
                             Column::Str(v) => v[i].clone().unwrap_or_else(|| "NA".into()),
+                            Column::Time(v, dt) => time_text(v[i], *dt),
                         })
                         .collect::<Vec<_>>()
                         .join(", ")

@@ -10,6 +10,7 @@
 
 mod colfns;
 mod columns;
+pub mod dtypes;
 pub mod expr;
 mod frame;
 mod learn;
@@ -93,6 +94,7 @@ impl OvmModule for OdsModule {
             .chain(series::FUNCTIONS.iter().copied())
             .chain(frame::FUNCTIONS.iter().copied())
             .chain(colfns::FUNCTIONS.iter().copied())
+            .chain(dtypes::FUNCTIONS.iter().copied())
         {
             module.insert(
                 name.to_string(),
@@ -195,6 +197,16 @@ pub(crate) fn call(func: &str, args: Vec<Value>) -> Result<Value, String> {
     // Exprs and the Frame verbs that take them.
     if let Some(r) = expr::dispatch(func, &args) {
         return r;
+    }
+    // Dates' parts and arithmetic: fused expressions too; text and
+    // categories: eager kernels (call nodes for an Expr).
+    if dtypes::handles(func, &args) {
+        if let Some(r) = dtypes::elementwise(func, &args) {
+            return r;
+        }
+        if let Some(r) = dtypes::eager(func, &args) {
+            return r;
+        }
     }
     // Elementwise: one fused expression (an Expr given an Expr).
     if !(func == "fill_null" && colfns::fill_method(&args))

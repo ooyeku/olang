@@ -369,6 +369,112 @@ pub enum Op {
     /// `[a]`: among Float, Int and Bool. Float to Int truncates, and a
     /// value an Int cannot hold becomes null (`Series::cast`'s rule).
     Cast(DType),
+    /// A calendar operation on a Date or Datetime (`[a]`, or `[a, b]`
+    /// for `MonthsBetween`). The flag says the operand is a Datetime
+    /// (microseconds rather than days); the planner sets it from the
+    /// operand, whatever the caller wrote.
+    Temporal(TOp, bool),
+}
+
+/// The calendar operations of the expression engine. Each reads the
+/// operand's integer storage (days, or microseconds) and computes with
+/// civil-from-days arithmetic: no table, no parsing, no branch on the
+/// calendar beyond a leap year.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TOp {
+    Year,
+    /// 1–4.
+    Quarter,
+    /// 1–12.
+    Month,
+    /// 1–31.
+    Day,
+    /// ISO: 1 = Monday … 7 = Sunday.
+    Weekday,
+    /// 1–366.
+    DayOfYear,
+    /// The ISO 8601 week, 1–53.
+    Week,
+    Hour,
+    Minute,
+    Second,
+    /// Saturday or Sunday.
+    IsWeekend,
+    /// A Datetime's day as a Date (a Date itself).
+    Date,
+    /// A Date's midnight as a Datetime.
+    ToDatetime,
+    /// The integer storage: days, or microseconds.
+    Raw,
+    /// An Int of days as a Date (an error past a Date's range).
+    AsDate,
+    /// An Int of microseconds as a Datetime.
+    AsDatetime,
+    /// The start of the span holding it.
+    Floor(crate::temporal::Every),
+    /// Calendar months later, the day clamped to the month's end.
+    AddMonths(i64),
+    /// `[a, b]`: whole calendar months from `b` to `a`.
+    MonthsBetween,
+}
+
+impl TOp {
+    pub fn name(self) -> &'static str {
+        match self {
+            TOp::Year => "year",
+            TOp::Quarter => "quarter",
+            TOp::Month => "month",
+            TOp::Day => "day",
+            TOp::Weekday => "weekday",
+            TOp::DayOfYear => "day_of_year",
+            TOp::Week => "week",
+            TOp::Hour => "hour",
+            TOp::Minute => "minute",
+            TOp::Second => "second",
+            TOp::IsWeekend => "is_weekend",
+            TOp::Date => "date",
+            TOp::ToDatetime => "to_datetime",
+            TOp::Raw => "raw",
+            TOp::AsDate => "as_date",
+            TOp::AsDatetime => "as_datetime",
+            TOp::Floor(_) => "floor",
+            TOp::AddMonths(_) => "add_months",
+            TOp::MonthsBetween => "months_between",
+        }
+    }
+
+    /// The component parts by their method names.
+    pub fn part(name: &str) -> Option<TOp> {
+        Some(match name {
+            "year" => TOp::Year,
+            "quarter" => TOp::Quarter,
+            "month" => TOp::Month,
+            "day" => TOp::Day,
+            "weekday" => TOp::Weekday,
+            "day_of_year" => TOp::DayOfYear,
+            "week" => TOp::Week,
+            "hour" => TOp::Hour,
+            "minute" => TOp::Minute,
+            "second" => TOp::Second,
+            "is_weekend" => TOp::IsWeekend,
+            "date" => TOp::Date,
+            _ => return None,
+        })
+    }
+}
+
+/// The type a step's values are stored as: a Date or Datetime is its
+/// integer, everything else itself.
+#[inline]
+fn phys(d: DType) -> DType {
+    match d {
+        DType::Date | DType::Datetime => DType::I64,
+        d => d,
+    }
+}
+
+fn temporal(d: Option<DType>) -> bool {
+    matches!(d, Some(DType::Date | DType::Datetime))
 }
 
 impl Op {
@@ -379,6 +485,8 @@ impl Op {
             Op::Bin(BinOp::Div | BinOp::Mod) => 2,
             Op::Round(_) => 3,
             Op::Where | Op::Coalesce | Op::Clip | Op::Between(_) => 2,
+            Op::Temporal(TOp::Raw | TOp::AsDate | TOp::AsDatetime | TOp::ToDatetime, _) => 1,
+            Op::Temporal(_, _) => 4,
             _ => 1,
         }
     }
@@ -448,8 +556,9 @@ impl Expr {
                     Op::Bin(BinOp::Add | BinOp::Sub | BinOp::Mul) | Op::Neg => {
                         args.iter().all(|a| {
                             matches!(a.dtype(), Ok(Some(DType::I64) | None))
-                        })
+                        }) || args.iter().any(|a| temporal(a.dtype().ok().flatten()))
                     }
+                    Op::Temporal(TOp::AsDate | TOp::AddMonths(_), _) => true,
                     Op::Math(Math::Abs) | Op::Round(_) => {
                         matches!(args[0].dtype(), Ok(Some(DType::I64)))
                     }
@@ -496,6 +605,8 @@ fn scalar_dtype(s: &Scalar) -> Option<DType> {
         Scalar::I64(_) => Some(DType::I64),
         Scalar::Bool(_) => Some(DType::Bool),
         Scalar::Str(_) => Some(DType::Str),
+        Scalar::Date(_) => Some(DType::Date),
+        Scalar::Datetime(_) => Some(DType::Datetime),
         Scalar::Null => None,
     }
 }
@@ -529,6 +640,18 @@ fn common(a: Option<DType>, b: Option<DType>, what: &str) -> Result<Option<DType
 
 /// The result type of `op` over operands of these types.
 pub fn op_dtype(op: Op, kids: &[Option<DType>]) -> Result<Option<DType>> {
+    // A Category reads as its text.
+    let kids: Vec<Option<DType>> = kids
+        .iter()
+        .map(|k| match k {
+            Some(DType::Category) => Some(DType::Str),
+            k => *k,
+        })
+        .collect();
+    let kids = kids.as_slice();
+    if let Some(t) = temporal_dtype(op, kids)? {
+        return Ok(t);
+    }
     let mismatch = |what: &str| {
         Err(OdsError::TypeMismatch(format!(
             "cannot apply {} to {}",
@@ -552,6 +675,10 @@ pub fn op_dtype(op: Op, kids: &[Option<DType>]) -> Result<Option<DType>> {
                 (a, b) if numeric(a) && numeric(b) => true,
                 (Some(DType::Str), Some(DType::Str) | None)
                 | (None, Some(DType::Str)) => true,
+                (Some(DType::Date), Some(DType::Date) | None)
+                | (None, Some(DType::Date))
+                | (Some(DType::Datetime), Some(DType::Datetime) | None)
+                | (None, Some(DType::Datetime)) => true,
                 (Some(DType::Bool), Some(DType::Bool) | None)
                 | (None, Some(DType::Bool)) => {
                     if !matches!(b, BinOp::Eq | BinOp::Ne) {
@@ -669,7 +796,13 @@ pub fn op_dtype(op: Op, kids: &[Option<DType>]) -> Result<Option<DType>> {
             let ok = kids.iter().all(|k| numeric(*k))
                 || kids
                     .iter()
-                    .all(|k| matches!(k, Some(DType::Str) | None));
+                    .all(|k| matches!(k, Some(DType::Str) | None))
+                || kids
+                    .iter()
+                    .all(|k| matches!(k, Some(DType::Date) | None))
+                || kids
+                    .iter()
+                    .all(|k| matches!(k, Some(DType::Datetime) | None));
             if ok {
                 Ok(Some(DType::Bool))
             } else {
@@ -677,9 +810,12 @@ pub fn op_dtype(op: Op, kids: &[Option<DType>]) -> Result<Option<DType>> {
             }
         }
         Op::Cast(to) => match (kids[0], to) {
-            (_, DType::Str) | (Some(DType::Str), _) => Err(OdsError::TypeMismatch(
-                "the expression engine casts among Float, Int and Bool".to_string(),
-            )),
+            (_, DType::Str | DType::Date | DType::Datetime | DType::Category)
+            | (Some(DType::Str | DType::Date | DType::Datetime | DType::Category), _) => {
+                Err(OdsError::TypeMismatch(
+                    "the expression engine casts among Float, Int and Bool".to_string(),
+                ))
+            }
             (Some(DType::F64), DType::Bool) => Err(OdsError::InvalidArgument(
                 "cast: Float to Bool has no meaning for values like 0.5. \
                  Write the comparison you mean, e.g. `s != 0.0`"
@@ -687,7 +823,143 @@ pub fn op_dtype(op: Op, kids: &[Option<DType>]) -> Result<Option<DType>> {
             )),
             _ => Ok(Some(to)),
         },
+        Op::Temporal(..) => unreachable!("temporal_dtype"),
     }
+}
+
+/// The result type of a calendar operation, or of arithmetic with a
+/// Date or Datetime (None: neither, the numeric rules decide).
+fn temporal_dtype(op: Op, kids: &[Option<DType>]) -> Result<Option<Option<DType>>> {
+    use DType::{Date, Datetime, I64};
+    let name = |k: &Option<DType>| name_of(*k);
+    match op {
+        Op::Temporal(t, _) => {
+            let k = kids[0];
+            let out = match t {
+                TOp::AsDate | TOp::AsDatetime => {
+                    if !matches!(k, Some(I64) | None) {
+                        return Err(OdsError::TypeMismatch(format!(
+                            "{}: needs an Int, got {}",
+                            t.name(),
+                            name(&k)
+                        )));
+                    }
+                    Some(if t == TOp::AsDate { Date } else { Datetime })
+                }
+                TOp::MonthsBetween => {
+                    let ok = matches!(
+                        (kids[0], kids[1]),
+                        (Some(Date) | None, Some(Date) | None)
+                            | (Some(Datetime) | None, Some(Datetime) | None)
+                    );
+                    if !ok {
+                        return Err(OdsError::TypeMismatch(format!(
+                            "months_between: needs two Dates or two Datetimes, got {} and {}",
+                            name(&kids[0]),
+                            name(&kids[1])
+                        )));
+                    }
+                    Some(I64)
+                }
+                _ if k.is_some() && !temporal(k) => {
+                    return Err(OdsError::TypeMismatch(format!(
+                        "{}: needs a Date or Datetime column, got {}{}",
+                        t.name(),
+                        name(&k),
+                        if k == Some(DType::Str) {
+                            " (read text as dates with to_date() or to_datetime())"
+                        } else {
+                            ""
+                        }
+                    )));
+                }
+                TOp::Hour | TOp::Minute | TOp::Second if k == Some(Date) => {
+                    return Err(OdsError::TypeMismatch(format!(
+                        "{}: a Date has no time of day (a Datetime does)",
+                        t.name()
+                    )));
+                }
+                TOp::Floor(e) if k == Some(Date) && e.below_day() => {
+                    return Err(OdsError::InvalidArgument(
+                        "floor: a Date cannot be cut finer than a day".to_string(),
+                    ));
+                }
+                TOp::Year
+                | TOp::Quarter
+                | TOp::Month
+                | TOp::Day
+                | TOp::Weekday
+                | TOp::DayOfYear
+                | TOp::Week
+                | TOp::Hour
+                | TOp::Minute
+                | TOp::Second
+                | TOp::Raw => Some(I64),
+                TOp::IsWeekend => Some(DType::Bool),
+                TOp::Date => Some(Date),
+                TOp::ToDatetime => Some(Datetime),
+                TOp::Floor(_) | TOp::AddMonths(_) => k.or(Some(Date)),
+            };
+            Ok(Some(out))
+        }
+        Op::Bin(b) if !b.is_cmp() && !b.is_logic() && kids.iter().any(|k| temporal(*k)) => {
+            let int = |k: Option<DType>| matches!(k, Some(I64) | None);
+            Ok(Some(match (b, kids[0], kids[1]) {
+                (BinOp::Add, Some(Date), y) if int(y) => Some(Date),
+                (BinOp::Add, x, Some(Date)) if int(x) => Some(Date),
+                (BinOp::Sub, Some(Date), y) if int(y) => Some(Date),
+                (BinOp::Sub, Some(Date), Some(Date)) => Some(I64),
+                (BinOp::Sub, Some(Datetime), Some(Datetime)) => Some(DType::F64),
+                _ => {
+                    return Err(OdsError::TypeMismatch(format!(
+                        "cannot apply {} to {} and {}: a Date takes + and - of an Int of days, \
+                         and Date - Date is days between; a Datetime moves by add_days and \
+                         add_months, and Datetime - Datetime is seconds between",
+                        b.word(),
+                        name(&kids[0]),
+                        name(&kids[1])
+                    )));
+                }
+            }))
+        }
+        Op::Neg | Op::Math(_) | Op::Round(_) | Op::Clip | Op::IsNan if temporal(kids[0]) => {
+            Err(OdsError::TypeMismatch(format!(
+                "{} is not defined for {}",
+                match op {
+                    Op::Neg => "negation".to_string(),
+                    Op::Math(m) => m.name().to_string(),
+                    Op::Round(_) => "round".to_string(),
+                    Op::Clip => "clip".to_string(),
+                    _ => "is_nan".to_string(),
+                },
+                name_of(kids[0])
+            )))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Arithmetic with a Date or Datetime as arithmetic on their integers:
+/// `d + n` is days added and range-checked, `d - d` days between, and
+/// `t - t` seconds between. None for anything else.
+fn rewrite_temporal(op: Op, args: &[Arc<Expr>], kids: &[Option<DType>]) -> Option<Arc<Expr>> {
+    use DType::{Date, Datetime};
+    let Op::Bin(b @ (BinOp::Add | BinOp::Sub)) = op else {
+        return None;
+    };
+    let raw = |e: &Arc<Expr>| Expr::op(Op::Temporal(TOp::Raw, false), vec![e.clone()]);
+    let as_date = |e: Arc<Expr>| Expr::op(Op::Temporal(TOp::AsDate, false), vec![e]);
+    Some(match (kids[0], kids[1]) {
+        (Some(Date), Some(Date)) => Expr::bin(BinOp::Sub, raw(&args[0]), raw(&args[1])),
+        (Some(Datetime), Some(Datetime)) => Expr::bin(
+            BinOp::Div,
+            Expr::bin(BinOp::Sub, raw(&args[0]), raw(&args[1])),
+            Expr::lit(Scalar::F64(crate::temporal::US_PER_SEC as f64)),
+        ),
+        (Some(Date), _) => as_date(Expr::bin(b, raw(&args[0]), args[1].clone())),
+        (_, Some(Date)) => as_date(Expr::bin(b, args[0].clone(), raw(&args[1]))),
+        _ => return None,
+    })
 }
 
 // ---------------------------------------------------------------------
@@ -705,7 +977,13 @@ enum Kind {
 struct Step {
     kind: Kind,
     args: Vec<usize>,
+    /// The values' type; a Date or Datetime is stored as its integer
+    /// (`phys`), so it computes in Int registers and kernels.
     dt: DType,
+    /// A Date, Datetime or Category column as it was given (the step
+    /// holds its integers or its text): what a root that is the column
+    /// gives back.
+    orig: Option<Series>,
     /// Whether any position can be null (statically): no validity work
     /// is done for a step that cannot.
     may_null: bool,
@@ -725,6 +1003,9 @@ fn series_key(s: &Series) -> Key {
         Series::I64 { values, .. } => (Arc::as_ptr(values) as usize, 1),
         Series::Bool { values, .. } => (Arc::as_ptr(values) as usize, 2),
         Series::Str { col, .. } => (col.spans().as_ptr() as usize, 3),
+        Series::Date { values, .. } => (Arc::as_ptr(values) as usize, 4),
+        Series::Datetime { values, .. } => (Arc::as_ptr(values) as usize, 5),
+        Series::Cat { codes, .. } => (Arc::as_ptr(codes) as usize, 6),
     };
     let v = s.validity().map(|b| b.words_ptr()).unwrap_or(0);
     Key::Col(ptr, v, s.len(), tag)
@@ -738,6 +1019,8 @@ fn lit_key(s: &Scalar, dt: DType) -> Key {
         Scalar::Bool(b) => Key::Lit(d | 32, *b as u64, String::new()),
         Scalar::Str(t) => Key::Lit(d | 48, 0, t.clone()),
         Scalar::Null => Key::Lit(d | 64, 0, String::new()),
+        Scalar::Date(x) => Key::Lit(d | 80, *x as u64, String::new()),
+        Scalar::Datetime(x) => Key::Lit(d | 96, *x as u64, String::new()),
     }
 }
 
@@ -797,6 +1080,9 @@ impl Builder {
             (Scalar::I64(x), DType::F64) => Scalar::F64(*x as f64),
             (Scalar::Bool(b), DType::F64) => Scalar::F64(if *b { 1.0 } else { 0.0 }),
             (Scalar::Bool(b), DType::I64) => Scalar::I64(*b as i64),
+            // A Date or Datetime literal is its integer.
+            (Scalar::Date(x), _) => Scalar::I64(*x as i64),
+            (Scalar::Datetime(x), _) => Scalar::I64(*x),
             _ => s.clone(),
         };
         let may_null = matches!(s, Scalar::Null);
@@ -806,6 +1092,7 @@ impl Builder {
                 kind: Kind::Lit(s),
                 args: vec![],
                 dt,
+                orig: None,
                 may_null,
             },
         )
@@ -825,12 +1112,24 @@ impl Builder {
             }
             Expr::Col(s) => {
                 self.check_len(s.len())?;
+                // A Date or Datetime is read as its integers, a Category
+                // as its text; the column itself is kept for a root.
+                let (store, dt, orig) = match s {
+                    Series::Date { .. } | Series::Datetime { .. } => {
+                        (s.physical().expect("temporal"), s.dtype(), Some(s.clone()))
+                    }
+                    Series::Cat { .. } => {
+                        (s.decoded().expect("a category"), DType::Str, Some(s.clone()))
+                    }
+                    _ => (s.clone(), s.dtype(), None),
+                };
                 let id = self.push(
                     series_key(s),
                     Step {
-                        kind: Kind::Col(s.clone()),
+                        kind: Kind::Col(store),
                         args: vec![],
-                        dt: s.dtype(),
+                        dt,
+                        orig,
                         may_null: s.validity().is_some(),
                     },
                 );
@@ -840,6 +1139,16 @@ impl Builder {
                 let kids: Vec<Option<DType>> =
                     args.iter().map(|a| a.dtype()).collect::<Result<_>>()?;
                 let out = op_dtype(*op, &kids)?.unwrap_or(DType::F64);
+                if let Some(e2) = rewrite_temporal(*op, args, &kids) {
+                    let id = self.node(&e2, want)?;
+                    self.seen.insert(memo, id);
+                    return Ok(id);
+                }
+                // The planner's flag: the operand is a Datetime.
+                let op = &match op {
+                    Op::Temporal(t, _) => Op::Temporal(*t, kids[0] == Some(DType::Datetime)),
+                    o => *o,
+                };
                 // The type the operation computes in.
                 let operand: Vec<Option<DType>> = match op {
                     Op::Bin(b) if b.is_logic() => vec![Some(DType::Bool); 2],
@@ -864,6 +1173,8 @@ impl Builder {
                         vec![Some(t.unwrap_or(DType::F64)); 3]
                     }
                     Op::Cast(_) => vec![None],
+                    Op::Temporal(TOp::AsDate | TOp::AsDatetime, _) => vec![Some(DType::I64)],
+                    Op::Temporal(..) => vec![None; args.len()],
                 };
                 // A String result is built row by row from its operands,
                 // then read as a column: the fused kernels are numeric.
@@ -877,6 +1188,7 @@ impl Builder {
                             dt: DType::Str,
                             kind: Kind::Col(s),
                             args: vec![],
+                            orig: None,
                         },
                     );
                     self.seen.insert(memo, id);
@@ -912,6 +1224,7 @@ impl Builder {
                         kind: Kind::Op(*op),
                         args: ids,
                         dt: out,
+                        orig: None,
                         may_null,
                     },
                 );
@@ -949,6 +1262,7 @@ impl Builder {
                 kind: Kind::Op(Op::Cast(want)),
                 args: vec![id],
                 dt: want,
+                orig: None,
                 may_null,
             },
         ))
@@ -973,7 +1287,10 @@ impl Builder {
             vals.push(match a.as_ref() {
                 Expr::Lit(Scalar::Str(t)) => T::Lit(Some(t.clone())),
                 Expr::Lit(_) => T::Lit(None),
-                _ => T::Col(a.eval(len, false)?),
+                _ => {
+                    let s = a.eval(len, false)?;
+                    T::Col(s.decoded().unwrap_or(s))
+                }
             });
         }
         fn text(t: &T, i: usize) -> Option<&str> {
@@ -1068,7 +1385,7 @@ impl Plan {
         let mut free: Vec<usize> = Vec::new();
         for i in 0..n {
             if let Kind::Op(_) = steps[i].kind {
-                let dt = steps[i].dt;
+                let dt = phys(steps[i].dt);
                 let r = match free.iter().position(|&r| regs[r] == dt) {
                     Some(p) => free.swap_remove(p),
                     None => {
@@ -1204,11 +1521,11 @@ impl Plan {
             let s = &self.steps[r];
             outs.push(match s.kind {
                 Kind::Op(_) if self.out_of[r] == Some(k) => Some(Out {
-                    vals: match s.dt {
+                    vals: match phys(s.dt) {
                         DType::F64 => OutVals::F(Vec::with_capacity(n)),
                         DType::I64 => OutVals::I(Vec::with_capacity(n)),
                         DType::Bool => OutVals::B(Vec::with_capacity(n)),
-                        DType::Str => unreachable!("text roots are columns"),
+                        _ => unreachable!("text roots are columns"),
                     },
                     valid: s.may_null.then(|| vec![0u64; nw]),
                 }),
@@ -1311,9 +1628,17 @@ impl Plan {
                         }
                         OutVals::I(mut v) => {
                             unsafe { v.set_len(n) };
-                            Series::I64 {
+                            let s = Series::I64 {
                                 values: Arc::new(v),
                                 validity,
+                            };
+                            match self.steps[r].dt {
+                                // `AsDate` checked the range of every Date
+                                // a plan makes.
+                                dt @ (DType::Date | DType::Datetime) => {
+                                    Series::from_physical(dt, s).expect("a Date in range")
+                                }
+                                _ => s,
                             }
                         }
                         OutVals::B(mut v) => {
@@ -1326,7 +1651,7 @@ impl Plan {
                     }
                 }
                 None => match &self.steps[r].kind {
-                    Kind::Col(s) => s.clone(),
+                    Kind::Col(s) => self.steps[r].orig.clone().unwrap_or_else(|| s.clone()),
                     Kind::Lit(s) => broadcast(s, self.steps[r].dt, n),
                     // The same root asked for again: the first's column.
                     Kind::Op(_) => done[self.out_of[r].expect("a root")].clone(),
@@ -1392,7 +1717,7 @@ impl Plan {
                             OutValsMut::B(v) => DVals::B(&mut v[off..off + n]),
                         };
                         let mut d = Dst { vals, valid };
-                        exec(op, step.dt, args, &mut d, n, step.may_null)?
+                        exec(op, phys(step.dt), args, &mut d, n, step.may_null)?
                     };
                     if !has_nulls && let Some(w) = o.valid.as_deref_mut() {
                         fill_valid(&mut w[off / 64..off / 64 + nw], n);
@@ -1416,7 +1741,7 @@ impl Plan {
                         vals: dst.vals.slice(n),
                         valid: &mut dst.valid[..nw],
                     };
-                    exec(op, step.dt, args, &mut d, n, step.may_null)?
+                    exec(op, phys(step.dt), args, &mut d, n, step.may_null)?
                 };
                 dst.all = !has_nulls;
                 regs[r] = dst;
@@ -1451,6 +1776,10 @@ impl Plan {
                     Series::I64 { values, .. } => View::I(Src::S(&values[s..s + n])),
                     Series::Bool { values, .. } => View::B(Src::S(&values[s..s + n])),
                     Series::Str { col, .. } => View::T(TSrc::Col(col, s)),
+                    Series::Datetime { values, .. } => View::I(Src::S(&values[s..s + n])),
+                    Series::Date { .. } | Series::Cat { .. } => {
+                        unreachable!("planned as their integers or their text")
+                    }
                 };
                 Arg { v, valid }
             }
@@ -1461,9 +1790,13 @@ impl Plan {
                     (Scalar::Bool(x), _) => View::B(Src::C(*x)),
                     (Scalar::Str(t), _) => View::T(TSrc::C(t.as_str())),
                     (Scalar::Null, DType::F64) => View::F(Src::C(0.0)),
-                    (Scalar::Null, DType::I64) => View::I(Src::C(0)),
+                    (Scalar::Null, DType::I64 | DType::Date | DType::Datetime) => {
+                        View::I(Src::C(0))
+                    }
                     (Scalar::Null, DType::Bool) => View::B(Src::C(false)),
-                    (Scalar::Null, DType::Str) => View::T(TSrc::C("")),
+                    (Scalar::Null, DType::Str | DType::Category) => View::T(TSrc::C("")),
+                    (Scalar::Date(x), _) => View::I(Src::C(*x as i64)),
+                    (Scalar::Datetime(x), _) => View::I(Src::C(*x)),
                 };
                 let valid = if matches!(sc, Scalar::Null) {
                     Vw::Null
@@ -1492,6 +1825,14 @@ impl Plan {
     /// Fold root 0 into one value without materializing it.
     pub fn reduce(&self, kind: Reduce, par: bool) -> Result<Scalar> {
         let dt = self.dtype(0);
+        if matches!(dt, DType::Date | DType::Datetime) && matches!(kind, Reduce::Sum | Reduce::Mean)
+        {
+            return Err(OdsError::TypeMismatch(format!(
+                "{} is not defined for {} series",
+                if kind == Reduce::Sum { "sum" } else { "mean" },
+                dt
+            )));
+        }
         let dense = !self.steps[self.roots[0]].may_null;
         let new_fold = || Fold::new(kind, dt, dense);
         let n = self.len;
@@ -1530,14 +1871,20 @@ impl Plan {
 
 fn broadcast(s: &Scalar, dt: DType, n: usize) -> Series {
     match (s, dt) {
+        (Scalar::I64(x), DType::Date) => Series::from_dates(vec![*x as i32; n]),
+        (Scalar::I64(x), DType::Datetime) => Series::from_datetimes(vec![*x; n]),
         (Scalar::F64(x), _) => Series::from_f64(vec![*x; n]),
         (Scalar::I64(x), _) => Series::from_i64(vec![*x; n]),
         (Scalar::Bool(x), _) => Series::from_bool(vec![*x; n]),
         (Scalar::Str(t), _) => Series::from_str_values(vec![t.clone(); n]),
         (Scalar::Null, DType::I64) => Series::from_i64_options(vec![None; n]),
         (Scalar::Null, DType::Bool) => Series::from_bool_options(vec![None; n]),
-        (Scalar::Null, DType::Str) => Series::from_str_options(vec![None; n]),
+        (Scalar::Null, DType::Str | DType::Category) => Series::from_str_options(vec![None; n]),
         (Scalar::Null, DType::F64) => Series::from_f64_options(vec![None; n]),
+        (Scalar::Null, DType::Date) => Series::from_date_options(vec![None; n]),
+        (Scalar::Null, DType::Datetime) => Series::from_datetime_options(vec![None; n]),
+        (Scalar::Date(x), _) => Series::from_dates(vec![*x; n]),
+        (Scalar::Datetime(x), _) => Series::from_datetimes(vec![*x; n]),
     }
 }
 
@@ -1607,7 +1954,7 @@ impl Reg {
                 DType::F64 => RegVals::F(vec![MaybeUninit::uninit(); CHUNK]),
                 DType::I64 => RegVals::I(vec![MaybeUninit::uninit(); CHUNK]),
                 DType::Bool => RegVals::B(vec![MaybeUninit::uninit(); CHUNK]),
-                DType::Str => unreachable!("no text registers"),
+                _ => unreachable!("no text registers"),
             },
             valid: [0; WORDS],
             all: true,
@@ -2009,11 +2356,130 @@ fn exec(op: Op, dt: DType, args: &[Arg<'_>], dst: &mut Dst<'_>, n: usize, may_nu
                 return Ok(nulls);
             }
         }
+        Op::Temporal(t, micros) => temporal_op(t, micros, args, dst, valid, n)?,
         Op::Where | Op::Coalesce | Op::IsNull | Op::NotNull => {
             unreachable!("handled above")
         }
     }
     Ok(has_nulls)
+}
+
+/// A calendar operation over a chunk of integers (days, or
+/// microseconds when `micros`).
+fn temporal_op(t: TOp, micros: bool, args: &[Arg<'_>], dst: &mut Dst<'_>, valid: &[u64], n: usize) -> Result<()> {
+    use crate::temporal as tm;
+    let x = i_of(&args[0]);
+    if let DVals::B(out) = &mut dst.vals {
+        debug_assert_eq!(t, TOp::IsWeekend);
+        if micros {
+            map1(x, out, |v| tm::iso_weekday(tm::day_of_us(v)) >= 6);
+        } else {
+            map1(x, out, |v| tm::iso_weekday(v) >= 6);
+        }
+        return Ok(());
+    }
+    let DVals::I(out) = &mut dst.vals else {
+        unreachable!("calendar answers are Int or Bool")
+    };
+    // Each component as its own loop over days, so it inlines and the
+    // compiler sees one straight-line body per element.
+    macro_rules! by_day {
+        ($f:expr) => {{
+            let f = $f;
+            if micros {
+                map1(x, out, |v| f(tm::day_of_us(v)) as i64)
+            } else {
+                map1(x, out, |v| f(v) as i64)
+            }
+        }};
+    }
+    match t {
+        TOp::Year => by_day!(tm::year_of),
+        TOp::Quarter => by_day!(|z| (tm::civil_from_days(z).1 - 1) / 3 + 1),
+        TOp::Month => by_day!(|z| tm::civil_from_days(z).1),
+        TOp::Day => by_day!(|z| tm::civil_from_days(z).2),
+        TOp::Weekday => by_day!(tm::iso_weekday),
+        TOp::DayOfYear => by_day!(tm::day_of_year),
+        TOp::Week => by_day!(tm::iso_week),
+        TOp::Hour => map1(x, out, |v| tm::time_of_us(v) / tm::US_PER_HOUR),
+        TOp::Minute => map1(x, out, |v| tm::time_of_us(v) / tm::US_PER_MIN % 60),
+        TOp::Second => map1(x, out, |v| tm::time_of_us(v) / tm::US_PER_SEC % 60),
+        TOp::Date => {
+            if micros {
+                map1(x, out, tm::day_of_us)
+            } else {
+                map1(x, out, |v| v)
+            }
+        }
+        TOp::ToDatetime => {
+            if micros {
+                map1(x, out, |v| v)
+            } else {
+                map1(x, out, |v| v * tm::US_PER_DAY)
+            }
+        }
+        TOp::Raw | TOp::AsDatetime => map1(x, out, |v| v),
+        TOp::AsDate => {
+            let bad = |v: i64| i32::try_from(v).is_err();
+            if any_of(x, n, bad) && any_valid(valid, n, |i| bad(x.at(i))) {
+                return Err(OdsError::InvalidArgument(
+                    "a day past the dates a Date holds".to_string(),
+                ));
+            }
+            map1(x, out, |v| v)
+        }
+        TOp::Floor(e) => {
+            if micros {
+                map1(x, out, |v| e.floor_us(v))
+            } else {
+                map1(x, out, |v| e.floor_day(v))
+            }
+        }
+        TOp::AddMonths(k) => {
+            let mut bad = false;
+            let lim = |d: i64| i32::try_from(d).is_ok();
+            if micros {
+                map1(x, out, |v| {
+                    match tm::add_months(tm::day_of_us(v), k).filter(|&d| lim(d)) {
+                        Some(d) => d * tm::US_PER_DAY + tm::time_of_us(v),
+                        None => {
+                            bad = true;
+                            0
+                        }
+                    }
+                })
+            } else {
+                map1(x, out, |v| match tm::add_months(v, k).filter(|&d| lim(d)) {
+                    Some(d) => d,
+                    None => {
+                        bad = true;
+                        0
+                    }
+                })
+            }
+            if bad
+                && any_valid(valid, n, |i| {
+                    let v = x.at(i);
+                    let d = if micros { tm::day_of_us(v) } else { v };
+                    tm::add_months(d, k).filter(|&d| lim(d)).is_none()
+                })
+            {
+                return Err(OdsError::InvalidArgument(
+                    "add_months: past the dates a Date holds".to_string(),
+                ));
+            }
+        }
+        TOp::MonthsBetween => {
+            let y = i_of(&args[1]);
+            if micros {
+                map2(x, y, out, |a, b| tm::months_between(tm::day_of_us(a), tm::day_of_us(b)))
+            } else {
+                map2(x, y, out, tm::months_between)
+            }
+        }
+        TOp::IsWeekend => unreachable!("a Bool answer"),
+    }
+    Ok(())
 }
 
 /// The domain error a valid out-of-range argument raises, if any: one
@@ -2738,6 +3204,11 @@ impl Fold {
             (Reduce::Mean, DType::F64) => Scalar::F64(self.float_sum() / self.count as f64),
             (Reduce::Mean, _) => Scalar::F64(self.isum as f64 / self.count as f64),
             (_, DType::F64) => self.fbest.map(Scalar::F64).unwrap_or(Scalar::Null),
+            (_, DType::Date) => self
+                .ibest
+                .map(|d| Scalar::Date(d as i32))
+                .unwrap_or(Scalar::Null),
+            (_, DType::Datetime) => self.ibest.map(Scalar::Datetime).unwrap_or(Scalar::Null),
             (_, _) => self.ibest.map(Scalar::I64).unwrap_or(Scalar::Null),
         })
     }

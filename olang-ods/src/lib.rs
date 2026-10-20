@@ -24,6 +24,7 @@
 //!   the `parallel` feature only changes speed, never results.
 
 pub mod bitmap;
+pub mod category;
 #[cfg(feature = "stats")]
 pub mod dist;
 pub mod frame;
@@ -35,6 +36,8 @@ pub mod gg;
 pub mod plot;
 #[cfg(feature = "stats")]
 pub mod stats;
+pub mod temporal;
+pub mod text;
 
 pub use bitmap::{Bitmap, merge_validity};
 pub use frame::{AggOp, AggSpec, ColumnSummary, Frame, JoinHow, RankMethod};
@@ -149,6 +152,12 @@ pub enum DType {
     I64,
     Bool,
     Str,
+    /// Days since 1970-01-01 (`i32`).
+    Date,
+    /// Microseconds since 1970-01-01T00:00:00 (`i64`), naive or UTC.
+    Datetime,
+    /// `u32` codes into an ordered list of text levels.
+    Category,
 }
 
 impl fmt::Display for DType {
@@ -158,6 +167,9 @@ impl fmt::Display for DType {
             DType::I64 => write!(f, "Int"),
             DType::Bool => write!(f, "Bool"),
             DType::Str => write!(f, "String"),
+            DType::Date => write!(f, "Date"),
+            DType::Datetime => write!(f, "Datetime"),
+            DType::Category => write!(f, "Category"),
         }
     }
 }
@@ -169,6 +181,10 @@ pub enum Scalar {
     I64(i64),
     Bool(bool),
     Str(String),
+    /// A Date: days since 1970-01-01.
+    Date(i32),
+    /// A Datetime: microseconds since 1970-01-01T00:00:00.
+    Datetime(i64),
     Null,
 }
 
@@ -388,6 +404,25 @@ pub enum Series {
         col: StrCol,
         validity: Option<Bitmap>,
     },
+    /// Days since 1970-01-01.
+    Date {
+        values: Arc<Vec<i32>>,
+        validity: Option<Bitmap>,
+    },
+    /// Microseconds since 1970-01-01T00:00:00, naive or UTC.
+    Datetime {
+        values: Arc<Vec<i64>>,
+        validity: Option<Bitmap>,
+    },
+    /// A categorical column: a code per row into `levels`, which are
+    /// distinct and in the category's order (sorted text unless given).
+    /// Sorting, `<` and `min`/`max` follow that order; the levels are
+    /// shared, so a gather copies four bytes a row.
+    Cat {
+        codes: Arc<Vec<u32>>,
+        levels: StrCol,
+        validity: Option<Bitmap>,
+    },
 }
 
 // ---------------------------------------------------------------------
@@ -505,6 +540,154 @@ impl Series {
         Series::from_f64(vec![0.0; len])
     }
 
+    /// A Date column of days since 1970-01-01.
+    pub fn from_dates(values: Vec<i32>) -> Self {
+        Series::Date {
+            values: Arc::new(values),
+            validity: None,
+        }
+    }
+
+    pub fn from_date_options(opts: Vec<Option<i32>>) -> Self {
+        let (values, validity) = split_options(opts);
+        Series::Date {
+            values: Arc::new(values),
+            validity,
+        }
+    }
+
+    /// A Datetime column of microseconds since the epoch.
+    pub fn from_datetimes(values: Vec<i64>) -> Self {
+        Series::Datetime {
+            values: Arc::new(values),
+            validity: None,
+        }
+    }
+
+    pub fn from_datetime_options(opts: Vec<Option<i64>>) -> Self {
+        let (values, validity) = split_options(opts);
+        Series::Datetime {
+            values: Arc::new(values),
+            validity,
+        }
+    }
+
+    /// A Category from codes into `levels` (distinct, in order). A code
+    /// under a null may be anything; a valid one must index a level.
+    pub fn category(codes: Vec<u32>, levels: StrCol, validity: Option<Bitmap>) -> Self {
+        debug_assert!(
+            codes
+                .iter()
+                .enumerate()
+                .all(|(i, &c)| (c as usize) < levels.len()
+                    || validity.as_ref().is_some_and(|v| !v.get(i))),
+            "a category code past its levels"
+        );
+        Series::Cat {
+            codes: Arc::new(codes),
+            levels,
+            validity: validity.filter(|v| !v.all_valid()),
+        }
+    }
+
+    /// A Date or Datetime column as the Int column of its storage (days,
+    /// or microseconds): the form the integer kernels sort, group and
+    /// join. None for every other dtype.
+    pub fn physical(&self) -> Option<Series> {
+        match self {
+            Series::Date { values, validity } => Some(Series::I64 {
+                values: Arc::new(values.iter().map(|&d| d as i64).collect()),
+                validity: validity.clone(),
+            }),
+            Series::Datetime { values, validity } => Some(Series::I64 {
+                values: values.clone(),
+                validity: validity.clone(),
+            }),
+            _ => None,
+        }
+    }
+
+    /// An Int column of days (`Date`) or microseconds (`Datetime`) as
+    /// that dtype. A day outside an `i32` is an error.
+    pub fn from_physical(dtype: DType, phys: Series) -> Result<Series> {
+        let Series::I64 { values, validity } = phys else {
+            return Err(OdsError::TypeMismatch(format!(
+                "a {} column's storage is Int, got {}",
+                dtype,
+                phys.dtype()
+            )));
+        };
+        Ok(match dtype {
+            DType::Datetime => Series::Datetime { values, validity },
+            DType::Date => {
+                let valid = |i: usize| validity.as_ref().is_none_or(|v| v.get(i));
+                let mut out = Vec::with_capacity(values.len());
+                for (i, &d) in values.iter().enumerate() {
+                    match i32::try_from(d) {
+                        Ok(x) => out.push(x),
+                        Err(_) if !valid(i) => out.push(0),
+                        Err(_) => {
+                            return Err(OdsError::InvalidArgument(format!(
+                                "{} days from 1970 is past the dates a Date holds",
+                                d
+                            )));
+                        }
+                    }
+                }
+                Series::Date {
+                    values: Arc::new(out),
+                    validity,
+                }
+            }
+            DType::I64 => Series::I64 { values, validity },
+            other => {
+                return Err(OdsError::TypeMismatch(format!(
+                    "no {} column is stored as Int",
+                    other
+                )));
+            }
+        })
+    }
+
+    /// A Category's values as a String column: spans into its levels,
+    /// so no text is copied. None for every other dtype.
+    pub fn decoded(&self) -> Option<Series> {
+        let Series::Cat {
+            codes,
+            levels,
+            validity,
+        } = self
+        else {
+            return None;
+        };
+        let lv = levels.spans();
+        let spans: Vec<(u32, u32)> = match validity {
+            None => codes.iter().map(|&c| lv[c as usize]).collect(),
+            Some(v) => codes
+                .iter()
+                .enumerate()
+                .map(|(i, &c)| if v.get(i) { lv[c as usize] } else { (0, 0) })
+                .collect(),
+        };
+        Some(Series::Str {
+            col: StrCol::from_spans(levels.buf_arc(), spans),
+            validity: validity.clone(),
+        })
+    }
+
+    /// The column as the hash and comparison kernels read it: a Date or
+    /// Datetime its Int storage, a Category its text, anything else
+    /// itself.
+    pub fn key_view(&self) -> std::borrow::Cow<'_, Series> {
+        match self {
+            Series::Date { .. } | Series::Datetime { .. } => {
+                std::borrow::Cow::Owned(self.physical().expect("temporal"))
+            }
+            Series::Cat { .. } => std::borrow::Cow::Owned(self.decoded().expect("a category")),
+            _ => std::borrow::Cow::Borrowed(self),
+        }
+    }
+
     pub fn linspace(start: f64, stop: f64, num: usize) -> Result<Self> {
         if num == 0 {
             return Ok(Series::from_f64(Vec::new()));
@@ -537,6 +720,9 @@ impl Series {
             Series::I64 { .. } => DType::I64,
             Series::Bool { .. } => DType::Bool,
             Series::Str { .. } => DType::Str,
+            Series::Date { .. } => DType::Date,
+            Series::Datetime { .. } => DType::Datetime,
+            Series::Cat { .. } => DType::Category,
         }
     }
 
@@ -546,6 +732,9 @@ impl Series {
             Series::I64 { values, .. } => values.len(),
             Series::Bool { values, .. } => values.len(),
             Series::Str { col, .. } => col.len(),
+            Series::Date { values, .. } => values.len(),
+            Series::Datetime { values, .. } => values.len(),
+            Series::Cat { codes, .. } => codes.len(),
         }
     }
 
@@ -560,7 +749,10 @@ impl Series {
             Series::F64 { validity, .. }
             | Series::I64 { validity, .. }
             | Series::Bool { validity, .. }
-            | Series::Str { validity, .. } => validity.as_ref(),
+            | Series::Str { validity, .. }
+            | Series::Date { validity, .. }
+            | Series::Datetime { validity, .. }
+            | Series::Cat { validity, .. } => validity.as_ref(),
         }
     }
 
@@ -586,6 +778,11 @@ impl Series {
             Series::I64 { values, .. } => Scalar::I64(values[i]),
             Series::Bool { values, .. } => Scalar::Bool(values[i]),
             Series::Str { col, .. } => Scalar::Str(col.get(i).to_string()),
+            Series::Date { values, .. } => Scalar::Date(values[i]),
+            Series::Datetime { values, .. } => Scalar::Datetime(values[i]),
+            Series::Cat { codes, levels, .. } => {
+                Scalar::Str(levels.get(codes[i] as usize).to_string())
+            }
         }
     }
 
@@ -619,6 +816,9 @@ impl Series {
     /// String concatenation, elementwise: `a + b` over two String
     /// series. A null on either side is a null cell, as arithmetic's is.
     pub fn concat_str(&self, other: &Series) -> Result<Series> {
+        if self.dtype() == DType::Category || other.dtype() == DType::Category {
+            return self.key_view().concat_str(&other.key_view());
+        }
         if self.len() != other.len() {
             return Err(OdsError::LengthMismatch {
                 left: self.len(),
@@ -639,6 +839,9 @@ impl Series {
     /// String concatenation with one String on every row: `s + "|"`
     /// (`scalar_first` false) or `"|" + s` (true). A null cell stays null.
     pub fn concat_str_scalar(&self, text: &str, scalar_first: bool) -> Result<Series> {
+        if let Some(t) = self.decoded() {
+            return t.concat_str_scalar(text, scalar_first);
+        }
         let Series::Str { col, validity } = self else {
             return Err(OdsError::TypeMismatch(format!(
                 "+ joins a String to a String series, got a {} series",
@@ -840,6 +1043,40 @@ impl Series {
                 right: other.len(),
             });
         }
+        // Two Dates or two Datetimes compare as their integers; a
+        // Category by its level order against one with the same levels,
+        // by text otherwise.
+        match (self, other) {
+            (Series::Date { .. }, Series::Date { .. })
+            | (Series::Datetime { .. }, Series::Datetime { .. }) => {
+                return self
+                    .physical()
+                    .expect("temporal")
+                    .compare(op, &other.physical().expect("temporal"));
+            }
+            (
+                Series::Cat {
+                    codes: a,
+                    levels: la,
+                    ..
+                },
+                Series::Cat {
+                    codes: b,
+                    levels: lb,
+                    ..
+                },
+            ) if category::same_levels(la, lb) => {
+                let validity = merge_validity(self.validity(), other.validity());
+                return Ok(Series::Bool {
+                    values: Arc::new(cmp_slices(a, b, op)),
+                    validity,
+                });
+            }
+            (Series::Cat { .. }, _) | (_, Series::Cat { .. }) => {
+                return self.key_view().compare(op, &other.key_view());
+            }
+            _ => {}
+        }
         let validity = merge_validity(self.validity(), other.validity());
         let bits: Vec<bool> = match (self, other) {
             (Series::F64 { values: a, .. }, Series::F64 { values: b, .. }) => cmp_slices(a, b, op),
@@ -886,6 +1123,28 @@ impl Series {
         // a < s  ≡  swapped(s < a) with the operator mirrored.
         let op = if swapped { mirror_cmp(op) } else { op };
         let validity = self.validity().cloned();
+        match (self, &scalar) {
+            (Series::Date { values, .. }, Scalar::Date(d)) => {
+                return Ok(Series::Bool {
+                    values: Arc::new(values.iter().map(|&x| cmp_one(x, *d, op)).collect()),
+                    validity,
+                });
+            }
+            (Series::Datetime { values, .. }, Scalar::Datetime(t)) => {
+                return Ok(Series::Bool {
+                    values: Arc::new(values.iter().map(|&x| cmp_one(x, *t, op)).collect()),
+                    validity,
+                });
+            }
+            (Series::Cat { codes, levels, .. }, Scalar::Str(t)) => {
+                let bits = category::compare_codes(codes, levels, t, op)?;
+                return Ok(Series::Bool {
+                    values: Arc::new(bits),
+                    validity,
+                });
+            }
+            _ => {}
+        }
         let bits: Vec<bool> = match (self, &scalar) {
             (Series::F64 { values, .. }, Scalar::F64(s)) => {
                 values.iter().map(|&x| cmp_one(x, *s, op)).collect()
@@ -952,9 +1211,13 @@ impl Series {
                     .filter(|&i| values[i] && validity.as_ref().is_none_or(|v| v.get(i)))
                     .count() as i64,
             )),
-            Series::Str { .. } => Err(OdsError::TypeMismatch(
-                "sum is not defined for String series".to_string(),
-            )),
+            Series::Str { .. }
+            | Series::Date { .. }
+            | Series::Datetime { .. }
+            | Series::Cat { .. } => Err(OdsError::TypeMismatch(format!(
+                "sum is not defined for {} series",
+                self.dtype()
+            ))),
         }
     }
 
@@ -990,7 +1253,7 @@ impl Series {
                 let cast: Vec<f64> = values.iter().map(|&x| x as f64).collect();
                 f64_sum_sq_dev(&cast, validity.as_ref(), mean, par)
             }
-            Series::Bool { .. } | Series::Str { .. } => {
+            _ => {
                 return Err(OdsError::TypeMismatch(format!(
                     "var is not defined for {} series",
                     self.dtype()
@@ -1013,6 +1276,35 @@ impl Series {
     }
 
     fn extremum(&self, want_min: bool) -> Result<Scalar> {
+        match self {
+            Series::Date { .. } => {
+                return Ok(match self.physical().expect("a Date").extremum(want_min)? {
+                    Scalar::I64(d) => Scalar::Date(d as i32),
+                    other => other,
+                });
+            }
+            Series::Datetime { .. } => {
+                return Ok(match self.physical().expect("a Datetime").extremum(want_min)? {
+                    Scalar::I64(t) => Scalar::Datetime(t),
+                    other => other,
+                });
+            }
+            Series::Cat {
+                codes,
+                levels,
+                validity,
+            } => {
+                let valid = |i: usize| validity.as_ref().is_none_or(|v| v.get(i));
+                let best = (0..codes.len())
+                    .filter(|&i| valid(i))
+                    .map(|i| codes[i]);
+                let best = if want_min { best.min() } else { best.max() };
+                return Ok(best
+                    .map(|c| Scalar::Str(levels.get(c as usize).to_string()))
+                    .unwrap_or(Scalar::Null));
+            }
+            _ => {}
+        }
         match self {
             Series::F64 { values, validity } => {
                 let mut best: Option<f64> = None;
@@ -1055,6 +1347,9 @@ impl Series {
             Series::Bool { .. } => Err(OdsError::TypeMismatch(
                 "min/max are not defined for Bool series".to_string(),
             )),
+            Series::Date { .. } | Series::Datetime { .. } | Series::Cat { .. } => {
+                unreachable!("handled above")
+            }
             Series::Str { col, validity } => {
                 let mut best: Option<&str> = None;
                 for (i, v) in col.iter().enumerate() {
@@ -1109,7 +1404,7 @@ impl Series {
                 .filter(|&i| validity.as_ref().map(|v| v.get(i)).unwrap_or(true))
                 .map(|i| values[i] as f64)
                 .collect()),
-            Series::Bool { .. } | Series::Str { .. } => Err(OdsError::TypeMismatch(format!(
+            _ => Err(OdsError::TypeMismatch(format!(
                 "numeric reduction is not defined for {} series",
                 self.dtype()
             ))),
@@ -1153,7 +1448,7 @@ impl Series {
         match self {
             Series::F64 { values, .. } => Ok(values.as_ref().clone()),
             Series::I64 { values, .. } => Ok(values.iter().map(|&x| x as f64).collect()),
-            Series::Bool { .. } | Series::Str { .. } => Err(OdsError::TypeMismatch(format!(
+            _ => Err(OdsError::TypeMismatch(format!(
                 "numeric reduction is not defined for {} series",
                 self.dtype()
             ))),
@@ -1168,6 +1463,25 @@ impl Series {
     /// sorts after +inf).
     pub fn sort(&self, par: bool) -> Result<Series> {
         match self {
+            Series::Date { .. } | Series::Datetime { .. } => {
+                let sorted = self.physical().expect("temporal").sort(par)?;
+                return Series::from_physical(self.dtype(), sorted);
+            }
+            // A category sorts by its levels' order: its codes, sorted.
+            Series::Cat { codes, levels, .. } => {
+                let phys = Series::I64 {
+                    values: Arc::new(codes.iter().map(|&c| c as i64).collect()),
+                    validity: self.validity().cloned(),
+                };
+                let Series::I64 { values, validity } = phys.sort(par)? else {
+                    unreachable!("an Int column sorts to one")
+                };
+                return Ok(Series::category(
+                    values.iter().map(|&c| c as u32).collect(),
+                    levels.clone(),
+                    validity,
+                ));
+            }
             Series::F64 { .. } | Series::I64 { .. } | Series::Str { .. } => {}
             Series::Bool { .. } => {
                 return Err(OdsError::TypeMismatch(
@@ -1253,7 +1567,7 @@ impl Series {
                     }
                 }))
             }
-            Series::Bool { .. } => unreachable!("rejected above"),
+            _ => unreachable!("rejected above"),
         }
     }
 
@@ -1303,6 +1617,9 @@ impl Series {
                 #[cfg(not(feature = "parallel"))]
                 valid_idx.sort_by(|&a, &b| col.get(a).cmp(col.get(b)));
             }
+            Series::Date { values, .. } => valid_idx.sort_by_key(|&i| values[i]),
+            Series::Datetime { values, .. } => valid_idx.sort_by_key(|&i| values[i]),
+            Series::Cat { codes, .. } => valid_idx.sort_by_key(|&i| codes[i]),
             Series::Bool { .. } => {
                 return Err(OdsError::TypeMismatch(
                     "argsort is not defined for Bool series".to_string(),
@@ -1340,6 +1657,18 @@ impl Series {
             Series::I64 { values, .. } => (0..n)
                 .filter(|&i| valid(i))
                 .map(|i| (flip(values[i] as u64 ^ (1 << 63)), i as u32))
+                .collect(),
+            Series::Datetime { values, .. } => (0..n)
+                .filter(|&i| valid(i))
+                .map(|i| (flip(values[i] as u64 ^ (1 << 63)), i as u32))
+                .collect(),
+            Series::Date { values, .. } => (0..n)
+                .filter(|&i| valid(i))
+                .map(|i| (flip(values[i] as i64 as u64 ^ (1 << 63)), i as u32))
+                .collect(),
+            Series::Cat { codes, .. } => (0..n)
+                .filter(|&i| valid(i))
+                .map(|i| (flip(codes[i] as u64), i as u32))
                 .collect(),
             _ => return None,
         };
@@ -1451,7 +1780,61 @@ impl Series {
                     }
                 }
             }
+            Series::Date { values, .. } => Series::Date {
+                values: Arc::new(indices.iter().map(|&i| values[i]).collect()),
+                validity: self.gathered_validity(indices, opts_needed),
+            },
+            Series::Datetime { values, .. } => Series::Datetime {
+                values: Arc::new(indices.iter().map(|&i| values[i]).collect()),
+                validity: self.gathered_validity(indices, opts_needed),
+            },
+            Series::Cat { codes, levels, .. } => Series::Cat {
+                codes: Arc::new(indices.iter().map(|&i| codes[i]).collect()),
+                levels: levels.clone(),
+                validity: self.gathered_validity(indices, opts_needed),
+            },
         }
+    }
+
+    /// The values at `idx` under a validity the caller computed.
+    pub(crate) fn gather_under(&self, idx: &[usize], validity: Option<Bitmap>) -> Series {
+        match self {
+            Series::F64 { values, .. } => Series::F64 {
+                values: Arc::new(idx.iter().map(|&i| values[i]).collect()),
+                validity,
+            },
+            Series::I64 { values, .. } => Series::I64 {
+                values: Arc::new(idx.iter().map(|&i| values[i]).collect()),
+                validity,
+            },
+            Series::Bool { values, .. } => Series::Bool {
+                values: Arc::new(idx.iter().map(|&i| values[i]).collect()),
+                validity,
+            },
+            Series::Str { col, .. } => Series::Str {
+                col: col.gather(idx),
+                validity,
+            },
+            Series::Date { values, .. } => Series::Date {
+                values: Arc::new(idx.iter().map(|&i| values[i]).collect()),
+                validity,
+            },
+            Series::Datetime { values, .. } => Series::Datetime {
+                values: Arc::new(idx.iter().map(|&i| values[i]).collect()),
+                validity,
+            },
+            Series::Cat { codes, levels, .. } => Series::Cat {
+                codes: Arc::new(idx.iter().map(|&i| codes[i]).collect()),
+                levels: levels.clone(),
+                validity,
+            },
+        }
+    }
+
+    fn gathered_validity(&self, indices: &[usize], any_null: bool) -> Option<Bitmap> {
+        any_null.then(|| {
+            Bitmap::from_bools(&indices.iter().map(|&i| self.is_valid(i)).collect::<Vec<_>>())
+        })
     }
 
     /// Running sum over valid positions; null positions stay null and the
@@ -1487,7 +1870,7 @@ impl Series {
                 }
                 Ok(Series::from_i64_options(out))
             }
-            Series::Bool { .. } | Series::Str { .. } => Err(OdsError::TypeMismatch(format!(
+            _ => Err(OdsError::TypeMismatch(format!(
                 "cumsum is not defined for {} series",
                 self.dtype()
             ))),
@@ -1514,6 +1897,9 @@ impl Series {
         if self.dtype() == to {
             return Ok(self.clone());
         }
+        if let Some(out) = self.cast_logical(to, fmt_f64) {
+            return out;
+        }
         // Float to Bool is the one pair with no defensible reading: 0.5
         // is neither true nor false, and NaN is neither. The comparison
         // the caller means is better written out.
@@ -1535,6 +1921,7 @@ impl Series {
                         Scalar::I64(x) => Some(x as f64),
                         Scalar::Bool(b) => Some(if b { 1.0 } else { 0.0 }),
                         Scalar::Str(s) => s.trim().parse::<f64>().ok(),
+                        Scalar::Date(_) | Scalar::Datetime(_) => None,
                     })
                     .collect(),
             ),
@@ -1553,6 +1940,7 @@ impl Series {
                         }
                         Scalar::Bool(b) => Some(i64::from(b)),
                         Scalar::Str(s) => s.trim().parse::<i64>().ok(),
+                        Scalar::Date(_) | Scalar::Datetime(_) => None,
                     })
                     .collect(),
             ),
@@ -1568,7 +1956,7 @@ impl Series {
                             _ => None,
                         },
                         // Refused above.
-                        Scalar::F64(_) => None,
+                        Scalar::F64(_) | Scalar::Date(_) | Scalar::Datetime(_) => None,
                     })
                     .collect(),
             ),
@@ -1580,10 +1968,115 @@ impl Series {
                         Scalar::F64(x) => Some(fmt_f64(x)),
                         Scalar::I64(x) => Some(x.to_string()),
                         Scalar::Bool(b) => Some(b.to_string()),
+                        Scalar::Date(d) => Some(temporal::format_date(d as i64)),
+                        Scalar::Datetime(t) => Some(temporal::format_datetime(t)),
                     })
                     .collect(),
             ),
+            DType::Date | DType::Datetime | DType::Category => {
+                unreachable!("cast_logical")
+            }
         })
+    }
+
+    /// The casts that involve a Date, a Datetime or a Category (None:
+    /// neither side is one). Text reads as ISO 8601 (a datetime's day is
+    /// a Date), and what does not read is null, as every cast's misfit is.
+    fn cast_logical(&self, to: DType, fmt_f64: &dyn Fn(f64) -> String) -> Option<Result<Series>> {
+        use temporal::{US_PER_DAY, format_date, format_datetime, parse_iso};
+        let from = self.dtype();
+        let logical = |d: DType| matches!(d, DType::Date | DType::Datetime | DType::Category);
+        if !logical(from) && !logical(to) {
+            return None;
+        }
+        let refuse = || {
+            Some(Err(OdsError::InvalidArgument(format!(
+                "cast: {} to {} has no meaning",
+                from, to
+            ))))
+        };
+        if let Some(text) = self.decoded() {
+            return Some(text.cast(to, fmt_f64));
+        }
+        if to == DType::Category {
+            return Some(category::to_category(self, None, fmt_f64));
+        }
+        let validity = self.validity().cloned();
+        let valid = |i: usize| validity.as_ref().is_none_or(|v| v.get(i));
+        Some(Ok(match (self, to) {
+            (Series::Date { values, .. }, DType::Str) => Series::Str {
+                col: StrCol::from_strings(
+                    (0..values.len())
+                        .map(|i| if valid(i) { format_date(values[i] as i64) } else { String::new() }),
+                ),
+                validity,
+            },
+            (Series::Datetime { values, .. }, DType::Str) => Series::Str {
+                col: StrCol::from_strings(
+                    (0..values.len())
+                        .map(|i| if valid(i) { format_datetime(values[i]) } else { String::new() }),
+                ),
+                validity,
+            },
+            (Series::Date { values, .. }, DType::Datetime) => Series::Datetime {
+                values: Arc::new(values.iter().map(|&d| d as i64 * US_PER_DAY).collect()),
+                validity,
+            },
+            (Series::Datetime { values, .. }, DType::Date) => Series::Date {
+                values: Arc::new(
+                    values
+                        .iter()
+                        .map(|&t| temporal::day_of_us(t) as i32)
+                        .collect(),
+                ),
+                validity,
+            },
+            (Series::Date { .. } | Series::Datetime { .. }, DType::I64) => {
+                self.physical().expect("temporal")
+            }
+            (Series::Date { .. } | Series::Datetime { .. }, DType::F64) => {
+                return Some(self.physical().expect("temporal").cast(DType::F64, fmt_f64));
+            }
+            (Series::Str { col, .. }, DType::Date | DType::Datetime) => {
+                let read = |t: &str| -> Option<i64> {
+                    let t = t.trim();
+                    if to == DType::Date {
+                        temporal::parse_iso_date(t)
+                            .or_else(|| parse_iso(t).map(|(us, _)| temporal::day_of_us(us)))
+                    } else {
+                        parse_iso(t).map(|(us, _)| us)
+                    }
+                };
+                let vals: Vec<Option<i64>> = (0..col.len())
+                    .map(|i| if valid(i) { read(col.get(i)) } else { None })
+                    .collect();
+                if to == DType::Date {
+                    Series::from_date_options(
+                        vals.into_iter()
+                            .map(|v| v.and_then(|d| i32::try_from(d).ok()))
+                            .collect(),
+                    )
+                } else {
+                    Series::from_datetime_options(vals)
+                }
+            }
+            (Series::I64 { values, .. }, DType::Date) => Series::from_date_options(
+                (0..values.len())
+                    .map(|i| valid(i).then(|| i32::try_from(values[i]).ok()).flatten())
+                    .collect(),
+            ),
+            (Series::I64 { values, .. }, DType::Datetime) => Series::Datetime {
+                values: values.clone(),
+                validity,
+            },
+            (Series::F64 { .. }, DType::Date | DType::Datetime) => {
+                return Some(
+                    self.cast(DType::I64, fmt_f64)
+                        .and_then(|i| i.cast(to, fmt_f64)),
+                );
+            }
+            _ => return refuse(),
+        }))
     }
 
     // -----------------------------------------------------------------
@@ -1642,6 +2135,43 @@ impl Series {
                 *col = StrCol::from_strings(
                     (0..col.len()).map(|i| if bm.get(i) { col.get(i) } else { f.as_str() }),
                 );
+            }
+            (Series::Date { values, validity }, Scalar::Date(f)) => {
+                let f = *f;
+                let bm = validity.take().expect("checked above");
+                for (i, v) in Arc::make_mut(values).iter_mut().enumerate() {
+                    if !bm.get(i) {
+                        *v = f;
+                    }
+                }
+            }
+            (Series::Datetime { values, validity }, Scalar::Datetime(f)) => {
+                let f = *f;
+                let bm = validity.take().expect("checked above");
+                for (i, v) in Arc::make_mut(values).iter_mut().enumerate() {
+                    if !bm.get(i) {
+                        *v = f;
+                    }
+                }
+            }
+            // A fill that is no level becomes the last one.
+            (Series::Cat { codes, levels, validity }, Scalar::Str(f)) => {
+                let found = levels.iter().position(|l| l == f.as_str());
+                let code = match found {
+                    Some(c) => c as u32,
+                    None => {
+                        let grown =
+                            StrCol::from_strings(levels.iter().chain(std::iter::once(f.as_str())));
+                        *levels = grown;
+                        (levels.len() - 1) as u32
+                    }
+                };
+                let bm = validity.take().expect("checked above");
+                for (i, v) in Arc::make_mut(codes).iter_mut().enumerate() {
+                    if !bm.get(i) {
+                        *v = code;
+                    }
+                }
             }
             _ => {
                 return Err(OdsError::TypeMismatch(format!(
@@ -1977,6 +2507,19 @@ fn rebuild_with_trailing_nulls<T: Default + Clone>(
         },
         Series::Str { col, .. } => Series::Str {
             col,
+            validity: Some(Bitmap::from_bools(&bits)),
+        },
+        Series::Date { values, .. } => Series::Date {
+            values,
+            validity: Some(Bitmap::from_bools(&bits)),
+        },
+        Series::Datetime { values, .. } => Series::Datetime {
+            values,
+            validity: Some(Bitmap::from_bools(&bits)),
+        },
+        Series::Cat { codes, levels, .. } => Series::Cat {
+            codes,
+            levels,
             validity: Some(Bitmap::from_bools(&bits)),
         },
     }

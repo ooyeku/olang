@@ -58,7 +58,7 @@ impl Hasher for FxHasher {
     }
 }
 
-type FxMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
+pub(crate) type FxMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
 
 // ---------------------------------------------------------------------
 // Frame
@@ -606,6 +606,25 @@ impl Series {
                     validity: validity(),
                 });
             }
+            Series::Date { values, .. } => {
+                return Ok(Series::Date {
+                    values: std::sync::Arc::new(moved(values, by, k)),
+                    validity: validity(),
+                });
+            }
+            Series::Datetime { values, .. } => {
+                return Ok(Series::Datetime {
+                    values: std::sync::Arc::new(moved(values, by, k)),
+                    validity: validity(),
+                });
+            }
+            Series::Cat { codes, levels, .. } => {
+                return Ok(Series::Cat {
+                    codes: std::sync::Arc::new(moved(codes, by, k)),
+                    levels: levels.clone(),
+                    validity: validity(),
+                });
+            }
             Series::Str { .. } => {}
         }
         let n = self.len() as i64;
@@ -623,7 +642,7 @@ impl Series {
     /// the running value so far, so the result has no nulls after the
     /// first valid element.
     pub fn cum_extreme(&self, want_max: bool) -> Result<Series> {
-        if matches!(self.dtype(), crate::DType::Str | crate::DType::Bool) {
+        if !matches!(self.dtype(), crate::DType::F64 | crate::DType::I64) {
             return Err(OdsError::InvalidArgument(format!(
                 "cum_max/cum_min: needs a numeric column, got {}",
                 self.dtype()
@@ -731,7 +750,7 @@ impl Series {
                 op.name()
             )));
         }
-        if op != AggOp::Count && matches!(self.dtype(), crate::DType::Str | crate::DType::Bool) {
+        if op != AggOp::Count && !matches!(self.dtype(), crate::DType::F64 | crate::DType::I64) {
             return Err(OdsError::InvalidArgument(format!(
                 "rolling: {:?} needs a numeric column, got {}",
                 op,
@@ -821,6 +840,8 @@ fn scalars_equal(a: Scalar, b: Scalar) -> bool {
         (Scalar::I64(x), Scalar::I64(y)) => x == y,
         (Scalar::Bool(x), Scalar::Bool(y)) => x == y,
         (Scalar::Str(x), Scalar::Str(y)) => x == y,
+        (Scalar::Date(x), Scalar::Date(y)) => x == y,
+        (Scalar::Datetime(x), Scalar::Datetime(y)) => x == y,
         _ => false,
     }
 }
@@ -1015,9 +1036,20 @@ impl Frame {
     }
 }
 
+/// Columns of one type laid end to end (a Category's levels merged).
+pub fn stack(cols: &[&Series]) -> Series {
+    if cols.len() == 1 {
+        return cols[0].clone();
+    }
+    stack_same_dtype(cols)
+}
+
 /// Lay same-typed columns end to end. `unpivot` has already established
 /// that they share a type; this is the copy that follows.
 fn stack_same_dtype(cols: &[&Series]) -> Series {
+    if cols[0].dtype() == crate::DType::Category {
+        return crate::category::stack(cols).expect("categories, checked");
+    }
     let scalars = || {
         cols.iter()
             .flat_map(|c| (0..c.len()).map(|i| c.scalar_at(i)))
@@ -1055,6 +1087,23 @@ fn stack_same_dtype(cols: &[&Series]) -> Series {
                 })
                 .collect(),
         ),
+        crate::DType::Date => Series::from_date_options(
+            scalars()
+                .map(|v| match v {
+                    Scalar::Date(x) => Some(x),
+                    _ => None,
+                })
+                .collect(),
+        ),
+        crate::DType::Datetime => Series::from_datetime_options(
+            scalars()
+                .map(|v| match v {
+                    Scalar::Datetime(x) => Some(x),
+                    _ => None,
+                })
+                .collect(),
+        ),
+        crate::DType::Category => unreachable!("stacked above"),
     }
 }
 
@@ -1066,6 +1115,8 @@ fn scalar_name(v: Scalar, fmt_f64: &dyn Fn(f64) -> String) -> String {
         Scalar::I64(x) => x.to_string(),
         Scalar::F64(x) => fmt_f64(x),
         Scalar::Bool(b) => b.to_string(),
+        Scalar::Date(d) => crate::temporal::format_date(d as i64),
+        Scalar::Datetime(t) => crate::temporal::format_datetime(t),
         // Refused before this is reached.
         Scalar::Null => "null".to_string(),
     }
@@ -1253,6 +1304,32 @@ impl Series {
             top: Vec::new(),
         };
         match self {
+            // A date's range and histogram over its integers; the host
+            // writes them as dates (it knows the column's type).
+            Series::Date { .. } | Series::Datetime { .. } => {
+                return self
+                    .physical()
+                    .expect("temporal")
+                    .summarize(upto, bins, top);
+            }
+            Series::Cat { codes, levels, .. } => {
+                let mut counts: Vec<(usize, usize)> = vec![(usize::MAX, 0); levels.len()];
+                for i in 0..m {
+                    if valid(i) {
+                        let slot = &mut counts[codes[i] as usize];
+                        if slot.0 == usize::MAX {
+                            slot.0 = i;
+                        }
+                        slot.1 += 1;
+                    }
+                }
+                let mut all: Vec<(usize, usize)> =
+                    counts.into_iter().filter(|c| c.1 > 0).collect();
+                out.distinct = all.len();
+                all.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+                all.truncate(top);
+                out.top = all;
+            }
             Series::F64 { .. } | Series::I64 { .. } => {
                 out.numeric = true;
                 let bins = bins.max(1);
@@ -1361,6 +1438,8 @@ enum Key {
     F(u64),
     B(bool),
     S(String),
+    D(i32),
+    T(i64),
 }
 
 fn key_at(s: &Series, i: usize) -> Option<Key> {
@@ -1374,6 +1453,8 @@ fn key_at(s: &Series, i: usize) -> Option<Key> {
         })),
         Scalar::Bool(b) => Some(Key::B(b)),
         Scalar::Str(s) => Some(Key::S(s)),
+        Scalar::Date(d) => Some(Key::D(d)),
+        Scalar::Datetime(t) => Some(Key::T(t)),
     }
 }
 
@@ -1450,6 +1531,39 @@ where
 
 fn group_ids_single(key: &Series) -> (Vec<u32>, usize) {
     let n = key.len();
+    match key {
+        // A date groups as its integer.
+        Series::Date { .. } | Series::Datetime { .. } => {
+            return group_ids_single(&key.physical().expect("temporal"));
+        }
+        // A category's codes are already a dictionary: first-seen order
+        // through a table as long as its levels, no hashing.
+        Series::Cat {
+            codes,
+            levels,
+            validity,
+        } => {
+            let null = levels.len();
+            let mut map = vec![u32::MAX; null + 1];
+            let mut next = 0u32;
+            let mut ids = Vec::with_capacity(n);
+            for (i, &c) in codes.iter().enumerate() {
+                let k = if validity.as_ref().is_none_or(|v| v.get(i)) {
+                    c as usize
+                } else {
+                    null
+                };
+                let slot = &mut map[k];
+                if *slot == u32::MAX {
+                    *slot = next;
+                    next += 1;
+                }
+                ids.push(*slot);
+            }
+            return (ids, next as usize);
+        }
+        _ => {}
+    }
 
     // The hot key types encode across all cores on large columns; the
     // sequential arms below serve small columns and the rare types.
@@ -1779,6 +1893,11 @@ fn accumulate_i64(
 
 fn aggregate_column(col: &Series, group_ids: &[u32], n_groups: usize, op: AggOp) -> Result<Series> {
     match col {
+        // The earliest and latest of a group's dates.
+        Series::Date { .. } | Series::Datetime { .. } if matches!(op, AggOp::Min | AggOp::Max) => {
+            let phys = col.physical().expect("temporal");
+            Series::from_physical(col.dtype(), aggregate_column(&phys, group_ids, n_groups, op)?)
+        }
         Series::F64 { values, validity } => {
             let (acc, cnt, mins, maxs) =
                 accumulate_f64(values, validity.as_ref(), group_ids, n_groups);
@@ -1999,6 +2118,25 @@ fn aggregate_by_rows(
 /// Gather with optional indices (join's right side): None -> null.
 fn gather_optional(col: &Series, idx: &[Option<usize>]) -> Series {
     match col {
+        Series::Date { .. } | Series::Datetime { .. } | Series::Cat { .. } => {
+            let valid: Vec<bool> = idx
+                .iter()
+                .map(|o| o.is_some_and(|i| col_valid(col, i)))
+                .collect();
+            let rows: Vec<usize> = idx.iter().map(|o| o.unwrap_or(0)).collect();
+            let validity = (!valid.iter().all(|&v| v)).then(|| Bitmap::from_bools(&valid));
+            if col.is_empty() {
+                // Nothing to gather from: every slot is null.
+                return match col {
+                    Series::Date { .. } => Series::from_date_options(vec![None; idx.len()]),
+                    Series::Datetime { .. } => Series::from_datetime_options(vec![None; idx.len()]),
+                    _ => Series::from_str_options(vec![None; idx.len()])
+                        .cast(crate::DType::Category, &|x| x.to_string())
+                        .expect("text to a category"),
+                };
+            }
+            col.gather_under(&rows, validity)
+        }
         Series::F64 { values, .. } => Series::from_f64_options(
             idx.iter()
                 .map(|o| o.filter(|&i| col_valid(col, i)).map(|i| values[i]))
@@ -2053,12 +2191,33 @@ fn coalesce(a: &Series, b: &Series) -> Result<Series> {
             b.dtype()
         )));
     }
+    if a.dtype() == crate::DType::Category {
+        let text = coalesce(&a.key_view(), &b.key_view())?;
+        return crate::category::to_category(&text, None, &|x| x.to_string());
+    }
     let pick = |i: usize| match a.scalar_at(i) {
         Scalar::Null => b.scalar_at(i),
         v => v,
     };
     let n = a.len();
     Ok(match a.dtype() {
+        crate::DType::Date => Series::from_date_options(
+            (0..n)
+                .map(|i| match pick(i) {
+                    Scalar::Date(x) => Some(x),
+                    _ => None,
+                })
+                .collect(),
+        ),
+        crate::DType::Datetime => Series::from_datetime_options(
+            (0..n)
+                .map(|i| match pick(i) {
+                    Scalar::Datetime(x) => Some(x),
+                    _ => None,
+                })
+                .collect(),
+        ),
+        crate::DType::Category => unreachable!("decoded above"),
         crate::DType::F64 => Series::from_f64_options(
             (0..n)
                 .map(|i| match pick(i) {
@@ -2095,7 +2254,7 @@ fn coalesce(a: &Series, b: &Series) -> Result<Series> {
 }
 
 fn col_valid(col: &Series, i: usize) -> bool {
-    !matches!(col.scalar_at(i), Scalar::Null)
+    col.validity().is_none_or(|v| v.get(i))
 }
 
 // ---------------------------------------------------------------------
@@ -2182,6 +2341,9 @@ fn key_ranks(key: &Series, descending: bool) -> Result<Vec<u32>> {
         Series::I64 { values, .. } => values[a] == values[b],
         Series::Bool { values, .. } => values[a] == values[b],
         Series::Str { col, .. } => col.get(a) == col.get(b),
+        Series::Date { values, .. } => values[a] == values[b],
+        Series::Datetime { values, .. } => values[a] == values[b],
+        Series::Cat { codes, .. } => codes[a] == codes[b],
     };
     let mut ranks = vec![u32::MAX; n];
     let mut r = 0u32;

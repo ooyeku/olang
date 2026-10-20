@@ -138,6 +138,8 @@ impl NativeObject for OdsSeries {
                 Scalar::I64(x) => x.to_string(),
                 Scalar::Bool(b) => b.to_string(),
                 Scalar::Str(s) => format!("\"{}\"", s),
+                Scalar::Date(d) => olang_ods::temporal::format_date(d as i64),
+                Scalar::Datetime(t) => olang_ods::temporal::format_datetime(t),
                 Scalar::Null => "null".to_string(),
             });
         }
@@ -206,14 +208,38 @@ impl NativeObject for OdsSeries {
 // Value ↔ engine translation
 // ---------------------------------------------------------------------
 
+/// An element as a language value: a Date element is a `Date` (the
+/// `dates` module's), a Datetime element its ISO 8601 text (as the
+/// `dates` module writes a moment), a Category element its level.
 pub(super) fn scalar_to_value(s: Scalar) -> Value {
     match s {
         Scalar::F64(x) => Value::Float(x),
         Scalar::I64(x) => Value::Integer(x),
         Scalar::Bool(b) => Value::Boolean(b),
         Scalar::Str(s) => Value::String(std::sync::Arc::new(s)),
+        Scalar::Date(d) => date_value(d),
+        Scalar::Datetime(t) => {
+            Value::String(std::sync::Arc::new(olang_ods::temporal::format_datetime(t)))
+        }
         Scalar::Null => Value::Unit,
     }
+}
+
+/// Days since 1970-01-01 as a `dates` Date.
+pub(super) fn date_value(days: i32) -> Value {
+    let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("the epoch");
+    match epoch.checked_add_signed(chrono::Duration::days(days as i64)) {
+        Some(d) => crate::stdlib::dates::date_value(d),
+        None => Value::Unit,
+    }
+}
+
+/// A `dates` Date as days since 1970-01-01.
+pub(super) fn date_days(v: &Value) -> Option<i32> {
+    let Value::Native(h) = v else { return None };
+    let d = h.0.as_any().downcast_ref::<crate::stdlib::dates::DateObject>()?;
+    let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("the epoch");
+    i32::try_from(d.0.signed_duration_since(epoch).num_days()).ok()
 }
 
 pub(super) fn value_to_scalar(v: &Value) -> Option<Scalar> {
@@ -223,6 +249,7 @@ pub(super) fn value_to_scalar(v: &Value) -> Option<Scalar> {
         Value::Boolean(b) => Some(Scalar::Bool(*b)),
         Value::String(s) => Some(Scalar::Str(s.as_ref().clone())),
         Value::Unit => Some(Scalar::Null),
+        Value::Native(_) => date_days(v).map(Scalar::Date),
         _ => None,
     }
 }
@@ -360,15 +387,39 @@ fn is_in(s: &Series, values: &Value) -> Result<Series, String> {
         Scalar::F64(_) | Scalar::I64(_) => "a number",
         Scalar::Str(_) => "a String",
         Scalar::Bool(_) => "a Bool",
+        Scalar::Date(_) => "a Date",
+        Scalar::Datetime(_) => "a Datetime",
         Scalar::Null => "()",
+    };
+    // Text against a date column reads as a date.
+    let wanted: Vec<Scalar> = match s.dtype() {
+        DType::Date | DType::Datetime => wanted
+            .into_iter()
+            .map(|w| match w {
+                Scalar::Str(t) => match olang_ods::temporal::parse_iso(t.trim()) {
+                    Some((us, _)) if s.dtype() == DType::Date => {
+                        Scalar::Date(olang_ods::temporal::day_of_us(us) as i32)
+                    }
+                    Some((us, _)) => Scalar::Datetime(us),
+                    None => Scalar::Str(t),
+                },
+                Scalar::Date(d) if s.dtype() == DType::Datetime => {
+                    Scalar::Datetime(d as i64 * olang_ods::temporal::US_PER_DAY)
+                }
+                w => w,
+            })
+            .collect(),
+        _ => wanted,
     };
     let fits = |w: &Scalar| {
         matches!(
             (s.dtype(), w),
             (_, Scalar::Null)
                 | (DType::F64 | DType::I64, Scalar::F64(_) | Scalar::I64(_))
-                | (DType::Str, Scalar::Str(_))
+                | (DType::Str | DType::Category, Scalar::Str(_))
                 | (DType::Bool, Scalar::Bool(_))
+                | (DType::Date, Scalar::Date(_))
+                | (DType::Datetime, Scalar::Datetime(_))
         )
     };
     if let Some(bad) = wanted.iter().find(|w| !fits(w)) {
@@ -381,6 +432,38 @@ fn is_in(s: &Series, values: &Value) -> Result<Series, String> {
     let n = s.len();
     let mut out: Vec<Option<bool>> = Vec::with_capacity(n);
     let null_answer = if keeps_null { Some(true) } else { None };
+    // A category answers once per level.
+    if let Series::Cat {
+        codes,
+        levels,
+        validity,
+    } = s
+    {
+        let set: HashSet<&str> = wanted
+            .iter()
+            .filter_map(|w| match w {
+                Scalar::Str(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        let hit: Vec<bool> = levels.iter().map(|l| set.contains(l)).collect();
+        for (i, &c) in codes.iter().enumerate() {
+            let valid = validity.as_ref().is_none_or(|b| b.get(i));
+            out.push(if valid { Some(hit[c as usize]) } else { null_answer });
+        }
+        return Ok(Series::from_bool_options(out));
+    }
+    if let Some(phys) = s.physical() {
+        let wanted: Vec<Value> = wanted
+            .iter()
+            .map(|w| match w {
+                Scalar::Date(d) => Value::Integer(*d as i64),
+                Scalar::Datetime(t) => Value::Integer(*t),
+                _ => Value::Unit,
+            })
+            .collect();
+        return is_in(&phys, &Value::List(std::sync::Arc::new(wanted)));
+    }
     match s {
         Series::Str { col, validity } => {
             let set: HashSet<&str> = wanted
@@ -461,6 +544,7 @@ pub(crate) fn series_from_list(items: &[Value]) -> Result<Series, String> {
     let mut saw_int = false;
     let mut saw_bool = false;
     let mut saw_str = false;
+    let mut saw_date = false;
     for item in items {
         match item {
             Value::Float(_) => saw_float = true,
@@ -468,13 +552,20 @@ pub(crate) fn series_from_list(items: &[Value]) -> Result<Series, String> {
             Value::Boolean(_) => saw_bool = true,
             Value::String(_) => saw_str = true,
             Value::Unit => {}
+            v if date_days(v).is_some() => saw_date = true,
             other => {
                 return Err(format!(
-                    "ods.series: list elements must be Int, Float, Bool, String, or () for null — got {}",
+                    "ods.series: list elements must be Int, Float, Bool, String, Date, or () for null — got {}",
                     other.type_name()
                 ));
             }
         }
+    }
+    if saw_date {
+        if saw_str || saw_float || saw_int || saw_bool {
+            return Err("ods.series: cannot mix Date with other element types".to_string());
+        }
+        return Ok(Series::from_date_options(items.iter().map(date_days).collect()));
     }
     if saw_str && (saw_float || saw_int || saw_bool) {
         return Err("ods.series: cannot mix String with other element types".to_string());
@@ -583,24 +674,20 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("not", 1),
     ("ne", 2),
     ("is_in", 2),
-    ("contains", 2),
 ];
 
 /// The ranking methods, in the order the error lists them.
 const RANK_METHODS: &[&str] = &["min", "max", "average", "ordinal", "dense"];
 
 /// The type names `cast` accepts, which are the names `schema` reports.
-const DTYPE_NAMES: &[&str] = &["Float", "Int", "Bool", "String"];
+const DTYPE_NAMES: &[&str] = &["Float", "Int", "Bool", "String", "Date", "Datetime", "Category"];
 
 fn parse_dtype(name: &str) -> Result<DType, String> {
-    match name {
-        "Float" => Ok(DType::F64),
-        "Int" => Ok(DType::I64),
-        "Bool" => Ok(DType::Bool),
-        "String" => Ok(DType::Str),
-        other => Err(format!(
+    match super::dtypes::dtype_named(name) {
+        Some(d) => Ok(d),
+        None => Err(format!(
             "ods.cast: '{}' is not a column type. Expected one of {}",
-            other,
+            name,
             DTYPE_NAMES.join(", ")
         )),
     }
@@ -1053,29 +1140,6 @@ fn dispatch_inner(func: &str, mut args: Vec<Value>, expected: usize) -> Result<V
             let s = want_series(func, &args, 0)?;
             Ok(OdsSeries::into_value(is_in(s, &args[1])?))
         }
-        "contains" => {
-            let s = want_series(func, &args, 0)?;
-            let text = match &args[1] {
-                Value::String(t) => t.as_str(),
-                other => {
-                    return Err(format!(
-                        "ods.contains: argument 2 must be a String, got {}",
-                        other.type_name()
-                    ));
-                }
-            };
-            let Series::Str { col, validity } = s else {
-                return Err(format!(
-                    "ods.contains: argument 1 must be a String Series, got a {} Series",
-                    s.dtype()
-                ));
-            };
-            let bits: Vec<bool> = col.iter().map(|x| x.contains(text)).collect();
-            Ok(OdsSeries::into_value(Series::Bool {
-                values: std::sync::Arc::new(bits),
-                validity: validity.clone(),
-            }))
-        }
         _ => unreachable!("dispatch() checked membership"),
     }
 }
@@ -1159,6 +1223,12 @@ pub fn binary_op(
             format!("cannot compare Series[{}] with ()", side.dtype())
         }));
     }
+    // A category against text compares its codes (in level order).
+    if bop_cmp(bop)
+        && let Some(r) = category_cmp(bop, lhs, rhs)
+    {
+        return Some(r);
+    }
     let a = super::expr::operand(lhs)?;
     let b = super::expr::operand(rhs)?;
     // Elementwise work is one fused expression: `a * b + 1.0` is
@@ -1166,6 +1236,47 @@ pub fn binary_op(
     // that can raise (a division, Int arithmetic) is evaluated at once,
     // so its error is raised here.
     Some(super::expr::build("", Op::Bin(bop), vec![a, b]))
+}
+
+fn bop_cmp(b: olang_ods::fuse::BinOp) -> bool {
+    use olang_ods::fuse::BinOp as O;
+    matches!(b, O::Eq | O::Ne | O::Lt | O::Le | O::Gt | O::Ge)
+}
+
+/// `cat < "b"`, `"b" == cat`: the eager kernel over codes, which knows
+/// the levels' order.
+fn category_cmp(
+    b: olang_ods::fuse::BinOp,
+    lhs: &Value,
+    rhs: &Value,
+) -> Option<Result<Value, String>> {
+    use olang_ods::fuse::BinOp as O;
+    let cat = |v: &Value| match v {
+        Value::Native(h) => h
+            .0
+            .as_any()
+            .downcast_ref::<OdsSeries>()
+            .is_some_and(|s| s.dtype() == DType::Category),
+        _ => false,
+    };
+    let (s, t, swapped) = match (lhs, rhs) {
+        (l, Value::String(t)) if cat(l) => (series_of(l)?, t, false),
+        (Value::String(t), r) if cat(r) => (series_of(r)?, t, true),
+        _ => return None,
+    };
+    let op = match b {
+        O::Eq => CmpOp::Eq,
+        O::Ne => CmpOp::Ne,
+        O::Lt => CmpOp::Lt,
+        O::Le => CmpOp::Le,
+        O::Gt => CmpOp::Gt,
+        _ => CmpOp::Ge,
+    };
+    Some(
+        s.compare_scalar(op, Scalar::Str(t.to_string()), swapped)
+            .map(OdsSeries::into_value)
+            .map_err(|e| e.to_string()),
+    )
 }
 
 /// `-s` and `!mask` on a Series or an Expr (the native unary operator

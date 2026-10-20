@@ -250,6 +250,8 @@ fn want_labels(func: &str, arg: &Value) -> Result<Vec<String>, String> {
                 Scalar::F64(v) => Ok(Value::Float(v).to_string()),
                 Scalar::I64(v) => Ok(v.to_string()),
                 Scalar::Bool(b) => Ok(b.to_string()),
+                Scalar::Date(d) => Ok(olang_ods::temporal::format_date(d as i64)),
+                Scalar::Datetime(t) => Ok(olang_ods::temporal::format_datetime(t)),
             })
             .collect(),
         (Value::List(items), None) => items

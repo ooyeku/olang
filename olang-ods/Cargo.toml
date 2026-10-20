@@ -42,3 +42,7 @@ harness = false
 [[bench]]
 name = "expr"
 harness = false
+
+[[bench]]
+name = "dtypes"
+harness = false

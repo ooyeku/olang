@@ -1491,7 +1491,7 @@ impl Session {
             "event": "hello", "protocol": PROTOCOL, "olang": crate::version::VERSION,
             "root": self.root.to_string_lossy(), "pid": std::process::id(),
             "ops": ["hello", "eval", "command", "commands", "complete", "deps", "drop", "expand", "fields", "release", "interrupt", "page", "ping", "record", "reload", "replay", "reread", "render", "reset", "set", "shutdown", "stats", "vars"],
-            "features": ["bind", "pure", "cell", "caps", "profile", "distinct", "record", "html", "scene"],
+            "features": ["bind", "pure", "cell", "caps", "profile", "distinct", "record", "html", "scene", "dtypes"],
         });
         if let Some(nb) = &self.notebook {
             v["notebook"] = json!({
@@ -3166,6 +3166,8 @@ impl Session {
                     (Scalar::I64(p), Scalar::I64(q)) => p.cmp(q),
                     (Scalar::Bool(p), Scalar::Bool(q)) => p.cmp(q),
                     (Scalar::Str(p), Scalar::Str(q)) => p.cmp(q),
+                    (Scalar::Date(p), Scalar::Date(q)) => p.cmp(q),
+                    (Scalar::Datetime(p), Scalar::Datetime(q)) => p.cmp(q),
                     _ => Ordering::Equal,
                 };
                 if desc { o.reverse() } else { o }
@@ -3431,7 +3433,12 @@ fn series_bytes(c: &olang_ods::Series) -> u64 {
     let n = c.len() as u64;
     let bits = n.div_ceil(8);
     match c {
-        Series::F64 { .. } | Series::I64 { .. } => 8 * n + bits,
+        Series::F64 { .. } | Series::I64 { .. } | Series::Datetime { .. } => 8 * n + bits,
+        Series::Date { .. } => 4 * n + bits,
+        Series::Cat { codes, levels, .. } => {
+            let text: u64 = levels.iter().map(|l| 8 + l.len() as u64).sum();
+            4 * codes.len() as u64 + text + bits
+        }
         Series::Bool { .. } => n + bits,
         Series::Str { col, .. } => {
             let k = col.len().min(10_000);
@@ -3907,7 +3914,19 @@ fn summaries(cols: &[&olang_ods::Series]) -> J {
     let one = |c: &olang_ods::Series| -> J {
         let s = c.summarize(SUMMARY_ROWS, SUMMARY_BINS, SUMMARY_TOP);
         let mut o = json!({ "nulls": s.nulls, "distinct": s.distinct });
-        if s.numeric {
+        // A date column's histogram over its days (or microseconds), its
+        // ends written as dates (the `dtypes` feature).
+        let date_text = |x: f64| match c.dtype() {
+            olang_ods::DType::Date => olang_ods::temporal::format_date(x as i64),
+            _ => olang_ods::temporal::format_datetime(x as i64),
+        };
+        if matches!(c.dtype(), olang_ods::DType::Date | olang_ods::DType::Datetime) {
+            if let Some((lo, hi, _)) = s.range {
+                o["min"] = json!(date_text(lo));
+                o["max"] = json!(date_text(hi));
+            }
+            o["hist"] = json!(s.hist);
+        } else if s.numeric {
             if let Some((lo, hi, mean)) = s.range {
                 o["min"] = json!(lo);
                 o["max"] = json!(hi);

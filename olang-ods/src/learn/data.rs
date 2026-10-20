@@ -129,8 +129,19 @@ pub fn numeric(s: &Series, what: &str) -> Result<(Vec<f64>, Vec<bool>)> {
             values.iter().map(|&b| if b { 1.0 } else { 0.0 }).collect(),
             vec![true; n],
         ),
-        Series::Str { .. } => {
-            return Err(bad(format!("{}: needs a numeric column, got String", what)));
+        Series::Str { .. } | Series::Cat { .. } => {
+            return Err(bad(format!(
+                "{}: needs a numeric column, got {}",
+                what,
+                s.dtype()
+            )));
+        }
+        Series::Date { .. } | Series::Datetime { .. } => {
+            return Err(bad(format!(
+                "{}: needs a numeric column, got a {} (use its parts: year(), month(), weekday(), …)",
+                what,
+                s.dtype()
+            )));
         }
     };
     if let Some(bm) = s.validity() {
@@ -165,8 +176,21 @@ impl Design {
                     features.push(name.clone());
                     inputs.push(Input::Flag(name.clone()));
                 }
-                Series::Str { .. } => {
-                    let levels = levels_of(s);
+                Series::Date { .. } | Series::Datetime { .. } => {
+                    return Err(bad(format!(
+                        "learn: column '{}' is a {}; give the model its parts \
+                         (year(), month(), weekday(), …) or days since a start",
+                        name,
+                        s.dtype()
+                    )));
+                }
+                Series::Str { .. } | Series::Cat { .. } => {
+                    // A Category's levels are its own, in its order (its
+                    // first is the one dropped); text's are sorted.
+                    let levels = match s {
+                        Series::Cat { levels, .. } => levels.iter().map(str::to_string).collect(),
+                        _ => levels_of(s),
+                    };
                     if levels.is_empty() {
                         return Err(bad(format!("learn: column '{}' has no values", name)));
                     }
@@ -199,10 +223,11 @@ impl Design {
             let s = frame.column(input.name())?;
             match input {
                 Input::Numeric(name) | Input::Flag(name) => {
-                    if matches!(s, Series::Str { .. }) {
+                    if matches!(s, Series::Str { .. } | Series::Cat { .. }) {
                         return Err(bad(format!(
-                            "learn: column '{}' was numeric when the model was fit, now String",
-                            name
+                            "learn: column '{}' was numeric when the model was fit, now {}",
+                            name,
+                            s.dtype()
                         )));
                     }
                     let (vals, ok) = numeric(s, name)?;
@@ -216,13 +241,19 @@ impl Design {
                     levels,
                     drop_first,
                 } => {
-                    let Series::Str { col, .. } = s else {
+                    let text = s.key_view();
+                    let Series::Str { col, .. } = text.as_ref() else {
                         return Err(bad(format!(
-                            "learn: column '{}' was String when the model was fit, now {}",
+                            "learn: column '{}' was categorical when the model was fit, now {}",
                             name,
                             s.dtype()
                         )));
                     };
+                    let index: std::collections::HashMap<&str, usize> = levels
+                        .iter()
+                        .enumerate()
+                        .map(|(i, l)| (l.as_str(), i))
+                        .collect();
                     let skip = usize::from(*drop_first);
                     let width = levels.len() - skip;
                     let mut block = vec![vec![0.0f64; n]; width];
@@ -231,7 +262,7 @@ impl Design {
                             valid[i] = false;
                             continue;
                         }
-                        if let Ok(pos) = levels.binary_search_by(|l| l.as_str().cmp(col.get(i)))
+                        if let Some(&pos) = index.get(col.get(i))
                             && pos >= skip
                         {
                             block[pos - skip][i] = 1.0;
@@ -345,6 +376,13 @@ impl Labels {
                 Labels::Int(set.into_iter().collect())
             }
             Series::Str { .. } => Labels::Str(levels_of(s)),
+            Series::Cat { .. } => Labels::Str(levels_of(&s.key_view())),
+            Series::Date { .. } | Series::Datetime { .. } => {
+                return Err(bad(format!(
+                    "learn: a classification target must be String, Bool or Int, got {}",
+                    s.dtype()
+                )));
+            }
         };
         let codes = labels.encode(s);
         Ok((labels, codes))
@@ -353,6 +391,9 @@ impl Labels {
     /// Encode `s` by these classes; a value not among them (or a null)
     /// is `NO_CLASS`.
     pub fn encode(&self, s: &Series) -> Vec<usize> {
+        if let Some(text) = s.decoded() {
+            return self.encode(&text);
+        }
         let n = s.len();
         let mut out = vec![NO_CLASS; n];
         for (i, o) in out.iter_mut().enumerate() {

@@ -912,7 +912,7 @@ a time in it is dropped (`dates.parse("2026-01-02T23:30:00-05:00")` is
 | Now | `now` `utc_now` `today` · `stamp` — the storage form: UTC, second precision, `Z` suffix (`2026-08-31T23:40:06Z`), sortable as text · `stamp_ms` — the same at millisecond precision (`…06.503Z`), the one to key a row's version on: two edits inside one second are identical under `stamp` |
 | Build | `date(y, m, d)` → `Result` of a `Date` · `datetime(y, m, d, h, mi, s)` → a UTC moment's text · `time(h, mi, s)` |
 | Parse/format | `parse(s)` → `Result` of a `Date` · `parse_date` `parse_datetime` `parse_time` · `format_date(d, fmt)` `format_datetime(dt, fmt)` `format_time(t, fmt)` — `fmt` in strftime's `%` form (`"%B %d, %Y"`); a specifier it does not know, a trailing `%`, or a field the value lacks (`%H` of a date) is an `Err` |
-| Fields | `year` `month` `day` `hour` `minute` `second` (a moment's own, in its offset) · `weekday` — 0 Sunday, 1 Monday, … 6 Saturday |
+| Fields | `year` `month` `day` `hour` `minute` `second` (a moment's own, in its offset) · `weekday` — 0 Sunday, 1 Monday, … 6 Saturday · `iso_weekday` — 1 Monday … 7 Sunday, what a Date column's `weekday()` answers |
 | Arithmetic | `add_days` `add_weeks` `add_months` `add_years` · `diff_days(a, b)` — `a` minus `b` in days, positive when `a` is later (`d2 - d1` the same) |
 | Calendar | `start_of_week(d)` — the Monday on or before `d` · `start_of_month(d)` — its first day |
 | Day numbers | `epoch_day(d)` → `Result` of the Int days since 1970-01-01 (a stamp's day is the one it is written in; `Err` for text that is no day) · `from_epoch_day(n)` → `Result` of a `Date` (`Err` past the calendar's range) |
@@ -3047,8 +3047,9 @@ them with reporting built in.
 ## `ods` — Series and Frames
 
 The core of the data stack: a **Series** is a typed, null-aware 1-D
-column of `Int`, `Float`, `Bool`, or `String` over a contiguous native
-buffer; a **Frame** is a table of named, equal-length Series. Operators
+column of `Int`, `Float`, `Bool`, `String`, `Date`, `Datetime` or
+`Category` over a contiguous native buffer; a **Frame** is a table of
+named, equal-length Series. Operators
 are vectorized (`s * 2.0` runs one kernel over the whole column;
 `s > 2` yields a Bool mask for `ods.filter`), nulls propagate through
 arithmetic and are skipped by reductions, and the Frame verbs —
@@ -3112,11 +3113,12 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 | Positions | `argmax(s)` · `argmin(s)` (first row of the extreme, `()` if none) · `searchsorted(s, v, side = "left")` |
 | Windows | `shift(s, by)` (nulls at the edge) · `diff(s, lag = 1)` · `pct_change(s, lag = 1)` · `cum_max` · `cum_min` · `rank(s, method = "min")` — min/max/average/ordinal/dense · `rolling(s, window, agg)` — `agg` one of count, sum, mean, min, max, median, std, var — null until the window fills |
 | Recode | `recode(s, mapping, default = keep)` — through a map, an object or `[from, to]` pairs; `()` as the default nulls the unmapped |
-| Text | `a + b` on String Series, or a String Series and a String on either side — elementwise concatenation, a null cell staying null |
+| Text | `a + b` on String Series, or a String Series and a String on either side — elementwise concatenation, a null cell staying null · `lower` `upper` `trim` `trim_start` `trim_end` · `replace(s, from, to)` · `replace_re(s, pattern, to)` · `contains(s, text, case = true)` · `starts_with(s, text)` · `ends_with(s, text)` · `len_chars(s)` · `substring(s, start, end = ())` · `split_n(s, sep, i)` (piece `i`, negative from the end; null where there is none) · `pad_start(s, width, fill = " ")` · `pad_end(s, width, fill = " ")` · `to_int(s)` · `to_float(s)` (null where a cell does not read) · `to_date(s, fmt = ())` · `to_datetime(s, fmt = ())` (ISO 8601 without a format, `strptime`'s `%` directives with one; null where a cell does not read) — each over the column's text with no `String` a row, a Category's once per level |
 | Head / tail | `head(s, n)` · `tail(s, n)` — the first or last `n` values (the Frame verbs, on a Series) |
 | Distinct | `unique(s)` (first-seen order) · `n_unique(s)` · `value_counts(s)` → a value/count Frame, most frequent first |
-| Dates | `date_part(s, "year"\|"month"\|"day")` — the prefix of an ISO date or timestamp String Series, as a String Series: the derived key for a by-month `group_by` |
-| Convert type | `cast(s, "Float"\|"Int"\|"Bool"\|"String")` — what the target cannot hold becomes null, so `null_count` reports what was lost |
+| Dates | on a `Date` or `Datetime` column: `year` `quarter` `month` `day` `weekday` (ISO: 1 Monday … 7 Sunday — `dates.weekday` of one Date is 0 Sunday) `day_of_year` `week` (ISO) `hour` `minute` `second` `is_weekend` · `date(s)` (a Datetime's day) · `day_name(s)` · `month_name(s)` (Categories in calendar order) · `floor(s, "1h"\|"1d"\|"1w"\|"1mo"\|"1q"\|"1y"…)` · `add_days(s, n)` · `add_months(s, n)` (the day clamped to the month's end) · `months_between(a, b)` (calendar months from `b` to `a`) · `format(s, fmt)` — and `d + n`, `d - n` (days), `d - d` (an Int of days), `t - t` (Float seconds), comparisons with a Date, a Datetime or ISO text · `date_part(s, "year"\|"month"\|"day")` — the prefix of an ISO date or timestamp String Series, as a String Series |
+| Categories | `to_category(s, levels = ())` — codes into its distinct values in their order, or into the levels given (a value not among them null) · `levels(s)` · `codes(s)` · `dummies(s \| f, columns = (), drop_first = true, prefix = (), dtype = "Float")` — indicator columns as a Frame (a Frame's String and Category columns, or those named, each replaced where it stands) · `interact(a, b, sep = ":")` — the pairs of two columns as a Category of the pairs that occur |
+| Convert type | `cast(s, "Float"\|"Int"\|"Bool"\|"String"\|"Date"\|"Datetime"\|"Category")` — what the target cannot hold becomes null, so `null_count` reports what was lost; text reads as ISO 8601 dates, a Date's Int is its days since 1970-01-01, a Datetime's its microseconds |
 | Order / select | `sort(s, descending = false)` (nulls last) · `argsort(s, descending = false)` (sorting indices, stable) · `take(s, idx)` (gather) · `get(s, i)` (a negative position raises, as a list's does) |
 | Convert | `to_list(s)` (nulls → `()`) · `len(s)` |
 
@@ -3124,8 +3126,8 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 
 | Group | Verbs |
 |---|---|
-| Build | `frame(columns)` · `frame_from_records(records)` · `try_frame_from_records(records)` (the Result form, for records from a file, a request, or a user) · `read_csv(text)` |
-| Files | `read_csv_file(path)` · `write_csv(f, path)` · `to_csv(f)` · `read_jsonl(text)` · `read_jsonl_file(path)` · `write_jsonl(f, path)` · `to_jsonl(f)` |
+| Build | `frame(columns)` · `frame_from_records(records)` · `try_frame_from_records(records)` (the Result form, for records from a file, a request, or a user) · `read_csv(text, sep:, dates:, dtypes:, nulls:)` — `sep` one character, `dates` column names or `"auto"` (ISO dates and datetimes), `dtypes` an object of column: type, `nulls` the cells that are null |
+| Files | `read_csv_file(path)` (the same options) · `write_csv(f, path, float_fmt = ())` · `to_csv(f, float_fmt = ())` — `float_fmt` `".2f"` or `".3e"` · `read_jsonl(text)` · `read_jsonl_file(path)` (`dates:` and `dtypes:`) · `write_jsonl(f, path)` · `to_jsonl(f)` |
 | Streaming | `open_csv(path)` · `open_jsonl(path)` — then `next_chunk(r, n)` · `rows_read(r)` · `at_end(r)`, the same verbs for either |
 | Native format | `write_frame(f, path)` · `read_frame(path, columns)` · `frame_info(path)` — exact types, faster loads, one column at a time |
 | Inspect | `columns(f)` · `n_rows(f)` · `n_cols(f)` · `head(f, n)` · `tail(f, n)` · `describe(f)` · `schema(f)` · `to_records(f)` · `to_matrix(f, names)` — Float/Int columns as a list of Float lists, for `vec` |
@@ -3138,7 +3140,7 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 | Reshape | `pivot(f, index, columns, values, agg)` long→wide · `unpivot(f, ids, value_columns = the rest)` wide→long, emitting `name`/`value` |
 | Sample | `sample(f, n)` (also on a Series) — n random rows, without replacement, in original order; seeded by `random.seed` |
 | Aggregate / join | `group_by(f, key, aggs)` — each agg `[name, op, column]`, op one of count, sum, mean, min, max, median, std, var, first, last, n_unique (`[name, "count"]` counts rows) · `join` (inner) · `join_left` · `join_full` · `join_semi` · `join_anti` — all `(a, b, on, on_b = on)` · `concat(frames)` |
-| Masks | `m1 & m2` · `m1 \| m2` · `m1 ^ m2` · `!m` · `eq(s, v)` · `ne(s, v)` · `is_in(s, values)` · `contains(s, text)` · `all_of(masks)` · `any_of(masks)` · `not(mask)` — three-valued, like SQL; parenthesize a comparison `&` joins |
+| Masks | `m1 & m2` · `m1 \| m2` · `m1 ^ m2` · `!m` · `eq(s, v)` · `ne(s, v)` · `is_in(s, values)` · `contains(s, text, case = true)` · `all_of(masks)` · `any_of(masks)` · `not(mask)` — three-valued, like SQL; parenthesize a comparison `&` joins |
 
 The stack has its own chapter, **[The data stack](ods.md)**: the
 reasons for the columnar model (with the measured 50× rewrite behind

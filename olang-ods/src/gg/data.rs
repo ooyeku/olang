@@ -10,6 +10,9 @@ use std::sync::Arc;
 pub enum Column {
     Num(Vec<f64>),
     Str(Vec<Option<String>>),
+    /// A date or datetime column: seconds since 1970-01-01 (NaN for
+    /// null), and whether it has times of day.
+    Time(Vec<f64>, bool),
 }
 
 impl Column {
@@ -17,6 +20,7 @@ impl Column {
         match self {
             Column::Num(v) => v.len(),
             Column::Str(v) => v.len(),
+            Column::Time(v, _) => v.len(),
         }
     }
 

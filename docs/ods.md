@@ -85,7 +85,8 @@ Two ideas carry everything that follows:
 ## Series — the typed column
 
 A **Series** is a one-dimensional, typed, null-aware column of `Int`,
-`Float`, `Bool`, or `String` values.
+`Float`, `Bool`, `String`, `Date`, `Datetime` or `Category` values
+(the last three are [below](#dates-and-datetimes)).
 
 ### Creating one
 
@@ -500,8 +501,10 @@ are float bit patterns with NaN canonicalized.
 ### Changing a column's type
 
 `ods.cast(s, type)` converts a column, where `type` is one of
-`"Float"`, `"Int"`, `"Bool"`, or `"String"` — the names `ods.schema`
-reports. Nulls stay null.
+`"Float"`, `"Int"`, `"Bool"`, `"String"`, `"Date"`, `"Datetime"` or
+`"Category"` — the names `ods.schema` reports. Nulls stay null. Text
+casts to a Date or a Datetime as ISO 8601, a Date's Int is its days
+since 1970-01-01 and a Datetime's its microseconds.
 
 The rule that matters is what happens to a value the target type
 cannot hold: it becomes **null**, not an error and not a wrong number.
@@ -605,6 +608,145 @@ println(to_string(raw.recode(names, default: "Other").to_list()))  // ["North", 
 println(to_string(ods.to_list(ods.recode(ods.series([1, 2]), [[1, 10]]))))   // [10, 2]
 ```
 
+### Text
+
+A String column's methods are its text kernels. Each runs over the
+column's buffer and writes a new one — no `String` a row — and a null
+stays null:
+
+```olang
+let raw = ods.series(["  Old Town ", "riverside", "OLD TOWN", ()])
+println(to_string(raw.trim().lower().to_list()))   // ["old town", "riverside", "old town", ()]
+let s = ods.series(["L103773", "L108142"])
+println(to_string(s.substring(1).to_int().to_list()))        // [103773, 108142]
+println(to_string(ods.series(["a,b,c"]).split_n(",", -1).to_list()))   // ["c"]
+println(to_string(ods.series(["7"]).pad_start(3, "0").to_list()))     // ["007"]
+```
+
+`lower`, `upper`, `trim` (and `trim_start`, `trim_end`), `replace(from,
+to)`, `replace_re(pattern, to)` (the `re` module's patterns; `$1` names a
+group), `contains(text, case: true)`, `starts_with`, `ends_with`,
+`len_chars`, `substring(start, end)`, `split_n(sep, i)` (piece `i`, a
+negative `i` counting from the end), `pad_start(width, fill)` and
+`pad_end` are the `str` functions of the same names over a column, and
+agree with them cell for cell. `to_int()` and `to_float()` read numbers,
+and a cell that is not one is null, as `cast` makes it. What only narrows
+a cell — a trim, a substring, a piece — writes no text at all: its cells
+point into the column's own buffer.
+
+### Dates and datetimes
+
+A **Date** column holds days since 1970-01-01, a **Datetime** column
+microseconds since 1970-01-01T00:00:00 (naive, or UTC: a time read with
+an offset is converted). They come from text, from `dates` values, or
+from a CSV:
+
+```olang
+let days = ods.series(["2024-03-01", "2024/03/02", ()]).replace("/", "-").to_date()
+println(days)                                       // Series[Date; 3] [2024-03-01, 2024-03-02, null]
+let raw = ods.series(["21/05/2024 13:45", "01/06/2024 08:00"])
+let ts = raw.to_datetime("%d/%m/%Y %H:%M")
+println(to_string(ts.hour().to_list()))             // [13, 8]
+println(ods.series([unwrap(dates.date(2026, 8, 7))]))   // Series[Date; 1] [2026-08-07]
+```
+
+Without a format, `to_date()` and `to_datetime()` read ISO 8601 —
+`2024-03-01`, and `2024-03-01T13:45`, with seconds, a fraction and `Z` or
+an offset if it has them — through a fixed-width path that is a few
+nanoseconds a cell. With one they read `strptime`'s directives (`%Y %m %d
+%H %M %S %f %y %b %B %j %p %I %z %a %A %F %T`). A cell that does not read
+is null.
+
+A date's parts are integer arithmetic on that storage, one pass over the
+column:
+
+| Method | Answer |
+|---|---|
+| `year()` `quarter()` `month()` `day()` | Int |
+| `weekday()` | Int, ISO: 1 Monday … 7 Sunday |
+| `day_of_year()` `week()` | Int (the ISO week, 1–53) |
+| `hour()` `minute()` `second()` | Int (a Datetime's) |
+| `is_weekend()` | Bool |
+| `date()` | a Datetime's day, as a Date |
+| `day_name()` `month_name()` | a Category whose levels are the calendar's, so it sorts Monday first |
+| `floor(every)` | the start of its hour, day, week (Monday), month, quarter or year: `"1h"`, `"15m"`, `"1d"`, `"1w"`, `"1mo"`, `"1q"`, `"1y"` |
+| `add_days(n)` `add_months(n)` | the same type; a month added to January 31st is February's last day |
+| `months_between(a, b)` | Int, the calendar months from `b` to `a` (the days ignored) |
+| `format(fmt)` | text, in `strftime`'s directives |
+
+A column's `weekday()` is ISO, 1 for Monday to 7 for Sunday, as Python's
+`isoweekday` and Polars count — while `dates.weekday` of a single Date
+keeps its long-standing 0 for Sunday. `dates.iso_weekday` is the scalar
+that agrees with the column.
+
+Arithmetic and comparisons do what they mean: `d + n` and `d - n` move a
+Date by days, `d - d` is an Int of days between, `t - t` is a Float of
+seconds between two Datetimes, and a comparison takes a Date, a Datetime
+or ISO text:
+
+```olang
+use ods { col }
+let sales = ods.read_csv("day,amount\n2024-01-30,10.0\n2024-02-02,25.0\n2024-02-29,40.0\n", dates: ["day"])
+let febr = sales |> ods.filter(col("day") >= "2024-02-01")
+println(to_string((febr["day"] - febr["day"].shift(1)).to_list()))   // [(), 27]
+println(to_string(sales["day"].add_months(1).to_list()))     // [2024-02-29, 2024-03-02, 2024-03-29]
+let monthly = sales
+    |> ods.with({ month: col("day").floor("1mo") })
+    |> ods.group_by("month", [["total", "sum", "amount"]])
+println(monthly)
+```
+
+The parts, `floor`, `add_months`, `months_between` and the arithmetic are
+expression-engine operations: in `ods.with` they fuse with the operators
+and comparisons around them, so `col("ts").weekday() == 7` is one pass.
+A Date or Datetime column sorts, groups, joins, takes `unique` and
+`value_counts`, and its `min` and `max` are dates; an element read back
+(`d[0]`, `to_list`) is a `Date` value, and a Datetime's is its ISO text
+(the `dates` module's moments are text).
+
+### Categories
+
+A **Category** is a column of small codes into a list of levels — a
+handful of neighbourhoods over a million rows stored as a code a row and
+six strings. Its levels are its order: sorted, unless given.
+
+```olang
+let size = ods.series(["m", "s", "l", "m", ()]).to_category(levels: ["s", "m", "l"])
+println(to_string(size.codes().to_list()))   // [1, 0, 2, 1, ()]
+println(to_string(size.sort().to_list()))    // ["s", "m", "m", "l", ()]
+println(to_string((size >= "m").to_list()))  // [true, false, true, true, ()]
+println(ods.dummies(size, prefix: "size"))   // size_m, size_l: 0.0 or 1.0 a row
+```
+
+`to_category(levels)` takes the levels in their order; a value that is
+none of them is null. Without them a column's distinct values are the
+levels: text sorted, numbers by value, dates by date. `levels()` and
+`codes()` read them back. A Category sorts and compares by its levels'
+order, and is equal by text, so `size == "m"` and `ods.is_in(size,
+["m", "l"])` read as they would on text. Text methods run once per level.
+It groups by its codes with no hashing, joins by its text, and stays a
+Category through `filter`, `take`, `sort_by`, `concat` (whose levels it
+merges) and the native file format.
+
+`ods.dummies(s | frame, columns, drop_first: true, prefix, dtype:
+"Float")` gives the indicator columns: one per level, named
+`prefix_level`, the first left out by default (the regression
+convention; `drop_first: false` keeps it), a null row 0 in all of them.
+Given a Frame it replaces each String and Category column (or each one
+named) by its indicators, where it stands. `ods.interact(a, b)` is the
+Category of each row's pair, `a:b`, its levels the pairs that occur — an
+interaction's dummies in one call:
+
+```olang
+let calendar = ods.frame([["daytype", ["workday", "sunday", "workday"]], ["hour", [8, 8, 18]]])
+let slot = ods.interact(calendar["daytype"], calendar["hour"])
+println(to_string(slot.levels().to_list()))   // ["sunday:8", "workday:8", "workday:18"]
+println(ods.columns(ods.dummies(slot, prefix: "slot")))
+```
+
+`learn`'s models encode a Category column by its levels: the first level
+is the dropped baseline, and the coefficients come out in level order.
+
 ### Back to language values
 
 `ods.to_list(s)` converts a Series back to an ordinary list (nulls
@@ -652,6 +794,28 @@ let sales = ods.read_csv("region,amount,qty\neast,25.5,10\nwest,320.0,3\neast,,4
 println(to_string(ods.columns(sales)))
 println(to_string(ods.null_count(sales["amount"])))   // 1
 ```
+
+Four options change how it reads. `sep` is the separator (one
+character), `nulls` the cells that read as null (`[""]` unless given),
+`dtypes` an object naming a column's type — `"String"` keeps zero-padded
+codes as text, which inference would read as numbers — and `dates` names
+the columns that hold ISO dates, or `"auto"` takes every text column
+whose cells all are. A column `dates` names that holds a cell that is no
+ISO date is an error naming the cell, rather than a column quietly half
+null:
+
+```olang
+let text = "zip;opened;flag
+007;2024-03-01;NA
+042;2024-03-02;y
+"
+let shops = ods.read_csv(text, sep: ";", nulls: ["NA"], dtypes: { zip: "String", flag: "Category" }, dates: "auto")
+println(ods.schema(shops))
+```
+
+`read_jsonl` takes `dates` and `dtypes` too, and `ods.write_csv(f, path,
+float_fmt: ".2f")` (or `ods.to_csv`) writes floats to a fixed number of
+places. Dates go out as ISO 8601, so `dates: "auto"` reads them back.
 
 Because it takes text, `ods.read_csv("sales.csv")` would once have
 parsed the *path* — one column named `sales.csv`, no rows, and no error
@@ -861,6 +1025,10 @@ data
 so a program can ask what is in a file — its columns, their types, how
 many nulls each holds, and how many bytes each occupies — without loading
 any of it.
+
+A Date is four bytes a row and a Datetime eight, and a Category is
+written as its dictionary — its levels in their order, then a code a
+row — so the file keeps a category's order as well as its values.
 
 `enc` is how a String column is stored. Repetition is the normal case in
 a table: a `region` column is a handful of distinct values across a

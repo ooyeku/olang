@@ -252,6 +252,10 @@ pub fn create_dates_module() -> Value {
     module.insert("minute".to_string(), create_builtin_function("minute", 1));
     module.insert("second".to_string(), create_builtin_function("second", 1));
     module.insert("weekday".to_string(), create_builtin_function("weekday", 1));
+    module.insert(
+        "iso_weekday".to_string(),
+        create_builtin_function("iso_weekday", 1),
+    );
 
     // Utility functions
     module.insert(
@@ -380,6 +384,7 @@ fn dispatch_dates(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
         "minute" => dates_minute(args),
         "second" => dates_second(args),
         "weekday" => dates_weekday(args),
+        "iso_weekday" => dates_iso_weekday(args),
         "is_leap_year" => dates_is_leap_year(args),
         "days_in_month" => dates_days_in_month(args),
         "timestamp" => dates_timestamp(args, 1000),
@@ -1092,6 +1097,20 @@ fn dates_weekday(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     };
 
     Ok(Value::Integer(weekday))
+}
+
+/// The ISO weekday, 1 = Monday … 7 = Sunday: what a Date column's
+/// `weekday()` answers (`weekday` here keeps 0 = Sunday).
+/// Usage: dates.iso_weekday(dates.date(2024, 3, 3)) -> Ok(7)
+fn dates_iso_weekday(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 1 {
+        return Err(misuse(format!(
+            "iso_weekday expects 1 argument, got {}",
+            args.len()
+        )));
+    }
+    let (date, _) = date_arg(&args[0], "iso_weekday: argument")?;
+    Ok(Value::Integer(date.weekday().number_from_monday() as i64))
 }
 
 /// Check if a year is a leap year

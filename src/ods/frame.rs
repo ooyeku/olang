@@ -126,17 +126,17 @@ pub fn frame_of(value: &Value) -> Option<&Frame> {
 /// of their first argument (handled in series.rs).
 pub const FUNCTIONS: &[(&str, usize)] = &[
     ("frame", 1),
-    ("read_csv", 1),
-    ("read_csv_file", 1),
-    ("read_jsonl", 1),
-    ("read_jsonl_file", 1),
+    ("read_csv", 2),
+    ("read_csv_file", 2),
+    ("read_jsonl", 2),
+    ("read_jsonl_file", 2),
     ("open_csv", 1),
     ("open_jsonl", 1),
     ("next_chunk", 2),
     ("rows_read", 1),
     ("at_end", 1),
-    ("to_csv", 1),
-    ("write_csv", 2),
+    ("to_csv", 2),
+    ("write_csv", 3),
     ("to_jsonl", 1),
     ("write_jsonl", 2),
     ("read_frame", 2),
@@ -240,6 +240,10 @@ fn default_tail(func: &str, args: &[Value]) -> Option<Value> {
         // every column. An empty list would be ambiguous with asking for
         // no columns at all.
         "read_frame" => Some(Value::Unit),
+        // No options: the inferred types, a comma, empty cells null; a
+        // float written as the language writes it.
+        "read_csv" | "read_csv_file" | "read_jsonl" | "read_jsonl_file" | "to_csv"
+        | "write_csv" => Some(Value::Unit),
         // Unit means "every column that is not an id column", which is
         // what unpivot means without a list.
         "unpivot" => Some(Value::Unit),
@@ -340,14 +344,25 @@ pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
                     trimmed, trimmed, trimmed
                 ));
             }
-            read_csv(&text)
+            let opts = CsvOpts::read(func, args.get(1))?;
+            if opts.plain() {
+                return read_csv(&text).and_then(|f| opts.finish(func, f));
+            }
+            read_csv_with(&text, &opts).and_then(|f| opts.finish(func, f))
         }
         // The file-reading twin. Gated under `fs` (see caps::required):
         // without that, `ods` would be a latent filesystem capability, the
         // same hole `db.open` had before 0.60.
         "read_csv_file" => {
             let path = want_string(func, &args, 0)?;
-            match read_csv_file_shared(&path) {
+            let opts = CsvOpts::read(func, args.get(1))?;
+            let read = if opts.plain() {
+                read_csv_file_shared(&path)
+            } else {
+                std::fs::read_to_string(&path).map(|text| read_csv_with(&text, &opts))
+            }
+            .map(|r| r.and_then(|f| opts.finish(func, f)));
+            match read {
                 // A missing or unreadable file is a failure the caller can
                 // handle, so it is a Result rather than a raise — the 0.64
                 // rule. A malformed CSV *inside* a readable file is also a
@@ -365,13 +380,15 @@ pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
         }
         "read_jsonl" => {
             let text = want_string(func, &args, 0)?;
-            read_jsonl(&text)
+            let opts = CsvOpts::read(func, args.get(1))?;
+            read_jsonl(&text).and_then(|f| opts.finish(func, f))
         }
         "read_jsonl_file" => {
             let path = want_string(func, &args, 0)?;
+            let opts = CsvOpts::read(func, args.get(1))?;
             match std::fs::read_to_string(&path) {
                 Err(err) => Ok(open_error("read_jsonl_file", &path, err)),
-                Ok(text) => read_jsonl(&text),
+                Ok(text) => read_jsonl(&text).and_then(|f| opts.finish(func, f)),
             }
         }
         "open_csv" => {
@@ -412,12 +429,14 @@ pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
         // returns the string outright.
         "to_csv" => {
             let f = want_frame(func, &args, 0)?;
-            Ok(Value::String(Arc::new(to_csv(f))))
+            let ff = FloatFmt::read(func, args.get(1))?;
+            Ok(Value::String(Arc::new(to_csv_with(f, ff))))
         }
         "write_csv" => {
             let f = want_frame(func, &args, 0)?;
             let path = want_string(func, &args, 1)?;
-            match std::fs::write(&path, to_csv(f)) {
+            let ff = FloatFmt::read(func, args.get(2))?;
+            match std::fs::write(&path, to_csv_with(f, ff)) {
                 Ok(()) => Ok(Value::Ok(Box::new(Value::Unit))),
                 Err(err) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
                     "ods.write_csv: {}: {}",
@@ -2078,6 +2097,275 @@ fn read_file_arc(path: &str) -> std::io::Result<std::sync::Arc<str>> {
     Ok(unsafe { std::sync::Arc::from_raw(std::sync::Arc::into_raw(arc) as *const str) })
 }
 
+/// `read_csv`'s keywords: `sep`, `dates` (names, or "auto"), `dtypes`
+/// (name → type) and `nulls` (the cells that are null; "" alone when not
+/// given). The same `dates` and `dtypes` apply to `read_jsonl`.
+struct CsvOpts {
+    sep: u8,
+    dates: Dates,
+    dtypes: Vec<(String, olang_ods::DType)>,
+    nulls: Option<Vec<String>>,
+}
+
+enum Dates {
+    None,
+    Auto,
+    Named(Vec<String>),
+}
+
+impl CsvOpts {
+    fn read(func: &str, v: Option<&Value>) -> Result<CsvOpts, String> {
+        let mut o = CsvOpts {
+            sep: b',',
+            dates: Dates::None,
+            dtypes: Vec::new(),
+            nulls: None,
+        };
+        let map = match v {
+            None | Some(Value::Unit) => return Ok(o),
+            Some(Value::Map(m)) => m,
+            Some(other) => {
+                return Err(format!(
+                    "ods.{}: the options are sep:, dates:, dtypes: and nulls:, got {}",
+                    func,
+                    other.type_name()
+                ));
+            }
+        };
+        let names = |v: &Value, what: &str| -> Result<Vec<String>, String> {
+            match v {
+                Value::String(s) => Ok(vec![s.to_string()]),
+                Value::List(items) => items
+                    .iter()
+                    .map(|x| match x {
+                        Value::String(s) => Ok(s.to_string()),
+                        other => Err(format!(
+                            "ods.{}: {} is a list of Strings, got {}",
+                            func,
+                            what,
+                            other.type_name()
+                        )),
+                    })
+                    .collect(),
+                other => Err(format!(
+                    "ods.{}: {} is a list of Strings, got {}",
+                    func,
+                    what,
+                    other.type_name()
+                )),
+            }
+        };
+        for (k, v) in map.iter() {
+            match k.as_str() {
+                "sep" => match v {
+                    Value::String(t) if t.len() == 1 && t.is_ascii() => o.sep = t.as_bytes()[0],
+                    Value::String(t) if t.as_str() == "\\t" => o.sep = b'\t',
+                    other => {
+                        return Err(format!(
+                            "ods.{}: sep is one ASCII character, like \";\" or \"\\t\", got {}",
+                            func, other
+                        ));
+                    }
+                },
+                "dates" => {
+                    o.dates = match v {
+                        Value::Unit => Dates::None,
+                        Value::String(t) if t.as_str() == "auto" => Dates::Auto,
+                        v => Dates::Named(names(v, "dates")?),
+                    }
+                }
+                "dtypes" => {
+                    let entries: Vec<(String, Value)> = match v {
+                        Value::Map(m) => m.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                        Value::Struct { fields, .. } => {
+                            fields.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+                        }
+                        Value::Unit => Vec::new(),
+                        other => {
+                            return Err(format!(
+                                "ods.{}: dtypes is an object of column: type, like {{ zip: \"String\" }}, got {}",
+                                func,
+                                other.type_name()
+                            ));
+                        }
+                    };
+                    for (name, t) in entries {
+                        let ty = match &t {
+                            Value::String(t) => super::dtypes::dtype_named(t),
+                            _ => None,
+                        }
+                        .ok_or_else(|| {
+                            format!(
+                                "ods.{}: the type of '{}' is one of Float, Int, Bool, String, Date, Datetime, Category, got {}",
+                                func, name, t
+                            )
+                        })?;
+                        o.dtypes.push((name, ty));
+                    }
+                }
+                "nulls" => o.nulls = Some(names(v, "nulls")?),
+                other => {
+                    return Err(format!(
+                        "ods.{}: no option named '{}' — it takes sep, dates, dtypes and nulls",
+                        func, other
+                    ));
+                }
+            }
+        }
+        Ok(o)
+    }
+
+    /// Whether the fast reader can read it (a comma, no null tokens, no
+    /// column kept as text): the rest is applied to the Frame it reads.
+    fn plain(&self) -> bool {
+        self.sep == b','
+            && self.nulls.is_none()
+            && !self.dtypes.iter().any(|(_, t)| *t == olang_ods::DType::Str)
+    }
+
+    /// The types and dates asked for, applied to the Frame as read.
+    fn finish(&self, func: &str, frame: Value) -> Result<Value, String> {
+        use olang_ods::DType;
+        // A reader's Result: its Frame, finished, in an Ok.
+        if let Value::Ok(inner) = &frame {
+            return self
+                .finish(func, inner.as_ref().clone())
+                .map(|f| Value::Ok(Box::new(f)));
+        }
+        let Some(f) = frame_of(&frame) else {
+            return Ok(frame);
+        };
+        if self.dtypes.is_empty() && matches!(self.dates, Dates::None) {
+            return Ok(frame);
+        }
+        let mut out = f.clone();
+        for (name, ty) in &self.dtypes {
+            let col = f.column(name).map_err(|_| {
+                format!(
+                    "ods.{}: dtypes names '{}', which is no column. The columns are: {}",
+                    func,
+                    name,
+                    f.names().join(", ")
+                )
+            })?;
+            let cast = col
+                .cast(*ty, &crate::ast::format_float)
+                .map_err(|x| format!("ods.{}: '{}': {}", func, name, x))?;
+            out = out.with_column(name, cast).map_err(e)?;
+        }
+        let named: Vec<String> = match &self.dates {
+            Dates::None => Vec::new(),
+            Dates::Auto => f
+                .names()
+                .iter()
+                .zip(f.columns())
+                .filter(|(n, c)| {
+                    c.dtype() == DType::Str
+                        && !self.dtypes.iter().any(|(m, _)| m == *n)
+                        && olang_ods::text::iso_kind(c).is_some()
+                })
+                .map(|(n, _)| n.clone())
+                .collect(),
+            Dates::Named(ns) => ns.clone(),
+        };
+        for name in &named {
+            let col = out.column(name).map_err(|_| {
+                format!(
+                    "ods.{}: dates names '{}', which is no column. The columns are: {}",
+                    func,
+                    name,
+                    f.names().join(", ")
+                )
+            })?;
+            if matches!(col.dtype(), DType::Date | DType::Datetime) {
+                continue;
+            }
+            let olang_ods::Series::Str { col: text, validity } = col else {
+                return Err(format!(
+                    "ods.{}: dates: column '{}' reads as {}, not as dates",
+                    func,
+                    name,
+                    col.dtype()
+                ));
+            };
+            let kind = match olang_ods::text::iso_kind(col) {
+                Some(k) => k,
+                None => {
+                    let bad = (0..text.len())
+                        .find(|&i| {
+                            validity.as_ref().is_none_or(|v| v.get(i))
+                                && olang_ods::temporal::parse_iso(text.get(i).trim()).is_none()
+                        })
+                        .map(|i| text.get(i).to_string())
+                        .unwrap_or_default();
+                    return Err(format!(
+                        "ods.{}: dates: column '{}' has {:?}, which is not an ISO date \
+                         (YYYY-MM-DD[THH:MM[:SS]]); read it as text and give its format to \
+                         to_date(fmt) or to_datetime(fmt)",
+                        func, name, bad
+                    ));
+                }
+            };
+            let as_dates = col
+                .cast(kind, &crate::ast::format_float)
+                .map_err(|x| format!("ods.{}: '{}': {}", func, name, x))?;
+            out = out.with_column(name, as_dates).map_err(e)?;
+        }
+        Ok(OdsFrame::into_value(out))
+    }
+}
+
+/// The general reader with options: any separator, null tokens, columns
+/// kept as text. Cells are read whole, then each column is typed.
+fn read_csv_with(text: &str, opts: &CsvOpts) -> Result<Value, String> {
+    use olang_ods::DType;
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .delimiter(opts.sep)
+        .from_reader(text.as_bytes());
+    let headers: Vec<String> = reader
+        .headers()
+        .map_err(|err| format!("ods.read_csv: {}", err))?
+        .iter()
+        .map(|h| h.to_string())
+        .collect();
+    let mut cells: Vec<Vec<String>> = vec![Vec::new(); headers.len()];
+    let nulls: Vec<&str> = match &opts.nulls {
+        Some(ns) => ns.iter().map(String::as_str).collect(),
+        None => vec![""],
+    };
+    for record in reader.records() {
+        let record = record.map_err(|err| format!("ods.read_csv: {}", err))?;
+        for (c, cell) in cells.iter_mut().enumerate() {
+            let t = record.get(c).unwrap_or("");
+            // A null token reads as the empty cell, which every type
+            // reads as null.
+            cell.push(if nulls.contains(&t) { String::new() } else { t.to_string() });
+        }
+    }
+    let pairs: Vec<(String, Series)> = headers
+        .into_iter()
+        .zip(cells)
+        .map(|(name, raw)| {
+            let keep_text = opts
+                .dtypes
+                .iter()
+                .any(|(n, t)| *n == name && *t == DType::Str);
+            let col = if keep_text {
+                Series::from_str_options(
+                    raw.into_iter()
+                        .map(|t| if t.is_empty() { None } else { Some(t) })
+                        .collect(),
+                )
+            } else {
+                infer_column(raw)
+            };
+            (name, col)
+        })
+        .collect();
+    Frame::new(pairs).map(OdsFrame::into_value).map_err(e)
+}
+
 fn read_csv_file_shared(path: &str) -> Result<Result<Value, String>, std::io::Error> {
     let text = read_file_arc(path)?;
     Ok(read_csv_arc(text))
@@ -2214,7 +2502,62 @@ fn read_csv_impl(text: &str, shared: Option<&std::sync::Arc<str>>) -> Result<Val
 /// exactly what `read_csv` reads back as null, and floats use the same
 /// `format_float` the rest of the language prints with, so a value shown
 /// in a REPL and a value written to a file agree.
-fn to_csv(f: &Frame) -> String {
+/// How `write_csv` writes a float: `.2f` (fixed decimals) or `.3e`
+/// (scientific), with or without a leading `%`.
+#[derive(Clone, Copy)]
+enum FloatFmtKind {
+    Fixed,
+    Sci,
+}
+type FloatFmt = Option<(FloatFmtKind, usize)>;
+
+trait ReadFloatFmt {
+    fn read(func: &str, v: Option<&Value>) -> Result<FloatFmt, String>;
+}
+
+impl ReadFloatFmt for FloatFmt {
+    fn read(func: &str, v: Option<&Value>) -> Result<FloatFmt, String> {
+        let spec = match v {
+            None | Some(Value::Unit) => return Ok(None),
+            Some(Value::String(t)) => t.as_str(),
+            Some(other) => {
+                return Err(format!(
+                    "ods.{}: float_fmt is a String like \".2f\", got {}",
+                    func,
+                    other.type_name()
+                ));
+            }
+        };
+        let t = spec.strip_prefix('%').unwrap_or(spec);
+        let parsed = t.strip_prefix('.').and_then(|rest| {
+            let (digits, kind) = rest.split_at(rest.len().saturating_sub(1));
+            let k = match kind {
+                "f" => FloatFmtKind::Fixed,
+                "e" => FloatFmtKind::Sci,
+                _ => return None,
+            };
+            digits.parse::<usize>().ok().filter(|d| *d <= 17).map(|d| (k, d))
+        });
+        match parsed {
+            Some(p) => Ok(Some(p)),
+            None => Err(format!(
+                "ods.{}: float_fmt \"{}\" is not one of \".<digits>f\" or \".<digits>e\" (\".2f\", \"%.3e\")",
+                func, spec
+            )),
+        }
+    }
+}
+
+fn write_float(x: f64, ff: FloatFmt) -> String {
+    match ff {
+        None => crate::ast::format_float(x),
+        Some(_) if !x.is_finite() => crate::ast::format_float(x),
+        Some((FloatFmtKind::Fixed, d)) => format!("{:.*}", d, x),
+        Some((FloatFmtKind::Sci, d)) => format!("{:.*e}", d, x),
+    }
+}
+
+fn to_csv_with(f: &Frame, ff: FloatFmt) -> String {
     let mut w = csv::WriterBuilder::new().from_writer(Vec::new());
     // `csv` only fails here on an IO error from the sink, and the sink is
     // an in-memory Vec — so these writes cannot fail in practice. Errors
@@ -2229,9 +2572,11 @@ fn to_csv(f: &Frame) -> String {
             record.push(match col.scalar_at(row) {
                 Scalar::Null => String::new(),
                 Scalar::I64(v) => v.to_string(),
-                Scalar::F64(v) => crate::ast::format_float(v),
+                Scalar::F64(v) => write_float(v, ff),
                 Scalar::Bool(v) => v.to_string(),
                 Scalar::Str(v) => v,
+                Scalar::Date(d) => olang_ods::temporal::format_date(d as i64),
+                Scalar::Datetime(t) => olang_ods::temporal::format_datetime(t),
             });
         }
         let _ = w.write_record(&record);
@@ -2508,6 +2853,12 @@ fn to_jsonl(frame: &Frame) -> String {
                 Scalar::I64(x) => serde_json::Value::Number(x.into()),
                 Scalar::Bool(b) => serde_json::Value::Bool(b),
                 Scalar::Str(s) => serde_json::Value::String(s.to_string()),
+                Scalar::Date(d) => {
+                    serde_json::Value::String(olang_ods::temporal::format_date(d as i64))
+                }
+                Scalar::Datetime(t) => {
+                    serde_json::Value::String(olang_ods::temporal::format_datetime(t))
+                }
             };
             obj.insert(name.clone(), cell);
         }
@@ -2625,6 +2976,8 @@ fn row_key(cols: &[&Series], row: usize) -> Vec<u8> {
             Scalar::I64(x) => Some(x.to_string()),
             Scalar::Bool(b) => Some(b.to_string()),
             Scalar::Str(s) => Some(s.to_string()),
+            Scalar::Date(d) => Some(olang_ods::temporal::format_date(d as i64)),
+            Scalar::Datetime(t) => Some(olang_ods::temporal::format_datetime(t)),
         };
         match field {
             // A distinct tag for null, so it is one value rather than
@@ -2682,6 +3035,17 @@ fn concat(frames: &[Value]) -> Result<Value, String> {
 
     let mut pairs = Vec::with_capacity(names.len());
     for name in &names {
+        // Columns of one type stack as they are (a Date stays a Date, a
+        // Category merges its levels).
+        let cols: Vec<&Series> = parts
+            .iter()
+            .map(|f| f.column(name))
+            .collect::<Result<_, _>>()
+            .map_err(e)?;
+        if cols.iter().all(|c| c.dtype() == cols[0].dtype()) {
+            pairs.push((name.clone(), olang_ods::frame::stack(&cols)));
+            continue;
+        }
         // Collect the column from every Frame as language values, which
         // is what lets `series_from_list` apply the same widening rule a
         // literal list gets: an Int column meeting a Float one becomes

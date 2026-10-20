@@ -51,6 +51,32 @@ fn texts(v: &Value, what: &str) -> Result<Vec<String>, String> {
 
 fn column_of(series: &Series) -> Column {
     match series {
+        // A date is time on an axis, in seconds.
+        Series::Date { values, .. } => Column::Time(
+            (0..values.len())
+                .map(|i| {
+                    if series.validity().is_none_or(|v| v.get(i)) {
+                        values[i] as f64 * 86400.0
+                    } else {
+                        f64::NAN
+                    }
+                })
+                .collect(),
+            false,
+        ),
+        Series::Datetime { values, .. } => Column::Time(
+            (0..values.len())
+                .map(|i| {
+                    if series.validity().is_none_or(|v| v.get(i)) {
+                        values[i] as f64 / 1e6
+                    } else {
+                        f64::NAN
+                    }
+                })
+                .collect(),
+            true,
+        ),
+        Series::Cat { .. } => column_of(&series.key_view()),
         Series::F64 { .. } | Series::I64 { .. } => Column::Num(
             (0..series.len())
                 .map(|i| match series.scalar_at(i) {

@@ -26,6 +26,7 @@ below made a measured difference of between 2× and several hundred times.
 - [Bulk data belongs in ods](#bulk-data-belongs-in-ods)
 - [Automatic parallelism in ods](#automatic-parallelism-in-ods)
 - [The expression engine](#the-expression-engine)
+- [Text, dates and categories](#text-dates-and-categories)
 - [What a program costs in memory](#what-a-program-costs-in-memory)
 
 ## Put hot loops in functions
@@ -394,6 +395,54 @@ a few pieces a worker (16 to 128 chunks each) and computes what the
 sequential run does, bit for bit; a reduction's pieces have a fixed
 size per plan, and their partial sums are added in order, so its result
 is the same on any number of threads.
+
+## Text, dates and categories
+
+A Date is an `i32` of days and a Datetime an `i64` of microseconds, so
+a date's parts are integer arithmetic (civil-from-days, its divisions by
+constants) in the expression engine: one fused, chunked pass that fans
+out like any other plan. ISO 8601 text reads through a fixed-width path;
+a format goes through a small `strptime`. Text kernels write one buffer
+and a span a row, and `trim`, `substring` and `split_n` write no text at
+all (their spans point into the column's buffer). A Category's text
+kernels run once per level; it groups by its codes with no hashing, and
+its indicator columns are zeroed allocations and one pass over the
+codes.
+
+Measured with `cargo bench -p olang-ods --bench dtypes` and
+`olang-ods/benches/dtypes.py` (pandas 3.0.5 with its default `str`
+dtype, no pyarrow), 1M rows, milliseconds, fastest of seven, Apple M5
+Pro (18 threads). Text is about fourteen bytes a cell; categories have
+twenty levels, and the group-bys 1,000.
+
+| Kernel | ods, one thread | ods, parallel | pandas |
+|---|---|---|---|
+| `to_datetime()`, ISO text | 9.17 | | 44.9 (`to_datetime(format="ISO8601")`) |
+| `to_date()`, ISO text | 6.83 | | 47.2 |
+| `to_datetime("%d/%m/%Y %H:%M")` | 22.2 | | 609 |
+| `hour()` | 0.47 | 0.10 | 19.2 (`dt.hour`) |
+| `weekday()` | 0.70 | 0.11 | 20.9 |
+| `year()` | 3.55 | 0.47 | 18.9 |
+| `month()` | 3.09 | 0.41 | 19.0 |
+| `floor("1h")` | 0.77 | 0.12 | 1.03 (`dt.floor("h")`) |
+| `floor("1mo")` | 11.4 | 1.28 | 67.2 (`to_period("M")`) |
+| `lower()` | 11.9 | | 43.2 (`.str.lower`) |
+| `upper()` | 12.6 | | 57.2 |
+| `trim()` | 4.48 | | 56.4 (`.str.strip`) |
+| `contains("ark")` | 9.99 | | 45.1 (`regex=False`) |
+| `contains("ark", case: false)` | 12.3 | | 59.9 |
+| `replace("o", "0")` | 23.9 | | 71.4 (`regex=False`) |
+| `len_chars()` | 2.82 | | 22.0 (`.str.len`) |
+| `split_n(" ", 2)` | 22.7 | | 293 (`.str.split().str[2]`) |
+| `to_category()` | 2.01 | | 29.5 (`astype("category")`) |
+| `dummies`, 20 levels | 1.94 | | 6.40 (`get_dummies(dtype=float)`) |
+| `lower()` of a Category | 0.96 | | 3.02 (`cat.str.lower`) |
+| `group_by` a Category, `sum` | 1.09 | | 5.51 (`observed=True`) |
+| `group_by` the same as text, `sum` | 1.82 | | 25.1 |
+
+The parts parallelize past the engine's thresholds (a part costs four
+operations, so a column of 500,000 rows fans out); the text kernels and
+parsing run on one thread, as pandas' do, and are ahead of it there.
 
 ## What a program costs in memory
 

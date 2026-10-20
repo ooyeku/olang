@@ -37,6 +37,8 @@ pub fn full(n: usize, v: &Scalar) -> Series {
             }
         }
         Scalar::Null => Series::from_f64_options(vec![None; n]),
+        Scalar::Date(d) => Series::from_dates(vec![*d; n]),
+        Scalar::Datetime(t) => Series::from_datetimes(vec![*t; n]),
     }
 }
 
@@ -90,24 +92,7 @@ fn gather_validity(s: &Series, idx: &[usize]) -> Option<Bitmap> {
 /// A gather that keeps a fully valid column bitmap-free.
 fn gather_all(s: &Series, idx: &[usize]) -> Series {
     let validity = gather_validity(s, idx).filter(|b| !b.all_valid());
-    match s {
-        Series::F64 { values, .. } => Series::F64 {
-            values: Arc::new(idx.iter().map(|&i| values[i]).collect()),
-            validity,
-        },
-        Series::I64 { values, .. } => Series::I64 {
-            values: Arc::new(idx.iter().map(|&i| values[i]).collect()),
-            validity,
-        },
-        Series::Bool { values, .. } => Series::Bool {
-            values: Arc::new(idx.iter().map(|&i| values[i]).collect()),
-            validity,
-        },
-        Series::Str { col, .. } => Series::Str {
-            col: col.gather(idx),
-            validity,
-        },
-    }
+    s.gather_under(idx, validity)
 }
 
 impl Series {
@@ -239,6 +224,25 @@ impl Series {
                     .find(|&i| values[i] == want_max)
                     .or_else(|| (0..values.len()).find(|&i| valid(i)))
             }
+            Series::Date { .. } | Series::Datetime { .. } => {
+                return self.physical().expect("temporal").arg_extreme(want_max);
+            }
+            Series::Cat { codes, .. } => {
+                let mut best: Option<usize> = None;
+                for (i, &x) in codes.iter().enumerate() {
+                    if !valid(i) {
+                        continue;
+                    }
+                    best = match best {
+                        Some(b) if (want_max && x > codes[b]) || (!want_max && x < codes[b]) => {
+                            Some(i)
+                        }
+                        None => Some(i),
+                        keep => keep,
+                    };
+                }
+                best
+            }
         })
     }
 
@@ -278,6 +282,9 @@ impl Series {
             Series::F64 { values, .. } => sort!(|&a, &b| values[b].total_cmp(&values[a])),
             Series::I64 { values, .. } => sort!(|&a, &b| values[b].cmp(&values[a])),
             Series::Str { col, .. } => sort!(|&a, &b| col.get(b).cmp(col.get(a))),
+            Series::Date { values, .. } => sort!(|&a, &b| values[b].cmp(&values[a])),
+            Series::Datetime { values, .. } => sort!(|&a, &b| values[b].cmp(&values[a])),
+            Series::Cat { codes, .. } => sort!(|&a, &b| codes[b].cmp(&codes[a])),
             Series::Bool { .. } => {
                 return Err(OdsError::TypeMismatch(
                     "argsort is not defined for Bool series".to_string(),
@@ -542,9 +549,10 @@ impl Series {
                         validity: finish(words),
                     };
                 }
-                Series::Str { .. } => {}
+                _ => {}
             }
-            // Text: the source row of each position, then a gather.
+            // Text and the rest: the source row of each position, then a
+            // gather.
             for (w, &bits) in v.words().iter().enumerate() {
                 let lo = w * 64;
                 let hi = (lo + 64).min(n);
@@ -603,24 +611,7 @@ impl Series {
             let bm = Bitmap::from_words(n, words);
             (!bm.all_valid()).then_some(bm)
         };
-        match self {
-            Series::F64 { values, .. } => Series::F64 {
-                values: Arc::new(src.iter().map(|&i| values[i]).collect()),
-                validity,
-            },
-            Series::I64 { values, .. } => Series::I64 {
-                values: Arc::new(src.iter().map(|&i| values[i]).collect()),
-                validity,
-            },
-            Series::Bool { values, .. } => Series::Bool {
-                values: Arc::new(src.iter().map(|&i| values[i]).collect()),
-                validity,
-            },
-            Series::Str { col, .. } => Series::Str {
-                col: col.gather(src),
-                validity,
-            },
-        }
+        self.gather_under(src, validity)
     }
 
     /// Nulls between two valid values filled on the straight line
@@ -808,6 +799,8 @@ fn key_text(s: &Scalar) -> String {
         Scalar::I64(x) => format!("n{}", x),
         Scalar::Bool(b) => format!("b{}", b),
         Scalar::Str(t) => format!("s{}", t),
+        Scalar::Date(d) => format!("d{}", d),
+        Scalar::Datetime(t) => format!("t{}", t),
         Scalar::Null => "null".to_string(),
     }
 }
@@ -817,7 +810,10 @@ fn set_validity(s: &mut Series, v: Option<Bitmap>) {
         Series::F64 { validity, .. }
         | Series::I64 { validity, .. }
         | Series::Bool { validity, .. }
-        | Series::Str { validity, .. } => *validity = v,
+        | Series::Str { validity, .. }
+        | Series::Date { validity, .. }
+        | Series::Datetime { validity, .. }
+        | Series::Cat { validity, .. } => *validity = v,
     }
 }
 

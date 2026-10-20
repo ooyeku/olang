@@ -42,6 +42,9 @@
 //! | `Bool` | bitmap of `rows` bits |
 //! | `String`, `enc=plain` | `rows + 1` × u64 offsets, then the UTF-8 blob |
 //! | `String`, `enc=dict` | u64 entry count, `entries + 1` × u64 offsets, the blob, then `rows` × u32 codes |
+//! | `Date` | `rows` × i32 days since 1970-01-01, little-endian |
+//! | `Datetime` | `rows` × i64 microseconds since 1970-01-01T00:00:00, little-endian |
+//! | `Category`, `enc=dict` | as a String's dictionary: the levels, in their order, then the codes |
 //!
 //! A String column is written whichever of those two ways is smaller,
 //! and the header says which. Repetition is the normal case in a
@@ -170,6 +173,43 @@ fn encode_column(series: &Series) -> (Vec<u8>, Encoding, usize) {
             out.extend_from_slice(&bitmap(rows, |i| {
                 matches!(series.scalar_at(i), Scalar::Bool(true))
             }));
+        }
+        DType::Date | DType::Datetime => {
+            let phys = series.physical().expect("temporal");
+            let olang_ods::Series::I64 { values, .. } = &phys else {
+                unreachable!("a date's storage is Int")
+            };
+            let valid = |i: usize| series.validity().is_none_or(|v| v.get(i));
+            for (i, &v) in values.iter().enumerate() {
+                let v = if valid(i) { v } else { 0 };
+                if series.dtype() == DType::Date {
+                    out.extend_from_slice(&(v as i32).to_le_bytes());
+                } else {
+                    out.extend_from_slice(&v.to_le_bytes());
+                }
+            }
+        }
+        // A category is its dictionary: the levels as they stand (their
+        // order is the category's), then a code a row.
+        DType::Category => {
+            let olang_ods::Series::Cat { codes, levels, .. } = series else {
+                unreachable!("a category")
+            };
+            encoding = Encoding::Dict;
+            let valid = |i: usize| series.validity().is_none_or(|v| v.get(i));
+            let mut blob = Vec::new();
+            let mut offsets = Vec::with_capacity((levels.len() + 1) * 8);
+            offsets.extend_from_slice(&0u64.to_le_bytes());
+            for l in levels.iter() {
+                blob.extend_from_slice(l.as_bytes());
+                offsets.extend_from_slice(&(blob.len() as u64).to_le_bytes());
+            }
+            out.extend_from_slice(&(levels.len() as u64).to_le_bytes());
+            out.extend_from_slice(&offsets);
+            out.extend_from_slice(&blob);
+            for (i, &c) in codes.iter().enumerate() {
+                out.extend_from_slice(&(if valid(i) { c } else { 0 }).to_le_bytes());
+            }
         }
         DType::Str => {
             let values = string_values(series);
@@ -315,6 +355,9 @@ fn dtype_of(name: &str) -> Result<DType, String> {
         "Float" => Ok(DType::F64),
         "Bool" => Ok(DType::Bool),
         "String" => Ok(DType::Str),
+        "Date" => Ok(DType::Date),
+        "Datetime" => Ok(DType::Datetime),
+        "Category" => Ok(DType::Category),
         other => Err(bad(format!("unknown column type '{}'", other))),
     }
 }
@@ -449,6 +492,63 @@ fn decode_column(spec: &ColumnSpec, rows: usize, block: &[u8]) -> Result<Series,
                 out.push(present(i).then(|| present_at(values, i)));
             }
             Series::from_bool_options(out)
+        }
+        DType::Date => {
+            let mut out = Vec::with_capacity(rows);
+            for i in 0..rows {
+                let raw = i32::from_le_bytes(take::<4>(values, i * 4)?);
+                out.push(present(i).then_some(raw));
+            }
+            Series::from_date_options(out)
+        }
+        DType::Datetime => {
+            let mut out = Vec::with_capacity(rows);
+            for i in 0..rows {
+                let raw = i64::from_le_bytes(take::<8>(values, i * 8)?);
+                out.push(present(i).then_some(raw));
+            }
+            Series::from_datetime_options(out)
+        }
+        DType::Category => {
+            if spec.encoding != Encoding::Dict {
+                return Err(bad("a category column is written as a dictionary"));
+            }
+            let count = u64::from_le_bytes(take::<8>(values, 0)?) as usize;
+            let codes_at = values
+                .len()
+                .checked_sub(rows * 4)
+                .ok_or_else(|| bad("a category's codes are truncated"))?;
+            let table_end = 8 + (count + 1) * 8;
+            if codes_at < table_end {
+                return Err(bad("a category's levels are truncated"));
+            }
+            let blob = &values[table_end..codes_at];
+            let mut levels = Vec::with_capacity(count);
+            for k in 0..count {
+                let a = u64::from_le_bytes(take::<8>(values, 8 + k * 8)?) as usize;
+                let b = u64::from_le_bytes(take::<8>(values, 8 + (k + 1) * 8)?) as usize;
+                if b < a || b > blob.len() {
+                    return Err(bad("a level's offset points outside the blob"));
+                }
+                levels.push(
+                    std::str::from_utf8(&blob[a..b])
+                        .map_err(|_| bad("a category holds invalid UTF-8"))?
+                        .to_string(),
+                );
+            }
+            let mut codes = Vec::with_capacity(rows);
+            let mut ok = Vec::with_capacity(rows);
+            for i in 0..rows {
+                let c = u32::from_le_bytes(take::<4>(values, codes_at + i * 4)?);
+                let p = present(i);
+                if p && c as usize >= count {
+                    return Err(bad("a category code is out of range"));
+                }
+                codes.push(if p { c } else { 0 });
+                ok.push(p);
+            }
+            let validity = (!ok.iter().all(|&b| b)).then(|| olang_ods::Bitmap::from_bools(&ok));
+            Series::category(codes, olang_ods::StrCol::from_strings(levels), validity)
         }
         DType::Str => {
             // Both layouts are an offset table over a blob; they differ

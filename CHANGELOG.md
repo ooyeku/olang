@@ -9,6 +9,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Dates, datetimes, categories and text columns (data ergonomics
+  D2).** Three new column types: `Date` (an `i32` of days since
+  1970-01-01), `Datetime` (an `i64` of microseconds, naive or UTC) and
+  `Category` (`u32` codes into ordered text levels, what `.olc` already
+  wrote as a dictionary). They come from text (`to_date(fmt?)`,
+  `to_datetime(fmt?)` — ISO 8601 by a fixed-width path, or `strptime`'s
+  `%` directives — and `cast`), from `dates` values
+  (`ods.series([d1, d2])`), from `read_csv(dates: […] | "auto")`, and
+  `to_category(levels?)`. A date's parts are expression-engine
+  operations that fuse and fan out: `year quarter month day weekday`
+  (ISO, 1 Monday … 7 Sunday; `dates.iso_weekday` is the scalar that
+  agrees, `dates.weekday` keeps 0 Sunday) `day_of_year week hour minute
+  second is_weekend date`, `floor("1h" | "1d" | "1w" | "1mo" | "1q" |
+  "1y" …)`, `add_days`, `add_months` (clamped to the month's end),
+  `months_between`; `d + n`, `d - d` (Int days), `t - t` (Float
+  seconds), and comparisons with a Date, a Datetime or ISO text, in
+  `ods.col` expressions too; `day_name()`/`month_name()` are Categories
+  in calendar order, `format(fmt)` writes text. Text methods run over a
+  column's spans with no `String` a row (a trim, substring or piece
+  writes no text at all): `lower upper trim trim_start trim_end
+  replace replace_re contains(case:) starts_with ends_with len_chars
+  substring split_n pad_start pad_end to_int to_float`. A Category
+  sorts and compares by its levels, equals by text, groups by its codes
+  (no hashing), joins by text, merges levels in `concat`, and runs text
+  methods once per level; `levels()`, `codes()`, `ods.dummies(s |
+  frame, columns, drop_first: true, prefix, dtype)` (indicator columns,
+  a Frame's replaced where they stand) and `ods.interact(a, b)` (the
+  pairs that occur). Every kernel handles the types: `sort`, `argsort`,
+  `unique`, `value_counts`, `group_by` (min/max/first/last of dates),
+  joins, `shift`, `fill_null`, `is_in`, `min`/`max`, `rank`, `pivot`
+  names, `.olc` (`Date`, `Datetime`, `Category enc=dict`), CSV and
+  JSON lines (ISO text out, `dates:` back in). `read_csv` and
+  `read_csv_file` take `sep:`, `dates:`, `dtypes:` and `nulls:`;
+  `read_jsonl` takes `dates:` and `dtypes:`; `write_csv`/`to_csv` take
+  `float_fmt:` (`".2f"`, `".3e"`). A Date element is a `dates` Date, a
+  Datetime element its ISO text. `learn` encodes a Category by its
+  levels (its first the baseline) and `learn.one_hot` takes one; a gg
+  axis given a Date or Datetime column is a time axis with no text
+  parsed. The REPL protocol says `dtypes` in its hello features, writes
+  a date column's summary ends as dates and sorts a table by a date.
+  All of it beats pandas 3.0.5 at 1M rows (docs/performance.md, "Text,
+  dates and categories"; `olang-ods/benches/dtypes.rs`, `dtypes.py`).
+  tests/ods_dtypes_test.rs (three tiers: each kernel against `dates.*`
+  and `str.*` element by element, nulls, round trips, groups, joins,
+  errors, models, gg); olang-ods unit tests (four centuries of
+  civil arithmetic, ISO and `strptime` reading, truncation, the text
+  kernels); ods.md (Text, Dates and datetimes, Categories; reading CSV
+  with options; the native format), stdlib.md.
+
 - **Names, methods and operators for native values (the data
   ergonomics prerequisites L1–L6).** A native builtin registers its
   parameters (`src/native_sig.rs`): `ods.rolling(s, window: 2, agg:

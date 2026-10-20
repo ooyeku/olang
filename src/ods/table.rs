@@ -38,7 +38,9 @@ impl Align {
         // Numbers line up on their last digit, text on its first letter.
         match dtype {
             DType::F64 | DType::I64 => Align::Right,
-            DType::Bool | DType::Str => Align::Left,
+            DType::Bool | DType::Str | DType::Date | DType::Datetime | DType::Category => {
+                Align::Left
+            }
         }
     }
 
@@ -104,6 +106,8 @@ pub fn scalar_text(scalar: Scalar) -> Option<String> {
         Scalar::I64(x) => x.to_string(),
         Scalar::Bool(b) => b.to_string(),
         Scalar::Str(s) => s.to_string(),
+        Scalar::Date(d) => olang_ods::temporal::format_date(d as i64),
+        Scalar::Datetime(t) => olang_ods::temporal::format_datetime(t),
         Scalar::Null => return None,
     })
 }
@@ -124,6 +128,8 @@ fn cell(scalar: Scalar, shortened: &mut bool) -> String {
         Scalar::I64(x) => x.to_string(),
         Scalar::Bool(b) => b.to_string(),
         Scalar::Str(s) => s.to_string(),
+        Scalar::Date(d) => olang_ods::temporal::format_date(d as i64),
+        Scalar::Datetime(t) => olang_ods::temporal::format_datetime(t),
         Scalar::Null => "—".to_string(),
     })
 }
