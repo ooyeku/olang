@@ -614,6 +614,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A quit from outside reaches the program (macOS).** The Dock's Quit,
+  AppleScript's `quit app`, a logout, a restart or a shutdown
+  (`applicationShouldTerminate:`) used to end the process at once: winit
+  only says the loop is ending, which the engine did not route, so
+  Loom's and Studio's quit never ran — no hot-exit write, no session
+  saved, no instance released, children left running. `gui.hold_quit(true)`
+  now makes it the program's `quit` event (`why`: quit, logout, restart,
+  shutdown) and answers the platform NSTerminateLater; the program's end
+  replies and the process exits with its status. `gui.platform()` says
+  `quit_hold`; `gui.input` takes a `"quit"`. Loom's run loop holds quits
+  and sends the message ⌘Q sends (Loom commit). tests/gui_macos_quit_test.rs
+  sends the request to a real window; checked by hand with Studio in a
+  temporary home: its session and settings written, its instance released.
+
 - **`olang notebook export` no longer panics on a chart with text beyond
   ASCII** (`gg.labs(x: "°C")`, a title in 温度): the SVG check walked
   bytes and sliced a word starting inside a character. A unit test in

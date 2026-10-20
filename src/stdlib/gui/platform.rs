@@ -133,6 +133,11 @@ pub fn host(spawn: impl FnOnce() -> std::thread::JoinHandle<i32>) -> i32 {
 }
 
 fn program_done(code: i32) {
+    // An external quit the program was finishing: the platform is told
+    // the application may now end (it ends the process with this code).
+    if quit_hold::finish(code) {
+        return;
+    }
     let state = LOOP.lock().unwrap_or_else(|e| e.into_inner());
     match &*state {
         LoopState::Running(p) => {
@@ -346,6 +351,10 @@ pub fn capabilities() -> Value {
         ("a11y_depth", b(true)),
         // `gui.set`'s `flash`: the repaint rainbow (damage.rs)
         ("flash", b(true)),
+        // `gui.hold_quit`: an external quit (the Dock's Quit, AppleScript's
+        // `quit`, a logout, a restart, a shutdown) is the program's `quit`
+        // event, and the application ends once the program has
+        ("quit_hold", b(mac)),
     ])
 }
 
@@ -1490,6 +1499,29 @@ fn observe_documents() {
             >(open),
             c"v@:@@".as_ptr(),
         );
+        let should: unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject) -> usize =
+            quit_hold::app_should_terminate;
+        objc2::ffi::class_addMethod(
+            cls,
+            objc2::sel!(applicationShouldTerminate:),
+            std::mem::transmute::<
+                unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject) -> usize,
+                Imp,
+            >(should),
+            c"Q@:@".as_ptr(),
+        );
+        let reply: unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject) =
+            quit_hold::app_reply_terminate;
+        objc2::ffi::class_addMethod(
+            cls,
+            objc2::sel!(olangReplyTerminate:),
+            std::mem::transmute::<
+                unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject),
+                Imp,
+            >(reply),
+            c"v@:@".as_ptr(),
+        );
+        quit_hold::set_delegate(obj as usize);
         objc2::ffi::class_addMethod(
             cls,
             objc2::sel!(newWindowForTab:),
@@ -1572,6 +1604,13 @@ impl ApplicationHandler<Cmd> for App {
 
     fn window_event(&mut self, el: &ActiveEventLoop, wid: WindowId, we: WindowEvent) {
         self.contained("window_event", |app| app.on_window_event(el, wid, we));
+    }
+
+    // The platform is ending the application (AppKit's terminate, after
+    // the program finished an external quit it held): the process ends
+    // with the program's own code, its output flushed.
+    fn exiting(&mut self, _el: &ActiveEventLoop) {
+        quit_hold::exiting();
     }
 }
 
@@ -2215,6 +2254,11 @@ impl App {
 
 pub fn open(opts: OpenOpts) -> Result<u64, String> {
     crate::boot_trace::mark("a window asked for (gui.open)");
+    // while the platform waits for an external quit to finish, its loop
+    // runs no handler: a request that waits for one would never return
+    if quit_hold::asked() {
+        return Err("gui.open: the application is ending".to_string());
+    }
     let p = proxy().map_err(|e| format!("gui.open: {e}"))?;
     let id = super::next_id();
     let (tx, rx) = crossbeam_channel::bounded(1);
@@ -2298,6 +2342,9 @@ pub fn dialog(kind: &str, opts: &Value) -> Result<Value, String> {
         return Err(format!(
             "gui.dialog: unknown kind \"{kind}\" (open, open_many, save, folder, message)"
         ));
+    }
+    if quit_hold::asked() {
+        return Err("gui.dialog: the application is ending".to_string());
     }
     let p = proxy().map_err(|e| format!("gui.dialog: {e}"))?;
     let (tx, rx) = crossbeam_channel::bounded(1);
@@ -4648,4 +4695,152 @@ fn accel_spelling(keys: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("+")
+}
+
+/// An external quit held for the program: the Dock's Quit, AppleScript's
+/// `quit app`, a logout, a restart or a shutdown (AppKit's
+/// `applicationShouldTerminate:`). winit only says the loop is ending
+/// (`applicationWillTerminate:`) and the process ended with nothing of
+/// the program's quit run — no session saved, no children stopped. A
+/// program that asks (`gui.hold_quit(true)`, Loom's run loop) hears the
+/// request as a `quit` event (`why`: "quit", "logout", "restart" or
+/// "shutdown") and the platform waits (NSTerminateLater) until the
+/// program ends; its end replies, and the process exits with its code.
+pub mod quit_hold {
+    use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
+
+    static HELD: AtomicBool = AtomicBool::new(false);
+    static ASKED: AtomicBool = AtomicBool::new(false);
+    static CODE: AtomicI32 = AtomicI32::new(0);
+    static DELEGATE: AtomicUsize = AtomicUsize::new(0);
+
+    /// The program holds external quits (`true`) or lets them end the
+    /// application at once (`false`, the default).
+    pub fn hold(on: bool) {
+        HELD.store(on, Ordering::SeqCst);
+    }
+
+    /// Whether an external quit is waiting for the program to end.
+    pub fn asked() -> bool {
+        ASKED.load(Ordering::SeqCst)
+    }
+
+    pub(super) fn set_delegate(ptr: usize) {
+        DELEGATE.store(ptr, Ordering::SeqCst);
+    }
+
+    /// The platform asks to end the application: `true` when the request
+    /// is the program's to finish (it heard `quit`), `false` to end now.
+    pub fn ask(why: &str) -> bool {
+        if !HELD.load(Ordering::SeqCst) {
+            return false;
+        }
+        // asked again while the program finishes: still waiting
+        if !ASKED.swap(true, Ordering::SeqCst) {
+            super::emit(vec![super::event("quit", vec![("why", super::s(why))])]);
+        }
+        true
+    }
+
+    /// The program ended: when it was finishing an external quit, reply
+    /// to the platform (which then ends the process — `exiting`) and
+    /// answer `true`; a reply that never comes ends the process anyway.
+    pub(super) fn finish(code: i32) -> bool {
+        if !asked() {
+            return false;
+        }
+        CODE.store(code, Ordering::SeqCst);
+        #[cfg(target_os = "macos")]
+        {
+            let delegate = DELEGATE.load(Ordering::SeqCst);
+            if delegate != 0 {
+                // SAFETY: the application's delegate, alive for the
+                // process; performSelectorOnMainThread is callable from
+                // any thread, and runs in the common modes — the modal
+                // panel mode AppKit waits for the reply in among them.
+                unsafe {
+                    let obj = delegate as *mut objc2::runtime::AnyObject;
+                    let nil: *mut objc2::runtime::AnyObject = std::ptr::null_mut();
+                    let _: () = objc2::msg_send![&*obj,
+                        performSelectorOnMainThread: objc2::sel!(olangReplyTerminate:),
+                        withObject: nil,
+                        waitUntilDone: false];
+                }
+            }
+        }
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            exiting();
+        });
+        true
+    }
+
+    /// The process ends with the program's code, its output flushed.
+    pub(super) fn exiting() {
+        if asked() {
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+            let _ = std::io::stderr().flush();
+            std::process::exit(CODE.load(Ordering::SeqCst));
+        }
+    }
+
+    /// Why the application is asked to end: the quit Apple event's
+    /// reason (`kAEQuitReason`), "quit" when it gives none.
+    #[cfg(target_os = "macos")]
+    fn reason() -> &'static str {
+        // SAFETY: AppKit's shared event manager and the event it is
+        // handling, read on the main thread inside the delegate call.
+        unsafe {
+            let Some(cls) = objc2::runtime::AnyClass::get(c"NSAppleEventManager") else {
+                return "quit";
+            };
+            let mgr: *mut objc2::runtime::AnyObject = objc2::msg_send![cls, sharedAppleEventManager];
+            if mgr.is_null() {
+                return "quit";
+            }
+            let ev: *mut objc2::runtime::AnyObject = objc2::msg_send![&*mgr, currentAppleEvent];
+            if ev.is_null() {
+                return "quit";
+            }
+            let why: *mut objc2::runtime::AnyObject =
+                objc2::msg_send![&*ev, attributeDescriptorForKeyword: u32::from_be_bytes(*b"why?")];
+            if why.is_null() {
+                return "quit";
+            }
+            let code: u32 = objc2::msg_send![&*why, enumCodeValue];
+            match &code.to_be_bytes() {
+                b"logo" | b"rlgo" => "logout",
+                b"rrst" | b"rest" => "restart",
+                b"rsdn" | b"shut" => "shutdown",
+                _ => "quit",
+            }
+        }
+    }
+
+    /// `applicationShouldTerminate:` — NSTerminateLater (2) when the
+    /// program finishes the quit, NSTerminateNow (1) otherwise.
+    #[cfg(target_os = "macos")]
+    pub(super) unsafe extern "C-unwind" fn app_should_terminate(
+        _this: *mut objc2::runtime::AnyObject,
+        _cmd: objc2::runtime::Sel,
+        _app: *mut objc2::runtime::AnyObject,
+    ) -> usize {
+        super::contain_callback("should_terminate", || if ask(reason()) { 2 } else { 1 }).unwrap_or(1)
+    }
+
+    /// The reply, on the main thread: the application may end.
+    #[cfg(target_os = "macos")]
+    pub(super) unsafe extern "C-unwind" fn app_reply_terminate(
+        _this: *mut objc2::runtime::AnyObject,
+        _cmd: objc2::runtime::Sel,
+        _arg: *mut objc2::runtime::AnyObject,
+    ) {
+        super::contain_callback("reply_terminate", || {
+            if let Some(mtm) = objc2_foundation::MainThreadMarker::new() {
+                let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
+                app.replyToApplicationShouldTerminate(true);
+            }
+        });
+    }
 }

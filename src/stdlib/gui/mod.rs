@@ -85,6 +85,7 @@ const FUNCTIONS: &[(&str, usize)] = &[
     ("wake", 0),
     ("prepare", 0),
     ("turn", 1),
+    ("hold_quit", 1),
     ("flatten", 4),
     ("flat_emit", 5),
     ("flat_join", 4),
@@ -190,6 +191,16 @@ fn gui_function(name: &str, args: Vec<Value>) -> DynRes {
             match &args[0] {
                 Value::Boolean(on) => platform::turn_watch::turn(*on),
                 _ => return Err("gui.turn: the argument is true (a turn begins) or false (it ends)".into()),
+            }
+            Ok(Value::Unit)
+        }
+        // External quits (the Dock's, AppleScript's, a logout's) held for
+        // the program: it hears `quit`, the application ends when it does.
+        "hold_quit" => {
+            arity("gui.hold_quit", &args, 1, 1)?;
+            match &args[0] {
+                Value::Boolean(on) => platform::quit_hold::hold(*on),
+                _ => return Err("gui.hold_quit: the argument is true (hold) or false".into()),
             }
             Ok(Value::Unit)
         }
@@ -1016,7 +1027,7 @@ fn input_of(v: &Value) -> Res<Input> {
         }
         other => {
             return Err(format!(
-                "gui.input: unknown kind \"{other}\" (key, text, pointer, wheel, pinch, compose, commit, resize, window_focus, files, close, menu, open, new_tab, clipboard, appearance, place, a11y)"
+                "gui.input: unknown kind \"{other}\" (key, text, pointer, wheel, pinch, compose, commit, resize, window_focus, files, close, menu, open, new_tab, quit, clipboard, appearance, place, a11y)"
             ));
         }
     })
@@ -1064,6 +1075,17 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
         // The tab bar's + button.
         Some("new_tab") => {
             emit(vec![event("new_tab", vec![])]);
+            return Ok(Value::Unit);
+        }
+        // A quit from outside the program (the Dock's, AppleScript's, a
+        // logout's — what `gui.hold_quit` delivers): `why` "quit",
+        // "logout", "restart" or "shutdown".
+        Some("quit") => {
+            let why = match get(&args[1], "why") {
+                Some(Value::String(w)) => w.as_ref().clone(),
+                _ => "quit".to_string(),
+            };
+            emit(vec![event("quit", vec![("why", s(&why))])]);
             return Ok(Value::Unit);
         }
         // The system's settings changing, as a platform window reports
