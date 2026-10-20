@@ -9,6 +9,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Matrices (data ergonomics D4).** A native `Matrix`: column-major
+  Floats whose columns are shared `Arc`s, so `ods.matrix(f, cols)` (or
+  `ods.matrix([s1, s2])`) over null-free Float columns copies nothing;
+  Int and Bool columns convert, a null raises naming the column unless
+  `nulls: "drop"`. `X @ b` is a Series for a list or Series `b`, a
+  Matrix for a Matrix, and `v @ X` is `vᵀX`; a transpose is a flag, so
+  `X.t() @ y` reads `X` once. Methods (the new `mat` namespace, a
+  `Matrix` receiver kind in native_sig, known to `check` and the
+  language server): `t gram col row shape mean(axis:) std(axis:, ddof:)
+  to_frame to_list`, and `len(X)`. `mat.of`, `mat.identity`,
+  `mat.matmul`, `mat.solve` (LU with partial pivoting, a vector or a
+  Matrix of right-hand sides), `mat.inv`, `mat.cholesky`, `mat.eigh`
+  (Householder tridiagonalization and implicit QL; largest first, signs
+  fixed), `mat.cdist(X, C, metric:)` (sqeuclidean, euclidean,
+  cityblock, chebyshev, cosine; parallel, each output written once).
+  `ods.corr(f, cols?, method: "pearson" | "spearman")` and `ods.cov`
+  give labelled Frames (`term`, then a column per variable) in one pass
+  over null-free columns (the centred columns' Gram matrix), pairwise
+  over the rows both have where a column has nulls, as pandas does.
+  `XᵀX` is one blocked pass over the rows, summed in a fixed order, so
+  parallel results are the sequential ones bit for bit. Against NumPy
+  2.5 (Accelerate) on a million rows of ten columns: `X.gram()` 1.3 ms
+  (8.3), `X @ B` 0.8 ms (10.7), `X @ b` 0.7 ms (0.44), `ods.corr` 5.5
+  ms (pandas 77.7). A Matrix prints as a grid, and the notebook kernel
+  shows it as a Frame of columns `0`, `1`, … (`Matrix[n x k]`), with no
+  Studio change.
+- **Model formulas.** Every supervised `learn` model takes a formula
+  where `y` and `x` go: `learn.linear(f, "price ~ sqft + C(hood) +
+  C(kind):C(hour) + I(sqft^2)")`, parsed natively (olang_ods::learn::
+  formula). `+`, `:` interactions, `*` (main effects and interaction),
+  `-` a term, `- 1` / `+ 0` no intercept, `C()` categorical for any
+  type (a text or Category column is categorical bare), `I()`
+  arithmetic and math functions (`log(x)`) compiled to the expression
+  engine, `Q("a name")`, and an expression response (`log(price) ~ …`).
+  Coding follows patsy: a term adds only what the terms before it do not
+  span, so `C(day):C(hour)` alone is every cell but one and the design
+  has full rank; columns are named `hood_west`, `kind_loft:hour_3`.
+  `fit.predict(new)`, `score`, `cross_validate`,
+  `permutation_importance` (by source column) encode new rows the same
+  way, with the training levels. Errors point into the formula with a
+  caret. A million-row fit with 75 columns (71 kind × hour cells) takes
+  296 ms (pandas `get_dummies` and NumPy `lstsq`: 761).
+- **learn.** `learn.conf_int(model, level = 0.95)` (term, lo, hi);
+  `learn.predict(…, interval: "confidence" | "prediction", level:)`;
+  `fit.resid` beside `fit.fitted` for OLS. A fit's method wins over its
+  entry of the same name in both tiers, so `fit.importance()` computes
+  (it raised, the entry being a Frame) and `fit.importance` reads.
 - **Dates, datetimes, categories and text columns (data ergonomics
   D2).** Three new column types: `Date` (an `i32` of days since
   1970-01-01), `Datetime` (an `i64` of microseconds, naive or UTC) and

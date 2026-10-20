@@ -30,6 +30,7 @@ use olang_ods::learn::tree::Criterion;
 use olang_ods::learn::{
     Algo, ClassWeight, Common, MaxFeatures, Model, Output, Pcg, PredictKind, TaskHint, TreeOpts,
 };
+use olang_ods::learn::formula::{self, Formula};
 use olang_ods::learn::{preprocess, rng::splitmix64};
 use olang_ods::{Frame, Scalar, Series};
 use std::any::Any;
@@ -129,6 +130,7 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("predict", 2),
     ("importance", 1),
     ("summary", 1),
+    ("conf_int", 1),
     ("params", 1),
     ("score", 3),
     ("spec", 2),
@@ -529,6 +531,34 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> R<Value> {
         "params" => {
             let m = want_model(func, &args, 0)?;
             Ok(params_value(m))
+        }
+        "conf_int" => {
+            let m = want_model(func, &args, 0)?;
+            let level = match args.get(1) {
+                None | Some(Value::Unit) => 0.95,
+                Some(Value::Float(l)) => *l,
+                Some(other) => {
+                    return Err(format!(
+                        "learn.conf_int: level must be a Float in (0, 1), got {}",
+                        other.type_name()
+                    ));
+                }
+            };
+            if !(level > 0.0 && level < 1.0) {
+                return Err("learn.conf_int: level must lie in (0, 1)".to_string());
+            }
+            let table = m.summary(level).map_err(e)?;
+            let has = |c: &str| table.names().iter().any(|n| n == c);
+            if !(has("term") && has("lo") && has("hi")) {
+                return Err(format!(
+                    "learn.conf_int: a {} model has no coefficient intervals (linear and logistic models do)",
+                    m.algo
+                ));
+            }
+            table
+                .select(&["term".to_string(), "lo".to_string(), "hi".to_string()])
+                .map(frame_value)
+                .map_err(e)
         }
         "score" => {
             let m = want_model(func, &args, 0)?;
@@ -942,10 +972,37 @@ fn class_weight(o: &Opts) -> R<ClassWeight> {
     }
 }
 
+/// The column a spec's `y` names: itself, or a formula's response.
+fn target_column(y: &str) -> String {
+    if formula::is_formula(y)
+        && let Ok(f) = Formula::parse(y)
+    {
+        return f.response_name();
+    }
+    y.to_string()
+}
+
 fn supervised(func: &str, args: &[Value]) -> R<Value> {
     let f = want_frame(func, args, 0)?;
     let y = want_str(func, args, 1)?;
-    let x = names_arg(func, args.get(2))?;
+    // `learn.linear(f, "price ~ sqft + C(hood)")`: the formula names the
+    // target and the inputs.
+    let formula = if formula::is_formula(&y) {
+        if !matches!(args.get(2), None | Some(Value::Unit)) {
+            return Err(format!(
+                "learn.{}: the formula names the inputs; give them there or as x, not both",
+                func
+            ));
+        }
+        Some(Arc::new(Formula::parse(&y).map_err(e)?))
+    } else {
+        None
+    };
+    let x = if formula.is_some() {
+        Vec::new()
+    } else {
+        names_arg(func, args.get(2))?
+    };
     let keys = allowed(func);
     let o = Opts::new(func, args.get(3), &keys)?;
     let task = match o.opt_str("task")?.as_deref() {
@@ -960,15 +1017,25 @@ fn supervised(func: &str, args: &[Value]) -> R<Value> {
         }
     };
     let common = Common {
-        y: y.clone(),
+        y: formula.as_ref().map(|f| f.response_name()).unwrap_or_else(|| y.clone()),
         x,
         weights: o.opt_str("weights")?,
         task,
         class_weight: class_weight(&o)?,
+        formula: formula.clone(),
     };
     let needs_seed = matches!(func, "tree" | "forest" | "boost");
     let seed = if needs_seed { o.seed()? } else { 0 };
-    let intercept = o.bool("intercept", true)?;
+    // `- 1` in a formula is `intercept: false`.
+    let intercept = o.bool("intercept", true)? && formula.as_ref().is_none_or(|f| f.intercept);
+    if formula.as_ref().is_some_and(|f| !f.intercept)
+        && !matches!(func, "linear" | "ridge" | "lasso" | "elastic_net")
+    {
+        return Err(format!(
+            "learn.{}: this model always fits an intercept; leave `- 1` out of the formula",
+            func
+        ));
+    }
     let algo = match func {
         "linear" => Algo::Linear { intercept },
         "ridge" => Algo::Ridge {
@@ -1278,6 +1345,7 @@ fn model_value(model: Model, spec: Value) -> Value {
             out.push(("bic", Value::Float(-2.0 * f.log_lik + p * n.ln())));
             out.push(("df_resid", Value::Float(f.df_resid)));
             out.push(("fitted", floats(&f.fitted)));
+            out.push(("resid", floats(&f.resid)));
         }
         Body::Penalized { n_iter, .. } => {
             out.push(("terms", strings(&m.terms())));
@@ -1392,7 +1460,7 @@ fn model_value(model: Model, spec: Value) -> Value {
 fn predict(args: &[Value]) -> R<Value> {
     let m = want_model("predict", args, 0)?;
     let f = want_frame("predict", args, 1)?;
-    let o = Opts::new("predict", args.get(2), &["kind", "level", "trees"])?;
+    let o = Opts::new("predict", args.get(2), &["kind", "level", "trees", "interval"])?;
     // a boosted model's stage: its first `trees` trees
     let staged = match o.opt_usize("trees")? {
         Some(k) => Some(m.with_trees(k).map_err(e)?),
@@ -1403,7 +1471,22 @@ fn predict(args: &[Value]) -> R<Value> {
     if !(level > 0.0 && level < 1.0) {
         return Err("learn.predict: level must lie in (0, 1)".to_string());
     }
-    let kind = match o.str("kind", "auto")?.as_str() {
+    // `interval: "prediction"` is `kind: "prediction"`, as the design
+    // spells it.
+    let kind_name = match (o.opt_str("interval")?, o.opt_str("kind")?) {
+        (Some(_), Some(_)) => {
+            return Err("learn.predict: give kind or interval, not both".to_string());
+        }
+        (Some(i), None) if i == "confidence" || i == "prediction" => i,
+        (Some(i), None) => {
+            return Err(format!(
+                "learn.predict: interval is \"confidence\" or \"prediction\", got \"{}\"",
+                i
+            ));
+        }
+        (None, k) => k.unwrap_or_else(|| "auto".to_string()),
+    };
+    let kind = match kind_name.as_str() {
         "auto" | "class" | "value" | "response" | "label" => PredictKind::Auto,
         "prob" => PredictKind::Prob,
         "probs" => PredictKind::ProbFrame,
@@ -1577,7 +1660,7 @@ fn cv_folds(s: &Spec, f: &Frame, k: usize, seed: u64, shuffle: bool) -> R<Vec<us
     let classify = classification_spec(s, f);
     if classify && let Value::String(y) = &s.y {
         return Ok(preprocess::stratified_kfold(
-            &strata(f, y)?,
+            &strata(f, &target_column(y))?,
             k,
             shuffle,
             &mut rng,
@@ -1603,7 +1686,9 @@ fn classification_spec(s: &Spec, f: &Frame) -> bool {
     match s.kind.as_str() {
         "logistic" | "naive_bayes" => true,
         "linear" | "ridge" | "lasso" | "elastic_net" => false,
-        _ => f.column(y).is_ok_and(|c| !matches!(c, Series::F64 { .. })),
+        _ => f
+            .column(&target_column(y))
+            .is_ok_and(|c| !matches!(c, Series::F64 { .. })),
     }
 }
 
@@ -1611,7 +1696,7 @@ fn default_metrics(s: &Spec, f: &Frame) -> Vec<String> {
     if classification_spec(s, f) {
         let binary = match &s.y {
             Value::String(y) => f
-                .column(y)
+                .column(&target_column(y))
                 .ok()
                 .and_then(|c| Labels::learn(c).ok())
                 .is_some_and(|(l, _)| l.len() == 2),

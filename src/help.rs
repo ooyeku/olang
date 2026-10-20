@@ -3539,6 +3539,68 @@ let parts = ods.split(f, 0.8)   // [train, test]"##],
             &[r##"ods.join_left(orders, users, "user_id", "id")"##],
         );
 
+        // --- matrices ---
+        self.doc_ex("ods.matrix", "ods.matrix(f, cols?, nulls?)", "Matrix", "ods", "a Matrix of a Frame's numeric columns (or a list of Series); null-free Float columns are shared, not copied; nulls: \"drop\" leaves out incomplete rows",
+            &[r##"let X = ods.matrix(f, ["sqft", "age"])"##],
+        );
+        self.doc_ex("ods.corr", "ods.corr(f, cols?, method?)", "Frame", "ods", "the correlation matrix as a labelled Frame (method: \"pearson\" or \"spearman\"); nulls pair over the rows both columns have",
+            &[r##"ods.corr(f, ["price", "sqft", "age"], method: "spearman")"##],
+        );
+        self.doc_ex("ods.cov", "ods.cov(f, cols?)", "Frame", "ods", "the sample covariance matrix as a labelled Frame",
+            &[r##"ods.cov(f, ["price", "sqft"])"##],
+        );
+        self.doc_ex("mat.of", "mat.of(rows)", "Matrix", "mat", "a Matrix from a list of rows",
+            &[r##"mat.of([[4.0, 1.0], [1.0, 3.0]])"##],
+        );
+        self.doc_ex("mat.identity", "mat.identity(n)", "Matrix", "mat", "the n x n identity matrix",
+            &[r##"mat.identity(3)"##],
+        );
+        self.doc_ex("mat.t", "mat.t(x)", "Matrix", "mat", "the transpose (free: the same storage, flagged)",
+            &[r##"X.t() @ y"##],
+        );
+        self.doc_ex("mat.gram", "mat.gram(x)", "Matrix", "mat", "XᵀX in one parallel pass over the rows",
+            &[r##"X.gram()"##],
+        );
+        self.doc_ex("mat.matmul", "mat.matmul(a, b)", "Matrix", "mat", "the product a @ b: a Series for a vector b, a Matrix for a Matrix",
+            &[r##"mat.matmul(X, [0.5, 2.0])"##],
+        );
+        self.doc_ex("mat.col", "mat.col(x, j)", "Series", "mat", "column j as a Series (shared, not copied)",
+            &[r##"X.col(0)"##],
+        );
+        self.doc_ex("mat.row", "mat.row(x, i)", "List", "mat", "row i as a list of Floats",
+            &[r##"X.row(0)"##],
+        );
+        self.doc_ex("mat.shape", "mat.shape(x)", "List", "mat", "the shape as [rows, columns]",
+            &[r##"X.shape()"##],
+        );
+        self.doc_ex("mat.mean", "mat.mean(x, axis?)", "Series", "mat", "means down each column (axis 0) or across each row (axis 1)",
+            &[r##"X.mean(axis: 0)"##],
+        );
+        self.doc_ex("mat.std", "mat.std(x, axis?, ddof?)", "Series", "mat", "standard deviations along an axis (ddof 1, as ods.std)",
+            &[r##"X.std(axis: 0)"##],
+        );
+        self.doc_ex("mat.solve", "mat.solve(a, b)", "Series", "mat", "x with a x = b (LU with partial pivoting); b a vector or a Matrix",
+            &[r##"mat.solve(X.gram(), X.t() @ y)"##],
+        );
+        self.doc_ex("mat.inv", "mat.inv(a)", "Matrix", "mat", "the inverse of a square matrix",
+            &[r##"mat.inv(mat.of([[4.0, 1.0], [1.0, 3.0]]))"##],
+        );
+        self.doc_ex("mat.cholesky", "mat.cholesky(a)", "Matrix", "mat", "the lower Cholesky factor of a symmetric positive-definite matrix",
+            &[r##"mat.cholesky(X.gram())"##],
+        );
+        self.doc_ex("mat.eigh", "mat.eigh(a)", "Map", "mat", "#{ values, vectors } of a symmetric matrix, largest first (Jacobi)",
+            &[r##"mat.eigh(X.gram()).values"##],
+        );
+        self.doc_ex("mat.cdist", "mat.cdist(x, c, metric?)", "Matrix", "mat", "pairwise distances between the rows of x and of c (sqeuclidean, euclidean, cityblock, chebyshev, cosine)",
+            &[r##"mat.cdist(X, centres, metric: "euclidean")"##],
+        );
+        self.doc_ex("mat.to_frame", "mat.to_frame(x, names?)", "Frame", "mat", "the Matrix as a Frame of its columns",
+            &[r##"X.to_frame(["a", "b"])"##],
+        );
+        self.doc_ex("mat.to_list", "mat.to_list(x)", "List", "mat", "the rows as lists of Floats",
+            &[r##"mat.to_list(mat.identity(2))"##],
+        );
+
         // --- learn ---
         self.doc_ex("learn.split", "learn.split(f, opts?)", "Map", "learn", "seeded train/test split: #{ train, test } (opts: test, stratify, shuffle, seed)",
             &[r##"learn.split(f, #{ "test": 0.25, "stratify": "churn", "seed": 7 })"##],

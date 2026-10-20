@@ -85,6 +85,7 @@ const MODULES: &[&str] = &[
     "stats",
     "plot",
     "learn",
+    "mat",
     "cell",
     "chan",
     "task",
@@ -2888,7 +2889,7 @@ fn receiver_native(text: &str, line: u32, receiver: &str) -> Option<(&'static st
     };
     let line = crate::tools::check::hover_types(&program).remove("__lsp_receiver")?;
     let kind = line.rsplit(": ").next()?.trim();
-    let kind = ["Series", "Frame", "Date", "Reader", "GroupBy"].into_iter().find(|k| *k == kind)?;
+    let kind = ["Series", "Frame", "Date", "Reader", "GroupBy", "Matrix"].into_iter().find(|k| *k == kind)?;
     Some((crate::native_sig::home_of(kind)?, kind))
 }
 

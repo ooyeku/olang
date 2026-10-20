@@ -15,6 +15,7 @@ pub mod expr;
 mod frame;
 mod group;
 mod learn;
+pub mod matrix;
 pub mod gg;
 mod plot;
 mod series;
@@ -25,6 +26,7 @@ pub use frame::{OdsFrame, frame_of};
 pub use group::{ApplyState, apply_finish, apply_groups, is_callable as apply_callable};
 pub use series::{OdsSeries, make_series_value, series_of};
 pub use table::scalar_text;
+pub use matrix::matrix_frame;
 
 /// A Frame's bytes in the columnar file format (`ods.write_frame`'s), or
 /// None for anything else: what a recorded run keeps of a Frame it read.
@@ -98,6 +100,7 @@ impl OvmModule for OdsModule {
             .chain(colfns::FUNCTIONS.iter().copied())
             .chain(dtypes::FUNCTIONS.iter().copied())
             .chain(group::FUNCTIONS.iter().copied())
+            .chain(matrix::ODS_FUNCTIONS.iter().copied())
         {
             module.insert(
                 name.to_string(),
@@ -143,9 +146,12 @@ impl OvmModule for OdsModule {
     }
 
     fn binary_op(&self, op: &BinaryOp, lhs: &Value, rhs: &Value) -> Option<Result<Value, String>> {
-        // `a @ b` on two Series: their dot product (a Matrix's product
-        // joins this when the Matrix does).
+        // `a @ b` on two Series: their dot product; with a Matrix on
+        // either side, the matrix product.
         if matches!(op, BinaryOp::MatMul) {
+            if let Some(result) = matrix::matmul(lhs, rhs) {
+                return Some(result);
+            }
             if series_of(lhs).is_some() && series_of(rhs).is_some() {
                 return Some(call("dot", vec![lhs.clone(), rhs.clone()]));
             }
@@ -197,6 +203,10 @@ impl OvmModule for OdsModule {
 /// Call `ods.<func>` with `args`: what the module dispatches, and what
 /// an Expr's call nodes run against a Frame.
 pub(crate) fn call(func: &str, args: Vec<Value>) -> Result<Value, String> {
+    // Matrices: `ods.matrix`, `ods.corr`, `ods.cov`.
+    if matrix::ods_handles(func) {
+        return matrix::ods_dispatch(func, &args);
+    }
     // Exprs and the Frame verbs that take them.
     if let Some(r) = expr::dispatch(func, &args) {
         return r;
@@ -396,6 +406,34 @@ impl OvmModule for LearnModule {
         _lhs: &Value,
         _rhs: &Value,
     ) -> Option<Result<Value, String>> {
+        None
+    }
+}
+
+/// The `mat` namespace: the Matrix value's functions (`mat.solve`,
+/// `X.gram()`), and `@` with a Matrix on either side.
+pub struct MatModule;
+
+impl OvmModule for MatModule {
+    fn name(&self) -> &'static str {
+        "mat"
+    }
+
+    fn namespaces(&self) -> Vec<(String, Value)> {
+        vec![("mat".to_string(), matrix::namespace())]
+    }
+
+    fn dispatch(&self, func: &str, args: Vec<Value>) -> Result<Value, String> {
+        if !matrix::handles(func) {
+            return Err(format!("unknown mat function: mat.{}", func));
+        }
+        matrix::dispatch(func, args)
+    }
+
+    fn binary_op(&self, op: &BinaryOp, lhs: &Value, rhs: &Value) -> Option<Result<Value, String>> {
+        if matches!(op, BinaryOp::MatMul) {
+            return matrix::matmul(lhs, rhs);
+        }
         None
     }
 }

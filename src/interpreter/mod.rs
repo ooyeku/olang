@@ -1887,9 +1887,16 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     let receiver = self.callee_value(object)?;
                     // A map's key, as a struct's field, wins over a
                     // trait method of the same name.
+                    // A fit's method wins over its entry of the same name
+                    // (`fit.importance()` calls, `fit.importance` reads).
                     let is_struct_field = match &receiver {
                         Value::Struct { fields, .. } => fields.contains_key(field),
-                        Value::Map(map) => map.contains_key(field),
+                        Value::Map(map) => {
+                            map.contains_key(field)
+                                && !crate::native_sig::method_receiver(&receiver)
+                                    .and_then(|(h, t)| crate::native_sig::method_target(h, t, field))
+                                    .is_some()
+                        }
                         _ => false,
                     };
                     if !is_struct_field

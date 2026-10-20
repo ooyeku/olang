@@ -21,6 +21,7 @@ pub mod boost;
 pub mod cluster;
 pub mod data;
 pub mod forest;
+pub mod formula;
 pub mod linalg;
 pub mod linear;
 pub mod metrics;

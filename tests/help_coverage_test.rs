@@ -52,6 +52,7 @@ fn every_callable_module_has_help_entries() {
         "ods",
         "stats",
         "plot",
+        "mat",
         "colx",
         "mathx",
         "cli",

@@ -56,6 +56,7 @@ a file system, a network, or a browser.
 - [`dom` — the browser](#dom--the-browser)
 - [`testing` — assertions](#testing--assertions)
 - [`ods` — Series and Frames](#ods--series-and-frames)
+- [`mat` — matrices](#mat--matrices)
 - [`stats` — statistical inference](#stats--statistical-inference)
 - [`learn` and `ml` — machine learning](#learn-and-ml--machine-learning)
 - [`plot` — charts as SVG text](#plot--charts-as-svg-text)
@@ -3141,6 +3142,7 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 | Sample | `sample(f, n)` (also on a Series) — n random rows, without replacement, in original order; seeded by `random.seed` |
 | Aggregate / join | `group_by(f, keys)` → a GroupBy, then `agg(by, { name: expr })` (e.g. `col("x").sum()`, `ods.count()`, `col("x").quantile(0.9)`) · `size(by)` · `transform(by, expr)` · `apply(by, fn)` (once per group) · `groups(by)` (`(key, frame)` pairs) · `sum(by)`, `mean(by)`, … over every column — or `group_by(f, keys, aggs)` with the aggs an object, or `[name, op, column]` triples, op one of count, sum, mean, min, max, median, std, var, first, last, n_unique, any, all, argmax, argmin (`[name, "count"]` counts rows) · `join(a, b, on, on_b = on, how = "inner", suffix = "_right", validate = ())` — `on` a name or a list, `how` inner/left/full/semi/anti, `validate` `"many_to_one"`, `"one_to_many"` or `"one_to_one"` · `join_left` · `join_full` · `join_semi` · `join_anti` (the same, `how` fixed) · `asof_join(a, b, on, by = (), direction = "backward", tolerance = (), suffix = "_right")` — each left row takes the right row nearest at or before it (`"forward"`, `"nearest"`) · `concat(frames)` |
 | Time | `resample(f, on, every, aggs, by = ())` — rows grouped by the start of their `every` bucket (`"15m"`, `"1h"`, `"1d"`, `"1w"`, `"1mo"`, `"1q"`, `"1y"`) of a Date or Datetime column (buckets of its type) or an ISO date/time text column, sorted by time · `floor(s, every)` — each value's bucket start, in the value's shape |
+| Matrices | `matrix(f, cols = every numeric, nulls = "raise")` — a [Matrix](#mat--matrices) of the columns (or of a list of Series), sharing null-free Float columns; `nulls: "drop"` leaves out rows with a null · `corr(f, cols = every numeric, method = "pearson")` (or `"spearman"`) · `cov(f, cols)` — labelled Frames: a `term` column, then one per variable; a column with nulls pairs over the rows both columns have |
 | Masks | `m1 & m2` · `m1 \| m2` · `m1 ^ m2` · `!m` · `eq(s, v)` · `ne(s, v)` · `is_in(s, values)` · `contains(s, text, case = true)` · `all_of(masks)` · `any_of(masks)` · `not(mask)` — three-valued, like SQL; parenthesize a comparison `&` joins |
 
 The stack has its own chapter, **[The data stack](ods.md)**: the
@@ -3149,6 +3151,41 @@ it), every Series and Frame verb with its semantics, null handling,
 joins and grouped aggregation, and the performance characteristics,
 each explained with examples. Engineering history and benchmark method
 live in [that chapter's design record](ods.md#the-design-record).
+
+## `mat` — matrices
+
+A `Matrix` is a dense, column-major table of Floats: `ods.matrix(f,
+cols)` makes one from a Frame's columns without copying them, `@`
+multiplies, and `mat` holds the small dense routines. Every `mat`
+function is also a method of a Matrix (`X.gram()`, `X.t()`), and a
+Matrix prints as a grid.
+
+```olang
+let f = ods.frame({ a: [1.0, 2.0, 3.0, 4.0], b: [2.0, 1.0, 0.0, 5.0], y: [3.0, 3.1, 2.9, 9.2] })
+let X = ods.matrix(f, ["a", "b"])
+let beta = mat.solve(X.gram(), X.t() @ f.y)        // least squares
+println(ods.round(X @ beta, 1).to_list())          // [3.1, 3.0, 2.9, 9.2]
+println(ods.round(mat.eigh(mat.of([[2.0, 1.0], [1.0, 2.0]])).values, 9).to_list())   // [3.0, 1.0]
+println(ods.corr(f, ["a", "y"])["a"].to_list())
+```
+
+| Function | Description |
+|---|---|
+| `ods.matrix(f, cols?, nulls = "raise")` | a Matrix of a Frame's numeric columns (all of them, or the ones named) or of a list of Series; Int and Bool become Float |
+| `X @ b`, `v @ X`, `X @ Y` | the product: a Series for a vector `b` (a list or a Series), `vᵀX` for a vector on the left, a Matrix for two matrices |
+| `mat.of(rows)` / `mat.identity(n)` | a Matrix of a list of rows / the identity |
+| `mat.t(x)` / `mat.gram(x)` / `mat.matmul(a, b)` | the transpose (free: the same storage) / `XᵀX` in one parallel pass / `a @ b` |
+| `mat.col(x, j)` / `mat.row(x, i)` / `mat.shape(x)` | column `j` as a Series (shared) / row `i` as a list / `[rows, cols]`; `len(x)` is the row count |
+| `mat.mean(x, axis = 0)` / `mat.std(x, axis = 0, ddof = 1)` | a Series: one value per column (axis 0) or per row (axis 1) |
+| `mat.solve(a, b)` / `mat.inv(a)` | `x` with `a x = b` (LU with partial pivoting; `b` a vector or a Matrix) / the inverse |
+| `mat.cholesky(a)` | the lower factor `L` of a symmetric positive-definite `a = L Lᵀ` |
+| `mat.eigh(a)` | `#{ values, vectors }` of a symmetric matrix, largest first, each vector's largest component positive |
+| `mat.cdist(x, c, metric = "sqeuclidean")` | distances between the rows of `x` and of `c`, an `n × m` Matrix; `"euclidean"`, `"cityblock"` (`"manhattan"`), `"chebyshev"`, `"cosine"` |
+| `mat.to_frame(x, names?)` / `mat.to_list(x)` | the columns as a Frame (named `0`, `1`, … by default) / the rows as lists |
+
+[Matrices](ods.md#matrices--odsmatrix-and-mat) in the data stack's
+chapter explains the storage and the kernels, and compares them with
+NumPy.
 
 ## `stats` — statistical inference
 
@@ -3189,16 +3226,20 @@ trees, random forests, gradient boosting, k-nearest neighbours, naive
 Bayes, k-means, Gaussian mixtures and PCA, and the metrics to judge
 them. Every kernel is Rust (`olang-ods`), parallel past measured sizes,
 and pinned against scikit-learn in the test suite. `learn` functions
-take their data positionally and their options in one trailing map, and
-an unknown option is an error naming the options there are. **`use
-ml`** gives the same functions keyword arguments with defaults.
+take their options by name (`learn.forest(f, y: "churn", n_trees: 300,
+seed: 1)`) or in one trailing map, and an unknown option is an error
+naming the options there are. **`use ml`** adds short names for a few
+options and the forms that call an olang function (below).
 
 A fit returns a Map: `fit.params.sqft`, `fit.r2`, `fit.coef` (a Frame of
 term, estimate, se, t, p, lo, hi) read like fields. Its `model` entry is
 what `learn.predict` uses, and its `spec` entry refits it, so
 `learn.cross_validate`, `learn.learning_curve` and `learn.grid_search`
-refit natively, in parallel over folds. Inputs are column names (`()`
-means every column but the target). A String column is one-hot encoded
+refit natively, in parallel over folds. A fit's methods are `learn`'s
+functions: `fit.predict(test)`, `fit.summary()`, `fit.importance()`,
+`fit.conf_int(0.9)`. A method wins over the fit's entry of the same name,
+so `fit.importance` reads the Frame and `fit.importance()` computes it.
+Inputs are column names (`()` means every column but the target). A String column is one-hot encoded
 with the training levels, and the first level is dropped for models with an
 intercept. A Bool becomes 0/1. A row with a null (or NaN) in a used column
 is left out of a fit (`fit.dropped` counts them) and predicts null.
@@ -3223,6 +3264,39 @@ println(ml.rmse(s.test["price"], pred) < 5.0)          // true
 println(ods.n_rows(ml.cross_validate(fit, homes, folds: 4)))   // 4
 ```
 
+**Formulas.** Every supervised model also takes a formula where `y` and
+`x` go: `learn.linear(f, "price ~ sqft + C(hood) + C(kind):C(hour) +
+I(sqft^2)")`. The notation is R's and patsy's, parsed natively: `+` adds
+a term, `a:b` is an interaction, `a * b` is `a + b + a:b`, `-` removes a
+term, and `- 1` (or `+ 0`) drops the intercept. `C(x)` treats a column
+as categorical whatever its type, so an Int hour becomes 24 levels. A
+String or Category column named bare is categorical too. `I(…)` is
+arithmetic (`+ - * / ^`, numbers, columns), evaluated by the expression
+engine, and `log(x)`, `sqrt(x)` and the other math functions are terms
+of their own. The response may be an expression too, as in `log(price) ~ …`.
+Coding follows patsy, so the design has full rank. A categorical factor
+uses treatment contrasts where its margin is already in the model and
+is coded in full where it is not, so `C(day):C(hour)` alone gives one
+column per cell but one. Columns are named `hood_west` and
+`kind_loft:hour_3`. `fit.predict(new)` computes the formula's columns on
+the new rows with the training levels. An error points into the
+formula:
+
+```olang
+let n = 48
+let f = ods.frame({
+    x: ods.arange(n) * 0.25,
+    kind: ods.series(map(range(0, n), (i) => ["flat", "house", "loft"][i % 3])),
+    hour: ods.arange(n) % 4,
+})
+let f = f.with({ y: f.x * 2.0 + f.x * f.x * 0.5 + f.hour * 0.1 + 1.0 })
+let fit = learn.linear(f, "y ~ x + I(x^2) + C(kind):C(hour)")
+println(len(fit.features))                       // 13
+println(math.round(map_get(fit.params, "I(x^2)") * 1000.0) / 1000.0)   // 0.5
+println(ods.columns(fit.conf_int(0.9)))          // ["term", "lo", "hi"]
+println(ods.n_rows(fit.predict(f, interval: "prediction")))   // 48
+```
+
 | Function | Description |
 |---|---|
 | `learn.split(f, opts)` | `#{ train, test }`; opts `test` (fraction or rows, 0.25), `stratify` (a column), `shuffle`, `seed` |
@@ -3231,7 +3305,7 @@ println(ods.n_rows(ml.cross_validate(fit, homes, folds: 4)))   // 4
 | `learn.scaler(f, cols, opts)`, `learn.one_hot(f, cols, opts)`, `learn.imputer(f, cols, opts)` | fitted transformers: `method` standard/minmax/robust; `drop_first`; `strategy` mean/median/most_frequent/constant and `fill` |
 | `learn.transform(model, f)` | apply a fitted scaler, encoder, imputer or PCA |
 | `learn.poly(f, cols, degree, opts)` | polynomial columns (`a^2`, `a*b`) appended; `interaction_only` |
-| `learn.linear(f, y, x, opts)` | OLS: `params`, `coef`, `r2`, `adj_r2`, `sigma`, `aic`, `bic`, `fitted`; opts `intercept`, `weights` |
+| `learn.linear(f, y, x, opts)` | OLS: `params`, `coef`, `r2`, `adj_r2`, `sigma`, `aic`, `bic`, `fitted`, `resid`; opts `intercept`, `weights`. `y` may be a formula (`"price ~ sqft + C(hood)"`) in this and every supervised model |
 | `learn.ridge`, `learn.lasso`, `learn.elastic_net` `(f, y, x, opts)` | penalized regression (sklearn's objectives): `alpha`, `l1_ratio`, `intercept`, `max_iter`, `tol` |
 | `learn.logistic(f, y, x, opts)` | binary (IRLS) or multinomial (Newton) logistic regression with se, z, p and odds ratios; `C` or `penalty`, `class_weight` (`"balanced"` or a map), `weights` |
 | `learn.tree(f, y, x, opts)` | CART: `max_depth`, `min_samples_split`, `min_samples_leaf`, `criterion` (gini, entropy, squared_error), `max_features`, `task`, `seed` |
@@ -3241,7 +3315,8 @@ println(ods.n_rows(ml.cross_validate(fit, homes, folds: 4)))   // 4
 | `learn.kmeans(f, cols, k, opts)` / `learn.gmm(f, cols, k, opts)` | k-means++ (`n_init`, `max_iter`, `seed`): `labels`, `centers`, `inertia` / Gaussian mixture by EM: `means`, `weights`, `bic` |
 | `learn.pca(f, cols, opts)` | principal components (`n_components`, `scale`): `explained_variance`, `explained_variance_ratio`, `components` |
 | `learn.silhouette(f, cols, labels, opts)` | mean silhouette coefficient; `sample`, `seed` |
-| `learn.predict(model, f, opts)` | values, class labels or clusters; `kind`: `"prob"` (positive class, or a Frame for 3+ classes), `"probs"`, `"link"`, `"confidence"` / `"prediction"` (an OLS interval Frame at `level`); `trees: k` a boosted model's prediction from its first k trees (staged) |
+| `learn.conf_int(model, level = 0.95)` | the coefficients' intervals: a Frame of term, lo, hi |
+| `learn.predict(model, f, opts)` | values, class labels or clusters; `interval`: `"confidence"` or `"prediction"` (an OLS interval Frame at `level`); `kind`: `"prob"` (positive class, or a Frame for 3+ classes), `"probs"`, `"link"`, `"confidence"` / `"prediction"` (an OLS interval Frame at `level`); `trees: k` a boosted model's prediction from its first k trees (staged) |
 | `learn.importance(model)`, `learn.summary(model, opts)`, `learn.params(model)` | importances (impurity, or abs(coef)) / the model as a Frame / estimates by term |
 | `learn.score(model, f, metric)` | one metric against the target column of `f` |
 | `learn.spec(kind, y, x, opts)` / `learn.fit(spec, f)` | how to fit, without fitting / fit a spec or refit a model |

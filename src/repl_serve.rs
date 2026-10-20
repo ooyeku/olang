@@ -2817,6 +2817,15 @@ impl Session {
             Value::EnumConstructor(_) | Value::TypeInfo(_) => {
                 json!({ "k": "fn", "t": t, "s": preview(v) })
             }
+            // A Matrix shows as the Frame of its columns (`0`, `1`, …),
+            // which every table view already reads.
+            Value::Native(_) if let Some(f) = crate::ods::matrix_frame(v) => {
+                let mut r = self.encode_ods(&f, held);
+                if let Some((rows, cols)) = crate::ods::matrix::matrix_of(v).map(|m| m.shape()) {
+                    r["s"] = J::String(format!("Matrix[{} x {}]", rows, cols));
+                }
+                r
+            }
             Value::Native(_) if ods_columns(v).is_some() => self.encode_ods(v, held),
             Value::Native(_) => match crate::stdlib::bytes::bytes_of(v) {
                 Ok(b) => {

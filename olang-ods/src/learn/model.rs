@@ -49,6 +49,9 @@ pub struct Common {
     pub weights: Option<String>,
     pub task: TaskHint,
     pub class_weight: ClassWeight,
+    /// A formula (`y ~ x + C(g)`), which then names the target and the
+    /// inputs instead of `y` and `x`.
+    pub formula: Option<std::sync::Arc<super::formula::Formula>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -334,17 +337,26 @@ fn other_columns(frame: &Frame, c: &Common) -> Vec<String> {
 }
 
 fn prepare(frame: &Frame, c: &Common, drop_first: bool, task_hint: TaskHint) -> Result<Prepared> {
-    let x_names = if c.x.is_empty() {
-        other_columns(frame, c)
-    } else {
-        c.x.clone()
+    let (design, response) = match &c.formula {
+        Some(f) => {
+            let d = Design::from_formula(frame, f)?;
+            let ys = f.response_series(frame, false)?;
+            (d, ys)
+        }
+        None => {
+            let x_names = if c.x.is_empty() {
+                other_columns(frame, c)
+            } else {
+                c.x.clone()
+            };
+            if x_names.contains(&c.y) {
+                return Err(bad(format!("learn: the target '{}' is also an input", c.y)));
+            }
+            (Design::learn(frame, &x_names, drop_first)?, frame.column(&c.y)?.clone())
+        }
     };
-    if x_names.contains(&c.y) {
-        return Err(bad(format!("learn: the target '{}' is also an input", c.y)));
-    }
-    let design = Design::learn(frame, &x_names, drop_first)?;
     let (x_all, mut valid) = design.encode(frame)?;
-    let ys = frame.column(&c.y)?;
+    let ys = &response;
     let hint = if task_hint == TaskHint::Auto {
         c.task
     } else {
@@ -835,6 +847,7 @@ pub fn fit_scaler(frame: &Frame, cols: &[String], method: &str) -> Result<Model>
     let design = Design {
         inputs: cols.iter().map(|c| Input::Numeric(c.clone())).collect(),
         features: cols.clone(),
+        response: None,
     };
     let n = frame.n_rows();
     Ok(unsupervised(
@@ -949,6 +962,7 @@ pub fn fit_imputer(
     let design = Design {
         inputs: cols.iter().map(|c| Input::Numeric(c.clone())).collect(),
         features: cols.clone(),
+        response: None,
     };
     let n = frame.n_rows();
     Ok(unsupervised(
@@ -1060,12 +1074,26 @@ impl Model {
         &self.design.features
     }
 
+    /// The Frame columns the model reads (a formula's, each once).
     pub fn inputs(&self) -> Vec<String> {
-        self.design
-            .inputs
-            .iter()
-            .map(|i| i.name().to_string())
-            .collect()
+        let mut out: Vec<String> = Vec::new();
+        for i in &self.design.inputs {
+            for c in i.sources() {
+                if !out.contains(&c) {
+                    out.push(c);
+                }
+            }
+        }
+        out
+    }
+
+    /// The target's values in `frame`: its column, or a formula's
+    /// response computed (`log(price) ~ …`).
+    pub fn target(&self, frame: &Frame, yname: &str) -> Result<Series> {
+        match &self.design.response {
+            Some(r) => r.series(frame, false),
+            None => Ok(frame.column(yname)?.clone()),
+        }
     }
 
     /// Raw predictions for an encoded matrix.
@@ -1728,7 +1756,8 @@ impl Model {
             .as_ref()
             .ok_or_else(|| bad("score: an unsupervised model has no target"))?;
         let (x, mut valid) = self.design.encode(frame)?;
-        let ys = frame.column(yname)?;
+        let target = self.target(frame, yname)?;
+        let ys = &target;
         let raw = self.raw(&x, par)?;
         match (&self.task, raw) {
             (Task::Regression, Raw::Values(p)) => {

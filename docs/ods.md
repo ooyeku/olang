@@ -20,6 +20,7 @@ Every plain `olang` block is executed by the test suite; blocks marked
 - [Series — the typed column](#series--the-typed-column)
 - [Frames — tables of named columns](#frames--tables-of-named-columns)
 - [Expressions — `ods.col`](#expressions--odscol)
+- [Matrices — `ods.matrix` and `mat`](#matrices--odsmatrix-and-mat)
 - [`stats` — from description to inference](#stats--from-description-to-inference)
 - [`plot` — charts as SVG text](#plot--charts-as-svg-text)
 - [The stack and the language](#the-stack-and-the-language)
@@ -1783,6 +1784,110 @@ across cores past the size where that pays. A function that is not
 elementwise (a rank, a shift, a reduction, `over`) runs once on its own
 column and joins the plan as an input. Errors name the column that is
 missing and the columns there are.
+
+## Matrices — `ods.matrix` and `mat`
+
+A `Matrix` is a dense table of Floats addressed by position rather than
+by name: what `X @ b`, a Gram matrix, a table of distances or an
+eigen-decomposition needs. It is column-major, and its columns are the
+Frame's own. `ods.matrix(f, cols)` over Float columns with no nulls
+shares them, so building one takes microseconds at any row count. A
+transpose is a flag on the same storage, so `X.t() @ y` reads `X` once.
+
+```olang
+let f = ods.frame({
+    sqft: [800.0, 1200.0, 1500.0, 2100.0, 950.0],
+    age: [30.0, 12.0, 5.0, 2.0, 40.0],
+    price: [210.0, 300.0, 360.0, 480.0, 220.0],
+})
+let X = ods.matrix(f, ["sqft", "age"])
+println(X.shape())                              // [5, 2]
+let b = mat.solve(X.gram(), X.t() @ f.price)    // least squares by the normal equations
+println(len(X @ b))                             // 5
+let e = mat.eigh(X.gram())
+println(e.values.get(0) > e.values.get(1))      // true: largest first
+println(mat.cdist(X, mat.of([[1000.0, 10.0]]), metric: "euclidean").shape())   // [5, 1]
+println(ods.corr(f)["term"].to_list())          // ["sqft", "age", "price"]
+```
+
+- **Building one.** `ods.matrix(f)` takes every numeric column,
+  `ods.matrix(f, ["a", "b"])` the ones named, and
+  `ods.matrix([s1, s2])` a list of Series. Int and Bool columns are
+  converted to Float. A null raises, naming the column and the count,
+  unless `nulls: "drop"` leaves out every row that has one.
+  `mat.of(rows)` builds a small matrix from a list of rows, and
+  `mat.identity(n)` the identity.
+- **Products.** `X @ b` is a Series when `b` is a list or Series of
+  `X`'s width, and a Matrix when `b` is a Matrix. `v @ X` is `vᵀX`. A
+  shape mismatch names both shapes.
+- **Methods.** `X.t()`, `X.gram()` (`XᵀX`), `X.col(j)` (a Series,
+  shared with the Matrix), `X.row(i)` (a list), `X.shape()`, `len(X)`
+  (the row count), `X.mean(axis: 0)` and `X.std(axis: 0, ddof: 1)` (a
+  Series by column; axis 1 gives one value per row), `X.to_frame(names)`
+  and `mat.to_list(X)`.
+- **Small dense routines.** `mat.solve(A, b)` uses LU with partial
+  pivoting, and `b` may be a vector or a Matrix of right-hand sides.
+  There are also `mat.inv(A)` and `mat.cholesky(A)` (the lower factor).
+  `mat.eigh(A)` gives `#{ values, vectors }` of a symmetric matrix,
+  largest first. Each vector's largest component is positive, so the
+  signs do not depend on the run. NumPy's `eigh` orders smallest first.
+- **Distances.** `mat.cdist(X, C, metric: "sqeuclidean")` gives the
+  distances between the rows of `X` and the rows of `C` as an `n × m`
+  Matrix. The other metrics are `"euclidean"`, `"cityblock"`,
+  `"chebyshev"` and `"cosine"`.
+- **Correlation.** `ods.corr(f, cols?, method: "pearson" | "spearman")`
+  and `ods.cov(f, cols?)` return labelled Frames: a `term` column, then
+  one column per variable, the way `df.corr()` prints. Columns without
+  nulls take one pass: the Gram matrix of the centred columns. A column
+  with nulls pairs over the rows both columns have, as pandas does.
+- **Display.** A Matrix prints as a grid under `Matrix[n x k]`. The
+  notebook and the REPL table views show it as a Frame with columns
+  `0`, `1`, ….
+
+How it runs. The shapes analysis meets are tall and skinny, so the
+O(rows) kernels are written for them:
+
+- `X @ b` walks the rows in L1-sized chunks. It adds four columns at a
+  time into a buffer that stays in cache, in parallel over pieces of
+  rows, and writes each output once.
+- `Xᵀ Y`, which includes `X.gram()` and `X.t() @ y`, is one pass. Each
+  chunk of rows adds every column pair's dot product to its piece's
+  accumulator, and the pieces are summed in order, so a parallel result
+  is the sequential one, bit for bit.
+- `cdist` splits the work into one centre against a piece of rows, so
+  each output is written once.
+- `eigh` uses Householder reduction to tridiagonal form, then the
+  implicit QL algorithm (EISPACK's `tred2` and `tql2`).
+
+None of it needs BLAS, so the module ships in the browser build.
+
+Against NumPy 2.5 (Accelerate) and pandas 3.0 on the same data, Apple
+M5 Pro, 18 cores, milliseconds, best of seven
+(`benchmarks/matrix.ol`, `benchmarks/matrix_numpy.py`):
+
+| Operation | ods, all threads | ods, one thread | NumPy / SciPy / pandas |
+|---|---:|---:|---:|
+| `ods.matrix(f, 10 columns)` | 0.001 (shared) | 0.001 | 0.001 (`df.to_numpy()`) |
+| `X @ b`, 1M × 10 | 0.71 | 1.32 | 0.44 |
+| `X @ B`, 1M × 10 times 10 × 3 | 0.75 | 3.44 | 10.7 |
+| `X.t() @ y`, 1M × 10 | 0.45 | 2.67 | 0.45 |
+| `X.gram()`, 1M × 10 | 1.27 | 13.1 | 8.29 (`X.T @ X`) |
+| `mat.eigh`, 20 × 20 | 0.015 | 0.014 | 0.015 |
+| `mat.eigh`, 100 × 100 | 0.71 | 0.68 | 0.35 |
+| `mat.solve`, 100 × 100 | 0.065 | 0.058 | 0.033 |
+| `mat.inv`, 100 × 100 | 0.15 | 0.14 | 0.053 |
+| `mat.cdist`, 10,000 × 8 centres, k = 10 | 0.22 | 0.25 | 0.17 (SciPy) |
+| `mat.cdist`, 2,000 × 2,000 euclidean | 1.81 | 9.37 | 7.39 (SciPy) |
+| `ods.corr`, Pearson, 1M × 10 | 5.54 | 19.2 | 77.7 (`df.corr()`) |
+| `ods.cov`, 1M × 10 | 5.62 | 19.2 | 13.4 |
+| `ods.corr`, Spearman, 100k × 10 | 2.62 | 15.3 | 50.5 |
+| `learn.linear(g, "y ~ x0 + x1 + I(x0^2) + C(kind):C(hour)")`, 1M rows, 75 columns | 296 | 891 | 761 (`get_dummies` + `lstsq`) |
+
+NumPy's BLAS wins the plain matrix–vector product and the k×k routines
+at these orders, by microseconds. The tall products that a model fit
+spends its time on are the reverse: the Gram matrix, products with
+several right-hand sides, correlation and distances. olang wins those
+by 3 to 14 times on all cores.
 
 ## `stats` — from description to inference
 

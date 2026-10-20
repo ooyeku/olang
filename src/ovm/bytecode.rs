@@ -5697,7 +5697,16 @@ impl BytecodeVm {
                     // Struct fields take precedence over methods, exactly as
                     // interpreted: field access that happens to hold a
                     // callable stays field access.
+                    // A fit's method wins over its entry of the same name
+                    // (`fit.importance()` calls, `fit.importance` reads).
+                    let fit_method = matches!(
+                        receiver.data,
+                        crate::ovm::value::ValueData::Map(_) | crate::ovm::value::ValueData::AstMap(_)
+                    ) && Self::native_method_receiver(&receiver)
+                        .and_then(|(h, t)| crate::native_sig::method_target(h, t, method))
+                        .is_some();
                     let field_callee = match &receiver.data {
+                        _ if fit_method => None,
                         crate::ovm::value::ValueData::Struct(st) => st.field(method).cloned(),
                         crate::ovm::value::ValueData::AstStruct(m, _)
                         | crate::ovm::value::ValueData::AstMap(m) => m

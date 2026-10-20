@@ -11,7 +11,9 @@
 //! A null (or a NaN) in any used column makes the row invalid: fits drop
 //! it (and say how many they dropped), predictions answer null there.
 
+use super::formula::{Formula, Response, TermCode};
 use crate::{Frame, OdsError, Series};
+use std::sync::Arc;
 
 pub type Result<T> = std::result::Result<T, OdsError>;
 
@@ -81,6 +83,8 @@ pub enum Input {
         levels: Vec<String>,
         drop_first: bool,
     },
+    /// A formula's term: its own columns, coded patsy's way.
+    Term(Arc<TermCode>),
 }
 
 impl Input {
@@ -88,6 +92,15 @@ impl Input {
         match self {
             Input::Numeric(n) | Input::Flag(n) => n,
             Input::Categorical { name, .. } => name,
+            Input::Term(t) => &t.label,
+        }
+    }
+
+    /// The Frame columns it reads.
+    pub fn sources(&self) -> Vec<String> {
+        match self {
+            Input::Term(t) => t.sources(),
+            other => vec![other.name().to_string()],
         }
     }
 }
@@ -98,6 +111,9 @@ pub struct Design {
     pub inputs: Vec<Input>,
     /// One name per feature column: the column's own, or `col_level`.
     pub features: Vec<String>,
+    /// A formula's response, when the model was fit from one: how to
+    /// read (or compute) the target from a new Frame.
+    pub response: Option<Response>,
 }
 
 /// The sorted distinct non-null strings of a String column.
@@ -206,7 +222,27 @@ impl Design {
                 }
             }
         }
-        Ok(Design { inputs, features })
+        Ok(Design {
+            inputs,
+            features,
+            response: None,
+        })
+    }
+
+    /// The design a formula describes over `frame`.
+    pub fn from_formula(frame: &Frame, f: &Formula) -> Result<Design> {
+        let (terms, response) = super::formula::code(f, frame)?;
+        let mut features = Vec::new();
+        let mut inputs = Vec::with_capacity(terms.len());
+        for t in terms {
+            features.extend(t.features());
+            inputs.push(Input::Term(Arc::new(t)));
+        }
+        Ok(Design {
+            inputs,
+            features,
+            response: Some(response),
+        })
     }
 
     pub fn k(&self) -> usize {
@@ -220,8 +256,13 @@ impl Design {
         let mut valid = vec![true; n];
         let mut cols: Vec<Vec<f64>> = Vec::with_capacity(self.k());
         for input in &self.inputs {
+            if let Input::Term(t) = input {
+                t.encode(frame, &mut cols, &mut valid, false)?;
+                continue;
+            }
             let s = frame.column(input.name())?;
             match input {
+                Input::Term(_) => unreachable!(),
                 Input::Numeric(name) | Input::Flag(name) => {
                     if matches!(s, Series::Str { .. } | Series::Cat { .. }) {
                         return Err(bad(format!(

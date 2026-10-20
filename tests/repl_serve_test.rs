@@ -661,6 +661,23 @@ fn a_cells_value_is_its_last_expression_and_it_says_what_it_defines() {
 }
 
 #[test]
+fn a_matrix_is_a_table_of_its_columns() {
+    let dir = project();
+    let (mut r, _) = Repl::start(dir.path());
+    let m = r.eval("mat.of([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]).t()");
+    assert_eq!(m["ok"], json!(true), "{m}");
+    let v = &m["value"];
+    assert_eq!(v["k"], json!("frame"), "{v}");
+    assert_eq!(v["s"], json!("Matrix[2 x 3]"));
+    assert_eq!(v["table"]["cols"], json!(["0", "1", "2"]));
+    assert_eq!(v["table"]["types"], json!(["Float", "Float", "Float"]));
+    assert_eq!(v["rows"][1]["c"], json!(["2.0", "4.0", "6.0"]));
+    let h = v["h"].as_u64().unwrap();
+    let page = r.ask(json!({ "op": "expand", "h": h, "table": true, "start": 0, "count": 5 }));
+    assert_eq!(page["n"], json!(2), "{page}");
+}
+
+#[test]
 fn a_frame_and_a_series_are_tables_with_typed_columns_read_by_range_and_sorted() {
     let dir = project();
     let (mut r, _) = Repl::start(dir.path());

@@ -26,8 +26,8 @@
 //! | `name?` | optional; the function decides what absence means, and a gap before a later argument is `()` |
 //! | `name = lit` | a default (`10`, `0.5`, `"min"`, `true`, `()`), filled whenever the call stops short of it |
 //! | `**name{k1 k2}` | the trailing options map: named arguments that are no parameter go into it, merged over a map given by position. Listed keys are checked here; an empty list leaves the check to the function |
-//! | `… -> K` | what it returns, when a native kind (`S`, `F`, `M`, `D`, `R`, or `=` for its first argument's): the checker and the language server follow bindings through it |
-//! | `name:SF` | the first parameter's receiver kinds, which make the function a method of those values: `S` Series (and a column expression), `F` Frame, `M` fitted model, `D` Date, `R` streaming reader, `G` grouped Frame (`ods.group_by(f, keys)`) |
+//! | `… -> K` | what it returns, when a native kind (`S`, `F`, `M`, `D`, `R`, `G`, `X`, or `=` for its first argument's): the checker and the language server follow bindings through it |
+//! | `name:SF` | the first parameter's receiver kinds, which make the function a method of those values: `S` Series (and a column expression), `F` Frame, `M` fitted model, `D` Date, `R` streaming reader, `G` grouped Frame (`ods.group_by(f, keys)`), `X` Matrix |
 //!
 //! **Methods.** `recv.m(args)` on a native value, with no `impl` of `m`
 //! for its type, is `home.m(recv, args)`: the value's own module first,
@@ -103,6 +103,7 @@ pub const RECV_MODEL: u8 = 4;
 pub const RECV_DATE: u8 = 8;
 pub const RECV_READER: u8 = 16;
 pub const RECV_GROUPBY: u8 = 32;
+pub const RECV_MATRIX: u8 = 64;
 
 #[derive(Debug, Clone)]
 pub struct Sig {
@@ -130,6 +131,7 @@ pub fn kind_name(bit: u8) -> Option<&'static str> {
         RECV_DATE => Some("Date"),
         RECV_READER => Some("Reader"),
         RECV_GROUPBY => Some("GroupBy"),
+        RECV_MATRIX => Some("Matrix"),
         _ => None,
     }
 }
@@ -139,6 +141,7 @@ pub fn home_of(type_name: &str) -> Option<&'static str> {
     match type_name {
         "Series" | "Expr" | "Frame" | "Reader" | "GroupBy" => Some("ods"),
         "Model" => Some("learn"),
+        "Matrix" => Some("mat"),
         "Date" => Some("dates"),
         _ => None,
     }
@@ -151,7 +154,7 @@ pub fn returns(full: &str, first: Option<&str>) -> Option<&'static str> {
     let s = sig(full)?;
     if s.ret == RET_SAME {
         let first = first?;
-        return ["Series", "Frame", "Model", "Date", "Reader", "GroupBy"]
+        return ["Series", "Frame", "Model", "Date", "Reader", "GroupBy", "Matrix"]
             .into_iter()
             .find(|k| *k == first);
     }
@@ -223,6 +226,7 @@ pub fn recv_bit(type_name: &str) -> u8 {
         "Date" => RECV_DATE,
         "Reader" => RECV_READER,
         "GroupBy" => RECV_GROUPBY,
+        "Matrix" => RECV_MATRIX,
         _ => 0,
     }
 }
@@ -259,6 +263,7 @@ fn parse_spec(full: &'static str, spec: &'static str) -> Sig {
                 "D" => RECV_DATE,
                 "R" => RECV_READER,
                 "G" => RECV_GROUPBY,
+                "X" => RECV_MATRIX,
                 "=" => RET_SAME,
                 other => panic!("native_sig: {full}: unknown return kind {other}"),
             },
@@ -318,6 +323,7 @@ fn parse_spec(full: &'static str, spec: &'static str) -> Sig {
                         'D' => RECV_DATE,
                         'R' => RECV_READER,
                         'G' => RECV_GROUPBY,
+                        'X' => RECV_MATRIX,
                         other => panic!("native_sig: {full}: unknown receiver kind {other}"),
                     };
                 }
@@ -662,7 +668,7 @@ fn borrowed_modules(type_name: &str) -> &'static [&'static str] {
 
 /// Home modules whose functions are methods of their values even before
 /// the table lists them (the data stack grows faster than this table).
-const OPEN_HOMES: &[&str] = &["ods", "learn", "dates"];
+const OPEN_HOMES: &[&str] = &["ods", "learn", "dates", "mat"];
 
 /// module → function → full name, for every builtin module.
 static MODULE_FUNCTIONS: LazyLock<HashMap<String, HashMap<String, &'static str>>> =
@@ -701,7 +707,7 @@ type FxMap<K, V> = std::collections::HashMap<K, V, rustc_hash::FxBuildHasher>;
 static METHOD_TABLE: LazyLock<FxMap<&'static str, FxMap<&'static str, &'static str>>> =
     LazyLock::new(|| {
         let mut out: FxMap<&'static str, FxMap<&'static str, &'static str>> = FxMap::default();
-        for type_name in ["Series", "Expr", "Frame", "Model", "Date", "Reader", "GroupBy"] {
+        for type_name in ["Series", "Expr", "Frame", "Model", "Date", "Reader", "GroupBy", "Matrix"] {
             let home = home_of(type_name).expect("a data type");
             let mut methods = FxMap::default();
             for full in methods_from(home, type_name) {
@@ -1010,6 +1016,28 @@ pub const TABLE: &[(&str, &str)] = &[
     ("ods.join_anti", "left:F, right, on, right_on?, suffix = \"_right\", validate? -> F"),
     ("ods.pivot", "f:F, index, columns, values, agg, fill? -> F"),
     ("ods.unpivot", "f:F, id_columns, value_columns? -> F"),
+    // ── ods: matrices (D4) ──
+    ("ods.matrix", "data:F, cols?, nulls = \"raise\" -> X"),
+    ("ods.corr", "data:F, cols?, method = \"pearson\" -> F"),
+    ("ods.cov", "data:F, cols? -> F"),
+    // ── mat: a Matrix's functions (D4) ──
+    ("mat.of", "rows -> X"),
+    ("mat.identity", "n -> X"),
+    ("mat.t", "x:X -> X"),
+    ("mat.gram", "x:X -> X"),
+    ("mat.matmul", "a:X, b"),
+    ("mat.col", "x:X, j -> S"),
+    ("mat.row", "x:X, i"),
+    ("mat.shape", "x:X"),
+    ("mat.mean", "x:X, axis = 0 -> S"),
+    ("mat.std", "x:X, axis = 0, ddof = 1 -> S"),
+    ("mat.solve", "a:X, b"),
+    ("mat.inv", "a:X -> X"),
+    ("mat.cholesky", "a:X -> X"),
+    ("mat.eigh", "a:X"),
+    ("mat.cdist", "x:X, c, metric = \"sqeuclidean\" -> X"),
+    ("mat.to_frame", "x:X, names? -> F"),
+    ("mat.to_list", "x:X"),
     // ── stats ──
     ("stats.describe", "s:S"),
     ("stats.corr", "a:S, b"),
@@ -1073,7 +1101,8 @@ pub const TABLE: &[(&str, &str)] = &[
     ("learn.gmm", "data:F, cols?, k, **opts{max_iter tol reg_covar seed} -> M"),
     ("learn.pca", "data:F, cols?, **opts{n_components scale} -> M"),
     ("learn.silhouette", "data:F, cols?, labels, **opts{sample seed}"),
-    ("learn.predict", "model:M, data, **opts{kind level trees} -> S"),
+    ("learn.predict", "model:M, data, **opts{kind interval level trees} -> S"),
+    ("learn.conf_int", "model:M, level = 0.95 -> F"),
     ("learn.importance", "model:M -> F"),
     ("learn.summary", "model:M, **opts{level} -> F"),
     ("learn.params", "model:M"),

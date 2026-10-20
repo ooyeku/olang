@@ -28,6 +28,7 @@ below made a measured difference of between 2× and several hundred times.
 - [The expression engine](#the-expression-engine)
 - [Text, dates and categories](#text-dates-and-categories)
 - [Frames: grouping, joins and time](#frames-grouping-joins-and-time)
+- [Matrices and formulas](#matrices-and-formulas)
 - [What a program costs in memory](#what-a-program-costs-in-memory)
 
 ## Put hot loops in functions
@@ -495,6 +496,47 @@ Every parallel path joins in a fixed order, so a result is the same run
 to run, and the same on one thread but for a grouped float `sum` or
 `mean`, whose additions the parallel scatter reorders
 (`tests/frames_ergonomics_test.rs` checks both).
+
+## Matrices and formulas
+
+`ods.matrix`, `@`, the `mat` routines, `ods.corr`/`ods.cov` and a formula
+fit (`benchmarks/matrix.ol`) are compared here with NumPy 2.5
+(Accelerate), SciPy 1.18 and pandas 3.0 on the same data
+(`benchmarks/matrix_numpy.py`). Both scripts build the data themselves.
+Times are milliseconds per call, the fastest of seven, on an Apple M5
+Pro (18 threads):
+
+| Operation | ods, all threads | ods, one thread | NumPy / SciPy / pandas |
+|---|---:|---:|---:|
+| `ods.matrix(f, 10 columns)` | 0.001 (shared) | 0.001 | 0.001 (`df.to_numpy()`) |
+| `X @ b`, 1M × 10 | 0.71 | 1.32 | 0.44 |
+| `X @ B`, 1M × 10 times 10 × 3 | 0.75 | 3.44 | 10.7 |
+| `X.t() @ y`, 1M × 10 | 0.45 | 2.67 | 0.45 |
+| `X.gram()`, 1M × 10 | 1.27 | 13.1 | 8.29 (`X.T @ X`) |
+| `mat.eigh`, 20 × 20 | 0.015 | 0.014 | 0.015 |
+| `mat.eigh`, 100 × 100 | 0.71 | 0.68 | 0.35 |
+| `mat.solve`, 100 × 100 | 0.065 | 0.058 | 0.033 |
+| `mat.inv`, 100 × 100 | 0.15 | 0.14 | 0.053 |
+| `mat.cdist`, 10,000 × 8 centres, k = 10 | 0.22 | 0.25 | 0.17 (SciPy) |
+| `mat.cdist`, 2,000 × 2,000 euclidean | 1.81 | 9.37 | 7.39 (SciPy) |
+| `ods.corr`, Pearson, 1M × 10 | 5.54 | 19.2 | 77.7 (`df.corr()`) |
+| `ods.cov`, 1M × 10 | 5.62 | 19.2 | 13.4 |
+| `ods.corr`, Spearman, 100k × 10 | 2.62 | 15.3 | 50.5 |
+| `learn.linear(g, "y ~ x0 + x1 + I(x0^2) + C(kind):C(hour)")`, 1M rows, 75 columns | 296 | 891 | 761 (`get_dummies` + `lstsq`) |
+
+A Matrix shares a Frame's Float columns, so building one is free. The
+products run over L1-sized chunks of rows in fixed pieces: `X @ B`
+writes each output once, and `Xᵀ Y` (the Gram matrix, `X.t() @ y`) is
+one pass that sums the pieces in order. A parallel result is therefore
+the sequential one, bit for bit. Past about two million multiply-adds,
+the pieces run on every core. `cdist` gives each task one centre
+against a piece of rows. Correlation centres each column once and takes
+their Gram matrix. A column with nulls falls back to pairwise-complete
+rows, as pandas does.
+
+A formula fit spends its time building the 71 dense cell columns and
+their Gram matrix. pandas' `get_dummies` with `lstsq` does the same work
+in 761 ms.
 
 ## What a program costs in memory
 

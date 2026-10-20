@@ -141,6 +141,8 @@ pub struct OlsFit {
     pub log_lik: f64,
     pub intercept: bool,
     pub fitted: Vec<f64>,
+    /// `y − fitted`, row by row.
+    pub resid: Vec<f64>,
 }
 
 pub fn ols(x: &Matrix, y: &[f64], w: Option<&[f64]>, intercept: bool, par: bool) -> Result<OlsFit> {
@@ -207,6 +209,7 @@ pub fn ols(x: &Matrix, y: &[f64], w: Option<&[f64]>, intercept: bool, par: bool)
         sse,
         log_lik,
         intercept,
+        resid: y.iter().zip(&fitted).map(|(a, b)| a - b).collect(),
         fitted,
     })
 }

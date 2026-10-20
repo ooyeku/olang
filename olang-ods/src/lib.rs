@@ -35,6 +35,8 @@ pub mod fuse;
 pub mod column;
 #[cfg(feature = "stats")]
 pub mod learn;
+#[cfg(feature = "stats")]
+pub mod matrix;
 pub mod gg;
 pub mod plot;
 #[cfg(feature = "stats")]
