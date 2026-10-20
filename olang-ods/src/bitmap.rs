@@ -84,6 +84,29 @@ impl Bitmap {
         &self.words
     }
 
+    /// A bitmap over `len` elements from its raw words (64 a word). Bits
+    /// at or past `len` are cleared here, so the tail invariant holds
+    /// whatever the caller left in the last word.
+    pub fn from_words(len: usize, mut words: Vec<u64>) -> Self {
+        words.resize(Self::word_count(len), 0);
+        if !len.is_multiple_of(64)
+            && let Some(last) = words.last_mut()
+        {
+            *last &= (1u64 << (len % 64)) - 1;
+        }
+        Self {
+            len,
+            words: Arc::new(words),
+        }
+    }
+
+    /// The identity of the shared words, for kernels that recognise the
+    /// same validity met twice (the expression engine's common
+    /// subexpressions).
+    pub fn words_ptr(&self) -> usize {
+        Arc::as_ptr(&self.words) as *const u64 as usize
+    }
+
     pub fn all_valid(&self) -> bool {
         self.count_valid() == self.len
     }

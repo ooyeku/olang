@@ -3103,18 +3103,21 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 
 | Group | Verbs |
 |---|---|
-| Create | `series(list\|range)` · `try_series(list)` (the Result form: a mixed-type list is `Err`, not a raise) · `zeros(n)` (n float zeros) · `linspace(a, b, n)` (n evenly spaced floats, inclusive) |
-| Elementwise | `map(s, "sin")` — apply a `math.*` unary fn over the column in one kernel pass |
+| Create | `series(list\|range)` · `try_series(list)` (the Result form: a mixed-type list is `Err`, not a raise) · `zeros(n)` (n float zeros) · `ones(n)` · `full(n, v)` · `full_like(s, v)` · `linspace(a, b, n)` (n evenly spaced floats, inclusive) · `arange(stop)` / `arange(start, stop, step = 1)` (Int from Ints, else Float; `stop` excluded) · `repeat(s, k)` (each element `k` times, or a list of counts) · `tile(s, k)` (the column `k` times) |
+| Math | `abs` `exp` `exp2` `expm1` `ln` `ln1p` `log2` `log10` `sqrt` `cbrt` `sin` `cos` `tan` `asin` `acos` `atan` `sinh` `cosh` `tanh` `sigmoid` `logit` `sign` `floor` `ceil` `trunc` — each `ods.exp(s)`, the scalar `math.*` function over the column (Int widens to Float, except where the answer is whole) · `pow(s, p)` · `round(s, digits = 0)` · `map(s, "sin")` — the older spelling, by name |
+| Conditionals | `where(mask, a, b)` (null mask → null) · `select(masks, values, default = ())` (first mask that holds) · `clip(s, lo, hi = ())` (`()` an open bound) · `between(s, lo, hi, closed = "both")` or `between(s, [lo, hi] \| ())` — `"left"`, `"right"`, `"neither"` |
 | Comparisons | `eq(a, b)` · `ne(a, b)` — elementwise masks between two Series (against a *scalar*, use the `s == v` / `s != v` operators) |
-| Nulls | `is_null(s)` (mask) · `fill_null(s, v)` · `null_count(s)` |
-| Reductions | `sum` `mean` `var` `std` `min` `max` `median` (skip nulls; `var`/`std` are sample) · `quantile(s, q)` · `cumsum(s)` · `dot(a, b)` |
-| Windows | `shift(s, by)` (nulls at the edge) · `cum_max` · `cum_min` · `rank(s, method = "min")` — min/max/average/ordinal/dense · `rolling(s, window, agg)` — `agg` one of count, sum, mean, min, max, median, std, var — null until the window fills |
+| Nulls | `is_null(s)` · `not_null(s)` · `is_nan(s)` (masks) · `fill_null(s, v)` — `v` a value, a Series, or a method `"ffill"`, `"bfill"`, `"linear"`, `"mean"`, `"median"` (the first three take a `limit`) · `coalesce(a, b, …)` (first non-null) · `interpolate(s, limit = ())` · `null_count(s)` |
+| Reductions | `sum` `mean` `var` `std` `min` `max` `median` (skip nulls; `var`/`std` are sample; a Bool mask sums to its count of true) · `quantile(s, q)` · `count(s)` (non-null) · `first(s)` · `last(s)` · `mode(s)` · `any(mask)` · `all(mask)` · `cumsum(s)` · `cumprod(s)` · `dot(a, b)` — a reduction of an expression reads its columns once |
+| Positions | `argmax(s)` · `argmin(s)` (first row of the extreme, `()` if none) · `searchsorted(s, v, side = "left")` |
+| Windows | `shift(s, by)` (nulls at the edge) · `diff(s, lag = 1)` · `pct_change(s, lag = 1)` · `cum_max` · `cum_min` · `rank(s, method = "min")` — min/max/average/ordinal/dense · `rolling(s, window, agg)` — `agg` one of count, sum, mean, min, max, median, std, var — null until the window fills |
+| Recode | `recode(s, mapping, default = keep)` — through a map, an object or `[from, to]` pairs; `()` as the default nulls the unmapped |
 | Text | `a + b` on String Series, or a String Series and a String on either side — elementwise concatenation, a null cell staying null |
 | Head / tail | `head(s, n)` · `tail(s, n)` — the first or last `n` values (the Frame verbs, on a Series) |
 | Distinct | `unique(s)` (first-seen order) · `n_unique(s)` · `value_counts(s)` → a value/count Frame, most frequent first |
 | Dates | `date_part(s, "year"\|"month"\|"day")` — the prefix of an ISO date or timestamp String Series, as a String Series: the derived key for a by-month `group_by` |
 | Convert type | `cast(s, "Float"\|"Int"\|"Bool"\|"String")` — what the target cannot hold becomes null, so `null_count` reports what was lost |
-| Order / select | `sort(s)` (nulls last) · `argsort(s)` (sorting indices) · `take(s, idx)` (gather) · `get(s, i)` (a negative position raises, as a list's does) |
+| Order / select | `sort(s, descending = false)` (nulls last) · `argsort(s, descending = false)` (sorting indices, stable) · `take(s, idx)` (gather) · `get(s, i)` (a negative position raises, as a list's does) |
 | Convert | `to_list(s)` (nulls → `()`) · `len(s)` |
 
 ### Frame verbs
@@ -3129,7 +3132,8 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 | Splits | `split(f, frac)` — a deterministic holdout under `random.seed`, `[kept, rest]` · `split_at(f, column, frac)` — the forward-in-time split: sorted by `column`, the first `frac` first |
 | Version | `ods.version()` — the engine's version, the same as `runtime.version()`, worth quoting in a bug report |
 | Subscript | `f["name"]` a column · `f[mask]` the rows a Bool Series keeps · `s[i]` an element (a negative position raises) · `column(f, name)` is the same as `f[name]`, for when a call reads better than a subscript |
-| Shape | `select(f, names)` · `drop(f, names)` · `rename(f, mapping)` · `with_column(f, name, series)` · `filter(f, mask)` · `sort_by(f, name, descending)` |
+| Shape | `select(f, names and exprs)` · `drop(f, names)` · `rename(f, mapping)` · `with_column(f, name, series)` · `with(f, { name: expr, … })` · `filter(f, mask \| expr)` · `sort_by(f, keys, descending = false)` — several keys (names or exprs), `descending` a Bool or one per key |
+| Expressions | `col(name)` · `lit(v)` · `alias(expr, name)` · `over(agg, keys)` — an aggregation within groups, given back to every row. Every column function and operator takes an expression and gives one; [Expressions](ods.md#expressions--odscol) |
 | Whole rows | `distinct(f, names = all)` · `drop_null(f, names = all)` — duplicates and missing data, first occurrence kept |
 | Reshape | `pivot(f, index, columns, values, agg)` long→wide · `unpivot(f, ids, value_columns = the rest)` wide→long, emitting `name`/`value` |
 | Sample | `sample(f, n)` (also on a Series) — n random rows, without replacement, in original order; seeded by `random.seed` |

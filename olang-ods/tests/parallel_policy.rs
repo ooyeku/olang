@@ -3,7 +3,7 @@
 //! steers: a parallel path computes what the sequential one does, bit
 //! for bit, and a fused chain what the eager kernels do.
 
-use olang_ods::fuse::Expr;
+use olang_ods::fuse::{Expr, Plan};
 use olang_ods::{ArithOp, ParClass, Scalar, Series, par_worth, parallel_enabled};
 use std::sync::Arc;
 
@@ -15,11 +15,11 @@ fn values(s: &Series) -> Vec<f64> {
 }
 
 fn leaf(v: &[f64]) -> Arc<Expr> {
-    Arc::new(Expr::Leaf(Arc::new(v.to_vec())))
+    Expr::col(Series::from_f64(v.to_vec()))
 }
 
 fn konst(c: f64) -> Arc<Expr> {
-    Arc::new(Expr::Const(c))
+    Expr::lit(Scalar::F64(c))
 }
 
 #[test]
@@ -86,36 +86,35 @@ fn a_fused_chain_is_the_eager_kernels_bit_for_bit() {
         let ops = [ArithOp::Add, ArithOp::Sub, ArithOp::Mul];
         for op in ops {
             for op2 in ops {
-                let cases: Vec<(Expr, Series)> = vec![
+                let cases: Vec<(Arc<Expr>, Series)> = vec![
                     // a op b
-                    (Expr::Bin(op, leaf(&a), leaf(&b)), eager(&sa, op, &sb)),
+                    (Expr::bin(op.into(), leaf(&a), leaf(&b)), eager(&sa, op, &sb)),
                     // a op 2.5, 2.5 op a
-                    (Expr::Bin(op, leaf(&a), konst(2.5)), eager_s(&sa, op, 2.5, false)),
-                    (Expr::Bin(op, konst(2.5), leaf(&a)), eager_s(&sa, op, 2.5, true)),
+                    (Expr::bin(op.into(), leaf(&a), konst(2.5)), eager_s(&sa, op, 2.5, false)),
+                    (Expr::bin(op.into(), konst(2.5), leaf(&a)), eager_s(&sa, op, 2.5, true)),
                     // (a op b) op2 1.5, 1.5 op2 (a op b)
                     (
-                        Expr::Bin(op2, Arc::new(Expr::Bin(op, leaf(&a), leaf(&b))), konst(1.5)),
+                        Expr::bin(op2.into(), Expr::bin(op.into(), leaf(&a), leaf(&b)), konst(1.5)),
                         eager_s(&eager(&sa, op, &sb), op2, 1.5, false),
                     ),
                     (
-                        Expr::Bin(op2, konst(1.5), Arc::new(Expr::Bin(op, leaf(&a), leaf(&b)))),
+                        Expr::bin(op2.into(), konst(1.5), Expr::bin(op.into(), leaf(&a), leaf(&b))),
                         eager_s(&eager(&sa, op, &sb), op2, 1.5, true),
                     ),
                     // (a op b) op2 c, c op2 (a op b)
                     (
-                        Expr::Bin(op2, Arc::new(Expr::Bin(op, leaf(&a), leaf(&b))), leaf(&c)),
+                        Expr::bin(op2.into(), Expr::bin(op.into(), leaf(&a), leaf(&b)), leaf(&c)),
                         eager(&eager(&sa, op, &sb), op2, &sc),
                     ),
                     (
-                        Expr::Bin(op2, leaf(&c), Arc::new(Expr::Bin(op, leaf(&a), leaf(&b)))),
+                        Expr::bin(op2.into(), leaf(&c), Expr::bin(op.into(), leaf(&a), leaf(&b))),
                         eager(&sc, op2, &eager(&sa, op, &sb)),
                     ),
                     // (a op 3.0) op2 (b op c): both sides chains
                     (
-                        Expr::Bin(
-                            op2,
-                            Arc::new(Expr::Bin(op, leaf(&a), konst(3.0))),
-                            Arc::new(Expr::Bin(op, leaf(&b), leaf(&c))),
+                        Expr::bin(op2.into(),
+                            Expr::bin(op.into(), leaf(&a), konst(3.0)),
+                            Expr::bin(op.into(), leaf(&b), leaf(&c)),
                         ),
                         eager(&eager_s(&sa, op, 3.0, false), op2, &eager(&sb, op, &sc)),
                     ),
@@ -123,8 +122,8 @@ fn a_fused_chain_is_the_eager_kernels_bit_for_bit() {
                 for (expr, want) in cases {
                     let want = values(&want);
                     let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
-                    assert_eq!(bits(&values(&expr.eval(n, false))), bits(&want), "{expr:?} n={n}");
-                    assert_eq!(bits(&values(&expr.eval(n, true))), bits(&want), "{expr:?} n={n} par");
+                    assert_eq!(bits(&values(&expr.eval(n, false).unwrap())), bits(&want), "{expr:?} n={n}");
+                    assert_eq!(bits(&values(&expr.eval(n, true).unwrap())), bits(&want), "{expr:?} n={n} par");
                 }
             }
         }
@@ -134,13 +133,19 @@ fn a_fused_chain_is_the_eager_kernels_bit_for_bit() {
 #[test]
 fn a_chain_over_one_column_is_classed_with_scalar_arithmetic() {
     let a = [1.0, 2.0];
-    let one = Expr::Bin(
-        ArithOp::Add,
-        Arc::new(Expr::Bin(ArithOp::Mul, leaf(&a), konst(2.0))),
+    let one = Expr::bin(
+        ArithOp::Add.into(),
+        Expr::bin(ArithOp::Mul.into(), leaf(&a), konst(2.0)),
         konst(1.0),
     );
-    assert_eq!(one.leaves(), 1);
-    assert_eq!(one.par_class(), ParClass::ElementwiseScalar);
-    let two = Expr::Bin(ArithOp::Mul, leaf(&a), leaf(&a));
-    assert_eq!(two.par_class(), ParClass::Elementwise);
+    let plan = Plan::new(&[one], None).unwrap();
+    assert!(plan.par_rows() <= ParClass::ElementwiseScalar.min_rows());
+    let col = leaf(&a);
+    let two = Expr::bin(ArithOp::Mul.into(), col.clone(), col);
+    // The same column twice is read once.
+    let plan = Plan::new(&[two], None).unwrap();
+    assert_eq!(plan.par_rows(), ParClass::ElementwiseScalar.min_rows());
+    let three = Expr::bin(ArithOp::Mul.into(), leaf(&a), leaf(&[3.0, 4.0]));
+    let plan = Plan::new(&[three], None).unwrap();
+    assert_eq!(plan.par_rows(), ParClass::Elementwise.min_rows());
 }

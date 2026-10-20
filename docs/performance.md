@@ -25,6 +25,7 @@ below made a measured difference of between 2× and several hundred times.
 - [Verifying a hot program](#verifying-a-hot-program)
 - [Bulk data belongs in ods](#bulk-data-belongs-in-ods)
 - [Automatic parallelism in ods](#automatic-parallelism-in-ods)
+- [The expression engine](#the-expression-engine)
 - [What a program costs in memory](#what-a-program-costs-in-memory)
 
 ## Put hot loops in functions
@@ -241,8 +242,9 @@ caller's thread (`olang_ods::ParClass`, and the frame kernels' own):
 A kernel already running on a pool worker (inside a `par_map` stage)
 never fans out again, and with `OLANG_PARALLELISM=1` nothing does.
 `set_parallel(false)` turns all of it off; the host's own threshold
-(the REPL's `:parallel threshold`) applies on top. Comparisons
-(`s > 1.5`) and string kernels are always sequential.
+(the REPL's `:parallel threshold`) applies on top. String kernels are
+always sequential; comparisons, math and the rest of the elementwise
+work follow [the expression engine](#the-expression-engine)'s cost model.
 
 The thresholds are read off `benches/crossover.rs` in olang-ods, which
 times every kernel with its sequential path and its parallel path
@@ -309,6 +311,89 @@ thresholds:
 
 The comparison with scikit-learn is in
 [the data stack](ods.md#against-scikit-learn).
+
+## The expression engine
+
+Elementwise column work — operators, the math functions, `where`,
+`select`, `coalesce`, `fill_null` with a value, `clip`, `between`, the
+null masks, the numeric casts, and `ods.col` expressions — runs through
+one engine (`olang_ods::fuse`). An expression compiles into a list of
+steps, common subexpressions once, and runs 2,048 rows at a time, so
+every intermediate stays in L1 and only the inputs and outputs touch
+memory. Nulls are combined a 64-bit word at a time. A reduction after
+an expression (`ods.sum(a * b)`, `ods.mean(mask)`, `ods.dot`) folds the
+chunks and makes no column. A single operation takes the eager kernel's
+own path, so it costs what it did.
+
+Measured with `cargo bench -p olang-ods --bench expr` (the engine) and
+`olang-ods/benches/expr.py` (the same shapes in NumPy 2.5.1 and pandas
+3.0.5), 10M rows, 10% nulls where marked, 1,000 groups; milliseconds,
+fastest of seven, Apple M5 Pro (18 threads). "Eager" is the kernel per
+operation, materializing each intermediate, as ods did before.
+
+| Kernel | ods, one thread | ods, parallel | eager, one thread | NumPy / pandas |
+|---|---|---|---|---|
+| `a * b` | 1.79 | 0.98 | 1.81 | 1.96 |
+| `a * 2.5` | 1.23 | 0.61 | 1.24 | 1.28 |
+| `a * b`, nulls | 1.82 | 1.05 | 1.84 | 1.85 (pandas) |
+| `exp(a)` | 39.7 | 3.24 | 43.5 (`map`) | 40.4 |
+| `sqrt(abs(a))` | 4.29 | 0.94 | | 3.44 |
+| `sigmoid(a)` | 43.3 | 3.30 | | 44.3 |
+| `ln(abs(a) + 1)` | 18.0 | 1.64 | | 18.4 |
+| `(a*b + c)*0.5 - 1` | 5.05 | 1.48 | 6.15 | 5.69 |
+| the same, nulls | 5.83 | 1.63 | 6.21 | 6.31 (pandas) |
+| `i*3 + j`, Int (checked) | 5.24 | 1.19 | 21.3 | 4.89 (unchecked) |
+| `sum(a * b)` | 2.28 | 0.70 | 2.84 | 2.95 |
+| `dot(a, b)` | 2.28 | 0.70 | 7.15 | 0.92 (BLAS) |
+| `mean((a - b)^2)` (an RMSE) | 3.15 | 0.75 | | 4.15 |
+| `mean(a > 0)` | 1.02 | 0.35 | | 4.76 |
+| log loss (`sigmoid`, two `ln`, a mean) | 124 | 8.88 | | 179 |
+| `where(a > 0, a, b)` | 3.98 | 1.18 | | 4.52 |
+| `clip(a, -100, 100)` | 2.28 | 0.73 | | 2.24 |
+| `between(a, -100, 100)` | 1.30 | 0.39 | | 3.64 (pandas) |
+| `coalesce(a, b)`, nulls | 4.76 | 1.03 | | 7.17 (pandas `fillna`) |
+| `fill_null(a, 0.0)`, nulls | 4.22 | 0.65 | 9.49 | 5.79 (pandas) |
+
+The column kernels around the engine, against pandas (they are not
+elementwise, so one thread):
+
+| Kernel | ods | NumPy / pandas |
+|---|---|---|
+| `fill_null(s, "ffill")`, nulls | 8.35 | 10.4 |
+| `interpolate(s)`, nulls | 11.7 | 166 |
+| `diff(s)` | 3.16 | 5.11 |
+| `pct_change(s)` | 5.11 | 8.09 |
+| `cumprod(s)` | 6.51 | 19.5 |
+| `argmax(s)` | 4.43 | 4.63 |
+| `mode(s)`, Int, 1,000 values | 5.77 | 14.9 |
+| `searchsorted`, 1,000 probes | 0.06 | 0.46 |
+| `sort(s, true)` | 115 (24.8 parallel) | 281 |
+| `argsort(s, true)`, stable | 165 (38.8 parallel) | 920 |
+| `recode`, 1,000-key text map | 21.3 | 177 (`map`) |
+| `over(mean, g)` | 22.3 (7.5 parallel) | 40.9 (`transform`) |
+| `over(median, g)` | 95.5 (21.4 parallel) | 126 (`transform`) |
+| `sort_by(f, ["g", "a"], [false, true])` | 901 (386 parallel) | 4,498 (`sort_values`, stable) |
+
+The transcendental functions run at NumPy's speed on one thread (both
+call a scalar `exp`/`log` per element); checked Int arithmetic pays a
+few percent over NumPy's wrapping arithmetic for raising on overflow.
+Everything else is at parity or ahead on one thread, and the parallel
+column is what a program gets past the threshold.
+
+**When an expression fans out.** A plan's cost is the sum of its
+operations, a transcendental function counting twelve and a division,
+`where`, `coalesce`, `clip` or `between` two. A plan of one operation
+keeps its kernel class's threshold above; a longer one fans out from
+`2,000,000 / cost` rows, but never below 65,536 nor above its class's
+threshold. So `exp(a)` goes parallel from 166,000 rows, a four-operation
+chain over columns from 500,000, and a log loss from 65,536. Measured at
+the thresholds (one thread / parallel, milliseconds): `exp` at 150,000
+rows 0.58 / 0.19; the four-operation chain at 600,000 rows 0.27 / 0.14;
+log loss at 65,536 rows 0.82 / 0.27. A parallel run cuts the rows into
+a few pieces a worker (16 to 128 chunks each) and computes what the
+sequential run does, bit for bit; a reduction's pieces have a fixed
+size per plan, and their partial sums are added in order, so its result
+is the same on any number of threads.
 
 ## What a program costs in memory
 

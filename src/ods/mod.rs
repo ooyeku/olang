@@ -8,7 +8,9 @@
 //! all thin tables over the engine (L2 of the layer cake). See
 //! `docs/design/ods.md`.
 
+mod colfns;
 mod columns;
+pub mod expr;
 mod frame;
 mod learn;
 pub mod gg;
@@ -90,6 +92,7 @@ impl OvmModule for OdsModule {
             .copied()
             .chain(series::FUNCTIONS.iter().copied())
             .chain(frame::FUNCTIONS.iter().copied())
+            .chain(colfns::FUNCTIONS.iter().copied())
         {
             module.insert(
                 name.to_string(),
@@ -131,36 +134,7 @@ impl OvmModule for OdsModule {
     }
 
     fn dispatch(&self, func: &str, args: Vec<Value>) -> Result<Value, String> {
-        if frame::FUNCTIONS.iter().any(|(n, _)| *n == func) {
-            return frame::dispatch(func, args);
-        }
-        // filter/take/sample are shared names: a Frame first argument
-        // routes to the frame verbs, everything else to the series
-        // kernels.
-        if matches!(func, "filter" | "take" | "sample")
-            && let Some(result) = frame::dispatch_shared(func, &args)
-        {
-            return result;
-        }
-        if series::FUNCTIONS.iter().any(|(n, _)| *n == func) {
-            return series::dispatch(func, args).expect("membership checked above");
-        }
-        match func {
-            "version" => Ok(Value::String(Arc::new(
-                env!("CARGO_PKG_VERSION").to_string(),
-            ))),
-            "probe" => match args.as_slice() {
-                [Value::Integer(tag)] => {
-                    Ok(Value::Native(NativeHandle::new(OdsProbe { tag: *tag })))
-                }
-                _ => Err("ods.probe expects one Int argument".to_string()),
-            },
-            "probe_tag" => match args.first().and_then(probe_of) {
-                Some(probe) if args.len() == 1 => Ok(Value::Integer(probe.tag)),
-                _ => Err("ods.probe_tag expects one OdsProbe argument".to_string()),
-            },
-            _ => Err(format!("unknown ods function: ods.{}", func)),
-        }
+        call(func, args)
     }
 
     fn binary_op(&self, op: &BinaryOp, lhs: &Value, rhs: &Value) -> Option<Result<Value, String>> {
@@ -168,7 +142,7 @@ impl OvmModule for OdsModule {
         // joins this when the Matrix does).
         if matches!(op, BinaryOp::MatMul) {
             if series_of(lhs).is_some() && series_of(rhs).is_some() {
-                return Some(self.dispatch("dot", vec![lhs.clone(), rhs.clone()]));
+                return Some(call("dot", vec![lhs.clone(), rhs.clone()]));
             }
             if let (Some(a), Some(b)) = (probe_of(lhs), probe_of(rhs)) {
                 return Some(Ok(Value::Integer(a.tag * b.tag)));
@@ -178,27 +152,7 @@ impl OvmModule for OdsModule {
         if let Some(result) = series::binary_op(op, lhs, rhs) {
             return Some(result);
         }
-        match op {
-            BinaryOp::Add => {
-                let (probe, n) = match (probe_of(lhs), rhs) {
-                    (Some(p), Value::Integer(n)) => (p, *n),
-                    _ => match (lhs, probe_of(rhs)) {
-                        (Value::Integer(n), Some(p)) => (p, *n),
-                        _ => return None,
-                    },
-                };
-                Some(match probe.tag.checked_add(n) {
-                    Some(tag) => Ok(Value::Native(NativeHandle::new(OdsProbe { tag }))),
-                    None => Err(
-                        "Integer overflow in addition (bigint.of gives arbitrary precision)"
-                            .to_string(),
-                    ),
-                })
-            }
-            // Equality falls through to the registry's structural
-            // native_eq fallback; everything else is a type error.
-            _ => None,
-        }
+        probe_binary_op(op, lhs, rhs)
     }
 
     fn unary_op(&self, op: &UnaryOp, value: &Value) -> Option<Result<Value, String>> {
@@ -215,7 +169,12 @@ impl OvmModule for OdsModule {
         Some(Ok(Value::Native(NativeHandle::new(OdsProbe { tag }))))
     }
 
-    fn bitwise_op(&self, op: &BitwiseOp, lhs: &Value, rhs: &Value) -> Option<Result<Value, String>> {
+    fn bitwise_op(
+        &self,
+        op: &BitwiseOp,
+        lhs: &Value,
+        rhs: &Value,
+    ) -> Option<Result<Value, String>> {
         if let Some(result) = series::bitwise_op(op, lhs, rhs) {
             return Some(result);
         }
@@ -227,6 +186,84 @@ impl OvmModule for OdsModule {
             _ => return None,
         };
         Some(Ok(Value::Native(NativeHandle::new(OdsProbe { tag }))))
+    }
+}
+
+/// Call `ods.<func>` with `args`: what the module dispatches, and what
+/// an Expr's call nodes run against a Frame.
+pub(crate) fn call(func: &str, args: Vec<Value>) -> Result<Value, String> {
+    // Exprs and the Frame verbs that take them.
+    if let Some(r) = expr::dispatch(func, &args) {
+        return r;
+    }
+    // Elementwise: one fused expression (an Expr given an Expr).
+    if !(func == "fill_null" && colfns::fill_method(&args))
+        && let Some(r) = colfns::elementwise(func, &args)
+    {
+        return r;
+    }
+    // A reduction of a pending expression folds it in one pass.
+    if let Some(r) = colfns::reduction(func, &args) {
+        return r;
+    }
+    if let Some(r) = colfns::eager(func, &args) {
+        return r;
+    }
+    // Any other column function given an Expr is a call node.
+    if expr::holds_expr(&args) && series::FUNCTIONS.iter().any(|(n, _)| *n == func) {
+        return Ok(expr::call_node(func, &args));
+    }
+    if frame::FUNCTIONS.iter().any(|(n, _)| *n == func) {
+        return frame::dispatch(func, args);
+    }
+    // filter/take/sample are shared names: a Frame first argument
+    // routes to the frame verbs, everything else to the series
+    // kernels.
+    if matches!(func, "filter" | "take" | "sample")
+        && let Some(result) = frame::dispatch_shared(func, &args)
+    {
+        return result;
+    }
+    if series::FUNCTIONS.iter().any(|(n, _)| *n == func) {
+        return series::dispatch(func, args).expect("membership checked above");
+    }
+    match func {
+        "version" => Ok(Value::String(Arc::new(
+            env!("CARGO_PKG_VERSION").to_string(),
+        ))),
+        "probe" => match args.as_slice() {
+            [Value::Integer(tag)] => Ok(Value::Native(NativeHandle::new(OdsProbe { tag: *tag }))),
+            _ => Err("ods.probe expects one Int argument".to_string()),
+        },
+        "probe_tag" => match args.first().and_then(probe_of) {
+            Some(probe) if args.len() == 1 => Ok(Value::Integer(probe.tag)),
+            _ => Err("ods.probe_tag expects one OdsProbe argument".to_string()),
+        },
+        _ => Err(format!("unknown ods function: ods.{}", func)),
+    }
+}
+
+fn probe_binary_op(op: &BinaryOp, lhs: &Value, rhs: &Value) -> Option<Result<Value, String>> {
+    match op {
+        BinaryOp::Add => {
+            let (probe, n) = match (probe_of(lhs), rhs) {
+                (Some(p), Value::Integer(n)) => (p, *n),
+                _ => match (lhs, probe_of(rhs)) {
+                    (Value::Integer(n), Some(p)) => (p, *n),
+                    _ => return None,
+                },
+            };
+            Some(match probe.tag.checked_add(n) {
+                Some(tag) => Ok(Value::Native(NativeHandle::new(OdsProbe { tag }))),
+                None => Err(
+                    "Integer overflow in addition (bigint.of gives arbitrary precision)"
+                        .to_string(),
+                ),
+            })
+        }
+        // Equality falls through to the registry's structural
+        // native_eq fallback; everything else is a type error.
+        _ => None,
     }
 }
 

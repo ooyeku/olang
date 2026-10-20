@@ -39,6 +39,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   tests; language.md (Operators on native values, Methods of native
   values), ods.md (Methods, names and fields).
 
+- **`ods`: one expression engine, column math, nulls and conditionals,
+  and `ods.col` expressions** (data-ergonomics D1). Every elementwise
+  column operation — `+ - * / %`, comparisons, the math functions,
+  `where`, `select`, `coalesce`, `fill_null` with a value, `clip`,
+  `between`, the null masks, numeric casts — builds one fused plan
+  (`olang_ods::fuse`), run 2,048 rows at a time across cores past a
+  cost-based threshold; nulls (validity a word at a time) and Int
+  (checked) now fuse, and a reduction after an expression (`ods.sum(a *
+  b)`, `ods.mean(mask)`, `ods.dot`) reads its inputs once. An operation
+  that can raise is evaluated where it is written, so errors stay where
+  they were. New column functions: `abs exp exp2 expm1 ln ln1p log2
+  log10 sqrt cbrt sin cos tan asin acos atan sinh cosh tanh sigmoid
+  logit sign floor ceil trunc`, `pow`, `round(digits)`, `clip`, `where`,
+  `select`, `coalesce`, `fill_null(s, Series | "ffill" | "bfill" |
+  "linear" | "mean" | "median", limit)`, `interpolate`, `between` (a `()`
+  bound open, a `[lo, hi]` pair or `()` as the range), `not_null`,
+  `is_nan`, `recode`, `full`, `ones`, `full_like`, `arange`, `repeat`,
+  `tile`, `argmax`, `argmin`, `diff`, `pct_change`, `cumprod`, `mode`,
+  `any`, `all`, `searchsorted`, `count`, `first`, `last`; `sort` and
+  `argsort` take `descending`; `%` on a Series. `ods.col(name)`,
+  `ods.lit`, `ods.alias` and `ods.over(agg, keys)` make expressions that
+  every column function and operator accepts; `ods.with(f, { name:
+  expr })` adds columns in one fused plan, and `ods.filter`,
+  `ods.select` and `ods.sort_by` (several keys, a direction each) take
+  expressions. Faster underneath: `shift` a word at a time, `argsort`
+  and multi-key sorting on packed keys (`sort_by` 5× pandas), a
+  group's `median` by selection. Two raises became values: `ods.sum` of
+  a Bool mask is its count of true (so `ods.mean(mask)` is a share), and
+  `fill_null` with a value of the other numeric type widens the column.
+  docs/ods.md "Expressions",
+  docs/performance.md "The expression engine"; olang-ods/tests/fuse.rs
+  (random plans with nulls against a row-by-row reference, parallel
+  against sequential, reductions against the eager kernels),
+  olang-ods/tests/column.rs, tests/ods_expr_test.rs.
 - **`ods`: more grouped aggregations, text `+`, and `head`/`tail` of a
   Series.** `group_by` (and so `pivot`) takes `median`, `std`, `var`,
   `first`, `last` and `n_unique` beside count/sum/mean/min/max — native,

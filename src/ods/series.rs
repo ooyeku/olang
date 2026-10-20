@@ -19,17 +19,29 @@
 
 use crate::ast::Value;
 use crate::native::{NativeHandle, NativeObject};
-use olang_ods::{AggOp, ArithOp, CmpOp, DType, RankMethod, Scalar, Series};
+use olang_ods::{AggOp, CmpOp, DType, RankMethod, Scalar, Series};
 use std::any::Any;
 
 #[derive(Debug)]
 pub struct OdsSeries {
-    /// The materialized series. Empty only while a fused chain is
+    /// The materialized series. Empty only while a fused expression is
     /// pending; every access goes through `series()`, which forces.
     cell: std::sync::OnceLock<Series>,
-    /// The pending fused chain, when this value was built lazily from
-    /// an operator chain (see `binary_op`). `(expr, len, depth)`.
-    pending: Option<(olang_ods::fuse::Expr, usize, usize)>,
+    /// The pending expression, when this value was built lazily from
+    /// operators or column functions that cannot raise (see
+    /// `expr::build`).
+    pending: Option<Pending>,
+}
+
+#[derive(Debug)]
+struct Pending {
+    expr: std::sync::Arc<olang_ods::fuse::Expr>,
+    len: usize,
+    depth: usize,
+    dtype: DType,
+    /// The pending Series it was built from (`expr::force` keeps the
+    /// costly ones' columns when it evaluates this).
+    deps: Vec<Value>,
 }
 
 impl OdsSeries {
@@ -42,23 +54,63 @@ impl OdsSeries {
         }
     }
 
-    fn from_expr(expr: olang_ods::fuse::Expr, len: usize, depth: usize) -> Self {
-        OdsSeries {
+    /// A lazy Series: `expr` over `len` rows, of type `dtype`, `depth`
+    /// operations deep. Only expressions that cannot raise are deferred.
+    pub fn pending_value(
+        expr: std::sync::Arc<olang_ods::fuse::Expr>,
+        len: usize,
+        depth: usize,
+        dtype: DType,
+        deps: Vec<Value>,
+    ) -> Value {
+        Value::Native(NativeHandle::new(OdsSeries {
             cell: std::sync::OnceLock::new(),
-            pending: Some((expr, len, depth)),
+            pending: Some(Pending {
+                expr,
+                len,
+                depth,
+                dtype,
+                deps,
+            }),
+        }))
+    }
+
+    /// Keep a column computed for this pending Series elsewhere (in the
+    /// plan of an expression that read it).
+    pub fn keep(&self, s: Series) {
+        let _ = self.cell.set(s);
+    }
+
+    /// The pending expression, its length and depth — None once the
+    /// value has been materialized (then the column is what to read).
+    pub fn pending(&self) -> Option<(&std::sync::Arc<olang_ods::fuse::Expr>, usize, usize)> {
+        if self.cell.get().is_some() {
+            return None;
+        }
+        self.pending.as_ref().map(|p| (&p.expr, p.len, p.depth))
+    }
+
+    /// The dtype, without forcing a pending expression.
+    pub fn dtype(&self) -> DType {
+        match (self.cell.get(), &self.pending) {
+            (Some(s), _) => s.dtype(),
+            (None, Some(p)) => p.dtype,
+            (None, None) => unreachable!("an OdsSeries is a column or an expression"),
         }
     }
 
-    /// The materialized series, forcing a pending chain on first use.
-    /// The fused evaluation is bit-identical to the eager kernels the
-    /// chain replaced, so nothing observable depends on when this runs.
+    /// The materialized series, forcing a pending expression on first
+    /// use. A pending expression cannot raise (only those are deferred)
+    /// and evaluates to what the eager kernels give, so nothing
+    /// observable depends on when this runs.
     pub fn series(&self) -> &Series {
         self.cell.get_or_init(|| {
-            let (expr, len, _) = self
+            let p = self
                 .pending
                 .as_ref()
-                .expect("an unmaterialized OdsSeries always carries its chain");
-            expr.eval(*len, par(expr.par_class(), *len))
+                .expect("an unmaterialized OdsSeries always carries its expression");
+            super::expr::force(&p.expr, p.len, &p.deps)
+                .expect("a deferred expression cannot raise")
         })
     }
 
@@ -114,7 +166,7 @@ impl NativeObject for OdsSeries {
     fn length(&self) -> Option<usize> {
         Some(match (&self.pending, self.cell.get()) {
             (_, Some(s)) => s.len(),
-            (Some((_, len, _)), None) => *len,
+            (Some(p), None) => p.len,
             (None, None) => self.series().len(),
         })
     }
@@ -191,7 +243,7 @@ fn want_bool_series<'a>(func: &str, args: &'a [Value], idx: usize) -> Result<&'a
 }
 
 /// The list of masks `all_of` / `any_of` combine, checked for shape.
-fn mask_list<'a>(func: &str, args: &'a [Value]) -> Result<Vec<&'a Series>, String> {
+pub(super) fn mask_list<'a>(func: &str, args: &'a [Value]) -> Result<Vec<&'a Series>, String> {
     let items = match args.first() {
         Some(Value::List(items)) => items,
         other => {
@@ -232,6 +284,12 @@ fn mask_list<'a>(func: &str, args: &'a [Value]) -> Result<Vec<&'a Series>, Strin
         ));
     }
     Ok(masks)
+}
+
+/// The long-standing checks on a list of masks (each a Bool Series, of
+/// one length), with their words.
+pub(super) fn check_masks(func: &str, items: &[Value]) -> Result<(), String> {
+    mask_list(func, &[Value::List(std::sync::Arc::new(items.to_vec()))]).map(|_| ())
 }
 
 /// Three-valued conjunction or disjunction, the same logic SQL uses and
@@ -398,7 +456,7 @@ pub fn series_of(value: &Value) -> Option<&Series> {
 /// any Float among numerics → Float (ints widen); all Bool → Bool;
 /// `()` is null and defers to the rest; an all-null or empty list is a
 /// Float series (the least surprising default for numeric work).
-pub(super) fn series_from_list(items: &[Value]) -> Result<Series, String> {
+pub(crate) fn series_from_list(items: &[Value]) -> Result<Series, String> {
     let mut saw_float = false;
     let mut saw_int = false;
     let mut saw_bool = false;
@@ -515,8 +573,8 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("cumsum", 1),
     ("map", 2),
     ("dot", 2),
-    ("sort", 1),
-    ("argsort", 1),
+    ("sort", 2),
+    ("argsort", 2),
     ("take", 2),
     ("filter", 2),
     ("eq", 2),
@@ -584,6 +642,10 @@ fn dispatch_inner(func: &str, mut args: Vec<Value>, expected: usize) -> Result<V
     // cannot drift apart.
     if func == "rank" && args.len() + 1 == expected {
         args.push(Value::String(std::sync::Arc::new("min".to_string())));
+    }
+    // A trailing `descending` is optional.
+    if matches!(func, "sort" | "argsort") && args.len() + 1 == expected {
+        args.push(Value::Boolean(false));
     }
     arity(func, &args, expected)?;
     let e = |err: olang_ods::OdsError| err.to_string();
@@ -909,14 +971,26 @@ fn dispatch_inner(func: &str, mut args: Vec<Value>, expected: usize) -> Result<V
             let b = want_series(func, &args, 1)?;
             a.dot(b, par_for(olang_ods::ParClass::Reduce, a)).map(Value::Float).map_err(e)
         }
-        "sort" => {
+        "sort" | "argsort" => {
             let s = want_series(func, &args, 0)?;
-            s.sort(par_for(olang_ods::ParClass::Sort, s)).map(OdsSeries::into_value).map_err(e)
-        }
-        "argsort" => want_series(func, &args, 0)?
-            .argsort()
+            let descending = match &args[1] {
+                Value::Boolean(b) => *b,
+                other => {
+                    return Err(format!(
+                        "ods.{}: descending must be a Bool, got {}",
+                        func,
+                        other.type_name()
+                    ));
+                }
+            };
+            if func == "sort" {
+                s.sort_by_dir(descending, par_for(olang_ods::ParClass::Sort, s))
+            } else {
+                s.argsort_by(descending)
+            }
             .map(OdsSeries::into_value)
-            .map_err(e),
+            .map_err(e)
+        }
         "take" => {
             let s = want_series(func, &args, 0)?;
             let idx = want_series(func, &args, 1)?;
@@ -1010,71 +1084,16 @@ fn dispatch_inner(func: &str, mut args: Vec<Value>, expected: usize) -> Result<V
 // Operators
 // ---------------------------------------------------------------------
 
-/// Whether `v` is a String series. A still-pending fused chain is
-/// numeric by construction, so it is answered without forcing it.
+/// Whether `v` is a String series, answered without forcing it.
 fn is_str_series(v: &Value) -> bool {
     let Value::Native(h) = v else { return false };
-    let Some(s) = h.0.as_any().downcast_ref::<OdsSeries>() else {
-        return false;
-    };
-    s.cell.get().is_some_and(|m| m.dtype() == DType::Str)
+    h.0.as_any()
+        .downcast_ref::<OdsSeries>()
+        .is_some_and(|s| s.dtype() == DType::Str)
 }
 
-/// One side of a fusable operator chain: its expression, its length
-/// (None for a broadcast scalar), and its tree depth.
-fn fuse_side(v: &Value) -> Option<(olang_ods::fuse::Expr, Option<usize>, usize)> {
-    use olang_ods::fuse::Expr;
-    if let Value::Float(x) = v {
-        return Some((Expr::Const(*x), None, 0));
-    }
-    let Value::Native(h) = v else { return None };
-    let s = h.0.as_any().downcast_ref::<OdsSeries>()?;
-    // A still-pending chain extends without materializing; a forced or
-    // eagerly built series joins as a leaf when it is exactly the shape
-    // the fused evaluator is proven identical on: null-free F64.
-    if let Some(m) = s.cell.get() {
-        return match m {
-            Series::F64 {
-                values,
-                validity: None,
-            } => Some((Expr::Leaf(values.clone()), Some(values.len()), 0)),
-            _ => None,
-        };
-    }
-    let (expr, len, depth) = s.pending.as_ref()?;
-    Some((expr.clone(), Some(*len), *depth))
-}
-
-/// Chains deeper than this materialize instead of growing — a bound on
-/// the fused evaluator's recursion and per-level chunk buffers.
-const MAX_FUSED_DEPTH: usize = 16;
-
-/// Build a lazy fused series for `lhs op rhs`, when both sides fit the
-/// proven-identical shape (see `olang_ods::fuse`). None falls back to
-/// the eager kernels; `Div` never fuses because it pre-checks divisors
-/// and must error at its own expression, not at force time.
-fn try_fuse(op: ArithOp, lhs: &Value, rhs: &Value) -> Option<Value> {
-    use olang_ods::fuse::Expr;
-    if matches!(op, ArithOp::Div) {
-        return None;
-    }
-    let (a, alen, adepth) = fuse_side(lhs)?;
-    let (b, blen, bdepth) = fuse_side(rhs)?;
-    let len = match (alen, blen) {
-        (Some(x), Some(y)) if x == y => x,
-        (Some(x), None) | (None, Some(x)) => x,
-        // Two scalars never reach binary_op; a length mismatch takes
-        // the eager path, which raises the engine's own error.
-        _ => return None,
-    };
-    let depth = adepth.max(bdepth) + 1;
-    if depth > MAX_FUSED_DEPTH {
-        return None;
-    }
-    let expr = Expr::Bin(op, std::sync::Arc::new(a), std::sync::Arc::new(b));
-    Some(Value::Native(NativeHandle::new(OdsSeries::from_expr(
-        expr, len, depth,
-    ))))
+fn is_series(v: &Value) -> bool {
+    matches!(v, Value::Native(h) if h.0.as_any().downcast_ref::<OdsSeries>().is_some())
 }
 
 pub fn binary_op(
@@ -1083,6 +1102,25 @@ pub fn binary_op(
     rhs: &Value,
 ) -> Option<Result<Value, String>> {
     use crate::ast::BinaryOp as B;
+    use olang_ods::fuse::{BinOp, Op};
+    let bop = match op {
+        B::Add => BinOp::Add,
+        B::Subtract => BinOp::Sub,
+        B::Multiply => BinOp::Mul,
+        B::Divide => BinOp::Div,
+        B::Modulo => BinOp::Mod,
+        B::LessThan => BinOp::Lt,
+        B::LessThanEqual => BinOp::Le,
+        B::GreaterThan => BinOp::Gt,
+        B::GreaterThanEqual => BinOp::Ge,
+        B::Equal => BinOp::Eq,
+        B::NotEqual => BinOp::Ne,
+        _ => return None,
+    };
+    // An Expr on either side makes an Expr.
+    if let Some(r) = super::expr::binary_op(bop, lhs, rhs) {
+        return Some(r);
+    }
     // `+` with a String series on a side joins text: `s["a"] + "|" +
     // s["b"]`, a String on every row or a String series alongside.
     if matches!(op, B::Add) && (is_str_series(lhs) || is_str_series(rhs)) {
@@ -1101,111 +1139,74 @@ pub fn binary_op(
         };
         return Some(joined.map(OdsSeries::into_value).map_err(|e| e.to_string()));
     }
-    // Elementwise chains fuse lazily: `a * b + 1.0` materializes once,
-    // in one pass, instead of once per operator.
-    if let Some(fop) = match op {
-        B::Add => Some(ArithOp::Add),
-        B::Subtract => Some(ArithOp::Sub),
-        B::Multiply => Some(ArithOp::Mul),
-        _ => None,
-    } && let Some(v) = try_fuse(fop, lhs, rhs)
-    {
-        return Some(Ok(v));
+    let (ls, rs) = (is_series(lhs), is_series(rhs));
+    if !(ls || rs) {
+        return None;
     }
-    let arith = |o: ArithOp| -> Option<Result<Value, String>> {
-        match (series_of(lhs), series_of(rhs)) {
-            (Some(a), Some(b)) => Some(
-                a.arith(o, b, par_for(olang_ods::ParClass::Elementwise, a))
-                    .map(OdsSeries::into_value)
-                    .map_err(|e| e.to_string()),
-            ),
-            (Some(a), None) => {
-                let s = value_to_scalar(rhs)?;
-                Some(
-                    a.arith_scalar(o, s, false, par_for(olang_ods::ParClass::ElementwiseScalar, a))
-                        .map(OdsSeries::into_value)
-                        .map_err(|e| e.to_string()),
-                )
-            }
-            (None, Some(b)) => {
-                let s = value_to_scalar(lhs)?;
-                Some(
-                    b.arith_scalar(o, s, true, par_for(olang_ods::ParClass::ElementwiseScalar, b))
-                        .map(OdsSeries::into_value)
-                        .map_err(|e| e.to_string()),
-                )
-            }
-            (None, None) => None,
-        }
-    };
-    let mask = |o: CmpOp| -> Option<Result<Value, String>> {
-        match (series_of(lhs), series_of(rhs)) {
-            (Some(a), Some(b)) => Some(
-                a.compare(o, b)
-                    .map(OdsSeries::into_value)
-                    .map_err(|e| e.to_string()),
-            ),
-            (Some(a), None) => {
-                let s = value_to_scalar(rhs)?;
-                Some(
-                    a.compare_scalar(o, s, false)
-                        .map(OdsSeries::into_value)
-                        .map_err(|e| e.to_string()),
-                )
-            }
-            (None, Some(b)) => {
-                let s = value_to_scalar(lhs)?;
-                Some(
-                    b.compare_scalar(o, s, true)
-                        .map(OdsSeries::into_value)
-                        .map_err(|e| e.to_string()),
-                )
-            }
-            (None, None) => None,
-        }
-    };
-    match op {
-        B::Add => arith(ArithOp::Add),
-        B::Subtract => arith(ArithOp::Sub),
-        B::Multiply => arith(ArithOp::Mul),
-        B::Divide => arith(ArithOp::Div),
-        B::LessThan => mask(CmpOp::Lt),
-        B::LessThanEqual => mask(CmpOp::Le),
-        B::GreaterThan => mask(CmpOp::Gt),
-        B::GreaterThanEqual => mask(CmpOp::Ge),
-        // Series == Series stays structural (the registry's native_eq
-        // fallback); against a scalar there is no structural reading, so
-        // ==/!= produce masks like the ordered comparisons.
-        B::Equal | B::NotEqual => {
-            let both_series = series_of(lhs).is_some() && series_of(rhs).is_some();
-            if both_series {
-                return None;
-            }
-            let o = if matches!(op, B::Equal) {
-                CmpOp::Eq
-            } else {
-                CmpOp::Ne
-            };
-            mask(o)
-        }
-        _ => None,
+    // Series == Series stays structural (the registry's native_eq
+    // fallback); against a scalar there is no structural reading, so
+    // ==/!= make masks like the ordered comparisons.
+    if matches!(op, B::Equal | B::NotEqual) && ls && rs {
+        return None;
     }
+    // A null scalar has no elementwise reading in an operator (it would
+    // null the whole column): the eager kernels refused it, and still do.
+    if matches!(lhs, Value::Unit) || matches!(rhs, Value::Unit) {
+        let side = if ls { series_of(lhs) } else { series_of(rhs) }.expect("a series side");
+        return Some(Err(if matches!(bop, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod) {
+            "cannot apply arithmetic with a null scalar".to_string()
+        } else {
+            format!("cannot compare Series[{}] with ()", side.dtype())
+        }));
+    }
+    let a = super::expr::operand(lhs)?;
+    let b = super::expr::operand(rhs)?;
+    // Elementwise work is one fused expression: `a * b + 1.0` is
+    // evaluated once, in one pass, when first observed; an operation
+    // that can raise (a division, Int arithmetic) is evaluated at once,
+    // so its error is raised here.
+    Some(super::expr::build("", Op::Bin(bop), vec![a, b]))
 }
 
-/// `-s`, `!mask` on a Series (L3). The hook's seam: D1's expression
-/// engine defines the operators (negation, mask negation with nulls kept).
-pub fn unary_op(_op: &crate::ast::UnaryOp, _v: &Value) -> Option<Result<Value, String>> {
-    None
+/// `-s` and `!mask` on a Series or an Expr (the native unary operator
+/// hook, L3): `-` negates (Int checked), `!` flips a Bool mask with nulls
+/// staying null.
+pub fn unary_op(op: &crate::ast::UnaryOp, v: &Value) -> Option<Result<Value, String>> {
+    use olang_ods::fuse::Op;
+    if !(is_series(v) || super::expr::expr_of(v).is_some()) {
+        return None;
+    }
+    let o = match op {
+        crate::ast::UnaryOp::Negate => Op::Neg,
+        crate::ast::UnaryOp::Not => Op::Not,
+    };
+    let a = super::expr::operand(v)?;
+    Some(super::expr::build("", o, vec![a]))
 }
 
-/// `a & b`, `a | b`, `a ^ b` on Bool Series (L3). The hook's seam: D1's
-/// expression engine defines the mask algebra (Kleene nulls).
+/// `a & b`, `a | b`, `a ^ b` between Bool masks (Series or Exprs, a
+/// Bool on either side broadcasting): Kleene logic, so `false & null` is
+/// false and `true | null` is true. Shifts have no column reading.
 pub fn bitwise_op(
-    _op: &crate::ast::BitwiseOp,
-    _lhs: &Value,
-    _rhs: &Value,
+    op: &crate::ast::BitwiseOp,
+    lhs: &Value,
+    rhs: &Value,
 ) -> Option<Result<Value, String>> {
-    None
+    use crate::ast::BitwiseOp as W;
+    use olang_ods::fuse::{BinOp, Op};
+    let o = match op {
+        W::And => BinOp::And,
+        W::Or => BinOp::Or,
+        W::Xor => BinOp::Xor,
+        W::Shl | W::Shr => return None,
+    };
+    let col = |v: &Value| is_series(v) || super::expr::expr_of(v).is_some();
+    if !(col(lhs) || col(rhs)) {
+        return None;
+    }
+    let a = super::expr::operand(lhs)?;
+    let b = super::expr::operand(rhs)?;
+    Some(super::expr::build("", Op::Bin(o), vec![a, b]))
 }
 
 /// Convenience used by tests: wrap a series value.

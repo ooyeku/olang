@@ -79,42 +79,35 @@ fn main() {
             });
             row(name, n, seq, par);
         }
-        let leaf = |s: &Series| match s {
-            Series::F64 { values, .. } => olang_ods::fuse::Expr::Leaf(values.clone()),
-            _ => unreachable!(),
-        };
-        let chain = olang_ods::fuse::Expr::Bin(
-            ArithOp::Add,
-            std::sync::Arc::new(olang_ods::fuse::Expr::Bin(
-                ArithOp::Mul,
-                std::sync::Arc::new(leaf(&a)),
-                std::sync::Arc::new(leaf(&b)),
-            )),
-            std::sync::Arc::new(olang_ods::fuse::Expr::Const(1.0)),
+        let leaf = |s: &Series| olang_ods::fuse::Expr::col(s.clone());
+        let chain = olang_ods::fuse::Expr::bin(
+            olang_ods::fuse::BinOp::Add,
+            olang_ods::fuse::Expr::bin(olang_ods::fuse::BinOp::Mul, leaf(&a), leaf(&b)),
+            olang_ods::fuse::Expr::lit(olang_ods::Scalar::F64(1.0)),
         );
         row(
             "fused a*b+1",
             n,
             time(n, || {
-                black_box(chain.eval(n, false));
+                black_box(chain.eval(n, false).unwrap());
             }),
             time(n, || {
-                black_box(chain.eval(n, true));
+                black_box(chain.eval(n, true).unwrap());
             }),
         );
-        let scalar_chain = olang_ods::fuse::Expr::Bin(
-            ArithOp::Add,
-            std::sync::Arc::new(leaf(&a)),
-            std::sync::Arc::new(olang_ods::fuse::Expr::Const(1.5)),
+        let scalar_chain = olang_ods::fuse::Expr::bin(
+            olang_ods::fuse::BinOp::Add,
+            leaf(&a),
+            olang_ods::fuse::Expr::lit(olang_ods::Scalar::F64(1.5)),
         );
         row(
             "fused a+1.5",
             n,
             time(n, || {
-                black_box(scalar_chain.eval(n, false));
+                black_box(scalar_chain.eval(n, false).unwrap());
             }),
             time(n, || {
-                black_box(scalar_chain.eval(n, true));
+                black_box(scalar_chain.eval(n, true).unwrap());
             }),
         );
         row(

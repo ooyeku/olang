@@ -411,9 +411,9 @@ fn fused_chains_match_the_eager_kernels_exactly() {
 }
 
 #[test]
-fn fusion_never_defers_division_or_nulls() {
-    // Division pre-checks its divisors and must error at its own
-    // expression — a chain containing one takes the eager path there.
+fn division_raises_at_its_expression_and_nulls_fuse() {
+    // Division can raise, so it is never deferred: a chain containing
+    // one is evaluated, fused, at the division, and raises there.
     let err = eval(
         "let z = ods.series([1.0, 0.0])\n\
          let n = ods.series([4.0, 4.0])\n\
@@ -424,8 +424,8 @@ fn fusion_never_defers_division_or_nulls() {
     .expect_err("division by zero must error eagerly");
     assert!(err.contains("Division by zero"), "{err}");
 
-    // A null-bearing series is outside the fused shape: the chain runs
-    // eagerly and nulls propagate exactly as before.
+    // A null-bearing series fuses: validity is combined per chunk, and
+    // nulls propagate exactly as the eager kernels propagate them.
     let out = eval(
         "let a = ods.series([1.0, (), 3.0])\n\
          let c = a * 2.0 + 1.0\n\
