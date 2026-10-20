@@ -605,6 +605,211 @@ impl Frame {
     }
 }
 
+/// Which right row an as-of join takes for a left row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AsOf {
+    /// The last right row at or before the left row's value.
+    Backward,
+    /// The first right row at or after it.
+    Forward,
+    /// Whichever of those two is closer (backward on a tie).
+    Nearest,
+}
+
+impl AsOf {
+    pub fn parse(name: &str) -> Option<AsOf> {
+        Some(match name {
+            "backward" => AsOf::Backward,
+            "forward" => AsOf::Forward,
+            "nearest" => AsOf::Nearest,
+            _ => return None,
+        })
+    }
+}
+
+impl Frame {
+    /// An as-of join: each left row takes the right row whose `on` value
+    /// is the nearest at or before its own (`direction`), among the right
+    /// rows with equal `by` keys — the last price before each trade, the
+    /// reading in force at each event. `on` is a number or ISO text on
+    /// both sides; `tolerance` (numbers only) bounds the distance. Every
+    /// left row is kept, in order, with nulls where nothing qualifies.
+    /// The right side need not be sorted.
+    pub fn asof_join(
+        &self,
+        right: &Frame,
+        on: &str,
+        by: &[String],
+        direction: AsOf,
+        tolerance: Option<f64>,
+        suffix: &str,
+    ) -> Result<Frame> {
+        let lon = self.column(on)?;
+        let ron = right.column(on)?;
+        let numeric = |s: &Series| matches!(s, Series::F64 { .. } | Series::I64 { .. });
+        let comparable = (numeric(lon) && numeric(ron))
+            || (lon.dtype() == crate::DType::Str && ron.dtype() == crate::DType::Str);
+        if !comparable {
+            return Err(OdsError::TypeMismatch(format!(
+                "asof_join: '{}' must be numbers or ISO text on both sides, got {} and {}",
+                on,
+                lon.dtype(),
+                ron.dtype()
+            )));
+        }
+        if tolerance.is_some() && !numeric(lon) {
+            return Err(OdsError::InvalidArgument(
+                "asof_join: a tolerance needs a numeric 'on' column".to_string(),
+            ));
+        }
+        let valid = |s: &Series, i: usize| s.validity().is_none_or(|v| v.get(i));
+        // The right rows by `by` key, each group's rows sorted by `on`
+        // (stable, so equal values keep their row order).
+        let (lcodes, rcodes, card) = if by.is_empty() {
+            (vec![0u32; self.n_rows()], vec![0u32; right.n_rows()], 1)
+        } else {
+            let lb: Vec<&Series> = by.iter().map(|k| self.column(k)).collect::<Result<_>>()?;
+            let rb: Vec<&Series> = by.iter().map(|k| right.column(k)).collect::<Result<_>>()?;
+            encode_join_keys(&lb, &rb)
+        };
+        let order = ron.argsort()?;
+        let Series::I64 { values: order, .. } = order else {
+            unreachable!("argsort gives Int positions")
+        };
+        let mut groups: Vec<Vec<u32>> = vec![Vec::new(); card];
+        for &r in order.iter() {
+            let r = r as usize;
+            if rcodes[r] != NO_KEY && valid(ron, r) {
+                groups[rcodes[r] as usize].push(r as u32);
+            }
+        }
+        let lvalid: Vec<bool> = (0..self.n_rows())
+            .map(|l| lcodes[l] != NO_KEY && valid(lon, l))
+            .collect();
+        let t = AsofTable { lvalid: &lvalid, lcodes: &lcodes, groups: &groups, direction, tolerance };
+        let right_idx: Vec<Option<usize>> = match (lon, ron) {
+            (Series::I64 { values: a, .. }, Series::I64 { values: b, .. }) => {
+                t.pick(|l| a[l], |r| b[r], Some(|x: i64, y: i64| (x as f64 - y as f64).abs()))
+            }
+            (Series::Str { col: a, .. }, Series::Str { col: b, .. }) => {
+                t.pick(|l| a.get(l), |r| b.get(r), None::<fn(&str, &str) -> f64>)
+            }
+            _ => {
+                let num = |s: &Series, i: usize| -> f64 {
+                    match s {
+                        Series::F64 { values, .. } => values[i],
+                        Series::I64 { values, .. } => values[i] as f64,
+                        _ => f64::NAN,
+                    }
+                };
+                t.pick(|l| num(lon, l), |r| num(ron, r), Some(|x: f64, y: f64| (x - y).abs()))
+            }
+        };
+
+        let mut pairs: Vec<(String, Series)> = self
+            .names
+            .iter()
+            .cloned()
+            .zip(self.cols.iter().cloned())
+            .collect();
+        for (name, col) in right.names.iter().zip(right.cols.iter()) {
+            if name == on || by.contains(name) {
+                continue;
+            }
+            let out = if self.names.contains(name) {
+                format!("{}{}", name, suffix)
+            } else {
+                name.clone()
+            };
+            pairs.push((out, gather_optional(col, &right_idx)));
+        }
+        Frame::new(pairs)
+    }
+}
+
+/// The built right side of an as-of join.
+struct AsofTable<'a> {
+    lvalid: &'a [bool],
+    lcodes: &'a [u32],
+    /// Each `by` group's right rows, sorted by `on`.
+    groups: &'a [Vec<u32>],
+    direction: AsOf,
+    tolerance: Option<f64>,
+}
+
+impl AsofTable<'_> {
+    /// Each left row's right row. A left side sorted by `on` (the usual
+    /// case: events in time) walks each group's rows once, a cursor per
+    /// group; otherwise each row is two binary searches.
+    fn pick<K: PartialOrd + Copy>(
+        &self,
+        lk: impl Fn(usize) -> K,
+        rk: impl Fn(usize) -> K,
+        dist: Option<impl Fn(K, K) -> f64>,
+    ) -> Vec<Option<usize>> {
+        let n = self.lvalid.len();
+        let mut prev: Option<K> = None;
+        let sorted = (0..n).filter(|&l| self.lvalid[l]).all(|l| {
+            let x = lk(l);
+            let ok = prev.is_none_or(|p| p <= x);
+            prev = Some(x);
+            ok
+        });
+        // Per group: how many rows are at or below the value (`le`), and
+        // how many strictly below (`lt`).
+        let mut le = vec![0usize; self.groups.len()];
+        let mut lt = vec![0usize; self.groups.len()];
+        (0..n)
+            .map(|l| {
+                if !self.lvalid[l] {
+                    return None;
+                }
+                let g = self.lcodes[l] as usize;
+                let rows = &self.groups[g];
+                let x = lk(l);
+                let want_back = self.direction != AsOf::Forward;
+                let want_fwd = self.direction != AsOf::Backward;
+                let (after, at_or_after) = if sorted {
+                    if want_back {
+                        while le[g] < rows.len() && rk(rows[le[g]] as usize) <= x {
+                            le[g] += 1;
+                        }
+                    }
+                    if want_fwd {
+                        while lt[g] < rows.len() && rk(rows[lt[g]] as usize) < x {
+                            lt[g] += 1;
+                        }
+                    }
+                    (le[g], lt[g])
+                } else {
+                    (
+                        if want_back { rows.partition_point(|&r| rk(r as usize) <= x) } else { 0 },
+                        if want_fwd { rows.partition_point(|&r| rk(r as usize) < x) } else { rows.len() },
+                    )
+                };
+                let back = (after > 0).then(|| rows[after - 1] as usize);
+                let fwd = rows.get(at_or_after).map(|&r| r as usize);
+                let d = |r: usize| dist.as_ref().map(|f| f(x, rk(r)));
+                let chosen = match self.direction {
+                    AsOf::Backward => back,
+                    AsOf::Forward => fwd,
+                    AsOf::Nearest => match (back, fwd) {
+                        (Some(b), Some(f)) => Some(match (d(b), d(f)) {
+                            (Some(db), Some(df)) if df < db => f,
+                            _ => b,
+                        }),
+                        (b, f) => b.or(f),
+                    },
+                };
+                chosen.filter(|&r| match (self.tolerance, d(r)) {
+                    (Some(t), Some(dr)) => dr <= t,
+                    _ => true,
+                })
+            })
+            .collect()
+    }
+}
+
 /// A join's keys and options.
 #[derive(Clone, Debug)]
 pub struct JoinSpec<'a> {
@@ -2106,17 +2311,34 @@ pub(crate) fn aggregate_by_rows(
 
 /// Gather with optional indices (join's right side): None -> null.
 pub(crate) fn gather_optional(col: &Series, idx: &[Option<usize>]) -> Series {
+    // Values and validity written apart: no Option per row.
+    fn dense<T: Copy + Default>(values: &[T], col: &Series, idx: &[Option<usize>]) -> (Vec<T>, Option<Bitmap>) {
+        let mut out = Vec::with_capacity(idx.len());
+        let mut valid = Vec::with_capacity(idx.len());
+        for o in idx {
+            match o.filter(|&i| col_valid(col, i)) {
+                Some(i) => {
+                    out.push(values[i]);
+                    valid.push(true);
+                }
+                None => {
+                    out.push(T::default());
+                    valid.push(false);
+                }
+            }
+        }
+        let bm = (!valid.iter().all(|&v| v)).then(|| Bitmap::from_bools(&valid));
+        (out, bm)
+    }
     match col {
-        Series::F64 { values, .. } => Series::from_f64_options(
-            idx.iter()
-                .map(|o| o.filter(|&i| col_valid(col, i)).map(|i| values[i]))
-                .collect(),
-        ),
-        Series::I64 { values, .. } => Series::from_i64_options(
-            idx.iter()
-                .map(|o| o.filter(|&i| col_valid(col, i)).map(|i| values[i]))
-                .collect(),
-        ),
+        Series::F64 { values, .. } => {
+            let (v, b) = dense(values, col, idx);
+            Series::F64 { values: std::sync::Arc::new(v), validity: b }
+        }
+        Series::I64 { values, .. } => {
+            let (v, b) = dense(values, col, idx);
+            Series::I64 { values: std::sync::Arc::new(v), validity: b }
+        }
         Series::Bool { values, .. } => Series::from_bool_options(
             idx.iter()
                 .map(|o| o.filter(|&i| col_valid(col, i)).map(|i| values[i]))
@@ -2203,7 +2425,7 @@ pub(crate) fn coalesce(a: &Series, b: &Series) -> Result<Series> {
 }
 
 fn col_valid(col: &Series, i: usize) -> bool {
-    !matches!(col.scalar_at(i), Scalar::Null)
+    col.validity().is_none_or(|v| v.get(i))
 }
 
 // ---------------------------------------------------------------------
@@ -2406,6 +2628,31 @@ fn shifted_validity(v: Option<&Bitmap>, n: usize, by: i64) -> Option<Bitmap> {
 #[cfg(test)]
 mod summary_tests {
     use super::*;
+
+    #[test]
+    fn an_asof_join_takes_the_row_in_force() {
+        let quotes = Frame::new(vec![
+            ("t".into(), Series::from_i64(vec![1, 5, 3, 9])),
+            ("sym".into(), Series::from_str_values(vec!["a".into(), "a".into(), "b".into(), "a".into()])),
+            ("px".into(), Series::from_f64(vec![10.0, 50.0, 30.0, 90.0])),
+        ])
+        .unwrap();
+        let trades = Frame::new(vec![
+            ("t".into(), Series::from_i64(vec![0, 4, 5, 8, 4])),
+            ("sym".into(), Series::from_str_values(vec!["a".into(), "a".into(), "a".into(), "a".into(), "b".into()])),
+        ])
+        .unwrap();
+        let px = |d: AsOf, tol: Option<f64>| -> Vec<Scalar> {
+            let j = trades.asof_join(&quotes, "t", &["sym".to_string()], d, tol, "_right").unwrap();
+            let c = j.column("px").unwrap();
+            (0..c.len()).map(|i| c.scalar_at(i)).collect()
+        };
+        use Scalar::{F64, Null};
+        assert_eq!(px(AsOf::Backward, None), vec![Null, F64(10.0), F64(50.0), F64(50.0), F64(30.0)]);
+        assert_eq!(px(AsOf::Forward, None), vec![F64(10.0), F64(50.0), F64(50.0), F64(90.0), Null]);
+        assert_eq!(px(AsOf::Nearest, None), vec![F64(10.0), F64(50.0), F64(50.0), F64(90.0), F64(30.0)]);
+        assert_eq!(px(AsOf::Backward, Some(1.0)), vec![Null, Null, F64(50.0), Null, F64(30.0)]);
+    }
 
     #[test]
     fn a_columns_summary_counts_ranges_and_ranks() {

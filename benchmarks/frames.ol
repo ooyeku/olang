@@ -31,6 +31,8 @@ let right = ods.frame({ k: ods.repeat(ods.arange(1000), 50), k2: ods.tile(ods.ar
 let right = right |> ods.with({ key: col("k") * 50 + col("k2") })
 let qs = map(range(0, 10000), (i) => (i * 7) % 50000)
 let by = df |> ods.group_by("k")
+let lt = df |> ods.with({ t: ods.arange(n) })
+let rt = ods.frame({ t: ods.arange(10000) * 100 + 7, k2: ods.arange(10000) % 50, r: ods.cast(ods.arange(10000), "Float") * 0.5 })
 
 println(`threads: ${os.env("OLANG_PARALLELISM") ?? "all"}, n = ${n}`)
 row("group_by agg: sum, mean, std, median, count", best(() => df.group_by("k").agg({
@@ -48,4 +50,6 @@ row("rolling 365 mean, exact", best(() => ods.rolling(df["x"], 365, "mean", exac
 row("rolling 365 std", best(() => ods.rolling(df["x"], 365, "std")))
 row("rolling 365 max", best(() => ods.rolling(df["x"], 365, "max")))
 row("rolling 24 median, centred", best(() => ods.rolling(df["x"], 24, "median", center: true)))
+row("asof_join on t, 10,000 right rows", best(() => ods.asof_join(lt, rt.select(["t", "r"]), "t")))
+row("asof_join on t by k2", best(() => ods.asof_join(lt, rt, "t", by: "k2")))
 row("lookup: 10,000 scalar keys, one at a time", best(() => map(qs, (q) => ods.lookup(right, "key", q, "w"))))

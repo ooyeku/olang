@@ -414,7 +414,9 @@ threads):
 | `with({ d: col("x") - col("x").mean().over("k") })` | 1.22 | 2.35 | 2.17 |
 | `by.apply(fn)`, 1,000 groups (an olang call each) | 10.9 | 16.6 | 42.3 |
 | `crosstab(k2, k % 20)` | 2.55 | 3.76 | 14.6 |
-| `join(f, right, ["k", "k2"], how: "left", validate: "many_to_one")`, 50,000 right rows | 11.6 | 13.0 | 22.6 |
+| `join(f, right, ["k", "k2"], how: "left", validate: "many_to_one")`, 50,000 right rows | 9.58 | 11.2 | 22.6 |
+| `asof_join(f, right, "t")`, 10,000 right rows | 4.91 | 5.15 | 4.25 (`merge_asof`) |
+| `asof_join(f, right, "t", by: "k2")` | 5.87 | 5.94 | 39.8 (`merge_asof`) |
 | `resample(f, "ts", "1d", …)`, sum and mean | 15.1 | 19.0 | 15.6 parsed, 65.5 from text |
 | `resample(f, "ts", "1mo", …)` | 17.6 | 23.2 | 12.6 parsed |
 | `rolling(x, 365, "mean")` | 3.78 | 3.74 | 3.89 |
@@ -429,7 +431,9 @@ of `group_by`, from 500,000 rows) and every aggregation, `transform`,
 `apply` and `groups` reuses them; the columns an `agg` object's
 expressions read are evaluated together in one fused plan. Joins encode
 each key column against the right side's values (an integer per row),
-so several keys cost little more than one and no key is built as text.
+so several keys cost little more than one and no key is built as text;
+an as-of join walks each `by` group's sorted right rows once when the
+left side is sorted (binary searches otherwise).
 `resample` parses each timestamp into an integer bucket and groups and
 sorts those, writing only the buckets back as text; pandas is faster on
 a column it has already parsed to datetimes, which olang will have when

@@ -1508,10 +1508,26 @@ let dup = ods.frame({ region: ["n", "n"], week: [2, 2], discount: [0.1, 0.3] })
 println(attempt(() => ods.join(sales, dup, ["region", "week"], validate: "many_to_one")))
 ```
 
+`ods.asof_join(left, right, on, by)` matches on the nearest value
+rather than an equal one: each left row takes the right row whose `on`
+is the last at or before its own (`direction: "forward"` the first at or
+after, `"nearest"` the closer), among the right rows with the same `by`
+keys — the reading in force at each event, the last quote before each
+trade. `on` is numbers or ISO text on both sides, `tolerance:` (numbers)
+bounds the distance, and every left row stays, in order, with nulls
+where nothing qualifies. The right side need not be sorted:
+
+```olang
+let readings = ods.frame({ t: [0, 60, 120], site: ["a", "a", "a"], temp: [10.0, 12.5, 11.0] })
+let events = ods.frame({ t: [30, 125, 5], site: ["a", "a", "b"] })
+println(ods.asof_join(events, readings, "t", by: "site")["temp"].to_list())               // [10.0, 11.0, ()]
+println(ods.asof_join(events, readings, "t", direction: "nearest")["temp"].to_list())     // [10.0, 11.0, 10.0]
+```
+
 Each side's key columns are encoded against the right side's values (an
 integer per row, a column at a time), so a join on several keys costs
 little more than a join on one, and no row's key is ever built as text.
-A million-row left join on two Int keys against 50,000 rows takes 12 ms
+A million-row left join on two Int keys against 50,000 rows takes 10 ms
 (pandas `merge`: 23).
 
 On a large left frame (50,000+ rows) the join's probe runs across every

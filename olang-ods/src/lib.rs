@@ -40,7 +40,7 @@ pub mod plot;
 pub mod stats;
 
 pub use bitmap::{Bitmap, merge_validity};
-pub use frame::{AggOp, AggSpec, ColumnSummary, Frame, JoinHow, JoinSpec, RankMethod, Validate};
+pub use frame::{AggOp, AggSpec, AsOf, ColumnSummary, Frame, JoinHow, JoinSpec, RankMethod, Validate};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;

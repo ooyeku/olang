@@ -24,7 +24,7 @@ use olang_ods::fuse::Expr;
 use olang_ods::group::{Grouping, Normalize};
 use olang_ods::time::Every;
 use olang_ods::window::Rolling;
-use olang_ods::{AggOp, DType, Frame, JoinHow, JoinSpec, Scalar, Series, Validate};
+use olang_ods::{AggOp, AsOf, DType, Frame, JoinHow, JoinSpec, Scalar, Series, Validate};
 use std::any::Any;
 use std::sync::Arc;
 
@@ -43,6 +43,7 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("runs", 1),
     ("run_id", 1),
     ("resample", 5),
+    ("asof_join", 7),
 ];
 
 /// The aggregations a GroupBy answers as a method over its columns.
@@ -730,6 +731,7 @@ pub fn dispatch(func: &str, args: &[Value]) -> Option<Result<Value, String>> {
         "rolling" if holds_expr(args) => Ok(call_node(func, args)),
         "rolling" => rolling(args),
         "join" | "join_left" | "join_full" | "join_semi" | "join_anti" => join(func, args),
+        "asof_join" => asof_join(args),
         "pivot" if args.len() > 5 => match args[5] {
             Value::Unit => super::call("pivot", args[..5].to_vec()),
             _ => pivot_fill(args),
@@ -1175,4 +1177,61 @@ fn resample(args: &[Value]) -> Result<Value, String> {
     Frame::new(pairs)
         .map(frame_value)
         .map_err(|e| format!("ods.resample: {}", e))
+}
+
+/// `ods.asof_join(left, right, on, by?, direction = "backward",
+/// tolerance?, suffix = "_right")`.
+fn asof_join(args: &[Value]) -> Result<Value, String> {
+    let l = want_frame("asof_join", args, 0)?;
+    let r = want_frame("asof_join", args, 1)?;
+    let on = want_str("asof_join", "on", args.get(2))?;
+    let by = match arg(args, 3) {
+        None => Vec::new(),
+        Some(v) => names_of("asof_join", "by", v)?,
+    };
+    let direction = match arg(args, 4) {
+        None => AsOf::Backward,
+        Some(Value::String(d)) => AsOf::parse(d).ok_or_else(|| {
+            format!(
+                "ods.asof_join: direction is \"backward\", \"forward\" or \"nearest\", got \"{}\"",
+                d
+            )
+        })?,
+        Some(other) => {
+            return Err(format!(
+                "ods.asof_join: direction must be a String, got {}",
+                other.type_name()
+            ));
+        }
+    };
+    let tolerance = match arg(args, 5) {
+        None => None,
+        Some(Value::Float(t)) => Some(*t),
+        Some(Value::Integer(t)) => Some(*t as f64),
+        Some(other) => {
+            return Err(format!(
+                "ods.asof_join: tolerance must be a number, got {}",
+                other.type_name()
+            ));
+        }
+    };
+    let suffix = match arg(args, 6) {
+        None => "_right".to_string(),
+        v => want_str("asof_join", "suffix", v)?,
+    };
+    for (side, f) in [("left", l), ("right", r)] {
+        for k in std::iter::once(&on).chain(by.iter()) {
+            if f.column(k).is_err() {
+                return Err(format!(
+                    "ods.asof_join: no column '{}' in the {} Frame. It has: {}",
+                    k,
+                    side,
+                    f.names().join(", ")
+                ));
+            }
+        }
+    }
+    l.asof_join(r, &on, &by, direction, tolerance, &suffix)
+        .map(frame_value)
+        .map_err(|e| format!("ods.{}", e))
 }

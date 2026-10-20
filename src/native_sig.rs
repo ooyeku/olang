@@ -958,6 +958,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("ods.runs", "s:S -> F"),
     ("ods.run_id", "s:S -> S"),
     ("ods.resample", "f:F, on, every, aggs, by? -> F"),
+    ("ods.asof_join", "left:F, right, on, by?, direction = \"backward\", tolerance?, suffix = \"_right\" -> F"),
     ("ods.join", "left:F, right, on, right_on?, how = \"inner\", suffix = \"_right\", validate? -> F"),
     ("ods.join_left", "left:F, right, on, right_on?, suffix = \"_right\", validate? -> F"),
     ("ods.join_full", "left:F, right, on, right_on?, suffix = \"_right\", validate? -> F"),

@@ -36,7 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   run), `ods.run_id(s | [s, …])`, `ods.pivot(…, fill:)`. Joins on a list
   of keys, `how:` on `ods.join` (inner, left, full, semi, anti),
   `suffix:`, and `validate: "many_to_one" | "one_to_many" |
-  "one_to_one"` raising on a key's fan-out. `ods.resample(f, on, every,
+  "one_to_one"` raising on a key's fan-out; `ods.asof_join(left, right,
+  on, by:, direction:, tolerance:)` (the right row in force at each left
+  row: backward, forward or nearest, numbers or ISO text). `ods.resample(f, on, every,
   aggs, by:)` over ISO date/time text (`"15m"`, `"1h"`, `"1d"`, `"1w"`,
   `"1mo"`, `"1q"`, `"1y"`; `olang_ods::time::Every` and `buckets`, which
   a Date column's floor reuses) and `floor(s, every)` on such a column
@@ -46,7 +48,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   and the language server know `group_by` without aggregations is one).
   At a million rows against pandas 3.0.5: five aggregations 3.2 ms
   (13.9), transform 0.6 (1.9), apply over 1,000 groups 10.9 (42),
-  crosstab 2.6 (14.6), a two-key join 11.6 (22.6), daily resample from
+  crosstab 2.6 (14.6), a two-key join 9.6 (22.6), an as-of join by a
+  key 5.9 (`merge_asof` 39.8; without a key 4.9 against 4.3), daily resample from
   text 15 (15.6 parsed, 65 from text), lookups 2.0 (5.1).
   `benchmarks/frames.ol` and `frames_pandas.py`;
   `tests/frames_ergonomics_test.rs` (three tiers, parallel determinism).

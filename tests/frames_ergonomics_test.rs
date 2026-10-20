@@ -268,6 +268,12 @@ println(attempt(() => ods.join(sales, ods.concat([promos, promos]), ["region", "
 println(attempt(() => ods.join(ods.concat([sales, sales]), promos, ["region", "week"], validate: "one_to_one")))
 println(attempt(() => ods.join(sales, promos, "region", how: "outer!")))
 println(attempt(() => ods.join(sales, promos, ["region", "nope"])))
+let readings = ods.frame({ t: ["2024-01-01T00:00", "2024-01-01T06:00", "2024-01-01T12:00"], site: ["a", "a", "b"], temp: [1.0, 2.0, 3.0] })
+let ev = ods.frame({ t: ["2024-01-01T07:00", "2024-01-01T05:00", "2024-01-01T13:00"], site: ["a", "a", "a"] })
+println(ods.to_list(ods.asof_join(ev, readings, "t", by: "site")["temp"]))
+println(ods.to_list(ods.asof_join(ev, readings, "t", direction: "forward")["temp"]))
+println(ods.to_list(ods.asof_join(ods.frame({ t: [5, 9] }), ods.frame({ t: [4, 10], v: [1, 2] }), "t", direction: "nearest", tolerance: 1)["v"]))
+println(attempt(() => ods.asof_join(ev, readings, "t", direction: "sideways")))
 "#;
 
 #[test]
@@ -288,6 +294,10 @@ Err("ods.join: validate \"many_to_one\" wants each key once on the right, but ke
 Err("ods.join: validate \"one_to_one\" wants each key once on the left, but key (\"n\", 1) is on rows 0 and 4 of it")
 Err("ods.join: how is \"inner\", \"left\", \"full\", \"semi\" or \"anti\", got \"outer!\"")
 Err("ods.join: no column 'nope' in the left Frame. It has: region, week, units")
+[2.0, 1.0, 2.0]
+[3.0, 2.0, ()]
+[1, 2]
+Err("ods.asof_join: direction is \"backward\", \"forward\" or \"nearest\", got \"sideways\"")
 "#,
     );
 }

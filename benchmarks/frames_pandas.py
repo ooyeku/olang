@@ -54,6 +54,8 @@ def main():
     right["key"] = right["k"] * 50 + right["k2"]
     ri = right.set_index("key")["w"]
     qs = [(i * 7) % 50_000 for i in range(10_000)]
+    lt = df.assign(t=np.arange(len(df)))
+    rt = pd.DataFrame({"t": np.arange(10_000) * 100 + 7, "k2": np.arange(10_000) % 50, "r": np.arange(10_000) * 0.5})
     g = df.groupby("k")
     rows = [
         ("group_by agg: sum, mean, std, median, count", lambda: g.agg(
@@ -72,6 +74,8 @@ def main():
         ("rolling 365 std", lambda: df.x.rolling(365).std()),
         ("rolling 365 max", lambda: df.x.rolling(365).max()),
         ("rolling 24 median, centred", lambda: df.x.rolling(24, center=True).median()),
+        ("asof_join on t, 10,000 right rows", lambda: pd.merge_asof(lt, rt[["t", "r"]], on="t")),
+        ("asof_join on t by k2", lambda: pd.merge_asof(lt, rt, on="t", by="k2")),
         ("lookup: 10,000 scalar keys, one at a time", lambda: [ri.at[q] for q in qs]),
     ]
     print(f"pandas {pd.__version__}, n = {len(df):,}")
