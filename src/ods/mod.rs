@@ -10,6 +10,7 @@
 
 mod columns;
 mod frame;
+pub mod gg;
 mod plot;
 mod series;
 mod stats;
@@ -201,7 +202,7 @@ impl OvmModule for PlotModule {
 
     fn namespaces(&self) -> Vec<(String, Value)> {
         let mut module = crate::ast::ValueMap::default();
-        for (name, arity) in plot::FUNCTIONS {
+        for (name, arity) in plot::FUNCTIONS.iter().chain(gg::FUNCTIONS.iter()) {
             module.insert(
                 name.to_string(),
                 Value::Builtin(BuiltinFunction {
@@ -220,6 +221,9 @@ impl OvmModule for PlotModule {
     }
 
     fn dispatch(&self, func: &str, args: Vec<Value>) -> Result<Value, String> {
+        if gg::FUNCTIONS.iter().any(|(n, _)| *n == func) {
+            return gg::dispatch(func, args);
+        }
         if !plot::handles(func) {
             return Err(format!("unknown plot function: plot.{}", func));
         }

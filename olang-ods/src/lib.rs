@@ -27,6 +27,7 @@ pub mod bitmap;
 #[cfg(feature = "stats")]
 pub mod dist;
 pub mod frame;
+pub mod gg;
 pub mod plot;
 #[cfg(feature = "stats")]
 pub mod stats;

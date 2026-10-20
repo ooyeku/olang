@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`gg`: a grammar of graphics.** `use gg` says a plot as ggplot2 does —
+  `gg.plot(f, gg.aes(x: "sqft", y: "price", color: "hood")) |> gg.point(alpha: 0.4)
+  |> gg.smooth(method: "lm") |> gg.facet_wrap("hood", ncol: 3) |> gg.scale_y_log10()
+  |> gg.labs(title: …) |> gg.theme("minimal")` — as pure data, and `plot.gg`
+  (olang-ods's `gg`, pure Rust) does all of it natively: 30 geoms (point,
+  line, path, step, area, ribbon, bar/col, histogram, freqpoly, density,
+  boxplot, violin, errorbar, pointrange, linerange, crossbar, summary,
+  smooth, text, label, tile, raster, rect, hline, vline, abline, rug,
+  segment, hex, bin2d, ecdf, qq, qq_line, annotate); stats (bin, count,
+  density with nrd0/nrd/scott bandwidths and five kernels, boxplot,
+  ydensity, summary with t intervals, smooth by lm, loess or a GCV
+  P-spline gam with standard-error bands, ecdf, qq, 2-D and hexagonal
+  bins); scales (continuous, discrete, ISO dates and date-times, log10,
+  sqrt, reverse, limits, breaks, percent/comma/dollar/short labels,
+  manual, the viridis family, gradients, diverging centred, a categorical
+  palette per appearance, sizes, alphas, shapes, linetypes); stack, fill,
+  dodge, jitter and nudge; facet_wrap and facet_grid with free scales;
+  coord_flip, coord_fixed, coord_cartesian; merged legends and colour
+  bars; titles, subtitles, captions; themes minimal (Studio's quiet
+  instrument), classic, bw, gray, linedraw, void, in light, dark and high
+  contrast. The plot becomes a scene — the display list in plot pixels,
+  each mark's values, each panel's scales — and the SVG is serialized
+  from it. A 100,000-point scatter coloured by group with a smooth per
+  group, faceted 3 × 3, renders in about 110 ms (SVG) and 80 ms (the
+  scene). olang-ods/src/gg/; tests/gg_gallery_test.rs (golden SVGs of 27
+  plots, light and dark)
+- **A gg plot is drawn natively by an editor.** A cell's or the REPL's
+  value that is a gg plot is sent as a `Plot` with its SVG and its scene
+  (`chart.type: "scene"`, points thinned for the screen, tooltip values
+  per mark); `expand` with `chart: {x0, x1, panel}` renders it zoomed. The
+  kernel's hello says `scene`. docs/tooling.md; tests/repl_serve_test.rs
 - **`gui`: continuous corners and analytic shadows.** A style's
   `corner: "continuous"` draws Apple's continuous corners (a
   superellipse reaching 1.528 × the radius along each edge, as deep at

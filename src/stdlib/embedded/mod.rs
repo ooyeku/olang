@@ -27,6 +27,7 @@ const MODULES: &[(&str, &str)] = &[
     ("mathx", include_str!("mathx.ol")),
     ("ui", include_str!("ui.ol")),
     ("viz", include_str!("viz.ol")),
+    ("gg", include_str!("gg.ol")),
     ("dash", include_str!("dash.ol")),
     ("cli", include_str!("cli.ol")),
     ("term", include_str!("term.ol")),
