@@ -563,11 +563,14 @@ pub fn svg_ok(svg: &str) -> bool {
         "form", "input", "button", "textarea", "select", "video", "audio", "source", "track",
         "picture", "frame", "frameset", "html",
     ];
+    // `i` walks bytes, so it can stand inside a character (`°`, `é`): a
+    // word is ASCII, so where none starts the word is empty — and where
+    // one does, both ends are character boundaries.
     let word_at = |i: usize| -> &str {
         let e = (i..b.len())
             .find(|&j| !(b[j].is_ascii_alphanumeric() || b[j] == b'-' || b[j] == b':'))
             .unwrap_or(b.len());
-        &low[i..e]
+        if e == i { "" } else { &low[i..e] }
     };
     for (i, _) in low.match_indices('<') {
         let j = skip_ws(i + 1);
@@ -2377,6 +2380,20 @@ mod tests {
         let reply = json!({ "ok": true, "value": { "k": "plot", "svg": { "text": "<svg><script>alert(3)</script></svg>" } } });
         let page = output_html(&reply, None, Mode::Export, "c1", false);
         assert!(!page.contains("<script>alert(3)"), "{page}");
+    }
+
+    #[test]
+    fn a_chart_with_text_beyond_ascii_is_judged_not_a_panic() {
+        // a byte walk landed inside `°` and sliced there
+        for text in ["°C", "naïve — ok", "温度", "x²", "🙂 smile"] {
+            let svg = format!(
+                "<svg xmlns=\"http://www.w3.org/2000/svg\"><text x=\"1\" y=\"2\">{text}</text><g aria-label=\"{text}\"/></svg>"
+            );
+            assert!(svg_ok(&svg), "{svg}");
+            assert!(chart_html(&svg).contains(text));
+        }
+        assert!(!svg_ok("<svg><text>°</text><script>x</script></svg>"));
+        assert!(!svg_ok("<svg é onload=\"x\"></svg>"));
     }
 
     #[test]
