@@ -2373,6 +2373,45 @@ fn a_code_field_pins_scopes_says_problems_and_hands_over_chords() {
     );
 }
 
+/// The caret a code field follows is never left under its sticky rows:
+/// moved up onto the line at the view's top, the view scrolls until the
+/// caret is below the pinned scope lines (it stayed under them, clipped
+/// and unseen).
+#[test]
+fn a_code_field_s_caret_is_followed_out_from_under_its_sticky_rows() {
+    let _turn = events_turn();
+    let v = run(r##"
+        let mut lines = ["fn outer() = {"]
+        for i in 0..80 { lines = lines + ["    let x" + to_string(i) + " = " + to_string(i)] }
+        let text = join(lines + ["}"], "\n")
+        let at21 = fold(range(0, 21), 0, (acc, i) => acc + str.length(lines[i]) + 1)
+        let w = gui.headless(#{ "size": (300, 160) })
+        gui.apply(w, [#{ "key": "root", "box": (0, 0, 300, 160), "style": #{ "bg": "#ffffff" } },
+                      #{ "key": "f", "parent": "root", "role": "textarea", "box": (0, 0, 300, 160),
+                         "style": #{ "pad": (4, 4, 4, 48), "font": "mono", "size": 13, "bg": "#ffffff" },
+                         "edit": #{ "value": text, "rich": true, "styles": [], "spans": [], "undo": false,
+                                    "scroll_to": (20, 1), "select": (at21, at21, 1),
+                                    "sticky": #{ "scopes": [(0, 81)], "max": 3, "bg": "#ffffff", "line": "#dddddd" } } },
+                      #{ "op": "focus", "key": "f" }])
+        let _p = gui.read(w, "pixels")
+        gui.input(w, #{ "kind": "key", "key": "up" })
+        let _p2 = gui.read(w, "pixels")
+        gui.input(w, #{ "kind": "key", "key": "up" })
+        let _p3 = gui.read(w, "pixels")
+        let c = gui.read(w, "caret")
+        [c != (), if c == () => -1.0 else => c[1]]
+    "##);
+    let Value::List(l) = &v else { panic!("{v:?}") };
+    assert_eq!(l[0], Value::Boolean(true), "{v:?}");
+    let y = match &l[1] {
+        Value::Float(f) => *f,
+        Value::Integer(i) => *i as f64,
+        other => panic!("{other:?}"),
+    };
+    // the field's top pad and one pinned row (13 × 1.2)
+    assert!(y >= 4.0 + 15.6 - 0.5, "the caret is under the sticky row: {v:?}");
+}
+
 #[test]
 fn headless_windows_have_one_key_window() {
     // as the platform's: the window opened last is key, a press in another

@@ -275,6 +275,8 @@ pub struct RichEditor {
     /// The pinned rows last drawn: `(top, bottom, line)`, device pixels
     /// from the field's content top (not scrolled), for a press.
     pub sticky_drawn: Vec<(f32, f32, usize)>,
+    /// A pinned row's height (device pixels) as last drawn; 0 before.
+    pub sticky_lh: f32,
     /// Vertical guides at these columns, and their colour.
     pub rulers: Vec<usize>,
     pub ruler_color: Option<Color>,
@@ -684,6 +686,7 @@ impl RichEditor {
             eol: Vec::new(),
             sticky: None,
             sticky_drawn: Vec::new(),
+            sticky_lh: 0.0,
             rulers: Vec::new(),
             ruler_color: None,
             nowrap: false,
@@ -2083,6 +2086,50 @@ impl RichEditor {
         BoundingBox::new(g.x0, g.y0 + y, g.x1, g.y1 + y)
     }
 
+    /// The sticky rows the view shows scrolled where it is: `(line, top)`,
+    /// the top in device pixels from the content's top, outer first.
+    pub fn sticky_rows(&mut self, ts: &mut TextSystem) -> Vec<(usize, f32)> {
+        let lh = self.sticky_lh;
+        let mut rows: Vec<(usize, f32)> = Vec::new();
+        let Some(stk) = self.sticky.clone() else {
+            return rows;
+        };
+        if stk.max == 0 || stk.scopes.is_empty() || lh <= 0.0 {
+            return rows;
+        }
+        let top = self.top_line(ts);
+        for &(h, e) in &stk.scopes {
+            if rows.len() >= stk.max {
+                break;
+            }
+            if h > top + stk.max || e < top {
+                continue;
+            }
+            let slot = rows.len() as f32 * lh;
+            let (hy, _) = self.line_box(h, ts);
+            if hy >= self.scroll_y + slot {
+                continue;
+            }
+            let (ey, eh) = self.line_box(e, ts);
+            let end_view = ey + eh - self.scroll_y;
+            if end_view <= slot + lh * 0.5 {
+                continue;
+            }
+            rows.push((h, slot.min(end_view - lh)));
+        }
+        rows
+    }
+
+    /// How far the sticky rows reach down from the content's top, scrolled
+    /// where the view is (device pixels; 0 with none).
+    fn sticky_bottom(&mut self, ts: &mut TextSystem) -> f32 {
+        let lh = self.sticky_lh;
+        self.sticky_rows(ts)
+            .iter()
+            .map(|r| r.1 + lh)
+            .fold(0.0f32, f32::max)
+    }
+
     /// Keep the caret in a view `h` high: adjust `scroll_y`.
     pub fn follow_caret(&mut self, h: f32, ts: &mut TextSystem) {
         // the view made shorter (a panel docked under it) keeps a caret
@@ -2118,7 +2165,21 @@ impl RichEditor {
                 if y0 < self.scroll_y {
                     self.scroll_y = y0;
                 }
+                // nor under the sticky rows pinned over the view's top: the
+                // rows the view shows where it lands, which the scroll up
+                // past them may change (a scope's first line comes into
+                // view), so found again until the caret holds still
                 let _ = self.visible(self.scroll_y, self.scroll_y + h, ts);
+                if self.sticky.is_some() {
+                    for _ in 0..4 {
+                        let inset = self.sticky_bottom(ts).min(h * 0.5);
+                        if y0 >= self.scroll_y + inset - 0.01 || self.scroll_y <= 0.0 {
+                            break;
+                        }
+                        self.scroll_y = (y0 - inset).max(0.0);
+                        let _ = self.visible(self.scroll_y, self.scroll_y + h, ts);
+                    }
+                }
                 let c2 = self.caret_box(1.0, ts);
                 if self.scroll_y == before && c2.y0 == c.y0 && c2.y1 == c.y1 {
                     break;

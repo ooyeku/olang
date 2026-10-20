@@ -4051,33 +4051,9 @@ impl WinState {
             } else {
                 1.2
             };
-        let mut rows: Vec<(usize, f32)> = Vec::new();
         let stk_now = r.sticky.clone();
-        if let Some(stk) = stk_now.clone()
-            && stk.max > 0
-            && !stk.scopes.is_empty()
-        {
-            let top = r.top_line(ts);
-            for &(h, e) in &stk.scopes {
-                if rows.len() >= stk.max {
-                    break;
-                }
-                if h > top + stk.max || e < top {
-                    continue;
-                }
-                let slot = rows.len() as f32 * lh;
-                let (hy, _) = r.line_box(h, ts);
-                if hy >= r.scroll_y + slot {
-                    continue;
-                }
-                let (ey, eh) = r.line_box(e, ts);
-                let end_view = ey + eh - r.scroll_y;
-                if end_view <= slot + lh * 0.5 {
-                    continue;
-                }
-                rows.push((h, slot.min(end_view - lh)));
-            }
-        }
+        r.sticky_lh = lh;
+        let rows: Vec<(usize, f32)> = r.sticky_rows(ts);
         // the edge the text is cut at: the pinned rows' bottom, else the
         // content's top. A row of text the edge half covers (a wrapped
         // line's row as much as a line's) is hidden whole — its glyphs by

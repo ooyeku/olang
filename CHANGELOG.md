@@ -529,6 +529,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`gui`: a code field's caret is never left under its sticky rows.**
+  Moved onto the line at the view's top, the view scrolled only to the
+  field's top edge and the caret stayed under the pinned scope lines,
+  clipped and unseen; following it now clears them. tests/gui_test.rs
 - **An expression nested deep without brackets is a parse error**, past
   4,000 (`if a => if a => …` overflowed the stack and aborted the
   process), and `toml.stringify` follows a value at most 512 deep.
