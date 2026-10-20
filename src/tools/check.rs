@@ -3072,7 +3072,13 @@ impl Checker {
                 _ => None,
             };
             if let Some(u) = use_decl {
-                if let Some(last) = u.path.last() {
+                // `use ods` binds the stdlib module itself: its calls stay
+                // the module's (checked against its signatures).
+                let stdlib_module =
+                    matches!(u.path.as_slice(), [one] if crate::stdlib::is_module_name(one));
+                if let Some(last) = u.path.last()
+                    && !stdlib_module
+                {
                     self.user_bound.insert(last.clone());
                 }
                 if let [one] = u.path.as_slice()
@@ -5614,6 +5620,10 @@ mod tests {
         let d = check(&format!("{src}s.nope()\nf.a.fill_null(0.0).nopes()\n"));
         assert_eq!(d.len(), 2, "{d:?}");
         assert!(d[0].message.contains("a Series has no method 'nope'"));
+        // `use ods` binds the module itself, so its calls are still checked
+        let d = check(&format!("use ods\n{src}s.clip(lo: 0.0).nope()\ns.round(digts: 1)\n"));
+        assert_eq!(d.len(), 2, "{d:?}");
+        assert!(d[1].message.contains("it takes s, digits"));
         // names the signature does not take; a pipeline's left counts
         let d = check(&format!(
             "{src}ods.rolling(s, windw: 2, agg: \"m\")\ns |> ods.rolling(window: 2, agg: \"m\")\nf.sort_by(\"a\", descending: true)\n"

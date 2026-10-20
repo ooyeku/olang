@@ -722,6 +722,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`olang check` kept checking `ods` calls after `use ods`.** A `use`
+  of a stdlib module counted its name as the program's own binding, so
+  every `ods.f(…)` and every Series method after it went unchecked (a
+  misspelled method or keyword passed). The module's name stays the
+  module's. A check unit test.
+
 - **A quit from outside reaches the program (macOS).** The Dock's Quit,
   AppleScript's `quit app`, a logout, a restart or a shutdown
   (`applicationShouldTerminate:`) used to end the process at once: winit
