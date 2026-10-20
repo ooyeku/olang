@@ -351,6 +351,7 @@ pub fn do_install(frozen: bool, update: bool, verbose: bool) -> anyhow::Result<(
         refresh: update,
         repin_shelf: true,
         explicit: true,
+        offline: false,
     };
     // A shelf library re-shelved since the lock was written (another
     // commit, or pinned/unpinned) is re-pinned to what the shelf holds now:

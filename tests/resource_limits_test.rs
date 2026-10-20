@@ -106,7 +106,7 @@ fn a_git_dependencys_url_or_ref_that_reads_as_an_option_is_refused_before_git_ru
         ("https://example.invalid/x.git", GitRef::Rev("--output=/tmp/x".into())),
         ("https://example.invalid/x.git", GitRef::Branch("-q".into())),
     ] {
-        match fetch_git(url, &r) {
+        match fetch_git(url, &r, false) {
             Err(CacheError::Git(m)) => assert!(m.contains("cannot start with '-'"), "{}", m),
             Err(other) => panic!("{}: {}", url, other),
             Ok(_) => panic!("{} fetched", url),

@@ -72,6 +72,13 @@ pub struct InstallOptions {
     /// only keeps incidental installs — a run, a test, the REPL, the
     /// language server, a check — from touching it.
     pub explicit: bool,
+    /// Fetch nothing: use what this machine already holds (a cached git
+    /// checkout, a path, the shelf) and say a dependency that is not
+    /// there as missing; write no lock. What opening a project does (a
+    /// REPL serving an editor, `olang check --tier`): reading a folder
+    /// must not clone from the network a manifest names. Fetching stays
+    /// with the commands that install (`olang run`, `otc install`).
+    pub offline: bool,
 }
 
 /// Resolve and fetch all dependencies of the project rooted at `root`,
@@ -184,7 +191,7 @@ pub fn install(root: &Path, options: &InstallOptions) -> Result<DependencyMap, P
             .map_err(|e| PkgError::Registry(e.to_string()))?;
         let git_ref = cache::GitRef::Rev(release.rev.clone());
         let fetched =
-            cache::fetch_git(&release.git, &git_ref).map_err(|e| PkgError::Fetch(e.to_string()))?;
+            cache::fetch_git(&release.git, &git_ref, options.offline).map_err(|e| PkgError::Fetch(e.to_string()))?;
         verify_checksum(name, release.checksum.as_deref(), &fetched.dir)?;
         dep_map.insert(name.clone(), fetched.dir.clone());
         lock.package.insert(
@@ -220,7 +227,7 @@ pub fn install(root: &Path, options: &InstallOptions) -> Result<DependencyMap, P
     // OLANG_LOCK_READONLY=1 keeps the lock (or its absence) as it is. A
     // project whose manifest says `lock = "never"` (a test fixture) is read
     // the same way by everything but an explicit otc command.
-    if !lock_readonly() && (options.explicit || !manifest.lock_never()) {
+    if !lock_readonly() && !options.offline && (options.explicit || !manifest.lock_never()) {
         lock.save(root).map_err(PkgError::Lock)?;
     }
     Ok(dep_map)
@@ -330,7 +337,7 @@ fn resolve_dependency(
                 cache::GitRef::Default
             };
             let fetched =
-                cache::fetch_git(git, &git_ref).map_err(|e| PkgError::Fetch(e.to_string()))?;
+                cache::fetch_git(git, &git_ref, options.offline).map_err(|e| PkgError::Fetch(e.to_string()))?;
             let checksum = cache::checksum_dir(&fetched.dir).ok();
             let deps = sub_dependency_names(&fetched.dir);
             Ok((
@@ -395,7 +402,7 @@ fn resolve_dependency(
             let release = reg
                 .release(name, version)
                 .map_err(|e| PkgError::Registry(e.to_string()))?;
-            let fetched = cache::fetch_git(&release.git, &cache::GitRef::Rev(release.rev.clone()))
+            let fetched = cache::fetch_git(&release.git, &cache::GitRef::Rev(release.rev.clone()), options.offline)
                 .map_err(|e| PkgError::Fetch(e.to_string()))?;
             verify_checksum(name, release.checksum.as_deref(), &fetched.dir)?;
             Ok((
@@ -659,7 +666,7 @@ fn locked_dir(
             })
         }
         LockedSource::Git { git, rev, .. } => {
-            Ok(cache::fetch_git(git, &cache::GitRef::Rev(rev.clone()))
+            Ok(cache::fetch_git(git, &cache::GitRef::Rev(rev.clone()), options.offline)
                 .map_err(|e| PkgError::Fetch(e.to_string()))?
                 .dir)
         }
@@ -679,7 +686,7 @@ fn locked_dir(
                 .release(name, &version)
                 .map_err(|e| PkgError::Registry(e.to_string()))?;
             Ok(
-                cache::fetch_git(&release.git, &cache::GitRef::Rev(release.rev.clone()))
+                cache::fetch_git(&release.git, &cache::GitRef::Rev(release.rev.clone()), options.offline)
                     .map_err(|e| PkgError::Fetch(e.to_string()))?
                     .dir,
             )

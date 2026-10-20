@@ -96,7 +96,11 @@ pub struct Fetched {
 /// The cache is keyed by (url, resolved-sha), so the same commit is only ever
 /// stored once. A previously cached checkout is reused without touching the
 /// network.
-pub fn fetch_git(url: &str, git_ref: &GitRef) -> Result<Fetched, CacheError> {
+///
+/// `offline`: touch no network at all — a commit already checked out, or
+/// one the mirror already holds, is used; anything else is not installed
+/// (`CacheError::Git`, saying so).
+pub fn fetch_git(url: &str, git_ref: &GitRef, offline: bool) -> Result<Fetched, CacheError> {
     // A manifest's url and ref reach git's command line: one that starts
     // with `-` would be read as an option (`--upload-pack=<command>` runs
     // a command), so neither may — git has no `--` for `rev-parse`'s spec
@@ -109,6 +113,9 @@ pub fn fetch_git(url: &str, git_ref: &GitRef) -> Result<Fetched, CacheError> {
     }
     let root = cache_root()?;
     let bare_dir = root.join("git-db").join(url_hash(url));
+    if offline {
+        return fetch_git_offline(&root, &bare_dir, url, git_ref);
+    }
     std::fs::create_dir_all(&bare_dir)?;
 
     // Maintain a bare mirror per URL, updated on demand, so ref resolution is
@@ -158,6 +165,59 @@ pub fn fetch_git(url: &str, git_ref: &GitRef) -> Result<Fetched, CacheError> {
         let _ = archive; // (the string form is unused; see checkout_via_archive)
     }
 
+    Ok(Fetched {
+        dir: checkout,
+        rev: Some(rev),
+    })
+}
+
+/// `fetch_git` from what the cache holds, with no network: an exact rev
+/// already checked out, else the mirror's own refs (as last fetched)
+/// resolved and checked out from it locally.
+fn fetch_git_offline(
+    root: &Path,
+    bare_dir: &Path,
+    url: &str,
+    git_ref: &GitRef,
+) -> Result<Fetched, CacheError> {
+    let not_installed = || {
+        CacheError::Git(format!(
+            "{} at {} is not installed on this machine (it is fetched by `olang run` or `otc install`, not when a project is opened)",
+            url,
+            git_ref.spec()
+        ))
+    };
+    if let GitRef::Rev(rev) = git_ref
+        && rev.len() == 40
+        && rev.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        let checkout = root.join("git").join(rev);
+        if checkout.is_dir() {
+            return Ok(Fetched {
+                dir: checkout,
+                rev: Some(rev.clone()),
+            });
+        }
+    }
+    if !bare_dir.join("HEAD").exists() {
+        return Err(not_installed());
+    }
+    let rev = git(
+        Some(bare_dir),
+        &["rev-parse", "--verify", "--quiet", &format!("{}^{{commit}}", git_ref.spec())],
+    )
+    .map_err(|_| not_installed())?;
+    if rev.is_empty() {
+        return Err(not_installed());
+    }
+    let checkout = root.join("git").join(&rev);
+    if !checkout.exists() {
+        std::fs::create_dir_all(&checkout)?;
+        if let Err(e) = checkout_via_archive(bare_dir, &rev, &checkout) {
+            let _ = std::fs::remove_dir_all(&checkout);
+            return Err(e);
+        }
+    }
     Ok(Fetched {
         dir: checkout,
         rev: Some(rev),

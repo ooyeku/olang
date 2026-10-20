@@ -4731,9 +4731,17 @@ pub fn run_tier_as(paths: &[PathBuf], json: bool) -> i32 {
         let mut interpreter = crate::interpreter::Interpreter::new();
         interpreter.enable_bytecode_tier(1, std::env::var_os("OLANG_TIER_VERBOSE").is_some());
         interpreter.set_current_file(&absolute);
-        if let Some(root) = crate::pkg::manifest::Manifest::find_root(&absolute)
-            && let Ok(map) = crate::pkg::install(&root, &crate::pkg::InstallOptions::default())
-        {
+        // The dependencies this machine holds, fetched from nowhere (a
+        // check reads a project; it does not install one): one missing is
+        // said where a `use` names it, as the file's "not checked" reason.
+        if let Some(root) = crate::pkg::manifest::Manifest::find_root(&absolute) {
+            let opts = crate::pkg::InstallOptions {
+                registry: std::env::var("OLANG_REGISTRY").ok().map(PathBuf::from),
+                offline: true,
+                ..Default::default()
+            };
+            let (map, missing) = crate::pkg::install_lenient(&root, &opts);
+            interpreter.set_missing_dependencies(missing.into_iter().collect());
             interpreter.set_dependency_map(map.into_iter().collect());
         }
         let mut skipped: std::collections::HashSet<String> = std::collections::HashSet::new();

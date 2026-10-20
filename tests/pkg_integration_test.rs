@@ -134,6 +134,7 @@ fn frozen_install_rejects_a_stale_lock() {
         refresh: false,
         repin_shelf: false,
         explicit: false,
+        offline: false,
     };
     assert!(
         install(&app, &frozen).is_err(),
@@ -691,4 +692,90 @@ fn a_path_dependencys_own_path_dependencies_are_followed() {
         lock
     );
     let _ = fs::remove_dir_all(&ws);
+}
+
+/// Opening a project fetches nothing: `olang check --tier` and `olang
+/// repl --serve` use the dependencies this machine holds and say one
+/// that is not here as missing — no clone of what the manifest names,
+/// no lock written. Once a run has installed it, both find it offline.
+#[test]
+fn opening_a_project_fetches_nothing() {
+    let ws = workspace("offline");
+    let repo = git_lib(&ws, "share fn answer() = 42\n");
+    let cache = ws.join("cache");
+    fs::create_dir_all(&cache).unwrap();
+    let app = ws.join("app");
+    write(
+        &app.join("olang.toml"),
+        &format!(
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ngitlib = {{ git = \"file://{}\" }}\n",
+            repo.display()
+        ),
+    );
+    write(
+        &app.join("main.ol"),
+        "use gitlib { answer }\nfn twice() = answer() * 2\nprintln(twice())\n",
+    );
+    let olang = || {
+        let mut c = std::process::Command::new(env!("CARGO_BIN_EXE_olang"));
+        c.current_dir(&app)
+            .env("OLANG_CACHE", &cache)
+            .env_remove("OLANG_LOCK_READONLY");
+        c
+    };
+    let fetched = || cache.join("git-db").exists() || cache.join("git").exists();
+
+    let check = olang().args(["check", "--tier", "main.ol"]).output().unwrap();
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    assert!(!fetched(), "check --tier cloned a dependency: {said}");
+    assert!(
+        said.contains("gitlib") && said.contains("not installed"),
+        "the missing dependency is said: {said}"
+    );
+    assert!(!app.join("olang.lock").exists(), "check --tier wrote a lock");
+
+    {
+        use std::io::{BufRead, Write};
+        let mut child = olang()
+            .args(["repl", "--serve"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        let mut out = std::io::BufReader::new(child.stdout.take().unwrap());
+        let mut line = String::new();
+        out.read_line(&mut line).unwrap(); // the handshake
+        writeln!(stdin, "{{\"id\":1,\"op\":\"eval\",\"code\":\"use gitlib\"}}").unwrap();
+        stdin.flush().unwrap();
+        line.clear();
+        out.read_line(&mut line).unwrap();
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(!fetched(), "repl --serve cloned a dependency");
+        assert!(
+            line.contains("could not be resolved") && line.contains("not installed"),
+            "the session says the dependency is missing: {line}"
+        );
+        assert!(!app.join("olang.lock").exists(), "repl --serve wrote a lock");
+    }
+
+    // a run installs it; from then on both find it with no network
+    let run = olang().arg("main.ol").output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "84", "{run:?}");
+    assert!(fetched());
+    // the mirror's own remote gone: nothing can be fetched
+    fs::remove_dir_all(&repo).unwrap();
+    let check = olang().args(["check", "--tier", "main.ol"]).output().unwrap();
+    let said = String::from_utf8_lossy(&check.stdout).to_string();
+    assert!(
+        !said.contains("not checked") && said.contains("every function compiles"),
+        "an installed dependency is found offline: {said}{}",
+        String::from_utf8_lossy(&check.stderr)
+    );
 }

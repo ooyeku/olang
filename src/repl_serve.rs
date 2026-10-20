@@ -554,8 +554,11 @@ impl Session {
         interp.set_current_file(&root.join("olang.toml"));
         let mut deps = HashMap::new();
         if crate::pkg::manifest::Manifest::find_root(&cwd).is_some() {
+            // what this machine holds, fetched from nowhere: opening a
+            // project must not clone what its manifest names
             let opts = crate::pkg::InstallOptions {
                 registry: std::env::var("OLANG_REGISTRY").ok().map(PathBuf::from),
+                offline: true,
                 ..Default::default()
             };
             let (map, missing) = crate::pkg::install_lenient(&root, &opts);
@@ -3153,7 +3156,10 @@ impl Session {
             && self.loom.as_deref() != Some(Path::new(p))
         {
             let lroot = PathBuf::from(p);
-            let opts = crate::pkg::InstallOptions::default();
+            let opts = crate::pkg::InstallOptions {
+                offline: true,
+                ..Default::default()
+            };
             let (map, _missing) = crate::pkg::install_lenient(&lroot, &opts);
             let mut map: HashMap<_, _> = map.into_iter().collect();
             map.insert("loom".to_string(), lroot.clone());
