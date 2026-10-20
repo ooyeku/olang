@@ -26,8 +26,8 @@
 //! | `name?` | optional; the function decides what absence means, and a gap before a later argument is `()` |
 //! | `name = lit` | a default (`10`, `0.5`, `"min"`, `true`, `()`), filled whenever the call stops short of it |
 //! | `**name{k1 k2}` | the trailing options map: named arguments that are no parameter go into it, merged over a map given by position. Listed keys are checked here; an empty list leaves the check to the function |
-//! | `… -> K` | what it returns, when a native kind (`S`, `F`, `M`, `D`, `R`, `G`, `X`, or `=` for its first argument's): the checker and the language server follow bindings through it |
-//! | `name:SF` | the first parameter's receiver kinds, which make the function a method of those values: `S` Series (and a column expression), `F` Frame, `M` fitted model, `D` Date, `R` streaming reader, `G` grouped Frame (`ods.group_by(f, keys)`), `X` Matrix |
+//! | `… -> K` | what it returns, when a native kind (`S`, `F`, `M`, `D`, `R`, `G`, `N`, `W`, `X`, or `=` for its first argument's): the checker and the language server follow bindings through it |
+//! | `name:SF` | the first parameter's receiver kinds, which make the function a method of those values: `S` Series (and a column expression), `F` Frame, `M` fitted model, `D` Date, `R` streaming reader, `G` grouped Frame (`ods.group_by(f, keys)`), `N` random generator (`random.rng(seed)`), `W` fitted Holt-Winters (`stats.ts.holt_winters`), `X` Matrix (`ods.matrix`) |
 //!
 //! **Methods.** `recv.m(args)` on a native value, with no `impl` of `m`
 //! for its type, is `home.m(recv, args)`: the value's own module first,
@@ -97,13 +97,15 @@ pub struct Options {
 }
 
 /// Receiver kinds, as a bit set.
-pub const RECV_SERIES: u8 = 1;
-pub const RECV_FRAME: u8 = 2;
-pub const RECV_MODEL: u8 = 4;
-pub const RECV_DATE: u8 = 8;
-pub const RECV_READER: u8 = 16;
-pub const RECV_GROUPBY: u8 = 32;
-pub const RECV_MATRIX: u8 = 64;
+pub const RECV_SERIES: u16 = 1;
+pub const RECV_FRAME: u16 = 2;
+pub const RECV_MODEL: u16 = 4;
+pub const RECV_DATE: u16 = 8;
+pub const RECV_READER: u16 = 16;
+pub const RECV_GROUPBY: u16 = 32;
+pub const RECV_RNG: u16 = 64;
+pub const RECV_HOLT_WINTERS: u16 = 256;
+pub const RECV_MATRIX: u16 = 512;
 
 #[derive(Debug, Clone)]
 pub struct Sig {
@@ -112,18 +114,31 @@ pub struct Sig {
     pub params: Vec<Param>,
     pub options: Option<Options>,
     /// What the first parameter takes, as a method receiver (0: not a method).
-    pub recv: u8,
+    pub recv: u16,
     /// What it returns, when that is a native kind the tools can follow:
     /// a receiver bit, `RET_SAME` (the kind of its first argument), or 0.
-    pub ret: u8,
+    pub ret: u16,
 }
 
 /// `-> =`: the function returns what its first argument is (`ods.head`
 /// of a Series is a Series, of a Frame a Frame).
-pub const RET_SAME: u8 = 128;
+pub const RET_SAME: u16 = 128;
+
+/// Every native kind the table names.
+pub const KINDS: &[&str] = &[
+    "Series",
+    "Frame",
+    "Model",
+    "Date",
+    "Reader",
+    "GroupBy",
+    "Rng",
+    "HoltWinters",
+    "Matrix",
+];
 
 /// The type name a receiver bit stands for.
-pub fn kind_name(bit: u8) -> Option<&'static str> {
+pub fn kind_name(bit: u16) -> Option<&'static str> {
     match bit {
         RECV_SERIES => Some("Series"),
         RECV_FRAME => Some("Frame"),
@@ -131,6 +146,8 @@ pub fn kind_name(bit: u8) -> Option<&'static str> {
         RECV_DATE => Some("Date"),
         RECV_READER => Some("Reader"),
         RECV_GROUPBY => Some("GroupBy"),
+        RECV_RNG => Some("Rng"),
+        RECV_HOLT_WINTERS => Some("HoltWinters"),
         RECV_MATRIX => Some("Matrix"),
         _ => None,
     }
@@ -143,6 +160,11 @@ pub fn home_of(type_name: &str) -> Option<&'static str> {
         "Model" => Some("learn"),
         "Matrix" => Some("mat"),
         "Date" => Some("dates"),
+        // Their methods live in a nested namespace (`random.Rng.normal`,
+        // `stats.ts.forecast`), so a method never shadows a module
+        // function of the same name (`random.uniform`).
+        "Rng" => Some("random.Rng"),
+        "HoltWinters" => Some("stats.ts"),
         _ => None,
     }
 }
@@ -154,9 +176,7 @@ pub fn returns(full: &str, first: Option<&str>) -> Option<&'static str> {
     let s = sig(full)?;
     if s.ret == RET_SAME {
         let first = first?;
-        return ["Series", "Frame", "Model", "Date", "Reader", "GroupBy", "Matrix"]
-            .into_iter()
-            .find(|k| *k == first);
+        return KINDS.iter().copied().find(|k| *k == first);
     }
     kind_name(s.ret)
 }
@@ -189,6 +209,9 @@ impl Sig {
         let mut out: Vec<&'static str> = self.params.iter().map(|p| p.name).collect();
         if let Some(o) = &self.options {
             out.extend(o.keys.iter().copied());
+            if takes_rng(o, "rng") && !o.keys.contains(&"rng") {
+                out.push("rng");
+            }
         }
         out
     }
@@ -216,8 +239,14 @@ impl Sig {
     }
 }
 
+/// Options that take a `seed` take a generator (`rng:`, a `random.rng`)
+/// in its place.
+fn takes_rng(o: &Options, name: &str) -> bool {
+    name == "rng" && o.keys.contains(&"seed")
+}
+
 /// The receiver bit a native type answers to.
-pub fn recv_bit(type_name: &str) -> u8 {
+pub fn recv_bit(type_name: &str) -> u16 {
     match type_name {
         // A column expression takes every column method (D1's `Expr`).
         "Series" | "Expr" => RECV_SERIES,
@@ -226,6 +255,8 @@ pub fn recv_bit(type_name: &str) -> u8 {
         "Date" => RECV_DATE,
         "Reader" => RECV_READER,
         "GroupBy" => RECV_GROUPBY,
+        "Rng" => RECV_RNG,
+        "HoltWinters" => RECV_HOLT_WINTERS,
         "Matrix" => RECV_MATRIX,
         _ => 0,
     }
@@ -263,6 +294,8 @@ fn parse_spec(full: &'static str, spec: &'static str) -> Sig {
                 "D" => RECV_DATE,
                 "R" => RECV_READER,
                 "G" => RECV_GROUPBY,
+                "N" => RECV_RNG,
+                "W" => RECV_HOLT_WINTERS,
                 "X" => RECV_MATRIX,
                 "=" => RET_SAME,
                 other => panic!("native_sig: {full}: unknown return kind {other}"),
@@ -272,7 +305,7 @@ fn parse_spec(full: &'static str, spec: &'static str) -> Sig {
     };
     let mut params = Vec::new();
     let mut options = None;
-    let mut recv = 0u8;
+    let mut recv = 0u16;
     // Split on commas outside braces.
     let mut parts: Vec<&'static str> = Vec::new();
     let mut depth = 0;
@@ -323,6 +356,8 @@ fn parse_spec(full: &'static str, spec: &'static str) -> Sig {
                         'D' => RECV_DATE,
                         'R' => RECV_READER,
                         'G' => RECV_GROUPBY,
+                        'N' => RECV_RNG,
+                        'W' => RECV_HOLT_WINTERS,
                         'X' => RECV_MATRIX,
                         other => panic!("native_sig: {full}: unknown receiver kind {other}"),
                     };
@@ -422,7 +457,9 @@ fn layout<'n>(
             continue;
         }
         match &sig.options {
-            Some(o) if o.keys.is_empty() || o.keys.contains(&name) => options = true,
+            Some(o) if o.keys.is_empty() || o.keys.contains(&name) || takes_rng(o, name) => {
+                options = true
+            }
             _ => {
                 return Err(format!(
                     "{}: no parameter {}named '{}' — it takes {}",
@@ -660,7 +697,7 @@ pub fn fill_defaults(full: &str, args: &mut Vec<Value>) {
 /// Modules a native type borrows methods from, after its own.
 fn borrowed_modules(type_name: &str) -> &'static [&'static str] {
     match type_name {
-        "Series" | "Expr" => &["stats", "plot"],
+        "Series" | "Expr" => &["stats", "stats.ts", "plot"],
         "Frame" => &["plot"],
         _ => &[],
     }
@@ -674,15 +711,31 @@ const OPEN_HOMES: &[&str] = &["ods", "learn", "dates", "mat"];
 static MODULE_FUNCTIONS: LazyLock<HashMap<String, HashMap<String, &'static str>>> =
     LazyLock::new(|| {
         let mut out: HashMap<String, HashMap<String, &'static str>> = HashMap::new();
-        for (module, value) in crate::stdlib::get_stdlib().iter() {
-            if let Value::Struct { fields, .. } = value {
-                let entry = out.entry(module.clone()).or_default();
-                for (name, v) in fields.iter() {
-                    if let Value::Builtin(b) = v {
+        // A module's nested namespaces (`stats.ts`, `random.Rng`) are
+        // modules of their own here, under their dotted names.
+        fn add(
+            out: &mut HashMap<String, HashMap<String, &'static str>>,
+            module: String,
+            fields: &ValueMap,
+        ) {
+            let mut entry: HashMap<String, &'static str> = HashMap::new();
+            for (name, v) in fields.iter() {
+                match v {
+                    Value::Builtin(b) => {
                         let full: &'static str = Box::leak(b.name.clone().into_boxed_str());
                         entry.insert(name.clone(), full);
                     }
+                    Value::Struct { type_name, fields } if type_name == "Module" => {
+                        add(out, format!("{}.{}", module, name), fields);
+                    }
+                    _ => {}
                 }
+            }
+            out.entry(module).or_default().extend(entry);
+        }
+        for (module, value) in crate::stdlib::get_stdlib().iter() {
+            if let Value::Struct { fields, .. } = value {
+                add(&mut out, module.clone(), fields);
             }
         }
         out
@@ -707,7 +760,7 @@ type FxMap<K, V> = std::collections::HashMap<K, V, rustc_hash::FxBuildHasher>;
 static METHOD_TABLE: LazyLock<FxMap<&'static str, FxMap<&'static str, &'static str>>> =
     LazyLock::new(|| {
         let mut out: FxMap<&'static str, FxMap<&'static str, &'static str>> = FxMap::default();
-        for type_name in ["Series", "Expr", "Frame", "Model", "Date", "Reader", "GroupBy", "Matrix"] {
+        for type_name in KINDS.iter().copied().chain(["Expr"]) {
             let home = home_of(type_name).expect("a data type");
             let mut methods = FxMap::default();
             for full in methods_from(home, type_name) {
@@ -826,7 +879,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("ods.n_unique", "s:SG"),
     ("ods.value_counts", "s:S -> F"),
     ("ods.cast", "s:S, type -> S"),
-    ("ods.sample", "x:SF, n -> ="),
+    ("ods.sample", "x:SF, n, seed?, rng? -> ="),
     ("ods.shift", "s:S, by -> S"),
     ("ods.cum_max", "s:S -> S"),
     ("ods.cum_min", "s:S -> S"),
@@ -1042,25 +1095,79 @@ pub const TABLE: &[(&str, &str)] = &[
     ("stats.describe", "s:S"),
     ("stats.corr", "a:S, b"),
     ("stats.cov", "a:S, b"),
-    ("stats.t_test", "a:S, b"),
+    ("stats.t_test", "a:S, b, level = 0.95, alternative = \"two-sided\""),
     ("stats.chi2_test", "observed:S, expected"),
     ("stats.lm", "y:S, x"),
+    ("stats.power_t", "effect, n, alpha = 0.05, alternative = \"two-sided\", kind = \"two-sample\", ratio = 1.0"),
+    ("stats.n_for_power", "effect, power = 0.8, alpha = 0.05, alternative = \"two-sided\", kind = \"two-sample\", ratio = 1.0"),
+    ("stats.mann_whitney", "a:S, b, alternative = \"two-sided\""),
+    ("stats.spearman", "a:S, b"),
+    ("stats.mad", "s:S, scale = \"normal\""),
+    ("stats.iqr", "s:S"),
+    ("stats.zscore", "s:S, robust = false -> S"),
+    ("stats.tukey_fences", "s:S, k = 1.5"),
+    ("stats.bootstrap", "s:S, stat = \"mean\", n = 2000, seed?, rng?, level = 0.95, compare = \"diff\""),
     ("stats.norm.pdf", "x, mean = 0.0, std = 1.0"),
     ("stats.norm.cdf", "x, mean = 0.0, std = 1.0"),
-    ("stats.norm.ppf", "p, mean = 0.0, std = 1.0"),
-    ("stats.norm.sample", "n, mean = 0.0, std = 1.0 -> S"),
+    ("stats.norm.ppf", "q, mean = 0.0, std = 1.0"),
+    ("stats.norm.sample", "n, mean = 0.0, std = 1.0, rng? -> S"),
     ("stats.t.pdf", "x, df"),
     ("stats.t.cdf", "x, df"),
-    ("stats.t.ppf", "p, df"),
-    ("stats.t.sample", "n, df -> S"),
+    ("stats.t.ppf", "q, df"),
+    ("stats.t.sample", "n, df, rng? -> S"),
     ("stats.chi2.pdf", "x, df"),
     ("stats.chi2.cdf", "x, df"),
-    ("stats.chi2.ppf", "p, df"),
-    ("stats.chi2.sample", "n, df -> S"),
+    ("stats.chi2.ppf", "q, df"),
+    ("stats.chi2.sample", "n, df, rng? -> S"),
     ("stats.f.pdf", "x, d1, d2"),
     ("stats.f.cdf", "x, d1, d2"),
-    ("stats.f.ppf", "p, d1, d2"),
-    ("stats.f.sample", "n, d1, d2 -> S"),
+    ("stats.f.ppf", "q, d1, d2"),
+    ("stats.f.sample", "n, d1, d2, rng? -> S"),
+    ("stats.lognorm.pdf", "x, mu = 0.0, sigma = 1.0"),
+    ("stats.lognorm.cdf", "x, mu = 0.0, sigma = 1.0"),
+    ("stats.lognorm.ppf", "q, mu = 0.0, sigma = 1.0"),
+    ("stats.lognorm.sample", "n, mu = 0.0, sigma = 1.0, rng? -> S"),
+    ("stats.beta.pdf", "x, a, b"),
+    ("stats.beta.cdf", "x, a, b"),
+    ("stats.beta.ppf", "q, a, b"),
+    ("stats.beta.sample", "n, a, b, rng? -> S"),
+    ("stats.gamma.pdf", "x, shape, scale = 1.0"),
+    ("stats.gamma.cdf", "x, shape, scale = 1.0"),
+    ("stats.gamma.ppf", "q, shape, scale = 1.0"),
+    ("stats.gamma.sample", "n, shape, scale = 1.0, rng? -> S"),
+    ("stats.poisson.pmf", "k, lam"),
+    ("stats.poisson.cdf", "k, lam"),
+    ("stats.poisson.ppf", "q, lam"),
+    ("stats.poisson.sample", "n, lam, rng? -> S"),
+    ("stats.binom.pmf", "k, trials, p"),
+    ("stats.binom.cdf", "k, trials, p"),
+    ("stats.binom.ppf", "q, trials, p"),
+    ("stats.binom.sample", "n, trials, p, rng? -> S"),
+    // ── stats.ts ──
+    ("stats.ts.acf", "s:S, lags?, ci = 0.95 -> F"),
+    ("stats.ts.pacf", "s:S, lags?, ci = 0.95, method = \"yw\" -> F"),
+    ("stats.ts.decompose", "s:S, period, model = \"additive\", time? -> F"),
+    ("stats.ts.holt_winters", "s:S, season?, trend = \"add\", seasonal = \"add\", fit = true, alpha?, beta?, gamma?, time? -> W"),
+    ("stats.ts.forecast", "model:W, h"),
+    ("stats.ts.seasonal_naive", "s:S, season, h, time?"),
+    // ── random: a generator (random.rng) and its methods ──
+    ("random.rng", "seed? -> N"),
+    ("random.Rng.normal", "rng:N, n?, mean = 0.0, std = 1.0"),
+    ("random.Rng.uniform", "rng:N, n?, low = 0.0, high = 1.0"),
+    ("random.Rng.integers", "rng:N, n?, low, high"),
+    ("random.Rng.poisson", "rng:N, n?, lam = 1.0"),
+    ("random.Rng.lognormal", "rng:N, n?, mean = 0.0, sigma = 1.0"),
+    ("random.Rng.binomial", "rng:N, n?, trials, p"),
+    ("random.Rng.choice", "rng:N, values, n?, weights?, replace = true"),
+    ("random.Rng.shuffle", "rng:N, values"),
+    ("random.Rng.permutation", "rng:N, n -> S"),
+    ("random.Rng.spawn", "rng:N, k"),
+    // ── str: numbers as text ──
+    ("str.pct", "x, digits = 1"),
+    ("str.money", "x, symbol = \"$\", digits = 0"),
+    // ── db: Frames ──
+    ("db.query_frame", "conn, sql, params?, **opts{timeout_ms} -> F"),
+    ("db.insert_frame", "conn, table, frame, create = true, replace = false"),
     // ── plot ──
     ("plot.line", concat!("x:S, y, ", plot_opts!())),
     ("plot.scatter", concat!("x:S, y, ", plot_opts!())),

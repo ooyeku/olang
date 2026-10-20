@@ -70,6 +70,27 @@ pub fn create_random_module() -> Value {
     module.insert("shuffle".to_string(), create_builtin_function("shuffle", 1));
     module.insert("seed".to_string(), create_builtin_function("seed", 1));
 
+    // A generator of its own (`random.rng(seed)`), and its methods as the
+    // nested `random.Rng` namespace: `g.normal(100)` is
+    // `random.Rng.normal(g, 100)`.
+    {
+        module.insert("rng".to_string(), create_builtin_function("rng", 0));
+        let mut methods = crate::ast::ValueMap::default();
+        for (name, arity) in crate::ods::rng::METHODS {
+            methods.insert(
+                name.to_string(),
+                create_builtin_function(&format!("Rng.{}", name), *arity),
+            );
+        }
+        module.insert(
+            "Rng".to_string(),
+            Value::Struct {
+                type_name: "Module".to_string(),
+                fields: std::sync::Arc::new(methods),
+            },
+        );
+    }
+
     Value::Struct {
         type_name: "Module".to_string(),
         fields: std::sync::Arc::new(module),
@@ -104,6 +125,8 @@ pub fn call_random_function(
         "randstr_alnum" => random_randstr_alnum(args),
         "shuffle" => random_shuffle(args),
         "seed" => random_seed(args),
+        "rng" => crate::ods::rng::make(&args).map_err(Into::into),
+        m if m.starts_with("Rng.") => crate::ods::rng::method(&m[4..], &args).map_err(Into::into),
         _ => Err(format!("Unknown random function: {}", name).into()),
     }
 }
@@ -690,7 +713,10 @@ mod tests {
                 }
             }
 
-            assert_eq!(fields.len(), 14, "Expected 14 functions in random module");
+            // and the generator: `rng` and its methods' namespace `Rng`
+            assert!(matches!(fields.get("rng"), Some(Value::Builtin(_))));
+            assert!(matches!(fields.get("Rng"), Some(Value::Struct { .. })));
+            assert_eq!(fields.len(), 16, "Expected 16 members in random module");
         } else {
             panic!("Expected struct for random module, got: {:?}", module);
         }

@@ -130,7 +130,10 @@ fn cap_of(full_name: &str) -> Option<CapUse> {
 fn recorded_of(op: &str) -> bool {
     // random: every draw consumes hidden RNG state.
     if let Some(f) = op.strip_prefix("random.") {
-        return !matches!(f, "seed"); // seed is a deterministic state-set
+        // seed is a deterministic state-set; a generator (`random.rng`)
+        // is a value whose draws follow from its seed alone, so neither
+        // it nor its methods (`random.Rng.*`) touch hidden state.
+        return !(matches!(f, "seed" | "rng") || f.starts_with("Rng."));
     }
     // The database: every call's answer depends on state outside the
     // program (the file, other writers), and every answer is plain data

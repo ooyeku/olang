@@ -28,6 +28,7 @@ below made a measured difference of between 2× and several hundred times.
 - [The expression engine](#the-expression-engine)
 - [Text, dates and categories](#text-dates-and-categories)
 - [Frames: grouping, joins and time](#frames-grouping-joins-and-time)
+- [Statistics and time series](#statistics-and-time-series)
 - [Matrices and formulas](#matrices-and-formulas)
 - [What a program costs in memory](#what-a-program-costs-in-memory)
 
@@ -496,6 +497,69 @@ Every parallel path joins in a fixed order, so a result is the same run
 to run, and the same on one thread but for a grouped float `sum` or
 `mean`, whose additions the parallel scatter reorders
 (`tests/frames_ergonomics_test.rs` checks both).
+
+## Statistics and time series
+
+The kernels behind `stats`, `stats.ts`, `random.rng` and number
+formatting (`olang-ods/benches/stats.rs`) against NumPy 2.5.1, SciPy
+1.18.0 and pandas 3.0.5 on the same work (`olang-ods/benches/stats.py`):
+a million values unless the row says otherwise. Milliseconds, the
+fastest of seven, Apple M5 Pro (18 threads):
+
+| Operation | ods, all threads | ods, one thread | NumPy / SciPy |
+|---|---:|---:|---:|
+| `stats.norm.cdf(s)` | 1.02 | 13.7 | 11.7 |
+| `stats.norm.pdf(s)` | 0.27 | 3.03 | 5.28 |
+| `stats.norm.ppf(s)` | 0.88 | 12.0 | 10.8 |
+| `stats.t.cdf(s, 10)` | 5.27 | 75.9 | 70.4 |
+| `stats.gamma.cdf(s, 2.0)` | 2.10 | 31.4 | 29.5 |
+| `g.normal(n)` | 0.60 | 5.30 | 3.30 (`Generator.normal`) |
+| `g.uniform(n)` | 0.15 | 1.20 | 2.89 |
+| `g.poisson(n, 3.0)` | 0.44 | 3.02 | 22.4 |
+| `g.integers(n, 0, 100)` | 0.19 | 1.13 | 1.55 |
+| `g.choice(50 values, n, weights:)` | 0.37 | 2.58 | 23.7 |
+| `stats.bootstrap(s, "mean", n: 10000)`, 10,000 values | 10.7 | 159 | 204 (fancy-indexed means) |
+| `stats.bootstrap(s, "median", n: 2000)`, 10,000 values | 2.87 | 39.5 | 192 |
+| `ods.format(s, ",.2f")` | | 82.3 | 188 (`Series.map(format)`) |
+| `ods.format(s, ".1%")` | | 69.2 | 144 |
+| `stats.mad(s)` | | 3.96 | 13.9 (`median_abs_deviation`) |
+| `stats.ts.acf(s, 100)` | 2.07 | 27.1 | 23.0 (NumPy FFT, statsmodels' method) |
+| `stats.ts.acf(s, 336)`, 26,280 hours | | 0.60 | 0.44 |
+| `stats.ts.pacf(s, 48)`, 26,280 hours | | 0.36 | |
+| `stats.ts.decompose(s, 168)`, 26,280 hours | | 0.18 | |
+| `stats.ts.holt_winters(s, season: 7)`, 1,095 days, fitted | | 1.03 | |
+| `stats.ts.holt_winters(s, season: 168)`, 26,280 hours, fitted | | 26.6 | |
+
+A distribution over a column evaluates one special function a value,
+so it fans out from 16,384 values rather than the elementwise
+threshold. A generator's column is cut into blocks of 65,536 values;
+each block starts from the generator jumped ahead by its offset (PCG's
+`advance`, O(log n)), so a parallel draw is the sequential one, value
+for value, and the generator ends where one pass would leave it. Every
+sampler reads a fixed number of outputs a value (Box–Muller pairs; an
+exact inverse-CDF table for Poisson, binomial and weighted choice),
+which is what makes the jump possible. The bootstrap draws resample `i`
+from stream `i` of its seed, so its draws do not depend on the thread
+count either. `acf` sums lags directly (a vectorized dot product a lag,
+the lags on the pool) when there are at most 8·log₂ n of them, and
+otherwise transforms the series as a half-length complex FFT (the
+stages that fit in cache run block by block); the choice depends on the
+shape alone. Holt-Winters fits by bounded Nelder–Mead from the best of
+a coarse grid, a few hundred passes of Winters' recursions; statsmodels
+was not available offline to time beside it, and against the energy
+notebook's own 32-point grid of olang loops (50 ms on the same hours)
+the fit takes half the time and finds a lower error.
+
+The notebooks' hand-written forms, timed in olang on the notebooks'
+sizes:
+
+| Pattern | Before (the notebook's code) | After |
+|---|---:|---:|
+| energy: ACF to 336 lags by a `stats.corr` per lag | 67.1 | 0.83 (`stats.ts.acf`) |
+| energy: MAD by `median(map(…, "abs"))` | 0.61 | 0.19 (`stats.mad`) |
+| experiment: 2,000 bootstrap lifts, an olang closure per index | 175 | 0.78 (`stats.bootstrap([b, a], compare: "ratio")`) |
+| experiment: power by 600 simulated tests | 9.3 | 0.06 (`stats.power_t`, exact) |
+| generators: 10,000 weighted picks, Poisson counts and lognormals, row by row | 14.0 | 0.41 (`random.rng` columns) |
 
 ## Matrices and formulas
 

@@ -6579,9 +6579,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         }
         let relevant = match full_name {
             "db.open" => args.first(),
-            "db.execute" | "db.query" | "db.query_one" | "db.query_rows" | "db.cursor" => {
-                args.get(1)
-            }
+            "db.execute" | "db.query" | "db.query_one" | "db.query_rows" | "db.query_frame"
+            | "db.cursor" => args.get(1),
             _ => return None,
         };
         let path = match relevant {

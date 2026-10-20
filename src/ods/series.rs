@@ -734,6 +734,18 @@ fn dispatch_inner(func: &str, mut args: Vec<Value>, expected: usize) -> Result<V
     if matches!(func, "sort" | "argsort") && args.len() + 1 == expected {
         args.push(Value::Boolean(false));
     }
+    // `sample(s, n, seed?, rng?)`: the seed and generator are optional.
+    if func == "sample" && (3..=4).contains(&args.len()) {
+        let s = want_series(func, &args, 0)?;
+        let idx = crate::ods::frame::sample_indices_from(
+            func,
+            s.len(),
+            args.get(1),
+            args.get(2),
+            args.get(3),
+        )?;
+        return s.take(&idx).map(make_series_value).map_err(|e| e.to_string());
+    }
     arity(func, &args, expected)?;
     let e = |err: olang_ods::OdsError| err.to_string();
     match func {
@@ -941,7 +953,13 @@ fn dispatch_inner(func: &str, mut args: Vec<Value>, expected: usize) -> Result<V
         }
         "sample" => {
             let s = want_series(func, &args, 0)?;
-            let idx = crate::ods::frame::sample_indices(func, s.len(), args.get(1))?;
+            let idx = crate::ods::frame::sample_indices_from(
+                func,
+                s.len(),
+                args.get(1),
+                args.get(2),
+                args.get(3),
+            )?;
             s.take(&idx).map(make_series_value).map_err(e)
         }
         // ── windows ──

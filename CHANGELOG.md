@@ -56,6 +56,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `fit.resid` beside `fit.fitted` for OLS. A fit's method wins over its
   entry of the same name in both tiers, so `fit.importance()` computes
   (it raised, the entry being a Frame) and `fit.importance` reads.
+- **Statistics, time series, generators, number formatting and Frames
+  in SQLite (data ergonomics D5).** Distributions are vectorized:
+  `stats.norm.cdf(s)` of a Series is a Series (nulls kept, one native
+  pass, parallel from 16,384 values), and five families join the four:
+  `stats.lognorm(mu, sigma)`, `stats.beta(a, b)`, `stats.gamma(shape,
+  scale)`, `stats.poisson(lam)` and `stats.binom(trials, p)` (`pmf` for
+  the counts). `stats.t_test` adds `diff`, `se`, `ci` (the interval of
+  the difference at `level`, of the mean for one sample) and `d`
+  (Cohen's d), and takes `alternative:`. New: `stats.power_t(effect, n,
+  alpha, alternative, kind, ratio)` (the noncentral t, AS 243, as
+  statsmodels' `TTestIndPower`), `stats.n_for_power`,
+  `stats.mann_whitney` (asymptotic, tie and continuity corrected),
+  `stats.spearman`, `stats.mad(s, scale: "normal")`, `stats.iqr`,
+  `stats.zscore(s, robust:)`, `stats.tukey_fences(s, k)` → `(lo, hi)`,
+  and `stats.bootstrap(s | [a, b], stat, n, seed:, rng:, level,
+  compare:)` (mean, median, std, var, sum or a quantile; resample `i`
+  from stream `i`, so the draws are the same on any thread count). Every
+  value pinned against SciPy (olang-ods/tests/stats_reference.rs,
+  fixtures written offline by tests/fixtures/stats/make_reference.py).
+  `stats.ts`: `acf(s, lags, ci)` (Bartlett's interval; direct sums for a
+  few lags, else a half-length real FFT), `pacf` (Yule–Walker),
+  `decompose(s, period, model)`, `holt_winters(s, season, trend,
+  seasonal, fit, alpha, beta, gamma, time)` (Winters' recursions, the
+  rates by bounded Nelder–Mead on the one-step SSE; a `HoltWinters`
+  value with `forecast(h)` and the fields `fitted`, `resid`, `params`,
+  `sse`, `level`, `slope`, `season`) and `seasonal_naive`; with `time:`
+  (a Date or Datetime column) the components carry it and a forecast is
+  a Frame of the times that follow. `random.rng(seed)` is a PCG64
+  generator of its own, independent of the global stream; its methods
+  (`random.Rng.*`) draw whole columns — `normal`, `uniform`, `integers`,
+  `poisson`, `lognormal`, `binomial`, `choice(values, n, weights,
+  replace)`, `shuffle`, `permutation` — in parallel blocks whose values
+  are the sequential ones, and `spawn(k)` hands out child streams for
+  `par_map`. `ods.sample`, `learn`'s seeded functions and
+  `stats.*.sample` take `rng:` (a generator or an Int seed).
+  `str.fmt(x, spec)` formats a number by Python's mini-language
+  (`".2f"`, `",.0f"`, `".1%"`, `"$,.0f"`, `"e"`, `"g"`, `"d"`, fill,
+  align, width; `{:.2f}` in a template), `str.pct(x, digits)` and
+  `str.money(x, symbol, digits)`; `ods.format(s, spec)` of a number
+  column is the text column (one buffer). `db.query_frame(conn, sql,
+  params)` reads a result into typed columns (Date and Datetime where
+  declared) and `db.insert_frame(conn, table, f, create:, replace:)`
+  writes one in a transaction. native_sig gains the `N` (Rng) and `W`
+  (HoltWinters) kinds, nested namespaces as method homes, and `rng` on
+  every options map that takes `seed`. Benchmarks in docs/performance.md
+  ("Statistics and time series"); tests/stats_ergonomics_test.rs (three
+  tiers, one thread and eight).
+
 - **Dates, datetimes, categories and text columns (data ergonomics
   D2).** Three new column types: `Date` (an `i32` of days since
   1970-01-01), `Datetime` (an `i64` of microseconds, naive or UTC) and

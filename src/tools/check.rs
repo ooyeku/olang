@@ -3997,6 +3997,8 @@ impl Checker {
                 "Frame" => Some("Frame"),
                 "Date" => Some("Date"),
                 "GroupBy" => Some("GroupBy"),
+                "Rng" => Some("Rng"),
+                "HoltWinters" => Some("HoltWinters"),
                 "Matrix" => Some("Matrix"),
                 _ => None,
             },

@@ -261,6 +261,8 @@ pub fn create_db_module() -> Value {
         ("query", 2),
         ("query_one", 2),
         ("query_rows", 2),
+        ("query_frame", 2),
+        ("insert_frame", 3),
         ("cursor", 2),
         ("next", 2),
         ("columns", 1),
@@ -297,6 +299,8 @@ pub fn call_db_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn s
         "query" => db_query(args, false),
         "query_one" => db_query(args, true),
         "query_rows" => db_query_rows(args),
+        "query_frame" => db_query_frame(args),
+        "insert_frame" => db_insert_frame(args),
         "cursor" => db_cursor(args),
         "next" => db_next(args),
         "columns" => db_columns(args),
@@ -1565,4 +1569,342 @@ fn db_close(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         },
         None => Ok(err("db.close: connection is already closed")),
     }
+}
+
+// ── Frames: db.query_frame, db.insert_frame ─────────────────────────
+
+/// One column's cells as SQLite gave them.
+enum Cells {
+    Int(Vec<Option<i64>>),
+    Real(Vec<Option<f64>>),
+    Text(Vec<Option<String>>),
+}
+
+struct ColumnAcc {
+    name: String,
+    decltype: Option<String>,
+    ints: Vec<Option<i64>>,
+    reals: Vec<Option<f64>>,
+    texts: Vec<Option<String>>,
+    saw_int: bool,
+    saw_real: bool,
+    saw_text: bool,
+}
+
+impl ColumnAcc {
+    fn push_null(&mut self) {
+        self.ints.push(None);
+        self.reals.push(None);
+        self.texts.push(None);
+    }
+
+    /// The column as the cells it holds: Int when every value is, Float
+    /// when Ints and Floats mix, text when any is text (a number written
+    /// as its text then).
+    fn cells(self) -> Cells {
+        if self.saw_text {
+            let texts = self
+                .texts
+                .into_iter()
+                .zip(self.ints.iter().zip(self.reals.iter()))
+                .map(|(t, (i, r))| {
+                    t.or_else(|| i.map(|i| i.to_string()))
+                        .or_else(|| r.map(crate::ast::format_float))
+                })
+                .collect();
+            Cells::Text(texts)
+        } else if self.saw_real {
+            Cells::Real(
+                self.reals
+                    .into_iter()
+                    .zip(self.ints)
+                    .map(|(r, i)| r.or(i.map(|i| i as f64)))
+                    .collect(),
+            )
+        } else if self.saw_int {
+            Cells::Int(self.ints)
+        } else {
+            // No values: the declared type says what the column is.
+            let d = self.decltype.as_deref().unwrap_or("").to_ascii_uppercase();
+            if d.contains("INT") {
+                Cells::Int(self.ints)
+            } else if d.contains("CHAR") || d.contains("TEXT") || d.contains("CLOB") || d.contains("DATE") || d.contains("TIME") {
+                Cells::Text(self.texts)
+            } else {
+                Cells::Real(self.reals)
+            }
+        }
+    }
+}
+
+/// A column as a Series: Date or Datetime where it is declared one (and
+/// every value reads as ISO text, or a Datetime as epoch seconds), Bool
+/// where declared BOOLEAN and every value is 0 or 1, else by its cells.
+fn column_series(acc: ColumnAcc) -> olang_ods::Series {
+    use olang_ods::{Series, temporal};
+    let decl = acc.decltype.as_deref().unwrap_or("").to_ascii_uppercase();
+    let is_datetime = decl.contains("DATETIME") || decl.contains("TIMESTAMP");
+    let is_date = !is_datetime && decl.contains("DATE");
+    let is_bool = decl.contains("BOOL");
+    match acc.cells() {
+        Cells::Text(t) if is_date || is_datetime => {
+            let parsed: Option<Vec<Option<i64>>> = t
+                .iter()
+                .map(|c| match c {
+                    None => Some(None),
+                    Some(s) => temporal::parse_iso(s.trim()).map(Some),
+                })
+                .map(|o| o.map(|v| v.map(|(us, _)| us)))
+                .collect();
+            match parsed {
+                Some(us) if is_date => Series::from_date_options(
+                    us.into_iter()
+                        .map(|v| v.map(|us| temporal::day_of_us(us) as i32))
+                        .collect(),
+                ),
+                Some(us) => Series::from_datetime_options(us),
+                None => Series::from_str_options(t),
+            }
+        }
+        Cells::Int(v) if is_datetime => Series::from_datetime_options(
+            v.into_iter().map(|s| s.map(|s| s.saturating_mul(1_000_000))).collect(),
+        ),
+        Cells::Int(v) if is_bool && v.iter().all(|x| matches!(x, None | Some(0) | Some(1))) => {
+            Series::from_bool_options(v.into_iter().map(|x| x.map(|x| x == 1)).collect())
+        }
+        Cells::Int(v) => Series::from_i64_options(v),
+        Cells::Real(v) => Series::from_f64_options(v),
+        Cells::Text(t) => Series::from_str_options(t),
+    }
+}
+
+/// db.query_frame(conn, sql[, params][, opts]) -> Result<Frame>: the rows
+/// as typed columns, read straight from the statement.
+fn db_query_frame(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if let Err(e) = connection_id(args.first().unwrap_or(&UNIT)) {
+        return Err(raised(e));
+    }
+    let sql = match sql_arg("query_frame", &args) {
+        Ok(s) => s,
+        Err(e) => return Err(raised(e)),
+    };
+    let tail = match call_tail("query_frame", &args, 2) {
+        Ok(t) => t,
+        Err(e) => return Err(raised(e)),
+    };
+    let outcome = with_conn("query_frame", &args[0], tail.timeout_ms, |st| {
+        let (stmt, cols) = prepare_bound(st, &sql, &tail.params)?;
+        let db = unsafe { open_conn(st).handle() };
+        let mut accs: Vec<ColumnAcc> = cols
+            .iter()
+            .map(|c| {
+                let field = |k: &str| match c {
+                    Value::Map(m) => m.get(k).cloned(),
+                    _ => None,
+                };
+                ColumnAcc {
+                    name: match &field("name") {
+                        Some(Value::String(s)) => s.to_string(),
+                        _ => String::new(),
+                    },
+                    decltype: match &field("decltype") {
+                        Some(Value::String(s)) => Some(s.to_string()),
+                        _ => None,
+                    },
+                    ints: Vec::new(),
+                    reals: Vec::new(),
+                    texts: Vec::new(),
+                    saw_int: false,
+                    saw_real: false,
+                    saw_text: false,
+                }
+            })
+            .collect();
+        let s = stmt.0.as_ptr();
+        // SAFETY: the statement lives on this stack frame, under the lock;
+        // each cell is read after a step that answered a row.
+        unsafe {
+            while step(db, &stmt)? {
+                for (i, acc) in accs.iter_mut().enumerate() {
+                    let i = i as c_int;
+                    match ffi::sqlite3_column_type(s, i) {
+                        ffi::SQLITE_INTEGER => {
+                            acc.saw_int = true;
+                            acc.ints.push(Some(ffi::sqlite3_column_int64(s, i)));
+                            acc.reals.push(None);
+                            acc.texts.push(None);
+                        }
+                        ffi::SQLITE_FLOAT => {
+                            acc.saw_real = true;
+                            acc.ints.push(None);
+                            acc.reals.push(Some(ffi::sqlite3_column_double(s, i)));
+                            acc.texts.push(None);
+                        }
+                        ffi::SQLITE_TEXT | ffi::SQLITE_BLOB => {
+                            acc.saw_text = true;
+                            let p = ffi::sqlite3_column_text(s, i);
+                            let n = ffi::sqlite3_column_bytes(s, i) as usize;
+                            let text = if p.is_null() {
+                                String::new()
+                            } else {
+                                String::from_utf8_lossy(std::slice::from_raw_parts(p, n)).into_owned()
+                            };
+                            acc.ints.push(None);
+                            acc.reals.push(None);
+                            acc.texts.push(Some(text));
+                        }
+                        _ => acc.push_null(),
+                    }
+                }
+            }
+        }
+        Ok(accs)
+    });
+    Ok(match outcome {
+        Ok(accs) => {
+            let mut pairs: Vec<(String, olang_ods::Series)> = Vec::with_capacity(accs.len());
+            for acc in accs {
+                let mut name = acc.name.clone();
+                // A repeated name (`SELECT a, a`) gets a suffix: a Frame's
+                // names are its keys.
+                let mut k = 2;
+                while pairs.iter().any(|(n, _)| *n == name) {
+                    name = format!("{}_{}", acc.name, k);
+                    k += 1;
+                }
+                pairs.push((name, column_series(acc)));
+            }
+            match olang_ods::Frame::new(pairs) {
+                Ok(f) => ok(crate::ods::OdsFrame::into_value(f)),
+                Err(e) => err(format!("db.query_frame: {}", e)),
+            }
+        }
+        Err(e) => e,
+    })
+}
+
+fn quote_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+fn sql_type(dtype: olang_ods::DType) -> &'static str {
+    use olang_ods::DType;
+    match dtype {
+        DType::F64 => "REAL",
+        DType::I64 => "INTEGER",
+        DType::Bool => "BOOLEAN",
+        DType::Date => "DATE",
+        DType::Datetime => "DATETIME",
+        _ => "TEXT",
+    }
+}
+
+/// One cell of a column as a SQL value: a Date or Datetime as ISO text,
+/// a Category as its level, a NaN as NULL.
+fn sql_cell(s: &olang_ods::Series, i: usize) -> SqlValue {
+    use olang_ods::{Series, temporal};
+    if s.validity().is_some_and(|v| !v.get(i)) {
+        return SqlValue::Null;
+    }
+    match s {
+        Series::F64 { values, .. } if values[i].is_nan() => SqlValue::Null,
+        Series::F64 { values, .. } => SqlValue::Real(values[i]),
+        Series::I64 { values, .. } => SqlValue::Integer(values[i]),
+        Series::Bool { values, .. } => SqlValue::Integer(values[i] as i64),
+        Series::Str { col, .. } => SqlValue::Text(col.get(i).to_string()),
+        Series::Date { values, .. } => SqlValue::Text(temporal::format_date(values[i] as i64)),
+        Series::Datetime { values, .. } => SqlValue::Text(temporal::format_datetime(values[i])),
+        Series::Cat { codes, levels, .. } => SqlValue::Text(levels.get(codes[i] as usize).to_string()),
+    }
+}
+
+/// db.insert_frame(conn, table, frame, create = true, replace = false) ->
+/// Result<Int>: every row of the Frame inserted (in one transaction unless
+/// one is open), the table created from the columns' types first when
+/// `create` (and dropped first when `replace`).
+fn db_insert_frame(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if let Err(e) = connection_id(args.first().unwrap_or(&UNIT)) {
+        return Err(raised(e));
+    }
+    let table = match args.get(1) {
+        Some(Value::String(s)) if !s.is_empty() => s.to_string(),
+        _ => return Err(misuse_text("db.insert_frame: the table must be a non-empty String")),
+    };
+    let Some(frame) = args.get(2).and_then(crate::ods::frame_of) else {
+        return Err(misuse_text(format!(
+            "db.insert_frame: the rows must be a Frame, got {}",
+            args.get(2).map(|v| v.type_name()).unwrap_or_default()
+        )));
+    };
+    let flag = |i: usize, name: &str, default: bool| match args.get(i) {
+        None | Some(Value::Unit) => Ok(default),
+        Some(Value::Boolean(b)) => Ok(*b),
+        Some(other) => Err(misuse_text(format!(
+            "db.insert_frame: {} must be a Bool, got {}",
+            name,
+            other.type_name()
+        ))),
+    };
+    let create = flag(3, "create", true)?;
+    let replace = flag(4, "replace", false)?;
+    let names = frame.names().to_vec();
+    let columns = frame.columns().to_vec();
+    let n_rows = frame.n_rows();
+    let outcome = with_conn("insert_frame", &args[0], None, |st| {
+        let conn = open_conn(st);
+        let t = quote_ident(&table);
+        let own_tx = conn.is_autocommit();
+        if own_tx {
+            conn.execute_batch("BEGIN")?;
+        }
+        let run = || -> Result<usize, Failure> {
+            if replace {
+                conn.execute_batch(&format!("DROP TABLE IF EXISTS {}", t))?;
+            }
+            if create || replace {
+                let cols: Vec<String> = names
+                    .iter()
+                    .zip(&columns)
+                    .map(|(n, c)| format!("{} {}", quote_ident(n), sql_type(c.dtype())))
+                    .collect();
+                conn.execute_batch(&format!(
+                    "CREATE TABLE IF NOT EXISTS {} ({})",
+                    t,
+                    cols.join(", ")
+                ))?;
+            }
+            let sql = format!(
+                "INSERT INTO {} ({}) VALUES ({})",
+                t,
+                names.iter().map(|n| quote_ident(n)).collect::<Vec<_>>().join(", "),
+                vec!["?"; names.len()].join(", ")
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            for i in 0..n_rows {
+                for (j, c) in columns.iter().enumerate() {
+                    stmt.raw_bind_parameter(j + 1, sql_cell(c, i))?;
+                }
+                stmt.raw_execute()?;
+            }
+            Ok(n_rows)
+        };
+        match run() {
+            Ok(n) => {
+                if own_tx {
+                    conn.execute_batch("COMMIT")?;
+                }
+                Ok(n)
+            }
+            Err(f) => {
+                if own_tx {
+                    let _ = conn.execute_batch("ROLLBACK");
+                }
+                Err(f)
+            }
+        }
+    });
+    Ok(match outcome {
+        Ok(n) => ok(Value::Integer(n as i64)),
+        Err(e) => e,
+    })
 }

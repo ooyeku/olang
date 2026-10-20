@@ -203,7 +203,8 @@ pub fn implied_fs(full_name: &str, arg: Option<&str>) -> Option<FsCap> {
                 Some(FsCap::Full) // opening a file db can create and write it
             }
         }
-        "db.execute" | "db.query" | "db.query_one" | "db.query_rows" | "db.cursor" => {
+        "db.execute" | "db.query" | "db.query_one" | "db.query_rows" | "db.query_frame"
+        | "db.cursor" => {
             if has_attach(arg) {
                 Some(FsCap::Full)
             } else {

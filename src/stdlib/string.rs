@@ -73,6 +73,10 @@ pub fn create_string_module() -> Value {
     // join(list, separator)
     module.insert("join".to_string(), create_builtin_function("join", 2));
     module.insert("fmt".to_string(), create_builtin_function("fmt", 1));
+    // Numbers for prose and tables: `str.pct(0.123)` is "12.3%",
+    // `str.money(1234.5)` "$1,235" (a Series of them a String Series).
+    module.insert("pct".to_string(), create_builtin_function("pct", 1));
+    module.insert("money".to_string(), create_builtin_function("money", 1));
 
     Value::Struct {
         type_name: "Module".to_string(),
@@ -132,6 +136,8 @@ pub fn call_string_function(
         "thousands" => str_thousands(args),
         "join" => str_join(args),
         "fmt" => str_fmt(args),
+        "pct" => str_pct(args),
+        "money" => str_money(args),
         _ => Err(format!("Unknown str function: {}", name).into()),
     }
 }
@@ -734,7 +740,96 @@ fn str_pad(args: Vec<Value>, start: bool) -> Result<Value, Box<dyn std::error::E
 /// form (strings bare, like `show`). `{{` and `}}` escape literal braces.
 /// The placeholder and argument counts must agree.
 /// Usage: str.fmt("{} of {}", 3, "hearts") -> "3 of hearts"
+// ── number formatting by a spec ─────────────────────────────────────
+
+/// A number (or a number Series) by `spec`.
+fn format_by(
+    func: &str,
+    v: &Value,
+    spec: &olang_ods::numfmt::Spec,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    match v {
+        Value::Integer(n) => {
+            let mut out = String::new();
+            spec.format_i64(*n, &mut out);
+            Ok(ok_string(out))
+        }
+        Value::Float(x) => Ok(ok_string(spec.format(*x))),
+        other => match crate::ods::series_of(other) {
+            Some(s) => olang_ods::text::format_numbers(s, spec)
+                .map(crate::ods::make_series_value)
+                .map_err(|e| format!("str.{}: {}", func, e).into()),
+            None => Err(format!(
+                "str.{}: expected a number or a Series of numbers, got {}",
+                func,
+                other.type_name()
+            )
+            .into()),
+        },
+    }
+}
+
+fn spec_of(func: &str, text: &str) -> Result<olang_ods::numfmt::Spec, Box<dyn std::error::Error>> {
+    olang_ods::numfmt::Spec::parse(text).map_err(|e| format!("str.{}: {}", func, e).into())
+}
+
+/// str.pct(x, digits = 1): "12.3%".
+fn str_pct(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let digits = match args.get(1) {
+        None | Some(Value::Unit) => 1,
+        Some(_) => arg_digits(&args, "pct")?,
+    };
+    let x = args.first().ok_or("str.pct: expected a number")?;
+    format_by("pct", x, &olang_ods::numfmt::Spec::percent(digits))
+}
+
+/// str.money(x, symbol = "$", digits = 0): "$1,235", "-$1,234.50".
+fn str_money(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let symbol = match args.get(1) {
+        None | Some(Value::Unit) => "$",
+        Some(Value::String(s)) => s.as_str(),
+        Some(other) => {
+            return Err(format!(
+                "str.money: the symbol must be a String, got {}",
+                other.type_name()
+            )
+            .into());
+        }
+    };
+    let digits = match args.get(2) {
+        None | Some(Value::Unit) => 0,
+        Some(Value::Integer(d)) if (0..=20).contains(d) => *d as usize,
+        Some(other) => {
+            return Err(format!("str.money: digits must be between 0 and 20, got {}", other).into());
+        }
+    };
+    let x = args.first().ok_or("str.money: expected a number")?;
+    format_by("money", x, &olang_ods::numfmt::Spec::money(symbol, digits))
+}
+
+/// str.fmt(x, spec) for a number (or a number Series): `str.fmt(0.123,
+/// ".1%")` is "12.3%"; str.fmt(template, ...) fills a template, where a
+/// placeholder may carry a spec for a number (`{:.2f}`).
 fn str_fmt(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if let Some(first) = args.first()
+        && (matches!(first, Value::Integer(_) | Value::Float(_))
+            || crate::ods::series_of(first).is_some())
+    {
+        let spec = match args.get(1) {
+            Some(Value::String(s)) => spec_of("fmt", s)?,
+            other => {
+                return Err(format!(
+                    "str.fmt: a number's format is a spec String (\".2f\", \",.0f\", \".1%\"), got {}",
+                    other.map(|v| v.type_name()).unwrap_or_else(|| "nothing".to_string())
+                )
+                .into());
+            }
+        };
+        if args.len() > 2 {
+            return Err("str.fmt: a number takes one spec (str.fmt(x, \".2f\"))".into());
+        }
+        return format_by("fmt", first, &spec);
+    }
     let template = match args.first() {
         Some(Value::String(s)) => s.as_ref().clone(),
         Some(other) => {
@@ -760,17 +855,48 @@ fn str_fmt(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
                 chars.next();
                 out.push('}');
             }
-            '{' if chars.peek() == Some(&'}') => {
-                chars.next();
+            '{' if matches!(chars.peek(), Some(&'}') | Some(&':')) => {
+                // `{}`, or `{:spec}` for a number
+                let mut spec = String::new();
+                if chars.peek() == Some(&':') {
+                    chars.next();
+                    loop {
+                        match chars.next() {
+                            Some('}') => break,
+                            Some(ch) => spec.push(ch),
+                            None => {
+                                return Err("str.fmt: a {: placeholder is not closed".into());
+                            }
+                        }
+                    }
+                } else {
+                    chars.next();
+                }
                 let value = args.get(used + 1).ok_or_else(|| {
                     format!(
                         "str.fmt: format string has more {{}} placeholders than arguments ({})",
                         args.len() - 1
                     )
                 })?;
-                match value {
-                    Value::String(s) => out.push_str(s),
-                    other => out.push_str(&other.to_string()),
+                if !spec.is_empty() {
+                    let sp = spec_of("fmt", &spec)?;
+                    match value {
+                        Value::Integer(n) => sp.format_i64(*n, &mut out),
+                        Value::Float(x) => sp.format_into(*x, &mut out),
+                        other => {
+                            return Err(format!(
+                                "str.fmt: {{:{}}} formats a number, got {}",
+                                spec,
+                                other.type_name()
+                            )
+                            .into());
+                        }
+                    }
+                } else {
+                    match value {
+                        Value::String(s) => out.push_str(s),
+                        other => out.push_str(&other.to_string()),
+                    }
                 }
                 used += 1;
             }

@@ -472,6 +472,9 @@ every function returns a new string.
 | `str.fmt(template, ...)` | fill `{}` placeholders, display form; `{{`/`}}` escape |
 | `str.fixed(x, digits)` | exactly `digits` decimals, never exponent form, never `-0.00` — the column form `to_string` is not |
 | `str.thousands(x, digits)` | `str.fixed` with thousands separators: `1,234,567.89` |
+| `str.fmt(x, spec)` | a number by a format spec, Python's mini-language: `".2f"` (`3.14`), `",.0f"` (`1,234,568`), `".1%"` (`12.3%`), `"$,.0f"` (`-$1,234`), `"e"`, `"g"`, `"d"`, with `[[fill]align][sign]` and a width (`">8.1f"`). A Series of numbers gives a String Series (`ods.format`). In a template, `{:.2f}` formats its argument by the spec |
+| `str.pct(x, digits = 1)` | a fraction as a percentage: `str.pct(0.1234)` is `"12.3%"` |
+| `str.money(x, symbol = "$", digits = 0)` | an amount with separators: `str.money(-1234.5, digits: 2)` is `"-$1,234.50"` |
 
 ```olang
 println(str.pad_start("7", 3, "0"))                 // 007
@@ -480,6 +483,10 @@ println(str.replace("a-b-c", "-", "+"))
 println(to_string(str.chars("ok")))
 println(to_string(unwrap(str.parse_float("2.5")) * 2))
 println(str.fmt("{} scored {} ({}%)", "ada", 99, 97.5))
+println(str.fmt(0.0731, ".1%"))                       // 7.3%
+println(str.fmt("{} of {:,d} ({:.1%})", "won", 12500, 0.42))   // won of 12,500 (42.0%)
+println(str.money(1234567.8))                         // $1,234,568
+println(str.pct(0.25, 0))                             // 25%
 ```
 
 **Display width.** `str.length` counts code points and `str.graphemes`
@@ -1176,6 +1183,49 @@ let deck = random.shuffle(range(1, 53))
 println(to_string(len(deck)) + " cards, top: " + typeof(random.choice(deck)))
 println(to_string(len(random.sample(deck, 5))))
 println(to_string(str.length(random.randstr_alpha(8))))
+```
+
+### Generators: `random.rng`
+
+`random.rng(seed)` is a generator of its own (PCG64), independent of the
+global stream: drawing from it never moves `random.random()`, and the
+global `random.seed` never moves it. Its draws with a count are Series,
+made in one native pass (in parallel blocks past a million values, the
+values the same on any number of threads); without a count, one value.
+`random.rng()` with no seed takes one from the global stream.
+
+Its methods are the functions of `random.Rng`: `g.normal(100)` is
+`random.Rng.normal(g, 100)`.
+
+| Method of a generator `g` | Description |
+|---|---|
+| `normal(n?, mean = 0.0, std = 1.0)` | normals |
+| `uniform(n?, low = 0.0, high = 1.0)` | uniforms in `[low, high)` |
+| `integers(n?, low, high)` | integers in `[low, high)` (`high` excluded, as `range`) |
+| `poisson(n?, lam = 1.0)` | Poisson counts |
+| `lognormal(n?, mean = 0.0, sigma = 1.0)` | `exp` of normals with this mean and sd |
+| `binomial(n?, trials, p)` | binomial counts |
+| `choice(values, n?, weights?, replace = true)` | picks from a List or Series, by `weights` when given; `replace: false` draws distinct positions (by weight, Efraimidis–Spirakis). A Series back when `values` is one or a list a Series can hold |
+| `shuffle(values)` | the values in a random order (a List stays a List) |
+| `permutation(n)` | `0..n` in a random order, an Int Series |
+| `spawn(k)` | `k` independent child generators, on streams of their own: hand one to each `par_map` task and the results are the same on every run |
+
+The data stack's random verbs take a generator where they take a seed:
+`ods.sample(f, n, rng: g)`, `learn.split(f, test: 0.25, rng: g)`,
+`stats.norm.sample(n, rng: g)`, `stats.bootstrap(s, rng: g)`. An Int is
+accepted as `rng:` too, for a fresh generator of that seed.
+
+```olang
+let g = random.rng(42)
+let heights = g.normal(1000, 170.0, 8.0)
+println(heights.len())                                          // 1000
+let tiers = g.choice(["free", "pro", "team"], 5000, weights: [0.7, 0.2, 0.1])
+println(tiers.value_counts().n_rows())                          // 3
+let orders = g.poisson(5000, 3.0)
+println(orders.min() >= 0)                                      // true
+let streams = random.rng(7).spawn(4)
+let means = par_map(streams, (r) => r.normal(10000).mean())
+println(means == par_map(random.rng(7).spawn(4), (r) => r.normal(10000).mean()))   // true
 ```
 
 ## `crypto` — hashing and encryption
@@ -2716,6 +2766,8 @@ in-process database, so the examples below run in the test suite.
 | `db.query(conn, sql)` / with `params` | `Ok` of the rows, as a list of maps |
 | `db.query_one(conn, sql)` / with `params` | `Ok(row)`, the first row as a map, or `Ok(())` when there is none (unambiguous, since a row is always a map) |
 | `db.query_rows(conn, sql)` / with `params` | the columns and the rows as SQL has them: `#{ "columns": [#{ "name", "decltype", "index" }], "rows": [[value, …]] }` |
+| `db.query_frame(conn, sql, params?, timeout_ms:)` | `Ok` of the rows as a Frame: a column per result column, typed by its values (Int, Float, String; Int and Float together a Float column), a column declared `DATE` a Date and `DATETIME`/`TIMESTAMP` a Datetime (ISO text, or a Datetime's epoch seconds), `BOOLEAN` a Bool; NULL is null. A repeated name gets a suffix (`a`, `a_2`) |
+| `db.insert_frame(conn, table, frame, create = true, replace = false)` | every row of a Frame, in one transaction (or the open one): with `create`, the table is made first if missing, its column types from the Frame's (`INTEGER`, `REAL`, `TEXT`, `BOOLEAN`, `DATE`, `DATETIME`); `replace: true` drops it first. Dates and datetimes are written as ISO text, a Category as its level, a null or NaN as NULL — `Ok(rows inserted)`, and `db.query_frame` reads the same Frame back |
 | `db.cursor(conn, sql)` / with `params` | a statement to read a piece at a time — `Ok(cursor)` |
 | `db.next(cur, n)` | up to `n` more rows of a cursor, each a list; `[]` at the end |
 | `db.columns(cur)` | a cursor's columns, as `db.query_rows` has them |
@@ -2744,6 +2796,24 @@ for row in rows {
     println(`${row.name}: ${row.points}`)
 }
 unwrap(db.close(conn))
+```
+
+**Frames.** `db.query_frame` reads a result straight into typed
+columns and `db.insert_frame` writes one back: no list of maps between
+the database and the data stack.
+
+```olang
+let c = unwrap(db.open(":memory:"))
+let sales = ods.frame({
+    day: ods.series(["2026-01-05", "2026-01-06", "2026-01-07"]).to_date(),
+    store: ["north", "south", "north"],
+    revenue: [1200.5, 980.0, 1410.25],
+})
+println(unwrap(db.insert_frame(c, "sales", sales)))        // 3
+let back = unwrap(db.query_frame(c, "SELECT * FROM sales WHERE revenue > ?", [1000.0]))
+println(back["day"].max())                                  // 2026-01-07
+println(back["revenue"].sum())                              // 2610.75
+unwrap(db.close(c))
 ```
 
 **Opening.** `db.open(path, #{ "readonly": true, "create": false })` —
@@ -3189,30 +3259,104 @@ NumPy.
 
 ## `stats` — statistical inference
 
-Distributions (`norm`, `t`, `chi2`, `f` — each with `pdf`/`cdf`/`ppf`/
-`sample`), `describe`, correlation and covariance, t-tests (one- and
-two-sample), the χ² goodness-of-fit test, and OLS regression via
-`stats.lm` — every statistic pinned against scipy reference values in
-the test suite. Tests and fits return maps; sampling draws from the
-`random` module's seeded stream, so `random.seed` makes simulations
-reproducible.
+Distributions, tests, power, robust statistics, the bootstrap and time
+series (`stats.ts`). Every statistic is pinned against SciPy reference
+values in the test suite. Tests and fits return maps. Sampling draws
+from a generator when given `rng:` (a [`random.rng`](#random--randomness)
+or an Int seed), else from the `random` module's seeded stream, so
+`random.seed` makes simulations reproducible either way.
 
 ```olang
 let a = ods.series([5.1, 4.9, 6.2, 5.7, 5.5, 4.8, 5.9, 6.1])
 let b = ods.series([4.2, 4.8, 4.5, 5.0, 4.4, 4.1, 4.9])
 let t = stats.t_test(a, b)
-println(`p = ${t.p_value}`)
-println(to_string(stats.norm.ppf(0.975, 0.0, 1.0)))   // 1.9599...
+println(`p = ${t.p_value |> str.fmt(".4f")}, d = ${t.d |> str.fmt(".2f")}`)
+println(`difference ${t.diff |> str.fmt(".2f")}, 95% CI ${t.ci[0] |> str.fmt(".2f")} to ${t.ci[1] |> str.fmt(".2f")}`)
+println(stats.norm.ppf(0.975) |> str.fmt(".6f"))     // 1.959964
+println(stats.norm.cdf(ods.series([-1.96, 0.0, 1.96])).to_list() |> to_string)
+let n = stats.n_for_power(0.5, power: 0.8)          // per group, d = 0.5
+println(`${math.ceil(n)} per group`)                 // 64 per group
 ```
+
+**Distributions.** Each family is a namespace of `pdf` (`pmf` for a
+count), `cdf`, `ppf` and `sample`. `x` (or `p`, or `k`) is a number or
+a numeric Series: a Series gives a Series, one native pass, nulls kept,
+in parallel past the elementwise threshold. A `ppf` outside [0, 1]
+raises for a number and is NaN in a column. `sample(n, …, rng:)` is a
+Series of `n` draws (Int for `poisson` and `binom`).
+
+| Family | Parameters |
+|---|---|
+| `stats.norm` | `mean = 0.0`, `std = 1.0` |
+| `stats.t` | `df` |
+| `stats.chi2` | `df` |
+| `stats.f` | `d1`, `d2` |
+| `stats.lognorm` | `mu = 0.0`, `sigma = 1.0`: the log is normal with this mean and sd (NumPy's `lognormal`) |
+| `stats.beta` | `a`, `b` |
+| `stats.gamma` | `shape`, `scale = 1.0` (SciPy's scale) |
+| `stats.poisson` | `lam` — `pmf`, `cdf`, `ppf`, `sample` |
+| `stats.binom` | `trials`, `p` — `pmf`, `cdf`, `ppf`, `sample` |
+
+**Tests, power and description.**
 
 | Function | Description |
 |---|---|
-| `stats.norm`, `stats.t`, `stats.chi2`, `stats.f` | distributions, each with `pdf`, `cdf`, `ppf` and `sample` |
 | `stats.describe(s)` | a map: `count`, `null_count`, `mean`, `std`, `min`, `q25`, `median`, `q75`, `max` |
 | `stats.corr(a, b)` / `stats.cov(a, b)` | Pearson correlation / sample covariance of two Series, over the rows where both are present |
-| `stats.t_test(a, b)` | Welch's two-sample test when `b` is a Series, the one-sample test against the mean `b` when it is a number: a map with `t`, `df`, `p_value` and the means |
+| `stats.t_test(a, b, level = 0.95, alternative = "two-sided")` | Welch's two-sample test when `b` is a Series, the one-sample test against the mean `b` when it is a number: a map of `t`, `df`, `p_value`, the means (`mean_a`, `mean_b`, or `mean`), `diff`, `se`, `ci` (the interval of the difference at `level`, a pair; of the mean for one sample, as SciPy and R give it) and `d` (Cohen's d: the difference over the pooled sd). `alternative` is `"two-sided"`, `"greater"` or `"less"` |
 | `stats.chi2_test(observed, expected)` | the χ² goodness-of-fit test of two Series of counts: a map with `chi2`, `df`, `p_value` |
 | `stats.lm(y, xs)` | ordinary least squares with an intercept, a map of coefficients and fit |
+| `stats.power_t(effect, n, alpha = 0.05, alternative = "two-sided", kind = "two-sample", ratio = 1.0)` | the power of a t-test by the noncentral t (statsmodels' `TTestIndPower`/`TTestPower`): `effect` is Cohen's d, `n` the first group's size (`ratio` the second's over it), `kind` `"two-sample"`, `"one-sample"` or `"paired"` |
+| `stats.n_for_power(effect, power = 0.8, alpha = 0.05, alternative = "two-sided", kind = "two-sample", ratio = 1.0)` | the `n` (a Float, per group) at which `power_t` reaches `power` |
+| `stats.mann_whitney(a, b, alternative = "two-sided")` | the Mann–Whitney U test by the normal approximation with tie and continuity corrections (SciPy's `method="asymptotic"`): `u` (of `a`), `z`, `p_value`, `effect` (U / n₁n₂, the chance a value of `a` exceeds one of `b`) |
+| `stats.spearman(a, b)` | Spearman's rank correlation over the complete pairs: `rho`, `p_value`, `n` |
+
+**Robust statistics and the bootstrap.**
+
+| Function | Description |
+|---|---|
+| `stats.mad(s, scale = "normal")` | the median absolute deviation, times 1.4826 by default (a normal sample's sd); `scale: 1.0` for the raw MAD |
+| `stats.iqr(s)` | the interquartile range, q75 − q25 (linear interpolation, as `ods.quantile`) |
+| `stats.zscore(s, robust = false)` | standard scores: `(x − mean) / sd`, or with `robust: true` `(x − median) / mad`; nulls stay null |
+| `stats.tukey_fences(s, k = 1.5)` | the pair `(q25 − k·IQR, q75 + k·IQR)` |
+| `stats.bootstrap(s, stat = "mean", n = 2000, seed?, rng?, level = 0.95, compare = "diff")` | `n` resamples, each the statistic (`"mean"`, `"median"`, `"std"`, `"var"`, `"sum"`, or a quantile as a number such as `0.9`), and the percentile interval at `level`: a map of `estimate`, `lo`, `hi`, `ci`, `se` and `draws` (a Series). `s` may be a list of two Series, each resampled on its own: then the statistic is compared by `compare`, `"diff"` (`a − b`) or `"ratio"` (`a / b`). Native and parallel; resample `i` draws from stream `i` of its seed, so the result is the same on any number of threads |
+
+```olang
+let r = random.rng(4)
+let x = r.normal(500, 10.0, 2.0)
+let (lo, hi) = stats.tukey_fences(x, k: 3.0)
+println(`a robust sd of ${stats.mad(x) |> str.fmt(".2f")}`)
+let boot = stats.bootstrap(x, "median", n: 1000, rng: r)
+println(boot.lo < boot.estimate && boot.estimate < boot.hi)   // true
+let a = r.normal(400, 50.0, 12.0)
+let b = r.normal(400, 52.0, 12.0)
+let lift = stats.bootstrap([b, a], compare: "ratio", seed: 2)
+println(`lift ${lift.estimate - 1.0 |> str.pct()}`)
+```
+
+### `stats.ts` — time series
+
+A series is a numeric Series with no nulls (`interpolate` or `fill_null`
+first). The functions are methods of a Series too: `s.acf(48)`.
+
+| Function | Description |
+|---|---|
+| `stats.ts.acf(s, lags?, ci = 0.95)` | the autocorrelation at lags 0..=`lags` (default `10·log₁₀ n`), by FFT in O(n log n): a Frame of `lag`, `acf`, and Bartlett's interval `lo`, `hi` at level `ci` (statsmodels' `acf(fft=True, alpha=…)`) |
+| `stats.ts.pacf(s, lags?, ci = 0.95, method = "yw")` | partial autocorrelations by Yule–Walker (`"yw"`, statsmodels' `ywadjusted`; `"ywm"` its `ywmle`): a Frame of `lag`, `pacf`, `lo`, `hi` (± z/√n) |
+| `stats.ts.decompose(s, period, model = "additive", time?)` | a centred moving average's `trend`, the phase means of the rest as `seasonal`, and `resid` (statsmodels' `seasonal_decompose`; `"multiplicative"` divides): a Frame of `observed`, `trend`, `seasonal`, `resid` (the trend null where the average does not reach), with a `time` column first when `time:` (a Date or Datetime Series) is given |
+| `stats.ts.holt_winters(s, season?, trend = "add", seasonal = "add", fit = true, alpha?, beta?, gamma?, time?)` | Holt-Winters exponential smoothing: an additive trend (`trend: "none"` for none), and with a `season` an additive or multiplicative (`"mul"`) season of that length (no `season`: Holt's linear method). The rates not given are fitted by bounded Nelder–Mead on the sum of squared one-step errors. The first season (one value without a season) sets the initial state, as Winters' method does. A `HoltWinters` value: `forecast(h)`, and the fields `fitted`, `resid`, `params` (`alpha`, `beta`, `gamma`), `sse`, `level`, `slope`, `season`, `n`, `m` |
+| `stats.ts.forecast(model, h)` | the `h` forecasts after the series: a Series, or with the model's `time:` a Frame of `time` (continuing the series' step: a day, an hour, a calendar month) and `forecast` |
+| `stats.ts.seasonal_naive(s, season, h, time?)` | the last `season` values, repeated over `h` steps (a Series, or a Frame with `time:`) |
+
+```olang
+let t = ods.arange(0, 140)
+let y = t * 0.5 + 100.0 + (t % 7).cast("Float") * 2.0
+let hw = stats.ts.holt_winters(y, season: 7)
+println(hw.forecast(3).to_list() |> map((v) => str.fmt(v, ".1f")))   // ["170.0", "172.5", "175.0"]
+println(hw.params.alpha >= 0.0 && hw.sse < 1e-6)                      // true
+let c = stats.ts.acf(y.diff().fill_null(0.0), 14)
+println(c.n_rows())                                                    // 15
+```
 
 **[The data stack](ods.md#stats--from-description-to-inference)**
 covers the module end to end, including a complete regression workflow

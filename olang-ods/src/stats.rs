@@ -123,9 +123,14 @@ pub struct TTest {
     pub mean: f64,
     /// Second sample's mean for the two-sample test; NaN for one-sample.
     pub mean_other: f64,
+    /// The standard error of the difference (of the mean, one sample).
+    pub se: f64,
+    /// Cohen's d: the difference over the pooled standard deviation (the
+    /// sample's, one sample).
+    pub d: f64,
 }
 
-fn valid_f64s(s: &Series) -> Result<Vec<f64>> {
+pub(crate) fn valid_f64s(s: &Series) -> Result<Vec<f64>> {
     (0..s.len())
         .filter_map(|i| match s.scalar_at(i) {
             Scalar::Null => None,
@@ -166,7 +171,8 @@ pub fn t_test_one_sample(s: &Series, mu0: f64) -> Result<TTest> {
             "t_test: sample has zero variance".to_string(),
         ));
     }
-    let t = (mean - mu0) / (var / n).sqrt();
+    let se = (var / n).sqrt();
+    let t = (mean - mu0) / se;
     let df = n - 1.0;
     Ok(TTest {
         t,
@@ -174,6 +180,8 @@ pub fn t_test_one_sample(s: &Series, mu0: f64) -> Result<TTest> {
         p_value: two_sided_t_p(t, df)?,
         mean,
         mean_other: f64::NAN,
+        se,
+        d: (mean - mu0) / var.sqrt(),
     })
 }
 
@@ -197,14 +205,18 @@ pub fn t_test_welch(a: &Series, b: &Series) -> Result<TTest> {
             "t_test: both samples have zero variance".to_string(),
         ));
     }
-    let t = (ma - mb) / (sa + sb).sqrt();
+    let se = (sa + sb).sqrt();
+    let t = (ma - mb) / se;
     let df = (sa + sb) * (sa + sb) / (sa * sa / (na - 1.0) + sb * sb / (nb - 1.0));
+    let pooled = (((na - 1.0) * va + (nb - 1.0) * vb) / (na + nb - 2.0)).sqrt();
     Ok(TTest {
         t,
         df,
         p_value: two_sided_t_p(t, df)?,
         mean: ma,
         mean_other: mb,
+        se,
+        d: (ma - mb) / pooled,
     })
 }
 
@@ -482,4 +494,129 @@ fn chol_inverse_diag(l: &[Vec<f64>]) -> Vec<f64> {
             chol_solve(l, &e)[i]
         })
         .collect()
+}
+
+// ---------------------------------------------------------------------
+// Rank tests
+// ---------------------------------------------------------------------
+
+/// Average ranks (1-based, ties sharing their mean rank) of `xs`, and
+/// the tie correction term Σ(t³ − t) over the tied groups.
+pub fn average_ranks(xs: &[f64]) -> (Vec<f64>, f64) {
+    let n = xs.len();
+    let mut idx: Vec<usize> = (0..n).collect();
+    idx.sort_unstable_by(|&a, &b| xs[a].total_cmp(&xs[b]));
+    let mut ranks = vec![0.0; n];
+    let mut ties = 0.0;
+    let mut i = 0;
+    while i < n {
+        let mut j = i + 1;
+        while j < n && xs[idx[j]] == xs[idx[i]] {
+            j += 1;
+        }
+        // positions i..j (0-based) hold ranks i+1..=j
+        let r = (i + 1 + j) as f64 / 2.0;
+        for &k in &idx[i..j] {
+            ranks[k] = r;
+        }
+        let t = (j - i) as f64;
+        ties += t * t * t - t;
+        i = j;
+    }
+    (ranks, ties)
+}
+
+fn norm_sf(z: f64) -> f64 {
+    0.5 * statrs::function::erf::erfc(z / std::f64::consts::SQRT_2)
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct MannWhitney {
+    /// U of the first sample.
+    pub u: f64,
+    pub z: f64,
+    pub p_value: f64,
+    /// U / (n1 n2): the chance a value of the first sample exceeds one of
+    /// the second (ties counting a half), the AUC.
+    pub effect: f64,
+}
+
+/// The Mann–Whitney U test (Wilcoxon rank-sum), by the normal
+/// approximation with the tie correction and a continuity correction:
+/// SciPy's `mannwhitneyu(x, y, method="asymptotic")`.
+pub fn mann_whitney(a: &Series, b: &Series, alternative: &str) -> Result<MannWhitney> {
+    let xs = valid_f64s(a)?;
+    let ys = valid_f64s(b)?;
+    if xs.is_empty() || ys.is_empty() {
+        return Err(OdsError::InvalidArgument(
+            "mann_whitney needs a value in each sample".to_string(),
+        ));
+    }
+    let (n1, n2) = (xs.len() as f64, ys.len() as f64);
+    let mut all = xs.clone();
+    all.extend_from_slice(&ys);
+    let (ranks, ties) = average_ranks(&all);
+    let r1: f64 = ranks[..xs.len()].iter().sum();
+    let u1 = r1 - n1 * (n1 + 1.0) / 2.0;
+    let u2 = n1 * n2 - u1;
+    let n = n1 + n2;
+    let mu = n1 * n2 / 2.0;
+    let s = (n1 * n2 / 12.0 * ((n + 1.0) - ties / (n * (n - 1.0)))).sqrt();
+    let u = match alternative {
+        "two-sided" => u1.max(u2),
+        "greater" => u1,
+        "less" => u2,
+        other => {
+            return Err(OdsError::InvalidArgument(format!(
+                "mann_whitney: alternative must be \"two-sided\", \"greater\" or \"less\", got \"{}\"",
+                other
+            )));
+        }
+    };
+    let z = if s > 0.0 { (u - mu - 0.5) / s } else { f64::NAN };
+    let mut p = norm_sf(z);
+    if alternative == "two-sided" {
+        p *= 2.0;
+    }
+    Ok(MannWhitney {
+        u: u1,
+        z,
+        p_value: p.clamp(0.0, 1.0),
+        effect: u1 / (n1 * n2),
+    })
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Spearman {
+    pub rho: f64,
+    pub p_value: f64,
+    pub n: usize,
+}
+
+/// Spearman's rank correlation over the pairwise-complete observations,
+/// its p from the t distribution with n − 2 degrees of freedom (SciPy's
+/// `spearmanr`, two-sided).
+pub fn spearman(a: &Series, b: &Series) -> Result<Spearman> {
+    let (xs, ys) = pairwise_complete(a, b)?;
+    let n = xs.len();
+    if n < 3 {
+        return Err(OdsError::InvalidArgument(
+            "spearman needs at least 3 complete pairs".to_string(),
+        ));
+    }
+    let (rx, _) = average_ranks(&xs);
+    let (ry, _) = average_ranks(&ys);
+    let rho = corr(&Series::from_f64(rx), &Series::from_f64(ry))?.unwrap_or(f64::NAN);
+    let df = n as f64 - 2.0;
+    let p = if rho.abs() >= 1.0 {
+        0.0
+    } else {
+        let t = rho * (df / ((1.0 + rho) * (1.0 - rho))).sqrt();
+        two_sided_t_p(t, df)?
+    };
+    Ok(Spearman {
+        rho,
+        p_value: p,
+        n,
+    })
 }

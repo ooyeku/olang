@@ -329,7 +329,9 @@ impl<'a> Opts<'a> {
         };
         if let Some(m) = map {
             for k in m.keys() {
-                if !allowed.contains(&k.as_str()) {
+                // A function that takes a seed takes a generator too.
+                let rng_for_seed = k == "rng" && allowed.contains(&"seed");
+                if !allowed.contains(&k.as_str()) && !rng_for_seed {
                     return Err(format!(
                         "learn.{}: unknown option '{}' — the options are {}",
                         func,
@@ -444,6 +446,12 @@ impl<'a> Opts<'a> {
 
     /// The seed: given, or drawn from the `random` module's stream.
     fn seed(&self) -> R<u64> {
+        if let Some(g) = self.get("rng").filter(|v| !matches!(v, Value::Unit)) {
+            if self.get("seed").is_some_and(|v| !matches!(v, Value::Unit)) {
+                return Err(format!("learn.{}: give seed or rng, not both", self.func));
+            }
+            return crate::ods::rng::seed_from(&format!("learn.{}", self.func), g);
+        }
         match self.get("seed") {
             Some(Value::Integer(s)) => Ok(*s as u64),
             None => Ok(draw_seed()),
@@ -468,6 +476,8 @@ fn with_seed(opts: Option<&Value>, seed: u64) -> Value {
         Some(Value::Map(m)) => m.as_ref().clone(),
         _ => ValueMap::default(),
     };
+    // A generator's draw is now this seed: the spec refits with it alone.
+    m.shift_remove("rng");
     m.insert("seed".to_string(), Value::Integer(seed as i64));
     Value::Map(Arc::new(m))
 }
