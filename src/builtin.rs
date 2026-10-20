@@ -677,7 +677,7 @@ impl BuiltinFunctions {
     fn call_internal(
         builtins: &BuiltinFunctions,
         name: &str,
-        arguments: Vec<Value>,
+        mut arguments: Vec<Value>,
         interpreter: &mut crate::interpreter::Interpreter,
     ) -> Result<Value, InterpreterError> {
         // The capability gate: one branch when no manifest is loaded;
@@ -688,7 +688,7 @@ impl BuiltinFunctions {
         }
         // A module loaded at run time (a plugin) is held to its scope too:
         // the host's builtins, its folders, its programs.
-        if let Some(message) = interpreter.scope_denial(name, &arguments) {
+        if let Some(message) = interpreter.scope_denial(name, &mut arguments) {
             return Err(InterpreterError::RuntimeError { message });
         }
         // The expansion purity gate (meta mode): same chokepoint, same

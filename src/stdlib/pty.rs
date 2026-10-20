@@ -170,7 +170,7 @@ fn num_opt(m: &crate::ast::ValueMap, k: &str) -> Option<i64> {
 mod imp {
     use super::*;
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
-    use std::process::{Child, Command, Stdio};
+    use std::process::{Child, Stdio};
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
@@ -376,25 +376,38 @@ mod imp {
         cloexec(master.as_raw_fd());
         cloexec(slave.as_raw_fd());
 
-        let mut cmd = Command::new(&argv[0]);
-        cmd.args(&argv[1..]);
-        if matches!(o.get("clear_env"), Some(Value::Boolean(true))) {
-            cmd.env_clear();
-        }
+        let clear = matches!(o.get("clear_env"), Some(Value::Boolean(true)));
+        let mut set: Vec<(String, String)> = Vec::new();
+        let mut removed: Vec<String> = Vec::new();
         if let Some(Value::Map(env)) = o.get("env") {
             for (k, v) in env.iter() {
                 match v {
-                    Value::Unit => {
-                        cmd.env_remove(k);
-                    }
-                    Value::String(t) => {
-                        cmd.env(k, t.as_str());
-                    }
-                    other => {
-                        cmd.env(k, format!("{other}"));
-                    }
+                    Value::Unit => removed.push(k.to_string()),
+                    Value::String(t) => set.push((k.to_string(), t.as_str().to_string())),
+                    other => set.push((k.to_string(), format!("{other}"))),
                 }
             }
+        }
+        // the program looked up on the child's PATH's absolute folders,
+        // here, as proc.spawn and os.exec do (proc::command_for)
+        let mut cmd = match crate::stdlib::proc::command_for(&argv[0], clear, &set, &removed) {
+            Ok(c) => c,
+            Err(e) => {
+                return Ok(err(format!(
+                    "pty.spawn: failed to start '{}': {}",
+                    argv[0], e
+                )));
+            }
+        };
+        cmd.args(&argv[1..]);
+        if clear {
+            cmd.env_clear();
+        }
+        for k in &removed {
+            cmd.env_remove(k);
+        }
+        for (k, v) in &set {
+            cmd.env(k, v);
         }
         if let Some(d) = &cwd {
             cmd.current_dir(d);

@@ -394,3 +394,72 @@ println(runtime.shape(#{ "n": 1, "items": ["a"], "s": Ok(#{ "k": 2.0 }) }))
     assert_eq!(lines[7], "host.ol:0 <lambda>");
     assert_eq!(lines[8], "{items:[String],n:Int,s:Ok({k:Float})}");
 }
+
+/// A module held to a list of programs runs only those, and only the
+/// files this process's PATH finds for them: every stage of a pipeline
+/// is judged, a PATH it hands its child does not choose the file
+/// (os.exec, proc.spawn, pty.spawn), and a path is not allowed merely
+/// for ending in an allowed name.
+#[test]
+fn a_module_s_programs_hold_on_every_stage_and_whatever_path_it_hands() {
+    let ws = workspace("programs");
+    let bin = ws.join("plug/p/bin");
+    write(&bin.join("echo"), "#!/bin/sh\necho PWNED\n");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(bin.join("echo"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    write(
+        &ws.join("plug/p/plugin.ol"),
+        r#"share fn pipe() = proc.pipeline([["echo", "hi"], ["sh", "-c", "echo PWNED"]])
+share fn pipe_ok() = unwrap(proc.pipeline([["echo", "hi"], ["echo", "there"]])).stdout
+share fn exec_path(dir) = unwrap(os.exec(["echo", "hi"], #{ "env": #{ "PATH": dir } })).stdout
+share fn exec_full(p) = os.exec([p, "hi"])
+share fn spawn_path(dir) = {
+  let p = unwrap(proc.spawn(["echo", "hi"], #{ "env": #{ "PATH": dir } }))
+  unwrap(proc.read_all(p))
+}
+share fn pty_path(dir) = {
+  let p = unwrap(pty.spawn(["echo", "hi"], #{ "env": #{ "PATH": dir } }))
+  let _w = pty.wait(p)
+  unwrap(bytes.to_string(unwrap(pty.read(p))))
+}
+"#,
+    );
+    let out = run(
+        &ws,
+        &format!(
+            r#"let m = unwrap(runtime.load_module("plug/p/plugin.ol", #{{ "name": "p", "fs": "read", "fs_roots": ["plug"], "proc": ["echo"] }}))
+fn said(r) = if map_get(r, "ok") => show(map_get(r, "value")) else => map_get(r, "error")
+let bin = "{bin}"
+println(said(runtime.call_budget(m.pipe, [], 5000)))
+println(said(runtime.call_budget(m.pipe_ok, [], 5000)))
+println(said(runtime.call_budget(m.exec_path, [bin], 5000)))
+println(said(runtime.call_budget(m.exec_full, [bin + "/echo"], 5000)))
+println(said(runtime.call_budget(m.spawn_path, [bin], 5000)))
+println(said(runtime.call_budget(m.pty_path, [bin], 5000)))
+"#,
+            bin = bin.display()
+        ),
+    );
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(
+        lines[0].contains("proc.pipeline runs sh, and module 'p' may only run echo"),
+        "every stage is judged: {}",
+        lines[0]
+    );
+    assert!(lines[1].contains("there"), "{}", lines[1]);
+    for (i, what) in [(2, "os.exec"), (4, "proc.spawn"), (5, "pty.spawn")] {
+        assert!(
+            lines[i].contains("hi") && !lines[i].contains("PWNED"),
+            "{what}: the module's PATH chose the program: {}",
+            lines[i]
+        );
+    }
+    assert!(
+        lines[3].contains("runs") && lines[3].contains("may only run echo"),
+        "a path is not allowed for its name alone: {}",
+        lines[3]
+    );
+}

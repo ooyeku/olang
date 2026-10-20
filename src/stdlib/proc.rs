@@ -135,7 +135,6 @@ pub(crate) fn command_for(
 ) -> std::io::Result<Command> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
         use std::os::unix::process::CommandExt;
         if program.contains('/') || program.is_empty() {
             return Ok(Command::new(program));
@@ -149,21 +148,14 @@ pub(crate) fn command_for(
         };
         // execvp's own default when there is no PATH
         let path = path.unwrap_or_else(|| "/usr/bin:/bin".to_string());
-        for dir in path.split(':') {
-            if !dir.starts_with('/') {
-                continue;
-            }
-            let cand = std::path::Path::new(dir).join(program);
-            if let Ok(meta) = std::fs::metadata(&cand)
-                && meta.is_file()
-                && meta.permissions().mode() & 0o111 != 0
-            {
+        match crate::caps::find_on_path(program, &path) {
+            Some(cand) => {
                 let mut c = Command::new(&cand);
                 c.arg0(program);
-                return Ok(c);
+                Ok(c)
             }
+            None => Err(std::io::Error::from_raw_os_error(2)),
         }
-        Err(std::io::Error::from_raw_os_error(2))
     }
     #[cfg(not(unix))]
     {
@@ -171,6 +163,7 @@ pub(crate) fn command_for(
         Ok(Command::new(program))
     }
 }
+
 
 /// A `cwd` option that names no directory: said as such, before the
 /// spawn would blame the program ("failed to start 'sh': No such file

@@ -6227,7 +6227,12 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     /// The scope gate for a module loaded at run time (caps::scope_denial):
     /// the host's builtins, a path outside its roots, a program outside
     /// its allow-list. One relaxed load until a module is loaded.
-    pub fn scope_denial(&mut self, full_name: &str, args: &[Value]) -> Option<String> {
+    ///
+    /// A call that starts a program, from a module held to a list of
+    /// programs, runs the file this process's PATH finds for each bare
+    /// name (`caps::pinned_program`): the name in `args` is put in its
+    /// place, so the PATH the module hands its child cannot choose it.
+    pub fn scope_denial(&mut self, full_name: &str, args: &mut [Value]) -> Option<String> {
         if !crate::caps::modules_active() {
             return None;
         }
@@ -6235,7 +6240,41 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             return None;
         }
         let grant = self.current_module_grant()?;
-        Self::scope_check(&grant, full_name, args)
+        if let Some(denied) = Self::scope_check(&grant, full_name, args) {
+            return Some(denied);
+        }
+        if grant.proc_allow.is_some()
+            && crate::caps::required(full_name) == Some(crate::caps::CapUse::Proc)
+        {
+            Self::pin_programs(full_name, args);
+        }
+        None
+    }
+
+    /// Each bare program name an argv (or each pipeline stage) names,
+    /// replaced by the file this process's PATH finds for it.
+    fn pin_programs(full_name: &str, args: &mut [Value]) {
+        fn pin(argv: &mut Value) {
+            if let Value::List(items) = argv
+                && let Some(Value::String(name)) = items.first()
+                && let Some(file) = crate::caps::pinned_program(name)
+            {
+                let file = Value::String(std::sync::Arc::new(file.to_string_lossy().to_string()));
+                std::sync::Arc::make_mut(items)[0] = file;
+            }
+        }
+        let Some(first) = args.first_mut() else {
+            return;
+        };
+        if full_name == "proc.pipeline" {
+            if let Value::List(stages) = first {
+                for stage in std::sync::Arc::make_mut(stages).iter_mut() {
+                    pin(stage);
+                }
+            }
+        } else {
+            pin(first);
+        }
     }
 
     /// `scope_denial` for a grant and a call's arguments.
@@ -6251,14 +6290,24 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 _ => None,
             })
             .collect();
-        let head = match args.first() {
-            Some(Value::List(items)) => match items.first() {
-                Some(Value::String(s)) => Some(s.as_str()),
+        fn head(v: &Value) -> Option<&str> {
+            match v {
+                Value::List(items) => match items.first() {
+                    Some(Value::String(s)) => Some(s.as_str()),
+                    _ => None,
+                },
                 _ => None,
-            },
-            _ => None,
+            }
+        }
+        // the programs the call names: its argv's head, or every stage's
+        let heads: Vec<Option<&str>> = match args.first() {
+            Some(Value::List(stages)) if full_name == "proc.pipeline" => {
+                stages.iter().map(head).collect()
+            }
+            Some(argv @ Value::List(_)) => vec![head(argv)],
+            _ => Vec::new(),
         };
-        crate::caps::scope_denial(grant, full_name, &strings, head)
+        crate::caps::scope_denial(grant, full_name, &strings, &heads)
     }
 
     /// The grant governing the currently-executing code, for the `caps`

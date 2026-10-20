@@ -527,39 +527,109 @@ fn gate_resolve(abs: PathBuf, depth: u32) -> PathBuf {
     at
 }
 
-/// The program a process-starting call names: a list's first item, or a
-/// command line's first word.
-fn program_of(full_name: &str, first: Option<&str>, list_head: Option<&str>) -> Option<String> {
-    if let Some(h) = list_head {
-        return Some(h.to_string());
+/// The executable file a bare `program` names on `path`, looked for in
+/// its absolute folders only (an empty or relative entry is skipped, as
+/// `command_for` explains); None when no folder holds one.
+pub fn find_on_path(program: &str, path: &str) -> Option<std::path::PathBuf> {
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+    for dir in path.split(':') {
+        if !dir.starts_with('/') {
+            continue;
+        }
+        let cand = std::path::Path::new(dir).join(program);
+        if let Ok(meta) = std::fs::metadata(&cand)
+            && meta.is_file()
+        {
+            #[cfg(unix)]
+            if meta.permissions().mode() & 0o111 == 0 {
+                continue;
+            }
+            return Some(cand);
+        }
     }
-    let s = first?;
-    if full_name == "os.exit" {
-        return None;
-    }
-    s.split_whitespace().next().map(|w| w.to_string())
+    None
 }
 
-/// Does the program `prog` match the allow-list? By its file name
-/// (`olang` allows `/x/target/release/olang`) or its whole path.
+/// Where a bare `program` is found on this process's own PATH (execvp's
+/// default when it has none): what a module held to a list of programs
+/// runs, whatever PATH it hands its child (`caps::scope_denial`).
+pub fn find_on_own_path(program: &str) -> Option<std::path::PathBuf> {
+    let path = std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string());
+    find_on_path(program, &path)
+}
+
+/// The programs a process-starting call names: its argv's first item
+/// (each stage's, for a pipeline — `heads`, None for one that is not a
+/// string), else a command line's first word.
+fn programs_of(full_name: &str, first: Option<&str>, heads: &[Option<&str>]) -> Vec<Option<String>> {
+    if !heads.is_empty() {
+        return heads.iter().map(|h| h.map(|s| s.to_string())).collect();
+    }
+    match first {
+        Some(s) if full_name != "os.exit" => s
+            .split_whitespace()
+            .next()
+            .map(|w| vec![Some(w.to_string())])
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+/// Does the program `prog` match the allow-list? A bare name by name,
+/// wherever this process's PATH finds it (the gate has the call run that
+/// one: `pinned_program`); a path when listed whole, or when it is the
+/// very file its listed name finds on this process's PATH (`olang`
+/// allows `/usr/local/bin/olang` when that is the `olang` on PATH, never
+/// another file that is merely called `olang`).
 pub fn program_allowed(allow: &[String], prog: &str) -> bool {
-    let base = std::path::Path::new(prog)
+    if !prog.contains('/') {
+        return allow.iter().any(|a| a == prog);
+    }
+    if allow.iter().any(|a| a == prog) {
+        return true;
+    }
+    let Some(base) = std::path::Path::new(prog)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| prog.to_string());
-    allow.iter().any(|a| a == prog || *a == base)
+    else {
+        return false;
+    };
+    if !allow.iter().any(|a| *a == base) {
+        return false;
+    }
+    match (
+        find_on_own_path(&base).and_then(|p| std::fs::canonicalize(p).ok()),
+        std::fs::canonicalize(prog).ok(),
+    ) {
+        (Some(listed), Some(named)) => listed == named,
+        _ => false,
+    }
+}
+
+/// The file a bare program name a module held to a list of programs
+/// runs: the one this process's PATH finds, whatever PATH (or none) the
+/// call hands its child — so a module cannot put a file of its own
+/// first on its child's PATH under an allowed name. None for a path
+/// (judged whole by `program_allowed`) or a name found nowhere.
+pub fn pinned_program(prog: &str) -> Option<PathBuf> {
+    if prog.contains('/') || prog.is_empty() {
+        return None;
+    }
+    find_on_own_path(prog)
 }
 
 /// The scope gate for code of a module loaded at run time: the host's
 /// builtins, the filesystem outside its roots, a program outside its
 /// allow-list. `strings` are the call's string arguments in order and
-/// `list_head` the first item of its first argument when that is a list
-/// (an argv). None when allowed; otherwise the denial's message.
+/// `heads` the programs its first argument names when that is an argv
+/// (one) or a pipeline's stages (one each; None for one not a string).
+/// None when allowed; otherwise the denial's message.
 pub fn scope_denial(
     grant: &ModuleGrant,
     full_name: &str,
     strings: &[Option<&str>],
-    list_head: Option<&str>,
+    heads: &[Option<&str>],
 ) -> Option<String> {
     if host_only(full_name) {
         return Some(format!(
@@ -598,23 +668,45 @@ pub fn scope_denial(
                     allow.join(", ")
                 ));
             }
-            match program_of(full_name, strings.first().copied().flatten(), list_head) {
-                Some(prog) if program_allowed(allow, &prog) => None,
-                Some(prog) => Some(format!(
-                    "capability 'proc' denied: {} runs {}, and module '{}' may only run {}",
-                    full_name,
-                    prog,
-                    grant.name,
-                    if allow.is_empty() {
-                        "nothing".to_string()
-                    } else {
-                        allow.join(", ")
-                    }
-                )),
-                // A handle (proc.wait, proc.kill on a process it started)
-                // carries the authority its start was granted.
-                None => None,
+            let may = || {
+                if allow.is_empty() {
+                    "nothing".to_string()
+                } else {
+                    allow.join(", ")
+                }
+            };
+            // A handle (proc.wait, proc.kill on a process it started)
+            // names no program: it carries the authority its start was
+            // granted. A pipeline names one in every stage.
+            for prog in programs_of(full_name, strings.first().copied().flatten(), heads) {
+                let Some(prog) = prog else {
+                    return Some(format!(
+                        "capability 'proc' denied: {} names a program that is not a string, and module '{}' may only run {}",
+                        full_name,
+                        grant.name,
+                        may()
+                    ));
+                };
+                if !program_allowed(allow, &prog) {
+                    return Some(format!(
+                        "capability 'proc' denied: {} runs {}, and module '{}' may only run {}",
+                        full_name,
+                        prog,
+                        grant.name,
+                        may()
+                    ));
+                }
+                if !prog.contains('/') && pinned_program(&prog).is_none() {
+                    return Some(format!(
+                        "capability 'proc' denied: {} runs {}, which this process's PATH does not hold, and module '{}' may only run {} from there",
+                        full_name,
+                        prog,
+                        grant.name,
+                        may()
+                    ));
+                }
             }
+            None
         }
         _ => None,
     }
