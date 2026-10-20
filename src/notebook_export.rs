@@ -445,6 +445,196 @@ pub fn output_html(
     out
 }
 
+thread_local! {
+    /// The folder a picture's path must be inside to be embedded: the
+    /// notebook's, while its page (or one output) is made.
+    static PICTURE_ROOT: std::cell::RefCell<Option<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// `f` with pictures' paths read only inside `root` (None: none read).
+pub fn with_picture_root<T>(root: Option<&Path>, f: impl FnOnce() -> T) -> T {
+    let root = root.and_then(|r| std::fs::canonicalize(r).ok());
+    let was = PICTURE_ROOT.with(|c| std::mem::replace(&mut *c.borrow_mut(), root));
+    let out = f();
+    PICTURE_ROOT.with(|c| *c.borrow_mut() = was);
+    out
+}
+
+/// The image MIME subtype a picture's file `ext` (lower case) says, for
+/// the formats a page embeds; None for any other file.
+fn picture_mime(ext: &str) -> Option<&'static str> {
+    match ext {
+        "png" => Some("png"),
+        "jpg" | "jpeg" => Some("jpeg"),
+        "gif" => Some("gif"),
+        "webp" => Some("webp"),
+        _ => None,
+    }
+}
+
+/// The bytes of the picture at `path` and their MIME subtype, when it is
+/// one a page may embed: a .png, .jpg, .jpeg, .gif or .webp whose real
+/// path is inside the notebook's folder — never another file (an output
+/// a cache or a program wrote could name `~/.ssh/id_ed25519`), nor one
+/// reached through a link out of the folder.
+fn picture_at(path: &str) -> Option<(&'static str, Vec<u8>)> {
+    let root = PICTURE_ROOT.with(|c| c.borrow().clone())?;
+    let ext = Path::new(path).extension()?.to_str()?.to_lowercase();
+    let mime = picture_mime(&ext)?;
+    let full = if Path::new(path).is_absolute() {
+        std::path::PathBuf::from(path)
+    } else {
+        root.join(path)
+    };
+    let real = std::fs::canonicalize(&full).ok()?;
+    if !real.starts_with(&root) || real == root || !real.is_file() {
+        return None;
+    }
+    Some((mime, std::fs::read(&real).ok()?))
+}
+
+/// Whether `svg` may be put in a page as markup: one whole `<svg>` and
+/// nothing that runs, fetches or leaves it — no script, foreignObject,
+/// frame or object, no handler (`onload=`), no source or link but to a
+/// place inside itself, no tag that ends the SVG for an HTML parser.
+/// What olang draws passes; anything else (a cached output, a reply) is
+/// shown as a picture instead (`chart_html`). Studio's `nc_svg_ok`.
+pub fn svg_ok(svg: &str) -> bool {
+    let low = svg.trim().to_lowercase();
+    let b = low.as_bytes();
+    let ws = |c: u8| c.is_ascii_whitespace();
+    let skip_ws = |mut i: usize| {
+        while i < b.len() && ws(b[i]) {
+            i += 1;
+        }
+        i
+    };
+    // a prolog, then the svg opening the text
+    let mut start = 0;
+    if low.starts_with("<?xml") {
+        match low.find("?>") {
+            Some(e) => start = skip_ws(e + 2),
+            None => return false,
+        }
+    }
+    let rest = &low[start..];
+    if !(rest.starts_with("<svg") && rest[4..].starts_with(|c: char| c.is_whitespace() || c == '>')) {
+        return false;
+    }
+    // and closing it
+    let tail = low.trim_end_matches(|c: char| c.is_whitespace());
+    let Some(body) = tail.strip_suffix('>') else {
+        return false;
+    };
+    if !body.trim_end().ends_with("</svg") {
+        return false;
+    }
+    let opened = low
+        .match_indices("<svg")
+        .filter(|(i, _)| b.get(i + 4).is_some_and(|&c| ws(c) || c == b'>' || c == b'/'))
+        .count();
+    if opened != low.matches("</svg").count() {
+        return false;
+    }
+    for bad in [
+        "<script",
+        "foreignobject",
+        "<iframe",
+        "<embed",
+        "<object",
+        "javascript:",
+        "vbscript:",
+        "<!entity",
+        "<!doctype",
+        "@import",
+        "<?xml-stylesheet",
+    ] {
+        if low.contains(bad) {
+            return false;
+        }
+    }
+    // a tag that ends the SVG for an HTML parser
+    const HTML_TAGS: &[&str] = &[
+        "b", "big", "blockquote", "body", "br", "center", "code", "dd", "div", "dl", "dt", "em",
+        "embed", "h1", "h2", "h3", "h4", "h5", "h6", "head", "hr", "i", "img", "image", "li",
+        "listing", "menu", "meta", "nobr", "ol", "p", "pre", "ruby", "s", "small", "span",
+        "strong", "strike", "sub", "sup", "table", "tt", "u", "ul", "var", "font", "base", "link",
+        "form", "input", "button", "textarea", "select", "video", "audio", "source", "track",
+        "picture", "frame", "frameset", "html",
+    ];
+    let word_at = |i: usize| -> &str {
+        let e = (i..b.len())
+            .find(|&j| !(b[j].is_ascii_alphanumeric() || b[j] == b'-' || b[j] == b':'))
+            .unwrap_or(b.len());
+        &low[i..e]
+    };
+    for (i, _) in low.match_indices('<') {
+        let j = skip_ws(i + 1);
+        let w = word_at(j);
+        if HTML_TAGS.contains(&w) {
+            return false;
+        }
+        if w == "style" && low[j..].split('>').next().is_some_and(|t| t.contains("src")) {
+            return false;
+        }
+    }
+    // attributes: a handler, a source, a link or a url to anywhere else
+    let mut i = 0;
+    while i < b.len() {
+        let after_sep = i > 0 && (ws(b[i - 1]) || matches!(b[i - 1], b'"' | b'\'' | b'/'));
+        let w = word_at(i);
+        if w.is_empty() {
+            i += 1;
+            continue;
+        }
+        let eq = skip_ws(i + w.len());
+        let assigns = b.get(eq) == Some(&b'=');
+        if after_sep && assigns {
+            if w.len() > 2 && w.starts_with("on") && w[2..].bytes().all(|c| c.is_ascii_lowercase()) {
+                return false;
+            }
+            if matches!(w, "src" | "srcset" | "poster" | "action" | "formaction" | "background") {
+                return false;
+            }
+        }
+        if assigns && (w == "href" || w.ends_with(":href")) {
+            // only to a place inside itself: `#id`
+            let mut k = skip_ws(eq + 1);
+            if matches!(b.get(k), Some(b'"' | b'\'')) {
+                k = skip_ws(k + 1);
+            }
+            if b.get(k) != Some(&b'#') {
+                return false;
+            }
+        }
+        if assigns && w == "attributename" {
+            let mut k = skip_ws(eq + 1);
+            if matches!(b.get(k), Some(b'"' | b'\'')) {
+                k = skip_ws(k + 1);
+            }
+            let v = word_at(k);
+            if v == "href" || v == "xlink:href" {
+                return false;
+            }
+        }
+        if w.ends_with("url") || w == "url" {
+            let p = skip_ws(i + w.len());
+            if b.get(p) == Some(&b'(') {
+                let mut k = skip_ws(p + 1);
+                if matches!(b.get(k), Some(b'"' | b'\'')) {
+                    k = skip_ws(k + 1);
+                }
+                if b.get(k) != Some(&b'#') {
+                    return false;
+                }
+            }
+        }
+        i += w.len().max(1);
+    }
+    true
+}
+
 /// A value as HTML, by its kind.
 fn value_html(v: &J, page: Option<&J>, as_markdown: bool) -> String {
     let k = v.get("k").and_then(|k| k.as_str()).unwrap_or("");
@@ -452,31 +642,28 @@ fn value_html(v: &J, page: Option<&J>, as_markdown: bool) -> String {
         return chart_html(svg);
     }
     if let Some(png) = v.get("png").and_then(|p| p.as_str()) {
+        // a known picture format, else png (an svg+xml here would be
+        // markup by another door); the data itself base64 or nothing
         let fmt = v
             .pointer("/img/format")
             .and_then(|f| f.as_str())
+            .and_then(|f| picture_mime(&f.to_lowercase()))
             .unwrap_or("png");
+        if !png
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'/' | b'='))
+        {
+            return String::new();
+        }
         return format!(
             "<figure class=\"picture\"><img alt=\"A picture\" src=\"data:image/{};base64,{}\"></figure>",
-            esc(fmt),
+            fmt,
             png
         );
     }
     if let Some(path) = v.get("img").and_then(|p| p.as_str())
-        && let Ok(bytes) = std::fs::read(path)
+        && let Some((mime, bytes)) = picture_at(path)
     {
-        let ext = Path::new(path)
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("png")
-            .to_lowercase();
-        let mime = match ext.as_str() {
-            "svg" => "svg+xml",
-            "jpg" | "jpeg" => "jpeg",
-            "gif" => "gif",
-            "webp" => "webp",
-            _ => "png",
-        };
         return format!(
             "<figure class=\"picture\"><img alt=\"A picture\" src=\"data:image/{};base64,{}\"></figure>",
             mime,
@@ -615,6 +802,14 @@ fn table_html(
 /// reader's appearance asks for); its description rides inside.
 fn chart_html(svg: &str) -> String {
     use olang_ods::plot::{Theme, retheme};
+    // markup that could run or fetch is never put in the page: a picture
+    // of it instead, where an SVG runs nothing
+    if !svg_ok(svg) {
+        return format!(
+            "<figure class=\"chart\"><img alt=\"A chart\" src=\"data:image/svg+xml;base64,{}\"></figure>",
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, svg.as_bytes())
+        );
+    }
     let light = retheme(svg, Theme::Light);
     let dark = retheme(svg, Theme::Dark);
     if light == dark {
@@ -788,17 +983,91 @@ fn brush_range(val: &str) -> Option<(f64, f64)> {
 
 /// Markdown as HTML (CommonMark with tables and strikethrough); raw HTML
 /// in it is escaped, never passed through.
+///
+/// A link goes only to the web (http, https), mail, a place in the page
+/// or a relative path; any other scheme (`javascript:`, `data:`, `file:`)
+/// is dropped, its text kept. A picture is never fetched when the page
+/// opens: one from the web, `data:` or any other scheme is its alt text.
 pub fn markdown_html(text: &str) -> String {
-    use pulldown_cmark::{Event, Options, Parser, html};
+    use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd, html};
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_TABLES);
     opts.insert(Options::ENABLE_STRIKETHROUGH);
-    let events = Parser::new_ext(text, opts).map(|e| match e {
-        Event::Html(h) | Event::InlineHtml(h) => Event::Text(h),
-        e => e,
-    });
+    // the scheme a url names, lower case, if it names one
+    fn scheme(url: &str) -> Option<String> {
+        let t: String = url
+            .chars()
+            .filter(|c| !c.is_whitespace() && !c.is_control())
+            .collect::<String>()
+            .to_lowercase();
+        let colon = t.find(':')?;
+        let head = &t[..colon];
+        // a colon after a / ? or # is in a relative path, not a scheme
+        if head.contains(['/', '?', '#']) || head.is_empty() {
+            return None;
+        }
+        Some(head.to_string())
+    }
+    let link_ok = |url: &str| match scheme(url) {
+        None => true,
+        Some(s) => matches!(s.as_str(), "http" | "https" | "mailto"),
+    };
+    let mut events: Vec<Event> = Vec::new();
+    // inside a picture dropped: its alt text, as text
+    let mut in_dropped_image = 0usize;
+    // links dropped, their ends to drop too
+    let mut dropped_links: Vec<bool> = Vec::new();
+    for e in Parser::new_ext(text, opts) {
+        match e {
+            Event::Html(h) | Event::InlineHtml(h) => events.push(Event::Text(h)),
+            Event::Start(Tag::Link {
+                link_type,
+                dest_url,
+                title,
+                id,
+            }) => {
+                let ok = link_ok(&dest_url);
+                dropped_links.push(!ok);
+                if ok {
+                    events.push(Event::Start(Tag::Link {
+                        link_type,
+                        dest_url,
+                        title,
+                        id,
+                    }));
+                }
+            }
+            Event::End(TagEnd::Link) => {
+                if !dropped_links.pop().unwrap_or(false) {
+                    events.push(Event::End(TagEnd::Link));
+                }
+            }
+            Event::Start(Tag::Image {
+                link_type,
+                dest_url,
+                title,
+                id,
+            }) => {
+                if in_dropped_image > 0
+                    || scheme(&dest_url).is_some()
+                    || dest_url.trim_start().starts_with("//")
+                {
+                    in_dropped_image += 1;
+                } else {
+                    events.push(Event::Start(Tag::Image {
+                        link_type,
+                        dest_url,
+                        title,
+                        id,
+                    }));
+                }
+            }
+            Event::End(TagEnd::Image) if in_dropped_image > 0 => in_dropped_image -= 1,
+            e => events.push(e),
+        }
+    }
     let mut out = String::new();
-    html::push_html(&mut out, events);
+    html::push_html(&mut out, events.into_iter());
     out
 }
 
@@ -997,6 +1266,13 @@ fn grant_words(nb: &crate::notebook::Notebook) -> String {
 /// self-contained HTML (its styles inline, its charts as SVG, its pictures
 /// as data), light and dark by the reader's appearance, printable.
 pub fn page_html(text: &str, path: &Path, doc: &J, mode: Mode) -> String {
+    let folder = std::path::absolute(path)
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+    with_picture_root(folder.as_deref(), || page_html_in(text, path, doc, mode))
+}
+
+fn page_html_in(text: &str, path: &Path, doc: &J, mode: Mode) -> String {
     let nb = crate::notebook::parse(text);
     let lines: Vec<&str> = text.split('\n').collect();
     let entries = cell_entries(&nb, doc);
@@ -2053,5 +2329,92 @@ mod tests {
             "{}",
             html
         );
+    }
+
+    #[test]
+    fn prose_links_and_pictures_run_and_fetch_nothing() {
+        let html = markdown_html(
+            "[click](javascript:alert(1)) ![x](https://evil.example/p.png) <javascript:alert(2)> \
+             [ok](https://olang.dev) [m](mailto:a@b.c) [here](#top) [rel](notes/a.md) \
+             ![local](plot.png) ![p](//evil.example/q.png) ![d](data:image/png;base64,AAAA) [J](JaVaScRiPt:x) [F](file:///etc/passwd)",
+        );
+        let low = html.to_lowercase();
+        // a dropped link's text stays, as text: no attribute names it
+        assert!(!low.contains("href=\"javascript") && !low.contains("href=\"java"), "{html}");
+        assert!(!html.contains("evil.example"), "{html}");
+        assert!(!html.contains("data:") && !html.contains("file:"), "{html}");
+        assert!(html.contains(">click<") || html.contains("click"), "{html}");
+        assert!(html.contains("href=\"https://olang.dev\""), "{html}");
+        assert!(html.contains("href=\"mailto:a@b.c\""), "{html}");
+        assert!(html.contains("href=\"#top\""), "{html}");
+        assert!(html.contains("href=\"notes/a.md\""), "{html}");
+        assert!(html.contains("src=\"plot.png\""), "{html}");
+    }
+
+    #[test]
+    fn a_chart_s_svg_is_inlined_only_when_it_runs_and_fetches_nothing() {
+        let good = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 10 10\"><defs><linearGradient id=\"g\"/></defs><rect fill=\"url(#g)\" width=\"10\" height=\"10\"/><use href=\"#g\"/><metadata>a chart</metadata></svg>";
+        assert!(svg_ok(good));
+        assert!(chart_html(good).contains("<rect"));
+        for bad in [
+            "<svg><script>alert(3)</script></svg>",
+            "<svg onload=\"alert(1)\"></svg>",
+            "<svg><a href=\"https://x\"><text>t</text></a></svg>",
+            "<svg><image href=\"file:///etc/passwd\"/></svg>",
+            "<svg><rect fill=\"url(https://x/y)\"/></svg>",
+            "<svg><foreignObject><div>x</div></foreignObject></svg>",
+            "<svg></svg><img src=x onerror=alert(1)>",
+            "<svg><p>leaves the svg</p></svg>",
+            "<svg><set attributeName=\"href\" to=\"javascript:x\"/></svg>",
+            "<div><svg></svg></div>",
+        ] {
+            assert!(!svg_ok(bad), "{bad}");
+            let html = chart_html(bad);
+            assert!(!html.contains("<script") && !html.contains("onload") && !html.contains("<a "), "{html}");
+            assert!(html.contains("data:image/svg+xml;base64,"), "{html}");
+        }
+        // an output's chart, an exported page's
+        let reply = json!({ "ok": true, "value": { "k": "plot", "svg": { "text": "<svg><script>alert(3)</script></svg>" } } });
+        let page = output_html(&reply, None, Mode::Export, "c1", false);
+        assert!(!page.contains("<script>alert(3)"), "{page}");
+    }
+
+    #[test]
+    fn a_picture_s_path_is_read_only_inside_the_notebook_s_folder() {
+        let base = std::env::temp_dir().join(format!("olang_nbx_pic_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let nb = base.join("nb");
+        std::fs::create_dir_all(&nb).unwrap();
+        std::fs::write(nb.join("plot.png"), b"PNGDATA").unwrap();
+        std::fs::write(base.join("secret.png"), b"SECRET").unwrap();
+        std::fs::write(nb.join("notes.txt"), b"TEXT").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(base.join("secret.png"), nb.join("link.png")).unwrap();
+        let shown = |p: &str| {
+            let v = json!({ "k": "img", "img": p });
+            with_picture_root(Some(&nb), || value_html(&v, None, false))
+        };
+        let enc = |b: &[u8]| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b);
+        assert!(shown("plot.png").contains(&enc(b"PNGDATA")));
+        assert!(shown(&nb.join("plot.png").to_string_lossy()).contains(&enc(b"PNGDATA")));
+        for p in [
+            base.join("secret.png").to_string_lossy().to_string(),
+            "../secret.png".to_string(),
+            "notes.txt".to_string(),
+            "link.png".to_string(),
+            "/etc/hosts".to_string(),
+        ] {
+            let h = shown(&p);
+            assert!(!h.contains(&enc(b"SECRET")) && !h.contains(&enc(b"TEXT")) && !h.contains("base64"), "{p}: {h}");
+        }
+        // with no notebook folder, no file at all
+        let v = json!({ "k": "img", "img": nb.join("plot.png").to_string_lossy() });
+        assert!(!value_html(&v, None, false).contains("base64"));
+        // a picture's format: a known one, else png
+        let v = json!({ "k": "img", "png": "AAAA", "img": { "format": "svg+xml" } });
+        assert!(value_html(&v, None, false).contains("data:image/png;base64,AAAA"));
+        let v = json!({ "k": "img", "png": "AAAA", "img": { "format": "JPEG" } });
+        assert!(value_html(&v, None, false).contains("data:image/jpeg;base64,AAAA"));
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

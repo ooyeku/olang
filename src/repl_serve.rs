@@ -2141,12 +2141,23 @@ impl Session {
         {
             let md = h.get("markdown").and_then(|m| m.as_bool()) == Some(true);
             let id = cell.clone().unwrap_or_default();
-            reply["html"] = J::String(crate::notebook_export::output_html(
-                &reply,
-                None,
-                crate::notebook_export::Mode::App,
-                &id,
-                md,
+            // a picture's path read only inside the notebook's folder
+            let folder = self
+                .notebook
+                .as_ref()
+                .and_then(|n| n.path.parent().map(|d| d.to_path_buf()))
+                .unwrap_or_else(|| self.root.clone());
+            reply["html"] = J::String(crate::notebook_export::with_picture_root(
+                Some(&folder),
+                || {
+                    crate::notebook_export::output_html(
+                        &reply,
+                        None,
+                        crate::notebook_export::Mode::App,
+                        &id,
+                        md,
+                    )
+                },
             ));
             if let Some(v) = reply.get("value") {
                 reply["text"] = J::String(crate::notebook_export::value_text(v));
