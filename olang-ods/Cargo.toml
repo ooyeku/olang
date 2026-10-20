@@ -38,3 +38,7 @@ harness = false
 [[bench]]
 name = "crossover"
 harness = false
+
+[[bench]]
+name = "expr"
+harness = false

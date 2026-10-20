@@ -19,6 +19,7 @@ Every plain `olang` block is executed by the test suite; blocks marked
 - [The columnar model](#why-columns)
 - [Series — the typed column](#series--the-typed-column)
 - [Frames — tables of named columns](#frames--tables-of-named-columns)
+- [Expressions — `ods.col`](#expressions--odscol)
 - [`stats` — from description to inference](#stats--from-description-to-inference)
 - [`plot` — charts as SVG text](#plot--charts-as-svg-text)
 - [The stack and the language](#the-stack-and-the-language)
@@ -112,6 +113,23 @@ let x = ods.linspace(0.0, 1.0, 5)
 println(to_string(ods.to_list(x)))       // [0.0, 0.25, 0.5, 0.75, 1.0]
 ```
 
+The rest of the scaffolding is NumPy's. `ods.full(n, v)` is `n` copies
+of any value (a text value is stored once), `ods.ones(n)` is `n` float
+ones, and `ods.full_like(s, v)` is a column of `v` as long as `s`.
+`ods.arange(stop)`, `ods.arange(start, stop)` and `ods.arange(start,
+stop, step)` count up to, not including, `stop`: an Int column from Int
+arguments, a Float column (element `i` is `start + i * step`, so the end
+carries no drift) otherwise. `ods.repeat(s, k)` repeats each element `k`
+times in a row (or as many times as a list of counts says, element by
+element), and `ods.tile(s, k)` repeats the whole column end to end:
+
+```olang
+println(to_string(ods.to_list(ods.arange(0, 10, 3))))                 // [0, 3, 6, 9]
+println(to_string(ods.to_list(ods.repeat(ods.series(["a", "b"]), 2))))   // ["a", "a", "b", "b"]
+println(to_string(ods.to_list(ods.tile(ods.series([1, 2]), 2))))        // [1, 2, 1, 2]
+println(to_string(ods.to_list(ods.full(2, "x"))))                       // ["x", "x"]
+```
+
 ### Arithmetic is elementwise
 
 The ordinary operators `+ - * /` work on Series, elementwise, with a
@@ -160,37 +178,65 @@ println(to_string(ods.to_list("<" + f["state"])))   // ["<TX", "<NV"]
 Anything else beside a String Series (`s + 1`) is an error naming the
 cast: `ods.cast(s, "String")` turns a number column into text first.
 
+`%` is the remainder with the sign of the dividend, as the scalar `%`
+is: `ods.series([7, -7]) % 3` is `[1, -1]`, and a zero divisor raises
+"Modulo by zero".
+
+**Operators and column functions fuse.** `a * b + c`, `ods.exp(x) *
+2.0`, `ods.where(m, a, b) - 1.0`: nothing is computed while the
+expression is built, and the first time the result is observed — a
+reduction, an index, a display, any verb — the whole expression runs
+in one pass, a couple of thousand rows at a time, so the intermediate
+columns live in the processor's cache instead of main memory. Nulls,
+Int columns and every elementwise function take part. An operation
+that can raise — a division, a remainder, checked Int arithmetic, a
+function with a restricted domain like `ln` — is evaluated where it is
+written (fused with everything before it), so its error is raised by
+the line that causes it. A reduction of an expression (`ods.sum(a *
+b)`, `ods.mean(mask)`) reads the columns once and makes no column at
+all. None of this is visible except by the clock: the values are the
+ones the operations give one at a time.
+
 Series arithmetic runs IEEE kernels for throughput: a Float Series
 can hold `inf` or `NaN` after an overflowing multiply, where the
 scalar language raises (language.md, "Floats"). `ods.to_list` hands
 such values over as they are; `ods.is_null` does not count them.
 
-### Elementwise math: `ods.map`
+### Elementwise math
 
-Arithmetic covers `+ - * /`; `ods.map(series, name)` covers the rest —
-the whole `math.*` family applied across a column in one native pass.
-The second argument is a function *name* (a String, not a closure)
-precisely so the loop stays in the kernel: `ods.map(xs, "sin")` is the
-vectorized form of `map(xs, (v) => math.sin(v))` with no per-element
-boundary crossing. Results are bit-identical to the scalar function
-(the kernel calls the same `f64` methods), nulls propagate, and
-domain-restricted functions (`sqrt`, `ln`, `asin`, …) raise the same
-error the scalar form would. Compose it with arithmetic for a full
-vectorized expression — one kernel per term:
+Every function of `math.*` that maps a number to a number has a column
+form: `ods.exp(s)`, `ods.ln(s)`, `ods.sqrt(s)` and the rest are one
+native pass over the column, computing what `math.exp` and friends
+compute (they call the same `f64` routines), bit for bit, with nulls
+propagating. The full set is `abs exp exp2 expm1 ln ln1p log2 log10
+sqrt cbrt sin cos tan asin acos atan sinh cosh tanh sigmoid logit sign
+floor ceil trunc`. Three more take a second argument: `ods.pow(s, p)`
+(`p` a number or a column), `ods.round(s, digits)` (half away from
+zero; `digits` defaults to 0 and may be negative, rounding to tens or
+hundreds), and `ods.clip`, below.
 
 ```olang
 let t = ods.linspace(0.0, 6.28, 8)
-let wave = ods.map(t, "sin") * 2.0 + 1.0          // sin(t)*2 + 1, native
+let wave = ods.sin(t) * 2.0 + 1.0                    // one fused pass
 println(to_string(ods.mean(wave)))
+let p = ods.sigmoid(ods.series([-2.0, 0.0, 2.0]))
+println(to_string(ods.to_list(ods.round(p, 3))))     // [0.119, 0.5, 0.881]
 ```
 
-The functions: `sin cos tan asin acos atan sinh cosh tanh exp exp2 ln
-log2 log10 sqrt cbrt floor ceil round trunc fract abs degrees
-radians` — all `f64 → f64`, producing a Float series (Int series
-widen). Because a Series feeds
-[`dom.draw_points`](wasm.md#graphics-the-draw-list) directly, generating
-a 50,000-point cloud this way runs entirely in native code — about
-**240× faster** than the closure form, and the whole reason large
+Two details matter in data work. A function whose answer is a whole
+number keeps an Int column Int (`abs`, `sign`, `floor`, `ceil`, `trunc`,
+`round`); the others widen it to Float, so an Int column needs no cast
+before `ods.ln`. And a function with a restricted domain (`sqrt`, `ln`,
+`log2`, `log10`, `ln1p`, `asin`, `acos`, `logit`) raises the scalar
+function's error at the first valid value outside it, exactly as a loop
+over `math.*` would; a null never raises. `sigmoid` is `1 / (1 + e^-x)`
+computed without overflow for large `|x|`, and `logit` is its inverse.
+
+`ods.map(s, name)` is the older spelling, and still works: `ods.map(s,
+"exp")` is `ods.exp(s)` with an Int column widened to Float (it also
+knows `fract`, `degrees` and `radians`). Generating a 50,000-point cloud
+this way, for [`dom.draw_points`](wasm.md#graphics-the-draw-list),
+runs about **240× faster** than the closure form, which is why large
 scatter and line art in the gallery is cheap to build.
 
 ### Comparisons make masks
@@ -218,6 +264,38 @@ let s = ods.series([1, 2, 2, 3])
 println(to_string(s == ods.series([1, 2, 2, 3])))       // true (structural)
 println(to_string(ods.to_list(s == 2)))                 // mask vs a scalar
 println(to_string(ods.to_list(ods.eq(s, ods.series([1, 0, 2, 0])))))
+```
+
+### Choosing values: `where`, `select`, `clip`, `between`
+
+`ods.where(mask, a, b)` takes `a` where the mask is true and `b` where
+it is false, each a column or a value; a null in the mask gives a null.
+The result has the type both sides meet at (Int and Float meet at
+Float). `ods.select(masks, values, default)` is the many-way form: the
+first mask that holds picks its value, a null mask counting as not
+holding, and the default (`()` if omitted) fills the rest:
+
+```olang
+let temp = ods.series([10.0, 18.0, 25.0, ()])
+let kind = ods.select([temp < 15.5, temp > 22.0], ["heating", "cooling"], "neither")
+println(to_string(ods.to_list(kind)))     // ["heating", "neither", "cooling", "neither"]
+println(to_string(ods.to_list(ods.where(temp < 15.5, 15.5 - temp, 0.0))))   // [5.5, 0.0, 0.0, ()]
+```
+
+`ods.clip(s, lo, hi)` limits a column to a range; either bound may be
+`()`, which leaves that side open, and `hi` may be left out (`ods.clip(s,
+0.0)` is `max(s, 0)`). `ods.between(s, lo, hi)` is the mask of values in
+the range, both ends included; a fourth argument, `"left"`, `"right"` or
+`"neither"`, says which ends are. A `()` bound is open there too, and so
+the range may come as one value — a `[lo, hi]` pair, or `()` for no
+range at all, which is what a `ui.brush` answers before anything is
+dragged:
+
+```olang
+let s = ods.series([-3.0, 0.5, 8.0])
+println(to_string(ods.to_list(ods.clip(s, 0.0, 5.0))))         // [0.0, 0.5, 5.0]
+println(to_string(ods.to_list(ods.between(s, 0.0, ()))))        // [false, true, true]
+println(to_string(ods.to_list(ods.between(s, ()))))             // [true, true, true]
 ```
 
 ### Nulls
@@ -251,6 +329,39 @@ println(to_string(ods.to_list(filled)))           // [1.0, 0.0, 3.0]
 println(to_string(ods.to_list(ods.is_null(s))))   // [false, true, false]
 ```
 
+`ods.not_null(s)` is the mask the other way round, and `ods.is_nan(s)`
+marks the NaNs of a Float column (a NaN is a value, not a null: it is
+what `0.0 / 0.0` gives in a column, and reductions do not skip it).
+
+The fill can be a column as well as a value — each null takes the
+other column's value at that row — and `ods.coalesce(a, b, …)` takes
+the first non-null of any number of columns and values. A value of the
+other numeric type widens the column (an Int column filled with `2.5`
+becomes Float). Or the fill can be a method, named by a String:
+
+| Method | Each null becomes |
+|---|---|
+| `"ffill"` | the last valid value before it |
+| `"bfill"` | the next valid value after it |
+| `"linear"` | the straight line between the valid values either side, by position (`ods.interpolate(s)`) |
+| `"mean"`, `"median"` | the column's mean or median |
+
+`"ffill"`, `"bfill"` and `"linear"` take a third argument, the most
+nulls in a row one value fills. Leading nulls have nothing before them
+to carry forward and stay null, as trailing ones do for `"bfill"` and
+`"linear"`; the interpolation is right over a run of several gaps, not
+just one:
+
+```olang
+let gaps = ods.series([1.0, (), (), 4.0, ()])
+println(to_string(ods.to_list(ods.fill_null(gaps, "ffill"))))    // [1.0, 1.0, 1.0, 4.0, 4.0]
+println(to_string(ods.to_list(ods.interpolate(gaps))))           // [1.0, 2.0, 3.0, 4.0, ()]
+println(to_string(ods.to_list(ods.coalesce(gaps, ods.series([9.0, 8.0, 7.0, 6.0, 5.0])))))
+```
+
+(A method name is always a method: to fill a text column with the word
+`"mean"`, write `ods.coalesce(s, "mean")`.)
+
 This is the honest treatment of missing data: nothing is coerced, and
 the one place a default value appears is the place you wrote one.
 
@@ -275,6 +386,26 @@ println(to_string(ods.to_list(ods.cumsum(s))))    // [4.0, 5.0, 12.0, 14.0]
 println(to_string(ods.dot(s, s)))                 // 4²+1²+7²+2²
 ```
 
+A Bool mask sums to its count of true, so `ods.mean(mask)` is the share
+of rows where it holds — `ods.mean(s > 2.0)` is a rate, with no cast.
+`ods.count(s)` counts the values that are not null, `ods.first(s)` and
+`ods.last(s)` are the ends (null included), `ods.mode(s)` is the most
+frequent value (the smallest on a tie), and `ods.any(mask)` and
+`ods.all(mask)` ask whether some or every valid element is true.
+`ods.argmax(s)` and `ods.argmin(s)` are positions: the first row of the
+largest or smallest value, skipping nulls and NaN, or `()` when there is
+none.
+
+```olang
+let s = ods.series([4.0, 1.0, 7.0, (), 7.0])
+println(`${ods.argmax(s)} ${ods.argmin(s)} ${ods.count(s)}`)          // 2 1 4
+println(`${ods.mean(s > 2.0)} ${ods.any(s > 6.0)} ${ods.mode(s)}`)   // 0.75 true 7.0
+```
+
+A reduction of an expression does not build the expression's column:
+`ods.sum(a * b)`, `ods.mean((y - p) * (y - p))` and `ods.dot(a, b)`
+read their inputs once, chunk by chunk.
+
 ### Windows
 
 Four verbs look at a column's neighbourhood rather than the whole of it.
@@ -282,13 +413,16 @@ Four verbs look at a column's neighbourhood rather than the whole of it.
 `ods.shift(s, by)` moves values down the column, filling what is vacated
 with nulls; a negative `by` moves them up. Nulls rather than a wrapped
 value, because a window has an edge and the row before the first row
-does not exist. That makes a difference fall out of the operators
-already there, which is why there is no separate `diff` verb:
+does not exist. `ods.diff(s, lag)` is `s - ods.shift(s, lag)` (`lag`
+defaults to 1; an Int column stays Int), `ods.pct_change(s, lag)` is the
+relative change `s / ods.shift(s, lag) - 1`, and `ods.cumprod(s)` is the
+running product, the shape `ods.cumsum` has:
 
 ```olang
 let s = ods.series([4, 1, 7, 1, 9])
 println(to_string(ods.to_list(ods.shift(s, 1))))       // [(), 4, 1, 7, 1]
-println(to_string(ods.to_list(s - ods.shift(s, 1))))   // [(), -3, 6, -6, 8]
+println(to_string(ods.to_list(ods.diff(s))))           // [(), -3, 6, -6, 8]
+println(to_string(ods.to_list(ods.cumprod(ods.series([1, 2, 3])))))   // [1, 2, 6]
 ```
 
 `ods.cum_max(s)` and `ods.cum_min(s)` are the running maximum and
@@ -429,6 +563,38 @@ let scores = ods.series([72, 91, 84])
 let order = ods.argsort(scores)
 println(to_string(ods.to_list(ods.take(names, order))))
 // scores ascending: [carol, bob, alice]
+```
+
+Both take a second argument, `descending`: `ods.sort(s, true)` puts the
+largest first, and `ods.argsort(s, true)` gives the order that does,
+ties keeping their row order. Nulls go last either way.
+`ods.searchsorted(s, v)` is where `v` would go in a sorted column to keep
+it sorted — the first position whose value is not less than `v`, or
+with `"right"` as a third argument, greater than `v`; `v` may be a list
+or a Series, giving a position for each:
+
+```olang
+let edges = ods.series([0.0, 10.0, 20.0, 50.0])
+println(to_string(ods.searchsorted(edges, 15.0)))               // 2
+println(to_string(ods.searchsorted(edges, [5.0, 60.0])))        // [1, 4]
+println(to_string(ods.to_list(ods.sort(ods.series([3, 9, 1]), true))))   // [9, 3, 1]
+```
+
+### Recoding values
+
+`ods.recode(s, mapping)` replaces each value through a mapping: a map or
+an object (whose keys are text, read as numbers for a number column) or
+a list of `[from, to]` pairs. A value the mapping does not name keeps
+itself; a third argument replaces those instead, with `()` making them
+null. Each distinct value is looked up once, so a mapping over a
+million rows of a dozen spellings costs a dozen lookups:
+
+```olang
+let raw = ods.series(["N", "s", "S", "x"])
+let names = #{ "N": "North", "s": "South", "S": "South" }
+println(to_string(ods.to_list(ods.recode(raw, names))))            // ["North", "South", "South", "x"]
+println(to_string(ods.to_list(ods.recode(raw, names, "Other"))))   // ["North", "South", "South", "Other"]
+println(to_string(ods.to_list(ods.recode(ods.series([1, 2]), [[1, 10]]))))   // [10, 2]
 ```
 
 ### Back to language values
@@ -1101,6 +1267,81 @@ concatenated in row order, so the parallel result is identical to the
 sequential one. This is where olang's lack of a GIL shows: the whole join
 uses the machine, no ceremony. Small joins stay single-threaded (the
 thread hand-off would cost more than it saves).
+
+## Expressions — `ods.col`
+
+`ods.col(name)` is an expression for a column of a Frame not yet named
+by a variable: the Frame verbs below resolve it against the Frame they
+are given. It is what lets a pipeline say "price per square foot"
+without repeating the Frame:
+
+```olang
+use ods { col }
+let houses = ods.read_csv("hood,price,sqft\nnorth,300000,1500\nsouth,210000,1400\nnorth,520000,2600\n")
+let priced = houses
+    |> ods.with({ ppsf: col("price") / col("sqft"), big: col("sqft") > 2000 })
+    |> ods.filter(col("ppsf") > 160.0)
+    |> ods.sort_by(["hood", "ppsf"], [false, true])
+println(priced)
+```
+
+Everything that takes a column takes an expression: the operators
+(`col("a") * 2 + col("b")`), every function of the sections above
+(`ods.exp(col("x"))`, `ods.fill_null(col("x"), "ffill")`,
+`ods.rank(col("x"))`, `ods.shift(col("x"), 1)`), and each of those
+gives an expression back. A reduction gives a value every row shares:
+`col("x") - ods.mean(col("x"))` centres a column. `ods.lit(v)` is a
+value as an expression, and a plain Series where an expression goes is a
+literal column of the Frame's length.
+
+The verbs that resolve expressions:
+
+| Verb | What it does |
+|---|---|
+| `ods.with(f, { name: expr, … })` | adds each column, or replaces the one of that name. Every expression sees the Frame as it was; the whole object is one fused pass, a column several outputs read is read once, and a shared subexpression is computed once. A map (`#{ "name": expr }`) works too, and so does a list of named expressions. |
+| `ods.filter(f, expr)` | the rows where a Bool expression holds (a null does not) |
+| `ods.select(f, [names and exprs])` | those columns, in that order: a name, an expression (named by `ods.alias(expr, name)`, or else by the first column it reads), or an object of named expressions |
+| `ods.sort_by(f, keys, descending)` | sorted by several keys: names or expressions, each ascending unless `descending` (a Bool for all, or a list of one per key) says otherwise. Ties keep their row order; nulls go last in every key. |
+
+### Within groups: `over`
+
+`ods.over(agg, keys)` computes an aggregation within each group of the
+key columns and gives it back to every row of the group — pandas'
+`transform`, Polars' `over`. The aggregation is `ods.sum`, `ods.mean`,
+`ods.min`, `ods.max`, `ods.count`, `ods.median`, `ods.std`, `ods.var`,
+`ods.first`, `ods.last` or `ods.n_unique` of an expression, and the keys
+are a column name or a list of them. A group-wise fill is one line (the
+filled column is Float, since a group's mean is):
+
+```olang
+use ods { col }
+let homes = ods.frame([
+    ["hood", ["north", "south", "north", "south", "north"]],
+    ["built", [1990, 2004, (), (), 2000]],
+])
+let filled = homes |> ods.with({
+    built: ods.fill_null(col("built"), ods.round(ods.over(ods.mean(col("built")), "hood"))),
+    share: col("built") / ods.over(ods.sum(col("built")), "hood"),
+})
+println(to_string(ods.to_list(filled["built"])))   // [1990.0, 2004.0, 1995.0, 2004.0, 2000.0]
+```
+
+The group ids come from the same parallel dictionary encoding as
+`ods.group_by`, so the two never disagree about what counts as one
+group (a null key is a group of its own).
+
+### How expressions run
+
+An expression is a description until a verb resolves it, so building
+one costs nothing and printing one shows what it says
+(`to_string(col("a") * 2)` is `(col("a") * 2)`). When a verb resolves
+it, the elementwise parts — operators, math, `where`, `coalesce`,
+`clip`, `between`, the null masks, casts — compile into one plan with
+the rest of the verb's expressions, which runs chunk by chunk and
+across cores past the size where that pays. A function that is not
+elementwise (a rank, a shift, a reduction, `over`) runs once on its own
+column and joins the plan as an input. Errors name the column that is
+missing and the columns there are.
 
 ## `stats` — from description to inference
 
@@ -1912,6 +2153,19 @@ unchanged, and chains deeper than 16 operators materialize as they
 grow. Measured on the flagship shape (a four-operator chain over 5M
 elements): 2.7× over the eager engine, identical checksum.
 
+**Amended again — the expression engine (2026-10).** The shape the
+fusion is proven on grew to everything elementwise: nulls (validity
+combined a 64-bit word at a time), Int columns (checked, as the eager
+kernels check), every math function, `where`/`select`/`coalesce`/
+`clip`/`between`, the null masks and the numeric casts, and reductions
+that follow an expression. The invisibility rule is kept by a simpler
+argument than "only infallible operations": an operation that can
+raise is evaluated where it is written, fused with what came before
+it, so its error is raised there; only what cannot raise is deferred.
+`ods.col` expressions are the same engine reached by name, and a
+Frame verb's expressions compile into one plan. The measurements are
+in [performance.md](performance.md#the-expression-engine).
+
 For everything else, the record stands: the eager engine is simple,
 measured, and ahead. Boring is a feature.
 
@@ -1928,10 +2182,12 @@ you when to reach for a different tool:
   and narrower floats wait for a concrete demand, not a checklist.
 - **Not lazy.** No query optimizer, no `collect()`, no second
   evaluation model. The one internal exception is invisible by
-  construction: elementwise operator chains defer just long enough to
+  construction: elementwise expressions defer just long enough to
   evaluate in one fused pass, with results and errors identical to the
   eager kernels — the reasoning and boundaries are recorded in
-  [Why eager evaluation](#why-eager-evaluation) above.
+  [Why eager evaluation](#why-eager-evaluation) above. An `ods.col`
+  expression is not a lazy Frame: it is resolved by the verb it is
+  given to, immediately.
 - **Not a plotting toolkit.** `plot` draws the statistical staples
   well, with strong defaults, as text. Interactive charts, animation,
   and grammar-of-graphics layering belong to dedicated tools that can

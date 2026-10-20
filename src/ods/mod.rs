@@ -8,7 +8,9 @@
 //! all thin tables over the engine (L2 of the layer cake). See
 //! `docs/design/ods.md`.
 
+mod colfns;
 mod columns;
+pub mod expr;
 mod frame;
 mod learn;
 pub mod gg;
@@ -90,6 +92,7 @@ impl OvmModule for OdsModule {
             .copied()
             .chain(series::FUNCTIONS.iter().copied())
             .chain(frame::FUNCTIONS.iter().copied())
+            .chain(colfns::FUNCTIONS.iter().copied())
         {
             module.insert(
                 name.to_string(),
@@ -131,6 +134,42 @@ impl OvmModule for OdsModule {
     }
 
     fn dispatch(&self, func: &str, args: Vec<Value>) -> Result<Value, String> {
+        call(func, args)
+    }
+
+    fn binary_op(&self, op: &BinaryOp, lhs: &Value, rhs: &Value) -> Option<Result<Value, String>> {
+        if let Some(result) = series::binary_op(op, lhs, rhs) {
+            return Some(result);
+        }
+        probe_binary_op(op, lhs, rhs)
+    }
+}
+
+/// Call `ods.<func>` with `args`: what the module dispatches, and what
+/// an Expr's call nodes run against a Frame.
+pub(crate) fn call(func: &str, args: Vec<Value>) -> Result<Value, String> {
+    {
+        // Exprs and the Frame verbs that take them.
+        if let Some(r) = expr::dispatch(func, &args) {
+            return r;
+        }
+        // Elementwise: one fused expression (an Expr given an Expr).
+        if !(func == "fill_null" && colfns::fill_method(&args))
+            && let Some(r) = colfns::elementwise(func, &args)
+        {
+            return r;
+        }
+        // A reduction of a pending expression folds it in one pass.
+        if let Some(r) = colfns::reduction(func, &args) {
+            return r;
+        }
+        if let Some(r) = colfns::eager(func, &args) {
+            return r;
+        }
+        // Any other column function given an Expr is a call node.
+        if expr::holds_expr(&args) && series::FUNCTIONS.iter().any(|(n, _)| *n == func) {
+            return Ok(expr::call_node(func, &args));
+        }
         if frame::FUNCTIONS.iter().any(|(n, _)| *n == func) {
             return frame::dispatch(func, args);
         }
@@ -162,11 +201,10 @@ impl OvmModule for OdsModule {
             _ => Err(format!("unknown ods function: ods.{}", func)),
         }
     }
+}
 
-    fn binary_op(&self, op: &BinaryOp, lhs: &Value, rhs: &Value) -> Option<Result<Value, String>> {
-        if let Some(result) = series::binary_op(op, lhs, rhs) {
-            return Some(result);
-        }
+fn probe_binary_op(op: &BinaryOp, lhs: &Value, rhs: &Value) -> Option<Result<Value, String>> {
+    {
         match op {
             BinaryOp::Add => {
                 let (probe, n) = match (probe_of(lhs), rhs) {

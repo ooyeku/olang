@@ -27,6 +27,8 @@ pub mod bitmap;
 #[cfg(feature = "stats")]
 pub mod dist;
 pub mod frame;
+pub mod fuse;
+pub mod column;
 #[cfg(feature = "stats")]
 pub mod learn;
 pub mod gg;
@@ -141,7 +143,7 @@ pub fn par_worth(class: ParClass, len: usize) -> bool {
 /// 100,000).
 pub const PAR_SORT_ROWS: usize = 100_000;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DType {
     F64,
     I64,
@@ -943,8 +945,12 @@ impl Series {
                 }
                 Ok(Scalar::I64(acc))
             }
-            Series::Bool { .. } => Err(OdsError::TypeMismatch(
-                "sum is not defined for Bool series".to_string(),
+            // A mask sums to its count of true (nulls skipped), so its
+            // mean is the share of true.
+            Series::Bool { values, validity } => Ok(Scalar::I64(
+                (0..values.len())
+                    .filter(|&i| values[i] && validity.as_ref().is_none_or(|v| v.get(i)))
+                    .count() as i64,
             )),
             Series::Str { .. } => Err(OdsError::TypeMismatch(
                 "sum is not defined for String series".to_string(),
@@ -1254,6 +1260,9 @@ impl Series {
     /// Indices that would sort the series ascending (stable); null
     /// positions come last in their original order.
     pub fn argsort(&self) -> Result<Series> {
+        if let Some(order) = self.packed_order(false) {
+            return Ok(Series::from_i64(order.into_iter().map(|i| i as i64).collect()));
+        }
         let n = self.len();
         let (mut valid_idx, null_idx): (Vec<usize>, Vec<usize>) =
             (0..n).partition(|&i| self.is_valid(i));
@@ -1304,6 +1313,49 @@ impl Series {
         Ok(Series::from_i64(
             valid_idx.into_iter().map(|i| i as i64).collect(),
         ))
+    }
+
+    /// The order sorting a Float or Int column, stable, nulls last in
+    /// row order: each valid value packed with its row into one integer
+    /// pair whose ascending order is the values' (IEEE total order for
+    /// floats, the row breaking ties), so the sort moves 12-byte pairs
+    /// through cache rather than chasing indices. None for other types
+    /// and for columns past 4G rows.
+    pub(crate) fn packed_order(&self, descending: bool) -> Option<Vec<usize>> {
+        let n = self.len();
+        if u32::try_from(n).is_err() {
+            return None;
+        }
+        let flip = |k: u64| if descending { !k } else { k };
+        let valid = |i: usize| self.validity().is_none_or(|v| v.get(i));
+        let mut pairs: Vec<(u64, u32)> = match self {
+            Series::F64 { values, .. } => (0..n)
+                .filter(|&i| valid(i))
+                .map(|i| {
+                    let b = values[i].to_bits();
+                    let k = if b >> 63 == 1 { !b } else { b | (1 << 63) };
+                    (flip(k), i as u32)
+                })
+                .collect(),
+            Series::I64 { values, .. } => (0..n)
+                .filter(|&i| valid(i))
+                .map(|i| (flip(values[i] as u64 ^ (1 << 63)), i as u32))
+                .collect(),
+            _ => return None,
+        };
+        #[cfg(feature = "parallel")]
+        if par_worth(ParClass::Sort, n) {
+            pairs.par_sort_unstable();
+        } else {
+            pairs.sort_unstable();
+        }
+        #[cfg(not(feature = "parallel"))]
+        pairs.sort_unstable();
+        let mut out: Vec<usize> = pairs.into_iter().map(|(_, i)| i as usize).collect();
+        if out.len() < n {
+            out.extend((0..n).filter(|&i| !valid(i)));
+        }
+        Some(out)
     }
 
     /// Gather by index; indices must be a non-null Int series, negatives
@@ -1927,196 +1979,6 @@ fn rebuild_with_trailing_nulls<T: Default + Clone>(
             col,
             validity: Some(Bitmap::from_bools(&bits)),
         },
-    }
-}
-
-// ---------------------------------------------------------------------
-// Fused elementwise evaluation
-// ---------------------------------------------------------------------
-
-/// A pending elementwise chain over F64 series, evaluated in one pass.
-///
-/// The host language builds these lazily from `a * b + 1.0`-style
-/// operator chains instead of materializing a full-length intermediate
-/// per operator; forcing evaluates the whole tree chunk by chunk, so
-/// intermediates live in cache instead of main memory. Deliberately
-/// narrow: Add/Sub/Mul only (infallible IEEE ops — `Div` pre-checks its
-/// divisors and must error at its own expression, so it is never
-/// deferred), null-free F64 leaves of equal length, and Float scalars.
-/// Within that shape the fused result is bit-identical to the eager
-/// kernels: each output element performs the same float operations in
-/// the same order.
-pub mod fuse {
-    use super::*;
-
-    /// Elements evaluated per tree walk — small enough that one buffer
-    /// per tree level stays in L1.
-    pub const CHUNK: usize = 1024;
-
-    /// `$body` with `$f` bound to the operator's closure: one loop per
-    /// operator, so nothing is decided per element and the loop
-    /// vectorizes.
-    macro_rules! by_op {
-        ($op:expr, $f:ident, $body:expr) => {
-            match $op {
-                ArithOp::Add => {
-                    let $f = |x: f64, y: f64| x + y;
-                    $body
-                }
-                ArithOp::Sub => {
-                    let $f = |x: f64, y: f64| x - y;
-                    $body
-                }
-                ArithOp::Mul => {
-                    let $f = |x: f64, y: f64| x * y;
-                    $body
-                }
-                ArithOp::Div => unreachable!("Div is never fused"),
-            }
-        };
-    }
-
-    #[derive(Clone, Debug)]
-    pub enum Expr {
-        /// A materialized, null-free F64 column.
-        Leaf(Arc<Vec<f64>>),
-        /// A broadcast scalar.
-        Const(f64),
-        /// An infallible elementwise operator (never `Div`).
-        Bin(ArithOp, Arc<Expr>, Arc<Expr>),
-    }
-
-    impl Expr {
-        /// How many columns the chain reads: one (a column with scalars)
-        /// costs what arithmetic with a scalar does, more what arithmetic
-        /// between columns does (`ParClass`).
-        pub fn leaves(&self) -> usize {
-            match self {
-                Expr::Leaf(_) => 1,
-                Expr::Const(_) => 0,
-                Expr::Bin(_, a, b) => a.leaves() + b.leaves(),
-            }
-        }
-
-        /// The kernel class the chain's evaluation is.
-        pub fn par_class(&self) -> ParClass {
-            if self.leaves() > 1 {
-                ParClass::Elementwise
-            } else {
-                ParClass::ElementwiseScalar
-            }
-        }
-
-        fn eval_chunk(&self, start: usize, out: &mut [f64]) {
-            let n = out.len();
-            let Expr::Bin(op, a, b) = self else {
-                match self {
-                    Expr::Leaf(v) => out.copy_from_slice(&v[start..start + n]),
-                    Expr::Const(c) => out.fill(*c),
-                    Expr::Bin(..) => unreachable!(),
-                }
-                return;
-            };
-            // An operand that is a column or a scalar is read where it
-            // is, never copied into a buffer first; the operator applies
-            // in place in `out` (the same float operation on each element
-            // as the eager kernels).
-            match (a.as_ref(), b.as_ref()) {
-                (Expr::Leaf(x), Expr::Leaf(y)) => {
-                    let (x, y) = (&x[start..start + n], &y[start..start + n]);
-                    by_op!(op, f, {
-                        for ((o, x), y) in out.iter_mut().zip(x).zip(y) {
-                            *o = f(*x, *y);
-                        }
-                    });
-                }
-                (_, Expr::Const(c)) => {
-                    a.eval_chunk(start, out);
-                    by_op!(op, f, out.iter_mut().for_each(|o| *o = f(*o, *c)));
-                }
-                (Expr::Const(c), _) => {
-                    b.eval_chunk(start, out);
-                    by_op!(op, f, out.iter_mut().for_each(|o| *o = f(*c, *o)));
-                }
-                (_, Expr::Leaf(y)) => {
-                    a.eval_chunk(start, out);
-                    let y = &y[start..start + n];
-                    by_op!(op, f, {
-                        for (o, y) in out.iter_mut().zip(y) {
-                            *o = f(*o, *y);
-                        }
-                    });
-                }
-                (Expr::Leaf(x), _) => {
-                    b.eval_chunk(start, out);
-                    let x = &x[start..start + n];
-                    by_op!(op, f, {
-                        for (o, x) in out.iter_mut().zip(x) {
-                            *o = f(*x, *o);
-                        }
-                    });
-                }
-                _ => {
-                    a.eval_chunk(start, out);
-                    let mut buf = [0.0f64; CHUNK];
-                    let rhs = &mut buf[..n];
-                    b.eval_chunk(start, rhs);
-                    by_op!(op, f, {
-                        for (o, r) in out.iter_mut().zip(rhs.iter()) {
-                            *o = f(*o, *r);
-                        }
-                    });
-                }
-            }
-        }
-
-        /// Materialize the chain: one output allocation, one pass.
-        /// Chunks are independent, so the parallel build fans them out.
-        pub fn eval(&self, len: usize, par: bool) -> Series {
-            // One operator over columns and scalars is the eager kernel's
-            // work, done as it does it: one pass, no zeroed output first.
-            if let Expr::Bin(op, a, b) = self {
-                match (a.as_ref(), b.as_ref()) {
-                    (Expr::Leaf(v), Expr::Const(c)) | (Expr::Const(c), Expr::Leaf(v)) => {
-                        let swapped = matches!(a.as_ref(), Expr::Const(_));
-                        return f64_arith_scalar(v.as_slice(), *c, *op, swapped, None, par)
-                            .expect("Add, Sub and Mul never fail");
-                    }
-                    (Expr::Leaf(x), Expr::Leaf(y)) => {
-                        return f64_arith(x.as_slice(), y.as_slice(), *op, None, par)
-                            .expect("Add, Sub and Mul never fail");
-                    }
-                    _ => {}
-                }
-            }
-            let mut values = vec![0.0f64; len];
-            #[cfg(feature = "parallel")]
-            if par {
-                // A task a piece of many chunks: one hand-off per piece,
-                // the chunks inside it walked as the sequential pass does.
-                const PIECE: usize = CHUNK * 128;
-                values
-                    .par_chunks_mut(PIECE)
-                    .enumerate()
-                    .for_each(|(pi, piece)| {
-                        for (ci, chunk) in piece.chunks_mut(CHUNK).enumerate() {
-                            self.eval_chunk(pi * PIECE + ci * CHUNK, chunk);
-                        }
-                    });
-                return Series::F64 {
-                    values: Arc::new(values),
-                    validity: None,
-                };
-            }
-            let _ = par;
-            for (ci, chunk) in values.chunks_mut(CHUNK).enumerate() {
-                self.eval_chunk(ci * CHUNK, chunk);
-            }
-            Series::F64 {
-                values: Arc::new(values),
-                validity: None,
-            }
-        }
     }
 }
 

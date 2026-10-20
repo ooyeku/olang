@@ -570,6 +570,44 @@ impl Series {
     /// the honest answer. `s - ods.shift(s, 1)` is then a difference
     /// whose first element is null, which is correct.
     pub fn shift(&self, by: i64) -> Result<Series> {
+        // Numbers and Bools: one copy of the kept values, the validity
+        // shifted a word at a time.
+        let n = self.len();
+        let k = (by.unsigned_abs() as usize).min(n);
+        fn moved<T: Copy + Default>(v: &[T], by: i64, k: usize) -> Vec<T> {
+            let n = v.len();
+            let mut out = Vec::with_capacity(n);
+            if by >= 0 {
+                out.extend(std::iter::repeat_n(T::default(), k));
+                out.extend_from_slice(&v[..n - k]);
+            } else {
+                out.extend_from_slice(&v[k..]);
+                out.extend(std::iter::repeat_n(T::default(), k));
+            }
+            out
+        }
+        let validity = || shifted_validity(self.validity(), n, by);
+        match self {
+            Series::F64 { values, .. } => {
+                return Ok(Series::F64 {
+                    values: std::sync::Arc::new(moved(values, by, k)),
+                    validity: validity(),
+                });
+            }
+            Series::I64 { values, .. } => {
+                return Ok(Series::I64 {
+                    values: std::sync::Arc::new(moved(values, by, k)),
+                    validity: validity(),
+                });
+            }
+            Series::Bool { values, .. } => {
+                return Ok(Series::Bool {
+                    values: std::sync::Arc::new(moved(values, by, k)),
+                    validity: validity(),
+                });
+            }
+            Series::Str { .. } => {}
+        }
         let n = self.len() as i64;
         let idx: Vec<Option<usize>> = (0..n)
             .map(|i| {
@@ -1929,10 +1967,20 @@ fn aggregate_by_rows(
                 }
                 // `Series::quantile(0.5)`'s arithmetic, so a group's
                 // median is the column's median of the same rows.
-                vals.sort_unstable_by(f64::total_cmp);
+                // The two middle order statistics by selection, not a
+                // full sort: the same values a sort would put there.
                 let h = (vals.len() - 1) as f64 * 0.5;
                 let (lo, hi) = (h.floor() as usize, h.ceil() as usize);
-                Some(vals[lo] + (vals[hi] - vals[lo]) * (h - lo as f64))
+                let (_, &mut a, rest) = vals.select_nth_unstable_by(lo, f64::total_cmp);
+                let b = if hi == lo {
+                    a
+                } else {
+                    *rest
+                        .iter()
+                        .min_by(|x, y| x.total_cmp(y))
+                        .expect("an even count has an upper middle")
+                };
+                Some(a + (b - a) * (h - lo as f64))
             }
             _ => {
                 if vals.len() < 2 {
@@ -2048,6 +2096,228 @@ fn coalesce(a: &Series, b: &Series) -> Result<Series> {
 
 fn col_valid(col: &Series, i: usize) -> bool {
     !matches!(col.scalar_at(i), Scalar::Null)
+}
+
+// ---------------------------------------------------------------------
+// Group aggregation broadcast back (`over`) and multi-key sorting
+// ---------------------------------------------------------------------
+
+/// Each row's group id over `keys` (first-seen order) and the number of
+/// groups: the dictionary encoding `group_by` runs, reusable.
+pub fn group_ids(keys: &[&Series]) -> Result<(Vec<u32>, usize)> {
+    let Some(first) = keys.first() else {
+        return Err(OdsError::InvalidArgument(
+            "a grouping needs at least one key column".to_string(),
+        ));
+    };
+    let n = first.len();
+    if let Some(bad) = keys.iter().find(|k| k.len() != n) {
+        return Err(OdsError::LengthMismatch {
+            left: n,
+            right: bad.len(),
+        });
+    }
+    Ok(if keys.len() == 1 {
+        group_ids_single(first)
+    } else {
+        group_ids_multi(keys, n)
+    })
+}
+
+/// `op` of `col` within each group of `keys`, given back to every row
+/// of the group (pandas' `transform`, Polars' `over`). `Count` counts
+/// the group's valid values, as `ods.count` does.
+pub fn over(col: &Series, keys: &[&Series], op: AggOp) -> Result<Series> {
+    let (ids, n_groups) = group_ids(keys)?;
+    if ids.len() != col.len() {
+        return Err(OdsError::LengthMismatch {
+            left: ids.len(),
+            right: col.len(),
+        });
+    }
+    let per_group = match op {
+        AggOp::Count => {
+            let mut counts = vec![0i64; n_groups];
+            for (i, &g) in ids.iter().enumerate() {
+                if col.validity().is_none_or(|v| v.get(i)) {
+                    counts[g as usize] += 1;
+                }
+            }
+            Series::from_i64(counts)
+        }
+        AggOp::Median | AggOp::Std | AggOp::Var | AggOp::NUnique => {
+            let rows = rows_by_group(&ids, n_groups);
+            aggregate_by_rows(col, &ids, &rows, op)?
+        }
+        AggOp::First => col.take(&Series::from_i64(first_row_per_group(&ids, n_groups)))?,
+        AggOp::Last => col.take(&Series::from_i64(last_row_per_group(&ids, n_groups)))?,
+        _ => aggregate_column(col, &ids, n_groups, op)?,
+    };
+    let idx: Vec<usize> = ids.iter().map(|&g| g as usize).collect();
+    Ok(per_group.gather(&idx))
+}
+
+/// A key's dense rank per row: equal values share a rank, nulls rank
+/// after every value whatever the direction, and `descending` reverses
+/// the values' order.
+fn key_ranks(key: &Series, descending: bool) -> Result<Vec<u32>> {
+    let n = key.len();
+    let order = match key {
+        Series::Bool { values, validity } => {
+            // false < true; nulls last.
+            let valid = |i: usize| validity.as_ref().is_none_or(|v| v.get(i));
+            let mut idx: Vec<usize> = (0..n).filter(|&i| valid(i) && !values[i]).collect();
+            idx.extend((0..n).filter(|&i| valid(i) && values[i]));
+            idx.extend((0..n).filter(|&i| !valid(i)));
+            idx
+        }
+        _ => match key.argsort()? {
+            Series::I64 { values, .. } => values.iter().map(|&i| i as usize).collect(),
+            _ => unreachable!("argsort gives Int indices"),
+        },
+    };
+    let valid = |i: usize| key.validity().is_none_or(|v| v.get(i));
+    let same = |a: usize, b: usize| match key {
+        Series::F64 { values, .. } => values[a].total_cmp(&values[b]).is_eq(),
+        Series::I64 { values, .. } => values[a] == values[b],
+        Series::Bool { values, .. } => values[a] == values[b],
+        Series::Str { col, .. } => col.get(a) == col.get(b),
+    };
+    let mut ranks = vec![u32::MAX; n];
+    let mut r = 0u32;
+    let mut prev: Option<usize> = None;
+    for &i in &order {
+        if !valid(i) {
+            break;
+        }
+        if let Some(p) = prev
+            && !same(p, i)
+        {
+            r += 1;
+        }
+        ranks[i] = r;
+        prev = Some(i);
+    }
+    if descending {
+        for x in ranks.iter_mut() {
+            if *x != u32::MAX {
+                *x = r - *x;
+            }
+        }
+    }
+    Ok(ranks)
+}
+
+/// Row order sorting by several keys, each ascending or descending:
+/// stable (ties keep their row order), nulls last in every key.
+pub fn sort_order(keys: &[(&Series, bool)]) -> Result<Vec<usize>> {
+    let Some((first, _)) = keys.first() else {
+        return Err(OdsError::InvalidArgument(
+            "sort_by needs at least one key".to_string(),
+        ));
+    };
+    let n = first.len();
+    let ranks: Vec<Vec<u32>> = keys
+        .iter()
+        .map(|(k, d)| {
+            if k.len() != n {
+                return Err(OdsError::LengthMismatch {
+                    left: n,
+                    right: k.len(),
+                });
+            }
+            key_ranks(k, *d)
+        })
+        .collect::<Result<_>>()?;
+    // The keys' ranks folded into one dense rank, a key at a time: a
+    // sort of packed (rank so far, next rank) pairs per key. Then one
+    // sort of (rank, row) pairs, the row breaking ties (stable).
+    let mut combined: Vec<u32> = ranks[0].clone();
+    for r in &ranks[1..] {
+        let mut pairs: Vec<(u64, u32)> = (0..n)
+            .map(|i| (((combined[i] as u64) << 32) | r[i] as u64, i as u32))
+            .collect();
+        sort_pairs(&mut pairs, n);
+        let mut next = 0u32;
+        for k in 0..pairs.len() {
+            if k > 0 && pairs[k].0 != pairs[k - 1].0 {
+                next += 1;
+            }
+            combined[pairs[k].1 as usize] = next;
+        }
+    }
+    let mut pairs: Vec<(u64, u32)> = (0..n).map(|i| (combined[i] as u64, i as u32)).collect();
+    sort_pairs(&mut pairs, n);
+    Ok(pairs.into_iter().map(|(_, i)| i as usize).collect())
+}
+
+fn sort_pairs(pairs: &mut [(u64, u32)], n: usize) {
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        if crate::par_worth(crate::ParClass::Sort, n) {
+            pairs.par_sort_unstable();
+            return;
+        }
+    }
+    let _ = n;
+    pairs.sort_unstable();
+}
+
+impl Frame {
+    /// Rows sorted by several key columns (`(name, descending)`), stable,
+    /// nulls last in each.
+    pub fn sort_by_keys(&self, keys: &[(&Series, bool)]) -> Result<Frame> {
+        let order = sort_order(keys)?;
+        if keys.first().is_some_and(|(k, _)| k.len() != self.n_rows()) {
+            return Err(OdsError::LengthMismatch {
+                left: self.n_rows(),
+                right: keys[0].0.len(),
+            });
+        }
+        let idx = Series::from_i64(order.into_iter().map(|i| i as i64).collect());
+        self.take(&idx)
+    }
+}
+
+/// A validity moved `by` positions down (up when negative), the
+/// vacated positions null: word by word, no per-element pass.
+fn shifted_validity(v: Option<&Bitmap>, n: usize, by: i64) -> Option<Bitmap> {
+    if by == 0 {
+        return v.cloned();
+    }
+    let nw = n.div_ceil(64);
+    let src = |k: i64| -> u64 {
+        if k < 0 || k as usize >= nw {
+            return 0;
+        }
+        let k = k as usize;
+        match v {
+            Some(b) => b.words()[k],
+            None => {
+                if (k + 1) * 64 <= n {
+                    u64::MAX
+                } else {
+                    (1u64 << (n - k * 64)) - 1
+                }
+            }
+        }
+    };
+    let words: Vec<u64> = (0..nw)
+        .map(|w| {
+            // Output bit 64w + j comes from source bit 64w + j - by.
+            let s = 64 * w as i64 - by;
+            let q = s.div_euclid(64);
+            let r = s.rem_euclid(64) as u32;
+            if r == 0 {
+                src(q)
+            } else {
+                (src(q) >> r) | (src(q + 1) << (64 - r))
+            }
+        })
+        .collect();
+    let bm = Bitmap::from_words(n, words);
+    (!bm.all_valid()).then_some(bm)
 }
 
 #[cfg(test)]
