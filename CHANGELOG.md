@@ -529,6 +529,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **An expression nested deep without brackets is a parse error**, past
+  4,000 (`if a => if a => …` overflowed the stack and aborted the
+  process), and `toml.stringify` follows a value at most 512 deep.
+  tests/resource_limits_test.rs
+- **A failed `runtime.load_module` reload keeps the module's imports:**
+  the module before it ran on without its imported names on the
+  interpreter tier. tests/runtime_modules_test.rs
 - **`gui`: colours on a wide-gamut screen.** A window's surface was
   presented uncolour-managed, so on a Display P3 screen (every recent
   Mac's) every sRGB colour was shown stretched to the panel's gamut
@@ -647,6 +654,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   blocks shadow), in `.ol` files and notebooks alike; text that does not
   parse falls back to words. A name the file binds itself may be renamed
   even when a builtin shares its spelling.
+
+### Security
+
+- **Opening a file runs nothing it should not.** A `meta fn`'s expansion
+  is bounded (50,000,000 steps a file) and may not print to stdout (the
+  language server's protocol); `olang lsp` discards what is printed while
+  it serves; `check --tier` loads a file's declarations and the modules
+  it uses under no capability. tests/macro_expansion_test.rs
+- **A dependency held below the app cannot widen its grant.**
+  `meta.eval`'s source answers to its caller's file, and
+  `runtime.load_module`'s grant is never wider than its caller's.
+  tests/capabilities_test.rs
+- **A bare program name is found on the PATH's absolute folders, in the
+  parent** (`os.exec`, `proc.spawn`, `proc.pipeline`, `pty.spawn`): an
+  empty or relative PATH entry was resolved from the child's folder, so
+  a repository's own `git` could run. tests/os_exec_test.rs
+- **A git dependency's url or ref that starts with `-` is refused** before
+  git runs (it reached git's command line as an option).
+  tests/resource_limits_test.rs
+- **Untrusted input is bounded by errors, never by the process ending:**
+  brackets nested past 1,000 are a parse error; a notebook's front matter
+  nests at most 64 deep; `range`, `col.filled`, `str.repeat` and
+  `str.pad_*` refuse a size past 2^32; `range`'s step stops at i64's end.
+  tests/resource_limits_test.rs
+- **`web-sdk` serve says it listens only once bound**, and a port it
+  cannot take ends the program with 1. tests/web_sdk_serve_test.rs
+- **A module held to a list of programs runs only those** (`proc`
+  allow-list): every stage of `proc.pipeline` is judged, a bare name runs
+  the file this process's PATH finds whatever PATH the module hands its
+  child, and a path passes only listed whole or as that same file.
+  tests/runtime_modules_test.rs
+- **A grant narrowed in a session holds on the bytecode tier.** Verdicts
+  decided as code compiled (a pre-granted call, `caps.allowed` folded)
+  are made only under a run's fixed table (`olang run`); a notebook
+  kernel's pure evaluation and the REPL's `:run` meet the gate at every
+  call. tests/capabilities_test.rs
+- **Opening a project fetches nothing.** `repl --serve` and `check
+  --tier` use the dependencies this machine holds (`InstallOptions::
+  offline`), say one missing where a `use` names it, and write no lock.
+  tests/pkg_integration_test.rs
+- **A notebook's export runs and fetches nothing it carries:** prose
+  links only to http, https, mailto, the page or a relative path; remote,
+  `data:` and other pictures as their alt text; a chart's SVG inlined
+  only when it runs and fetches nothing, else a picture of it; a
+  picture's path only inside the notebook's folder, a known format.
+  src/notebook_export.rs
 
 ## [1.0.0-rc.2] - 2026-10-14
 
