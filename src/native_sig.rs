@@ -863,7 +863,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("ods.sigmoid", "s:S -> S"),
     ("ods.logit", "s:S -> S"),
     ("ods.sign", "s:S -> S"),
-    ("ods.floor", "s:S -> S"),
+    ("ods.floor", "s:S, every? -> S"),
     ("ods.ceil", "s:S -> S"),
     ("ods.trunc", "s:S -> S"),
     ("ods.pow", "s:S, exponent -> S"),

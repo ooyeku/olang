@@ -5645,6 +5645,14 @@ mod tests {
         assert!(d.is_empty(), "{d:?}");
         let d = check("let ods = #{ \"rolling\": (s, w) => s }\nods.rolling(1, w: 2)\n");
         assert!(d.iter().all(|x| !x.message.contains("no parameter")), "{d:?}");
+        // a group_by without aggregations is a GroupBy, with them a Frame
+        let d = check(&format!(
+            "{src}let by = f.group_by(\"a\")\nby.agg(#{{}})\nby.agx()\nby.mean(q: 1)\n\
+             ods.group_by(f, \"a\", #{{}}).sort_by(\"a\")\n(f |> ods.group_by(\"a\")).size()\n"
+        ));
+        assert_eq!(d.len(), 2, "{d:?}");
+        assert!(d[0].message.contains("a GroupBy has no method 'agx'"), "{d:?}");
+        assert!(d[1].message.contains("no parameter named 'q'"), "{d:?}");
     }
 
     #[test]

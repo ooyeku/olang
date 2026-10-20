@@ -711,6 +711,22 @@ pub fn dispatch(func: &str, args: &[Value]) -> Option<Result<Value, String>> {
         "runs" => want_series(func, args, 0).and_then(|s| olang_ods::group::runs(s).map(frame_value).map_err(err)),
         "run_id" => run_id(args),
         "resample" => resample(args),
+        // `floor(s, every)`: the start of each time's bucket. ISO text
+        // here; a numeric column's floor is the math function's.
+        "floor" if args.len() == 2 && matches!(args[1], Value::String(_)) => {
+            if holds_expr(args) {
+                Ok(call_node(func, args))
+            } else {
+                let Value::String(every) = &args[1] else { unreachable!("matched") };
+                match series_of(&args[0]) {
+                    Some(s) if s.dtype() == DType::Str => Every::parse(&every)
+                        .and_then(|e| olang_ods::time::floor(s, e))
+                        .map(OdsSeries::into_value)
+                        .map_err(|e| format!("ods.floor: {}", e)),
+                    _ => return None,
+                }
+            }
+        }
         "rolling" if holds_expr(args) => Ok(call_node(func, args)),
         "rolling" => rolling(args),
         "join" | "join_left" | "join_full" | "join_semi" | "join_anti" => join(func, args),

@@ -39,7 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   "one_to_one"` raising on a key's fan-out. `ods.resample(f, on, every,
   aggs, by:)` over ISO date/time text (`"15m"`, `"1h"`, `"1d"`, `"1w"`,
   `"1mo"`, `"1q"`, `"1y"`; `olang_ods::time::Every` and `buckets`, which
-  a Date column's floor reuses). `ods.rolling(s, w, agg, center:,
+  a Date column's floor reuses) and `floor(s, every)` on such a column
+  (`col("date").floor("1w")`, the week a join keys on). `ods.rolling(s, w, agg, center:,
   min_periods:, exact:)`. Methods and keywords for all of it in
   `src/native_sig.rs` (a `G` receiver kind for the GroupBy; `olang check`
   and the language server know `group_by` without aggregations is one).

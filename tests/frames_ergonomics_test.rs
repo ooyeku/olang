@@ -316,6 +316,9 @@ println(ods.to_list(s.rolling(3, "std", exact: true)) == ods.to_list(s.rolling(3
 println(ods.to_list(ods.rolling(ods.series([1, (), 3, 4]), 2, "sum")))
 println(ods.to_list(ods.rolling(ods.series([1, (), 3, 4]), 2, "max", min_periods: 1)))
 println(ods.to_list(ods.with(ods.frame({ x: [1.0, 2.0, 3.0] }), { m: col("x").rolling(2, "mean", min_periods: 1) })["m"]))
+println(ods.to_list(ods.series(["2024-03-17 13:45:10", "2024-03-17 09:05:30"]).floor("1h")))
+println(ods.to_list(ods.with(t, { w: col("ts").floor("1w") })["w"]))
+println(ods.to_list(ods.floor(ods.series([1.5, -0.5]))))
 "#;
 
 #[test]
@@ -338,6 +341,9 @@ true
 [(), 1, 3, 7]
 [1, 1, 3, 4]
 [1.0, 1.5, 2.5]
+["2024-03-17 13:00:00", "2024-03-17 09:00:00"]
+["2024-01-01", "2024-01-01", "2024-01-01", "2024-01-29", ()]
+[1.0, -1.0]
 "#,
     );
 }

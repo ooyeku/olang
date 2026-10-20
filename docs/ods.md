@@ -1420,6 +1420,16 @@ println(ods.resample(hourly, "ts", "1d", { energy: col("mw").sum(), hours: ods.c
 println(ods.resample(hourly, "ts", "1mo", { energy: col("mw").sum() }, by: "site"))
 ```
 
+`ods.floor(s, every)` (or `col("ts").floor("1w")`) is the bucket
+column itself, each value's bucket start in the same shape — the key a
+join on weeks or months needs:
+
+```olang
+let days = ods.series(["2024-03-14", "2024-03-17", "2024-03-18"])
+println(to_string(days.floor("1w").to_list()))     // ["2024-03-11", "2024-03-11", "2024-03-18"]
+println(to_string(days.floor("1mo").to_list()))    // ["2024-03-01", "2024-03-01", "2024-03-01"]
+```
+
 Each value is parsed once into an integer bucket (no text per row), the
 grouping and the sort run on those integers, and only the buckets are
 written back as text. A million hourly rows to daily sums and means
@@ -1465,6 +1475,11 @@ println(to_string(ods.n_rows(ods.join(orders, payments, "customer"))))       // 
 println(to_string(ods.n_rows(ods.join_semi(orders, payments, "customer"))))  // 1
 println(to_string(ods.to_list(ods.join_anti(orders, payments, "customer")["customer"])))
 ```
+
+An inner or left join keeps the left Frame's row order (a left row
+matched twice is followed by its second match), so there is nothing to
+re-sort after one; a full join appends the right side's unmatched rows
+after them.
 
 Every kind follows the same null rule: a null key matches nothing. So a
 null-keyed left row appears in a left, full, or anti join and never in

@@ -1876,7 +1876,7 @@ fn native_methods_and_names_complete() {
         "textDocument":{"uri":uri},"position":{"line":5,"character":21}}}),
     );
     let r = c.recv_until(|m| m["id"] == 5);
-    assert_eq!(r["result"]["signatures"][0]["label"], ".rolling(window, agg)", "{r}");
+    assert_eq!(r["result"]["signatures"][0]["label"], ".rolling(window, agg, center = false, min_periods?, exact = false)", "{r}");
     assert_eq!(r["result"]["activeParameter"], 1);
     c.send(&serde_json::json!({"jsonrpc":"2.0","id":9,"method":"shutdown","params":null}));
     c.recv_until(|m| m["id"] == 9);
