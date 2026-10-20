@@ -982,8 +982,25 @@ pub(crate) fn json_to_olang_value(json_value: serde_json::Value) -> Result<Value
     })
 }
 
+/// How deep `olang_value_to_json` follows a value. The tree it builds
+/// is walked by recursion everywhere after (serde_json's printer and its
+/// drop, the TOML writer), a frame per level: a value a million deep
+/// overflowed the stack and aborted the process. JSON's own reader stops
+/// at 128.
+pub(crate) const MAX_VALUE_DEPTH: usize = 512;
+
 /// Convert Olang Value to serde_json::Value
 pub(crate) fn olang_value_to_json(value: &Value) -> Result<serde_json::Value, JsonError> {
+    value_to_json_at(value, 0)
+}
+
+fn value_to_json_at(value: &Value, depth: usize) -> Result<serde_json::Value, JsonError> {
+    if depth > MAX_VALUE_DEPTH {
+        return Err(JsonError::TypeError {
+            message: format!("the value nests more than {} deep", MAX_VALUE_DEPTH),
+        });
+    }
+    let olang_value_to_json = |v: &Value| value_to_json_at(v, depth + 1);
     match value {
         Value::Unit => Ok(serde_json::Value::Null),
         Value::Boolean(b) => Ok(serde_json::Value::Bool(*b)),

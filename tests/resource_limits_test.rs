@@ -113,3 +113,43 @@ fn a_git_dependencys_url_or_ref_that_reads_as_an_option_is_refused_before_git_ru
         }
     }
 }
+
+#[test]
+fn expressions_nested_without_brackets_past_the_limit_are_a_parse_error() {
+    let n = 100_000;
+    for src in [
+        format!(
+            "let a = true\nlet x = {}1{}\n",
+            "if a => ".repeat(n),
+            " else => 0".repeat(n)
+        ),
+        format!("let f = {}1\n", "(x) => ".repeat(n)),
+    ] {
+        let err = parse_err(src).expect("too deep");
+        assert!(err.contains("nested more than"), "{}", err);
+    }
+    // a real depth parses and runs, brackets to their own limit too
+    let src = format!(
+        "let a = true\n{}1{}\n",
+        "if a => ".repeat(500),
+        " else => 0".repeat(500)
+    );
+    assert_eq!(run(&src).expect("runs"), Value::Integer(1));
+    let src = format!("{}1{}\n", "(".repeat(1000), ")".repeat(1000));
+    assert_eq!(run(&src).expect("runs"), Value::Integer(1));
+}
+
+#[test]
+fn a_value_too_deep_for_toml_is_an_error_not_a_stack_overflow() {
+    let r = run(
+        "let mut v = #{ \"a\": 1 }\nfor i in range(20000) { v = #{ \"a\": v } }\ntoml.stringify(v)",
+    )
+    .expect("runs");
+    assert!(
+        matches!(&r, Value::Err(e) if e.to_string().contains("nests more than")),
+        "{:?}",
+        r.to_string().chars().take(200).collect::<String>()
+    );
+    let r = run("toml.stringify(#{ \"a\": #{ \"b\": [1, 2] } })").expect("runs");
+    assert!(matches!(r, Value::Ok(_)), "{}", r);
+}

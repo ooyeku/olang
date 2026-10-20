@@ -307,6 +307,12 @@ fn top_level_starts(input: &str) -> Vec<usize> {
 /// notebook's kernel on a file opened. No written program comes near.
 pub const MAX_NESTING: usize = 1000;
 
+/// The deepest one expression may sit inside others, brackets or none
+/// (`if a => if a => …`, a lambda returning a lambda …): the builder
+/// recurses once a level, as the bracket count above explains. Room for
+/// every bracket [`MAX_NESTING`] allows and the expressions between.
+pub const MAX_EXPR_DEPTH: usize = 4 * MAX_NESTING;
+
 /// Where `input`'s brackets first nest deeper than [`MAX_NESTING`] (a
 /// byte offset), or `None`: `(`, `[`, `{` counted in code and inside a
 /// template's `${…}`; strings, raw strings, a template's text and `//`
@@ -756,6 +762,8 @@ pub struct Parser {
     /// declarations-only shortcut applies only when all of them are top
     /// level (a nested one is a placement error the expander reports).
     meta_fn_count: std::cell::Cell<usize>,
+    /// How deep inside other expressions the one being built is.
+    expr_depth: std::cell::Cell<usize>,
 }
 
 /// Line starts of `input`: byte offsets, the first always 0.
@@ -800,6 +808,7 @@ impl Parser {
             saw_meta_fn: std::cell::Cell::new(false),
             saw_decorated: std::cell::Cell::new(false),
             meta_fn_count: std::cell::Cell::new(0),
+            expr_depth: std::cell::Cell::new(0),
             line_starts: std::cell::RefCell::new(Vec::new()),
             source: std::cell::RefCell::new(String::new()),
         }
@@ -1432,7 +1441,29 @@ impl Parser {
         })
     }
 
-    fn build_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+    /// An expression, at most [`MAX_EXPR_DEPTH`] inside others: what
+    /// nests without brackets (`if a => if a => …`, `(x) => (x) => …`)
+    /// escapes the bracket count, and the tree's builder recursed into
+    /// it until the stack overflowed and the process aborted.
+    fn build_expr(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        let depth = self.expr_depth.get() + 1;
+        if depth > MAX_EXPR_DEPTH {
+            let message = format!(
+                "an expression nested more than {} deep: bind the inner parts to names",
+                MAX_EXPR_DEPTH
+            );
+            return Err(match pairs.peek() {
+                Some(pair) => ParseError::invalid_syntax_at(message, PositionInfo::from_pair(&pair)),
+                None => ParseError::InvalidSyntax { message },
+            });
+        }
+        self.expr_depth.set(depth);
+        let built = self.build_expr_at(pairs);
+        self.expr_depth.set(depth - 1);
+        built
+    }
+
+    fn build_expr_at(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
         if let Some(pair) = pairs.next() {
             match pair.as_rule() {
                 Rule::binary_expr => self.build_binary_expr(pair.into_inner()),
