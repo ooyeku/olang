@@ -722,6 +722,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Importing an enum and its variants by name.** `use lib.util { Shape,
+  Circle, Dot }` raised "importing `Circle` would replace `Circle`": the
+  type's import had already bound its variants, and the clash check did
+  not recognise a variant as the import's own binding. It does now.
+  tests/import_clash_test.rs, and tests/compile_cache_test.rs passes
+  again.
+
 - **`olang check` kept checking `ods` calls after `use ods`.** A `use`
   of a stdlib module counted its name as the program's own binding, so
   every `ods.f(…)` and every Series method after it went unchecked (a

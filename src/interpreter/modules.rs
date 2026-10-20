@@ -1771,6 +1771,9 @@ fn same_binding(a: &Value, b: &Value) -> bool {
             std::sync::Arc::ptr_eq(x, y)
         }
         (Value::TypeInfo(x), Value::TypeInfo(y)) => std::sync::Arc::ptr_eq(x, y),
+        // An enum's variants, which importing its type binds too.
+        (Value::EnumConstructor(x), Value::EnumConstructor(y)) => std::sync::Arc::ptr_eq(x, y),
+        (Value::Enum(x), Value::Enum(y)) => std::sync::Arc::ptr_eq(x, y),
         (Value::Native(x), Value::Native(y)) => std::sync::Arc::ptr_eq(&x.0, &y.0),
         (Value::List(x), Value::List(y)) => std::sync::Arc::ptr_eq(x, y),
         (Value::Map(x), Value::Map(y)) => std::sync::Arc::ptr_eq(x, y),

@@ -195,3 +195,23 @@ fn an_item_named_as_its_module_stays_the_item() {
     assert_eq!(rc, 0, "{out}");
     assert_eq!(out.lines().collect::<Vec<_>>(), ["themed a", "themed b", "themed c"], "{out}");
 }
+
+#[test]
+fn an_enum_and_its_listed_variants_import_together() {
+    // Importing an enum type binds its variants; listing them as well is
+    // the same binding, not a clash.
+    let dir = project(&[
+        (
+            "lib/shape.ol",
+            "share type Shape = enum { Circle(Int), Dot }\n\
+             share fn area(s) = match s { Circle(r) => r * r, Dot => 0 }\n",
+        ),
+        (
+            "main.ol",
+            "use lib.shape { Shape, Circle, Dot, area }\nprintln(area(Circle(3)) + area(Dot))\n",
+        ),
+    ]);
+    let (out, rc) = tiers(&dir, "main.ol");
+    assert_eq!(rc, 0, "{out}");
+    assert_eq!(out.trim(), "9", "{out}");
+}
