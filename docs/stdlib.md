@@ -57,6 +57,7 @@ a file system, a network, or a browser.
 - [`testing` — assertions](#testing--assertions)
 - [`ods` — Series and Frames](#ods--series-and-frames)
 - [`stats` — statistical inference](#stats--statistical-inference)
+- [`learn` and `ml` — machine learning](#learn-and-ml--machine-learning)
 - [`plot` — charts as SVG text](#plot--charts-as-svg-text)
 
 ## Conventions
@@ -3160,6 +3161,106 @@ println(to_string(stats.norm.ppf(0.975, 0.0, 1.0)))   // 1.9599...
 **[The data stack](ods.md#stats--from-description-to-inference)**
 covers the module end to end, including a complete regression workflow
 and how to interpret p-values and `r2`.
+
+## `learn` and `ml` — machine learning
+
+`learn` trains, predicts and evaluates models over Frames: splits and
+folds, scalers, encoders and imputers, linear and logistic regression,
+trees, random forests, gradient boosting, k-nearest neighbours, naive
+Bayes, k-means, Gaussian mixtures and PCA, and the metrics to judge
+them. Every kernel is Rust (`olang-ods`), parallel past measured sizes,
+and pinned against scikit-learn in the test suite. `learn` functions
+take their data positionally and their options in one trailing map, and
+an unknown option is an error naming the options there are. **`use
+ml`** gives the same functions keyword arguments with defaults.
+
+A fit returns a Map: `fit.params.sqft`, `fit.r2`, `fit.coef` (a Frame of
+term, estimate, se, t, p, lo, hi) read like fields. Its `model` entry is
+what `learn.predict` uses, and its `spec` entry refits it, so
+`learn.cross_validate`, `learn.learning_curve` and `learn.grid_search`
+refit natively, in parallel over folds. Inputs are column names (`()`
+means every column but the target). A String column is one-hot encoded
+with the training levels, and the first level is dropped for models with an
+intercept. A Bool becomes 0/1. A row with a null (or NaN) in a used column
+is left out of a fit (`fit.dropped` counts them) and predicts null.
+Classification or regression follows the target's type (Float is
+regression; String, Bool and Int are classes), and `task` overrides it.
+Every random choice takes `seed`. Without one, a seed is drawn from the
+`random` stream and recorded in the spec. Results do not depend on the
+thread count.
+
+```olang
+use ml
+let n = 120
+let sqft = map(range(0, n), (i) => 600.0 + to_float((i * 37) % 100) * 20.0)
+let hood = map(range(0, n), (i) => if i % 3 == 0 => "east" else => "west")
+let price = map(range(0, n), (i) => 50.0 + 0.2 * sqft[i] + (if hood[i] == "east" => 30.0 else => 0.0) + to_float((i * 13) % 7))
+let homes = ods.frame([["sqft", sqft], ["hood", hood], ["price", price]])
+let s = ml.split(homes, test: 0.25, seed: 7)
+let fit = ml.linear(s.train, y: "price", x: ["sqft", "hood"])
+println(fit.params.sqft > 0.19)                       // true
+let pred = ml.predict(fit, s.test)
+println(ml.rmse(s.test["price"], pred) < 5.0)          // true
+println(ods.n_rows(ml.cross_validate(fit, homes, folds: 4)))   // 4
+```
+
+| Function | Description |
+|---|---|
+| `learn.split(f, opts)` | `#{ train, test }`; opts `test` (fraction or rows, 0.25), `stratify` (a column), `shuffle`, `seed` |
+| `learn.kfold(f \| n, k, opts)` / `learn.folds(f, k, opts)` | fold ids per row / the folds as `#{ fold, train, test }`; opts `shuffle`, `stratify`, `seed` |
+| `learn.time_splits(f \| n, n_splits, opts)` | rolling-origin `#{ train, test }` windows (sklearn's `TimeSeriesSplit`); opts `test_size`, `gap`, `max_train` |
+| `learn.scaler(f, cols, opts)`, `learn.one_hot(f, cols, opts)`, `learn.imputer(f, cols, opts)` | fitted transformers: `method` standard/minmax/robust; `drop_first`; `strategy` mean/median/most_frequent/constant and `fill` |
+| `learn.transform(model, f)` | apply a fitted scaler, encoder, imputer or PCA |
+| `learn.poly(f, cols, degree, opts)` | polynomial columns (`a^2`, `a*b`) appended; `interaction_only` |
+| `learn.linear(f, y, x, opts)` | OLS: `params`, `coef`, `r2`, `adj_r2`, `sigma`, `aic`, `bic`, `fitted`; opts `intercept`, `weights` |
+| `learn.ridge`, `learn.lasso`, `learn.elastic_net` `(f, y, x, opts)` | penalized regression (sklearn's objectives): `alpha`, `l1_ratio`, `intercept`, `max_iter`, `tol` |
+| `learn.logistic(f, y, x, opts)` | binary (IRLS) or multinomial (Newton) logistic regression with se, z, p and odds ratios; `C` or `penalty`, `class_weight` (`"balanced"` or a map), `weights` |
+| `learn.tree(f, y, x, opts)` | CART: `max_depth`, `min_samples_split`, `min_samples_leaf`, `criterion` (gini, entropy, squared_error), `max_features`, `task`, `seed` |
+| `learn.forest(f, y, x, opts)` | random forest, trees grown in parallel: the tree options plus `n_trees`, `bootstrap`, `max_samples`, `oob` (gives `oob_score`) |
+| `learn.boost(f, y, x, opts)` | histogram gradient boosting (squared loss, or log loss for a binary target): `n_trees`, `learning_rate`, `max_depth`, `max_leaf_nodes`, `min_samples_leaf`, `l2`, `subsample`, `max_bins`, `early_stopping`, `validation_fraction`, `n_iter_no_change` |
+| `learn.knn(f, y, x, opts)` / `learn.naive_bayes(f, y, x, opts)` | k-nearest neighbours (`k`, `weights_by`) / Gaussian naive Bayes (`var_smoothing`) |
+| `learn.kmeans(f, cols, k, opts)` / `learn.gmm(f, cols, k, opts)` | k-means++ (`n_init`, `max_iter`, `seed`): `labels`, `centers`, `inertia` / Gaussian mixture by EM: `means`, `weights`, `bic` |
+| `learn.pca(f, cols, opts)` | principal components (`n_components`, `scale`): `explained_variance`, `explained_variance_ratio`, `components` |
+| `learn.silhouette(f, cols, labels, opts)` | mean silhouette coefficient; `sample`, `seed` |
+| `learn.predict(model, f, opts)` | values, class labels or clusters; `kind`: `"prob"` (positive class, or a Frame for 3+ classes), `"probs"`, `"link"`, `"confidence"` / `"prediction"` (an OLS interval Frame at `level`) |
+| `learn.importance(model)`, `learn.summary(model, opts)`, `learn.params(model)` | importances (impurity, or abs(coef)) / the model as a Frame / estimates by term |
+| `learn.score(model, f, metric)` | one metric against the target column of `f` |
+| `learn.spec(kind, y, x, opts)` / `learn.fit(spec, f)` | how to fit, without fitting / fit a spec or refit a model |
+| `learn.cross_validate(spec, f, opts)` | per-fold scores (`folds`, `metrics`, `seed`); stratified for classifiers |
+| `learn.permutation_importance(model, f, opts)` | `metric`, `repeats`, `seed` |
+| `learn.partial_dependence(model, f, feature, opts)` | the mean prediction over a grid (`grid`, `points`, `sample`) |
+| `learn.learning_curve(spec, f, opts)` | train and test scores by training size (`sizes`, `folds`, `metric`) |
+| `learn.grid_search(spec, f, grid, opts)` | `#{ results, best, best_score, metric, model }` |
+| `learn.rmse`, `learn.mse`, `learn.mae`, `learn.mape`, `learn.r2` `(y, pred)` | regression metrics |
+| `learn.accuracy(y, pred)`, `learn.precision`, `learn.recall`, `learn.f1` `(y, pred, opts)` | label metrics; `average` binary/macro/micro/weighted, `pos` |
+| `learn.log_loss`, `learn.brier`, `learn.auc`, `learn.average_precision` `(y, p, opts)` | probability metrics; `pos` names the positive class |
+| `learn.roc`, `learn.pr_curve` `(y, p, opts)` | the curves as Frames |
+| `learn.confusion(y, pred)`, `learn.classification_report(y, pred)` | Frames |
+| `learn.at_threshold(y, p, opts)` / `learn.threshold_sweep(y, p, opts)` | counts and rates at one `threshold` / at every distinct one |
+| `learn.calibration(y, p, opts)` | predicted against observed per bin (`bins`, `strategy` uniform/quantile) |
+
+`use ml` mirrors each of these with keywords (`ml.forest(f, y: "churn",
+trees: 300, seed: 1)`; `trees`, `bins`, `validation` and `patience` are the
+short names of `n_trees`, `max_bins`, `validation_fraction` and
+`n_iter_no_change`). It adds three more: `prob(model, f)`, the class
+probabilities; `fit_transform(model_fn, data)`; and a
+`cross_validate(fit, data)` whose `fit` may also be a
+`(train) => model` function, called once per fold:
+
+| `ml` function | Purpose |
+|---|---|
+| `split`, `kfold`, `folds`, `time_splits` | splitting, with `test:`, `k:`, `stratify:`, `seed:` |
+| `scaler`, `one_hot`, `imputer`, `transform`, `fit_transform`, `poly` | preprocessing |
+| `linear`, `ridge`, `lasso`, `elastic_net`, `logistic` | linear models, `y:` and `x:` |
+| `tree`, `forest`, `boost`, `knn`, `naive_bayes` | trees, ensembles and the rest |
+| `kmeans`, `gmm`, `pca`, `silhouette` | unsupervised |
+| `predict`, `prob`, `importance`, `summary`, `params`, `score`, `spec`, `fit` | the model interface |
+| `cross_validate`, `permutation_importance`, `partial_dependence`, `learning_curve`, `grid_search` | evaluation |
+| `rmse`, `mse`, `mae`, `mape`, `r2`, `accuracy`, `precision`, `recall`, `f1`, `log_loss`, `brier`, `auc`, `average_precision`, `roc`, `pr_curve`, `confusion`, `classification_report`, `at_threshold`, `threshold_sweep`, `calibration` | metrics |
+
+**[The data stack](ods.md#learn--machine-learning)** walks through a
+classification workflow end to end, and gives the benchmarks against
+scikit-learn.
 
 ## `plot` — charts as SVG text
 

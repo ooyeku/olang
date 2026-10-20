@@ -1202,6 +1202,141 @@ random.seed(42)
 println(to_string(first == stats.norm.sample(5, 0.0, 1.0)))   // true
 ```
 
+## `learn` — machine learning
+
+`stats.lm` answers an inference question about one regression. `learn`
+is for predictive modelling: split the data, fit a model, predict
+held-out rows, and measure the result. The models are named values
+rather than coefficient vectors. A fit knows its inputs by name and
+encodes a new Frame the way it encoded the training one, so a String
+column, a new category or a reordered frame cannot shift a coefficient.
+The [reference](stdlib.md#learn-and-ml--machine-learning) lists every
+function. This section walks through one workflow.
+
+### A classification workflow
+
+Simulated churn, where the truth is known: churn rises with `tickets`,
+falls with `tenure`, and the `pro` plan churns less.
+
+```olang
+use ml
+random.seed(11)
+let n = 2000
+let tenure = stats.norm.sample(n, 24.0, 8.0)
+let tickets = stats.norm.sample(n, 2.0, 1.0)
+let plan = ods.series(map(ods.to_list(stats.norm.sample(n, 0.0, 1.0)), (z) => if z > 0.6 => "pro" else => "basic"))
+let eta = ods.to_list(tickets * 1.1 - tenure * 0.08 + 0.5)
+let pl = ods.to_list(plan)
+let u = ods.to_list(stats.norm.sample(n, 0.0, 1.0))
+let churn = ods.series(map(range(0, n), (i) => eta[i] - (if pl[i] == "pro" => 0.8 else => 0.0) + u[i] > 0.0))
+let f = ods.frame([["tenure", tenure], ["tickets", tickets], ["plan", plan], ["churn", churn]])
+
+let s = ml.split(f, test: 0.25, stratify: "churn", seed: 3)
+let lr = ml.logistic(s.train, y: "churn")
+println(lr.params.tickets > 0.0 && lr.params.plan_pro < 0.0)     // true
+let p = ml.prob(lr, s.test)
+println(ml.auc(s.test["churn"], p) > 0.8)                         // true
+
+let gb = ml.boost(s.train, y: "churn", trees: 200, seed: 3)
+println(ml.auc(s.test["churn"], ml.prob(gb, s.test)) > 0.8)       // true
+println(ods.n_rows(ml.cross_validate(lr, f, folds: 5)))           // 5
+```
+
+`lr.coef` is the full table (estimate, se, z, p, the interval and the
+odds ratio per term). `ml.importance(gb)` ranks the inputs.
+`ml.roc(y, p)`, `ml.pr_curve(y, p)` and `ml.calibration(y, p)` return
+Frames that plot directly, and `ml.at_threshold(y, p, threshold: 0.3)`
+gives the counts at an operating point.
+
+How the pieces fit:
+
+- **Fits are maps.** `fit.params`, `fit.coef`, `fit.r2`, `fit.importance`
+  and `fit.oob_score` are entries, so they read like fields without
+  method calls. `fit.model` is the native model, and `fit.spec` is how
+  to fit it again.
+- **Evaluation refits natively.** `ml.cross_validate(fit, f)`,
+  `ml.learning_curve` and `ml.grid_search` take a model or a spec
+  (`ml.spec("forest", y: "churn", options: #{ "n_trees": 200 })`) and
+  refit it fold by fold in Rust, in parallel. `ml.cross_validate` also
+  takes a `(train) => model` function, which runs once per fold.
+- **Seeds make results exact.** Each random step draws from its own
+  PCG stream of the seed: one per tree, per k-means start, per
+  permutation repeat. A seeded program gives the same models on one
+  thread or eighteen. Without a seed, one is drawn from the `random`
+  stream, so `random.seed` still pins a whole program.
+- **Preprocessing is fitted.** `ml.scaler(train)`, `ml.one_hot(train)`
+  and `ml.imputer(train)` learn from the training rows, and
+  `ml.transform(t, test)` applies what they learned. The models do
+  their own one-hot encoding, so the encoder is for code that needs the
+  dummy columns themselves.
+
+### What the models are
+
+- **Linear models.** OLS (the same estimates, standard errors and
+  intervals as statsmodels), ridge, and the lasso and elastic net by
+  coordinate descent on the Gram matrix (sklearn's objectives). Each
+  sweep is O(k²) whatever the row count. Logistic regression uses
+  Newton's method (IRLS) on the weighted Gram matrix, so it needs no
+  learning rate and converges in a handful of iterations. With more
+  than two classes it is multinomial.
+- **Trees.** CART with exact best splits (sklearn's splitter). Random
+  forests weight each tree's bootstrap and grow the trees in parallel.
+  Gradient boosting bins each feature once into at most 255 quantile
+  bins and grows each tree from histograms of gradient and Hessian
+  sums. A node's larger child takes its histogram by subtraction, as
+  in LightGBM and sklearn's `HistGradientBoosting`. Leaves split
+  best-first, bounded by `max_depth` and `max_leaf_nodes`.
+- **The rest.** Exact k-nearest neighbours: blocked distances, one
+  vectorized column at a time. Gaussian naive Bayes. k-means with
+  k-means++ seeding, where assignment is the parallel part. Gaussian
+  mixtures by EM, initialized from k-means. PCA by eigen-decomposition
+  of the covariance matrix.
+
+None of them needs BLAS at these shapes (many rows, tens of columns),
+so `learn` is pure Rust and ships in the browser build.
+
+### Against scikit-learn
+
+Fit times on 80,000 training rows (sklearn's `make_friedman1` with 10
+features for regression, `make_classification` with 20 for
+classification), and the test score on the other 20,000 rows: RMSE for
+regression, AUC for classification. These were measured on an Apple M5
+Pro (18 cores) against scikit-learn 1.9 with numpy 2. Each time is the
+best of three runs, one for the slowest.
+
+| Model | olang `learn` | scikit-learn | Score (olang / sklearn) |
+|---|---:|---:|---|
+| OLS, 10 features | 1.6 ms | 5.1 ms (`LinearRegression`) | 2.636 / 2.636 |
+| Lasso, alpha 0.01 | 1.5 ms | 1.5 ms | 2.637 / 2.637 |
+| Logistic, C = 1 | 17 ms | 19 ms (lbfgs) | 0.9618 / 0.9618 |
+| Decision tree, depth 8 (classification) | 188 ms | 673 ms | 0.9627 / 0.9623 |
+| Random forest, 100 trees (classification) | 525 ms | 1,416 ms (`n_jobs=-1`), 18,759 ms (one core) | 0.9757 / 0.9753 |
+| Random forest, 100 trees (regression) | 1,004 ms | 2,498 ms (`n_jobs=-1`) | 1.205 / 1.206 |
+| Boosting, 100 trees of depth 3 (regression) | 168 ms | 13,711 ms (`GradientBoosting`), 186 ms (`HistGradientBoosting`) | 1.259 / 1.307, 1.276 |
+| Boosting, 300 trees of 31 leaves (regression) | 459 ms | 2,360 ms (`HistGradientBoosting`) | 1.046 / 1.054 |
+| Boosting, 100 trees of depth 3 (classification) | 194 ms | 27,281 ms (`GradientBoosting`), 210 ms (`HistGradientBoosting`) | 0.9732 / 0.9740, 0.9736 |
+| Boosting, 300 trees of 31 leaves (classification) | 525 ms | 2,395 ms (`HistGradientBoosting`) | 0.9751 / 0.9753 |
+| k-nearest neighbours, k = 5 (fit and predict 20,000) | 349 ms | 235 ms | 0.9742 / 0.9742 |
+| k-means, k = 8, 10 starts (100,000 rows) | 599 ms | 902 ms | inertia 62,572 / 62,571 |
+| Gaussian naive Bayes | 10 ms | 8 ms | 0.9344 / 0.9344 |
+| PCA, 20 columns (100,000 rows) | 3.7 ms | 1.9 ms | the same components |
+
+At 20,000 rows the picture is the same. kNN is at parity there (17 ms
+against 17 ms), and the forest takes 64 ms against sklearn's 214 ms.
+
+- **Boosting.** It is the histogram method, so the fair comparison is
+  `HistGradientBoosting`. It is about as fast at 100 small trees and
+  4–5 times faster at 300 trees of 31 leaves. Against the exact
+  `GradientBoosting` it is 80–140 times faster, at equal or better
+  test scores.
+- **Forests and trees.** Trees grow in parallel, and each split's sort
+  is cheap, so forests are 2.5–3 times faster than sklearn on all
+  cores.
+- **Where sklearn wins.** kNN at 80,000 × 20,000 rows: sklearn's
+  brute-force search is a BLAS matrix product, and `learn` is pure
+  Rust with no BLAS, so it ships in the browser build. Naive Bayes and
+  PCA: both take a few milliseconds either way.
+
 ## `plot` — charts as SVG text
 
 A `plot` function returns a complete, standalone SVG document as a

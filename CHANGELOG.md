@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`learn` and `use ml`: machine learning over Frames.** A native
+  `learn` module (positional arguments, one trailing options map) and
+  its keyword layer `use ml`. It covers seeded and stratified splits,
+  k-fold and stratified k-fold, and rolling time splits. Preprocessing:
+  standard, min-max and robust scalers, one-hot encoding with the
+  training levels, imputers, polynomial features. Models: OLS with
+  se, t, p and confidence and prediction intervals; ridge, the lasso
+  and elastic net; binary and multinomial logistic regression with
+  inference, C and class weights; CART trees; random forests (parallel,
+  out-of-bag score); histogram gradient boosting (early stopping,
+  subsampling); k-nearest neighbours; Gaussian naive Bayes; k-means++;
+  Gaussian mixtures; PCA. Each fit is a Map with named terms (`fit.params.sqft`,
+  `fit.coef` as a Frame) carrying its native model and the spec that
+  refits it. Evaluation: `cross_validate`, `learning_curve` and
+  `grid_search` refit natively in parallel over folds;
+  `permutation_importance`, `partial_dependence`, and the sklearn
+  metrics (rmse to calibration, ROC and PR curves as Frames). Seeded
+  per-task PCG streams make results independent of thread count.
+  Values are pinned against scikit-learn in tests/learn_test.rs
+  (fixtures in tests/fixtures/learn), and the timings against
+  scikit-learn are in docs/ods.md.
 - **`gui`: continuous corners and analytic shadows.** A style's
   `corner: "continuous"` draws Apple's continuous corners (a
   superellipse reaching 1.528 × the radius along each edge, as deep at

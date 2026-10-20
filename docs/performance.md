@@ -271,6 +271,22 @@ The repository's notebooks under `olmd/`, `olang test` wall time
 | energy | 0.20 s | 0.21 s | 0.21 s | 0.21 s |
 | housing, workspace, experiment, sales | unchanged (0.01–0.16 s) | | | |
 
+`learn`'s models parallelize by work rather than by rows. The runtime's
+list threshold (10,000 elements under `olang run`) is about olang
+closures, so the model kernels ignore it and use their own measured
+thresholds:
+- trees of a forest: always, one stream per tree;
+- histogram building: 64,000 cells;
+- gradient and loss passes, and logistic regression's elementwise
+  steps: 32,768 rows, summed in fixed pieces so the result is the same
+  on any thread count;
+- a Gram matrix: 50,000 rows × columns;
+- k-means assignment: a million row × centre × feature operations;
+- kNN queries: 2 million query × training pairs.
+
+The comparison with scikit-learn is in
+[the data stack](ods.md#against-scikit-learn).
+
 ## What a program costs in memory
 
 A declared function costs its syntax tree and one table entry — a few

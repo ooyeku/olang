@@ -3532,6 +3532,204 @@ let parts = ods.split(f, 0.8)   // [train, test]"##],
             &[r##"ods.join_left(orders, users, "user_id", "id")"##],
         );
 
+        // --- learn ---
+        self.doc_ex("learn.split", "learn.split(f, opts?)", "Map", "learn", "seeded train/test split: #{ train, test } (opts: test, stratify, shuffle, seed)",
+            &[r##"learn.split(f, #{ "test": 0.25, "stratify": "churn", "seed": 7 })"##],
+        );
+        self.doc_ex("learn.kfold", "learn.kfold(f_or_n, k, opts?)", "Series", "learn", "fold ids 0..k for each row, shuffled and optionally stratified",
+            &[r##"learn.kfold(f, 5, #{ "seed": 1 })"##],
+        );
+        self.doc_ex("learn.folds", "learn.folds(f, k, opts?)", "List", "learn", "the k folds as #{ fold, train, test } Frames",
+            &[r##"for p in learn.folds(f, 5) { println(ods.n_rows(p.test)) }"##],
+        );
+        self.doc_ex("learn.time_splits", "learn.time_splits(f_or_n, n_splits, opts?)", "List", "learn", "rolling-origin splits for ordered data (opts: test_size, gap, max_train)",
+            &[r##"learn.time_splits(f, 4, #{ "gap": 7 })"##],
+        );
+        self.doc_ex("learn.scaler", "learn.scaler(f, cols, opts?)", "Map", "learn", "a fitted standard, minmax or robust scaler; apply with learn.transform",
+            &[r##"learn.transform(learn.scaler(train, ["x"]), test)"##],
+        );
+        self.doc_ex("learn.one_hot", "learn.one_hot(f, cols, opts?)", "Map", "learn", "a fitted one-hot encoder of String columns (training levels)",
+            &[r##"learn.transform(learn.one_hot(f, ["city"]), f)"##],
+        );
+        self.doc_ex("learn.imputer", "learn.imputer(f, cols, opts?)", "Map", "learn", "a fitted imputer: mean, median, most_frequent or constant",
+            &[r##"learn.imputer(f, ["age"], #{ "strategy": "median" })"##],
+        );
+        self.doc_ex("learn.transform", "learn.transform(model, f)", "Frame", "learn", "apply a fitted scaler, encoder, imputer or PCA to a Frame",
+            &[r##"learn.transform(scaler, test)"##],
+        );
+        self.doc_ex("learn.poly", "learn.poly(f, cols, degree, opts?)", "Frame", "learn", "polynomial and interaction columns appended (a^2, a*b)",
+            &[r##"learn.poly(f, ["a", "b"], 2)"##],
+        );
+        self.doc_ex("learn.linear", "learn.linear(f, y, x, opts?)", "Map", "learn", "OLS with named terms, se, t, p, intervals, r2, aic; x () means every other column",
+            &[r##"learn.linear(homes, "price", ["sqft", "hood"]).params.sqft"##],
+        );
+        self.doc_ex("learn.ridge", "learn.ridge(f, y, x, opts?)", "Map", "learn", "ridge regression (opts: alpha, intercept)",
+            &[r##"learn.ridge(f, "y", (), #{ "alpha": 2.0 })"##],
+        );
+        self.doc_ex("learn.lasso", "learn.lasso(f, y, x, opts?)", "Map", "learn", "the lasso by coordinate descent (opts: alpha)",
+            &[r##"learn.lasso(f, "y", (), #{ "alpha": 0.1 })"##],
+        );
+        self.doc_ex("learn.elastic_net", "learn.elastic_net(f, y, x, opts?)", "Map", "learn", "elastic net (opts: alpha, l1_ratio)",
+            &[r##"learn.elastic_net(f, "y", (), #{ "alpha": 0.1, "l1_ratio": 0.5 })"##],
+        );
+        self.doc_ex("learn.logistic", "learn.logistic(f, y, x, opts?)", "Map", "learn", "logistic regression by Newton/IRLS, binary or multinomial; se, z, p, odds ratios (opts: C, penalty, class_weight, weights)",
+            &[r##"learn.logistic(f, "churn", (), #{ "class_weight": "balanced" })"##],
+        );
+        self.doc_ex("learn.tree", "learn.tree(f, y, x, opts?)", "Map", "learn", "a CART decision tree (opts: max_depth, min_samples_leaf, criterion, max_features, task, seed)",
+            &[r##"learn.tree(f, "churn", (), #{ "max_depth": 4, "seed": 1 })"##],
+        );
+        self.doc_ex("learn.forest", "learn.forest(f, y, x, opts?)", "Map", "learn", "a random forest grown in parallel, with oob_score (opts: n_trees, max_features, max_depth, oob, seed)",
+            &[r##"learn.forest(f, "churn", (), #{ "n_trees": 300, "oob": true, "seed": 1 })"##],
+        );
+        self.doc_ex("learn.boost", "learn.boost(f, y, x, opts?)", "Map", "learn", "histogram gradient boosting, squared or log loss, early stopping (opts: n_trees, learning_rate, max_depth, max_leaf_nodes, subsample, early_stopping, seed)",
+            &[r##"learn.boost(f, "y", (), #{ "n_trees": 300, "early_stopping": true, "seed": 1 })"##],
+        );
+        self.doc_ex("learn.knn", "learn.knn(f, y, x, opts?)", "Map", "learn", "k-nearest neighbours (opts: k, weights_by)",
+            &[r##"learn.knn(f, "label", (), #{ "k": 7 })"##],
+        );
+        self.doc_ex("learn.naive_bayes", "learn.naive_bayes(f, y, x, opts?)", "Map", "learn", "Gaussian naive Bayes",
+            &[r##"learn.naive_bayes(f, "label", ())"##],
+        );
+        self.doc_ex("learn.kmeans", "learn.kmeans(f, cols, k, opts?)", "Map", "learn", "k-means with k-means++ starts: labels, centers, inertia",
+            &[r##"learn.kmeans(f, ["x", "y"], 4, #{ "seed": 1 }).centers"##],
+        );
+        self.doc_ex("learn.gmm", "learn.gmm(f, cols, k, opts?)", "Map", "learn", "a Gaussian mixture fitted by EM: means, weights, bic",
+            &[r##"learn.gmm(f, ["x", "y"], 3, #{ "seed": 1 }).bic"##],
+        );
+        self.doc_ex("learn.pca", "learn.pca(f, cols, opts?)", "Map", "learn", "principal components: explained variance, components; scores via learn.transform",
+            &[r##"learn.transform(learn.pca(f, (), #{ "n_components": 2 }), f)"##],
+        );
+        self.doc_ex("learn.silhouette", "learn.silhouette(f, cols, labels, opts?)", "Float", "learn", "mean silhouette coefficient of a labelling",
+            &[r##"learn.silhouette(f, ["x", "y"], km.labels)"##],
+        );
+        self.doc_ex("learn.predict", "learn.predict(model, f, opts?)", "Series", "learn", "predictions on a Frame; kind: prob, probs, link, confidence, prediction",
+            &[r##"learn.predict(fit, test, #{ "kind": "prob" })"##],
+        );
+        self.doc_ex("learn.importance", "learn.importance(model)", "Frame", "learn", "feature importances, largest first (impurity for trees, |coef| for linear models)",
+            &[r##"learn.importance(forest)"##],
+        );
+        self.doc_ex("learn.summary", "learn.summary(model, opts?)", "Frame", "learn", "the model as a table: coefficients with inference, importances, centres, components",
+            &[r##"learn.summary(fit, #{ "level": 0.9 })"##],
+        );
+        self.doc_ex("learn.params", "learn.params(model)", "Map", "learn", "the estimates by term name",
+            &[r##"learn.params(fit)"##],
+        );
+        self.doc_ex("learn.score", "learn.score(model, f, metric)", "Float", "learn", "one metric of a model on a Frame carrying the target",
+            &[r##"learn.score(fit, test, "rmse")"##],
+        );
+        self.doc_ex("learn.spec", "learn.spec(kind, y, x?, opts?)", "Map", "learn", "how to fit, without fitting; for cross_validate, learning_curve and grid_search",
+            &[r##"learn.spec("forest", "churn", (), #{ "n_trees": 100 })"##],
+        );
+        self.doc_ex("learn.fit", "learn.fit(spec, f)", "Map", "learn", "fit a spec (or refit a model's) on a Frame",
+            &[r##"learn.fit(spec, train)"##],
+        );
+        self.doc_ex("learn.cross_validate", "learn.cross_validate(spec, f, opts?)", "Frame", "learn", "per-fold scores, refit natively in parallel (opts: folds, metrics, seed)",
+            &[r##"learn.cross_validate(fit, f, #{ "folds": 5, "metrics": ["rmse", "r2"] })"##],
+        );
+        self.doc_ex("learn.permutation_importance", "learn.permutation_importance(model, f, opts?)", "Frame", "learn", "the drop in a metric when each input is shuffled",
+            &[r##"learn.permutation_importance(fit, test, #{ "metric": "auc" })"##],
+        );
+        self.doc_ex("learn.partial_dependence", "learn.partial_dependence(model, f, feature, opts?)", "Frame", "learn", "average prediction over a grid of one feature",
+            &[r##"learn.partial_dependence(fit, f, "age")"##],
+        );
+        self.doc_ex("learn.learning_curve", "learn.learning_curve(spec, f, opts?)", "Frame", "learn", "train and test scores as the training set grows",
+            &[r##"learn.learning_curve(fit, f, #{ "metric": "auc" })"##],
+        );
+        self.doc_ex("learn.grid_search", "learn.grid_search(spec, f, grid, opts?)", "Map", "learn", "cross-validated search over a grid of options; refits the best",
+            &[r##"learn.grid_search(spec, f, #{ "max_depth": [3, 5, 8] })"##],
+        );
+        self.doc_ex("learn.rmse", "learn.rmse(y, pred)", "Float", "learn", "root mean squared error",
+            &[r##"learn.rmse(test["price"], pred)"##],
+        );
+        self.doc_ex("learn.mse", "learn.mse(y, pred)", "Float", "learn", "mean squared error between targets and predictions",
+            &[r##"learn.mse(y, pred)"##],
+        );
+        self.doc_ex("learn.mae", "learn.mae(y, pred)", "Float", "learn", "mean absolute error between targets and predictions",
+            &[r##"learn.mae(y, pred)"##],
+        );
+        self.doc_ex("learn.mape", "learn.mape(y, pred)", "Float", "learn", "mean absolute percentage error, as a fraction",
+            &[r##"learn.mape(y, pred)"##],
+        );
+        self.doc_ex("learn.r2", "learn.r2(y, pred)", "Float", "learn", "coefficient of determination",
+            &[r##"learn.r2(y, pred)"##],
+        );
+        self.doc_ex("learn.accuracy", "learn.accuracy(y, pred)", "Float", "learn", "share of labels predicted right",
+            &[r##"learn.accuracy(y, pred)"##],
+        );
+        self.doc_ex("learn.precision", "learn.precision(y, pred, opts?)", "Float", "learn", "precision (average: binary, macro, micro, weighted)",
+            &[r##"learn.precision(y, pred, #{ "average": "macro" })"##],
+        );
+        self.doc_ex("learn.recall", "learn.recall(y, pred, opts?)", "Float", "learn", "recall: share of each actual class found (average, pos options)",
+            &[r##"learn.recall(y, pred)"##],
+        );
+        self.doc_ex("learn.f1", "learn.f1(y, pred, opts?)", "Float", "learn", "F1 score, the harmonic mean of precision and recall",
+            &[r##"learn.f1(y, pred)"##],
+        );
+        self.doc_ex("learn.log_loss", "learn.log_loss(y, p, opts?)", "Float", "learn", "log loss of a probability Series, or a Frame of class probabilities",
+            &[r##"learn.log_loss(y, p)"##],
+        );
+        self.doc_ex("learn.brier", "learn.brier(y, p, opts?)", "Float", "learn", "Brier score: mean squared gap between probability and outcome",
+            &[r##"learn.brier(y, p)"##],
+        );
+        self.doc_ex("learn.auc", "learn.auc(y, p, opts?)", "Float", "learn", "area under the ROC curve (ties count half)",
+            &[r##"learn.auc(y, p)"##],
+        );
+        self.doc_ex("learn.average_precision", "learn.average_precision(y, p, opts?)", "Float", "learn", "area under the precision-recall curve",
+            &[r##"learn.average_precision(y, p)"##],
+        );
+        self.doc_ex("learn.roc", "learn.roc(y, p, opts?)", "Frame", "learn", "the ROC curve: fpr, tpr, threshold",
+            &[r##"learn.roc(y, p)"##],
+        );
+        self.doc_ex("learn.pr_curve", "learn.pr_curve(y, p, opts?)", "Frame", "learn", "the precision-recall curve",
+            &[r##"learn.pr_curve(y, p)"##],
+        );
+        self.doc_ex("learn.confusion", "learn.confusion(y, pred)", "Frame", "learn", "confusion matrix: actual by predicted",
+            &[r##"learn.confusion(y, pred)"##],
+        );
+        self.doc_ex("learn.classification_report", "learn.classification_report(y, pred)", "Frame", "learn", "precision, recall, f1 and support per class",
+            &[r##"learn.classification_report(y, pred)"##],
+        );
+        self.doc_ex("learn.at_threshold", "learn.at_threshold(y, p, opts?)", "Map", "learn", "tp, fp, fn, tn, precision, recall, f1 at one threshold",
+            &[r##"learn.at_threshold(y, p, #{ "threshold": 0.3 })"##],
+        );
+        self.doc_ex("learn.threshold_sweep", "learn.threshold_sweep(y, p, opts?)", "Frame", "learn", "precision, recall, f1 at every distinct threshold",
+            &[r##"learn.threshold_sweep(y, p)"##],
+        );
+        self.doc_ex("learn.calibration", "learn.calibration(y, p, opts?)", "Frame", "learn", "calibration bins: predicted vs observed (opts: bins, strategy)",
+            &[r##"learn.calibration(y, p, #{ "bins": 10 })"##],
+        );
+        // --- ml (use ml) ---
+        self.doc_ex("ml.split", "ml.split(data, test: 0.25, stratify: (), seed: ())", "Map", "ml", "seeded train/test split with keywords: test, stratify, shuffle, seed",
+            &[r##"ml.split(f, test: 0.2, seed: 7)"##],
+        );
+        self.doc_ex("ml.linear", "ml.linear(data, y:, x: ())", "Map", "ml", "OLS with keywords y: and x:, returning named params, coef table, r2",
+            &[r##"ml.linear(f, y: "price", x: ["sqft", "hood"])"##],
+        );
+        self.doc_ex("ml.logistic", "ml.logistic(data, y:, x: (), C: ())", "Map", "ml", "logistic regression with keywords",
+            &[r##"ml.logistic(f, y: "churn", class_weight: "balanced")"##],
+        );
+        self.doc_ex("ml.forest", "ml.forest(data, y:, trees: 100, ...)", "Map", "ml", "random forest with keywords",
+            &[r##"ml.forest(f, y: "churn", trees: 300, seed: 1)"##],
+        );
+        self.doc_ex("ml.boost", "ml.boost(data, y:, trees: 100, learning_rate: 0.1, ...)", "Map", "ml", "gradient boosting with keywords",
+            &[r##"ml.boost(f, y: "y", trees: 500, early_stopping: true)"##],
+        );
+        self.doc_ex("ml.predict", "ml.predict(model, data, kind: \"auto\")", "Series", "ml", "predictions with keywords",
+            &[r##"ml.predict(fit, test, kind: "prob")"##],
+        );
+        self.doc_ex("ml.cross_validate", "ml.cross_validate(fit, data, folds: 5, metrics: ())", "Frame", "ml", "cross-validation of a model, a spec or a (train) => model function",
+            &[r##"ml.cross_validate((d) => ml.linear(d, y: "y"), f, folds: 5)"##],
+        );
+        self.doc_ex("ml.grid_search", "ml.grid_search(spec, data, grid, folds: 5, metric: ())", "Map", "ml", "grid search with keywords",
+            &[r##"ml.grid_search(ml.spec("tree", y: "y"), f, #{ "max_depth": [2, 4, 8] })"##],
+        );
+        self.doc_ex("ml.rmse", "ml.rmse(y, pred)", "Float", "ml", "root mean squared error",
+            &[r##"ml.rmse(test["y"], pred)"##],
+        );
+        self.doc_ex("ml.auc", "ml.auc(y, p, pos: ())", "Float", "ml", "area under the ROC curve of probabilities against a binary target",
+            &[r##"ml.auc(test["churn"], ml.prob(fit, test))"##],
+        );
+
         // --- stats ---
         self.doc_ex(
             "stats.describe",
