@@ -39,6 +39,9 @@ struct Pending {
     len: usize,
     depth: usize,
     dtype: DType,
+    /// The pending Series it was built from (`expr::force` keeps the
+    /// costly ones' columns when it evaluates this).
+    deps: Vec<Value>,
 }
 
 impl OdsSeries {
@@ -58,6 +61,7 @@ impl OdsSeries {
         len: usize,
         depth: usize,
         dtype: DType,
+        deps: Vec<Value>,
     ) -> Value {
         Value::Native(NativeHandle::new(OdsSeries {
             cell: std::sync::OnceLock::new(),
@@ -66,8 +70,15 @@ impl OdsSeries {
                 len,
                 depth,
                 dtype,
+                deps,
             }),
         }))
+    }
+
+    /// Keep a column computed for this pending Series elsewhere (in the
+    /// plan of an expression that read it).
+    pub fn keep(&self, s: Series) {
+        let _ = self.cell.set(s);
     }
 
     /// The pending expression, its length and depth — None once the
@@ -98,7 +109,7 @@ impl OdsSeries {
                 .pending
                 .as_ref()
                 .expect("an unmaterialized OdsSeries always carries its expression");
-            super::expr::eval_one(&p.expr, Some(p.len))
+            super::expr::force(&p.expr, p.len, &p.deps)
                 .expect("a deferred expression cannot raise")
         })
     }

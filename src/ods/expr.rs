@@ -218,8 +218,9 @@ const MAX_FUSED_DEPTH: usize = 16;
 /// One argument of an elementwise operation.
 pub enum Operand {
     /// Concrete: an engine expression, its column length (None for a
-    /// scalar), and its depth.
-    Eng(Arc<Expr>, Option<usize>, usize),
+    /// scalar), its depth, and the pending Series it came from (which a
+    /// forced evaluation may keep, see `force`).
+    Eng(Arc<Expr>, Option<usize>, usize, Vec<Value>),
     /// An Expr: resolved against a Frame later.
     Lazy(Arc<LExpr>),
 }
@@ -234,8 +235,8 @@ pub fn operand(v: &Value) -> Option<Operand> {
         && let Some(s) = h.0.as_any().downcast_ref::<OdsSeries>()
     {
         return Some(match s.pending() {
-            Some((e, len, depth)) => Operand::Eng(e.clone(), Some(len), depth),
-            None => Operand::Eng(Expr::col(s.series().clone()), Some(s.series().len()), 0),
+            Some((e, len, depth)) => Operand::Eng(e.clone(), Some(len), depth, vec![v.clone()]),
+            None => Operand::Eng(Expr::col(s.series().clone()), Some(s.series().len()), 0, vec![]),
         });
     }
     let s = match v {
@@ -244,13 +245,13 @@ pub fn operand(v: &Value) -> Option<Operand> {
         }
         _ => return None,
     };
-    Some(Operand::Eng(Expr::lit(s), None, 0))
+    Some(Operand::Eng(Expr::lit(s), None, 0, vec![]))
 }
 
 fn to_lexpr(o: Operand) -> Result<Arc<LExpr>, String> {
     Ok(match o {
         Operand::Lazy(e) => e,
-        Operand::Eng(e, _, _) => match e.as_ref() {
+        Operand::Eng(e, _, _, _) => match e.as_ref() {
             Expr::Lit(s) => Arc::new(LExpr::Lit(s.clone())),
             Expr::Col(s) => Arc::new(LExpr::Series(s.clone())),
             _ => Arc::new(LExpr::Series(eval_one(&e, None)?)),
@@ -296,7 +297,7 @@ fn reduce_expr(e: &Arc<Expr>, kind: Reduce) -> Result<Value, String> {
 /// `ods.dot`: the sum of the products in one fused pass, nulls skipped
 /// (a pending operand is never materialized).
 pub fn dot_fused(a: &Value, b: &Value) -> Option<Result<Value, String>> {
-    let (Some(Operand::Eng(x, Some(la), _)), Some(Operand::Eng(y, Some(lb), _))) = (operand(a), operand(b)) else {
+    let (Some(Operand::Eng(x, Some(la), _, _)), Some(Operand::Eng(y, Some(lb), _, _))) = (operand(a), operand(b)) else {
         return None;
     };
     if la != lb {
@@ -328,10 +329,12 @@ pub fn build(func: &str, op: Op, args: Vec<Operand>) -> Result<Value, String> {
     let mut depth = 0;
     let mut kids = Vec::with_capacity(args.len());
     let mut types = Vec::with_capacity(args.len());
+    let mut deps = Vec::new();
     for a in args {
-        let Operand::Eng(e, l, d) = a else {
+        let Operand::Eng(e, l, d, ds) = a else {
             unreachable!()
         };
+        deps.extend(ds);
         if let Some(l) = l {
             match len {
                 None => len = Some(l),
@@ -350,7 +353,7 @@ pub fn build(func: &str, op: Op, args: Vec<Operand>) -> Result<Value, String> {
     }
     fuse::op_dtype(op, &types).map_err(|e| prefix(func, e.to_string()))?;
     let expr = Expr::op(op, kids);
-    finish(func, expr, len, depth + 1)
+    finish(func, expr, len, depth + 1, deps)
 }
 
 fn prefix(func: &str, msg: String) -> String {
@@ -365,17 +368,51 @@ fn prefix(func: &str, msg: String) -> String {
 
 /// An engine expression as a value: lazy when it cannot raise and is
 /// shallow, evaluated now otherwise; a scalar with no column under it.
-pub fn finish(func: &str, expr: Arc<Expr>, len: Option<usize>, depth: usize) -> Result<Value, String> {
+/// `deps` are the pending Series the expression was built from.
+pub fn finish(
+    func: &str,
+    expr: Arc<Expr>,
+    len: Option<usize>,
+    depth: usize,
+    deps: Vec<Value>,
+) -> Result<Value, String> {
     let Some(len) = len else {
         let s = eval_one(&expr, Some(1)).map_err(|e| prefix(func, e))?;
         return Ok(scalar_to_value(s.scalar_at(0)));
     };
     if expr.fallible() || depth > MAX_FUSED_DEPTH {
-        let s = eval_one(&expr, Some(len)).map_err(|e| prefix(func, e))?;
+        let s = force(&expr, len, &deps).map_err(|e| prefix(func, e))?;
         return Ok(OdsSeries::into_value(s));
     }
     let dtype = expr.dtype().map_err(|e| e.to_string())?.unwrap_or(DType::F64);
-    Ok(OdsSeries::pending_value(expr, len, depth, dtype))
+    Ok(OdsSeries::pending_value(expr, len, depth, dtype, deps))
+}
+
+/// Below this cost a pending operand is recomputed by each expression
+/// that reads it; at or above it (a transcendental function, or a
+/// longer chain), the first evaluation that reads it keeps its column,
+/// so `let p = ods.sigmoid(z)` used twice computes the sigmoid once.
+const KEEP_COST: usize = 8;
+
+/// Evaluate `expr`, keeping the column of each costly pending operand
+/// (in the same plan: a shared subtree is computed once).
+pub fn force(expr: &Arc<Expr>, len: usize, deps: &[Value]) -> Result<Series, String> {
+    let keep: Vec<&OdsSeries> = deps
+        .iter()
+        .filter_map(|v| match v {
+            Value::Native(h) => h.0.as_any().downcast_ref::<OdsSeries>(),
+            _ => None,
+        })
+        .filter(|s| s.pending().is_some_and(|(e, _, _)| e.cost() >= KEEP_COST))
+        .collect();
+    let mut roots = vec![expr.clone()];
+    roots.extend(keep.iter().map(|s| s.pending().expect("checked").0.clone()));
+    let mut cols = eval_roots(&roots, Some(len))?.into_iter();
+    let out = cols.next().expect("the root");
+    for (s, col) in keep.into_iter().zip(cols) {
+        s.keep(col);
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------
@@ -527,7 +564,7 @@ fn root_of(r: &mut Resolver<'_>, v: &Value, what: &str) -> Result<Arc<Expr>, Str
         return Ok(Expr::col(series_from_list(items)?));
     }
     match operand(v) {
-        Some(Operand::Eng(e, len, _)) => {
+        Some(Operand::Eng(e, len, _, _)) => {
             let n = r.frame.n_rows();
             if let Some(l) = len
                 && l != n

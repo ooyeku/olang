@@ -461,6 +461,27 @@ impl Expr {
         }
     }
 
+    /// What computing a row costs, an arithmetic operation counting one
+    /// (a shared subtree counted once): the measure a caller weighs
+    /// recomputing against keeping a column.
+    pub fn cost(&self) -> usize {
+        fn walk(e: &Expr, seen: &mut std::collections::HashSet<usize>) -> usize {
+            match e {
+                Expr::Op(op, args) => {
+                    let mut c = op.cost();
+                    for a in args {
+                        if seen.insert(Arc::as_ptr(a) as usize) {
+                            c += walk(a, seen);
+                        }
+                    }
+                    c
+                }
+                _ => 0,
+            }
+        }
+        walk(self, &mut std::collections::HashSet::new())
+    }
+
     /// Evaluate one expression into a column of `len` rows (`len` is
     /// only consulted when the expression reads no column).
     pub fn eval(self: &Arc<Self>, len: usize, par: bool) -> Result<Series> {
@@ -933,7 +954,9 @@ impl Builder {
         ))
     }
 
-    /// A String-valued `where` or `coalesce`, row by row.
+    /// A String-valued `where` or `coalesce`, row by row into one text
+    /// buffer (the conditions evaluate as columns; a text operand is read
+    /// where it is).
     fn text_node(&mut self, op: Op, args: &[Arc<Expr>]) -> Result<Series> {
         let len = self
             .len
@@ -941,38 +964,64 @@ impl Builder {
             .ok_or_else(|| {
                 OdsError::InvalidArgument("a text expression needs a column".to_string())
             })?;
-        let mut cols = Vec::with_capacity(args.len());
+        enum T {
+            Col(Series),
+            Lit(Option<String>),
+        }
+        let mut vals = Vec::with_capacity(args.len());
         for a in args {
-            cols.push(match a.as_ref() {
-                Expr::Lit(s) => Series::from_str_options(vec![
-                    match s {
-                        Scalar::Str(t) => Some(t.clone()),
-                        _ => None,
-                    };
-                    len
-                ]),
-                _ => a.eval(len, false)?,
+            vals.push(match a.as_ref() {
+                Expr::Lit(Scalar::Str(t)) => T::Lit(Some(t.clone())),
+                Expr::Lit(_) => T::Lit(None),
+                _ => T::Col(a.eval(len, false)?),
             });
         }
-        let text = |s: &Series, i: usize| -> Option<String> {
-            match s.scalar_at(i) {
-                Scalar::Str(t) => Some(t),
-                _ => None,
+        fn text(t: &T, i: usize) -> Option<&str> {
+            match t {
+                T::Lit(x) => x.as_deref(),
+                T::Col(Series::Str { col, validity }) => {
+                    validity.as_ref().is_none_or(|v| v.get(i)).then(|| col.get(i))
+                }
+                T::Col(_) => None,
+            }
+        }
+        let pick = |i: usize| -> Option<&str> {
+            match op {
+                Op::Where => match &vals[0] {
+                    T::Col(Series::Bool { values, validity }) => {
+                        if !validity.as_ref().is_none_or(|v| v.get(i)) {
+                            None
+                        } else if values[i] {
+                            text(&vals[1], i)
+                        } else {
+                            text(&vals[2], i)
+                        }
+                    }
+                    T::Lit(_) | T::Col(_) => None,
+                },
+                _ => vals.iter().find_map(|t| text(t, i)),
             }
         };
-        let out: Vec<Option<String>> = match op {
-            Op::Where => (0..len)
-                .map(|i| match cols[0].scalar_at(i) {
-                    Scalar::Bool(true) => text(&cols[1], i),
-                    Scalar::Bool(false) => text(&cols[2], i),
-                    _ => None,
-                })
-                .collect(),
-            _ => (0..len)
-                .map(|i| cols.iter().find_map(|c| text(c, i)))
-                .collect(),
-        };
-        Ok(Series::from_str_options(out))
+        let mut buf = String::new();
+        let mut spans = Vec::with_capacity(len);
+        let mut valid = vec![true; len];
+        for (i, ok) in valid.iter_mut().enumerate() {
+            let start = buf.len() as u32;
+            match pick(i) {
+                Some(t) => buf.push_str(t),
+                None => *ok = false,
+            }
+            spans.push((start, buf.len() as u32 - start));
+        }
+        assert!(
+            u32::try_from(buf.len()).is_ok(),
+            "text column exceeds 4 GB of backing text"
+        );
+        let validity = (!valid.iter().all(|&b| b)).then(|| Bitmap::from_bools(&valid));
+        Ok(Series::Str {
+            col: StrCol::from_spans(Arc::from(buf), spans),
+            validity,
+        })
     }
 }
 

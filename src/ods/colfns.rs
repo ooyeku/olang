@@ -116,11 +116,11 @@ fn opnd(func: &str, args: &[Value], i: usize) -> Result<Operand, String> {
 }
 
 fn null() -> Operand {
-    Operand::Eng(Expr::lit(Scalar::Null), None, 0)
+    Operand::Eng(Expr::lit(Scalar::Null), None, 0, vec![])
 }
 
 fn lit(s: Scalar) -> Operand {
-    Operand::Eng(Expr::lit(s), None, 0)
+    Operand::Eng(Expr::lit(s), None, 0, vec![])
 }
 
 fn want_int(func: &str, what: &str, v: &Value) -> Result<i64, String> {
@@ -331,7 +331,7 @@ pub fn elementwise(func: &str, args: &[Value]) -> Option<Result<Value, String>> 
                 }
                 match acc {
                     Operand::Lazy(e) => Ok(expr_value(e)),
-                    Operand::Eng(x, len, d) => expr::finish(func, x, len, d),
+                    Operand::Eng(x, len, d, deps) => expr::finish(func, x, len, d, deps),
                 }
             }
             "all_of" | "any_of" => {
@@ -356,7 +356,7 @@ pub fn elementwise(func: &str, args: &[Value]) -> Option<Result<Value, String>> 
                 }
                 match acc {
                     Operand::Lazy(e) => Ok(expr_value(e)),
-                    Operand::Eng(x, len, d) => expr::finish(func, x, len, d),
+                    Operand::Eng(x, len, d, deps) => expr::finish(func, x, len, d, deps),
                 }
             }
             _ => Err(String::new()),
