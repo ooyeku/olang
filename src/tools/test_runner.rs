@@ -333,6 +333,7 @@ pub fn run_paths(
             interpreter.set_capabilities(crate::caps::CapTable {
                 app: d,
                 deps: Vec::new(),
+                fixed: false,
             });
         }
 

@@ -1265,3 +1265,59 @@ fn an_attenuated_dependency_cannot_widen_its_grant_through_eval_or_load_module()
     );
     let _ = std::fs::remove_dir_all(&ws);
 }
+
+/// A grant narrowed under a session (a notebook kernel's pure
+/// evaluation, the REPL's `:run`) holds on the bytecode tier exactly as
+/// on the interpreter: a function compiled under the wider grant keeps
+/// no verdict from it — neither a pre-granted call nor a folded
+/// `caps.allowed`.
+#[test]
+fn a_narrowed_grant_holds_for_code_compiled_under_a_wider_one() {
+    use olang::caps::{CapTable, Caps};
+    use olang::{Interpreter, Parser, Value};
+    fn eval(i: &mut Interpreter, src: &str) -> Result<Value, String> {
+        let program = Parser::new().parse(src).map_err(|e| e.to_string())?;
+        i.eval_program(program).map_err(|e| e.to_string())
+    }
+    let wide = || CapTable {
+        app: Caps::default(),
+        deps: Vec::new(),
+        fixed: false,
+    };
+    let none = || {
+        Some(std::sync::Arc::new(CapTable {
+            app: Caps::none(),
+            deps: Vec::new(),
+            fixed: false,
+        }))
+    };
+    for tier in [false, true] {
+        let mut i = Interpreter::new();
+        if tier {
+            i.enable_bytecode_tier(1, false);
+        }
+        i.set_capabilities(wide());
+        eval(
+            &mut i,
+            "fn peek() = is_ok(fs.read_file(\"/etc/hosts\"))\n\
+             fn can() = caps.allowed(\"fs\")\n\
+             let a = peek()\nlet b = peek()\nlet c = can()\nlet d = can()\n",
+        )
+        .unwrap();
+        assert_eq!(eval(&mut i, "peek()").unwrap(), Value::Boolean(true));
+        assert_eq!(eval(&mut i, "can()").unwrap(), Value::Boolean(true));
+        let was = i.replace_capabilities(none());
+        let read = eval(&mut i, "peek()");
+        assert!(
+            read.as_ref().is_err_and(|e| e.contains("capability 'fs' denied")),
+            "tier {tier}: a narrowed grant must deny a call compiled under the wider one: {read:?}"
+        );
+        assert_eq!(
+            eval(&mut i, "can()").unwrap(),
+            Value::Boolean(false),
+            "tier {tier}: caps.allowed answers the grant in force"
+        );
+        i.restore_capabilities(was);
+        assert_eq!(eval(&mut i, "peek()").unwrap(), Value::Boolean(true));
+    }
+}

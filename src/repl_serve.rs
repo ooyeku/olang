@@ -673,16 +673,19 @@ impl Session {
                     Err(_) => crate::caps::CapTable {
                         app: crate::caps::Caps::none(),
                         deps: Vec::new(),
+                        fixed: false,
                     },
                 }),
                 None => restrict.map(|r| crate::caps::CapTable {
                     app: r,
                     deps: Vec::new(),
+                    fixed: false,
                 }),
             },
             Err(_) => Some(crate::caps::CapTable {
                 app: crate::caps::Caps::none(),
                 deps: Vec::new(),
+                fixed: false,
             }),
         }
     }
@@ -1139,6 +1142,7 @@ impl Session {
                 .replace_capabilities(Some(Arc::new(crate::caps::CapTable {
                     app: crate::caps::Caps::none(),
                     deps: Vec::new(),
+                    fixed: false,
                 })));
         let value = self.cmd.interpreter.eval_program(program);
         self.cmd.interpreter.replace_capabilities(kept);
@@ -1898,6 +1902,7 @@ impl Session {
                     crate::caps::CapTable {
                         app: crate::caps::Caps::none(),
                         deps: Vec::new(),
+                        fixed: false,
                     },
                 ))))
             } else {

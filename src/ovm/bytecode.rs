@@ -2211,8 +2211,12 @@ impl BytecodeVm {
         };
         self.caps = caps.clone();
         // The compiler folds capability queries and pre-grants gated
-        // calls against this same table, so it must see every change.
-        self.compiler.static_caps = caps;
+        // calls against this same table, so it must see every change —
+        // and only a table fixed for the run (`CapTable::fixed`): code
+        // compiled under a session's table (a notebook kernel's, the
+        // REPL's) runs on under the next one, narrower perhaps, and a
+        // verdict baked into it would outlive the grant that gave it.
+        self.compiler.static_caps = caps.filter(|t| t.fixed);
         // The bridge caches its state; a changed table means the next
         // dispatch rebuilds one that carries it.
         if changed {
@@ -9879,11 +9883,14 @@ impl BytecodeVm {
         let interpreter = self.builtin_interpreter.as_mut().expect("just ensured");
         interpreter.seed_bridge_caps(caps, trace, attributed_to);
         interpreter.set_call_depth_base(depth);
-        if pregranted {
+        if pregranted && self.caps.as_ref().is_some_and(|t| t.fixed) {
             // The compiler proved the static manifest grants this call
             // for this provenance; the gate's per-call table walk is
             // skipped. --trace-caps recording and the argument-dependent
             // fs sub-gate still run — only the yes/no lookup is elided.
+            // Only while the table in force is a run's fixed one: code
+            // compiled under it and run under another (a cached entry, a
+            // session's narrower grant) meets the gate.
             interpreter.set_cap_pregranted();
         }
 

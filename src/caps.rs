@@ -301,6 +301,13 @@ pub struct CapTable {
     pub app: Caps,
     /// (package dir, package name, resolved caps) — longest dir match wins.
     pub deps: Vec<(PathBuf, String, Caps)>,
+    /// The table is the run's for its whole length (`olang run`): never
+    /// narrowed or replaced, so the bytecode tier may decide its verdicts
+    /// as it compiles (pre-granted calls, `caps.allowed` folded). A
+    /// table a session puts in force for a while (a notebook kernel, the
+    /// REPL's `:run`, a pure evaluation) is not: code compiled under it
+    /// may run under another, and asks the gate at every call.
+    pub fixed: bool,
 }
 
 impl CapTable {
@@ -331,7 +338,11 @@ impl CapTable {
         }
         // Longest path first, so nested package dirs attribute correctly.
         deps.sort_by_key(|d| std::cmp::Reverse(d.0.as_os_str().len()));
-        Ok(CapTable { app, deps })
+        Ok(CapTable {
+            app,
+            deps,
+            fixed: false,
+        })
     }
 
     /// The capability set that governs code defined in `def_file`

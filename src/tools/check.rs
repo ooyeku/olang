@@ -501,6 +501,7 @@ fn run_rules(rules_path: &Path, files: &[PathBuf]) -> usize {
             env: false,
         },
         deps: Vec::new(),
+        fixed: false,
     });
     let abs = std::fs::canonicalize(rules_path).unwrap_or_else(|_| rules_path.to_path_buf());
     interp.set_current_file(&abs);
@@ -4772,6 +4773,7 @@ pub fn run_tier_as(paths: &[PathBuf], json: bool) -> i32 {
             crate::caps::CapTable {
                 app: none,
                 deps: Vec::new(),
+                fixed: false,
             },
         )));
         let loaded = interpreter.eval_program(Program {

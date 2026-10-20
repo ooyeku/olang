@@ -4171,7 +4171,7 @@ fn execute_program(
                                     entry.2 = entry.2.intersect(d);
                                 }
                             }
-                            interpreter.set_capabilities(table);
+                            interpreter.set_capabilities_for_run(table);
                             caps_installed = true;
                         }
                         Err(e) => return Err(anyhow::anyhow!("{}", e)),
@@ -4185,9 +4185,10 @@ fn execute_program(
     // A --deny/OLANG_DENY restriction applies to every run, package or
     // not — a bare script gets a deny-only table.
     if !caps_installed && let Some(d) = deny {
-        interpreter.set_capabilities(olang::caps::CapTable {
+        interpreter.set_capabilities_for_run(olang::caps::CapTable {
             app: d,
             deps: Vec::new(),
+            fixed: false,
         });
     }
 

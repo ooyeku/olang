@@ -1911,6 +1911,7 @@ impl Repl {
                                     crate::caps::CapTable {
                                         app: crate::caps::Caps::default(),
                                         deps: Vec::new(),
+                                        fixed: false,
                                     },
                                 );
                                 table.app = table.app.intersect(grant);

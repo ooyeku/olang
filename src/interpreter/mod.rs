@@ -6094,6 +6094,14 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         was
     }
 
+    /// Put the run's own table in force, for its whole length (`olang
+    /// run`): never narrowed after, so the bytecode tier may decide its
+    /// verdicts as it compiles (`CapTable::fixed`).
+    pub fn set_capabilities_for_run(&mut self, mut table: crate::caps::CapTable) {
+        table.fixed = true;
+        self.set_capabilities(table);
+    }
+
     pub fn set_capabilities(&mut self, table: crate::caps::CapTable) {
         self.caps = Some(std::sync::Arc::new(table));
         // Both tiers enforce, through the same gate. `BuiltinFunctions::
