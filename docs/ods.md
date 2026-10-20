@@ -125,8 +125,8 @@ element), and `ods.tile(s, k)` repeats the whole column end to end:
 
 ```olang
 println(to_string(ods.to_list(ods.arange(0, 10, 3))))                 // [0, 3, 6, 9]
-println(to_string(ods.to_list(ods.repeat(ods.series(["a", "b"]), 2))))   // ["a", "a", "b", "b"]
-println(to_string(ods.to_list(ods.tile(ods.series([1, 2]), 2))))        // [1, 2, 1, 2]
+println(to_string(ods.series(["a", "b"]).repeat(2).to_list()))          // ["a", "a", "b", "b"]
+println(to_string(ods.series([1, 2]).tile(2).to_list()))               // [1, 2, 1, 2]
 println(to_string(ods.to_list(ods.full(2, "x"))))                       // ["x", "x"]
 ```
 
@@ -217,10 +217,10 @@ hundreds), and `ods.clip`, below.
 
 ```olang
 let t = ods.linspace(0.0, 6.28, 8)
-let wave = ods.sin(t) * 2.0 + 1.0                    // one fused pass
-println(to_string(ods.mean(wave)))
-let p = ods.sigmoid(ods.series([-2.0, 0.0, 2.0]))
-println(to_string(ods.to_list(ods.round(p, 3))))     // [0.119, 0.5, 0.881]
+let wave = t.sin() * 2.0 + 1.0                       // one fused pass
+println(to_string(wave.mean()))
+let p = ods.sigmoid(ods.series([-2.0, 0.0, 2.0]))    // the module form is the same call
+println(to_string(p.round(digits: 3).to_list()))     // [0.119, 0.5, 0.881]
 ```
 
 Two details matter in data work. A function whose answer is a whole
@@ -277,24 +277,27 @@ holding, and the default (`()` if omitted) fills the rest:
 
 ```olang
 let temp = ods.series([10.0, 18.0, 25.0, ()])
-let kind = ods.select([temp < 15.5, temp > 22.0], ["heating", "cooling"], "neither")
+let kind = ods.select([temp < 15.5, temp > 22.0], ["heating", "cooling"], default: "neither")
 println(to_string(ods.to_list(kind)))     // ["heating", "neither", "cooling", "neither"]
 println(to_string(ods.to_list(ods.where(temp < 15.5, 15.5 - temp, 0.0))))   // [5.5, 0.0, 0.0, ()]
 ```
 
 `ods.clip(s, lo, hi)` limits a column to a range; either bound may be
-`()`, which leaves that side open, and `hi` may be left out (`ods.clip(s,
-0.0)` is `max(s, 0)`). `ods.between(s, lo, hi)` is the mask of values in
-the range, both ends included; a fourth argument, `"left"`, `"right"` or
-`"neither"`, says which ends are. A `()` bound is open there too, and so
+`()` or left out, which leaves that side open (`s.clip(lo: 0.0)` is
+`max(s, 0)`, `s.clip(hi: 1.0)` caps it). `ods.between(s, lo, hi)` is the
+mask of values in the range, both ends included; `closed`, one of
+`"both"` (the default), `"left"`, `"right"` or `"neither"`, says which
+ends are. A `()` bound is open there too, and so
 the range may come as one value — a `[lo, hi]` pair, or `()` for no
 range at all, which is what a `ui.brush` answers before anything is
 dragged:
 
 ```olang
 let s = ods.series([-3.0, 0.5, 8.0])
-println(to_string(ods.to_list(ods.clip(s, 0.0, 5.0))))         // [0.0, 0.5, 5.0]
-println(to_string(ods.to_list(ods.between(s, 0.0, ()))))        // [false, true, true]
+println(to_string(s.clip(0.0, 5.0).to_list()))                  // [0.0, 0.5, 5.0]
+println(to_string(s.clip(hi: 1.0).to_list()))                   // [-3.0, 0.5, 1.0]
+println(to_string(s.between(0.0, ()).to_list()))                // [false, true, true]
+println(to_string(s.between([0.0, 8.0], closed: "left").to_list()))   // [false, true, false]
 println(to_string(ods.to_list(ods.between(s, ()))))             // [true, true, true]
 ```
 
@@ -346,16 +349,17 @@ becomes Float). Or the fill can be a method, named by a String:
 | `"linear"` | the straight line between the valid values either side, by position (`ods.interpolate(s)`) |
 | `"mean"`, `"median"` | the column's mean or median |
 
-`"ffill"`, `"bfill"` and `"linear"` take a third argument, the most
-nulls in a row one value fills. Leading nulls have nothing before them
+`"ffill"`, `"bfill"` and `"linear"` take a third argument, `limit`, the
+most nulls in a row one value fills. Leading nulls have nothing before them
 to carry forward and stay null, as trailing ones do for `"bfill"` and
 `"linear"`; the interpolation is right over a run of several gaps, not
 just one:
 
 ```olang
 let gaps = ods.series([1.0, (), (), 4.0, ()])
-println(to_string(ods.to_list(ods.fill_null(gaps, "ffill"))))    // [1.0, 1.0, 1.0, 4.0, 4.0]
-println(to_string(ods.to_list(ods.interpolate(gaps))))           // [1.0, 2.0, 3.0, 4.0, ()]
+println(to_string(gaps.fill_null("ffill").to_list()))            // [1.0, 1.0, 1.0, 4.0, 4.0]
+println(to_string(gaps.fill_null("ffill", limit: 1).to_list()))  // [1.0, 1.0, (), 4.0, 4.0]
+println(to_string(gaps.interpolate().to_list()))                 // [1.0, 2.0, 3.0, 4.0, ()]
 println(to_string(ods.to_list(ods.coalesce(gaps, ods.series([9.0, 8.0, 7.0, 6.0, 5.0])))))
 ```
 
@@ -398,8 +402,9 @@ none.
 
 ```olang
 let s = ods.series([4.0, 1.0, 7.0, (), 7.0])
-println(`${ods.argmax(s)} ${ods.argmin(s)} ${ods.count(s)}`)          // 2 1 4
-println(`${ods.mean(s > 2.0)} ${ods.any(s > 6.0)} ${ods.mode(s)}`)   // 0.75 true 7.0
+println(`${s.argmax()} ${s.argmin()} ${s.count()}`)                   // 2 1 4
+println(`${(s > 2.0).mean()} ${(s > 6.0).any()} ${s.mode()}`)        // 0.75 true 7.0
+println(`${(s > 2.0).sum()} ${ods.mean(s > 2.0)}`)                   // 3 0.75
 ```
 
 A reduction of an expression does not build the expression's column:
@@ -421,8 +426,9 @@ running product, the shape `ods.cumsum` has:
 ```olang
 let s = ods.series([4, 1, 7, 1, 9])
 println(to_string(ods.to_list(ods.shift(s, 1))))       // [(), 4, 1, 7, 1]
-println(to_string(ods.to_list(ods.diff(s))))           // [(), -3, 6, -6, 8]
-println(to_string(ods.to_list(ods.cumprod(ods.series([1, 2, 3])))))   // [1, 2, 6]
+println(to_string(s.diff().to_list()))                 // [(), -3, 6, -6, 8]
+println(to_string(s.diff(lag: 2).to_list()))           // [(), (), 3, 0, 2]
+println(to_string(ods.series([1, 2, 3]).cumprod().to_list()))   // [1, 2, 6]
 ```
 
 `ods.cum_max(s)` and `ods.cum_min(s)` are the running maximum and
@@ -565,19 +571,21 @@ println(to_string(ods.to_list(ods.take(names, order))))
 // scores ascending: [carol, bob, alice]
 ```
 
-Both take a second argument, `descending`: `ods.sort(s, true)` puts the
-largest first, and `ods.argsort(s, true)` gives the order that does,
+Both take a second argument, `descending`: `s.sort(descending: true)`
+puts the largest first, and `s.argsort(descending: true)` gives the
+order that does,
 ties keeping their row order. Nulls go last either way.
 `ods.searchsorted(s, v)` is where `v` would go in a sorted column to keep
 it sorted — the first position whose value is not less than `v`, or
-with `"right"` as a third argument, greater than `v`; `v` may be a list
+with `side: "right"`, greater than `v`; `v` may be a list
 or a Series, giving a position for each:
 
 ```olang
 let edges = ods.series([0.0, 10.0, 20.0, 50.0])
-println(to_string(ods.searchsorted(edges, 15.0)))               // 2
+println(to_string(edges.searchsorted(15.0)))                    // 2
+println(to_string(edges.searchsorted(20.0, side: "right")))     // 3
 println(to_string(ods.searchsorted(edges, [5.0, 60.0])))        // [1, 4]
-println(to_string(ods.to_list(ods.sort(ods.series([3, 9, 1]), true))))   // [9, 3, 1]
+println(to_string(ods.series([3, 9, 1]).sort(descending: true).to_list()))   // [9, 3, 1]
 ```
 
 ### Recoding values
@@ -593,7 +601,7 @@ million rows of a dozen spellings costs a dozen lookups:
 let raw = ods.series(["N", "s", "S", "x"])
 let names = #{ "N": "North", "s": "South", "S": "South" }
 println(to_string(ods.to_list(ods.recode(raw, names))))            // ["North", "South", "South", "x"]
-println(to_string(ods.to_list(ods.recode(raw, names, "Other"))))   // ["North", "South", "South", "Other"]
+println(to_string(raw.recode(names, default: "Other").to_list()))  // ["North", "South", "South", "Other"]
 println(to_string(ods.to_list(ods.recode(ods.series([1, 2]), [[1, 10]]))))   // [10, 2]
 ```
 
@@ -959,16 +967,20 @@ copy would be a trap. Use `ods.with_column`.
 
 ### Combining conditions
 
-A real filter has more than one condition, and `&&` cannot serve: the
-language compiles it to a conditional jump so that it can short-circuit,
-which has no elementwise reading over a column. `ods.all_of` and
-`ods.any_of` take a *list* of masks, because a filter usually has three
-or four conditions rather than two, and `ods.not` inverts one:
+A real filter has more than one condition. `&`, `|` and `^` combine
+masks elementwise (and, or, exclusive or), and `!` inverts one; `&&`
+cannot serve, because the language compiles it to a conditional jump so
+that it can short-circuit, which has no elementwise reading over a
+column. As in Rust and pandas, `&` and `|` bind tighter than a
+comparison, so each comparison they join goes in parentheses. `ods.all_of` and `ods.any_of` take
+a *list* of masks, for a filter built up as data:
 
 ```olang
 let f = ods.read_csv("quality,kwh\nok,5.0\nfail,7.0\nok,-1.0\nok,9.0\n")
-let usable = f[ods.all_of([ods.eq(f["quality"], "ok"), f["kwh"] > 0.0])]
-println(to_string(ods.to_list(usable["kwh"])))               // [5.0, 9.0]
+let usable = f[ods.eq(f.quality, "ok") & (f.kwh > 0.0)]
+println(to_string(usable.kwh.to_list()))                     // [5.0, 9.0]
+println(to_string(f[!(f.kwh > 0.0) | (f.kwh > 8.0)].kwh.to_list()))   // [-1.0, 9.0]
+println(to_string(ods.all_of([ods.ne(f.quality, "fail"), f.kwh > 0.0]).sum()))   // 2
 ```
 
 `ods.eq` and `ods.ne` are equality as a *mask*, taking either another
@@ -978,8 +990,9 @@ everywhere else in the language.
 
 Combination is three-valued, the same logic SQL uses and the same that
 `filter` already assumes when it treats a null as false. One `false`
-settles an `all_of` even when another entry is unknown, and one `true`
-settles an `any_of`; otherwise an unknown propagates. A comparison
+settles an `&` (or an `all_of`) even when the other side is unknown,
+and one `true` settles an `|` (or an `any_of`); otherwise an unknown
+propagates. A comparison
 against a null is itself unknown, which is why the mask above does not
 need a null check in front of it.
 
@@ -988,14 +1001,14 @@ Two more masks name the conditions a chain of `eq`s spells badly.
 list or a Series; a number matches either kind of number, so `2` finds
 `2.0`), and `ods.contains(s, text)` is true where a String element
 contains `text`, case-sensitive — a column of any other type is an
-error naming it. Both compose with `all_of`, `filter` and a Frame's
-mask subscript like any comparison:
+error naming it. Both compose with `&`, `filter` and a Frame's mask
+subscript like any comparison:
 
 ```olang
 let f = ods.read_csv("region,product,amount\neast,gadget,120.0\nnorth,gadget,300.0\nwest,widget,150.0\nwest,gadgetry,90.0\n")
-let picked = f[ods.all_of([ods.is_in(f["region"], ["east", "west"]),
-                           f["amount"] >= 100.0,
-                           ods.contains(f["product"], "gad")])]
+let picked = f[f.region.is_in(["east", "west"])
+               & (f.amount >= 100.0)
+               & f["product"].contains("gad")]
 println(to_string(ods.to_list(picked["amount"])))            // [120.0]
 ```
 
@@ -1286,11 +1299,12 @@ println(priced)
 ```
 
 Everything that takes a column takes an expression: the operators
-(`col("a") * 2 + col("b")`), every function of the sections above
-(`ods.exp(col("x"))`, `ods.fill_null(col("x"), "ffill")`,
-`ods.rank(col("x"))`, `ods.shift(col("x"), 1)`), and each of those
-gives an expression back. A reduction gives a value every row shares:
-`col("x") - ods.mean(col("x"))` centres a column. `ods.lit(v)` is a
+(`col("a") * 2 + col("b")`, `-col("x")`, `col("a") > 0 & col("b") < 5`),
+every function of the sections above, as a method or by the module
+(`col("x").exp()`, `col("x").fill_null("ffill")`, `ods.rank(col("x"))`,
+`col("x").shift(1)`), and each of those gives an expression back. A
+reduction gives a value every row shares: `col("x") - col("x").mean()`
+centres a column. `ods.lit(v)` is a
 value as an expression, and a plain Series where an expression goes is a
 literal column of the Frame's length.
 
@@ -1319,9 +1333,9 @@ let homes = ods.frame([
     ["hood", ["north", "south", "north", "south", "north"]],
     ["built", [1990, 2004, (), (), 2000]],
 ])
-let filled = homes |> ods.with({
-    built: ods.fill_null(col("built"), ods.round(ods.over(ods.mean(col("built")), "hood"))),
-    share: col("built") / ods.over(ods.sum(col("built")), "hood"),
+let filled = homes.with({
+    built: col("built").fill_null(col("built").mean().over("hood").round()),
+    share: col("built") / ods.over(ods.sum(col("built")), "hood"),   // the module form
 })
 println(to_string(ods.to_list(filled["built"])))   // [1990.0, 2004.0, 1995.0, 2004.0, 2000.0]
 ```
@@ -1823,12 +1837,17 @@ println(to_string(len(sales)))                                // 4 rows
   takes; `olang check` reports it before the run.
 - **Methods.** A Series has the column functions and borrows `stats`
   and `plot` (`s.describe()`, `s.hist()`); a Frame has the table verbs;
-  a `learn` fit has the model's (`fit.predict(test)`). An `impl` for
+  a `learn` fit has the model's (`fit.predict(test)`); an `ods.col`
+  expression has a Series' column functions (`col("x").mean().over("g")`,
+  `col("y").fill_null("ffill")`). An `impl` for
   `Series` or `Frame` wins over the module's function of the same name.
   The editor completes a value's methods after `s.`.
 - **Fields.** `f.amount` is `f["amount"]`. A method's name always means
   the method: a column called `sum` is `f["sum"]`.
 - **`len`** counts a Series' values and a Frame's rows.
+- **Operators.** `-s` negates a column, `!m` inverts a mask, and `m1 &
+  m2`, `m1 | m2`, `m1 ^ m2` combine masks with nulls as unknowns — on
+  Series and on expressions alike.
 - **`@`** is the dot product of two Series (and a Matrix's product).
 
 That last point deserves a demonstration, because Monte Carlo methods

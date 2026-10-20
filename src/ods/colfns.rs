@@ -234,17 +234,21 @@ pub fn elementwise(func: &str, args: &[Value]) -> Option<Result<Value, String>> 
             }
             "between" => {
                 want_n(func, args, 2, 4)?;
-                let (lo, hi, closed_at) = match (args.len(), &args[1]) {
+                // `s.between([lo, hi], closed: "left")` leaves `hi` a gap.
+                let ranged = args.len() == 2
+                    || (matches!(args.get(2), Some(Value::Unit))
+                        && matches!(&args[1], Value::Unit | Value::List(_) | Value::Tuple(_)));
+                let (lo, hi, closed_at) = match (if ranged { 2 } else { args.len() }, &args[1]) {
                     // A range as one value: a [lo, hi] pair (`ui.brush`'s),
                     // or () for no range at all.
-                    (2, Value::Unit) => (null(), null(), None),
+                    (2, Value::Unit) => (null(), null(), args.get(3)),
                     (2, Value::List(p)) | (2, Value::Tuple(p)) if p.len() == 2 => {
                         let side = |v: &Value| {
                             operand(v).ok_or_else(|| {
                                 format!("ods.between: a bound is a number, got {}", v.type_name())
                             })
                         };
-                        (side(&p[0])?, side(&p[1])?, None)
+                        (side(&p[0])?, side(&p[1])?, args.get(3))
                     }
                     (2, other) => {
                         return Err(format!(

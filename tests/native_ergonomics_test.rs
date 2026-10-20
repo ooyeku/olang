@@ -258,3 +258,79 @@ println(col(f))
         "3\n3\n3\nSeries[Float; 3] [1.0, 2.0, 3.0]\nSeries[Int; 3] [1, 2, 3]\nErr(\"'head' is a method of a Frame (ods.head): call it, `value.head(…)`\")\nErr(\"a Frame has no column 'missing' — its columns are price, sum\")\nSeries[Float; 3] [1.0, 2.0, 3.0]",
     );
 }
+
+// ── D0 × D1: the column functions through names, methods and operators ──
+
+const COLUMNS: &str = r#"
+use ods { col }
+let s = ods.series([1.0, (), -3.0, 4.0])
+let f = ods.frame([["g", ["a", "a", "b", "b"]], ["x", [1.0, 2.0, 4.0, 8.0]], ["y", [2.0, (), 1.0, 3.0]]])
+fn chain(v) = v.fill_null("ffill").clip(lo: 0.0, hi: 3.0).round(digits: 0).to_list()
+fn masks(v) = {
+    let pos = v > 0.0
+    let small = v < 3.0
+    [(pos & small).to_list(), (pos | small).to_list(), (pos ^ small).to_list(), (!pos).to_list(), (pos & small).sum()]
+}
+fn neg(v) = (-v).to_list()
+fn dotted(a, b) = a @ b
+fn grouped(t) = t.with({
+    m: col("x").mean().over("g"),
+    d: t.x - t.x.mean(),
+    z: col("y").fill_null(0.0).sqrt().alias("ignored"),
+    w: ods.where(col("x") > 2.0, col("x"), -col("x")),
+})
+println(chain(s))
+println(masks(s))
+println(neg(s))
+println(dotted(f.x, f.x))
+println(len(s), len(f))
+let g = grouped(f)
+println(g.m.to_list())
+println(g.d.to_list())
+println(g.z.to_list())
+println(g.w.to_list())
+println(s.between([0.0, 4.0], closed: "left").to_list())
+println(f.x.diff(lag: 2).to_list(), f.x.pct_change().to_list())
+println(f.x.sort(descending: true).to_list(), f.x.argsort(descending: true).to_list())
+println(f.x.searchsorted(4.0, side: "right"))
+println(ods.arange(0, 6, step: 2).to_list(), ods.full(2, value: 7).to_list())
+println(f.x.repeat(times: 2).len(), f.x.tile(n: 2).len())
+println(ods.select([f.x > 4.0, f.x > 1.0], ["big", "mid"], default: "small").to_list())
+println(f.y.recode([[2.0, 20.0]], default: 0.0).to_list())
+println(f.y.interpolate().to_list(), s.coalesce(0.0).to_list())
+println(f.x.cumprod().to_list(), f.x.argmax(), f.g.mode(), (f.x > 0.0).all(), f.y.count())
+println(f.filter(col("x") > 1.5).n_rows(), f.select(["g", col("x") * 2.0]).columns())
+println(f.sort_by(col("x"), descending: true).x.to_list())
+println(attempt(() => s.clip(low: 0.0)))
+"#;
+
+const COLUMNS_OUT: &str = r#"
+[1.0, 1.0, 0.0, 3.0]
+[[true, (), false, false], [true, (), true, true], [false, (), true, true], [false, (), true, false], 1]
+[-1.0, (), 3.0, -4.0]
+85.0
+4 4
+[1.5, 1.5, 6.0, 6.0]
+[-2.75, -1.75, 0.25, 4.25]
+[1.4142135623730951, 0.0, 1.0, 1.7320508075688772]
+[-1.0, -2.0, 4.0, 8.0]
+[true, (), false, false]
+[(), (), 3.0, 6.0] [(), 1.0, 1.0, 1.0]
+[8.0, 4.0, 2.0, 1.0] [3, 2, 1, 0]
+3
+[0, 2, 4] [7, 7]
+8 8
+["small", "mid", "mid", "big"]
+[20.0, (), 0.0, 0.0]
+[2.0, 1.5, 1.0, 3.0] [1.0, 0.0, -3.0, 4.0]
+[1.0, 2.0, 8.0, 64.0] 3 a true 3
+3 ["g", "x"]
+[8.0, 4.0, 2.0, 1.0]
+Err("ods.clip: no parameter named 'low' — it takes s, lo, hi")
+"#;
+
+#[test]
+fn column_functions_take_names_methods_and_operators_on_every_tier() {
+    agrees(COLUMNS, COLUMNS_OUT.trim_start());
+    promoted(COLUMNS, &["chain", "masks", "neg", "dotted", "grouped"]);
+}

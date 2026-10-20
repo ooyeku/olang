@@ -802,7 +802,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("ods.get", "s:S, i"),
     ("ods.null_count", "s:S"),
     ("ods.is_null", "s:S -> S"),
-    ("ods.fill_null", "s:S, value -> S"),
+    ("ods.fill_null", "s:S, value, limit? -> S"),
     ("ods.sum", "s:S"),
     ("ods.mean", "s:S"),
     ("ods.var", "s:S"),
@@ -824,8 +824,8 @@ pub const TABLE: &[(&str, &str)] = &[
     ("ods.cumsum", "s:S -> S"),
     ("ods.map", "s:S, fn -> S"),
     ("ods.dot", "a:S, b"),
-    ("ods.sort", "s:S -> S"),
-    ("ods.argsort", "s:S -> S"),
+    ("ods.sort", "s:S, descending = false -> S"),
+    ("ods.argsort", "s:S, descending = false -> S"),
     ("ods.take", "x:SF, idx -> ="),
     ("ods.filter", "x:SF, mask -> ="),
     ("ods.eq", "a:S, b -> S"),
@@ -835,6 +835,66 @@ pub const TABLE: &[(&str, &str)] = &[
     ("ods.not", "mask:S -> S"),
     ("ods.is_in", "s:S, values -> S"),
     ("ods.contains", "s:S, text -> S"),
+    // ── ods: column math, nulls and conditionals (D1) ──
+    ("ods.abs", "s:S -> S"),
+    ("ods.exp", "s:S -> S"),
+    ("ods.exp2", "s:S -> S"),
+    ("ods.expm1", "s:S -> S"),
+    ("ods.ln", "s:S -> S"),
+    ("ods.ln1p", "s:S -> S"),
+    ("ods.log2", "s:S -> S"),
+    ("ods.log10", "s:S -> S"),
+    ("ods.sqrt", "s:S -> S"),
+    ("ods.cbrt", "s:S -> S"),
+    ("ods.sin", "s:S -> S"),
+    ("ods.cos", "s:S -> S"),
+    ("ods.tan", "s:S -> S"),
+    ("ods.asin", "s:S -> S"),
+    ("ods.acos", "s:S -> S"),
+    ("ods.atan", "s:S -> S"),
+    ("ods.sinh", "s:S -> S"),
+    ("ods.cosh", "s:S -> S"),
+    ("ods.tanh", "s:S -> S"),
+    ("ods.sigmoid", "s:S -> S"),
+    ("ods.logit", "s:S -> S"),
+    ("ods.sign", "s:S -> S"),
+    ("ods.floor", "s:S -> S"),
+    ("ods.ceil", "s:S -> S"),
+    ("ods.trunc", "s:S -> S"),
+    ("ods.pow", "s:S, exponent -> S"),
+    ("ods.round", "s:S, digits = 0 -> S"),
+    ("ods.clip", "s:S, lo?, hi? -> S"),
+    ("ods.between", "s:S, lo, hi?, closed = \"both\" -> S"),
+    ("ods.where", "mask:S, a, b -> S"),
+    ("ods.coalesce", "a:S, b? -> S"),
+    ("ods.not_null", "s:S -> S"),
+    ("ods.is_nan", "s:S -> S"),
+    ("ods.interpolate", "s:S, limit? -> S"),
+    ("ods.recode", "s:S, mapping, default? -> S"),
+    ("ods.full", "n, value -> S"),
+    ("ods.ones", "n -> S"),
+    ("ods.full_like", "s:S, value -> S"),
+    ("ods.arange", "start, stop?, step = 1 -> S"),
+    ("ods.repeat", "s:S, times -> S"),
+    ("ods.tile", "s:S, n -> S"),
+    ("ods.argmax", "s:S"),
+    ("ods.argmin", "s:S"),
+    ("ods.diff", "s:S, lag = 1 -> S"),
+    ("ods.pct_change", "s:S, lag = 1 -> S"),
+    ("ods.cumprod", "s:S -> S"),
+    ("ods.mode", "s:S"),
+    ("ods.any", "s:S"),
+    ("ods.all", "s:S"),
+    ("ods.searchsorted", "s:S, v, side = \"left\""),
+    ("ods.count", "s:S"),
+    ("ods.first", "s:S"),
+    ("ods.last", "s:S"),
+    // ── ods: column expressions (D1) ──
+    ("ods.col", "name -> S"),
+    ("ods.lit", "v -> S"),
+    ("ods.alias", "e:S, name -> S"),
+    ("ods.over", "agg:S, keys -> S"),
+    ("ods.with", "f:F, exprs -> F"),
     // ── ods: Frame ──
     ("ods.frame", "columns -> F"),
     ("ods.read_csv", "text -> F"),
@@ -864,7 +924,10 @@ pub const TABLE: &[(&str, &str)] = &[
     ("ods.column", "f:F, name -> S"),
     ("ods.n_rows", "f:F"),
     ("ods.n_cols", "f:F"),
-    ("ods.select", "f:F, names -> F"),
+    // A Frame's columns (`f.select(["a", col("b") * 2.0])`), or — given
+    // a list of masks — np.select's first-true-wins (`ods.select([m1, m2],
+    // [v1, v2], default: v)`): one name, told apart by its first argument.
+    ("ods.select", "x:F, items, default? -> ="),
     ("ods.with_column", "f:F, name, values -> F"),
     ("ods.sort_by", "f:F, by, descending = false -> F"),
     ("ods.head", "x:SF, n = 10 -> ="),
@@ -1064,5 +1127,20 @@ mod tests {
         assert!(plan("ods.rolling", 1, &["agg"]).unwrap_err().contains("missing argument 'window'"));
         assert!(plan("ods.rolling", 2, &["windw"]).unwrap_err().contains("s, window, agg"));
         assert!(plan("len", 0, &["x"]).unwrap_err().contains("by position"));
+    }
+
+    #[test]
+    fn column_functions_are_methods_of_columns_and_expressions() {
+        for (ty, m) in [("Series", "clip"), ("Series", "fill_null"), ("Expr", "over"),
+            ("Expr", "alias"), ("Expr", "sqrt"), ("Frame", "with"), ("Frame", "select")]
+        {
+            assert!(method_target("ods", ty, m).is_some(), "{ty}.{m}");
+        }
+        // a Frame takes no column math, and a column no Frame verb
+        assert!(method_target("ods", "Frame", "sqrt").is_none());
+        assert!(method_target("ods", "Series", "with").is_none());
+        // ods.clip(s, lo: 0.0): hi left open
+        assert_eq!(plan("ods.clip", 1, &["lo"]).unwrap(), vec![Slot::Arg(0), Slot::Arg(1)]);
+        assert_eq!(returns("ods.col", None), Some("Series"));
     }
 }

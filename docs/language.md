@@ -930,6 +930,8 @@ let w = ods.series([0.5, 0.25, 0.25])
 let x = ods.series([4.0, 8.0, 12.0])
 println(to_string(w @ x))          // 7.0
 println(to_string(w @ x * 2.0))    // 14.0: `@` binds like `*`
+println(to_string((-x).to_list()))                     // [-4.0, -8.0, -12.0]
+println(to_string(((x > 5.0) & !(x > 10.0)).to_list()))  // [false, true, false]
 ```
 
 ### String and list `+`

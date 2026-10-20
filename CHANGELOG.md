@@ -73,6 +73,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   (random plans with nulls against a row-by-row reference, parallel
   against sequential, reductions against the eager kernels),
   olang-ods/tests/column.rs, tests/ods_expr_test.rs.
+- **The column functions by name, as methods and through operators.**
+  Every D1 column function and expression builder registers its
+  parameters and receivers, so they take names and are methods of a
+  Series and of an `ods.col` expression: `s.clip(lo: 0.0)`,
+  `s.fill_null("ffill", limit: 1)`, `s.round(digits: 2)`,
+  `s.between([0.0, 1.0], closed: "left")`, `s.sort(descending: true)`,
+  `s.diff(lag: 2)`, `edges.searchsorted(v, side: "right")`,
+  `raw.recode(names, default: "Other")`, `ods.arange(0, 10, step: 2)`,
+  `ods.select(masks, values, default: v)`, `col("x").mean().over("g")`,
+  `col("y").fill_null(0.0).alias("y0")`, `f.with({ … })`. `-s`, `!m`,
+  `m1 & m2`, `m1 | m2` and `m1 ^ m2` work on Series and expressions on
+  every tier; `ods.select` is one name for a Frame's columns and
+  np.select's conditional, told apart by its first argument. `olang
+  check` and the editor know them (a misspelled method or name is
+  reported, `s.` completes them). tests/native_ergonomics_test.rs (D0
+  and D1 together, three tiers); ods.md uses `&` for combined masks and
+  the method and keyword forms beside the module ones.
 - **`ods`: more grouped aggregations, text `+`, and `head`/`tail` of a
   Series.** `group_by` (and so `pivot`) takes `median`, `std`, `var`,
   `first`, `last` and `n_unique` beside count/sum/mean/min/max — native,
