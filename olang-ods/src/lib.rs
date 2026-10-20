@@ -36,9 +36,16 @@ pub mod column;
 #[cfg(feature = "stats")]
 pub mod learn;
 pub mod gg;
+pub mod numfmt;
 pub mod plot;
 #[cfg(feature = "stats")]
+pub mod random;
+#[cfg(feature = "stats")]
+pub mod robust;
+#[cfg(feature = "stats")]
 pub mod stats;
+#[cfg(feature = "stats")]
+pub mod ts;
 pub mod temporal;
 pub mod text;
 

@@ -572,11 +572,21 @@ println(to_string(first == ods.to_list(ods.sample(f, 3)["id"])))    // true
 ```
 
 That stream is shared by the whole process, which is what makes one
-`random.seed` govern every sampling verb. It also means a seed does
-**not** make sampling reproducible inside `par_map` or `par for`:
+`random.seed` govern every sampling verb. It also means the global seed
+does **not** make sampling reproducible inside `par_map` or `par for`:
 several threads drawing from one stream interleave in whatever order
-they reach it. Sample before the fan-out, or seed nothing and treat
-the result as genuinely random.
+they reach it. For that, give the sample its own seed or generator:
+`ods.sample(f, n, seed: 7)`, or `ods.sample(f, n, rng: g)` with a
+[`random.rng`](stdlib.md#generators-randomrng) — and inside `par_map`
+one child of `g.spawn(k)` per task.
+
+```olang
+let f = ods.frame({ id: ods.arange(0, 100) })
+println(ods.sample(f, 5, seed: 3)["id"].to_list() == ods.sample(f, 5, seed: 3)["id"].to_list())   // true
+let kids = random.rng(9).spawn(3)
+let picks = par_map(kids, (g) => f.sample(2, rng: g)["id"].to_list())
+println(len(picks))   // 3
+```
 
 ### Order and selection
 
@@ -648,7 +658,19 @@ group), `contains(text, case: true)`, `starts_with`, `ends_with`,
 `len_chars`, `substring(start, end)`, `split_n(sep, i)` (piece `i`, a
 negative `i` counting from the end), `pad_start(width, fill)` and
 `pad_end` are the `str` functions of the same names over a column, and
-agree with them cell for cell. `to_int()` and `to_float()` read numbers,
+agree with them cell for cell. `format(spec)` of a number column is the
+column as text by a number spec (`str.fmt`'s: `".2f"`, `",.0f"`,
+`".1%"`, `"$,.0f"`), one pass into one buffer — the table and label
+form of a measure:
+
+```olang
+let share = ods.series([0.1234, 0.5, ()])
+println(to_string(share.format(".1%").to_list()))   // ["12.3%", "50.0%", ()]
+println(to_string(ods.series([1234567.0]).format("$,.0f").to_list()))   // ["$1,234,567"]
+```
+
+The same spec reads in prose and on a scalar: `str.fmt(x, ".2f")`,
+`str.pct(x)`, `str.money(x)`. `to_int()` and `to_float()` read numbers,
 and a cell that is not one is null, as `cast` makes it. What only narrows
 a cell — a trim, a substring, a piece — writes no text at all: its cells
 point into the column's own buffer.
@@ -1824,6 +1846,22 @@ println(`p = ${t.p_value}`)
 println(`means: ${t.mean_a} vs ${t.mean_b}`)
 ```
 
+The map also carries the effect, not only its test: `diff` (the
+difference of the means), its standard error `se`, `ci` (its interval
+at `level`, 0.95 by default) and `d`, Cohen's d — the difference in
+pooled standard deviations, the effect size power is planned in.
+`alternative: "greater"` or `"less"` makes the test, and the interval,
+one-sided.
+
+```olang
+let a = ods.series([5.1, 4.9, 6.2, 5.7, 5.5, 4.8, 5.9, 6.1])
+let b = ods.series([4.2, 4.8, 4.5, 5.0, 4.4, 4.1, 4.9])
+let t = stats.t_test(a, b)
+let (lo, hi) = t.ci
+println(lo < t.diff && t.diff < hi)   // true
+println(t.d > 1.0)                    // true
+```
+
 Read the p-value for what it is: the probability of a gap at least
 this large *if the groups truly had the same mean*. It is not the
 probability the hypothesis is true, and crossing an arbitrary
@@ -1840,6 +1878,45 @@ let expected = ods.series([20.0, 20.0, 20.0])
 let r = stats.chi2_test(observed, expected)
 println(to_string(r.p_value > 0.05))   // consistent with uniform
 ```
+
+### Power: how big must a study be?
+
+`stats.power_t(effect, n)` is the chance a two-sample t-test at `alpha`
+(0.05) detects a true standardized difference `effect` (Cohen's d) with
+`n` in each group — computed from the noncentral t distribution, as
+statsmodels does, not simulated. `stats.n_for_power(effect, power:
+0.8)` inverts it. `kind: "one-sample"` (or `"paired"`) and
+`alternative:` cover the other designs, `ratio:` unequal groups:
+
+```olang
+println(stats.power_t(0.5, 64) |> str.fmt(".3f"))          // 0.801
+println(math.ceil(stats.n_for_power(0.5, power: 0.8)))     // 64
+println(math.ceil(stats.n_for_power(0.2, power: 0.9)))     // 527
+```
+
+### Without the normal assumption
+
+`stats.mann_whitney(a, b)` compares two samples by rank (its `effect`
+is the chance a value of `a` beats one of `b`), and `stats.spearman(a,
+b)` correlates ranks. For spread and outliers, `stats.mad(s)` is a
+standard deviation the outliers cannot drag (the median absolute
+deviation, scaled to a normal's sd), `stats.iqr(s)` the interquartile
+range, `stats.tukey_fences(s, k: 1.5)` the pair of bounds outside which
+a value is an outlier, and `stats.zscore(s, robust: true)` scores by
+median and MAD:
+
+```olang
+let x = ods.series([10.0, 11.0, 9.5, 10.5, 10.2, 9.8, 48.0])
+let (lo, hi) = stats.tukey_fences(x)
+println(x.filter(x > hi).to_list() |> to_string)          // [48.0]
+println(stats.zscore(x, robust: true).max() > 10.0)        // true
+```
+
+`stats.bootstrap(s, stat)` resamples natively — `"mean"`, `"median"`,
+`"std"`, a quantile — and gives the percentile interval; a list of two
+samples compares them (`compare: "diff"` or `"ratio"`). Each resample
+draws from a stream of its own seed, so the answer does not depend on
+the thread count.
 
 ### Regression — a complete workflow
 
@@ -1885,9 +1962,11 @@ predictors.
 
 ### Distributions
 
-Four families — `stats.norm` (parameters `mu, sigma`), `stats.t`
-(`df`), `stats.chi2` (`df`), `stats.f` (`d1, d2`) — each with four
-functions:
+Nine families — `stats.norm` (parameters `mean, std`), `stats.t`
+(`df`), `stats.chi2` (`df`), `stats.f` (`d1, d2`), `stats.lognorm`
+(`mu, sigma`), `stats.beta` (`a, b`), `stats.gamma` (`shape, scale`),
+and the counts `stats.poisson` (`lam`) and `stats.binom` (`trials, p`)
+— each with four functions (a count's density is its `pmf`):
 
 | Function | Question it answers |
 |---|---|
@@ -1904,7 +1983,18 @@ println(to_string(stats.norm.ppf(0.975, 0.0, 1.0)))    // 1.9599...
 println(to_string(stats.norm.cdf(1.96, 0.0, 1.0)))     // ≈ 0.975
 ```
 
-Sampling draws from the `random` module's seeded stream, so
+Each takes a Series as well as a number, and answers a Series — one
+native pass over the column, in parallel when it is large:
+
+```olang
+let z = ods.series([-1.96, 0.0, 1.96])
+println(stats.norm.cdf(z).to_list() |> map((p) => str.fmt(p, ".3f")))   // ["0.025", "0.500", "0.975"]
+println(stats.poisson.pmf(ods.series([0, 1, 2]), 2.0).sum() |> str.fmt(".4f"))  // 0.6767
+```
+
+`sample(n, …, rng: g)` draws from a generator of its own
+([`random.rng`](stdlib.md#generators-randomrng)), or an Int seed.
+Without one, sampling draws from the `random` module's seeded stream, so
 `random.seed(k)` makes a simulation exactly reproducible — the
 property that keeps randomized code testable:
 
@@ -1913,6 +2003,29 @@ random.seed(42)
 let first = stats.norm.sample(5, 0.0, 1.0)
 random.seed(42)
 println(to_string(first == stats.norm.sample(5, 0.0, 1.0)))   // true
+```
+
+### Time series: `stats.ts`
+
+`stats.ts` reads a column as a series in time: `acf` (by FFT, with
+Bartlett's interval) and `pacf`, `decompose` into trend, season and
+residual, Holt-Winters smoothing fitted by Nelder–Mead, and the
+seasonal naive forecast to beat. Give `time:` (a Date or Datetime
+column) and the answers carry it: a forecast is a Frame of the times
+that follow.
+
+```olang
+let days = ods.arange(0, 84)
+let start = ods.series(["2026-01-05"]).to_date()[0]
+let stamp = ods.series(map(range(0, 84), (k) => unwrap(dates.add_days(start, k))))
+let weekly = (days % 7).cast("Float")
+let demand = days * 0.2 + 50.0 + weekly * weekly
+let hw = stats.ts.holt_winters(demand, season: 7, time: stamp)
+let next = hw.forecast(7)
+println(next["time"].min())                         // 2026-03-30
+println(next.n_rows())                              // 7
+let corr = stats.ts.acf(demand - demand.rolling(7, "mean").fill_null("bfill"), 14)
+println(corr.filter(ods.col("lag") == 7)["acf"][0] > 0.9)   // true
 ```
 
 ## `learn` — machine learning

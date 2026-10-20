@@ -1051,6 +1051,41 @@ fn index_from(u: f64, span: usize) -> usize {
 }
 
 pub fn sample_indices(func: &str, len: usize, n: Option<&Value>) -> Result<Series, String> {
+    sample_indices_from(func, len, n, None, None)
+}
+
+/// `sample_indices` drawn from `seed:` or `rng:` (a generator, or an Int
+/// seed) when either is given: a partial Fisher–Yates on that stream.
+/// Without them, the global stream as before.
+pub fn sample_indices_from(
+    func: &str,
+    len: usize,
+    n: Option<&Value>,
+    seed: Option<&Value>,
+    rng: Option<&Value>,
+) -> Result<Series, String> {
+    let given = |v: Option<&Value>| v.is_some_and(|v| !matches!(v, Value::Unit));
+    if given(seed) || given(rng) {
+        let want = match n {
+            Some(Value::Integer(k)) if *k >= 0 => (*k as usize).min(len),
+            other => {
+                return Err(format!(
+                    "ods.{}: n must be a non-negative Int, got {}",
+                    func,
+                    other.map(|v| v.type_name()).unwrap_or_default()
+                ));
+            }
+        };
+        if len == 0 || want == 0 {
+            return Ok(Series::from_i64(Vec::new()));
+        }
+        let mut idx = super::rng::with_source(&format!("ods.{}", func), rng, seed, |g| {
+            olang_ods::random::choice(g, len, want, None, false, false)
+        })?
+        .map_err(|e| format!("ods.{}: {}", func, e))?;
+        idx.sort_unstable();
+        return Ok(Series::from_i64(idx.into_iter().map(|i| i as i64).collect()));
+    }
     let want = match n {
         Some(Value::Integer(k)) if *k >= 0 => (*k as usize).min(len),
         Some(Value::Integer(k)) => {
@@ -1113,7 +1148,7 @@ pub fn dispatch_shared(func: &str, args: &[Value]) -> Option<Result<Value, Strin
             None => Err("ods.take: indices must be an Int Series".to_string()),
         }),
         "sample" => Some(
-            sample_indices(func, f.n_rows(), args.get(1))
+            sample_indices_from(func, f.n_rows(), args.get(1), args.get(2), args.get(3))
                 .and_then(|idx| f.take(&idx).map(OdsFrame::into_value).map_err(e)),
         ),
         _ => None,

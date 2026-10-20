@@ -462,6 +462,11 @@ pub fn to_date(s: &Series, fmt: Option<&str>) -> Result<Series> {
 
 /// A Date or Datetime written in a format (`strftime`'s directives).
 pub fn format(s: &Series, fmt: &str) -> Result<Series> {
+    if matches!(s, Series::F64 { .. } | Series::I64 { .. }) {
+        let spec = crate::numfmt::Spec::parse(fmt)
+            .map_err(|e| OdsError::InvalidArgument(format!("format: {}", e)))?;
+        return format_numbers(s, &spec);
+    }
     let f = Format::new(fmt).map_err(|e| OdsError::InvalidArgument(format!("format: {}", e)))?;
     let validity = s.validity();
     let valid = |i: usize| validity.is_none_or(|v| v.get(i));
@@ -554,4 +559,37 @@ mod tests {
         assert_eq!(d.scalar_at(0), Scalar::Date(19783));
         assert_eq!(d.scalar_at(1), Scalar::Null);
     }
+}
+
+/// A number column as text by a format spec (`crate::numfmt`): one pass,
+/// one text buffer. A null stays null.
+pub fn format_numbers(s: &Series, spec: &crate::numfmt::Spec) -> Result<Series> {
+    let validity = s.validity();
+    let valid = |i: usize| validity.is_none_or(|v| v.get(i));
+    let (col, ok) = match s {
+        Series::F64 { values, .. } => build(s.len(), |i, out| {
+            if !valid(i) {
+                return false;
+            }
+            spec.format_into(values[i], out);
+            true
+        }),
+        Series::I64 { values, .. } => build(s.len(), |i, out| {
+            if !valid(i) {
+                return false;
+            }
+            spec.format_i64(values[i], out);
+            true
+        }),
+        other => {
+            return Err(OdsError::TypeMismatch(format!(
+                "format: needs a number column, got {}",
+                other.dtype()
+            )));
+        }
+    };
+    Ok(Series::Str {
+        col,
+        validity: validity_from(&ok),
+    })
 }

@@ -17,9 +17,11 @@ mod group;
 mod learn;
 pub mod gg;
 mod plot;
+pub mod rng;
 mod series;
 mod stats;
 mod table;
+mod ts;
 
 pub use frame::{OdsFrame, frame_of};
 pub use group::{ApplyState, apply_finish, apply_groups, is_callable as apply_callable};
