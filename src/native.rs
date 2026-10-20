@@ -166,6 +166,7 @@ pub fn registered_modules() -> &'static [Arc<dyn OvmModule>] {
         modules.push(Arc::new(crate::ods::OdsModule));
         modules.push(Arc::new(crate::ods::StatsModule));
         modules.push(Arc::new(crate::ods::PlotModule));
+        modules.push(Arc::new(crate::ods::LearnModule));
         // Operators for Date values only — the `dates` builtin namespace
         // itself dispatches through the stdlib path.
         modules.push(Arc::new(crate::stdlib::dates::DatesModule));

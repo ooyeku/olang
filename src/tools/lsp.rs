@@ -84,6 +84,7 @@ const MODULES: &[&str] = &[
     "ods",
     "stats",
     "plot",
+    "learn",
     "cell",
     "chan",
     "task",
@@ -97,7 +98,7 @@ const MODULES: &[&str] = &[
     "bigint",
     "collections",
 ];
-const USE_MODULES: &[&str] = &["cli", "term", "ui", "viz", "dash", "colx", "mathx"];
+const USE_MODULES: &[&str] = &["cli", "term", "ui", "viz", "dash", "colx", "mathx", "ml"];
 
 #[path = "lsp_notebook.rs"]
 mod notebook;

@@ -10,6 +10,7 @@
 
 mod columns;
 mod frame;
+mod learn;
 mod plot;
 mod series;
 mod stats;
@@ -256,6 +257,37 @@ impl OvmModule for StatsModule {
             return Err(format!("unknown stats function: stats.{}", func));
         }
         stats::dispatch(func, args)
+    }
+
+    fn binary_op(
+        &self,
+        _op: &BinaryOp,
+        _lhs: &Value,
+        _rhs: &Value,
+    ) -> Option<Result<Value, String>> {
+        None
+    }
+}
+
+/// The `learn` namespace: machine learning over Frames (models,
+/// preprocessing, validation, metrics). Its one native type is the
+/// fitted model; it defines no operators.
+pub struct LearnModule;
+
+impl OvmModule for LearnModule {
+    fn name(&self) -> &'static str {
+        "learn"
+    }
+
+    fn namespaces(&self) -> Vec<(String, Value)> {
+        vec![("learn".to_string(), learn::namespace())]
+    }
+
+    fn dispatch(&self, func: &str, args: Vec<Value>) -> Result<Value, String> {
+        if !learn::handles(func) {
+            return Err(format!("unknown learn function: learn.{}", func));
+        }
+        learn::dispatch(func, args)
     }
 
     fn binary_op(
