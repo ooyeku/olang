@@ -559,15 +559,47 @@ impl Interpreter {
     /// A module from a file named by its path (`runtime.load_module`):
     /// loaded afresh — every module cached from its folder forgotten
     /// first, so an edited plugin is read again, its own imports too.
+    ///
+    /// A reload that fails puts back what it forgot: the module before
+    /// it runs on, and its functions — whose frames read their module's
+    /// scope by its file — keep their imports (they lost every one, and
+    /// raised `Undefined variable` on the interpreter tier).
     pub fn load_module_at(&mut self, file: &std::path::Path) -> Result<Value, InterpreterError> {
         let dir = file.parent().map(|d| d.to_path_buf()).unwrap_or_default();
-        self.forget_modules_under(&dir);
+        let forgotten = self.take_modules_under(&dir);
         let name = file.to_string_lossy().to_string();
-        self.load_module_resolved(file.to_path_buf(), &name)
+        let loaded = self.load_module_resolved(file.to_path_buf(), &name);
+        if loaded.is_err() {
+            let (cache, scopes, names) = forgotten;
+            for (k, e) in cache {
+                self.module_cache.insert(k, e);
+            }
+            for (k, sc) in scopes {
+                self.module_scopes.insert(k, sc);
+            }
+            for (k, f) in names {
+                self.module_name_index.insert(k, f);
+            }
+        }
+        loaded
     }
 
     /// Forget every cached module whose file is under `dir`.
     pub fn forget_modules_under(&mut self, dir: &std::path::Path) {
+        let _ = self.take_modules_under(dir);
+    }
+
+    /// `forget_modules_under`, answering what it forgot: the cache's
+    /// entries, the modules' scopes and the names that led to them.
+    #[allow(clippy::type_complexity)]
+    fn take_modules_under(
+        &mut self,
+        dir: &std::path::Path,
+    ) -> (
+        Vec<(String, ModuleCacheEntry)>,
+        Vec<(String, Arc<im::HashMap<String, Value>>)>,
+        Vec<(String, std::path::PathBuf)>,
+    ) {
         let keys: Vec<String> = self
             .module_cache
             .iter()
@@ -577,11 +609,24 @@ impl Interpreter {
             })
             .map(|(k, _)| k.clone())
             .collect();
+        let mut cache = Vec::new();
+        let mut scopes = Vec::new();
         for k in keys {
-            self.module_cache.remove(&k);
-            self.module_scopes.remove(&k);
+            if let Some(e) = self.module_cache.remove(&k) {
+                cache.push((k.clone(), e));
+            }
+            if let Some(sc) = self.module_scopes.remove(&k) {
+                scopes.push((k, sc));
+            }
         }
+        let names: Vec<(String, std::path::PathBuf)> = self
+            .module_name_index
+            .iter()
+            .filter(|(_, f)| f.starts_with(dir))
+            .map(|(k, f)| (k.clone(), f.clone()))
+            .collect();
         self.module_name_index.retain(|_, f| !f.starts_with(dir));
+        (cache, scopes, names)
     }
 
     fn load_module_resolved(

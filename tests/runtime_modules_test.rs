@@ -463,3 +463,42 @@ println(said(runtime.call_budget(m.pty_path, [bin], 5000)))
         lines[3]
     );
 }
+
+/// A reload that fails keeps the module before it whole, its imports
+/// included, on both tiers: its functions' frames read their module's
+/// scope by its file, and the failed reload had forgotten that scope
+/// (`Undefined variable` for every name the module imported — olang
+/// Studio's tier plugin lost `tier_check_argv` so).
+#[test]
+fn a_failed_reload_keeps_the_module_s_imports() {
+    let ws = workspace("reload_imports");
+    write(&ws.join("plug/p/helper.ol"), "share fn argv(x) = [\"olang\", x]\n");
+    let good = "use helper { argv }\nfn inner(x) = argv(x)\nshare fn go(x) = inner(x)\n";
+    write(&ws.join("plug/p/plugin.ol"), good);
+    let host = r#"let m = unwrap(runtime.load_module("plug/p/plugin.ol", #{ "name": "p" }))
+println(show(m.go("a")))
+let _w = fs.write_file("plug/p/plugin.ol", "use helper { argv }\nfn inner(x) = argv(x\n")
+println(show(is_ok(runtime.load_module("plug/p/plugin.ol", #{ "name": "p" }))))
+let r = runtime.call_budget(m.go, ["b"], 1000)
+println(if map_get(r, "ok") => show(map_get(r, "value")) else => map_get(r, "error"))
+"#;
+    for flags in [&["--no-ovm"][..], &[][..]] {
+        write(&ws.join("plug/p/plugin.ol"), good);
+        write(&ws.join("host.ol"), host);
+        let out = Command::new(olang())
+            .current_dir(&ws)
+            .args(flags)
+            .arg("host.ol")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+        let lines: Vec<&str> = stdout.lines().collect();
+        assert_eq!(lines.first().copied(), Some("[\"olang\", \"a\"]"), "{flags:?}: {stdout}");
+        assert_eq!(lines.get(1).copied(), Some("false"), "{flags:?}: {stdout}");
+        assert_eq!(
+            lines.get(2).copied(),
+            Some("[\"olang\", \"b\"]"),
+            "{flags:?}: the module before the failed reload lost its imports: {stdout}"
+        );
+    }
+}
