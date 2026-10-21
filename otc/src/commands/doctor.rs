@@ -188,6 +188,19 @@ pub fn run(fix: bool) -> Result<()> {
         }
     }
 
+    // ── the project here: a lock behind the shelf (information) ──────
+    if let Ok(cwd) = std::env::current_dir()
+        && let Some(root) = olang::pkg::manifest::Manifest::find_root(&cwd)
+    {
+        let behind = olang::pkg::lock_behind_shelf(&root);
+        if !behind.is_empty() {
+            println!("project {}:", root.display());
+            for line in behind {
+                println!("  note: {}", line);
+            }
+        }
+    }
+
     // ── sizes of the prunable parts ──────────────────────────────────
     for (label, path) in [
         ("cache", home.join("cache")),

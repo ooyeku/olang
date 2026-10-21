@@ -433,21 +433,43 @@ shelf resolved and a checksum of its contents. From there:
 - **A library shelved at a commit** does not follow its checkout. `otc
   lib add <path> --rev <commit>` writes the repository's tree at that
   commit into the shelf's own directory (`shelf/pins/<name>-<sha>`),
-  registers the name there, and records the full commit id. The lock of
-  every project that depends on the name then carries `rev`: on a
-  machine whose shelf holds the library at another commit, or following
-  a directory, a run fails and names the `otc lib add <path> --rev <sha>`
-  that satisfies it, and the snapshot's checksum is verified as a
-  fetched dependency's is. Re-registering the name without `--rev`
-  unpins it. Two machines resolve the same library this way from
-  checkouts each keeps moving.
+  registers the name there, and records the full commit id and the
+  repository it came from. The lock of every project that depends on
+  the name then carries `rev`, and the lock is the source of truth: a
+  run, `olang test`, `olang check`, the language server and the REPL use
+  that commit's snapshot whatever commit the shelf holds the name at
+  now. The shelf keeps every snapshot it made under `pins/`; one that is
+  gone is made again from the repository at that commit. The snapshot's
+  checksum is verified as a fetched dependency's is, and a mismatch is
+  refused. A commit this machine cannot produce fails, naming the
+  library, the locked commit, the shelf's commit and the fix:
+
+  ```text
+  the lock pins shelf library 'sdk' at 4f2a91c03e1b, which this machine
+  does not hold (…/pins/sdk-4f2a91c03e1b is not there, and the shelf
+  knows no repository to make it from); the shelf has it at 9b03e7d5a210.
+  Run `otc install` to move the lock to the shelf's pin, or shelve that
+  commit: `otc lib add <path> --rev 4f2a91c03e1b`
+  ```
+
+  Re-registering the name without `--rev` unpins it. Two machines
+  resolve the same library this way from checkouts each keeps moving.
+- **A dependency's own lock pins its shelf libraries.** A library that
+  depends on another by shelf name, and ships an `olang.lock` pinning
+  it, gets the commit its lock names in every project that uses it,
+  resolved and verified the same way. The project's lock pins the
+  library, and the library's lock pins the rest.
 - **Re-shelving is picked up by `otc install`.** After `otc lib add
   <path> --rev <new-sha>`, or `otc lib add <path>` to follow the
   directory again, the next `otc install` reports the move (`shelf
   library 'sdk' moved: the lock had it at 4f2a91c…, the shelf has it at
   9b03e7d… — re-pinning`) and re-resolves that entry; `--frozen` refuses
-  the drift. A library that follows its directory has no directory in
-  the lock, so re-registering it at another path needs no re-pin.
+  the drift. Until then the project runs the commit its lock pins, and
+  `otc doctor`, run in the project, says so as a note, not a problem
+  (`note: olang.lock has shelf library 'sdk' at 4f2a91c03e1b, the shelf
+  has it at 9b03e7d5a210; its snapshot is here and is what runs`). A
+  library that follows its directory has no directory in the lock, so
+  re-registering it at another path needs no re-pin.
 
 A lockfile pin on a starter behaves like any other: after `otc lib
 restore`, the next `otc install` in each project re-pins it, visibly.
@@ -474,7 +496,8 @@ manage it:
   PATH with its version and origin (cargo, Homebrew, olang-home) and
   which copy wins; version agreement between `olang` and `otc`; files
   and directories the layout does not hold; shelf entries whose paths do
-  not resolve; and the sizes of the prunable parts. The default
+  not resolve; a project lock (the one the working directory is in)
+  behind the shelf, as a note; and the sizes of the prunable parts. The default
   run is read-only; `otc doctor --fix` applies the safe repairs (stray
   files removed, the REPL history moved into `state/`) and never touches
   installations owned by other package managers.

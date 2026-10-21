@@ -1053,6 +1053,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A lock that pins a shelf library at a commit the shelf has moved
+  past runs that commit.** `olang run`, `test`, `check`, the language
+  server and `repl --serve` use the snapshot under `shelf/pins/`, made
+  again from the library's repository when it is gone, its checksum
+  verified; one that cannot be had names the library, both commits and
+  `otc install`, where `olang test` said "Module 'web' not found". A
+  dependency's own lock pins its shelf libraries the same way, and
+  `otc doctor` notes a project lock behind the shelf.
 - **The browser runtime reaches no clock or sleep that panics there.**
   `ods.read_csv` trapped the instance ("time not implemented on this
   platform"): every timing on a path the wasm build compiles goes
