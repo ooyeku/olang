@@ -122,3 +122,100 @@ fn the_slugifier_follows_the_github_convention() {
         assert_eq!(slugify(heading), slug);
     }
 }
+
+/// The headings of every chapter, by file name, fences skipped.
+fn book_slugs(docs: &Path) -> BTreeMap<String, BTreeSet<String>> {
+    let mut headings = BTreeMap::new();
+    for e in std::fs::read_dir(docs).expect("docs/").flatten() {
+        let path = e.path();
+        if path.extension().is_none_or(|x| x != "md") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).expect("readable");
+        let mut in_fence = false;
+        let slugs = text
+            .lines()
+            .filter(|line| {
+                if line.trim_start().starts_with("```") {
+                    in_fence = !in_fence;
+                }
+                !in_fence
+            })
+            .filter_map(|line| {
+                let trimmed = line.trim_start_matches('#');
+                (trimmed.len() < line.len() && line.starts_with('#')).then(|| slugify(trimmed))
+            })
+            .collect();
+        headings.insert(path.file_name().unwrap().to_string_lossy().to_string(), slugs);
+    }
+    headings
+}
+
+/// A link from anywhere in the repository into the book (a README in
+/// benchmarks/, an example's notes) aims at a heading that exists: a
+/// chapter renamed or moved breaks those as surely as its siblings'.
+#[test]
+fn every_link_into_the_book_from_the_repository_resolves() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let docs = root.join("docs").canonicalize().expect("docs/");
+    let headings = book_slugs(&docs);
+    let mut files = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        for e in rd.flatten() {
+            let p = e.path();
+            let name = e.file_name().to_string_lossy().to_string();
+            if p.is_dir() {
+                if !matches!(name.as_str(), "target" | "vendor" | "node_modules" | ".git" | "docs")
+                    && !name.starts_with('.')
+                {
+                    stack.push(p);
+                }
+            } else if name.ends_with(".md") {
+                files.push(p);
+            }
+        }
+    }
+    let mut broken = Vec::new();
+    let mut checked = 0usize;
+    for path in &files {
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        let base = path.parent().unwrap();
+        let mut i = 0;
+        while let Some(open) = text[i..].find("](") {
+            let start = i + open + 2;
+            let Some(close) = text[start..].find(')') else { break };
+            let link = &text[start..start + close];
+            i = start + close;
+            let Some((target, anchor)) = link.split_once('#') else { continue };
+            if !target.ends_with(".md") || target.contains("://") {
+                continue;
+            }
+            let Ok(resolved) = base.join(target).canonicalize() else { continue };
+            if resolved.parent() != Some(docs.as_path()) {
+                continue;
+            }
+            let file = resolved.file_name().unwrap().to_string_lossy().to_string();
+            let Some(slugs) = headings.get(&file) else { continue };
+            checked += 1;
+            if !slugs.contains(anchor) {
+                let line = text[..start].matches('\n').count() + 1;
+                broken.push(format!(
+                    "  {}:{} → {}#{}",
+                    path.strip_prefix(root).unwrap_or(path).display(),
+                    line,
+                    target,
+                    anchor
+                ));
+            }
+        }
+    }
+    assert!(checked > 0, "no link into the book found: the extractor is broken");
+    assert!(
+        broken.is_empty(),
+        "{} link(s) into the book point at a heading that does not exist:\n{}",
+        broken.len(),
+        broken.join("\n")
+    );
+}

@@ -7,7 +7,7 @@ identical semantics: in olang on the ods data stack
 ([pipeline_pandas.py](pipeline_pandas.py)), and in Polars
 ([pipeline_polars.py](pipeline_polars.py)). This is the DP4 benchmark
 from the roadmap; the published results and methodology live in
-[docs/ods.md](../docs/ods.md#the-pipeline-benchmark).
+[docs/performance.md](../docs/performance.md#the-data-stack-against-other-engines).
 
 Every engine prints one `STAGE <name> <ms> <checksum>` line per stage.
 The runner executes each engine several times and **refuses the result
