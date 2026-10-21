@@ -530,12 +530,16 @@ share fn ylab(p, title) = labs(p, y: title)
 /// "classic", "bw", "gray", "linedraw", "void", or "light", "dark",
 /// "contrast" for minimal in that appearance), `appearance`, `base_size`,
 /// `legend_position` ("right", "bottom", "top", "left", "none"),
-/// `width` and `height` in pixels, `grid` ("both", "x", "y", "none"), `font`.
+/// `width` and `height` in pixels, `grid` ("both", "x", "y", "none"), `font`,
+/// `paper` (the background, any CSS colour: "transparent" lets the page
+/// show through), `ink` (every word and line in one CSS colour:
+/// "currentColor" takes the page's), and `id` (the prefix of the ids the
+/// SVG names; by default one derived from the SVG).
 share fn theme(p, name = (), appearance = (), base_size = (), legend_position = (), width = (), height = (),
-               grid = (), font = ()) = {
+               grid = (), font = (), paper = (), ink = (), id = ()) = {
     let new = pairs_map([["name", name], ["appearance", appearance], ["base_size", base_size],
                          ["legend_position", legend_position], ["width", width], ["height", height],
-                         ["grid", grid], ["font", font]])
+                         ["grid", grid], ["font", font], ["paper", paper], ["ink", ink], ["id", id]])
     map_set(check_plot(p, "theme"), "theme", map_merge(p.theme, new))
 }
 

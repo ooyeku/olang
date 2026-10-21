@@ -160,8 +160,8 @@ struct Cli {
     record: Option<String>,
 
     /// Report which capabilities the program actually exercised, then print a
-    /// suggested least-privilege [capabilities] manifest. Runs on the
-    /// interpreter tier so every effect is seen.
+    /// suggested least-privilege [capabilities] manifest. The trace sees
+    /// every effect on every tier.
     #[arg(long, help_heading = "Run options")]
     trace_caps: bool,
 
@@ -568,10 +568,15 @@ enum NotebookAction {
         /// Write the page as a PDF here (WebKit's print, macOS only)
         #[arg(long, value_name = "OUT.pdf")]
         pdf: Option<PathBuf>,
-        /// Write the outputs document (each cell's reply as the kernel
-        /// gives it) here, `-` for stdout
+        /// Write the outputs document here, `-` for stdout: each cell's
+        /// reply as the kernel gives it (a Frame's schema and first rows, a
+        /// chart's SVG in both appearances and its scene), the prose with
+        /// its `${…}` values, the params and controls with their defaults
         #[arg(long, value_name = "OUT.json")]
         json: Option<PathBuf>,
+        /// The rows a Frame's or Series' output carries
+        #[arg(long, value_name = "N", default_value_t = 20)]
+        rows: usize,
         /// Draw these outputs (an outputs document: Studio's run) instead of
         /// running the notebook
         #[arg(long, value_name = "RUN.json")]
@@ -1690,6 +1695,7 @@ fn notebook_command(action: NotebookAction) -> i32 {
             html,
             pdf,
             json,
+            rows,
             outputs,
             params,
         } => {
@@ -1731,7 +1737,11 @@ fn notebook_command(action: NotebookAction) -> i32 {
                         return 1;
                     }
                 },
-                None => match olang::repl_serve::run_notebook(&file, &overrides) {
+                None => match olang::repl_serve::run_notebook(
+                    &file,
+                    &overrides,
+                    &olang::repl_serve::RunOptions { rows, twins: true },
+                ) {
                     Ok(d) => d,
                     Err(e) => {
                         eprintln!("{}", e);
@@ -1804,7 +1814,11 @@ fn notebook_command(action: NotebookAction) -> i32 {
                 }
             };
             let text = std::fs::read_to_string(&file).unwrap_or_default();
-            let doc = match olang::repl_serve::run_notebook(&file, &overrides) {
+            let doc = match olang::repl_serve::run_notebook(
+                &file,
+                &overrides,
+                &olang::repl_serve::RunOptions::default(),
+            ) {
                 Ok(d) => d,
                 Err(e) => {
                     eprintln!("{}", e);

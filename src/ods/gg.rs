@@ -407,6 +407,23 @@ pub fn scene_of(v: &Value, zoom: Option<(f64, f64, Option<usize>)>) -> Result<Sc
     .map_err(|e| e.to_string())
 }
 
+/// A spec value's scene in an appearance, unless its theme names one.
+pub fn scene_in(
+    v: &Value,
+    zoom: Option<(f64, f64, Option<usize>)>,
+    appearance: Appearance,
+) -> Result<Scene, String> {
+    let spec = spec_of(v)?;
+    olang_ods::gg::render(
+        &spec,
+        &RenderOptions {
+            zoom,
+            appearance: Some(appearance),
+        },
+    )
+    .map_err(|e| e.to_string())
+}
+
 pub const FUNCTIONS: &[(&str, usize)] = &[("gg", 1), ("gg_scene", 1)];
 
 pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {

@@ -51,31 +51,62 @@ pub(crate) fn with_stack_headroom<R>(f: impl FnOnce() -> R) -> R {
     f()
 }
 
-/// The message for a missing module member, with the nearest real
-/// member suggested when one is close. Shared wording with the VM's
-/// twin so the tiers report identically.
+/// The message for a missing module member — read or called, on every
+/// tier — naming the module when its members say it (a stdlib module's
+/// builtins are `math.sqrt`, …) and the nearest real member: the same
+/// name in another case first (`pi` → `PI`), then the closest spelling.
 pub(crate) fn module_member_miss<'a>(
+    module: Option<&str>,
     field: &str,
     members: impl Iterator<Item = &'a str>,
 ) -> String {
+    let members: Vec<&str> = members.filter(|m| *m != field && !m.starts_with("__")).collect();
+    let lower = field.to_lowercase();
     let max_distance = (field.chars().count() / 3).clamp(1, 3);
     let nearest = members
-        .filter(|m| *m != field)
-        .map(|m| {
-            (
-                crate::interpreter::errors::IntuitiveErrorFormatter::levenshtein_distance(field, m),
-                m,
-            )
-        })
-        .filter(|(d, _)| *d <= max_distance)
-        .min();
+        .iter()
+        .copied()
+        .filter(|m| m.to_lowercase() == lower)
+        .min()
+        .or_else(|| {
+            members
+                .iter()
+                .map(|m| {
+                    (
+                        crate::interpreter::errors::IntuitiveErrorFormatter::levenshtein_distance(field, m),
+                        *m,
+                    )
+                })
+                .filter(|(d, _)| *d <= max_distance)
+                .min()
+                .map(|(_, m)| m)
+        });
+    let who = match module {
+        Some(m) => format!("module '{}'", m),
+        None => "the module".to_string(),
+    };
     match nearest {
-        Some((_, m)) => format!(
-            "Function '{}' not found in module — did you mean '{}'?",
-            field, m
-        ),
-        None => format!("Function '{}' not found in module", field),
+        Some(m) => format!("{} has no member '{}'; did you mean '{}'?", who, field, m),
+        None => format!("{} has no member '{}'", who, field),
     }
+}
+
+/// A module's name as its members say it: the prefix of a builtin's
+/// qualified name (`math.sqrt` → `math`).
+pub(crate) fn module_name_of<'a>(builtin_names: impl Iterator<Item = &'a str>) -> Option<String> {
+    builtin_names
+        .filter_map(|n| n.split_once('.').map(|(m, _)| m))
+        .min()
+        .map(str::to_string)
+}
+
+/// A module value's missing member's message (the tree-walker's values).
+pub(crate) fn module_miss_of(fields: &crate::ast::ValueMap, field: &str) -> String {
+    let module = module_name_of(fields.values().filter_map(|v| match v {
+        Value::Builtin(b) => Some(b.name.as_str()),
+        _ => None,
+    }));
+    module_member_miss(module.as_deref(), field, fields.keys().map(|k| k.as_str()))
 }
 
 /// The result of walking a function body's tail positions: an ordinary
@@ -1946,7 +1977,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                         && type_name == "Module"
                     {
                         return Err(InterpreterError::TypeError {
-                            message: module_member_miss(field, fields.keys().map(|k| k.as_str())),
+                            message: module_miss_of(fields, field),
                         });
                     }
                     read_callee = Some(self.field_of(receiver, field)?);
@@ -4716,7 +4747,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     }
 
     /// A callee's value: a module's member the module lacks raises,
-    /// naming the nearest (`fs.reed_file(p)`), where a read is `()`.
+    /// naming the nearest (`fs.reed_file(p)`).
     fn callee_value(&mut self, callee: &crate::ast::Expr) -> Result<Value, InterpreterError> {
         if let crate::ast::Expr::FieldAccess { object, field } = callee {
             let receiver = self.callee_value(object)?;
@@ -4725,7 +4756,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 && !fields.contains_key(field.as_str())
             {
                 return Err(InterpreterError::TypeError {
-                    message: module_member_miss(field, fields.keys().map(|k| k.as_str())),
+                    message: module_miss_of(fields, field),
                 });
             }
             return self.field_of(receiver, field);
@@ -4738,9 +4769,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         object: &crate::ast::Expr,
         field: &str,
     ) -> Result<Value, InterpreterError> {
-        // A field read of a module's member the module lacks
-        // (`m.missing.x`) raises naming the nearest member; `m.missing`
-        // alone is `()`.
+        // A field read of a module's member the module lacks raises
+        // naming the nearest member.
         let object_value = self.callee_value(object)?;
         self.field_of(object_value, field)
     }
@@ -4752,12 +4782,13 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 ref type_name,
             } => {
                 if type_name == "Module" {
-                    // A module's member (`fs.read_file`). Read, a member
-                    // the module lacks is `()`, as `map_get` answers — a
-                    // plugin host asks a module it loaded whether it has
-                    // an `init`. Called, the miss raises and names the
-                    // nearest member (`callee_value`).
-                    Ok(fields.get(field).cloned().unwrap_or(Value::Unit))
+                    // A module's member (`fs.read_file`). A member the
+                    // module lacks raises, read or called, naming the
+                    // nearest (`math.pi` → `PI`); `map_get(m, "init")`
+                    // asks whether it has one.
+                    fields.get(field).cloned().ok_or_else(|| InterpreterError::TypeError {
+                        message: module_miss_of(fields, field),
+                    })
                 } else if type_name == "JsonObject" || type_name == "Object" {
                     // An object and a parsed JSON object read as a map
                     // does: `o.key` is `map_get(o, "key")`, and an absent

@@ -1339,7 +1339,9 @@ for rec in summary.to_records() {
 ```
 
 `ods.group_by(f, keys, aggs)` with an object of aggregations is
-`ods.group_by(f, keys).agg(aggs)`. It also takes a list of
+`ods.group_by(f, keys).agg(aggs)`. Text where an aggregation goes
+raises (`{ v: "mean" }` names the expression it means,
+`col("v").mean()`); `ods.lit("x")` is a constant column. It also takes a list of
 `[out_name, op, column]` triples, with ops `count` (the group's rows,
 nulls included, so the column may be left out), `sum`, `mean`, `min`,
 `max`, `median`, `std`, `var`, `first`, `last`, `n_unique`, `any`,
@@ -2110,7 +2112,7 @@ unwrap(fs.write_file("waves.svg", svg))
 ### A chart's description
 
 Every chart also says what it draws, as data: right after its opening
-`<svg>` tag stands `<metadata id="olang-chart">`, a JSON description
+`<svg>` tag stands `<metadata class="olang-chart">`, a JSON description
 (escaped for XML) that an SVG viewer ignores and a host reads to draw
 the chart itself (a notebook host hovers, zooms and brushes a chart
 from it). `plot.describe(svg)` answers it as a Map, `Err` for text

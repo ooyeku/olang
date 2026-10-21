@@ -33,13 +33,58 @@ pub fn discover_sources(path: &Path) -> Vec<PathBuf> {
     discover(path, true)
 }
 
-/// Every `.ol` file at or below `path`, sorted, skipping VCS/build dirs and
-/// hidden directories. A file path returns just itself. Public: the CLI's
-/// watch mode polls it from the binary crate.
+/// Every `.ol` file at or below `path`, sorted. A walk keeps what a
+/// checkout keeps: the `.gitignore`s (at every level, and above `path`)
+/// and `.git/info/exclude` respected, a repository or not; hidden folders
+/// and the build and cache folders (`SKIPPED_DIRS`) left out even with no
+/// `.gitignore`. A file path returns just itself. Public: the CLI's watch
+/// mode polls it from the binary crate.
 pub fn discover_ol_files(path: &Path) -> Vec<PathBuf> {
     discover(path, false)
 }
 
+/// Folders a walk never enters: build output, dependencies, caches.
+pub const SKIPPED_DIRS: &[&str] = &["target", "node_modules", "dist"];
+
+fn wanted(name: &str, notebooks: bool) -> bool {
+    name.ends_with(".ol") || (notebooks && name.ends_with(".olmd"))
+}
+
+fn skipped_dir(name: &str) -> bool {
+    name.starts_with('.') || SKIPPED_DIRS.contains(&name)
+}
+
+#[cfg(feature = "native")]
+fn discover(path: &Path, notebooks: bool) -> Vec<PathBuf> {
+    if path.is_file() {
+        return vec![path.to_path_buf()];
+    }
+    let mut b = ignore::WalkBuilder::new(path);
+    b.hidden(false)
+        .parents(true)
+        .git_ignore(true)
+        .git_exclude(true)
+        .git_global(false)
+        .ignore(false)
+        .require_git(false)
+        .follow_links(true)
+        .filter_entry(|e| {
+            e.depth() == 0
+                || !e.file_type().is_some_and(|t| t.is_dir())
+                || !skipped_dir(&e.file_name().to_string_lossy())
+        });
+    let mut found: Vec<PathBuf> = b
+        .build()
+        .flatten()
+        .filter(|e| e.file_type().is_some_and(|t| t.is_file()))
+        .filter(|e| wanted(&e.file_name().to_string_lossy(), notebooks))
+        .map(|e| e.into_path())
+        .collect();
+    found.sort();
+    found
+}
+
+#[cfg(not(feature = "native"))]
 fn discover(path: &Path, notebooks: bool) -> Vec<PathBuf> {
     let mut found = Vec::new();
     if path.is_file() {
@@ -56,10 +101,10 @@ fn discover(path: &Path, notebooks: bool) -> Vec<PathBuf> {
             let p = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
             if p.is_dir() {
-                if !name.starts_with('.') && name != "target" && name != "node_modules" {
+                if !skipped_dir(&name) {
                     stack.push(p);
                 }
-            } else if name.ends_with(".ol") || (notebooks && name.ends_with(".olmd")) {
+            } else if wanted(&name, notebooks) {
                 found.push(p);
             }
         }

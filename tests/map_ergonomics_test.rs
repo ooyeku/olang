@@ -743,9 +743,9 @@ fn the_parser_names_an_unsupported_spread() {
 // ── a module reads like a record ───────────────────────────────────────
 
 #[test]
-fn a_module_member_read_is_unit_when_absent_and_a_call_raises() {
+fn a_module_member_the_module_lacks_raises_read_or_called() {
     let src = r#"
-fn main() = [str.trimm == (), str.trim == (), map_get(str, "trimm") == ()]
+fn main() = [is_err(attempt(() => str.trimm)), str.trim == (), map_get(str, "trimm") == ()]
 main()
 "#;
     assert_eq!(
@@ -757,6 +757,8 @@ main()
         ]))
     );
     for call in [
+        "str.trimm",
+        "str.trimm == ()",
         "str.trimm(\" x\")",
         "\" x\" |> str.trimm",
         "\" x\" |> str.trimm()",

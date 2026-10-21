@@ -105,6 +105,16 @@ pub struct Theme {
     pub strip_fill: bool,
     pub width: Option<f64>,
     pub height: Option<f64>,
+    /// The background as any CSS colour (`"transparent"` lets the page
+    /// show through); None: the appearance's surface.
+    pub paper: Option<String>,
+    /// Every word, tick, gridline and axis line in one CSS colour
+    /// (`"currentColor"` takes the page's text colour), the lines at a
+    /// reduced opacity; None: the appearance's inks.
+    pub ink: Option<String>,
+    /// The prefix of every id the SVG names (its clip paths); None: one
+    /// derived from the SVG's content.
+    pub id: Option<String>,
 }
 
 impl Theme {
@@ -143,6 +153,9 @@ impl Theme {
             strip_fill,
             width: p_num(p, "width"),
             height: p_num(p, "height"),
+            paper: p_str(p, "paper").map(str::to_string),
+            ink: p_str(p, "ink").map(str::to_string),
+            id: p_str(p, "id").map(str::to_string),
         }
     }
 

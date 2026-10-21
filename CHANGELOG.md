@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **What a site needs from gg and notebooks.** Every id a gg SVG names
+  starts with one prefix, `gg` and a hash of the SVG (or the theme's
+  `id`), so plots share a page without clipping each other; a `plot`
+  chart's gradient ids likewise (`vz`…). A chart's description is
+  `<metadata class="olang-chart">`. `gg.theme` takes `paper` and `ink`
+  (`"transparent"`, `"currentColor"`). `olang notebook export --json`
+  carries the notebook in order (`blocks`: prose with each `${…}`
+  value, code with its source), each chart in both appearances
+  (`svg.light`, `svg.dark`: a gg plot drawn in each), a Frame's first
+  `--rows N` rows, and each param and control with its default; the
+  exported page draws a gg chart's dark twin natively.
+
 - **Frames and dtypes after the D6 notebooks.** `+` joins text in an
   expression as it does eagerly (`"n=" + col("n").cast("String")`,
   `col("s") + "!"`, a Category as its text). `add_months` takes an Int
@@ -809,6 +821,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   of its own, with how to continue the line instead.
 
 ### Changed
+
+- **A module's missing member raises, read or called, on every tier**:
+  `math.pi` is "module 'math' has no member 'pi'; did you mean 'PI'?"
+  (the same name in another case first, then the nearest spelling).
+  `map_get(module, "name")` asks without raising. `olang check` flags a
+  presence test (`gui.turn == ()`) too.
+- **`group_by` and `agg` refuse text where an aggregation goes**
+  (`{ v: "mean" }` names `col("v").mean()`); `ods.lit` is a constant.
+- **`olang test`, `check` and `fmt` walk what a checkout keeps**: every
+  `.gitignore` and `.git/info/exclude` respected, and `target/`,
+  `node_modules/`, `dist/` and hidden folders skipped with none. A test
+  runs from its own folder, as tooling.md now says.
+- `olang check --rules` takes a finding as an object (`{ message, line }`)
+  as well as a map; the validate starter takes object literals; the
+  `--trace-caps` help says the trace sees every tier.
 
 - **`unpivot` widens Int beside Float to Float**, as `concat` does,
   instead of refusing; any other mix still asks for a cast.

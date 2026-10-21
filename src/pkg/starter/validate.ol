@@ -20,8 +20,15 @@
 //!                       message becomes the field's problem
 //!
 //! A "date" is an ISO day string (`2026-08-31`) that `dates.parse`
-//! accepts. Parsed JSON (`JsonObject`) is map-shaped and checks like a
-//! Map, so a request body needs no copy first.
+//! accepts. An object literal (`{ name: "Ada" }`) and parsed JSON
+//! (`JsonObject`) are map-shaped and check like a Map, so a request body
+//! needs no copy first; a rule's opts may be an object too.
+
+/// A Map, an object literal or a parsed JSON object.
+fn map_shaped(value) = {
+    let t = typeof(value)
+    t == "Map" || t == "Object" || t == "JsonObject"
+}
 
 /// Does `value` have the olang type `kind` names?
 fn kind_ok(kind, value) = {
@@ -33,7 +40,7 @@ fn kind_ok(kind, value) = {
     else if kind == "num" => t == "Int" || t == "Float"
     else if kind == "bool" => t == "Bool"
     else if kind == "list" => t == "List"
-    else if kind == "map" => t == "Map" || t == "JsonObject"
+    else if kind == "map" => map_shaped(value)
     else if kind == "date" => t == "String" && is_ok(dates.parse(value))
     else => false
 }
@@ -106,7 +113,7 @@ fn field_problems(m, rule) = {
 /// failure, in rule order — when any fails. A non-map value fails
 /// immediately with a single problem naming its type.
 share fn check(m, rules) = {
-    if typeof(m) != "Map" && typeof(m) != "JsonObject" => Err([`expected a map, got ${typeof(m)}`])
+    if !map_shaped(m) => Err([`expected a map, got ${typeof(m)}`])
     else => {
         let problems = fold(rules, [], (acc, rule) => acc + field_problems(m, rule))
         if len(problems) == 0 => Ok(m) else => Err(problems)
@@ -131,6 +138,13 @@ test "dates, predicates, and parsed JSON" {
     }
     let body = unwrap(json.parse("{\"name\": \"ada\", \"age\": 36}"))
     assert_eq(ok(body, [["name", "str"], ["age", "int"]]), true)
+}
+
+test "object literals check like maps" {
+    let rules = [["name", "str"], ["age", "int", { min: 0 }], ["note", "str", { required: false }]]
+    assert_eq(ok({ name: "Ada", age: 36 }, rules), true)
+    assert_eq(check({ name: "Ada", age: -1 }, rules), Err(["age: below minimum 0"]))
+    assert_eq(ok(#{ "profile": { city: "Paris" } }, [["profile", "map"]]), true)
 }
 
 test "kinds and requirement" {

@@ -642,7 +642,8 @@ pub fn svg_ok(svg: &str) -> bool {
 fn value_html(v: &J, page: Option<&J>, as_markdown: bool) -> String {
     let k = v.get("k").and_then(|k| k.as_str()).unwrap_or("");
     if let Some(svg) = v.pointer("/svg/text").and_then(|t| t.as_str()) {
-        return chart_html(svg);
+        let twin = |k: &str| v.pointer(&format!("/svg/{}", k)).and_then(|t| t.as_str());
+        return chart_html(svg, twin("light"), twin("dark"));
     }
     if let Some(png) = v.get("png").and_then(|p| p.as_str()) {
         // a known picture format, else png (an svg+xml here would be
@@ -802,8 +803,9 @@ fn table_html(
 }
 
 /// A chart as its SVG, drawn in both themes (the page shows the one its
-/// reader's appearance asks for); its description rides inside.
-fn chart_html(svg: &str) -> String {
+/// reader's appearance asks for): the twins the kernel drew when it
+/// did, else the chart rethemed; its description rides inside.
+fn chart_html(svg: &str, light: Option<&str>, dark: Option<&str>) -> String {
     use olang_ods::plot::{Theme, retheme};
     // markup that could run or fetch is never put in the page: a picture
     // of it instead, where an SVG runs nothing
@@ -813,8 +815,10 @@ fn chart_html(svg: &str) -> String {
             base64::Engine::encode(&base64::engine::general_purpose::STANDARD, svg.as_bytes())
         );
     }
-    let light = retheme(svg, Theme::Light);
-    let dark = retheme(svg, Theme::Dark);
+    let (light, dark) = match (light, dark) {
+        (Some(l), Some(d)) if svg_ok(l) && svg_ok(d) => (l.to_string(), d.to_string()),
+        _ => (retheme(svg, Theme::Light), retheme(svg, Theme::Dark)),
+    };
     if light == dark {
         return format!("<figure class=\"chart\">{}</figure>", svg);
     }
@@ -944,7 +948,7 @@ fn control_html(ctl: &J, mode: Mode, cell: &str, value: Option<&J>) -> String {
                 range
             );
             if let Some(svg) = ctl.pointer("/svg/text").and_then(|t| t.as_str()) {
-                o.push_str(&chart_html(svg));
+                o.push_str(&chart_html(svg, None, None));
             }
             o.push_str("</div>");
             let _ = write!(
@@ -1186,6 +1190,60 @@ fn prose_runs(nb: &crate::notebook::Notebook, n: usize) -> Vec<(usize, usize)> {
         out.push((at, n));
     }
     out
+}
+
+/// The notebook as a page draws it, in order (the outputs document's
+/// `blocks`): each run of prose — its Markdown with `${expr}` kept, and
+/// each expression with its value's text (`ok` false and the error's
+/// message where it failed, no `text` where it was never evaluated) —
+/// and each code cell, by the `id` its entry in `cells` has, with its
+/// source.
+pub fn blocks(text: &str, doc: &J) -> J {
+    let nb = crate::notebook::parse(text);
+    let lines: Vec<&str> = text
+        .split('\n')
+        .map(|l| l.strip_suffix('\r').unwrap_or(l))
+        .collect();
+    let values = interp_of(doc);
+    let entries = cell_entries(&nb, doc);
+    let mut at: Vec<(usize, J)> = Vec::new();
+    for (from, to) in prose_runs(&nb, lines.len()) {
+        let chunk = lines[from..to].join("\n");
+        let body = chunk.trim_matches('\n');
+        if body.trim().is_empty() {
+            continue;
+        }
+        let exprs: Vec<J> = take_exprs(body)
+            .1
+            .iter()
+            .map(|e| {
+                let reply = values.iter().find(|(x, _)| x.trim() == e.as_str()).map(|(_, r)| r);
+                match reply {
+                    Some(r) if r.get("ok").and_then(|o| o.as_bool()) == Some(true) => {
+                        let v = r.get("value").cloned().unwrap_or(J::Null);
+                        json!({ "expr": e, "ok": true, "text": value_text(&v), "type": v.get("t") })
+                    }
+                    Some(r) => json!({ "expr": e, "ok": false,
+                        "error": r.pointer("/error/message").cloned().unwrap_or(J::Null) }),
+                    None => json!({ "expr": e }),
+                }
+            })
+            .collect();
+        let skipped = chunk.len() - chunk.trim_start_matches('\n').len();
+        at.push((from, json!({ "kind": "prose", "line": from + 1 + skipped, "text": body, "exprs": exprs })));
+    }
+    for (c, e) in nb.cells.iter().zip(entries) {
+        let from = c.fence_line as usize;
+        let to = (c.close_line as usize).saturating_sub(1).min(lines.len()).max(from);
+        let mut b = json!({ "kind": "code", "line": from + 1, "name": c.options.name,
+            "source": lines[from.min(to)..to].join("\n"), "run": !c.no_run });
+        if let Some(e) = e {
+            b["id"] = e.get("id").cloned().unwrap_or(J::Null);
+        }
+        at.push((from, b));
+    }
+    at.sort_by_key(|(l, _)| *l);
+    J::Array(at.into_iter().map(|(_, b)| b).collect())
 }
 
 // ── code ────────────────────────────────────────────────────────────
@@ -1507,7 +1565,7 @@ fn pinned_html(text: &str, c: &crate::notebook::Cell) -> String {
         return String::new();
     };
     let inner = match o.kind.as_str() {
-        "chart" => chart_html(&body),
+        "chart" => chart_html(&body, None, None),
         _ => format!("<pre class=\"text pinned\">{}</pre>", esc(&body)),
     };
     format!("<div class=\"pinned-note\">pinned</div>{}", inner)
@@ -2285,7 +2343,7 @@ mod tests {
     #[test]
     fn a_brush_over_a_gg_plot_drags_in_a_panel_on_the_page() {
         // a gg plot's description: panels, each with its horizontal axis
-        let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 720 440\"><metadata id=\"olang-chart\">{\"v\":1,\"type\":\"gg\",\"width\":720,\"height\":440,\"panels\":[{\"x\":40,\"y\":30,\"w\":600,\"h\":360,\"h_axis\":{\"kind\":\"continuous\",\"trans\":\"log10\",\"lo\":0,\"hi\":3}}]}</metadata></svg>";
+        let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 720 440\"><metadata class=\"olang-chart\">{\"v\":1,\"type\":\"gg\",\"width\":720,\"height\":440,\"panels\":[{\"x\":40,\"y\":30,\"w\":600,\"h\":360,\"h_axis\":{\"kind\":\"continuous\",\"trans\":\"log10\",\"lo\":0,\"hi\":3}}]}</metadata></svg>";
         let reply = json!({ "ok": true, "out": "", "value": { "k": "list", "s": "[10.0, 100.0]" },
             "control": { "kind": "brush", "name": "window", "value": { "k": "list", "s": "[10.0, 100.0]" }, "svg": { "text": svg } } });
         let page = output_html(&reply, None, Mode::Export, "c2", false);
@@ -2296,7 +2354,7 @@ mod tests {
 
     #[test]
     fn a_brush_is_dragged_on_a_page_and_set_in_an_app() {
-        let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 720 440\"><metadata id=\"olang-chart\">{\"v\":1,\"type\":\"xy\",\"width\":720,\"height\":440,\"x\":{\"lo\":0.0,\"hi\":10.0},\"plot\":{\"left\":56.0,\"top\":20.0,\"w\":644.0,\"h\":380.0}}</metadata></svg>";
+        let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 720 440\"><metadata class=\"olang-chart\">{\"v\":1,\"type\":\"xy\",\"width\":720,\"height\":440,\"x\":{\"lo\":0.0,\"hi\":10.0},\"plot\":{\"left\":56.0,\"top\":20.0,\"w\":644.0,\"h\":380.0}}</metadata></svg>";
         let reply = json!({ "ok": true, "out": "", "value": { "k": "list", "s": "[2.0, 4.5]" },
             "control": { "kind": "brush", "name": "window", "value": { "k": "list", "s": "[2.0, 4.5]" }, "svg": { "text": svg } } });
         // the chart under a layer a range is dragged on, its range said
@@ -2389,7 +2447,7 @@ mod tests {
     fn a_chart_s_svg_is_inlined_only_when_it_runs_and_fetches_nothing() {
         let good = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 10 10\"><defs><linearGradient id=\"g\"/></defs><rect fill=\"url(#g)\" width=\"10\" height=\"10\"/><use href=\"#g\"/><metadata>a chart</metadata></svg>";
         assert!(svg_ok(good));
-        assert!(chart_html(good).contains("<rect"));
+        assert!(chart_html(good, None, None).contains("<rect"));
         for bad in [
             "<svg><script>alert(3)</script></svg>",
             "<svg onload=\"alert(1)\"></svg>",
@@ -2403,7 +2461,7 @@ mod tests {
             "<div><svg></svg></div>",
         ] {
             assert!(!svg_ok(bad), "{bad}");
-            let html = chart_html(bad);
+            let html = chart_html(bad, None, None);
             assert!(!html.contains("<script") && !html.contains("onload") && !html.contains("<a "), "{html}");
             assert!(html.contains("data:image/svg+xml;base64,"), "{html}");
         }
@@ -2421,7 +2479,7 @@ mod tests {
                 "<svg xmlns=\"http://www.w3.org/2000/svg\"><text x=\"1\" y=\"2\">{text}</text><g aria-label=\"{text}\"/></svg>"
             );
             assert!(svg_ok(&svg), "{svg}");
-            assert!(chart_html(&svg).contains(text));
+            assert!(chart_html(&svg, None, None).contains(text));
         }
         assert!(!svg_ok("<svg><text>°</text><script>x</script></svg>"));
         assert!(!svg_ok("<svg é onload=\"x\"></svg>"));

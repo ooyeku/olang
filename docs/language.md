@@ -2409,13 +2409,15 @@ An import never replaces what it was not asked for:
 export it skips (a warning) and a listed name that would replace the
 file's own (an error). It also knows each stdlib module's members: a
 member a module lacks — lowercase `pi` read off `math`, whose constant
-is `PI`; a `trimm` called on `str` — is an error naming the nearest, and `gui.turn == ()` — asking whether this build has a
-member — is left alone.
+is `PI`; a `trimm` called on `str` — is an error naming the nearest.
 
-A namespace reads like any record: calling a member it does not have raises, naming the nearest
-(`geometry.aera(3, 4)` — did you mean `area`?), and reading one is `()`,
-as `map_get` answers — how a program asks a module it loaded at run time
-whether it has a hook (`if plugin.init == () => …`). Because a later wildcard
+A member a namespace does not have raises, read or called, on every
+tier, naming the module and the nearest member: `math.pi` raises
+"module 'math' has no member 'pi'; did you mean 'PI'?", and
+`geometry.aera(3, 4)` suggests `area`. `map_get` asks without raising:
+`map_get(plugin, "init")` is the hook or `()`, how a program asks a
+module it loaded at run time whether it has one
+(`if map_get(plugin, "init") != () => …`). Because a later wildcard
 import rebinds any earlier import of the same name,
 `olang check` warns when it can see the collision; the alias form is
 the resolution that keeps both names.
