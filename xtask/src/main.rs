@@ -7,8 +7,9 @@
 //! root crate's `build.rs` reads it — `target/wasm32-unknown-unknown/
 //! release/olang_playground.wasm` — so the next `cargo build` or
 //! `cargo install --path .` of `olang` carries the runtime. With
-//! `--full` it also builds the website's profile (the whole stdlib) and
-//! stages it at `website/static/playground/olang.wasm`.
+//! `--full` it also builds the full profile (the whole stdlib, `re` and
+//! RSA included), for a playground that runs any program, and copies it
+//! to `target/wasm-full/olang.wasm`.
 //!
 //! Nested cargo inside `build.rs` would rebuild the runtime on every
 //! native build and fight the outer build for the target directory; a
@@ -88,7 +89,7 @@ fn wasm(full: bool) -> ExitCode {
         .join("release")
         .join("olang_playground.wasm");
     if full {
-        // The website's playground carries the whole stdlib.
+        // The full profile: the whole stdlib, for a playground.
         if !cargo(
             &root,
             &[
@@ -104,7 +105,7 @@ fn wasm(full: bool) -> ExitCode {
         ) {
             return ExitCode::FAILURE;
         }
-        let dest = root.join("website/static/playground/olang.wasm");
+        let dest = root.join("target/wasm-full/olang.wasm");
         if let Some(dir) = dest.parent() {
             let _ = std::fs::create_dir_all(dir);
         }

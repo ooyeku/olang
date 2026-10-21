@@ -1,18 +1,11 @@
 //! Every `chapter.md#anchor` link in the book points at a heading that
 //! exists.
 //!
-//! The failure this guards against is indirect: renaming a heading in
-//! one chapter silently breaks the links *other* chapters aimed at it.
-//! R1's prose pass hit exactly that — `stability.md`'s "Reserved —
-//! parses today, semantics later" heading was corrected (nothing under
-//! it parses), and `types.md` was still linking to the old anchor while
-//! repeating the old claim. The claim had one home in each chapter; the
-//! anchor was the thread between them, and nothing checked the thread.
+//! Renaming a heading in one chapter silently breaks the links other
+//! chapters aim at it; this test is the thread between them.
 //!
-//! Slugs follow the GitHub/marked convention the website's renderer
-//! uses: lowercase, punctuation dropped, spaces to hyphens. If the
-//! website's slugifier ever changes, this test's `slugify` must change
-//! with it — they are one convention spelled twice.
+//! Slugs follow GitHub's convention, which any renderer of the book
+//! must use too: lowercase, punctuation dropped, spaces to hyphens.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -21,9 +14,9 @@ fn slugify(heading: &str) -> String {
     let mut out = String::with_capacity(heading.len());
     for c in heading.trim().chars() {
         match c {
-            'A'..='Z' => out.push(c.to_ascii_lowercase()),
-            'a'..='z' | '0'..='9' | '-' => out.push(c),
             ' ' => out.push('-'),
+            '-' | '_' => out.push(c),
+            c if c.is_alphanumeric() => out.extend(c.to_lowercase()),
             // Backticks, em-dashes, commas, colons, and the rest drop.
             _ => {}
         }
@@ -124,6 +117,7 @@ fn the_slugifier_follows_the_github_convention() {
         ("`plot` — charts as SVG text", "plot--charts-as-svg-text"),
         ("How `use` resolves", "how-use-resolves"),
         ("Operators and precedence", "operators-and-precedence"),
+        ("`map_get` and `m[k]`", "map_get-and-mk"),
     ] {
         assert_eq!(slugify(heading), slug);
     }

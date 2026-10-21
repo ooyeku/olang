@@ -21,8 +21,8 @@ default = ["native", "full", "gui"]
 # The whole stdlib. The browser profile the web SDK ships omits these
 # (`cargo build -p olang-playground` without `--features full`): the
 # regex engine and its Unicode tables, and the RSA suite, are a third of
-# the runtime's code and nothing a page needs. The website's playground
-# keeps them.
+# the runtime's code and nothing a page needs. A playground that runs
+# any program keeps them (`cargo xtask wasm --full`).
 full = ["regex-module", "rsa-crypto"]
 # `alloc-count`: has the accounting allocator (`src/memory.rs`) also count
 # allocations made, for measuring allocations per benchmark iteration;
