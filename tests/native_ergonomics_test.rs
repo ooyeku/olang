@@ -1,4 +1,4 @@
-//! The data-ergonomics prerequisites (docs/design/data-ergonomics.md,
+//! The data-ergonomics prerequisites (docs/ods.md,
 //! L1–L6) on every tier: keyword arguments and defaults for native
 //! builtins, methods on native values, the native operator hooks
 //! (unary, bitwise, `@`), `len` of a Series or Frame, and a Frame's

@@ -1,4 +1,4 @@
-//! Phase 1 acceptance benchmarks (docs/design/ods.md, B1/B2/B3/B5).
+//! Phase 1 acceptance benchmarks (docs/ods.md, B1/B2/B3/B5).
 //! Run with `cargo bench -p olang-ods`. NumPy reference numbers are
 //! collected separately and recorded in the design doc.
 

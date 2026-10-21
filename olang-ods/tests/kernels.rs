@@ -1,6 +1,6 @@
 //! Every kernel pinned against a naive reference implementation over
 //! generated data, including null patterns — the property-test discipline
-//! the design doc requires (docs/design/ods.md, Phase 1 gate).
+//! the design doc requires (docs/ods.md, Phase 1 gate).
 
 use olang_ods::{ArithOp, CmpOp, DType, OdsError, Scalar, Series};
 

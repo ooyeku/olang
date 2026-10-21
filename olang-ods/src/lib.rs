@@ -2,7 +2,7 @@
 //!
 //! Pure buffers and kernels with **no dependency on olang**: the language
 //! glue lives in the olang crate (`src/ods/`) and calls in here. See
-//! `docs/design/ods.md` in the olang repository for the full design.
+//! `docs/ods.md` in the olang repository for the full design.
 //!
 //! Semantics the kernels guarantee (chosen to mirror olang's scalar
 //! operators, so operator interception cannot diverge from the language):

@@ -1,4 +1,4 @@
-//! Phase 0 seam tests for the ods OVM module (docs/design/ods.md).
+//! Phase 0 seam tests for the ods OVM module (docs/ods.md).
 //!
 //! These pin the Native-value plumbing before any real engine exists:
 //! the tier boundary shares one Arc (no conversion), operator

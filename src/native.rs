@@ -4,7 +4,7 @@
 //! native functions into *both* execution tiers at once. The contract is
 //! deliberately small — a name, some stdlib-style namespaces, a function
 //! dispatcher, and first refusal on binary operators that touch the
-//! module's values. See `docs/design/ods.md` for the full design.
+//! module's values. See `docs/ods.md` for the full design.
 //!
 //! The load-bearing property is [`NativeHandle`]: one `Arc` that the
 //! interpreter's `Value::Native` and the OVM's `ValueData::Native` hold

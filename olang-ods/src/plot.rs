@@ -2,7 +2,7 @@
 //!
 //! Output is a complete standalone SVG document string — it composes
 //! with `fs.write_file`, an HTTP response, or the wasm playground
-//! equally well, which is the whole design (docs/design/ods.md,
+//! equally well, which is the whole design (docs/ods.md,
 //! Phase 4: "plot output is SVG text").
 //!
 //! The visual defaults follow a validated categorical palette and the

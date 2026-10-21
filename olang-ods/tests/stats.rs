@@ -1,5 +1,5 @@
 //! Phase 2 gate: inference results pinned against scipy reference values
-//! (docs/design/ods.md). Every constant below was produced by scipy
+//! (docs/ods.md). Every constant below was produced by scipy
 //! 1.x / NumPy 2.5.2 — the generating snippets are noted inline so the
 //! numbers can be re-derived.
 
@@ -21,7 +21,7 @@ const TIGHT: f64 = 1e-9;
 
 #[test]
 fn distributions_match_scipy() {
-    // scipy.stats.norm/t/chi2/f — see docs/design/ods.md Phase 2 gate.
+    // scipy.stats.norm/t/chi2/f — see docs/ods.md Phase 2 gate.
     close(
         dist::norm_pdf(1.5, 0.0, 1.0).unwrap(),
         0.12951759566589174,

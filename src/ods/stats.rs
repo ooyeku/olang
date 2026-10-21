@@ -1,6 +1,6 @@
 //! The `stats` namespace: L2 of the ods layer cake — thin tables over
 //! the engine's inference kernels and distributions. No numeric loops
-//! live here (the L0/L2 invariant in docs/design/ods.md); this file is
+//! live here (the L0/L2 invariant in docs/ods.md); this file is
 //! argument checking, Value↔engine translation, and result shaping.
 //!
 //! Results come back as olang maps (`#{...}`) so callers destructure

@@ -1,4 +1,4 @@
-//! Matrices and model formulas (docs/design/data-ergonomics.md §5, §6).
+//! Matrices and model formulas (docs/ods.md).
 //!
 //! - Numbers: `ods.matrix`, `@`, `mat.*`, `ods.corr`/`ods.cov` and the
 //!   formula fits, pinned against NumPy 2.5 / SciPy 1.18 / pandas 3.0 on

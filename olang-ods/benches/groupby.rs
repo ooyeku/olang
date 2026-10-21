@@ -1,4 +1,4 @@
-//! B6 acceptance benchmark (docs/design/ods.md): group-by aggregate,
+//! B6 acceptance benchmark (docs/ods.md): group-by aggregate,
 //! 10M rows, 1k groups, vs Polars. Run with
 //! `cargo bench -p olang-ods --bench groupby`.
 

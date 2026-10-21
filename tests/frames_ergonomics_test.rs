@@ -1,4 +1,4 @@
-//! Frames: shape, group, join, time (docs/design/data-ergonomics.md §4)
+//! Frames: shape, group, join, time (docs/ods.md)
 //! on every tier: the GroupBy value and its verbs, aggregation
 //! expressions and `over`, `apply` calling olang once per group, keyed
 //! lookup and slicing, crosstabs and runs, joins on several keys with

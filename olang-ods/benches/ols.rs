@@ -1,4 +1,4 @@
-//! B4 acceptance benchmark (docs/design/ods.md): OLS fit, 1M rows × 20
+//! B4 acceptance benchmark (docs/ods.md): OLS fit, 1M rows × 20
 //! regressors, vs numpy.linalg.lstsq. Run with
 //! `cargo bench -p olang-ods --bench ols`.
 

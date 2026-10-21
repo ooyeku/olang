@@ -1,4 +1,4 @@
-//! Matrices (docs/design/data-ergonomics.md §5): the `Matrix` value,
+//! Matrices (docs/ods.md): the `Matrix` value,
 //! `ods.matrix`, `ods.corr` and `ods.cov`, the `mat` namespace, and `@`.
 //!
 //! A Matrix is the engine's `olang_ods::matrix::Matrix`: column-major

@@ -1,4 +1,4 @@
-//! Frames: shape, group, join, time (docs/design/data-ergonomics.md §4).
+//! Frames: shape, group, join, time (docs/ods.md).
 //!
 //! - **GroupBy**, a native value: `ods.group_by(f, keys)` with no
 //!   aggregations computes the group ids once (the engine's `Grouping`)

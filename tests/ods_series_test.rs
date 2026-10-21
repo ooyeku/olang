@@ -1,5 +1,5 @@
 //! Phase 1 integration tests: Series behaves identically from both tiers
-//! and agrees with olang-list reference computations (docs/design/ods.md).
+//! and agrees with olang-list reference computations (docs/ods.md).
 //!
 //! Promoted functions here use float constants deliberately: the baseline
 //! JIT's pure-integer whitelist declines them, so these tests exercise the

@@ -6,7 +6,7 @@
 //! kernels, no olang dependency). Phase 2 adds the `stats` namespace:
 //! distributions, t-tests, chi-squared, correlation, and `stats.lm`,
 //! all thin tables over the engine (L2 of the layer cake). See
-//! `docs/design/ods.md`.
+//! `docs/ods.md`.
 
 mod colfns;
 mod columns;

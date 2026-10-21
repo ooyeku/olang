@@ -5,7 +5,7 @@
 //! threshold via `crate::parallel::should_parallelize`, and the engine's
 //! per-class size via `olang_ods::par_worth`: see `par`). No numeric logic
 //! lives in this file; that is the engine's job (L0/L2 split in
-//! docs/design/ods.md).
+//! docs/ods.md).
 //!
 //! Operator semantics chosen for Phase 1 (revisit in the language
 //! reference when the surface stabilizes):
