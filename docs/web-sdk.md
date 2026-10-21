@@ -171,6 +171,13 @@ the 500, and it is for failures: an absent row is an answer, not a
 crash. `req.remote_addr` is the peer (`ip:port`); with `"trust_proxy":
 true` in the config it is the first entry of `X-Forwarded-For` instead.
 
+A path no route has answers the JSON envelope `{"error": {"code":
+"not_found", …}}` with status 404. `"not_found": (req) => response` in
+the config answers it instead — a site's HTML 404 page, a static file
+when one exists. A path that has routes for other methods is a 405 with
+`Allow` either way, and the configured headers and compression apply to
+the answer as to any other.
+
 `serve` wraps every response, the static routes included: `"headers"`
 in its config is a map added to each one — the `Content-Security-Policy`,
 `X-Content-Type-Options`, and `Referrer-Policy` a `<meta>` cannot carry —

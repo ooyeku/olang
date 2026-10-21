@@ -51,6 +51,8 @@ let painted = spawn {
                                 [to_string(s.n) + " notes"]),
              "initial": () => #{ "n": 3, "tag": "<b>" },
              "headers": #{ "X-Content-Type-Options": "nosniff" },
+             "not_found": (req) => { status: 404, body: "<h1>No page at " + req.path + "</h1>",
+                                     headers: #{ "Content-Type": "text/html; charset=utf-8" } },
              "head": (req) => "<meta name=\"path\" content=\"" + req.path + "\">" })
 }
 
@@ -157,6 +159,14 @@ test "the error envelope crosses the socket" {
     let gone = unwrap(http.get(base + "/definitely/not/here"))
     assert_eq(gone.status, 404)
     assert_eq(str.contains(gone.body, "not_found"), true)
+}
+
+test "a not_found option answers an unknown path with its own page" {
+    let gone = unwrap(http.get(painted_base + "/no/such/page"))
+    assert_eq(gone.status, 404)
+    assert_eq(gone.body, "<h1>No page at /no/such/page</h1>")
+    assert_eq(str.starts_with(gone.headers["content-type"], "text/html"), true)
+    assert_eq(gone.headers["x-content-type-options"], "nosniff")
 }
 
 test "a large text response is gzipped only for a client that accepts it" {

@@ -105,7 +105,7 @@ fn access_level() = match os.get_env("OLANG_ACCESS_LOG") {
 /// `(req, response, ms) => ...` — or Unit for the default line. Passed
 /// as a value (never a cell: handlers run on worker threads), so an app
 /// with its own structured logging owns every line of its output.
-share fn dispatch_with(routes, req, log) = dispatch_in(routes, req, log, under_test())
+share fn dispatch_with(routes, req, log) = dispatch_in(routes, req, log, under_test(), ())
 
 /// `hop`: run the handler on a task thread. Under `olang test` a direct
 /// `dispatch` does, the way `serve`'s workers run it: a handler that
@@ -115,7 +115,9 @@ share fn dispatch_with(routes, req, log) = dispatch_in(routes, req, log, under_t
 /// hops — its worker is already the thread, and a handler that defers
 /// (`http.defer`) must run on the connection's own thread — so a served
 /// test needs no OLANG_TEST juggling.
-fn dispatch_in(routes, req, log, hop) = {
+/// `missing`: `(req) => response` for a path no route has, or Unit for
+/// the JSON 404 envelope (`serve`'s `not_found` option).
+fn dispatch_in(routes, req, log, hop, missing) = {
     let started = time.monotonic_ms()
     let outcome = find(routes, req.method, req.path)
     let hit = outcome.hit
@@ -137,6 +139,7 @@ fn dispatch_in(routes, req, log, hop) = {
                 "allow": outcome.allowed } })),
             #{ "Content-Type": "application/json",
                "Allow": join(outcome.allowed, ", ") })
+    else if missing != () => missing(req)
     else =>
         error_response(404, "not_found", "no route for " + req.method + " " + req.path)
     let ms = time.monotonic_ms() - started
@@ -257,7 +260,7 @@ fn use_root(t) = {
 fn browser_resolves(name) =
     contains(["str", "json", "dates", "time", "math", "random", "crypto", "base64", "bytes", "col",
               "chan", "cell", "dom", "testing", "meta", "caps", "vec", "task", "bigint", "compress",
-              "re", "toml", "csv", "ods", "plot", "viz", "ui", "dash", "term", "collections", "heap",
+              "md", "re", "toml", "csv", "ods", "plot", "viz", "ui", "dash", "term", "collections", "heap",
               "deque", "bitset", "dsu", "table", "alg", "colx", "mathx", "cli"], name)
 
 test "the bundler strips package and project imports and keeps the browser's" {
@@ -694,6 +697,9 @@ test "the shell carries the first paint and its state when given a view" {
 ///   drain    true to stop accepting and finish in-flight requests on
 ///            SIGINT/SIGTERM instead of dying mid-request (default false)
 ///   trust_proxy  take req.remote_addr from X-Forwarded-For (default false)
+///   not_found  `(req) => response` for a path no route matches (a
+///            site's HTML 404 page); absent, the JSON 404 envelope. A
+///            path with routes for other methods is still a 405
 ///
 /// `head` may be a function of the request — `(req) => html` — so a
 /// per-response value (a CSP nonce) is possible; the shell is then
@@ -739,6 +745,8 @@ share fn serve(config) = {
     let trust_proxy = get_or(config, "trust_proxy", false)
     let compress_responses = get_or(config, "compress", true)
     let drain_ms = get_or(config, "drain_ms", 5000)
+    let missing = get_or(config, "not_found", ())
+    if missing != () && typeof(missing) != "Function" => raise("serve: not_found must be a function (req) => response")
     // `"hot"`: the client functions the image tells the browser to
     // compile at declaration, so the boot render runs on the VM. Absent,
     // every function the app's own client files declare — the view and
@@ -905,7 +913,7 @@ share fn serve(config) = {
     // drained stop; a port that cannot be taken ends the program with 1
     // (it went on with exit 0, a supervisor seeing a clean stop).
     println(title)
-    match http.serve(port, (req) => encoded(req, with_headers(dispatch_in(table, req, log, false))),
+    match http.serve(port, (req) => encoded(req, with_headers(dispatch_in(table, req, log, false, missing))),
                      #{ "bind": bind, "trust_proxy": trust_proxy, "drain_ms": drain_ms }) {
         Err(e) => {
             eprintln(title + ": could not start on " + bind + ":" + show(port) + ": " + show(e))
@@ -923,6 +931,20 @@ fn fake_req(method, path) =
 
 fn fake_req_body(method, path, body) =
     { method: method, path: path, query: #{}, headers: #{}, body: body }
+
+test "a not_found handler answers a path no route has; a 405 stays a 405" {
+    let table = index_routes([#{ "method": "GET", "pattern": "/a", "name": "", "handler": (req, p) => 1 }])
+    let page = (req) => { status: 404, body: "<h1>Not here: " + req.path + "</h1>",
+                          headers: #{ "Content-Type": "text/html; charset=utf-8" } }
+    let r = dispatch_in(table, fake_req("GET", "/nope"), "off", false, page)
+    assert_eq(r.status, 404)
+    assert_eq(r.body, "<h1>Not here: /nope</h1>")
+    assert_eq(r.headers["Content-Type"], "text/html; charset=utf-8")
+    assert_eq(dispatch_in(table, fake_req("POST", "/a"), "off", false, page).status, 405)
+    assert_eq(dispatch_in(table, fake_req("GET", "/a"), "off", false, page).status, 200)
+    let plain = dispatch_in(table, fake_req("GET", "/nope"), "off", false, ())
+    assert_eq(str.contains(plain.body, "\"not_found\""), true)
+}
 
 test "dispatch: hit, wrap, 404, 405 with Allow, Err becomes 500" {
     let table = [
