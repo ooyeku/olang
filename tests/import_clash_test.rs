@@ -163,7 +163,7 @@ fn check_knows_each_stdlib_module_s_members() {
         (
             "good.ol",
             "println(math.PI)\n\
-             if gui.no_such_thing == () => println(\"absent\")\n\
+             if map_get(gui, \"no_such_thing\") == () => println(\"absent\")\n\
              let math2 = 1\n\
              use gg\n\
              let p = gg.plot\n\
