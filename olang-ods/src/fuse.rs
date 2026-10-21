@@ -127,6 +127,19 @@ impl BinOp {
     fn is_logic(self) -> bool {
         matches!(self, BinOp::And | BinOp::Or | BinOp::Xor)
     }
+
+    /// The comparison as the eager kernels' operator.
+    fn cmp_op(self) -> Option<crate::CmpOp> {
+        Some(match self {
+            BinOp::Eq => crate::CmpOp::Eq,
+            BinOp::Ne => crate::CmpOp::Ne,
+            BinOp::Lt => crate::CmpOp::Lt,
+            BinOp::Le => crate::CmpOp::Le,
+            BinOp::Gt => crate::CmpOp::Gt,
+            BinOp::Ge => crate::CmpOp::Ge,
+            _ => return None,
+        })
+    }
 }
 
 /// The elementwise math functions. Each is the std `f64` method the
@@ -414,6 +427,8 @@ pub enum TOp {
     Floor(crate::time::Every),
     /// Calendar months later, the day clamped to the month's end.
     AddMonths(i64),
+    /// `[d, n]`: `n` (an Int a row) calendar months later.
+    AddMonthsBy,
     /// `[a, b]`: whole calendar months from `b` to `a`.
     MonthsBetween,
 }
@@ -438,7 +453,7 @@ impl TOp {
             TOp::AsDate => "as_date",
             TOp::AsDatetime => "as_datetime",
             TOp::Floor(_) => "floor",
-            TOp::AddMonths(_) => "add_months",
+            TOp::AddMonths(_) | TOp::AddMonthsBy => "add_months",
             TOp::MonthsBetween => "months_between",
         }
     }
@@ -558,11 +573,12 @@ impl Expr {
                             matches!(a.dtype(), Ok(Some(DType::I64) | None))
                         }) || args.iter().any(|a| temporal(a.dtype().ok().flatten()))
                     }
-                    Op::Temporal(TOp::AsDate | TOp::AddMonths(_), _) => true,
+                    Op::Temporal(TOp::AsDate | TOp::AddMonths(_) | TOp::AddMonthsBy, _) => true,
                     Op::Math(Math::Abs) | Op::Round(_) => {
                         matches!(args[0].dtype(), Ok(Some(DType::I64)))
                     }
                     Op::Math(m) => m.domain().is_some(),
+                    Op::Bin(_) | Op::Between(_) => category_cmp_fallible(*op, args),
                     _ => false,
                 };
                 me || args.iter().any(|a| a.fallible())
@@ -699,6 +715,13 @@ pub fn op_dtype(op: Op, kids: &[Option<DType>]) -> Result<Option<DType>> {
                     name_of(kids[1])
                 )))
             }
+        }
+        // `+` of text joins it (a null on either side is a null).
+        Op::Bin(BinOp::Add)
+            if kids.contains(&Some(DType::Str))
+                && kids.iter().all(|k| matches!(k, Some(DType::Str) | None)) =>
+        {
+            Ok(Some(DType::Str))
         }
         Op::Bin(b) => {
             if !(numeric(kids[0]) && numeric(kids[1])) {
@@ -899,6 +922,15 @@ fn temporal_dtype(op: Op, kids: &[Option<DType>]) -> Result<Option<Option<DType>
                 TOp::Date => Some(Date),
                 TOp::ToDatetime => Some(Datetime),
                 TOp::Floor(_) | TOp::AddMonths(_) => k.or(Some(Date)),
+                TOp::AddMonthsBy => {
+                    if !matches!(kids[1], Some(I64 | DType::Bool) | None) {
+                        return Err(OdsError::TypeMismatch(format!(
+                            "add_months: the months are an Int, got {}",
+                            name(&kids[1])
+                        )));
+                    }
+                    k.or(Some(Date))
+                }
             };
             Ok(Some(out))
         }
@@ -937,6 +969,86 @@ fn temporal_dtype(op: Op, kids: &[Option<DType>]) -> Result<Option<Option<DType>
         }
         _ => Ok(None),
     }
+}
+
+/// A comparison of a Category column with a level (a text literal), or
+/// with a Category column of the same levels: the eager kernel over the
+/// codes, which knows the levels' order. None for any other comparison
+/// (a Category against other text compares as text).
+fn category_cmp(op: Op, args: &[Arc<Expr>]) -> Result<Option<Series>> {
+    let Op::Bin(b) = op else { return Ok(None) };
+    let Some(cmp) = b.cmp_op() else { return Ok(None) };
+    let cat = |e: &Arc<Expr>| match e.as_ref() {
+        Expr::Col(s @ Series::Cat { .. }) => Some(s.clone()),
+        _ => None,
+    };
+    let level = |e: &Arc<Expr>| match e.as_ref() {
+        Expr::Lit(Scalar::Str(t)) => Some(t.clone()),
+        _ => None,
+    };
+    Ok(match (cat(&args[0]), cat(&args[1])) {
+        (Some(a), Some(c)) => match (&a, &c) {
+            (Series::Cat { levels: la, .. }, Series::Cat { levels: lb, .. })
+                if crate::category::same_levels(la, lb) =>
+            {
+                Some(a.compare(cmp, &c)?)
+            }
+            _ => None,
+        },
+        (Some(a), None) => match level(&args[1]) {
+            Some(t) => Some(a.compare_scalar(cmp, Scalar::Str(t), false)?),
+            None => None,
+        },
+        (None, Some(c)) => match level(&args[0]) {
+            Some(t) => Some(c.compare_scalar(cmp, Scalar::Str(t), true)?),
+            None => None,
+        },
+        (None, None) => None,
+    })
+}
+
+/// `between` of a Category column and two levels: both comparisons, in
+/// level order.
+fn category_between(op: Op, args: &[Arc<Expr>]) -> Option<Arc<Expr>> {
+    let Op::Between(closed) = op else { return None };
+    let is_level = |e: &Arc<Expr>| matches!(e.as_ref(), Expr::Lit(Scalar::Str(_)));
+    if !matches!(args[0].as_ref(), Expr::Col(Series::Cat { .. }))
+        || !is_level(&args[1])
+        || !is_level(&args[2])
+    {
+        return None;
+    }
+    let (lo, hi) = match closed {
+        Closed::Both => (BinOp::Ge, BinOp::Le),
+        Closed::Left => (BinOp::Ge, BinOp::Lt),
+        Closed::Right => (BinOp::Gt, BinOp::Le),
+        Closed::Neither => (BinOp::Gt, BinOp::Lt),
+    };
+    Some(Expr::bin(
+        BinOp::And,
+        Expr::bin(lo, args[0].clone(), args[1].clone()),
+        Expr::bin(hi, args[0].clone(), args[2].clone()),
+    ))
+}
+
+/// Whether comparing these operands can raise: an ordering of a Category
+/// against text that is not one of its levels has no answer.
+fn category_cmp_fallible(op: Op, args: &[Arc<Expr>]) -> bool {
+    let ordering = match op {
+        Op::Bin(b) => b.is_cmp() && !matches!(b, BinOp::Eq | BinOp::Ne),
+        Op::Between(_) => true,
+        _ => false,
+    };
+    if !ordering {
+        return false;
+    }
+    let pair = |c: &Arc<Expr>, l: &Arc<Expr>| match (c.as_ref(), l.as_ref()) {
+        (Expr::Col(Series::Cat { levels, .. }), Expr::Lit(Scalar::Str(t))) => {
+            !levels.iter().any(|x| x == t.as_str())
+        }
+        _ => false,
+    };
+    args[1..].iter().any(|l| pair(&args[0], l)) || pair(&args[1], &args[0])
 }
 
 /// Arithmetic with a Date or Datetime as arithmetic on their integers:
@@ -1139,6 +1251,30 @@ impl Builder {
                 let kids: Vec<Option<DType>> =
                     args.iter().map(|a| a.dtype()).collect::<Result<_>>()?;
                 let out = op_dtype(*op, &kids)?.unwrap_or(DType::F64);
+                // A Category against a level, or against a Category of the
+                // same levels, compares in level order: the eager kernel
+                // over its codes, as `cat < "b"` outside an expression.
+                if let Some(e2) = category_between(*op, args) {
+                    let id = self.node(&e2, want)?;
+                    self.seen.insert(memo, id);
+                    return Ok(id);
+                }
+                if let Some(s) = category_cmp(*op, args)? {
+                    self.check_len(s.len())?;
+                    let id = self.push(
+                        series_key(&s),
+                        Step {
+                            may_null: s.validity().is_some(),
+                            dt: DType::Bool,
+                            kind: Kind::Col(s),
+                            args: vec![],
+                            orig: None,
+                        },
+                    );
+                    let id = self.convert(id, want)?;
+                    self.seen.insert(memo, id);
+                    return Ok(id);
+                }
                 if let Some(e2) = rewrite_temporal(*op, args, &kids) {
                     let id = self.node(&e2, want)?;
                     self.seen.insert(memo, id);
@@ -1146,14 +1282,24 @@ impl Builder {
                 }
                 // The planner's flag: the operand is a Datetime.
                 let op = &match op {
-                    Op::Temporal(t, _) => Op::Temporal(*t, kids[0] == Some(DType::Datetime)),
+                    Op::Temporal(t, _) => Op::Temporal(
+                        *t,
+                        kids[0] == Some(DType::Datetime)
+                            || (*t == TOp::MonthsBetween && kids[1] == Some(DType::Datetime)),
+                    ),
                     o => *o,
                 };
                 // The type the operation computes in.
                 let operand: Vec<Option<DType>> = match op {
                     Op::Bin(b) if b.is_logic() => vec![Some(DType::Bool); 2],
                     Op::Bin(b) if b.is_cmp() => {
-                        let t = common(kids[0], kids[1], "comparison")?.unwrap_or(DType::F64);
+                        // A Category reads as its text.
+                        let text = |k: Option<DType>| match k {
+                            Some(DType::Category) => Some(DType::Str),
+                            k => k,
+                        };
+                        let t = common(text(kids[0]), text(kids[1]), "comparison")?
+                            .unwrap_or(DType::F64);
                         vec![Some(t); 2]
                     }
                     Op::Bin(BinOp::Div | BinOp::Pow) => vec![Some(DType::F64); 2],
@@ -1168,13 +1314,30 @@ impl Builder {
                     Op::Between(_) => {
                         let mut t = None;
                         for k in &kids {
-                            t = common(t, *k, "between")?;
+                            let k = match k {
+                                Some(DType::Category) => Some(DType::Str),
+                                k => *k,
+                            };
+                            t = common(t, k, "between")?;
                         }
                         vec![Some(t.unwrap_or(DType::F64)); 3]
                     }
                     Op::Cast(_) => vec![None],
                     Op::Temporal(TOp::AsDate | TOp::AsDatetime, _) => vec![Some(DType::I64)],
-                    Op::Temporal(..) => vec![None; args.len()],
+                    // A null stands as the other operand's type (a Date's
+                    // when neither says), so it is read as integers.
+                    Op::Temporal(t, _) => {
+                        let at = kids
+                            .iter()
+                            .take(if t == &TOp::MonthsBetween { 2 } else { 1 })
+                            .find_map(|k| *k)
+                            .unwrap_or(DType::Date);
+                        match t {
+                            TOp::AddMonthsBy => vec![Some(at), Some(DType::I64)],
+                            TOp::MonthsBetween => vec![Some(at); 2],
+                            _ => vec![Some(at)],
+                        }
+                    }
                 };
                 // A String result is built row by row from its operands,
                 // then read as a column: the fused kernels are numeric.
@@ -1302,6 +1465,7 @@ impl Builder {
                 T::Col(_) => None,
             }
         }
+        let join = matches!(op, Op::Bin(BinOp::Add));
         let pick = |i: usize| -> Option<&str> {
             match op {
                 Op::Where => match &vals[0] {
@@ -1324,9 +1488,19 @@ impl Builder {
         let mut valid = vec![true; len];
         for (i, ok) in valid.iter_mut().enumerate() {
             let start = buf.len() as u32;
-            match pick(i) {
-                Some(t) => buf.push_str(t),
-                None => *ok = false,
+            if join {
+                match (text(&vals[0], i), text(&vals[1], i)) {
+                    (Some(a), Some(b)) => {
+                        buf.push_str(a);
+                        buf.push_str(b);
+                    }
+                    _ => *ok = false,
+                }
+            } else {
+                match pick(i) {
+                    Some(t) => buf.push_str(t),
+                    None => *ok = false,
+                }
             }
             spans.push((start, buf.len() as u32 - start));
         }
@@ -2469,6 +2643,32 @@ fn temporal_op(t: TOp, micros: bool, args: &[Arg<'_>], dst: &mut Dst<'_>, valid:
                     tm::add_months(d, k).filter(|&d| lim(d)).is_none()
                 })
             {
+                return Err(OdsError::InvalidArgument(
+                    "add_months: past the dates a Date holds".to_string(),
+                ));
+            }
+        }
+        TOp::AddMonthsBy => {
+            let y = i_of(&args[1]);
+            let lim = |d: i64| i32::try_from(d).is_ok();
+            let one = |v: i64, k: i64| -> Option<i64> {
+                if micros {
+                    tm::add_months(tm::day_of_us(v), k)
+                        .filter(|&d| lim(d))
+                        .map(|d| d * tm::US_PER_DAY + tm::time_of_us(v))
+                } else {
+                    tm::add_months(v, k).filter(|&d| lim(d))
+                }
+            };
+            let mut bad = false;
+            map2(x, y, out, |v, k| match one(v, k) {
+                Some(d) => d,
+                None => {
+                    bad = true;
+                    0
+                }
+            });
+            if bad && any_valid(valid, n, |i| one(x.at(i), y.at(i)).is_none()) {
                 return Err(OdsError::InvalidArgument(
                     "add_months: past the dates a Date holds".to_string(),
                 ));

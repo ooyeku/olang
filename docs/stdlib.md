@@ -472,7 +472,7 @@ every function returns a new string.
 | `str.fmt(template, ...)` | fill `{}` placeholders, display form; `{{`/`}}` escape |
 | `str.fixed(x, digits)` | exactly `digits` decimals, never exponent form, never `-0.00` — the column form `to_string` is not |
 | `str.thousands(x, digits)` | `str.fixed` with thousands separators: `1,234,567.89` |
-| `str.fmt(x, spec)` | a number by a format spec, Python's mini-language: `".2f"` (`3.14`), `",.0f"` (`1,234,568`), `".1%"` (`12.3%`), `"$,.0f"` (`-$1,234`), `"e"`, `"g"`, `"d"`, with `[[fill]align][sign]` and a width (`">8.1f"`). A Series of numbers gives a String Series (`ods.format`). In a template, `{:.2f}` formats its argument by the spec |
+| `str.fmt(x, spec)` | a number by a format spec, Python's mini-language: `".2f"` (`3.14`), `",.0f"` (`1,234,568`), `".1%"` (`12.3%`), `"$,.0f"` (`-$1,234`), `"e"`, `"g"`, `"n"`, `"d"`, `"x"` `"o"` `"b"` (`"X"` `"E"` `"F"` `"G"` upper case), with `[[fill]align][sign][z][#][0][width][,\|_]`: `">8.1f"`, `"02d"` (`05`: the `0` flag pads with zeros after the sign, `"+05d"` `+0005`, grouped too: `"08,d"` `0,001,234`), `"=+8.1f"`, `"#x"` (`0xff`), `"_d"`; `$` before the digits is ours. A Series of numbers gives a String Series (`ods.format`). In a template, `{:.2f}` formats its argument by the spec |
 | `str.pct(x, digits = 1)` | a fraction as a percentage: `str.pct(0.1234)` is `"12.3%"` |
 | `str.money(x, symbol = "$", digits = 0)` | an amount with separators: `str.money(-1234.5, digits: 2)` is `"-$1,234.50"` |
 

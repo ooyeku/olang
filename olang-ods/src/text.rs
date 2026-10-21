@@ -425,7 +425,7 @@ pub fn to_float(s: &Series) -> Result<Series> {
 /// Each cell read as a Datetime: ISO 8601 without a format, else the
 /// format's; null where it does not read.
 pub fn to_datetime(s: &Series, fmt: Option<&str>) -> Result<Series> {
-    let f = fmt.map(Format::new).transpose().map_err(|e| {
+    let f = fmt.map(Format::reader).transpose().map_err(|e| {
         OdsError::InvalidArgument(format!("to_datetime: {}", e))
     })?;
     let (v, validity) = per_cell("to_datetime", s, |t| match &f {
@@ -442,7 +442,7 @@ pub fn to_datetime(s: &Series, fmt: Option<&str>) -> Result<Series> {
 /// format, else the format's; null where it does not read.
 pub fn to_date(s: &Series, fmt: Option<&str>) -> Result<Series> {
     let f = fmt
-        .map(Format::new)
+        .map(Format::reader)
         .transpose()
         .map_err(|e| OdsError::InvalidArgument(format!("to_date: {}", e)))?;
     let (v, validity) = per_cell("to_date", s, |t| {

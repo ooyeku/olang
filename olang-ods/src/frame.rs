@@ -12,7 +12,7 @@
 //! SipHash's DoS resistance buys nothing against our own group keys and
 //! costs most of the group-by budget at 10M rows.
 
-use crate::{Bitmap, OdsError, Scalar, Series};
+use crate::{Bitmap, DType, OdsError, Scalar, Series};
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
 
@@ -1347,8 +1347,7 @@ impl Frame {
     /// `value_columns` into rows of a `name`/`value` pair.
     ///
     /// The value columns are stacked into one column, so they must share
-    /// a type. Mixing them would mean choosing a common type on the
-    /// caller's behalf, which is `cast`'s job and its explicit decision.
+    /// a type; Int beside Float widens to Float, as `concat` does.
     pub fn unpivot(
         &self,
         id: &[String],
@@ -1361,10 +1360,19 @@ impl Frame {
                 "unpivot: needs at least one value column".to_string(),
             ));
         }
-        let cols: Vec<&Series> = value_columns
+        let mut cols: Vec<&Series> = value_columns
             .iter()
             .map(|n| self.column(n))
             .collect::<Result<_>>()?;
+        let numeric = |c: &&Series| matches!(c.dtype(), DType::F64 | DType::I64);
+        let widened: Vec<Series>;
+        if cols.iter().all(numeric) && cols.iter().any(|c| c.dtype() == DType::F64) {
+            widened = cols
+                .iter()
+                .map(|c| c.cast(DType::F64, &|x| x.to_string()))
+                .collect::<Result<_>>()?;
+            cols = widened.iter().collect();
+        }
         let dtype = cols[0].dtype();
         if let Some(pos) = cols.iter().position(|c| c.dtype() != dtype) {
             return Err(OdsError::InvalidArgument(format!(

@@ -159,6 +159,14 @@ pub fn time_of_us(us: i64) -> i64 {
 // Writing
 // ---------------------------------------------------------------------
 
+/// `v` space-padded to two characters (`%e`, `%k`, `%l`).
+fn push_space(out: &mut String, v: i64) {
+    if (0..10).contains(&v) {
+        out.push(' ');
+    }
+    out.push_str(&v.to_string());
+}
+
 fn push_num(out: &mut String, v: i64, width: usize) {
     if v < 0 {
         out.push('-');
@@ -340,19 +348,50 @@ enum Item {
     Space,
     Year,
     Year2,
+    /// `%C`: the century, two digits.
+    Century,
     Month,
     MonthName,
+    MonthAbbr,
     Day,
+    /// `%e`: the day, space-padded to two.
+    DaySpace,
     DayOfYear,
     Hour,
+    /// `%k`: the hour, space-padded.
+    HourSpace,
     Hour12,
+    /// `%l`: the 12-hour hour, space-padded.
+    Hour12Space,
     AmPm,
+    /// `%P`: am or pm.
+    AmPmLower,
     Minute,
     Second,
     Frac,
     Offset,
+    /// `%Z`: the zone's name (UTC: a time is naive or UTC).
+    Zone,
     WeekdayName,
+    WeekdayAbbr,
+    /// `%u`: ISO, 1 for Monday to 7 for Sunday.
+    WeekdayIso,
+    /// `%w`: 0 for Sunday to 6 for Saturday.
+    WeekdaySun,
+    /// `%U`: the week of the year, Sunday first, 00–53.
+    WeekSun,
+    /// `%W`: the week of the year, Monday first, 00–53.
+    WeekMon,
+    /// `%V`: the ISO 8601 week, 01–53.
+    IsoWeek,
+    /// `%G`: the ISO 8601 week's year.
+    IsoYear,
+    /// `%s`: seconds since the epoch.
+    Epoch,
 }
+
+/// The directives a format knows, for its error.
+const DIRECTIVES: &str = "%Y %y %C %G %m %b %B %h %d %e %j %U %W %V %u %w %a %A %H %k %I %l %p %P %M %S %f %z %Z %s %F %T %D %R %c %x %X %n %t %%";
 
 /// A parsed `strptime`/`strftime` format.
 #[derive(Clone, Debug)]
@@ -374,6 +413,7 @@ impl Format {
                 items.push(Item::Lit(std::mem::take(lit)));
             }
         };
+        let lit_item = |t: &str| Item::Lit(t.to_string());
         while let Some(c) = chars.next() {
             if c == ' ' {
                 flush(&mut lit, &mut items);
@@ -390,44 +430,94 @@ impl Format {
             let Some(d) = chars.next() else {
                 return Err("the format ends in a lone %".to_string());
             };
-            if d == '%' {
-                lit.push('%');
-                continue;
+            match d {
+                '%' => {
+                    lit.push('%');
+                    continue;
+                }
+                'n' => {
+                    lit.push('\n');
+                    continue;
+                }
+                't' => {
+                    lit.push('\t');
+                    continue;
+                }
+                _ => {}
             }
             flush(&mut lit, &mut items);
             match d {
                 'Y' => items.push(Item::Year),
                 'y' => items.push(Item::Year2),
+                'C' => items.push(Item::Century),
+                'G' => items.push(Item::IsoYear),
                 'm' => items.push(Item::Month),
-                'b' | 'B' | 'h' => items.push(Item::MonthName),
-                'd' | 'e' => items.push(Item::Day),
+                'B' => items.push(Item::MonthName),
+                'b' | 'h' => items.push(Item::MonthAbbr),
+                'd' => items.push(Item::Day),
+                'e' => items.push(Item::DaySpace),
                 'j' => items.push(Item::DayOfYear),
+                'U' => items.push(Item::WeekSun),
+                'W' => items.push(Item::WeekMon),
+                'V' => items.push(Item::IsoWeek),
+                'u' => items.push(Item::WeekdayIso),
+                'w' => items.push(Item::WeekdaySun),
                 'H' => items.push(Item::Hour),
+                'k' => items.push(Item::HourSpace),
                 'I' => items.push(Item::Hour12),
+                'l' => items.push(Item::Hour12Space),
                 'p' => items.push(Item::AmPm),
+                'P' => items.push(Item::AmPmLower),
                 'M' => items.push(Item::Minute),
                 'S' => items.push(Item::Second),
                 'f' => items.push(Item::Frac),
                 'z' => items.push(Item::Offset),
-                'a' | 'A' => items.push(Item::WeekdayName),
+                'Z' => items.push(Item::Zone),
+                's' => items.push(Item::Epoch),
+                'A' => items.push(Item::WeekdayName),
+                'a' => items.push(Item::WeekdayAbbr),
                 'F' => items.extend([
                     Item::Year,
-                    Item::Lit("-".into()),
+                    lit_item("-"),
                     Item::Month,
-                    Item::Lit("-".into()),
+                    lit_item("-"),
                     Item::Day,
                 ]),
-                'T' => items.extend([
+                'T' | 'X' => items.extend([
                     Item::Hour,
-                    Item::Lit(":".into()),
+                    lit_item(":"),
                     Item::Minute,
-                    Item::Lit(":".into()),
+                    lit_item(":"),
                     Item::Second,
+                ]),
+                'D' | 'x' => items.extend([
+                    Item::Month,
+                    lit_item("/"),
+                    Item::Day,
+                    lit_item("/"),
+                    Item::Year2,
+                ]),
+                'R' => items.extend([Item::Hour, lit_item(":"), Item::Minute]),
+                // The C locale's: `Mon Jan  1 00:00:00 2024`.
+                'c' => items.extend([
+                    Item::WeekdayAbbr,
+                    Item::Space,
+                    Item::MonthAbbr,
+                    Item::Space,
+                    Item::DaySpace,
+                    Item::Space,
+                    Item::Hour,
+                    lit_item(":"),
+                    Item::Minute,
+                    lit_item(":"),
+                    Item::Second,
+                    Item::Space,
+                    Item::Year,
                 ]),
                 other => {
                     return Err(format!(
-                        "the format has %{}, which is not one of %Y %y %m %b %B %d %e %j %H %I %p %M %S %f %z %a %A %F %T %%",
-                        other
+                        "the format has %{}, which is not one of {}",
+                        other, DIRECTIVES
                     ));
                 }
             }
@@ -436,10 +526,35 @@ impl Format {
         let has_time = items.iter().any(|i| {
             matches!(
                 i,
-                Item::Hour | Item::Hour12 | Item::Minute | Item::Second | Item::Frac
+                Item::Hour
+                    | Item::HourSpace
+                    | Item::Hour12
+                    | Item::Hour12Space
+                    | Item::Minute
+                    | Item::Second
+                    | Item::Frac
+                    | Item::Epoch
             )
         });
         Ok(Format { items, has_time })
+    }
+
+    /// A format to read with: one with a directive that is only written
+    /// (a week number, a century, an ISO year) is refused.
+    pub fn reader(fmt: &str) -> Result<Format, String> {
+        let f = Format::new(fmt)?;
+        if f.items.iter().any(|i| {
+            matches!(
+                i,
+                Item::Century | Item::IsoYear | Item::WeekSun | Item::WeekMon | Item::IsoWeek
+            )
+        }) {
+            return Err(format!(
+                "\"{}\" has %C, %G, %U, %V or %W, which format a date but say too little to read one",
+                fmt
+            ));
+        }
+        Ok(f)
     }
 
     /// Read `s` as microseconds since the epoch (a date alone is its
@@ -452,6 +567,7 @@ impl Format {
         let (mut hh, mut mi, mut ss, mut frac) = (0i64, 0i64, 0i64, 0i64);
         let mut pm: Option<bool> = None;
         let mut off = 0i64;
+        let mut epoch: Option<i64> = None;
         // Up to `max` digits (at least one).
         let num = |at: &mut usize, max: usize| -> Option<i64> {
             let start = *at;
@@ -507,8 +623,10 @@ impl Format {
                     y = if v >= 69 { 1900 + v } else { 2000 + v };
                 }
                 Item::Month => m = num(&mut at, 2)? as u32,
-                Item::MonthName => m = name(&mut at, &MONTH_NAMES)? as u32 + 1,
-                Item::Day => {
+                Item::MonthName | Item::MonthAbbr => {
+                    m = name(&mut at, &MONTH_NAMES)? as u32 + 1
+                }
+                Item::Day | Item::DaySpace => {
                     if b.get(at) == Some(&b' ') {
                         at += 1;
                     }
@@ -516,7 +634,13 @@ impl Format {
                 }
                 Item::DayOfYear => doy = Some(num(&mut at, 3)? as u32),
                 Item::Hour | Item::Hour12 => hh = num(&mut at, 2)?,
-                Item::AmPm => {
+                Item::HourSpace | Item::Hour12Space => {
+                    if b.get(at) == Some(&b' ') {
+                        at += 1;
+                    }
+                    hh = num(&mut at, 2)?
+                }
+                Item::AmPm | Item::AmPmLower => {
                     let rest = &s[at..];
                     if rest.len() < 2 {
                         return None;
@@ -560,13 +684,42 @@ impl Format {
                     let om = num(&mut at, 2).unwrap_or(0);
                     off = sign * (oh * US_PER_HOUR + om * US_PER_MIN);
                 }
-                Item::WeekdayName => {
+                Item::WeekdayName | Item::WeekdayAbbr => {
                     name(&mut at, &DAY_NAMES)?;
+                }
+                // A weekday's number, like its name, is read and not
+                // checked.
+                Item::WeekdayIso | Item::WeekdaySun => {
+                    num(&mut at, 1)?;
+                }
+                Item::Zone => {
+                    let rest = &s[at..];
+                    let n = ["UTC", "GMT", "Z"]
+                        .iter()
+                        .find(|z| rest.starts_with(**z))?
+                        .len();
+                    at += n;
+                }
+                Item::Epoch => {
+                    let neg = b.get(at) == Some(&b'-');
+                    if neg {
+                        at += 1;
+                    }
+                    let v = num(&mut at, 18)?;
+                    epoch = Some(if neg { -v } else { v });
+                }
+                // Only written: a week number or a century says too
+                // little to read a date back.
+                Item::Century | Item::IsoYear | Item::WeekSun | Item::WeekMon | Item::IsoWeek => {
+                    return None;
                 }
             }
         }
         if at != b.len() {
             return None;
+        }
+        if let Some(v) = epoch {
+            return v.checked_mul(US_PER_SEC)?.checked_add(frac);
         }
         if let Some(p) = pm {
             if !(1..=12).contains(&hh) {
@@ -607,21 +760,49 @@ impl Format {
                 Item::Space => out.push(' '),
                 Item::Year => push_num(&mut out, y, 4),
                 Item::Year2 => push_num(&mut out, y.rem_euclid(100), 2),
+                Item::Century => push_num(&mut out, y.div_euclid(100), 2),
                 Item::Month => push_num(&mut out, m as i64, 2),
                 Item::MonthName => out.push_str(MONTH_NAMES[m as usize - 1]),
+                Item::MonthAbbr => out.push_str(&MONTH_NAMES[m as usize - 1][..3]),
                 Item::Day => push_num(&mut out, d as i64, 2),
+                Item::DaySpace => push_space(&mut out, d as i64),
                 Item::DayOfYear => push_num(&mut out, day_of_year(day) as i64, 3),
                 Item::Hour => push_num(&mut out, t / US_PER_HOUR, 2),
-                Item::Hour12 => {
+                Item::HourSpace => push_space(&mut out, t / US_PER_HOUR),
+                Item::Hour12 | Item::Hour12Space => {
                     let h = t / US_PER_HOUR % 12;
-                    push_num(&mut out, if h == 0 { 12 } else { h }, 2)
+                    let h = if h == 0 { 12 } else { h };
+                    if *item == Item::Hour12 {
+                        push_num(&mut out, h, 2)
+                    } else {
+                        push_space(&mut out, h)
+                    }
                 }
                 Item::AmPm => out.push_str(if t / US_PER_HOUR >= 12 { "PM" } else { "AM" }),
+                Item::AmPmLower => out.push_str(if t / US_PER_HOUR >= 12 { "pm" } else { "am" }),
                 Item::Minute => push_num(&mut out, t / US_PER_MIN % 60, 2),
                 Item::Second => push_num(&mut out, t / US_PER_SEC % 60, 2),
                 Item::Frac => out.push_str(&format!("{:06}", t % US_PER_SEC)),
                 Item::Offset => out.push_str("+0000"),
+                Item::Zone => out.push_str("UTC"),
+                Item::Epoch => out.push_str(&us.div_euclid(US_PER_SEC).to_string()),
                 Item::WeekdayName => out.push_str(DAY_NAMES[iso_weekday(day) as usize - 1]),
+                Item::WeekdayAbbr => out.push_str(&DAY_NAMES[iso_weekday(day) as usize - 1][..3]),
+                Item::WeekdayIso => push_num(&mut out, iso_weekday(day) as i64, 1),
+                Item::WeekdaySun => push_num(&mut out, iso_weekday(day) as i64 % 7, 1),
+                Item::WeekSun | Item::WeekMon => {
+                    // Days before the year's first Sunday (Monday) are
+                    // week 0.
+                    let doy = day_of_year(day) as i64 - 1;
+                    let wd = if *item == Item::WeekSun {
+                        iso_weekday(day) as i64 % 7
+                    } else {
+                        iso_weekday(day) as i64 - 1
+                    };
+                    push_num(&mut out, (doy + 7 - wd) / 7, 2)
+                }
+                Item::IsoWeek => push_num(&mut out, iso_week(day) as i64, 2),
+                Item::IsoYear => push_num(&mut out, year_of(day - iso_weekday(day) as i64 + 4), 4),
             }
         }
         out
@@ -672,6 +853,39 @@ mod tests {
         let g = Format::new("%b %d, %Y %I:%M %p").unwrap();
         assert_eq!(g.parse("Jan 01, 1970 12:15 PM"), Some(12 * US_PER_HOUR + 15 * US_PER_MIN));
         assert!(Format::new("%Q").is_err());
+        // Every directive against Python's strftime (C locale) for
+        // 2024-01-07T15:04:05.25, a Sunday.
+        let t = days_from_civil(2024, 1, 7) * US_PER_DAY
+            + 15 * US_PER_HOUR
+            + 4 * US_PER_MIN
+            + 5 * US_PER_SEC
+            + 250_000;
+        for (fmt, want) in [
+            ("%Y %y %C %G", "2024 24 20 2024"),
+            ("%m %b %B %h", "01 Jan January Jan"),
+            ("%d|%e|%j", "07| 7|007"),
+            ("%U %W %V %u %w", "01 01 01 7 0"),
+            ("%a %A", "Sun Sunday"),
+            ("%H %k %I %l %p %P", "15 15 03  3 PM pm"),
+            ("%M %S %f", "04 05 250000"),
+            ("%z %Z %s", "+0000 UTC 1704639845"),
+            ("%F %T", "2024-01-07 15:04:05"),
+            ("%D %R", "01/07/24 15:04"),
+            ("%c", "Sun Jan  7 15:04:05 2024"),
+            ("%x %X", "01/07/24 15:04:05"),
+            ("%%%n%t", "%\n\t"),
+        ] {
+            assert_eq!(Format::new(fmt).unwrap().format(t), want, "{}", fmt);
+        }
+        // The ISO year of a late-December Monday is the next.
+        let d = days_from_civil(2024, 12, 30) * US_PER_DAY;
+        assert_eq!(Format::new("%G-W%V-%u").unwrap().format(d), "2025-W01-1");
+        // Week 0 holds the days before the year's first Sunday / Monday.
+        let jan1 = days_from_civil(2023, 1, 1) * US_PER_DAY; // a Sunday
+        assert_eq!(Format::new("%U %W").unwrap().format(jan1), "01 00");
+        assert_eq!(Format::new("%b %e %Y").unwrap().parse("Jan  7 2024"), Some(days_from_civil(2024, 1, 7) * US_PER_DAY));
+        assert_eq!(Format::new("%s").unwrap().parse("86400"), Some(US_PER_DAY));
+        assert_eq!(Format::new("%Y-%V").unwrap().parse("2024-01"), None);
         assert_eq!(Format::new("%Y-%j").unwrap().parse("1970-032"), Some(31 * US_PER_DAY));
     }
 }

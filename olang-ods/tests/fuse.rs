@@ -815,3 +815,146 @@ fn text_columns_compare_and_coalesce() {
     let filled = Expr::op(Op::Coalesce, vec![Expr::col(s), Expr::col(t)]).eval(3, false).unwrap();
     assert_eq!(filled.scalar_at(1), Scalar::Str("y".into()));
 }
+
+/// Every operand kind: a column of each type (a Category's levels not in
+/// text order) and a literal of each.
+fn every_operand() -> Vec<(String, Arc<Expr>)> {
+    let cat = olang_ods::category::to_category(
+        &Series::from_str_options(vec![Some("m".into()), Some("s".into()), None]),
+        Some(&["s".to_string(), "m".to_string(), "l".to_string()]),
+        &|x| x.to_string(),
+    )
+    .unwrap();
+    let cols = [
+        ("F", Series::from_f64_options(vec![Some(1.5), None, Some(-2.0)])),
+        ("I", Series::from_i64_options(vec![Some(1), Some(-4), None])),
+        ("B", Series::from_bool(vec![true, false, true])),
+        ("T", Series::from_str_options(vec![Some("s".into()), None, Some("2024-01-01".into())])),
+        ("D", Series::from_date_options(vec![Some(19_000), None, Some(19_500)])),
+        ("DT", Series::from_datetime_options(vec![Some(0), Some(86_400_000_000), None])),
+        ("C", cat),
+    ];
+    let lits = [
+        ("f", Scalar::F64(2.0)),
+        ("i", Scalar::I64(3)),
+        ("b", Scalar::Bool(true)),
+        ("level", Scalar::Str("m".into())),
+        ("text", Scalar::Str("zz".into())),
+        ("iso", Scalar::Str("2024-01-01".into())),
+        ("d", Scalar::Date(19_100)),
+        ("dt", Scalar::Datetime(1)),
+        ("null", Scalar::Null),
+    ];
+    cols.into_iter()
+        .map(|(n, s)| (n.to_string(), Expr::col(s)))
+        .chain(lits.into_iter().map(|(n, s)| (n.to_string(), Expr::lit(s))))
+        .collect()
+}
+
+/// A Series an expression defers is evaluated later, where an error has
+/// nowhere to go: so whatever types (`op_dtype`) and does not call itself
+/// fallible must evaluate. Every operation over every pair (and triple)
+/// of operand kinds.
+#[test]
+fn what_types_and_cannot_fail_evaluates() {
+    let ops = every_operand();
+    let bins = [
+        BinOp::Add, BinOp::Sub, BinOp::Mul, BinOp::Div, BinOp::Mod, BinOp::Pow, BinOp::Eq, BinOp::Ne,
+        BinOp::Lt, BinOp::Le, BinOp::Gt, BinOp::Ge, BinOp::And, BinOp::Or, BinOp::Xor,
+    ];
+    let mut tried = 0;
+    let mut try_one = |e: Arc<Expr>, what: String| {
+        let typed = e.dtype();
+        if typed.is_err() || e.fallible() || e.len_hint().is_none() {
+            return;
+        }
+        tried += 1;
+        let got = std::panic::catch_unwind(|| e.eval(3, false).map(|_| ()).map_err(|x| x.to_string()));
+        match got {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => panic!("{} types as {:?} and is not fallible, but raises: {}", what, typed, err),
+            Err(_) => panic!("{} types as {:?} and is not fallible, but panics", what, typed),
+        }
+    };
+    let unary = [
+        Op::Neg,
+        Op::Not,
+        Op::IsNull,
+        Op::NotNull,
+        Op::IsNan,
+        Op::Math(Math::Exp),
+        Op::Math(Math::Abs),
+        Op::Round(1),
+        Op::Cast(DType::F64),
+        Op::Cast(DType::I64),
+        Op::Cast(DType::Bool),
+        Op::Temporal(olang_ods::fuse::TOp::Year, false),
+        Op::Temporal(olang_ods::fuse::TOp::Hour, false),
+        Op::Temporal(olang_ods::fuse::TOp::Date, false),
+        Op::Temporal(olang_ods::fuse::TOp::AddMonths(1), false),
+    ];
+    for (na, a) in &ops {
+        for op in unary {
+            try_one(Expr::op(op, vec![a.clone()]), format!("{:?}({})", op, na));
+        }
+        for (nb, b) in &ops {
+            try_one(
+                Expr::op(Op::Temporal(olang_ods::fuse::TOp::AddMonthsBy, false), vec![a.clone(), b.clone()]),
+                format!("add_months({}, {})", na, nb),
+            );
+            try_one(
+                Expr::op(Op::Temporal(olang_ods::fuse::TOp::MonthsBetween, false), vec![a.clone(), b.clone()]),
+                format!("months_between({}, {})", na, nb),
+            );
+            for op in bins {
+                try_one(Expr::bin(op, a.clone(), b.clone()), format!("{:?}({}, {})", op, na, nb));
+            }
+            try_one(Expr::op(Op::Coalesce, vec![a.clone(), b.clone()]), format!("coalesce({}, {})", na, nb));
+            for (nc, c) in &ops {
+                for closed in [Closed::Both, Closed::Neither] {
+                    try_one(
+                        Expr::op(Op::Between(closed), vec![a.clone(), b.clone(), c.clone()]),
+                        format!("between({}, {}, {})", na, nb, nc),
+                    );
+                }
+                try_one(
+                    Expr::op(Op::Where, vec![a.clone(), b.clone(), c.clone()]),
+                    format!("where({}, {}, {})", na, nb, nc),
+                );
+                try_one(
+                    Expr::op(Op::Clip, vec![a.clone(), b.clone(), c.clone()]),
+                    format!("clip({}, {}, {})", na, nb, nc),
+                );
+            }
+        }
+    }
+    assert!(tried > 500, "{} combinations tried", tried);
+}
+
+/// A Category compares in its levels' order against a level, or against
+/// a Category of the same levels, as the eager kernel does; `+` joins
+/// text.
+#[test]
+fn categories_compare_by_level_and_text_joins() {
+    let ops = every_operand();
+    let get = |n: &str| ops.iter().find(|(k, _)| k == n).unwrap().1.clone();
+    let lt = Expr::bin(BinOp::Lt, get("C"), get("level")).eval(3, false).unwrap();
+    // m < m, s < m, null
+    assert_eq!((0..3).map(|i| lt.scalar_at(i)).collect::<Vec<_>>(), vec![Scalar::Bool(false), Scalar::Bool(true), Scalar::Null]);
+    let ge = Expr::bin(BinOp::Ge, get("level"), get("C")).eval(3, false).unwrap();
+    assert_eq!(ge.scalar_at(1), Scalar::Bool(true));
+    let between = Expr::op(Op::Between(Closed::Both), vec![get("C"), Expr::lit(Scalar::Str("s".into())), get("level")]);
+    assert!(!between.fallible());
+    assert_eq!(between.eval(3, false).unwrap().scalar_at(0), Scalar::Bool(true));
+    // An ordering against text that is no level has no answer, and says so.
+    let bad = Expr::bin(BinOp::Lt, get("C"), get("text"));
+    assert!(bad.fallible());
+    assert!(bad.eval(3, false).unwrap_err().to_string().contains("not a level"));
+    let ne = Expr::bin(BinOp::Ne, get("C"), get("text")).eval(3, false).unwrap();
+    assert_eq!(ne.scalar_at(0), Scalar::Bool(true));
+    let joined = Expr::bin(BinOp::Add, get("C"), Expr::lit(Scalar::Str("!".into()))).eval(3, false).unwrap();
+    assert_eq!(joined.scalar_at(0), Scalar::Str("m!".into()));
+    assert_eq!(joined.scalar_at(2), Scalar::Null);
+    let both = Expr::bin(BinOp::Add, get("T"), get("T")).eval(3, false).unwrap();
+    assert_eq!(both.scalar_at(0), Scalar::Str("ss".into()));
+}

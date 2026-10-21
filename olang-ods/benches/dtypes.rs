@@ -4,7 +4,7 @@
 //! dtypes` (`-- 1000000` for another size); `benches/dtypes.py` times the
 //! pandas side of each row, and docs/performance.md records both.
 
-use olang_ods::fuse::{Expr, Op, Plan, TOp};
+use olang_ods::fuse::{BinOp, Expr, Op, Plan, TOp};
 use olang_ods::temporal::{US_PER_SEC, format_date, format_datetime};
 use olang_ods::time::Every;
 use olang_ods::{AggOp, AggSpec, DType, Frame, Series, StrCol, category, text};
@@ -197,6 +197,43 @@ fn main() {
     row(
         "group_by(String) sum",
         time(|| drop(black_box(fs.group_by(&["g".into()], &spec).unwrap()))),
+        None,
+    );
+
+    // The D6 gaps: a Category against a level and text joined in an
+    // expression, months added by a column, strftime and a padded number.
+    // planned and evaluated each round: a Category's comparison and a
+    // text join are computed as the plan is made
+    let plan_time = |e: std::sync::Arc<Expr>| {
+        let run = |par: bool| Plan::new(std::slice::from_ref(&e), None).unwrap().eval(par).unwrap();
+        (time(|| drop(black_box(run(false)))), time(|| drop(black_box(run(true)))))
+    };
+    let lit = |t: &str| Expr::lit(olang_ods::Scalar::Str(t.into()));
+    for (name, op, level) in [
+        ("col(cat) == \"Riverside\"", BinOp::Eq, "Riverside"),
+        ("col(cat) < \"Kingsway\"", BinOp::Lt, "Kingsway"),
+    ] {
+        let (s, p) = plan_time(Expr::bin(op, Expr::col(cat.clone()), lit(level)));
+        row(name, s, Some(p));
+    }
+    let (s, p) = plan_time(Expr::bin(BinOp::Add, Expr::col(words.clone()), lit("!")));
+    row("col(text) + \"!\"", s, Some(p));
+    let dates = Series::from_dates(secs.iter().map(|&x| (x / 86_400) as i32).collect());
+    let months = Series::from_i64(pseudo(n, 6).map(|x| (x % 25) as i64 - 12).collect());
+    let (s, p) = plan_time(Expr::op(
+        Op::Temporal(TOp::AddMonthsBy, false),
+        vec![Expr::col(dates.clone()), Expr::col(months)],
+    ));
+    row("add_months(col(n))", s, Some(p));
+    row(
+        "format(\"%b %d %Y\")",
+        time(|| drop(black_box(text::format(&dates, "%b %d %Y").unwrap()))),
+        None,
+    );
+    let ints = Series::from_i64(pseudo(n, 7).map(|x| (x % 100_000) as i64).collect());
+    row(
+        "format(\"05d\")",
+        time(|| drop(black_box(text::format(&ints, "05d").unwrap()))),
         None,
     );
 }

@@ -212,8 +212,18 @@ pub fn elementwise(func: &str, args: &[Value]) -> Option<Result<Value, String>> 
         })(),
         "add_months" => (|| {
             want_n(func, args, 2, 2)?;
-            let n = want_int(func, "the number of months", args.get(1))?;
-            build(func, Op::Temporal(TOp::AddMonths(n), false), vec![opnd(func, args, 0)?])
+            // A constant, or an Int a row (a column or an Expr).
+            if let Some(Value::Integer(n)) = args.get(1) {
+                return build(func, Op::Temporal(TOp::AddMonths(*n), false), vec![opnd(func, args, 0)?]);
+            }
+            if !matches!(args.get(1), Some(Value::Native(_))) {
+                want_int(func, "the number of months", args.get(1))?;
+            }
+            build(
+                func,
+                Op::Temporal(TOp::AddMonthsBy, false),
+                vec![opnd(func, args, 0)?, opnd(func, args, 1)?],
+            )
         })(),
         "months_between" => (|| {
             want_n(func, args, 2, 2)?;
@@ -541,12 +551,13 @@ fn dummies(args: &[Value]) -> Result<Value, String> {
 }
 
 /// A String operand standing against a Date or Datetime in a comparison
-/// is read as one (`d > "2024-01-01"`); text that is no date is an error
-/// naming it.
+/// or a subtraction is read as one (`d > "2024-01-01"`, `t - t.min()`,
+/// whose minimum is ISO text); text that is no date is an error naming
+/// it.
 pub fn dates_from_text(op: Op, kids: Vec<Arc<Expr>>) -> Result<Vec<Arc<Expr>>, String> {
     let cmp = matches!(
         op,
-        Op::Bin(BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge)
+        Op::Bin(BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Sub)
             | Op::Between(_)
             | Op::Where
             | Op::Coalesce
@@ -571,8 +582,10 @@ pub fn dates_from_text(op: Op, kids: Vec<Arc<Expr>>) -> Result<Vec<Arc<Expr>>, S
                     ))),
                     (Some(us), _) => Ok(Expr::lit(Scalar::Datetime(us))),
                     (None, _) => Err(format!(
-                        "\"{}\" is not an ISO date (YYYY-MM-DD[THH:MM[:SS]]) to compare a {} with",
-                        t, want
+                        "\"{}\" is not an ISO date (YYYY-MM-DD[THH:MM[:SS]]) to {} a {} with",
+                        t,
+                        if op == Op::Bin(BinOp::Sub) { "subtract from" } else { "compare" },
+                        want
                     )),
                 }
             }

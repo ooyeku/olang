@@ -529,8 +529,20 @@ impl Resolver<'_> {
                     .iter()
                     .map(|a| self.arg_value(a))
                     .collect::<Result<Vec<_>, _>>()?;
+                let datetime = matches!(
+                    vals.first().and_then(series_of).map(|s| s.dtype()),
+                    Some(DType::Datetime)
+                );
                 let out = super::call(func, vals)?;
-                if let Some(s) = series_of(&out) {
+                // A Datetime's reduction (min, max, first, last, mode) is
+                // its ISO text as a value; in an expression it stays a
+                // Datetime, so `col("t") - col("t").min()` is seconds.
+                if datetime
+                    && let Value::String(t) = &out
+                    && let Some((us, _)) = olang_ods::temporal::parse_iso(t)
+                {
+                    Expr::lit(Scalar::Datetime(us))
+                } else if let Some(s) = series_of(&out) {
                     if s.len() != n {
                         return Err(format!(
                             "ods.{} gives {} rows in an expression over a Frame of {} rows; \

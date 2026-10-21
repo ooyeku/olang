@@ -40,6 +40,9 @@ def main():
     v = rng.integers(0, 1000, n).astype(float)
     fc = pd.DataFrame({"g": g, "v": v})
     fs = pd.DataFrame({"g": pd.Series(g).astype(str), "v": v})
+    ordered = cat.cat.as_ordered()
+    dates = ts.dt.normalize()
+    ints = pd.Series(rng.integers(0, 100_000, n))
     print(f"pandas {pd.__version__}; string dtype {words.dtype}; n = {n}; milliseconds")
     rows = [
         ("to_datetime, ISO", lambda: pd.to_datetime(iso, format="ISO8601")),
@@ -64,6 +67,11 @@ def main():
         ("lower, a Category", lambda: cat.str.lower()),
         ("group_by(Category) sum", lambda: fc.groupby("g", observed=True, sort=False)["v"].sum()),
         ("group_by(String) sum", lambda: fs.groupby("g", sort=False)["v"].sum()),
+        ('col(cat) == "Riverside"', lambda: cat == "Riverside"),
+        ('col(cat) < "Kingsway"', lambda: ordered < "Kingsway"),
+        ('col(text) + "!"', lambda: words + "!"),
+        ('format("%b %d %Y")', lambda: dates.dt.strftime("%b %d %Y")),
+        ('format("05d")', lambda: ints.map("{:05d}".format)),
     ]
     for name, f in rows:
         print(f"{name:<34} {best(f):>9.2f}")

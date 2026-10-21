@@ -1491,7 +1491,7 @@ impl Session {
             "event": "hello", "protocol": PROTOCOL, "olang": crate::version::VERSION,
             "root": self.root.to_string_lossy(), "pid": std::process::id(),
             "ops": ["hello", "eval", "command", "commands", "complete", "deps", "drop", "expand", "fields", "release", "interrupt", "page", "ping", "record", "reload", "replay", "reread", "render", "reset", "set", "shutdown", "stats", "vars"],
-            "features": ["bind", "pure", "cell", "caps", "profile", "distinct", "record", "html", "scene", "dtypes"],
+            "features": ["bind", "pure", "cell", "caps", "profile", "distinct", "record", "html", "scene", "dtypes", "daterange"],
         });
         if let Some(nb) = &self.notebook {
             v["notebook"] = json!({
@@ -3999,15 +3999,37 @@ fn read_filters(fs: &[J], cols: &[(String, &olang_ods::Series)]) -> Result<Vec<F
             let pair = r.as_array().filter(|a| a.len() == 2).ok_or_else(|| {
                 format!("the filter on `{}`: range is [lo, hi], either null", name)
             })?;
-            if !matches!(col.dtype(), DType::F64 | DType::I64) {
+            // A date column's bounds are ISO text (the `daterange`
+            // feature), read as its days or microseconds.
+            let dated = matches!(col.dtype(), DType::Date | DType::Datetime);
+            if !matches!(col.dtype(), DType::F64 | DType::I64) && !dated {
                 return Err(format!(
-                    "the filter on `{}`: a range is a number's, and `{}` is a {} column",
+                    "the filter on `{}`: a range is a number's or a date's, and `{}` is a {} column",
                     name,
                     name,
                     col.dtype()
                 ));
             }
-            out.push(Filter::Range(c, pair[0].as_f64(), pair[1].as_f64()));
+            let bound = |b: &J| -> Result<Option<f64>, String> {
+                match b {
+                    J::Null => Ok(None),
+                    J::String(t) if dated => olang_ods::temporal::parse_iso(t.trim())
+                        .map(|(us, _)| {
+                            Some(if col.dtype() == DType::Date {
+                                olang_ods::temporal::day_of_us(us) as f64
+                            } else {
+                                us as f64
+                            })
+                        })
+                        .ok_or_else(|| {
+                            format!("the filter on `{}`: \"{}\" is not an ISO date", name, t)
+                        }),
+                    b => b.as_f64().map(Some).ok_or_else(|| {
+                        format!("the filter on `{}`: a bound is a number{}", name, if dated { " or ISO text" } else { "" })
+                    }),
+                }
+            };
+            out.push(Filter::Range(c, bound(&pair[0])?, bound(&pair[1])?));
         } else if let Some(vs) = f.get("values") {
             let vs = vs.as_array().ok_or_else(|| {
                 format!(
@@ -4057,6 +4079,8 @@ fn filter_mask(filters: &[Filter], cols: &[(String, &olang_ods::Series)], n: usi
                     let x = match col.scalar_at(i) {
                         Scalar::F64(x) => x,
                         Scalar::I64(x) => x as f64,
+                        Scalar::Date(d) => d as f64,
+                        Scalar::Datetime(t) => t as f64,
                         _ => {
                             *k = false;
                             continue;

@@ -704,6 +704,31 @@ fn want_series<'a>(func: &str, args: &'a [Value], idx: usize) -> Result<&'a Seri
     })
 }
 
+/// `take`'s indices: an Int Series, or a list of Ints.
+pub(crate) fn take_indices(v: Option<&Value>) -> Result<std::borrow::Cow<'_, Series>, String> {
+    let bad = |what: String| format!("ods.take: the indices must be an Int Series or a list of Ints, got {}", what);
+    match v {
+        Some(Value::List(items)) => {
+            if items.iter().any(|x| !matches!(x, Value::Integer(_))) {
+                let odd = items.iter().find(|x| !matches!(x, Value::Integer(_))).expect("one");
+                return Err(bad(format!("a list holding a {}", odd.type_name())));
+            }
+            let idx: Vec<i64> = items
+                .iter()
+                .map(|x| match x {
+                    Value::Integer(i) => *i,
+                    _ => unreachable!("checked"),
+                })
+                .collect();
+            Ok(std::borrow::Cow::Owned(Series::from_i64(idx)))
+        }
+        Some(v) => series_of(v)
+            .map(std::borrow::Cow::Borrowed)
+            .ok_or_else(|| bad(v.type_name().to_string())),
+        None => Err(bad("nothing".to_string())),
+    }
+}
+
 fn arity(func: &str, args: &[Value], expected: usize) -> Result<(), String> {
     if args.len() != expected {
         return Err(format!(
@@ -1098,8 +1123,8 @@ fn dispatch_inner(func: &str, mut args: Vec<Value>, expected: usize) -> Result<V
         }
         "take" => {
             let s = want_series(func, &args, 0)?;
-            let idx = want_series(func, &args, 1)?;
-            s.take(idx).map(OdsSeries::into_value).map_err(e)
+            let idx = take_indices(args.get(1))?;
+            s.take(&idx).map(OdsSeries::into_value).map_err(e)
         }
         "filter" => {
             let s = want_series(func, &args, 0)?;

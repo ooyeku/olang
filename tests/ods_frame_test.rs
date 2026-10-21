@@ -2242,10 +2242,11 @@ fn reshape_refuses_the_shapes_that_have_no_honest_answer() {
             r#"ods.pivot(ods.frame([["r", ["a"]], ["v", [1]]]), "r", "v", "v", "nope")"#,
             "is not an aggregation",
         ),
-        // Stacking columns of different types would mean choosing a
-        // common type on the caller's behalf — that is `cast`'s job.
+        // Stacking text beside numbers would mean choosing a common type
+        // on the caller's behalf — that is `cast`'s job (Int beside Float
+        // widens, as concat does).
         (
-            r#"ods.unpivot(ods.frame([["id", [1]], ["i", [1]], ["f", [1.0]]]), "id")"#,
+            r#"ods.unpivot(ods.frame([["id", [1]], ["i", [1]], ["s", ["x"]]]), "id")"#,
             "must share",
         ),
         (

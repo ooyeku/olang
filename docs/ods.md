@@ -178,7 +178,9 @@ println(to_string(ods.to_list("<" + f["state"])))   // ["<TX", "<NV"]
 ```
 
 Anything else beside a String Series (`s + 1`) is an error naming the
-cast: `ods.cast(s, "String")` turns a number column into text first.
+cast: `ods.cast(s, "String")` turns a number column into text first. A
+Category joins as its text, and in an expression `+` joins the same way
+(`"n=" + col("n").cast("String")`, `col("city") + "!"`).
 
 `%` is the remainder with the sign of the dividend, as the scalar `%`
 is: `ods.series([7, -7]) % 3` is `[1, -1]`, and a zero divisor raises
@@ -593,8 +595,9 @@ println(len(picks))   // 3
 
 `ods.sort(s)` returns an ascending copy, nulls last. `ods.argsort(s)`
 returns the *indices* that would sort — an Int series — and
-`ods.take(s, idx)` gathers by index. The pair composes into the
-classic idiom: sort one column by another.
+`ods.take(s, idx)` gathers by index (an Int Series or a list of Ints,
+`ods.take(s, [2, 0])`). The pair composes into the classic idiom: sort
+one column by another.
 
 ```olang
 let names = ods.series(["carol", "alice", "bob"])
@@ -660,8 +663,9 @@ group), `contains(text, case: true)`, `starts_with`, `ends_with`,
 negative `i` counting from the end), `pad_start(width, fill)` and
 `pad_end` are the `str` functions of the same names over a column, and
 agree with them cell for cell. `format(spec)` of a number column is the
-column as text by a number spec (`str.fmt`'s: `".2f"`, `",.0f"`,
-`".1%"`, `"$,.0f"`), one pass into one buffer — the table and label
+column as text by a number spec (`str.fmt`'s, Python's mini-language:
+`".2f"`, `",.0f"`, `".1%"`, `"$,.0f"`, `"02d"` zero-padded, `"#x"`),
+one pass into one buffer — the table and label
 form of a measure:
 
 ```olang
@@ -695,9 +699,10 @@ println(ods.series([unwrap(dates.date(2026, 8, 7))]))   // Series[Date; 1] [2026
 Without a format, `to_date()` and `to_datetime()` read ISO 8601 —
 `2024-03-01`, and `2024-03-01T13:45`, with seconds, a fraction and `Z` or
 an offset if it has them — through a fixed-width path that is a few
-nanoseconds a cell. With one they read `strptime`'s directives (`%Y %m %d
-%H %M %S %f %y %b %B %j %p %I %z %a %A %F %T`). A cell that does not read
-is null.
+nanoseconds a cell. With one they read `strptime`'s directives (`%Y %y %m
+%d %e %j %H %k %I %l %p %P %M %S %f %z %Z %s %b %B %h %a %A %u %w %F %T
+%D %R %c %x %X`; a month's or a day's name in full or its first three
+letters). A cell that does not read is null. `%C %G %U %V %W` only write.
 
 A date's parts are integer arithmetic on that storage, one pass over the
 column:
@@ -712,9 +717,9 @@ column:
 | `date()` | a Datetime's day, as a Date |
 | `day_name()` `month_name()` | a Category whose levels are the calendar's, so it sorts Monday first |
 | `floor(every)` | the start of its hour, day, week (Monday), month, quarter or year: `"1h"`, `"15m"`, `"1d"`, `"1w"`, `"1mo"`, `"1q"`, `"1y"` |
-| `add_days(n)` `add_months(n)` | the same type; a month added to January 31st is February's last day |
+| `add_days(n)` `add_months(n)` | the same type; a month added to January 31st is February's last day; `n` an Int, or an Int column or expression (`col("d").add_months(col("term"))`) |
 | `months_between(a, b)` | Int, the calendar months from `b` to `a` (the days ignored) |
-| `format(fmt)` | text, in `strftime`'s directives |
+| `format(fmt)` | text, in `strftime`'s directives as Python's C locale writes them: `%b` `Jan` and `%B` `January`, `%a` `Sun` and `%A` `Sunday`, `%d` `07` and `%e` ` 7`, `%U` `%W` weeks (Sunday or Monday first), `%G-W%V-%u` the ISO week, `%c` `Sun Jan  7 15:04:05 2024` |
 
 A column's `weekday()` is ISO, 1 for Monday to 7 for Sunday, as Python's
 `isoweekday` and Polars count — while `dates.weekday` of a single Date
@@ -723,8 +728,8 @@ that agrees with the column.
 
 Arithmetic and comparisons do what they mean: `d + n` and `d - n` move a
 Date by days, `d - d` is an Int of days between, `t - t` is a Float of
-seconds between two Datetimes, and a comparison takes a Date, a Datetime
-or ISO text:
+seconds between two Datetimes, and a comparison or a subtraction takes a
+Date, a Datetime or ISO text (`t - t.min()`, whose minimum is its text):
 
 ```olang
 use ods { col }
@@ -765,7 +770,10 @@ none of them is null. Without them a column's distinct values are the
 levels: text sorted, numbers by value, dates by date. `levels()` and
 `codes()` read them back. A Category sorts and compares by its levels'
 order, and is equal by text, so `size == "m"` and `ods.is_in(size,
-["m", "l"])` read as they would on text. Text methods run once per level.
+["m", "l"])` read as they would on text — the same in an expression
+(`ods.filter(f, col("size") >= "m")`, `ods.between(col("size"), "s",
+"m")`) and in `ods.eq` and `ods.ne`. Ordering against text that is not
+a level is an error naming the levels; `==` against it is false. Text methods run once per level.
 It groups by its codes with no hashing, joins by its text, and stays a
 Category through `filter`, `take`, `sort_by`, `concat` (whose levels it
 merges) and the native file format.
@@ -1293,7 +1301,7 @@ println(to_string(ods.to_list(j["amount"] - j["cost"])))    // [7.0, 16.0]
 
 On the row axis, `ods.filter(f, mask)` keeps rows where a Bool series
 is true (build the mask from any column), `ods.take(f, idx)` gathers
-rows by index, `ods.head(f, n)` keeps the first `n` and `ods.tail(f, n)`
+rows by index (an Int Series or a list), `ods.head(f, n)` keeps the first `n` and `ods.tail(f, n)`
 the last `n` (both defaulting to ten, and both taking a Series as well,
 whose first or last `n` values they return), and `ods.sort_by(f, col,
 descending)` sorts the whole table by one column, nulls last either way:
@@ -1577,10 +1585,11 @@ println(to_string(ods.columns(long)))            // ["region", "name", "value"]
 println(to_string(ods.to_list(long["name"])))    // ["Q1", "Q1", "Q2", "Q2"]
 ```
 
-The value columns stack into one column, so they must share a type.
-Mixing them would mean choosing a common type on the caller's behalf,
-which is `ods.cast`'s job and its explicit decision, so `unpivot`
-refuses and names the two columns that disagree.
+The value columns stack into one column, so they share a type: Int
+columns beside Float ones widen to Float, as `ods.concat` widens them;
+any other mix (text beside numbers, a Date beside a Float) is `ods.cast`'s
+explicit decision, so `unpivot` refuses and names the two columns that
+disagree.
 
 The round trip is lossless in one direction and explicit in the other:
 `unpivot` after `pivot` returns the long form with the combinations that
@@ -1753,7 +1762,9 @@ every function of the sections above, as a method or by the module
 (`col("x").exp()`, `col("x").fill_null("ffill")`, `ods.rank(col("x"))`,
 `col("x").shift(1)`), and each of those gives an expression back. A
 reduction gives a value every row shares: `col("x") - col("x").mean()`
-centres a column. `ods.lit(v)` is a
+centres a column, and a Date's or Datetime's `min`, `max`, `first`,
+`last` or `mode` stays one, so `col("t") - col("t").min()` is seconds
+since the first. `ods.lit(v)` is a
 value as an expression, and a plain Series where an expression goes is a
 literal column of the Frame's length.
 

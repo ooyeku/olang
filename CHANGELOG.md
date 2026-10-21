@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Frames and dtypes after the D6 notebooks.** `+` joins text in an
+  expression as it does eagerly (`"n=" + col("n").cast("String")`,
+  `col("s") + "!"`, a Category as its text). `add_months` takes an Int
+  column or expression of months as well as an Int. `ods.take` takes a
+  list of Ints as well as an Int Series (a Series and a Frame). A number
+  spec (`str.fmt`, `ods.format`) reads all of Python's mini-language:
+  the `0` flag (`"02d"` is `05`, `"+05d"` `+0005`, `"08,d"`
+  `0,001,234`), `=` alignment, `#`, `z`, `_` grouping, and the `n`, `x`,
+  `o`, `b` types and the upper-case `X` `E` `F` `G`. strftime gains
+  `%e %k %l %P %u %w %U %W %V %G %C %Z %s %D %R %c %x %X %n %t`, all as
+  Python's C locale writes them. The notebook kernel's table view takes
+  a range filter on a Date or Datetime column as ISO text, said by the
+  `daterange` feature.
+
 - **Matrices (data ergonomics D4).** A native `Matrix`: column-major
   Floats whose columns are shared `Arc`s, so `ods.matrix(f, cols)` (or
   `ods.matrix([s1, s2])`) over null-free Float columns copies nothing;
@@ -758,6 +772,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **`unpivot` widens Int beside Float to Float**, as `concat` does,
+  instead of refusing; any other mix still asks for a cast.
+- **A Datetime's reductions stay Datetimes in an expression**:
+  `col("t").min()`, `max`, `first`, `last` and `mode` are a Datetime
+  there (eagerly a Datetime element is still its ISO text), so
+  `col("t") - col("t").min()` is seconds. A subtraction, like a
+  comparison, reads ISO text against a Date or Datetime column
+  (`f.t - f.t.min()`, `d - "2024-01-01"`).
+- **A Category compares by its levels in an expression** as it does
+  eagerly: `col("c") == "a"` was refused ("Category and String, which
+  have no common type"), and `col("c") < "b"` and `ods.between` now
+  order by level, not by text.
+
 - **`ods.rolling` slides in O(n).** Sums, means, variances and standard
   deviations keep compensated running totals (Neumaier; a NaN or an
   infinity counted apart, so it leaves the window with its row), min and
@@ -923,6 +950,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `impl`, `error` and `catch` before a `(`, `[` or `.`).
 
 ### Fixed
+
+- **`ods.eq` and `ods.ne` of a Category panicked** ("a deferred
+  expression cannot raise"): the deferred comparison passed the type
+  check and failed in planning. A test now walks every operation over
+  every pair and triple of operand kinds and requires whatever types and
+  is not fallible to evaluate; it found `months_between` and the
+  calendar parts of a null literal planned as Floats (a panic), fixed
+  too.
+- **`Date.format("%b")` wrote the full month name** (and `%a` the full
+  day, `%e` a zero-padded day); `%b` `%h` `%a` abbreviate and `%e` pads
+  with a space, as strftime does.
 
 - **Importing an enum and its variants by name.** `use lib.util { Shape,
   Circle, Dot }` raised "importing `Circle` would replace `Circle`": the

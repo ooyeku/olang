@@ -287,7 +287,8 @@ fn a_functions_parameters_are_named_then_bound_for_one_evaluation() {
     assert_eq!(
         hello["features"],
         json!([
-            "bind", "pure", "cell", "caps", "profile", "distinct", "record", "html", "scene", "dtypes"
+            "bind", "pure", "cell", "caps", "profile", "distinct", "record", "html", "scene", "dtypes",
+            "daterange"
         ])
     );
     let f = calc(dir.path());
@@ -1060,6 +1061,27 @@ fn a_frames_view_is_filtered_sorted_and_summarised_by_handle() {
             .unwrap()
             .contains("`product`")
     );
+}
+
+#[test]
+fn a_date_columns_range_is_iso_text() {
+    let dir = project();
+    let (mut r, _) = Repl::start(dir.path());
+    let f = r.eval(
+        "ods.frame({ d: ods.series([\"2024-01-05\", \"2024-03-01\", (), \"2024-02-01\"]).to_date(), t: ods.series([\"2024-01-01T00:00\", \"2024-01-01T06:00\", \"2024-01-02T00:00\", ()]).to_datetime() })",
+    );
+    let h = f["value"]["h"].as_u64().unwrap();
+    assert_eq!(f["value"]["table"]["sum"][0]["min"], json!("2024-01-05"), "{f}");
+    let at = |v: &J| -> Vec<J> { v["rows"].as_array().unwrap().iter().map(|r| r["i"].clone()).collect() };
+    let d = r.ask(json!({ "op": "expand", "h": h, "table": true, "count": 10,
+        "filters": [{ "col": 0, "range": ["2024-01-06", "2024-03-01"] }] }));
+    assert_eq!(at(&d), vec![json!(1), json!(3)], "{d}");
+    let t = r.ask(json!({ "op": "expand", "h": h, "table": true, "count": 10,
+        "filters": [{ "col": 1, "range": [null, "2024-01-01T06:00"] }] }));
+    assert_eq!(at(&t), vec![json!(0), json!(1)], "{t}");
+    let bad = r.ask(json!({ "op": "expand", "h": h, "table": true,
+        "filters": [{ "col": 0, "range": ["soon", null] }] }));
+    assert_eq!(bad["error"]["kind"], json!("protocol"), "{bad}");
 }
 
 #[test]

@@ -1143,10 +1143,10 @@ pub fn dispatch_shared(func: &str, args: &[Value]) -> Option<Result<Value, Strin
             Some(mask) => f.filter(mask).map(OdsFrame::into_value).map_err(e),
             None => Err("ods.filter: mask must be a Bool Series".to_string()),
         }),
-        "take" => Some(match args.get(1).and_then(series_of) {
-            Some(idx) => f.take(idx).map(OdsFrame::into_value).map_err(e),
-            None => Err("ods.take: indices must be an Int Series".to_string()),
-        }),
+        "take" => Some(
+            super::series::take_indices(args.get(1))
+                .and_then(|idx| f.take(&idx).map(OdsFrame::into_value).map_err(e)),
+        ),
         "sample" => Some(
             sample_indices_from(func, f.n_rows(), args.get(1), args.get(2), args.get(3))
                 .and_then(|idx| f.take(&idx).map(OdsFrame::into_value).map_err(e)),

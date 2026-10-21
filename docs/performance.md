@@ -443,6 +443,17 @@ twenty levels, and the group-bys 1,000.
 | `lower()` of a Category | 0.96 | | 3.02 (`cat.str.lower`) |
 | `group_by` a Category, `sum` | 1.09 | | 5.51 (`observed=True`) |
 | `group_by` the same as text, `sum` | 1.82 | | 25.1 |
+| `col(cat) == "Riverside"`, an expression | 0.46 | | 0.03 (`cat == …`, codes compared by NumPy) |
+| `col(cat) < "Kingsway"`, by level | 0.48 | | 0.07 (an ordered categorical) |
+| `col(text) + "!"`, an expression | 11.0 | | 41.3 (`+ "!"`) |
+| `add_months(col(n))`, Dates | 12.3 | 1.96 | — (no vectorized form: `DateOffset` a row) |
+| `format("%b %d %Y")`, Dates | 83.5 | | 1480 (`dt.strftime`) |
+| `format("05d")`, Ints | 66.8 | | 104 (`map("{:05d}".format)`) |
+
+A Category against a level is its codes compared once, row by row into
+a mask, where pandas' is one NumPy comparison of its small codes: a
+microsecond-scale gap on a sub-millisecond kernel. The rows from
+`col(cat)` down are the D6 gaps' kernels (pandas 3.0.6).
 
 The parts parallelize past the engine's thresholds (a part costs four
 operations, so a column of 500,000 rows fans out); the text kernels and

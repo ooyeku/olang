@@ -971,7 +971,8 @@ the evaluation that printed it (`out`); stdout belongs to the protocol.
 **Handshake.** On start the server says
 `{"event":"hello","protocol":1,"olang":"0.88.0","root":…,"pid":…,"ops":[…],"features":["bind","pure","cell","caps","profile","distinct"]}`
 (`features`: what an `eval` takes beyond the protocol's first version —
-`scene`: a gg plot value is said with its scene, below;
+`scene`: a gg plot value is said with its scene, below; `daterange`:
+a table view's range filter takes a Date or Datetime column, below;
 a notebook's kernel says `notebook` too, below).
 A client that does not know the protocol's version stops there. `{"op":"hello"}`
 asks again.
@@ -1271,6 +1272,9 @@ take about 10 ms, 70 at worst — a million distinct strings):
   "mean", "hist"}` — `hist` 20 equal-width bins over [min, max] (every
   value in the first when min is max), nulls not counted; `min`, `max`
   and `mean` numbers over the finite values, absent when there are none;
+- a `Date` or `Datetime` column: `{"nulls", "distinct", "min", "max",
+  "hist"}` — `min` and `max` its first and last as ISO text, `hist` 20
+  bins between them;
 - any other: `{"nulls", "distinct", "top"}` — `top` the six most frequent
   values, most first, ties by first appearance, each `["cell text",
   count]` (the text the table's cells use); a null is never in `top`.
@@ -1281,8 +1285,9 @@ take about 10 ms, 70 at worst — a million distinct strings):
 `filters`, a list ANDed together, each on a column by index:
 
 - `{"col": 2, "range": [100.0, null]}` — inclusive bounds, either `null`
-  (open), on a numeric column only (any other is a `protocol` error naming
-  it); a null fails;
+  (open), on a numeric column, or a Date or Datetime one with ISO text
+  bounds (`["2024-01-01", "2024-03-31"]`; a date alone is its midnight);
+  any other is a `protocol` error naming it; a null fails;
 - `{"col": 1, "values": ["east", "west"]}` — the cell's text is one of
   them; `null` in the list keeps null cells;
 - `{"col": 0, "contains": "gad"}` — the cell's text contains it,
