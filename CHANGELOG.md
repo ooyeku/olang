@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`stats.prop_z_test(count, nobs, value, alternative, level)`.** The
+  z-test of one proportion or two (statsmodels' `proportions_ztest`: the
+  pooled proportion's variance for two samples), with `diff`, `se` and
+  Wald's interval `ci` beside `z` and `p_value`; pinned against
+  statsmodels on three tiers.
+- **Formulas nest and cross to a power.** `a / b` is `a + a:b` (and
+  `(a + b) / c` is `a + b + a:b:c`), `(a + b + c)^2` (or `**`) every
+  interaction of up to two of them, as patsy reads them.
+- **A Frame fits learn's models.** The models are a Frame's methods
+  (`homes.linear("price ~ sqft + C(hood)")`, `homes.forest(y: "sold",
+  n_trees: 200)`, `pts.kmeans(k: 4)`); learn's other functions are not,
+  so a column named `silhouette` or `split` still reads with `.`.
+- **gg.** `gg.density` takes `linewidth` and `linetype`; a rect's edge
+  left out is the panel's, as ggplot's `-Inf`/`Inf` are
+  (`gg.annotate(p, "rect", xmin: 3, xmax: 5)` is a band the panel's
+  height), and an infinite edge is drawn there too.
 - **Matrices (data ergonomics D4).** A native `Matrix`: column-major
   Floats whose columns are shared `Arc`s, so `ods.matrix(f, cols)` (or
   `ods.matrix([s1, s2])`) over null-free Float columns copies nothing;
@@ -758,6 +774,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **learn options: objects, checked at once, and `spec.options`.**
+  Options given as an object (`{ n_trees: 7 }`) are options as a map is,
+  everywhere learn and ml take them (`ml.spec(…, options: { n_trees: 7 })`
+  kept only the seed and dropped the rest without a word); `learn.spec`
+  checks its options against the kind's and raises on an unknown key;
+  `ml.grid_search` takes an object grid and raises on a key the spec's
+  kind has no option for. A fit's spec keeps its options under `options`
+  (it was `opts`, which nothing documented).
+- **Trees split a 0/1 column without sorting it.** A one-hot level or a
+  Bool has one threshold, found in one pass over the node's rows: churn's
+  300-tree forest over Category columns takes 86 ms, down from 101
+  (scikit-learn 234), with the same trees.
+
 - **`ods.rolling` slides in O(n).** Sums, means, variances and standard
   deviations keep compensated running totals (Neumaier; a NaN or an
   infinity counted apart, so it leaves the window with its row), min and
@@ -923,6 +952,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `impl`, `error` and `catch` before a `(`, `[` or `.`).
 
 ### Fixed
+
+- **gg orders a Category by its levels.** An axis, a colour or fill
+  legend and facet_wrap's and facet_grid's panels sorted a Category's
+  values as text (Feb before Jan); they follow its levels now, and a
+  scale's `limits` still wins. A String keeps its natural sort.
+- **Constant colours in several layers.** `gg.constant` colour mappings
+  in two layers drew both lines in the first colour (the legend was
+  right): each layer's codes are now the scale's.
+- **`gg.aes` holds a Series.** `gg.aes(ymin: f.y - 1.0)` raised "cannot
+  compare Series[Float] with ()".
 
 - **Importing an enum and its variants by name.** `use lib.util { Shape,
   Circle, Dot }` raised "importing `Circle` would replace `Circle`": the

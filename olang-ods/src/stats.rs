@@ -586,6 +586,92 @@ pub fn mann_whitney(a: &Series, b: &Series, alternative: &str) -> Result<MannWhi
     })
 }
 
+/// A z-test of one proportion or of two.
+#[derive(Clone, Copy, Debug)]
+pub struct PropZ {
+    pub z: f64,
+    pub p_value: f64,
+    /// The sample proportions (`p2` NaN for one sample).
+    pub p1: f64,
+    pub p2: f64,
+    /// p1 − p2 (two samples) or p1 − value (one), as `t_test`'s.
+    pub diff: f64,
+    /// The standard error the test divides by: the pooled proportion's
+    /// for two samples, the sample proportion's for one.
+    pub se: f64,
+    /// The interval of p1 − p2 (or of p1) at the level asked: Wald's, from
+    /// the unpooled standard error.
+    pub lo: f64,
+    pub hi: f64,
+}
+
+/// statsmodels' `proportions_ztest(count, nobs, value, alternative)`:
+/// one sample (`count` and `nobs` of one) against `value`, or two, whose
+/// difference is tested against `value` with the pooled proportion's
+/// variance (`prop_var=False`). The interval beside it (at `level`) is
+/// Wald's, as `confint_proportions_2indep(method="wald")` and
+/// `proportion_confint(method="normal")` give.
+pub fn prop_ztest(count: &[f64], nobs: &[f64], value: f64, alternative: &str, level: f64) -> Result<PropZ> {
+    let bad = |m: String| OdsError::InvalidArgument(format!("prop_z_test: {}", m));
+    if count.len() != nobs.len() || !(1..=2).contains(&count.len()) {
+        return Err(bad(format!(
+            "count and nobs are one number each, or two each; got {} and {}",
+            count.len(),
+            nobs.len()
+        )));
+    }
+    for (c, n) in count.iter().zip(nobs) {
+        if !(*n > 0.0) || !(*c >= 0.0) || c > n {
+            return Err(bad(format!("each count lies in [0, nobs] and each nobs is positive; got {} of {}", c, n)));
+        }
+    }
+    if !(level > 0.0 && level < 1.0) {
+        return Err(bad(format!("level must lie in (0, 1), got {}", level)));
+    }
+    let p: Vec<f64> = count.iter().zip(nobs).map(|(c, n)| c / n).collect();
+    let two = p.len() == 2;
+    let (est, diff, se, se_ci) = if two {
+        let pooled = (count[0] + count[1]) / (nobs[0] + nobs[1]);
+        let se = (pooled * (1.0 - pooled) * (1.0 / nobs[0] + 1.0 / nobs[1])).sqrt();
+        let se_ci = (p[0] * (1.0 - p[0]) / nobs[0] + p[1] * (1.0 - p[1]) / nobs[1]).sqrt();
+        (p[0] - p[1], p[0] - p[1], se, se_ci)
+    } else {
+        let se = (p[0] * (1.0 - p[0]) / nobs[0]).sqrt();
+        (p[0], p[0] - value, se, se)
+    };
+    let z = if two { (diff - value) / se } else { diff / se };
+    let (pv, lo, hi) = match alternative {
+        "two-sided" => {
+            let q = dist::norm_ppf(1.0 - (1.0 - level) / 2.0, 0.0, 1.0)?;
+            (2.0 * norm_sf(z.abs()), est - q * se_ci, est + q * se_ci)
+        }
+        "larger" | "greater" => {
+            let q = dist::norm_ppf(level, 0.0, 1.0)?;
+            (norm_sf(z), est - q * se_ci, f64::INFINITY)
+        }
+        "smaller" | "less" => {
+            let q = dist::norm_ppf(level, 0.0, 1.0)?;
+            (1.0 - norm_sf(z), f64::NEG_INFINITY, est + q * se_ci)
+        }
+        other => {
+            return Err(bad(format!(
+                "alternative must be \"two-sided\", \"greater\" or \"less\", got \"{}\"",
+                other
+            )));
+        }
+    };
+    Ok(PropZ {
+        z,
+        p_value: if pv.is_nan() { f64::NAN } else { pv.clamp(0.0, 1.0) },
+        p1: p[0],
+        p2: if two { p[1] } else { f64::NAN },
+        diff,
+        se,
+        lo,
+        hi,
+    })
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Spearman {
     pub rho: f64,

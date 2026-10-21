@@ -13,6 +13,10 @@ pub enum Column {
     /// A date or datetime column: seconds since 1970-01-01 (NaN for
     /// null), and whether it has times of day.
     Time(Vec<f64>, bool),
+    /// A Category column: its values' text (None for null) and its
+    /// levels, whose order is the order a discrete scale, a legend or a
+    /// facet's panels take (a String column's values are sorted).
+    Cat(Vec<Option<String>>, Arc<Vec<String>>),
 }
 
 impl Column {
@@ -21,6 +25,7 @@ impl Column {
             Column::Num(v) => v.len(),
             Column::Str(v) => v.len(),
             Column::Time(v, _) => v.len(),
+            Column::Cat(v, _) => v.len(),
         }
     }
 

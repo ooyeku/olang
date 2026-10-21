@@ -23,12 +23,12 @@
 // the native renderer (this module's own `plot` shadows its name)
 let native = plot
 
-fn put(m, k, v) = if v == () => m else => map_set(m, k, v)
+fn put(m, k, v) = if typeof(v) == "Unit" => m else => map_set(m, k, v)
 
 fn pairs_map(pairs) = fold(pairs, #{}, (m, kv) => put(m, kv[0], kv[1]))
 
 fn frame_of(data) =
-    if data == () => ()
+    if typeof(data) == "Unit" => ()
     else if typeof(data) == "List" => ods.frame_from_records(data)
     else => data
 
@@ -164,10 +164,11 @@ share fn freqpoly(p, mapping = (), data = (), bins = (), binwidth = (), color = 
 /// A kernel density estimate (`bw`: "nrd0", "nrd", "scott" or a number;
 /// `adjust`; `kernel`; `n`; `trim`).
 share fn density(p, mapping = (), data = (), bw = (), adjust = (), kernel = (), n = (), trim = (), fill = (),
-                 color = (), colour = (), alpha = (), position = (), inherit = true, legend = true) =
+                 color = (), colour = (), alpha = (), linewidth = (), linetype = (), position = (), inherit = true,
+                 legend = true) =
     add(p, "density", (), position, mapping, data, inherit, legend,
         [["bw", bw], ["adjust", adjust], ["kernel", kernel], ["n", n], ["trim", trim], ["fill", fill],
-         ["color", pick(color, colour)], ["alpha", alpha]])
+         ["color", pick(color, colour)], ["alpha", alpha], ["linewidth", linewidth], ["linetype", linetype]])
 
 /// Boxplots: median, hinges, 1.5 IQR whiskers, outliers.
 share fn boxplot(p, mapping = (), data = (), width = (), coef = (), outliers = (), fill = (), color = (),
@@ -233,7 +234,7 @@ fn text_params(label, color, colour, size, hjust, vjust, nudge_x, nudge_y, check
     [["label", label], ["color", pick(color, colour)], ["size", size], ["hjust", hjust], ["vjust", vjust],
      ["nudge_x", nudge_x], ["nudge_y", nudge_y], ["check_overlap", check_overlap], ["fontface", fontface], ["fill", fill]]
 
-fn nudged(nudge_x, nudge_y) = if nudge_x == () && nudge_y == () => () else => "nudge"
+fn nudged(nudge_x, nudge_y) = if typeof(nudge_x) == "Unit" && typeof(nudge_y) == "Unit" => () else => "nudge"
 
 /// Text at each point (the label aesthetic; `size` in pixels; `hjust`,
 /// `vjust`, `nudge_x`, `nudge_y`, `check_overlap`, `fontface`).
@@ -258,18 +259,19 @@ share fn tile(p, mapping = (), data = (), width = (), height = (), fill = (), co
 share fn raster(p, mapping = (), data = (), fill = (), alpha = (), inherit = true, legend = true) =
     add(p, "raster", (), (), mapping, data, inherit, legend, [["fill", fill], ["alpha", alpha]])
 
-/// Rectangles from xmin to xmax, ymin to ymax.
+/// Rectangles from xmin to xmax, ymin to ymax (an edge not mapped is the
+/// panel's).
 share fn rect(p, mapping = (), data = (), fill = (), color = (), colour = (), alpha = (), inherit = true, legend = true) =
     add(p, "rect", (), (), mapping, data, inherit, legend, [["fill", fill], ["color", pick(color, colour)], ["alpha", alpha]])
 
 /// Horizontal reference lines at `yintercept` (a number or a list).
 share fn hline(p, yintercept = (), mapping = (), data = (), color = (), colour = (), linetype = (), linewidth = (), alpha = ()) =
-    add(p, "hline", (), (), mapping, data, yintercept == (), false,
+    add(p, "hline", (), (), mapping, data, typeof(yintercept) == "Unit", false,
         [["yintercept", yintercept]] + line_params(color, colour, linewidth, linetype, alpha))
 
 /// Vertical reference lines at `xintercept`.
 share fn vline(p, xintercept = (), mapping = (), data = (), color = (), colour = (), linetype = (), linewidth = (), alpha = ()) =
-    add(p, "vline", (), (), mapping, data, xintercept == (), false,
+    add(p, "vline", (), (), mapping, data, typeof(xintercept) == "Unit", false,
         [["xintercept", xintercept]] + line_params(color, colour, linewidth, linetype, alpha))
 
 /// A line y = intercept + slope · x (in the scales' transformed space).
@@ -312,12 +314,14 @@ share fn qq_line(p, mapping = (), data = (), mean = (), sd = (), color = (), col
         [["mean", mean], ["sd", sd], ["color", pick(color, colour)], ["linetype", linetype]])
 
 /// One mark of any geom from constants (a label, a band, an arrow's
-/// line): `gg.annotate(p, "text", x: 3, y: 9, label: "peak")`.
+/// line): `gg.annotate(p, "text", x: 3, y: 9, label: "peak")`. A rect's
+/// edge left out is the panel's (ggplot's -Inf/Inf): `gg.annotate(p,
+/// "rect", xmin: 3, xmax: 5)` spans the panel's height.
 share fn annotate(p, geom, x = (), y = (), xend = (), yend = (), xmin = (), xmax = (), ymin = (), ymax = (),
                   label = (), color = (), colour = (), fill = (), alpha = (), size = (), linetype = (), hjust = (),
                   vjust = ()) = {
     let cols = filter([["x", x], ["y", y], ["xend", xend], ["yend", yend], ["xmin", xmin], ["xmax", xmax],
-                       ["ymin", ymin], ["ymax", ymax], ["label", label]], (kv) => kv[1] != ())
+                       ["ymin", ymin], ["ymax", ymax], ["label", label]], (kv) => typeof(kv[1]) != "Unit")
     let n = fold(cols, 1, (a, kv) => if typeof(kv[1]) == "List" => max(a, len(kv[1])) else => a)
     let column = (v) => {
         let vs = if typeof(v) == "List" => v else => map(range(0, n), (i) => v)
@@ -484,7 +488,7 @@ share fn scale_linetype(p, values = (), name = (), labels = (), limits = (), gui
 
 // ── facets ─────────────────────────────────────────────────────────────
 
-fn names_of(v) = if v == () => [] else if typeof(v) == "List" => v else => [v]
+fn names_of(v) = if typeof(v) == "Unit" => [] else if typeof(v) == "List" => v else => [v]
 
 /// Small multiples: one panel per value of `facets` (a column or a list),
 /// wrapped into `ncol` columns (`scales`: "fixed", "free", "free_x", "free_y").

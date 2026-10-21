@@ -36,6 +36,7 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("power_t", 2),
     ("n_for_power", 1),
     ("mann_whitney", 2),
+    ("prop_z_test", 2),
     ("spearman", 2),
     ("mad", 1),
     ("iqr", 1),
@@ -350,6 +351,7 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
                 ("effect", Value::Float(r.effect)),
             ]))
         }
+        "prop_z_test" => prop_z_test(&args),
         "spearman" => {
             let a = want_series(func, &args, 0)?;
             let b = want_series(func, &args, 1)?;
@@ -465,6 +467,59 @@ fn t_test(args: &[Value]) -> Result<Value, String> {
         ("se", Value::Float(r.se)),
         ("ci", pair(lo, hi)),
         ("d", Value::Float(r.d)),
+    ]);
+    Ok(map_value(entries))
+}
+
+/// A count or a number of trials: one number, or two (a list or a
+/// Series).
+fn counts(func: &str, what: &str, v: &Value) -> Result<Vec<f64>, String> {
+    let one = |x: &Value| match x {
+        Value::Integer(i) => Ok(*i as f64),
+        Value::Float(f) => Ok(*f),
+        other => Err(format!(
+            "stats.{}: {} must be a number or two, got {}",
+            func,
+            what,
+            other.type_name()
+        )),
+    };
+    match v {
+        Value::List(items) => items.iter().map(one).collect(),
+        other => match series_of(other) {
+            Some(s) => {
+                let (v, valid) = as_f64(func, s)?;
+                if valid.is_some_and(|b| !b.all_valid()) {
+                    return Err(format!("stats.{}: {} has a null", func, what));
+                }
+                Ok(v)
+            }
+            None => Ok(vec![one(other)?]),
+        },
+    }
+}
+
+/// `stats.prop_z_test(count, nobs, value, alternative, level)`: one
+/// proportion against `value`, or two against each other.
+fn prop_z_test(args: &[Value]) -> Result<Value, String> {
+    let func = "prop_z_test";
+    let count = counts(func, "count", &args[0])?;
+    let nobs = counts(func, "nobs", &args[1])?;
+    let value = num_or(func, args, 2, 0.0)?;
+    let alt = alternative(func, args.get(3))?;
+    let level = num_or(func, args, 4, 0.95)?;
+    let r = stats::prop_ztest(&count, &nobs, value, alt, level).map_err(e)?;
+    let mut entries = vec![("z", Value::Float(r.z)), ("p_value", Value::Float(r.p_value))];
+    if count.len() == 2 {
+        entries.push(("prop_a", Value::Float(r.p1)));
+        entries.push(("prop_b", Value::Float(r.p2)));
+    } else {
+        entries.push(("prop", Value::Float(r.p1)));
+    }
+    entries.extend([
+        ("diff", Value::Float(r.diff)),
+        ("se", Value::Float(r.se)),
+        ("ci", pair(r.lo, r.hi)),
     ]);
     Ok(map_value(entries))
 }

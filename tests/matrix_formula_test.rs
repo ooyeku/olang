@@ -357,7 +357,7 @@ let df = ods.frame({ y: [1.0, 2.0, 3.0, 4.0], x: [1.0, 3.0, 2.0, 5.0], g: ["a", 
 fn say(r) = match r { Ok(v) => println("ok"), Err(e) => println(e) }
 say(attempt(() => learn.linear(df, "y ~ x + z")))
 say(attempt(() => learn.linear(df, "y ~ x +")))
-say(attempt(() => learn.linear(df, "y ~ x / g")))
+say(attempt(() => learn.linear(df, "y ~ (x + g)^2.5")))
 say(attempt(() => learn.linear(df, "y ~ wobble(x)")))
 say(attempt(() => learn.linear(df, "y ~ x", ["x"])))
 say(attempt(() => learn.linear(df, "y ~ y + x")))
@@ -370,9 +370,9 @@ learn: in the formula, no column 'z' (the Frame has y, x, g):
 learn: in the formula, a term is missing here:
     y ~ x +
            ^
-learn: in the formula, nesting (`/`) and powers of terms are not supported; write the terms out, or put arithmetic inside I(…):
-    y ~ x / g
-          ^
+learn: in the formula, a power of terms is a whole number of at least 1 (`(a + b)^2`); arithmetic goes inside I(…):
+    y ~ (x + g)^2.5
+                ^^^
 learn: in the formula, 'wobble' is not a formula function (C, I, Q, or a math function: log, exp, sqrt, abs, …):
     y ~ wobble(x)
         ^^^^^^

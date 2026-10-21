@@ -223,6 +223,13 @@ pub fn grow(
     let mut right = Stats::new(n_out);
     let mut scratch: Vec<(f64, usize)> = Vec::with_capacity(rows.len());
     let mut features: Vec<usize> = (0..k).collect();
+    // A 0/1 column (a one-hot level, a Bool) has one threshold, 0.5: its
+    // split is found by one pass over the node's rows, with no sort.
+    let binary: Vec<bool> = x
+        .cols
+        .iter()
+        .map(|c| c.iter().all(|&v| v == 0.0 || v == 1.0))
+        .collect();
     while let Some((start, end, depth, parent, is_left)) = stack.pop() {
         let id = tree.feature.len();
         if parent != usize::MAX {
@@ -267,6 +274,38 @@ pub fn grow(
             let f = features[drawn];
             drawn += 1;
             let col = &x.cols[f];
+            if binary[f] {
+                left.clear();
+                let mut nl = 0usize;
+                for &i in &rows[start..end] {
+                    if col[i] == 0.0 {
+                        left.add(target, i, w[i]);
+                        nl += 1;
+                    }
+                }
+                if nl == 0 || nl == n_node {
+                    continue;
+                }
+                visited += 1;
+                if nl < params.min_samples_leaf || n_node - nl < params.min_samples_leaf {
+                    continue;
+                }
+                right.clone_from(&node_stats);
+                right.w -= left.w;
+                for (r, l) in right.counts.iter_mut().zip(&left.counts) {
+                    *r -= l;
+                }
+                right.sy -= left.sy;
+                right.syy -= left.syy;
+                if left.w <= 0.0 || right.w <= 0.0 {
+                    continue;
+                }
+                let proxy = proxy_gain(&left, &right, params.criterion);
+                if best.is_none_or(|b| proxy > b.0) {
+                    best = Some((proxy, f, 0.5, nl));
+                }
+                continue;
+            }
             scratch.clear();
             scratch.extend(rows[start..end].iter().map(|&i| (col[i], i)));
             scratch.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));

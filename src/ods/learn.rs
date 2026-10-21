@@ -321,7 +321,7 @@ impl<'a> Opts<'a> {
             Some(Value::Map(m)) => Some(m.as_ref()),
             Some(other) => {
                 return Err(format!(
-                    "learn.{}: the options must be a map (#{{...}}), got {}",
+                    "learn.{}: the options must be a map (#{{...}}) or an object ({{ k: v }}), got {}",
                     func,
                     other.type_name()
                 ));
@@ -464,6 +464,15 @@ impl<'a> Opts<'a> {
     }
 }
 
+/// An anonymous or JSON object as the map it spells; anything else as is.
+fn object_as_map(v: Value) -> Value {
+    let fields = match &v {
+        Value::Struct { type_name, fields } if type_name == "Object" || type_name == "JsonObject" => fields.clone(),
+        _ => return v,
+    };
+    Value::Map(fields)
+}
+
 fn draw_seed() -> u64 {
     let u = crate::stdlib::random::draw_uniforms(1)[0];
     (u * 9_007_199_254_740_992.0) as u64
@@ -512,6 +521,10 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> R<Value> {
             )
         });
     }
+    // An object (`{ n_trees: 7 }`) is options as much as a map is: every
+    // argument that is one is its map from here on, so no path below can
+    // read an object as "no options".
+    let args: Vec<Value> = args.into_iter().map(object_as_map).collect();
     match func {
         "split" => split(&args),
         "kfold" => kfold(&args),
@@ -961,7 +974,8 @@ fn class_weight(o: &Opts) -> R<ClassWeight> {
     match o.get("class_weight") {
         None => Ok(ClassWeight::None),
         Some(Value::String(s)) if s.as_str() == "balanced" => Ok(ClassWeight::Balanced),
-        Some(Value::Map(m)) => m
+        Some(v) if crate::native_sig::options_fields(v).is_some() => crate::native_sig::options_fields(v)
+            .unwrap()
             .iter()
             .map(|(k, v)| match v {
                 Value::Float(x) => Ok((k.clone(), *x)),
@@ -1302,7 +1316,7 @@ fn spec_value(kind: &str, y: Value, x: Value, opts: Value) -> Value {
         ("kind", Value::String(Arc::new(kind.to_string()))),
         ("y", y),
         ("x", x),
-        ("opts", opts),
+        ("options", opts),
     ])
 }
 
@@ -1553,6 +1567,9 @@ fn spec(args: &[Value]) -> R<Value> {
     let y = args.get(1).cloned().unwrap_or(Value::Unit);
     let x = args.get(2).cloned().unwrap_or(Value::Unit);
     let opts = args.get(3).cloned().unwrap_or(Value::Unit);
+    // The options are checked now, as the fit would check them: a
+    // misspelt or foreign key raises here rather than at the first refit.
+    Opts::new("spec", Some(&opts), &spec_keys(&kind))?;
     let needs_seed = matches!(
         kind.as_str(),
         "tree" | "forest" | "boost" | "kmeans" | "gmm"
@@ -1568,6 +1585,20 @@ fn spec(args: &[Value]) -> R<Value> {
         opts
     };
     Ok(spec_value(&kind, y, x, opts))
+}
+
+/// The options a spec of `kind` takes: the fit's own, and `k` for the
+/// clusterings, whose k is an argument of the fit.
+fn spec_keys(kind: &str) -> Vec<&'static str> {
+    match kind {
+        "kmeans" => vec!["k", "n_init", "max_iter", "tol", "seed"],
+        "gmm" => vec!["k", "max_iter", "tol", "reg_covar", "seed"],
+        "pca" => vec!["n_components", "scale"],
+        "scaler" => vec!["method"],
+        "one_hot" => vec!["drop_first"],
+        "imputer" => vec!["strategy", "fill"],
+        _ => allowed(kind),
+    }
 }
 
 struct Spec {
@@ -1600,7 +1631,7 @@ fn spec_of(func: &str, v: &Value) -> R<Spec> {
         kind,
         y: m.get("y").cloned().unwrap_or(Value::Unit),
         x: m.get("x").cloned().unwrap_or(Value::Unit),
-        opts: m.get("opts").cloned().unwrap_or(Value::Unit),
+        opts: m.get("options").cloned().unwrap_or(Value::Unit),
     })
 }
 
@@ -1980,11 +2011,20 @@ fn grid_search(args: &[Value]) -> R<Value> {
         Value::Map(m) => m.clone(),
         other => {
             return Err(format!(
-                "learn.grid_search: the grid must be a map of option to values, got {}",
+                "learn.grid_search: the grid must be a map or an object of option to values, got {}",
                 other.type_name()
             ));
         }
     };
+    let keys = spec_keys(&s.kind);
+    if let Some(k) = grid.keys().find(|k| !keys.contains(&k.as_str())) {
+        return Err(format!(
+            "learn.grid_search: a {} spec has no option '{}' — its options are {}",
+            s.kind,
+            k,
+            keys.join(", ")
+        ));
+    }
     let o = Opts::new("grid_search", args.get(3), &["folds", "metric", "seed"])?;
     let k = o.usize("folds", 5)?;
     let metric = match o.opt_str("metric")? {

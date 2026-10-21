@@ -649,6 +649,19 @@ pub fn bind(
     bind_values(full, vals, n_pos, &|j| names[j].as_str())
 }
 
+/// The entries of an options value: a map (`#{ "k": v }`), or an
+/// anonymous or JSON object (`{ k: v }`), which are the same thing
+/// written another way. A declared struct is not options.
+pub fn options_fields(v: &Value) -> Option<&Arc<ValueMap>> {
+    match v {
+        Value::Map(m) => Some(m),
+        Value::Struct { type_name, fields } if type_name == "Object" || type_name == "JsonObject" => {
+            Some(fields)
+        }
+        _ => None,
+    }
+}
+
 /// The options map of a call: the positional map, with the named options
 /// written over it in order.
 pub fn options_map(
@@ -658,10 +671,10 @@ pub fn options_map(
 ) -> Result<Value, String> {
     let mut map: ValueMap = match base {
         None | Some(Value::Unit) => ValueMap::default(),
-        Some(Value::Map(ref m)) => (**m).clone(),
+        Some(ref v) if options_fields(v).is_some() => options_fields(v).unwrap().as_ref().clone(),
         Some(other) => {
             return Err(format!(
-                "{}: the options must be a map (#{{...}}), got {}",
+                "{}: the options must be a map (#{{...}}) or an object ({{ k: v }}), got {}",
                 full,
                 other.type_name()
             ));
@@ -698,9 +711,23 @@ pub fn fill_defaults(full: &str, args: &mut Vec<Value>) {
 fn borrowed_modules(type_name: &str) -> &'static [&'static str] {
     match type_name {
         "Series" | "Expr" => &["stats", "stats.ts", "plot"],
-        "Frame" => &["plot"],
+        // `homes.linear("price ~ sqft")`: a Frame fits learn's models
+        "Frame" => &["plot", "learn"],
         _ => &[],
     }
+}
+
+/// learn's models, the only learn functions a Frame borrows: a method
+/// name hides a column's `.` read, so the rest (`split`, `silhouette`,
+/// `kfold`: names a column has) stay `learn.f(frame, …)`.
+const FRAME_MODELS: &[&str] = &[
+    "linear", "ridge", "lasso", "elastic_net", "logistic", "tree", "forest", "boost", "knn",
+    "naive_bayes", "kmeans", "gmm", "pca",
+];
+
+/// Whether a type borrows `method` from `module` (one it lists).
+fn borrows(type_name: &str, module: &str, method: &str) -> bool {
+    !(type_name == "Frame" && module == "learn") || FRAME_MODELS.contains(&method)
 }
 
 /// Home modules whose functions are methods of their values even before
@@ -810,6 +837,7 @@ fn resolve_method(home: &str, type_name: &str, method: &str) -> Option<&'static 
     }
     borrowed_modules(type_name)
         .iter()
+        .filter(|m| borrows(type_name, m, method))
         .find_map(|m| try_module(m, false))
 }
 
@@ -1101,6 +1129,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("stats.power_t", "effect, n, alpha = 0.05, alternative = \"two-sided\", kind = \"two-sample\", ratio = 1.0"),
     ("stats.n_for_power", "effect, power = 0.8, alpha = 0.05, alternative = \"two-sided\", kind = \"two-sample\", ratio = 1.0"),
     ("stats.mann_whitney", "a:S, b, alternative = \"two-sided\""),
+    ("stats.prop_z_test", "count, nobs, value = 0.0, alternative = \"two-sided\", level = 0.95"),
     ("stats.spearman", "a:S, b"),
     ("stats.mad", "s:S, scale = \"normal\""),
     ("stats.iqr", "s:S"),

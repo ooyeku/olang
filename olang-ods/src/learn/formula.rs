@@ -7,6 +7,8 @@
 //! | `a + b` | both terms |
 //! | `a:b` | their interaction (the product of their columns) |
 //! | `a * b` | `a + b + a:b` |
+//! | `a / b` | `a + a:b` (b nested in a); `(a + b) / c` is `a + b + a:b:c` |
+//! | `(a + b + c)^2` | every interaction of up to two of them (`**` too) |
 //! | `(a + b):c` | `a:c + b:c` (the operators distribute) |
 //! | `- a` | leave a term out; `- 1` (or `+ 0`) drops the intercept |
 //! | `C(x)` | `x` as categorical, whatever its type (an Int hour) |
@@ -328,6 +330,45 @@ impl Terms {
         self
     }
 
+    /// `self / other`: self's terms, then the interaction of all of
+    /// self's factors with each of other's terms (patsy's nesting).
+    fn nest(self, other: &Terms) -> Terms {
+        let mut all: Vec<usize> = Vec::new();
+        for t in &self.terms {
+            for f in t {
+                if !all.contains(f) {
+                    all.push(*f);
+                }
+            }
+        }
+        let whole = Terms {
+            terms: if all.is_empty() { Vec::new() } else { vec![all] },
+            intercept: None,
+        };
+        let inner = whole.colon(other);
+        self.plus(inner)
+    }
+
+    /// `self ^ n`: every interaction of up to n of self's terms.
+    fn power(&self, n: usize) -> Terms {
+        let mut acc = Terms {
+            terms: self.terms.clone(),
+            intercept: None,
+        };
+        let mut cur = Terms {
+            terms: self.terms.clone(),
+            intercept: None,
+        };
+        for _ in 1..n {
+            cur = cur.colon(self);
+            acc = acc.plus(Terms {
+                terms: cur.terms.clone(),
+                intercept: None,
+            });
+        }
+        acc
+    }
+
     fn colon(&self, other: &Terms) -> Terms {
         let mut out = Vec::new();
         for a in &self.terms {
@@ -413,39 +454,63 @@ impl<'a> Parser<'a> {
         }
     }
 
-    // product := inter ('*' inter)*
+    // product := inter (('*' | '/') inter)*
     fn product(&mut self) -> Result<Terms> {
         let mut acc = self.inter()?;
-        while self.is("*") {
-            let star = self.next();
+        while self.is("*") || self.is("/") {
+            let op = self.next();
             let rhs = self.inter()?;
+            let star = op.tok == Tok::Sym("*");
             if acc.intercept.is_some() || rhs.intercept.is_some() {
-                return Err(at(self.src, star.span, "`*` joins terms, not 0 or 1"));
+                return Err(at(
+                    self.src,
+                    op.span,
+                    if star { "`*` joins terms, not 0 or 1" } else { "`/` nests terms, not 0 or 1" },
+                ));
             }
-            let both = acc.colon(&rhs);
-            acc = acc.plus(rhs).plus(both);
-        }
-        if self.is("/") || self.is("**") || self.is("^") {
-            let t = self.peek().clone();
-            return Err(at(
-                self.src,
-                t.span,
-                "nesting (`/`) and powers of terms are not supported; write the terms out, or put arithmetic inside I(…)",
-            ));
+            if star {
+                let both = acc.colon(&rhs);
+                acc = acc.plus(rhs).plus(both);
+            } else {
+                acc = acc.nest(&rhs);
+            }
         }
         Ok(acc)
     }
 
-    // inter := atom (':' atom)*
+    // inter := power (':' power)*
     fn inter(&mut self) -> Result<Terms> {
-        let mut acc = self.atom()?;
+        let mut acc = self.power()?;
         while self.is(":") {
             let colon = self.next();
-            let rhs = self.atom()?;
+            let rhs = self.power()?;
             if acc.intercept.is_some() || rhs.intercept.is_some() {
                 return Err(at(self.src, colon.span, "`:` joins terms, not 0 or 1"));
             }
             acc = acc.colon(&rhs);
+        }
+        Ok(acc)
+    }
+
+    // power := atom (('^' | '**') Int)*
+    fn power(&mut self) -> Result<Terms> {
+        let mut acc = self.atom()?;
+        while self.is("^") || self.is("**") {
+            let op = self.next();
+            if acc.intercept.is_some() {
+                return Err(at(self.src, op.span, "a power raises terms, not 0 or 1"));
+            }
+            let n = self.next();
+            match n.tok {
+                Tok::Num(v) if v >= 1.0 && v.fract() == 0.0 => acc = acc.power(v as usize),
+                _ => {
+                    return Err(at(
+                        self.src,
+                        n.span,
+                        "a power of terms is a whole number of at least 1 (`(a + b)^2`); arithmetic goes inside I(…)",
+                    ));
+                }
+            }
         }
         Ok(acc)
     }
@@ -1283,6 +1348,13 @@ mod tests {
         assert_eq!(features("y ~ x:g"), vec!["x:g_a", "x:g_b", "x:g_c"]);
         assert_eq!(features("y ~ (x + I(x^2)):C(h)").len(), 4);
         assert_eq!(features("y ~ log(x) + I(x * 2 - 1)"), vec!["log(x)", "I(x*2-1)"]);
+        // nesting: g / x is g + g:x (x's slope within each g)
+        assert_eq!(features("y ~ g / x"), features("y ~ g + g:x"));
+        assert_eq!(features("y ~ (g + C(h)) / x"), features("y ~ g + C(h) + g:C(h):x"));
+        // powers: every interaction up to the order
+        assert_eq!(features("y ~ (x + g + C(h))^2"), features("y ~ x + g + C(h) + x:g + x:C(h) + g:C(h)"));
+        assert_eq!(features("y ~ (x + g)**2"), features("y ~ x * g"));
+        assert_eq!(features("y ~ (x + g + C(h))^3"), features("y ~ x * g * C(h)"));
     }
 
     #[test]
@@ -1292,8 +1364,8 @@ mod tests {
         let f = Formula::parse("y ~ x + sqf").unwrap();
         let e = code(&f, &frame()).unwrap_err().to_string();
         assert!(e.contains("no column 'sqf'") && e.contains("            ^^^"), "{e}");
-        let e = Formula::parse("y ~ x / g").unwrap_err().to_string();
-        assert!(e.contains("nesting"), "{e}");
+        let e = Formula::parse("y ~ (x + g)^1.5").unwrap_err().to_string();
+        assert!(e.contains("whole number"), "{e}");
         let e = Formula::parse("y ~ foo(x)").unwrap_err().to_string();
         assert!(e.contains("'foo' is not a formula function"), "{e}");
         let f = Formula::parse("y ~ y + x").unwrap();
