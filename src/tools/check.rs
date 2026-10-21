@@ -681,23 +681,26 @@ fn flatten_into(v: &Value, inherited_line: i64, out: &mut Vec<Value>) {
 }
 
 /// Read a rule's return value into (line, message) findings. Accepts a list
-/// of strings, a list of `#{ message, line }` maps, or a mix; a bare string
-/// or map (a single finding) is accepted too. Anything else is no findings.
+/// of strings, a list of `{ message, line }` objects or maps, or a mix; a
+/// bare string, object or map (a single finding) is accepted too. Anything
+/// else is no findings.
 fn rule_findings(result: &Value) -> Vec<(i64, String)> {
+    fn of(m: &crate::ast::ValueMap) -> Option<(i64, String)> {
+        let message = match m.get("message").or_else(|| m.get("msg")) {
+            Some(Value::String(s)) => s.to_string(),
+            _ => return None,
+        };
+        let line = match m.get("line") {
+            Some(Value::Integer(l)) => *l,
+            _ => 0,
+        };
+        Some((line, message))
+    }
     fn one(v: &Value) -> Option<(i64, String)> {
         match v {
             Value::String(s) => Some((0, s.to_string())),
-            Value::Map(m) => {
-                let message = match m.get("message").or_else(|| m.get("msg")) {
-                    Some(Value::String(s)) => s.to_string(),
-                    _ => return None,
-                };
-                let line = match m.get("line") {
-                    Some(Value::Integer(l)) => *l,
-                    _ => 0,
-                };
-                Some((line, message))
-            }
+            Value::Map(m) => of(m),
+            Value::Struct { fields, .. } if crate::ast::reads_absent_as_unit(v) => of(fields),
             _ => None,
         }
     }
@@ -2912,8 +2915,8 @@ struct Checker {
     /// The embedded modules this file imports by their own name (`use
     /// gg`, `use ml { split }`): their namespaces' members are known.
     embedded_uses: std::collections::HashSet<String>,
-    /// `module.member` reads compared with `()` — a presence test, the
-    /// way a program asks whether this build has a member.
+    /// `module.member` reads compared with `()`: a presence test, which
+    /// raises when the member is missing (`map_get` is the test).
     probed: std::collections::HashSet<(String, String)>,
     /// Every trait method name the file declares or implements: a read of
     /// one off a struct may be the method, not a field.
@@ -3601,10 +3604,10 @@ impl Checker {
     }
 
     /// A member a stdlib module does not have: `math.pi` (it is
-    /// `math.PI`) reads `()` at run time, and `str.trimm(x)` raises. The
-    /// module is a native one the file does not rebind, or an embedded
-    /// one it imports (`use gg` → `gg.*`). A read compared with `()` is a
-    /// presence test and is left alone.
+    /// `math.PI`) and `str.trimm(x)` raise at run time. The module is a
+    /// native one the file does not rebind, or an embedded one it imports
+    /// (`use gg` → `gg.*`). A read compared with `()` (a presence test)
+    /// raises too: `map_get(m, "name")` is the test.
     fn check_module_member(&mut self, object: &Expr, field: &str, call: bool, span: (u32, u32)) {
         let Expr::Identifier(module) = object else {
             return;
@@ -3626,11 +3629,10 @@ impl Checker {
                 None => return,
             }
         };
-        if members.iter().any(|m| m == field)
-            || self.probed.contains(&(module.clone(), field.to_string()))
-        {
+        if members.iter().any(|m| m == field) {
             return;
         }
+        let probe = self.probed.contains(&(module.clone(), field.to_string()));
         // the same name in another case first (`pi` → `PI`), then the
         // nearest spelling
         let lower = field.to_lowercase();
@@ -3650,10 +3652,15 @@ impl Checker {
             Some(n) => format!(" — did you mean `{}.{}`?", module, n),
             None => String::new(),
         };
-        let what = if call {
-            "calling it raises at run time"
+        let what = if probe {
+            format!(
+                "reading it raises at run time, so a presence test is `map_get({}, \"{}\") == ()`",
+                module, field
+            )
+        } else if call {
+            "calling it raises at run time".to_string()
         } else {
-            "reading it is () at run time"
+            "reading it raises at run time".to_string()
         };
         self.out.push(CheckDiagnostic {
             line: span.0,

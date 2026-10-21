@@ -389,6 +389,11 @@ pub struct Scene {
     /// Whether the horizontal axis zooms (continuous or time).
     pub zoomable: bool,
     pub zoom: Option<(f64, f64)>,
+    /// The theme's paper, ink and id prefix (`Theme`): the SVG's alone, a
+    /// host draws the scene in its own tokens.
+    pub paper: Option<String>,
+    pub ink: Option<String>,
+    pub id: Option<String>,
 }
 
 fn n1(v: f64) -> String {
@@ -412,7 +417,8 @@ fn n2(v: f64) -> String {
 }
 
 fn esc(s: &str) -> String {
-    s.replace('&', "&amp;")
+    s.replace(ID_MARK, "")
+        .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
@@ -550,6 +556,40 @@ fn paint_attr(name: &str, p: Paint, app: Appearance) -> String {
     }
 }
 
+/// The marker standing for a plot's id prefix while its SVG is written:
+/// a character no SVG text holds (`esc` drops it), replaced once the
+/// document is whole.
+const ID_MARK: char = '\u{1}';
+
+/// A 64-bit FNV-1a hash: a plot's ids derive from its SVG's content, so a
+/// build is reproducible and two different plots on one page never share
+/// an id.
+fn fnv1a(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in s.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    h
+}
+
+/// A caller's id prefix kept to what an id may hold (letters, digits,
+/// `-`, `_`), starting with a letter.
+fn id_prefix_of(given: &str) -> Option<String> {
+    let kept: String = given
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    if kept.is_empty() {
+        return None;
+    }
+    Some(if kept.starts_with(|c: char| c.is_ascii_alphabetic()) {
+        kept
+    } else {
+        format!("g{}", kept)
+    })
+}
+
 /// How the JSON a host draws is cut down for the screen.
 #[derive(Clone, Debug)]
 pub struct SceneJsonOptions {
@@ -624,7 +664,6 @@ impl Scene {
 
     /// The scene as an SVG document.
     pub fn to_svg(&self) -> String {
-        let app = self.app;
         let npts: usize = self
             .items
             .iter()
@@ -645,17 +684,17 @@ impl Scene {
         let desc = self.description();
         let _ = write!(
             s,
-            "<metadata id=\"olang-chart\">{}</metadata>",
+            "<metadata class=\"olang-chart\">{}</metadata>",
             desc.replace('&', "&amp;")
                 .replace('<', "&lt;")
                 .replace('>', "&gt;")
         );
         let _ = write!(
             s,
-            "<rect width=\"{}\" height=\"{}\" fill=\"{}\"/>",
+            "<rect width=\"{}\" height=\"{}\"{}/>",
             n1(self.width),
             n1(self.height),
-            app.role(Role::Surface).rgb_hex()
+            self.paint_attr("fill", Paint::Role(Role::Surface))
         );
         let mut clip_id = 0;
         let mut open_groups = 0;
@@ -665,7 +704,7 @@ impl Scene {
                     clip_id += 1;
                     let _ = write!(
                         s,
-                        "<clipPath id=\"ggc{clip_id}\"><rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"/></clipPath><g clip-path=\"url(#ggc{clip_id})\">",
+                        "<clipPath id=\"{ID_MARK}clip{clip_id}\"><rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"/></clipPath><g clip-path=\"url(#{ID_MARK}clip{clip_id})\">",
                         n2(*x),
                         n2(*y),
                         n2(*w),
@@ -705,11 +744,11 @@ impl Scene {
                         let _ = write!(s, " rx=\"{}\"", n1(*r));
                     }
                     match fill {
-                        Some(f) => s.push_str(&paint_attr("fill", *f, app)),
+                        Some(f) => s.push_str(&self.paint_attr("fill", *f)),
                         None => s.push_str(" fill=\"none\""),
                     }
                     if let Some(st) = stroke {
-                        s.push_str(&paint_attr("stroke", *st, app));
+                        s.push_str(&self.paint_attr("stroke", *st));
                         let _ = write!(s, " stroke-width=\"{}\"", n2(*sw));
                     }
                     s.push_str("/>");
@@ -730,7 +769,7 @@ impl Scene {
                         n2(*y1),
                         n2(*x2),
                         n2(*y2),
-                        paint_attr("stroke", *stroke, app),
+                        self.paint_attr("stroke", *stroke),
                         n2(*sw),
                         dash_attr(dash)
                     );
@@ -756,11 +795,11 @@ impl Scene {
                     }
                     let _ = write!(s, "<path d=\"{}\"", d);
                     match fill {
-                        Some(f) => s.push_str(&paint_attr("fill", *f, app)),
+                        Some(f) => s.push_str(&self.paint_attr("fill", *f)),
                         None => s.push_str(" fill=\"none\""),
                     }
                     if let Some(st) = stroke {
-                        s.push_str(&paint_attr("stroke", *st, app));
+                        s.push_str(&self.paint_attr("stroke", *st));
                         let _ = write!(
                             s,
                             " stroke-width=\"{}\" stroke-linejoin=\"round\" stroke-linecap=\"round\"{}",
@@ -786,7 +825,7 @@ impl Scene {
                         n2(*x),
                         n2(*y + size * 0.35),
                         n1(*size),
-                        paint_attr("fill", *paint, app)
+                        self.paint_attr("fill", *paint)
                     );
                     if *anchor != Anchor::Start {
                         let _ = write!(s, " text-anchor=\"{}\"", anchor.svg());
@@ -802,7 +841,46 @@ impl Scene {
             s.push_str("</g>");
         }
         s.push_str("</svg>");
+        // every id the document names takes one prefix: the theme's `id`,
+        // else a hash of the document, so two plots on one page (or a
+        // plot's light and dark twins) never share one and a build of the
+        // same plot writes the same ids
+        if s.contains(ID_MARK) {
+            let prefix = match self.id.as_deref().and_then(id_prefix_of) {
+                Some(p) => format!("{}-", p),
+                None => format!("gg{:08x}-", fnv1a(&s) as u32),
+            };
+            s = s.replace(ID_MARK, &prefix);
+        }
         s
+    }
+
+    /// A paint as an SVG attribute: a role in the theme's paper or ink
+    /// when it names one (the lines at a reduced opacity), else the
+    /// appearance's colour.
+    fn paint_attr(&self, name: &str, p: Paint) -> String {
+        if let Paint::Role(r) = p {
+            if r == Role::Surface
+                && let Some(paper) = &self.paper
+            {
+                return format!(" {}=\"{}\"", name, esc(paper));
+            }
+            if r != Role::Surface
+                && let Some(ink) = &self.ink
+            {
+                let opacity = match r {
+                    Role::Grid => Some(0.12),
+                    Role::Axis => Some(0.3),
+                    Role::Strip | Role::Panel => Some(0.05),
+                    _ => None,
+                };
+                return match opacity {
+                    Some(o) => format!(" {}=\"{}\" {}-opacity=\"{}\"", name, esc(ink), name, o),
+                    None => format!(" {}=\"{}\"", name, esc(ink)),
+                };
+            }
+        }
+        paint_attr(name, p, self.app)
     }
 
     fn points_svg(&self, s: &mut String, p: &Points) {

@@ -5860,10 +5860,7 @@ impl BytecodeVm {
                                 let ValueData::Struct(st) = &receiver.data else {
                                     unreachable!()
                                 };
-                                BytecodeError::TypeError(crate::interpreter::module_member_miss(
-                                    method,
-                                    st.iter().map(|(name, _)| name.as_str()),
-                                ))
+                                BytecodeError::TypeError(vm_module_miss(st, method))
                             }
                             None => match self.execute_get_field(&receiver, method) {
                                 Err(e) => e,
@@ -10476,23 +10473,16 @@ impl BytecodeVm {
             ValueData::Native(h) => crate::native::field_hook(h, field)
                 .map(OvmValue::from_ast)
                 .map_err(BytecodeError::RuntimeError),
-            // A module's member read: `()` when the module lacks it, as
-            // `map_get` answers (a call raises; see CallMethod).
-            ValueData::Struct(s) if s.type_name() == "Module" => {
-                Ok(s.field(field).cloned().unwrap_or_else(OvmValue::new_unit))
-            }
-            ValueData::Struct(s) => s.field(field).cloned().ok_or_else(|| {
-                if s.type_name() == "Module" {
-                    // Same wording (and nearest-member suggestion) as the
-                    // interpreter — the tiers must report identically.
-                    BytecodeError::TypeError(crate::interpreter::module_member_miss(
-                        field,
-                        s.iter().map(|(name, _)| name.as_str()),
-                    ))
-                } else {
-                    BytecodeError::TypeError(self.no_field_or_method(s.type_name(), field))
-                }
-            }),
+            // A module's member: one the module lacks raises, read or
+            // called, in the interpreter's words.
+            ValueData::Struct(s) if s.type_name() == "Module" => s
+                .field(field)
+                .cloned()
+                .ok_or_else(|| BytecodeError::TypeError(vm_module_miss(s, field))),
+            ValueData::Struct(s) => s
+                .field(field)
+                .cloned()
+                .ok_or_else(|| BytecodeError::TypeError(self.no_field_or_method(s.type_name(), field))),
             _ => Err(BytecodeError::TypeError(format!(
                 "Cannot access field '{}' on non-struct value",
                 field
@@ -16075,4 +16065,14 @@ impl crate::native_sig::BindValue for OvmValue {
         }
         crate::native_sig::options_map(full, base, ast.into_iter()).map(OvmValue::from_ast)
     }
+}
+
+/// A module value's missing member's message (the VM's values), in the
+/// interpreter's words (`crate::interpreter::module_member_miss`).
+fn vm_module_miss(st: &crate::ovm::value::StructObject, field: &str) -> String {
+    let module = crate::interpreter::module_name_of(st.iter().filter_map(|(_, v)| match &v.data {
+        crate::ovm::value::ValueData::Builtin(b) => Some(b.name.as_str()),
+        _ => None,
+    }));
+    crate::interpreter::module_member_miss(module.as_deref(), field, st.iter().map(|(name, _)| name.as_str()))
 }

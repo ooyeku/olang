@@ -376,12 +376,11 @@ pub fn render_xy(series: &[XySeries], opts: &PlotOptions) -> Result<String> {
                 if s.kind == XyKind::Area {
                     // Fill to the plot floor with a vertical gradient
                     // fading toward the axis — the fill stays a hint,
-                    // the line carries the value. Gradient ids derive
-                    // from the color, so identical definitions collide
-                    // harmlessly when several charts share a page.
+                    // the line carries the value. A gradient's id is the
+                    // chart's prefix (`ids_scoped`) and its colour.
                     let floor = geo.top + geo.plot_h;
                     let (first, last) = (pts[0].0, pts[pts.len() - 1].0);
-                    let gid = format!("vzg{}", color.trim_start_matches('#'));
+                    let gid = format!("{}{}", ID_MARK, color.trim_start_matches('#'));
                     let _ = write!(
                         svg.body,
                         "<linearGradient id=\"{gid}\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\">\
@@ -1015,9 +1014,42 @@ fn quantile(sorted: &[f64], q: f64) -> f64 {
 // The chart's description: what it draws, as data
 // ---------------------------------------------------------------------
 
-/// The `id` of the `<metadata>` element every chart carries its
-/// description in (JSON, escaped for XML).
+/// The `class` of the `<metadata>` element every chart carries its
+/// description in (JSON, escaped for XML). A class, not an id: a page
+/// holds many charts.
 pub const DESCRIPTION_ID: &str = "olang-chart";
+
+/// The marker standing for a chart's id prefix while its SVG is written
+/// (no SVG text holds it: `escape` drops it).
+const ID_MARK: char = '\u{1}';
+
+/// A chart's id prefix: `vz` and a hash of its SVG, so a build writes the
+/// same ids and two charts on one page (a chart's light and dark twins
+/// too) never share one.
+fn id_prefix(svg: &str) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in svg.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("vz{:08x}-", h as u32)
+}
+
+/// `svg` with its ids' prefix (`vz` + 8 hex digits + `-`) made again from
+/// its content: a rethemed chart is another chart.
+fn ids_rescoped(svg: String) -> String {
+    let Some(at) = svg.find("id=\"vz") else {
+        return svg;
+    };
+    let old = &svg[at + 4..(at + 4 + 11).min(svg.len())];
+    if old.len() != 11 || !old.ends_with('-') {
+        return svg;
+    }
+    let old = old.to_string();
+    let marked = svg.replace(&old, &ID_MARK.to_string());
+    let prefix = id_prefix(&marked);
+    marked.replace(ID_MARK, &prefix)
+}
 
 /// A JSON string literal.
 fn jstr(s: &str) -> String {
@@ -1151,7 +1183,7 @@ pub fn retheme(svg: &str, to: Theme) -> String {
     }
     // the description keeps its palettes (they name both) and says the
     // theme it is drawn in now
-    let open = format!("<metadata id=\"{}\">", DESCRIPTION_ID);
+    let open = format!("<metadata class=\"{}\">", DESCRIPTION_ID);
     let (head, body) = match svg
         .find(&open)
         .and_then(|a| svg[a..].find("</metadata>").map(|e| a + e))
@@ -1183,13 +1215,13 @@ pub fn retheme(svg: &str, to: Theme) -> String {
         out.push(ch);
         i += ch.len_utf8();
     }
-    out
+    ids_rescoped(out)
 }
 
 /// The description a chart carries (`plot.*`'s SVG): its JSON text, or
 /// None for a string that carries none.
 pub fn description_of(svg: &str) -> Option<String> {
-    let open = format!("<metadata id=\"{}\">", DESCRIPTION_ID);
+    let open = format!("<metadata class=\"{}\">", DESCRIPTION_ID);
     // it stands right after the opening tag: look no further than the
     // document's start
     let head = &svg[..svg.len().min(4096)];
@@ -1441,13 +1473,17 @@ impl Svg {
             )
             .finish();
         let meta = format!(
-            "<metadata id=\"{}\">{}</metadata>",
+            "<metadata class=\"{}\">{}</metadata>",
             DESCRIPTION_ID,
             json.replace('&', "&amp;")
                 .replace('<', "&lt;")
                 .replace('>', "&gt;")
         );
         self.body.insert_str(self.open_end, &meta);
+        if self.body.contains(ID_MARK) {
+            let prefix = id_prefix(&self.body);
+            self.body = self.body.replace(ID_MARK, &prefix);
+        }
         self.body
     }
 }
@@ -1578,7 +1614,8 @@ fn format_num(v: f64) -> String {
 }
 
 fn escape(s: &str) -> String {
-    s.replace('&', "&amp;")
+    s.replace(ID_MARK, "")
+        .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
@@ -1623,7 +1660,7 @@ mod tests {
         .unwrap();
         // right after the opening tag, escaped for XML
         let open = &line[..line.find('>').unwrap() + 1];
-        assert!(line[open.len()..].starts_with("<metadata id=\"olang-chart\">{"));
+        assert!(line[open.len()..].starts_with("<metadata class=\"olang-chart\">{"));
         assert!(line.contains("a &lt;b&gt; &amp; c"));
         let d = description_of(&line).unwrap();
         assert!(
@@ -1892,7 +1929,7 @@ mod tests {
             &PlotOptions::default(),
         )
         .unwrap();
-        assert!(s.contains("<linearGradient id=\"vzg"));
+        assert!(s.contains("<linearGradient id=\"vz"));
         assert!(s.contains("stop-opacity=\"0.5\""));
         // The stroke line still draws on top of the fill.
         assert!(s.contains("stroke-width=\"2\""));

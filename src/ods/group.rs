@@ -429,6 +429,23 @@ fn aggregate_named(
         .map(|(name, v)| {
             let val = match expr_of(v) {
                 Some(e) => agg_value_with(f, keys, g, e, &pre).map_err(|e| format!("ods.{}: '{}': {}", func, name, e))?,
+                // text where an aggregation goes is an op's name more
+                // often than a constant: refused, the expression named
+                None if matches!(v, Value::String(_)) => {
+                    let Value::String(t) = v else { unreachable!() };
+                    let hint = if t.as_str() == "quantile" {
+                        format!("col(\"{}\").quantile(0.5)", name)
+                    } else if expr::agg_of(t.as_str()).is_some() {
+                        format!("col(\"{}\").{}()", name, t)
+                    } else {
+                        "col(\"x\").sum()".to_string()
+                    };
+                    return Err(format!(
+                        "ods.{}: '{}' is the text \"{}\"; an aggregation is an expression like {} \
+                         (ods.lit(\"{}\") for a constant column; the triple [\"{}\", \"{}\", \"{}\"] names an op)",
+                        func, name, t, hint, t, name, t, name
+                    ));
+                }
                 None => match value_to_scalar(v) {
                     Some(s) => GVal::Lit(s),
                     None => {

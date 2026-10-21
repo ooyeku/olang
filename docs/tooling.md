@@ -151,10 +151,18 @@ A *test file* is any `.ol` file containing a top-level `test "name" { ... }`
 block. Each test file runs in a fresh interpreter, top to bottom — helper
 functions, fixtures, and imports work exactly as they do under
 `olang <file>`, and files inside a package get the package's dependencies.
-Each runs with the working directory set to the file's own folder (and
-set back after), so a relative path in a test — `fs.read_file("fixtures/a.txt")`
-— is read beside the test file, as `olang <file>` run from there reads it.
-Files without test blocks are not executed at all.
+Each runs with the working directory set to the test file's own
+folder, and set back after: a relative path in a test
+(`fs.read_file("fixtures/a.txt")`) is read beside the test file, as
+`olang <file>` run from there reads it, whatever folder `olang test`
+was started in. Files without test blocks are not executed at all.
+
+The walk keeps what a checkout keeps: every `.gitignore` (at any level,
+and those above the path) and `.git/info/exclude` are respected, a
+repository or not, and hidden folders, `target/`, `node_modules/` and
+`dist/` are left out even with no `.gitignore`. A path named on the
+command line is walked whatever ignores it. `olang check` and
+`olang fmt` walk the same way.
 
 `olang test` answers for the project's own files. An imported module's
 blocks run when the module is one of them — under the package's root
@@ -879,15 +887,15 @@ Each node is a map with at least a `kind` field and a `line` field; a
 pattern's `form` and `variant`, a parameter's `type` with its `form` and
 `fields`), so an exhaustiveness or a record-shape rule is written here
 rather than in a tool of its own. The
-function returns a list of findings. A finding is a message string or a
-map with `message` and `line` fields.
+function returns a list of findings. A finding is a message string or an
+object (or map) with `message` and `line` fields.
 
 ```olang
 // rules.ol
 share fn rule_no_bare_unwrap(nodes) =
     nodes
       |> filter((n) => n.kind == "call" && n.target == "unwrap")
-      |> map((n) => #{ "message": "bare unwrap(): use match or ?", "line": n.line })
+      |> map((n) => { message: "bare unwrap(): use match or ?", line: n.line })
 ```
 
 `olang check` runs each rule against every checked file except the rules

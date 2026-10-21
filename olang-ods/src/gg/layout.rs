@@ -886,6 +886,9 @@ pub fn draw(b: &Built) -> super::Result<Scene> {
         alt: alt_text(b, &title),
         zoomable,
         zoom: b.zoom,
+        paper: t.paper.clone(),
+        ink: t.ink.clone(),
+        id: t.id.clone(),
     })
 }
 

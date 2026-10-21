@@ -35,7 +35,7 @@ fn a_scatter_renders_points_a_legend_and_an_svg() {
     assert_eq!(pts, 63);
     let svg = s.to_svg();
     assert!(svg.starts_with("<svg") && svg.ends_with("</svg>"));
-    assert!(svg.contains("<metadata id=\"olang-chart\">"));
+    assert!(svg.contains("<metadata class=\"olang-chart\">"));
     let json = s.to_json(&SceneJsonOptions::default());
     assert!(json.contains("\"type\":\"scene\"") && json.contains("\"op\":\"points\""));
 }

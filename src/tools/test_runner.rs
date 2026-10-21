@@ -338,7 +338,9 @@ pub fn run_paths(
         }
 
         // Run from the file's own directory so relative imports and file
-        // reads resolve exactly as under `olang <file>` run from there.
+        // reads resolve exactly as under `olang <file>` run from there
+        // (docs/tooling.md says so; the suites of Loom and Studio read
+        // their fixtures beside their tests).
         let saved_cwd = std::env::current_dir().ok();
         if let Some(dir) = absolute.parent() {
             let _ = std::env::set_current_dir(dir);

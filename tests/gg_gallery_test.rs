@@ -62,7 +62,7 @@ fn every_gallery_plot_matches_its_golden_svg() {
     let mut differ = Vec::new();
     for (name, svg) in &plots {
         assert!(svg.starts_with("<svg") && svg.ends_with("</svg>"), "{name} is an svg");
-        assert!(svg.contains("<metadata id=\"olang-chart\">"), "{name} carries its description");
+        assert!(svg.contains("<metadata class=\"olang-chart\">"), "{name} carries its description");
         let path = dir.join(format!("{name}.svg"));
         if bless {
             std::fs::write(&path, svg).expect("write golden");

@@ -261,7 +261,12 @@ pub fn serve(no_ovm: bool, notebook: Option<PathBuf>) -> i32 {
 /// cell's reply as the kernel gave it. The process enters the notebook's
 /// folder. A notebook with problems, or an override naming nothing, is an
 /// error (the problems as `olang run` prints them).
-pub fn run_notebook(path: &Path, overrides: &[(String, String)]) -> Result<J, String> {
+///
+/// Beside the replies the document says the notebook as a page draws it:
+/// `blocks` (its prose, each `${expr}` with its value's text, and its
+/// cells, in order), each param with its default and each control with
+/// its kind, value, default and choices.
+pub fn run_notebook(path: &Path, overrides: &[(String, String)], opts: &RunOptions) -> Result<J, String> {
     let abs = std::path::absolute(path).unwrap_or(path.to_path_buf());
     if !abs.is_file() || !crate::notebook::is_notebook(&abs) {
         return Err(format!("{} is no notebook (an .olmd file)", abs.display()));
@@ -322,6 +327,8 @@ pub fn run_notebook(path: &Path, overrides: &[(String, String)]) -> Result<J, St
     crate::output::collect_output();
     let running = AtomicBool::new(false);
     let mut session = Session::new(false, None);
+    session.first_rows = opts.rows;
+    session.twins = opts.twins;
     session.open_notebook(&abs);
     // the params as overridden (validated by the program above)
     if let Some(info) = session.notebook.as_mut() {
@@ -377,11 +384,18 @@ pub fn run_notebook(path: &Path, overrides: &[(String, String)]) -> Result<J, St
             && ctl.get("kind").and_then(|k| k.as_str()) != Some("brush")
             && let Some(name) = ctl.get("name").and_then(|n| n.as_str())
         {
-            let v = ctl
-                .get("value")
-                .map(crate::notebook_export::value_text)
-                .unwrap_or_default();
-            controls_said.push(json!({ "name": name, "value": v }));
+            let text = |k: &str| ctl.get(k).map(crate::notebook_export::value_text);
+            let mut said = json!({ "name": name, "value": text("value").unwrap_or_default(),
+                "cell": id, "kind": ctl.get("kind"), "default": text("default") });
+            if let Some(o) = ctl.get("options").and_then(|o| o.as_array()) {
+                said["options"] = o.iter().map(crate::notebook_export::value_text).collect();
+            }
+            for k in ["min", "max", "step"] {
+                if let Some(x) = ctl.get(k) {
+                    said[k] = x.clone();
+                }
+            }
+            controls_said.push(said);
         }
         entry["reply"] = reply;
         cells.push(entry);
@@ -403,7 +417,10 @@ pub fn run_notebook(path: &Path, overrides: &[(String, String)]) -> Result<J, St
         .map(|n| {
             n.params
                 .iter()
-                .map(|p| json!({ "name": p.0, "value": p.1 }))
+                .map(|p| {
+                    let default = nb.params.iter().find(|d| d.name == p.0).map(|d| d.value.clone());
+                    json!({ "name": p.0, "value": p.1, "default": default })
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -423,10 +440,27 @@ pub fn run_notebook(path: &Path, overrides: &[(String, String)]) -> Result<J, St
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
-    Ok(
-        json!({ "v": 1, "at": at, "label": label, "notebook": abs.to_string_lossy(), "title": nb.title,
-        "params": params, "controls": controls_said, "cells": cells, "interp": interp }),
-    )
+    let mut doc = json!({ "v": 1, "at": at, "label": label, "notebook": abs.to_string_lossy(), "title": nb.title,
+        "params": params, "controls": controls_said, "cells": cells, "interp": interp });
+    doc["blocks"] = crate::notebook_export::blocks(&text, &doc);
+    Ok(doc)
+}
+
+/// How `run_notebook` runs: the rows a Frame's value carries, and whether
+/// a chart's carries both appearances.
+#[derive(Clone, Debug)]
+pub struct RunOptions {
+    pub rows: usize,
+    pub twins: bool,
+}
+
+impl Default for RunOptions {
+    fn default() -> Self {
+        RunOptions {
+            rows: FIRST_ITEMS,
+            twins: false,
+        }
+    }
 }
 
 /// A file's declarations as the session knows them (for frames, and for
@@ -504,6 +538,12 @@ struct Session {
     /// The params that could not be bound, and why: an evaluation that
     /// reads one says so (it said "a cell not run yet").
     unbound_params: HashMap<String, String>,
+    /// The rows a Frame's or Series' value carries (`FIRST_ITEMS`; an
+    /// export's `--rows`).
+    first_rows: usize,
+    /// Whether a chart's value carries both appearances (`svg.light`,
+    /// `svg.dark`): an export's, which a page draws in either.
+    twins: bool,
 }
 
 /// A kernel's record or replay (docs/tooling.md, "A recorded run").
@@ -593,6 +633,8 @@ impl Session {
             controls: HashMap::new(),
             timeline: None,
             unbound_params: HashMap::new(),
+            first_rows: FIRST_ITEMS,
+            twins: false,
         }
     }
 
@@ -2725,7 +2767,12 @@ impl Session {
                 if let Some(p) = self.image_path(s) {
                     r["img"] = J::String(p);
                 }
-                if let Some(svg) = svg_of(s) {
+                if let Some(mut svg) = svg_of(s) {
+                    if self.twins && chart.is_some() {
+                        use olang_ods::plot::{Theme, retheme};
+                        svg["light"] = J::String(retheme(s, Theme::Light));
+                        svg["dark"] = J::String(retheme(s, Theme::Dark));
+                    }
                     r["svg"] = svg;
                 }
                 if let Some(mut c) = chart {
@@ -2862,7 +2909,17 @@ impl Session {
                     .unwrap_or(J::Null);
                 let mut r = json!({ "k": "str", "t": "Plot", "n": svg.chars().count(), "h": h,
                                     "s": svg.chars().take(TEXT_CHARS).collect::<String>(), "chart": chart });
-                if let Some(sv) = svg_of(&svg) {
+                if let Some(mut sv) = svg_of(&svg) {
+                    if self.twins {
+                        // each appearance drawn as the plot draws in it (a
+                        // theme that names one keeps it in both)
+                        use olang_ods::gg::Appearance;
+                        for (key, app) in [("light", Appearance::Light), ("dark", Appearance::Dark)] {
+                            if let Ok(twin) = crate::ods::gg::scene_in(v, zoom, app) {
+                                sv[key] = J::String(twin.to_svg());
+                            }
+                        }
+                    }
                     r["svg"] = sv;
                 }
                 r
@@ -2877,7 +2934,7 @@ impl Session {
         let n = cols.first().map(|(_, c)| c.len()).unwrap_or(0);
         let names: Vec<&str> = cols.iter().map(|(name, _)| name.as_str()).collect();
         let types: Vec<String> = cols.iter().map(|(_, c)| c.dtype().to_string()).collect();
-        let rows: Vec<J> = (0..n.min(FIRST_ITEMS)).map(|i| ods_row(&cols, i)).collect();
+        let rows: Vec<J> = (0..n.min(self.first_rows)).map(|i| ods_row(&cols, i)).collect();
         let s = if frame {
             format!("Frame[{} x {}]", n, cols.len())
         } else {

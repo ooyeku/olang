@@ -347,10 +347,32 @@ document, and tabs as indentation. A key given twice is an error.
 | `:run x.olmd` in the REPL | runs it in its folder, under its grant |
 | `olang lsp` | a notebook is one document: its cells one module on the file's own lines, so completion (a Frame's columns and a map's keys inside the strings that name them, from the literals the program builds), hover, signature help, go to definition, references, highlights and rename work across cells, by binding (a cell's parameter, lambda or block `let` that shadows a param or another cell's name is its own); a param is its front matter key, and a name a `${expr}` in prose reads is found (and renamed) there too; prose, fences and the front matter's other lines are about nothing; its problems are `olang check`'s (the notebook's own, code `notebook`), a name only prose reads not unused; formatting is `olang fmt`'s |
 | `olang run x.olmd --for NAME=A,B` | runs it once a parameter set ([Params](#params)) |
-| `olang notebook export x.olmd` | runs it cell by cell (as its kernel does) and writes a self-contained page: prose, code (unless hidden), outputs (tables as HTML tables, charts as SVG in both themes, pictures inline), controls at their value (a brush draggable: the range is shaded and the points outside it dimmed on the page, nothing run — the page's only script), light and dark by the reader's appearance; `--html`, `--pdf` (macOS: WebKit's print), `--json` (the outputs document), `--outputs RUN.json` (draw given outputs, run nothing), `--param` |
+| `olang notebook export x.olmd` | runs it cell by cell (as its kernel does) and writes a self-contained page: prose, code (unless hidden), outputs (tables as HTML tables, charts as SVG in both themes, pictures inline), controls at their value (a brush draggable: the range is shaded and the points outside it dimmed on the page, nothing run — the page's only script), light and dark by the reader's appearance; `--html`, `--pdf` (macOS: WebKit's print), `--json` (the [outputs document](#the-outputs-document)), `--rows N` (the rows a Frame's output carries there, 20 by default), `--outputs RUN.json` (draw given outputs, run nothing), `--param`; it writes nothing beside the notebook |
 | `olang notebook pin x.olmd` | runs it and writes each pinned cell's [output block](#pinned-output); `--check` writes nothing and exits 1 when one differs |
 | `olang notebook app x.olmd` | writes a web-sdk app (`-o DIR`, default `<stem>-app` beside it): `olang run main.ol` serves the page, its controls form fields (a brush a range dragged across its chart) and its params editable; a change runs again, in the notebook's kernel, only the cells that read it, and the page swaps their outputs in |
 | `olang repl --serve --notebook x.olmd` | the notebook's kernel: its params bound, its grant, its folder, `eval` by cell (each saying the capabilities it reached), a cell's names read without running it (`deps`), its names and values (`vars`), its front matter read again (`reread`), a cell's control and the value an editor sets for it (`set`); a Frame's column summaries, its views filtered and sorted and a column's distinct values paged by handle, a chart's description as data, an evaluation's profile ([the protocol](tooling.md#olang-repl---serve)) |
+
+### The outputs document
+
+`olang notebook export x.olmd --json OUT.json` writes what a page needs
+to draw the notebook itself, in its own type and highlighting:
+
+- `blocks`: the notebook in order. A prose block has its Markdown
+  (`text`, `${expr}` kept), its `line`, and `exprs`: each expression
+  with `ok`, its value's `text` and `type` (or the `error`). A code
+  block has its `source`, `line`, `name`, `run` (false for `no-run`)
+  and the `id` of its entry in `cells`;
+- `cells`: each code cell's `id`, `name`, `line` and `reply`, as the
+  kernel gives it ([values](tooling.md#olang-repl---serve)). A Frame's
+  value carries its schema (under `table`: `cols`, `types`, each
+  column's summary) and its first `--rows` rows (`rows`, each cell as text); a
+  chart's carries `svg.light` and `svg.dark` (each appearance drawn as
+  the plot draws in it), `svg.text` (the one the run drew) and its
+  description or scene (`chart`);
+- `params`: each param's `name`, `value` and `default` (as olang
+  source); `controls`: each control's `name`, `cell`, `kind`, `value`,
+  `default`, and its `options` or `min`, `max` and `step`;
+- `interp`: each `${expr}` with its reply, and `title`, `label`, `at`.
 
 `olang check DIR` and `olang fmt DIR` take a folder's notebooks with its
 `.ol` files; `--watch` re-runs when a notebook changes. `olang fmt`

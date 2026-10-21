@@ -128,9 +128,11 @@ A fourth rule covers *lookups* — operations where "not there" is an
 ordinary answer rather than a failure: **a lookup returns the value, or
 `Unit` when there is nothing there.** `m.k` or `m[k]` on a missing key,
 `str.index_of` on an absent substring, a JSON `null` crossing in — all
-produce the same `()`, tested with `== ()` / `!= ()`. A module's missing
-member reads as `()` too; calling one raises and suggests the nearest
-member (calling `trimm` on `str` suggests `trim`).
+produce the same `()`, tested with `== ()` / `!= ()`. A module's
+member is not a lookup: a member it lacks raises, read or called, and
+suggests the nearest (`math.pi` → "module 'math' has no member 'pi'; did
+you mean 'PI'?"). `map_get(module, "name")` is the lookup: the member,
+or `()`.
 
 The same holds where an operation looks for something and finds
 nothing: `re.find` with no match is `Ok(())`, a capture group that took
@@ -3614,9 +3616,11 @@ an option, not a fate: `colors` gives a chart its own palette, `vary`
 colors bar categories individually, `scale` picks a heatmap ramp
 (`ocean`/`ember`/`thermal`/`diverging`), and `plot.ramp(name, t)`
 hands the same ramps to your code. Every chart carries its description
-as data (a `<metadata id="olang-chart">` of JSON after its opening
+as data (a `<metadata class="olang-chart">` of JSON after its opening
 tag), and `plot.describe(svg)` answers it as a Map — `Err` for text
-that carries none ([the data stack](ods.md#a-charts-description)).
+that carries none ([the data stack](ods.md#a-charts-description)). A
+chart's ids (an area's gradient) start with `vz` and a hash of the
+chart, so charts share a page without sharing an id.
 `plot.gg(p)` renders a [`gg`](#gg--a-grammar-of-graphics) plot to SVG
 and `plot.gg_scene(p)` to its scene as JSON (the display list a host
 draws natively). In `viz`, `"color_by": "column"`
@@ -3789,8 +3793,15 @@ colour bar.
 | `facet_grid(p, rows, cols, scales)` | a grid of panels, rows by columns |
 | `coord_flip(p, xlim, ylim)` · `coord_fixed(p, ratio)` · `coord_cartesian(p, xlim, ylim)` | the axes swapped; a fixed aspect; a zoom that drops no data |
 | `labs(p, title, subtitle, caption, x, y, color, fill, size, shape, alpha, linetype, linewidth)` · `ggtitle(p, title, subtitle)` · `xlab(p, title)` · `ylab(p, title)` | titles (`""` hides an axis's) |
-| `theme(p, name, appearance, base_size, legend_position, width, height, grid, font)` | the look: `"minimal"` (the default — hairline grid, no ticks, one type scale), `"classic"`, `"bw"`, `"gray"`, `"linedraw"`, `"void"`; `appearance` `"light"`, `"dark"`, `"contrast"` (else the host's: a notebook's follows Studio's) |
+| `theme(p, name, appearance, base_size, legend_position, width, height, grid, font, paper, ink, id)` | the look: `"minimal"` (the default — hairline grid, no ticks, one type scale), `"classic"`, `"bw"`, `"gray"`, `"linedraw"`, `"void"`; `appearance` `"light"`, `"dark"`, `"contrast"` (else the host's: a notebook's follows Studio's); `paper` the background and `ink` every word and line, as CSS colours (`"transparent"` and `"currentColor"` take the page's); `id` the prefix of the SVG's ids |
 
 The vertical axis's title reads across, over its labels; a plot is 720
 pixels wide and as tall as its panels need unless the theme says.
+
+Every id an SVG names (a panel's clip path) starts with one prefix:
+the theme's `id`, else `gg` and a hash of the SVG's content. Two
+different plots on one page, or one plot's light and dark appearances,
+never share an id, and the same plot always writes the same ids; the
+same plot drawn twice on a page takes an `id` each. Its description is
+the `<metadata class="olang-chart">` after the opening tag.
 

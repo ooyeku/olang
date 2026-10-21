@@ -131,8 +131,11 @@ fn references(text: &str, modules: &[String]) -> BTreeSet<String> {
 
 /// Names the book mentions on purpose although they do not exist, each
 /// with its reason, so an accidental reference to a removed function can
-/// never hide among them. Empty: the book names no such function.
-const DELIBERATELY_HYPOTHETICAL: &[(&str, &str)] = &[];
+/// never hide among them.
+const DELIBERATELY_HYPOTHETICAL: &[(&str, &str)] = &[(
+    "math.pi",
+    "the missing member a module's error names (the constant is math.PI)",
+)];
 
 /// What `reference` is, by `typeof`: in scope, after `use` of its module,
 /// or (for a collections short name) after `use collections { heap }`.
@@ -161,8 +164,8 @@ fn kind_of(reference: &str) -> Option<String> {
 
 /// A reference resolves when it names a function or a builtin. A
 /// submodule (`collections.heap`, `stats.norm`) is named in prose as a
-/// place, and resolves too; anything else — `()` above all, which a
-/// missing member reads as since 0.88 — does not.
+/// place, and resolves too; anything else — a missing member, which
+/// raises — does not.
 fn resolves(reference: &str) -> bool {
     matches!(
         kind_of(reference).as_deref(),
@@ -226,8 +229,7 @@ fn every_function_the_book_names_exists() {
     );
 }
 
-/// A missing member reads as `()`; that is not a function, so the check
-/// must not count it as resolved (it did, from 0.88 until this test).
+/// A missing member raises; the check must not count it as resolved.
 #[test]
 fn a_missing_member_does_not_resolve() {
     assert!(!resolves("fs.bogus_function_xyz"));
