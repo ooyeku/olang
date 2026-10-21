@@ -1,8 +1,8 @@
 # Installation
 
-This chapter describes how to install the olang compiler, run programs, use
-the interactive REPL, and run the language in the browser without installing
-anything.
+This chapter installs `olang` (the language: run, check, test, format,
+build) and `otc` (the project tool), and covers running programs and the
+REPL.
 
 Part of [the olang book](README.md).
 
@@ -11,19 +11,18 @@ Part of [the olang book](README.md).
 - [The installer script](#the-installer-script)
 - [With Cargo](#with-cargo)
 - [Installing from source](#installing-from-source)
-  - [Checking the preview platforms (contributors)](#checking-the-preview-platforms-contributors)
+- [Platforms](#platforms)
 - [Updating](#updating)
 - [Running programs](#running-programs)
 - [The REPL](#the-repl)
-- [The browser playground](#the-browser-playground)
 - [Editor support](#editor-support)
 - [Next steps](#next-steps)
 
 ## The installer script
 
-The fastest path on macOS (and on the Linux preview) downloads a prebuilt binary from the
-latest release, verifies its checksum, and installs `olang` and `otc`
-into `~/.olang/bin`:
+The installer downloads a prebuilt binary from the latest release,
+verifies its checksum, and installs `olang` and `otc` into
+`~/.olang/bin`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh
@@ -44,7 +43,11 @@ repository without a clone:
 cargo install --locked --git https://github.com/ooyeku/olang.git olang otc
 ```
 
-Binaries land on the Cargo binary path (typically `~/.cargo/bin`).
+Binaries land on the Cargo binary path (typically `~/.cargo/bin`). A
+binary built this way does not carry the browser runtime, so
+`runtime.wasm()` and the web SDK's client bundle report it missing; the
+installer's prebuilt binaries and a source build with `cargo xtask
+install` carry it.
 
 ## Installing from source
 
@@ -56,8 +59,14 @@ source.
 ```bash
 git clone https://github.com/ooyeku/olang.git
 cd olang
-cargo install --path .
+rustup target add wasm32-unknown-unknown   # once, for the browser runtime
+cargo xtask install
 ```
+
+`cargo xtask install` builds the browser runtime
+([olang in the browser](wasm.md)), then installs `olang` and `otc` with
+it embedded. `cargo install --path .` installs `olang` alone, without the
+runtime unless `cargo xtask wasm` ran first.
 
 Confirm any installation with:
 
@@ -65,42 +74,22 @@ Confirm any installation with:
 olang --version
 ```
 
-To build without installing — for development on the compiler itself — use
-`cargo build --release`; the binary is then at `target/release/olang`.
+For work on the implementation itself, `cargo build --release` leaves the
+binary at `target/release/olang`; run `cargo xtask wasm` once beforehand so
+it embeds the browser runtime.
 
-olang supports macOS, with release builds for Apple silicon and Intel. Linux
-and Windows are unsupported previews: Linux binaries are released but carry
-no compatibility promise, and the Windows build compiles but has never been
-run. [Stability and compatibility](stability.md#platforms) states what 1.0
-promises.
+## Platforms
 
-A source build on the Linux preview with the default features (`gui` among them)
+olang supports macOS, with release builds for Apple silicon and Intel.
+Linux and Windows are unsupported previews: Linux binaries are released
+but carry no compatibility promise, and the Windows build compiles but is
+unverified. [Stability and compatibility](stability.md#platforms) states
+what is promised.
+
+A source build on Linux with the default features (`gui` among them)
 needs `pkg-config libssl-dev libfontconfig1-dev libxkbcommon-dev
-libwayland-dev` (Debian and Ubuntu names). Linux windows are drawn
-under Wayland only; X11 has no `gui` (`gui.available()` is
-false there, and Loom programs take their terminal face).
-
-### Checking the preview platforms (contributors)
-
-For contributors, two scripts rerun the cross-platform pass from a Mac,
-locally, with no CI:
-
-```bash
-tools/linux-check.sh                 # build olang in a Linux container (Docker or OrbStack), then
-                                     # Loom's verify, its pty check, open-track desktop's verify,
-                                     # gui_test, and Heddle's suite against that binary
-tools/linux-check.sh build loom      # named stages only; `shell` opens the container
-tools/windows-check.sh               # cargo check for x86_64-pc-windows-msvc (zig compiles the C)
-tools/windows-check.sh --link        # and link olang.exe for x86_64-pc-windows-gnu with zig
-```
-
-`linux-check.sh` expects loom, open-track-desktop, and heddle beside
-olang, keeps Cargo's target and registry in the Docker volume
-`olang-linux-target` (never olang/target), and limits the container to
-4 CPUs and 8 GB. `windows-check.sh` needs zig and the rustup targets; it
-downloads nothing from Microsoft, and builds into
-`target/windows-check`. Neither runs anything on Windows itself. Run one
-at a time, and not beside another cargo build.
+libwayland-dev` (Debian and Ubuntu names). Linux windows are drawn under
+Wayland only; under X11 `gui.available()` is false.
 
 ## Updating
 
@@ -162,21 +151,6 @@ one evaluation. `it` always holds the last printed result. A mistyped
 command suggests the nearest real one, and `:help <module>` opens any module — including
 `collections` and its submodules (`:help collections.heap.push`). Type
 `:quit` or press Control-D to exit.
-
-## The browser playground
-
-The language also runs in a web browser. The project's website compiles the
-interpreter, the bytecode tier, and the full data stack to WebAssembly and
-runs them sandboxed in the page. To run the website locally:
-
-```bash
-cd website
-bun run dev
-```
-
-Then open the `/playground` route. Code entered in the playground executes
-entirely in the browser; nothing is sent to a server. The browser build is
-described in [olang in the browser](wasm.md).
 
 ## Editor support
 

@@ -1,5 +1,6 @@
 # Roadmap
 
+The project's work list; not a chapter of [the book](README.md).
 The plan of record: what olang still has to do, and nothing else. An
 item leaves this file in the change that lands it; what landed, and
 why, is in the CHANGELOG and in this file's git history (the full
@@ -110,7 +111,6 @@ program observes; `after` when it is additive.
 
 | Item | Evidence | Done when | 1.0 |
 |---|---|---|---|
-| `[stdlib]` The data stack is 1.3–2× longer than pandas and scikit-learn for the same analysis | The seven olmd notebooks (2026-10-18): 158 workaround sites in 13 categories. The sites include 46 list round-trips, 86 lines of casts, 19 string-named math calls, 9 `fold(enumerate(xs), …)` standing in for `X @ b`, about 30 positional coefficient lookups, and about 45 hand-written helpers (logistic regression, k-means, PCA, Holt-Winters, AUC/ROC/confusion, k-fold, one-hot, `where`). The design, gap table and milestones are in [design/data-ergonomics.md](design/data-ergonomics.md) | D0–D6 of that design land. Each DS notebook rewritten on it has no more code lines than its Python reference and runs no slower, with no per-row olang code in its analysis cells | after |
 | `[stdlib]` No process table and no signal by pid | Studio's process manager runs `/bin/ps -axo pid,ppid,pgid,pcpu,rss,etime,stat,command` and `lsof -a -d cwd` every 2 s for its children's CPU, memory, time and folder, and `/bin/kill -TERM -<pgid>` to stop one Loom did not start as a handle (core/procs.ol, face/autoface.ol); at quit it lists every descendant the same way | `os.processes()` (pid, parent, group, CPU, memory, start, state, command, folder) and `os.kill(pid, signal, #{ group })`, on every platform | after |
 | `[stdlib]` No way to run a child on the terminal | `$EDITOR` needs the terminal as stdin and stdout; Heddle's `run_editor` shells out to `sh -c '$EDITOR "$1" </dev/tty >/dev/tty'` | `proc.spawn(…, #{ stdio: "inherit" })`, or `tty.foreground(h, argv)` leaving and re-entering the tty around the child | after |
 | `[stdlib]` Map keys must be scalars | a style cannot be cached by its spec because `map_set` refuses a tuple key (Heddle) | map keys of any value `==` compares, additive only: the scalar keys keep their text (language.md, "Values and runtime types": `map_keys(#{1: "a"})` stays `["1"]`) | after |
@@ -164,7 +164,7 @@ Kept, not scheduled, while the work is macOS-only.
 ## Stdlib naming audit
 
 Every global builtin (80) and every function of the native modules was
-listed on 2026-10-11 and read against docs/STYLE.md and stability.md's
+listed on 2026-10-11 and read against stability.md's
 conventions (a function returns its value, a `Result` when it can fail
 for a reason the caller can handle, and raises when called wrongly; a
 lookup's absence is `()`; the subject is the first argument, so a call

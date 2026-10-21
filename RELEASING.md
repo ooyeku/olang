@@ -1,18 +1,17 @@
 # Releasing olang
 
 The complete runbook: cut the release, let CI build the artifacts, then
-publish per channel. Steps 1–4 are the process every release since 0.25
-has followed; 5–6 are the distribution machinery layered on top.
+publish per channel.
 
 ## 1. Version bump
 
-- `docs/packages.md` — the REPL transcript shows the version banner
-  (`Olang vX.Y.Z`); update it to match.
-- `Cargo.toml` — bump `version` (this is the version `olang --version`
-  and `otc --version` both report).
+- `Cargo.toml` — bump `version` (the version `olang --version` and
+  `otc --version` both report).
+- `playground/Cargo.toml` — the same `version`, for the browser runtime.
+- `Cargo.lock` — refreshed by the next build; commit it with the bump.
 - `CHANGELOG.md` — promote `## [Unreleased]` to `## [X.Y.Z] - <date>`.
 
-Nothing else carries the version; `Cargo.lock` is not committed.
+Nothing else carries the version.
 
 ## 2. Gates (all green before the release commit)
 
@@ -22,38 +21,29 @@ cargo test --workspace --profile fasttest  # full suite (~6 min), including the
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 cd examples && olang run_all.ol        # the example corpus (skips long_running)
-cargo build -p olang-playground --target wasm32-unknown-unknown --release
-                                       # wasm build stays green (make wasm)
+cargo xtask wasm                       # the browser runtime builds (make wasm)
 make install                           # then: olang --version / otc --version
                                        # report the new number
 ```
 
-If uncommitted WIP in `examples/` (historically `loops.ol`,
-`benchmark.ol`) interferes with `run_all`, stash it scoped around that
-step only.
+If uncommitted work in `examples/` interferes with `run_all`, stash it
+around that step only.
 
-The Linux pass runs the same suite and the examples harness inside a
-Linux container against the working tree (requires a Docker-compatible
-daemon; the container builds into its own cached volume, so the host
-`target/` is untouched):
-
-```bash
-dist/linux-verify.sh                   # full suite + examples on Linux
-```
-
-The pass is architecture-honest — on Apple silicon it verifies
-linux/aarch64; run it on an x86_64 host for x86_64 coverage.
+Linux is a preview platform ([stability.md](docs/stability.md#platforms)).
+To check it anyway, `dist/linux-verify.sh` runs the same suite and the
+examples harness in a Linux container against the working tree (it needs a
+Docker-compatible daemon and builds into its own cached volume, so the host
+`target/` is untouched). On Apple silicon it verifies linux/aarch64.
 
 ## 3. Release commit
 
 ```bash
-git add Cargo.toml CHANGELOG.md docs/packages.md
-git commit -m "chore(release): vX.Y.Z"   # body: what the release is,
-                                          # closing with the gates that passed
+git add Cargo.toml playground/Cargo.toml Cargo.lock CHANGELOG.md
+git commit -m "X.Y.Z: <what the release is>"   # body closes with the gates that passed
 ```
 
-Always explicit `git add` paths — never `-A`. Check `git show --stat`
-afterward: nothing but the two files should be in the commit.
+Always explicit `git add` paths, never `-A`. Check `git show --stat`
+afterward: nothing but those four files should be in the commit.
 
 ## 4. Tag and push
 
@@ -67,14 +57,15 @@ git push origin main vX.Y.Z
 Pushing the `vX.Y.Z` tag triggers `.github/workflows/release.yml`,
 which with **no further action**:
 
-1. Builds `olang` + `otc` in release mode for **macos-arm64**,
-   **macos-x64**, **linux-x64**, and **linux-arm64**; strips them;
-   packages each with LICENSE + README as
+1. Builds the browser runtime (`cargo xtask wasm`), then `olang` +
+   `otc` in release mode for **macos-arm64**, **macos-x64**,
+   **linux-x64**, and **linux-arm64**, each embedding the runtime;
+   strips them; packages each with LICENSE + README as
    `olang-X.Y.Z-<platform>.tar.gz`.
-2. Builds the playground wasm and packages it as
-   `olang-playground-X.Y.Z.wasm`.
+2. Packages the browser runtime as `olang-playground-X.Y.Z.wasm`.
 3. Generates `SHA256SUMS` over all of it.
-4. Creates the GitHub Release for the tag with everything attached.
+4. Creates the GitHub Release for the tag with everything attached. A
+   version with a suffix (`v1.0.0-rc.2`) is marked a prerelease.
 
 Cross-check locally any time with `make dist` — same binaries, same
 wasm, plus the .vsix, staged into `dist/out/` with its own SHA256SUMS.
@@ -84,7 +75,8 @@ The Homebrew tap updates itself: the workflow's `homebrew` job renders
 to `ooyeku/homebrew-olang`, provided the `TAP_PUSH_TOKEN` secret (a
 fine-grained PAT with Contents read/write on the tap repo) is
 configured. Without the secret the job skips and the manual procedure
-in `dist/homebrew/README.md` applies.
+in `dist/homebrew/README.md` applies. A prerelease does not move the
+tap.
 
 ## 6. Per-channel publishing
 

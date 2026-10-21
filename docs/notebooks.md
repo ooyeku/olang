@@ -7,8 +7,9 @@ name ends `.olmd`. olang reads it as a program, so `olang run`, `test`,
 `check`, `fmt` and `expand` take a notebook as they take a `.ol` file,
 and every location they report is a line of the notebook itself. This
 chapter is the reference for the file format and for how olang reads it.
-The notebook pane, its outputs and its reactive runs are olang Studio's,
-specified in its own notebook design (studio/docs/notebooks.md).
+An editor runs a notebook cell by cell, and draws its outputs and
+controls, through the notebook kernel
+([`olang repl --serve --notebook`](tooling.md#olang-repl---serve)).
 
 ## Table of contents
 
@@ -47,12 +48,12 @@ let sales = unwrap(ods.read_csv_file("data/sales.csv"))
 ```
 
 ```olang
-let mine = sales |> ods.filter(sales["region"] == region)
-let total = ods.sum(mine["amount"])
+let mine = sales.filter(ods.col("region") == region)
+let total = mine.amount.sum()
 ```
 
 ```olang {name: chart, hide: code}
-plot.bar(mine["month"], mine["amount"], #{ "title": "Sales" })
+plot.bar(mine.month, mine.amount, title: "Sales")
 ```
 ````
 
@@ -97,7 +98,7 @@ and `\\` escape), `true` or `false`.
 |---|---|---|
 | `name` | a word or a string | the cell's id for links and runs; two cells may not share one |
 | `hide` | `code`, `output`, `all` | what is hidden when the notebook is drawn or exported |
-| `run` | `auto`, `manual` | `manual` makes a pure cell wait to be run (Studio) |
+| `run` | `auto`, `manual` | `manual` makes a pure cell wait to be run in an editor rather than re-run on its own |
 | `pin` | `true`, `false` | keep the cell's last output in the file, in an `output` block under it |
 | `as` | `markdown` | a String result is drawn as markdown |
 
@@ -197,8 +198,8 @@ key. Its `value` is what the param binds; a value that is not one of its
 `options`, or a number outside `min` … `max`, is a diagnostic at the
 value, as other front matter problems are. Any other map stays a Map
 param. A `--param` is held to the spec the same way (an error at the
-param's line), and `reread` reads it too. olang Studio draws such a
-param as its control.
+param's line), and `reread` reads it too. An editor draws such a param
+as its control.
 
 ```yaml
 params:
@@ -284,7 +285,7 @@ fenced block directly under the cell, blank lines between:
 
 ````markdown
 ```olang {name: top, pin: true}
-ods.head(by_region, 3)
+by_region.head(3)
 ```
 
 ```output {cell: top, kind: table}
@@ -311,8 +312,8 @@ a `name` (its block names it); an output block stands directly under the
 cell its `cell` names, and that cell is pinned. olang reads the block as
 prose, so a run, `olang test` and `olang check` never see it; `olang fmt`
 leaves it byte for byte. `olang notebook pin` writes them from a run (and
-`--check` says which differ); olang Studio writes them as a pinned cell
-runs, and draws one where nothing has run.
+`--check` says which differ); an editor may write them as a pinned cell
+runs.
 
 ## The YAML subset
 

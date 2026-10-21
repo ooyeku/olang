@@ -79,13 +79,13 @@ explicit, but is never required for the native modules.
 
 **One environment note:** `fs`, `os`, `proc`, `pty`, `tty`, `gui`,
 `http`, and `db` need an operating system and are absent from the
-browser playground build, where calling them reports exactly that.
+[browser build](wasm.md), where calling them reports exactly that.
 `dom` is the reverse: browser-only, an error everywhere else.
 
 ### What a function returns, and when it raises
 
-Three rules, settled in 0.64. They hold across every module, so you can
-predict a function's shape from what it does rather than looking it up.
+Three rules hold across every module, so a function's shape follows
+from what it does.
 
 **1. An operation that cannot fail returns its value.** `os.args()`,
 `math.sqrt(x)`, `str.trim(s)`, `fs.exists(p)`, `crypto.sha256(s)` — no
@@ -117,22 +117,19 @@ os.arch(1, 2)
 // error: os.arch expects 0 arguments, got 2
 ```
 
-The third rule is why the second one is trustworthy. If misuse also came
-back as `Err`, then `unwrap_or(fs.read_file(path), "")` would swallow a
-typo'd call exactly the way it swallows a missing file, and the default
-would hide the bug indefinitely. Keeping them apart means a `Result` you
-see is always a real condition worth handling.
+Because misuse raises rather than answering `Err`, a default such as
+`unwrap_or(fs.read_file(path), "")` covers a missing file but never hides
+a wrong call: a `Result` is always a real condition worth handling.
 
 ### Absence is Unit
 
-A fourth rule, settled in 0.69, covers *lookups* — operations where "not
-there" is an ordinary answer rather than a failure: **a lookup returns
-the value, or `Unit` when there is nothing there.** `map_get` on a
-missing key, `str.index_of` on an absent substring, a JSON `null`
-crossing in — all produce the same `()`, tested with `== ()` / `!= ()`.
-(Before 0.69, `str.index_of` returned `-1` — a sentinel that negative
-indexing made genuinely dangerous, since `s[str.index_of(s, x)]` on a
-miss silently read the last character.)
+A fourth rule covers *lookups* — operations where "not there" is an
+ordinary answer rather than a failure: **a lookup returns the value, or
+`Unit` when there is nothing there.** `m.k` or `m[k]` on a missing key,
+`str.index_of` on an absent substring, a JSON `null` crossing in — all
+produce the same `()`, tested with `== ()` / `!= ()`. A module's missing
+member reads as `()` too; calling one raises and suggests the nearest
+member (calling `trimm` on `str` suggests `trim`).
 
 The same holds where an operation looks for something and finds
 nothing: `re.find` with no match is `Ok(())`, a capture group that took
@@ -187,13 +184,6 @@ A precision or unit variant carries its unit as a suffix
 `_bytes` for the binary form of a text function). And a name lives in
 exactly one module — the `col.` prefixes of the global collection
 helpers are aliases of the same function, never a second definition.
-The 0.82 audit of every documented name against the docs and examples
-found no duplicates beyond those aliases; the names used once or never
-outside their own chapter are the RSA and certificate family in
-`crypto`, the cell-editing family in `csv`, and the component parts of
-`dates` (`hour`, `minute`, `add_weeks`, …). They are kept, because each
-is the one place its job is done, and are listed here as the record for
-any future review of the surface.
 
 ## Global builtins
 
@@ -522,18 +512,14 @@ println(str.cell_width("🇯🇵"))      // 2
 
 ## `col` / `colx` — collections
 
-Higher-order operations beyond the global builtins. The design principle:
-the *global* builtins cover what nearly every program touches (`map`,
-`filter`, `fold`, `sort`); `col` holds the next ring out — quantifiers,
-partitions, key-function variants — so the global namespace stays small
-while the full toolkit stays one dot away. `colx` (`use colx`)
-implements the higher-order core of `col` *in olang*, embedded in the
-binary: `all`, `any`, `count_by`, `drop_while`, `flat_map`,
-`frequencies`, `last`, `max_by`, `min_by`, `partition`, `sort_by`,
-`sum_by`, `take_while`, `unique`, `window`, and `zip_with`. It is not
-the whole `col` API; the functions it shares are differential-tested
-against their native twins, so the language is exercised by its own
-standard library.
+Higher-order operations beyond the global builtins. The global builtins
+cover what nearly every program touches (`map`, `filter`, `fold`,
+`sort`); `col` holds the rest — quantifiers, partitions, key-function
+variants. `colx` (`use colx`) implements the higher-order core of `col`
+in olang, embedded in the binary: `all`, `any`, `count_by`,
+`drop_while`, `flat_map`, `frequencies`, `last`, `max_by`, `min_by`,
+`partition`, `sort_by`, `sum_by`, `take_while`, `unique`, `window`, and
+`zip_with`, each tested against its native twin.
 
 | Function | Description |
 |---|---|
@@ -813,7 +799,7 @@ do not.
 let doc = unwrap(json.parse("{\"name\": \"ada\", \"tags\": [\"x\", \"y\"], \"age\": 36}"))
 println(`${doc.name} has ${len(doc.tags)} tags`)
 let field = "age"
-println(to_string(map_get(doc, field)))          // a computed key
+println(to_string(doc[field]))                   // a computed key
 let out = unwrap(json.stringify({ ok: true, n: 1 }))
 println(out)                                     // {"ok":true,"n":1}
 let row = unwrap(json.stringify_pairs([("id", 7), ("name", "ada"), ("tags", ["x"])]))
@@ -844,7 +830,7 @@ println(to_string(toml.is_valid("not [ valid")))
 
 Quoted fields, embedded commas, and header-aware parsing.
 `parse_with_headers` yields rows as maps keyed by the header (`#{ "name":
-"Ada" }`, read `row.name` or `map_get(row, "first name")`; all cells
+"Ada" }`, read `row.name` or `row["first name"]`; all cells
 are strings — convert explicitly).
 
 | Function | Description |
@@ -877,7 +863,8 @@ for a pattern that arrives at runtime.
 
 The browser runtime the web SDK ships omits this module (the engine and
 its Unicode tables are a fifth of the runtime's code); a page that calls
-`re.*` hears so. The website's playground carries it.
+`re.*` hears so. The full browser profile (`cargo xtask wasm --full`,
+see [olang in the browser](wasm.md)) carries it.
 
 | Function | Description |
 |---|---|
@@ -928,14 +915,13 @@ a time in it is dropped (`dates.parse("2026-01-02T23:30:00-05:00")` is
 | Epoch | `timestamp(dt)` — Unix milliseconds, the unit of every other clock (`time.now_ms`, `modified_ms`); an offset is honoured, a bare day is its midnight UTC · `timestamp_s(dt)` — Unix seconds · `from_timestamp(ms)` / `from_timestamp_s(s)` → the UTC moment's text |
 | Facts | `is_leap_year(y)` `days_in_month(y, m)` |
 
-Since 0.69 a date is a first-class **`Date` value**: `dates.date(y, m, d)`
-and `dates.parse(s)` build one, `typeof` says `Date`, it displays as ISO
-(`2026-08-07`), comparisons order chronologically, `d2 - d1` is the day
-difference, and `d + n` / `d - n` shift by days. Every date-taking
-function accepts a `Date` *or* a date string and answers in kind — string
-in, string out (the pre-0.69 behavior, unchanged), `Date` in, `Date`
-out — so existing string-based code keeps working while new code gets a
-real type:
+A day is a **`Date` value**: `dates.date(y, m, d)` and `dates.parse(s)`
+build one, `typeof` says `Date`, it displays as ISO (`2026-08-07`),
+comparisons order chronologically, `d2 - d1` is the day difference, and
+`d + n` / `d - n` shift by days. Every date-taking function accepts a
+`Date` *or* a date string and answers in kind — string in, string out,
+`Date` in, `Date` out. A column of days is a Date Series
+([Dates and datetimes](ods.md#dates-and-datetimes)).
 
 ```olang
 let d = unwrap(dates.date(2026, 8, 7))
@@ -1055,7 +1041,7 @@ it, or touching a cell from inside its own `cell.update`.
 let seen = cell(#{})
 fn remember(word) = {
     let counts = cell.get(seen)
-    let n = map_get_or(counts, word, 0)
+    let n = counts[word] ?? 0
     cell.set(seen, map_set(counts, word, n + 1))
     n + 1
 }
@@ -1127,8 +1113,8 @@ that is computing, sleeping, or waiting with a bound (`recv_timeout`,
 `join_timeout`, `try_recv`) counts as live but not parked, and a
 running `http.serve` disables the abort entirely, because an incoming
 request can wake a worker at any time. Setting `OLANG_STALL_ABORT=0`
-restores the old behavior (the program hangs) for embedding hosts that
-manage their own threads.
+turns the abort off (the program hangs instead), for embedding hosts
+that manage their own threads.
 
 ```olang
 fn producer(ch, n) = {
@@ -1284,7 +1270,7 @@ changed byte is an `Err`, never a wrong plaintext. The plaintext is text
 
 ## `bytes` — binary data
 
-Strings are UTF-8 text; `Bytes` (new in 0.69) is the value for everything
+Strings are UTF-8 text; `Bytes` is the value for everything
 that isn't — an image, an archive, a hash's raw output, a non-UTF-8
 file. A `Bytes` value is immutable, `typeof` says `Bytes`, `len(b)` is
 the byte count, `b[i]` is the byte at `i` as an Int (a negative `i`
@@ -1493,7 +1479,10 @@ ordinary olang values: a list of statement maps, each tagged with a
 `"kind"`, that you walk with the same `map`/`filter`/`fold`/`match` you
 use on any data. Because the syntax is stable, these node shapes are a
 stable public format — linters, codemods, and import extractors are
-olang scripts, not compiler changes.
+olang scripts, not compiler changes. The toolchain reads the same
+format: `olang check` runs a project's own lint rules, written in olang
+over these nodes, beside the type checker
+([Project rules](tooling.md#project-rules)).
 
 | Function | Result |
 |---|---|
@@ -1668,9 +1657,8 @@ println(meta.lit([1, "a"]))                        // [1, "a"]
 
 ## `runtime` — what this binary carries
 
-The olang binary carries its browser runtime: the playground wasm
-(olang compiled for `wasm32-unknown-unknown`, the browser profile the
-web SDK ships), embedded at build time from the artifact `cargo xtask
+The olang binary carries its browser runtime (olang compiled for
+`wasm32-unknown-unknown`, the browser profile the web SDK ships), embedded at build time from the artifact `cargo xtask
 wasm` builds. The web SDK's `serve` reads it from here, so an app has no
 wasm file to build, copy, or keep in step with the binary; a program
 that serves its own routes reads the same bytes.
@@ -1682,10 +1670,10 @@ that serves its own routes reads the same bytes.
 | `runtime.memory()` | `#{ "heap", "program", "values", "embedded", "tasks" }`, in bytes — where the process's memory is (below) |
 | `runtime.profile_start()` / `runtime.profile_start(interval_us)` | begin sampling this process with the profiler behind `olang profile` (every 1,000 µs by default): `Ok(())`, or `Err` when a profile is already running |
 | `runtime.profile_stop()` | end it: `Ok(#{ "interval_us", "ticks", "idle", "blocked", "samples", "rows" })`, where `rows` is `[#{ "function", "tier", "samples", "share" }]`, most first — the functions that were running when the sampler looked, the tier each ran on (`interp`, `vm`, `native`, `builtin`), and its share of the samples that landed in code. `blocked` counts thread-ticks spent parked — a receive, a sleep, a server waiting for a connection, an idle http worker — which are charged to no function. `Err` when no profile is running |
-| `runtime.profile_live_start(dir)` `runtime.profile_live_start(dir, #{ "every_ms", "interval_us", "label" })` | a live profile of this process from now — what `olang profile --format json --live DIR` makes of a program it runs: stacks sampled by tier every `interval_us` (1,000), and a snapshot of the profile and the vital signs written to `DIR/<pid>.json` every `every_ms` (500, at least 50) in that format (docs/tooling.md), cumulative and replaced atomically. `Ok(())`, or `Err` when a profile already runs (`--profile-live`, `olang profile`, `runtime.profile_start`, an earlier call). Nothing is paid until it is called: an app that draws its own profile (olang Studio) turns it on and off |
+| `runtime.profile_live_start(dir)` `runtime.profile_live_start(dir, #{ "every_ms", "interval_us", "label" })` | a live profile of this process from now — what `olang profile --format json --live DIR` makes of a program it runs: stacks sampled by tier every `interval_us` (1,000), and a snapshot of the profile and the vital signs written to `DIR/<pid>.json` every `every_ms` (500, at least 50) in that format ([`olang profile`](tooling.md#olang-profile)), cumulative and replaced atomically. `Ok(())`, or `Err` when a profile already runs (`--profile-live`, `olang profile`, `runtime.profile_start`, an earlier call). Nothing is paid until it is called: an app that draws its own profile turns it on and off |
 | `runtime.profile_live_stop()` | end it: sampling stops, the final snapshot (`"done": true`) is written. `Ok(())`, or `Err` when none runs |
 | `runtime.build()` | what this binary is: `#{ "version", "commit", "branch", "dirty", "date", "profile", "target", "rustc", "features", "crates", "exe" }` — the git commit it was built from (empty outside a checkout) and whether tracked files had changes then (`dirty`, `()` when git could not say), when its build script last ran (UTC: the last change to the sources, the lock or the commit), `release` or `debug`, the target triple, `rustc -V`, the Cargo features, the gui engine's and the stdlib's key crates from Cargo.lock as `[#{ "name", "version", "vendored" }]` (`vendored`: a patched copy under vendor/, accesskit_macos), and the binary's path |
-| `runtime.load_module(path, grant)` | the olang file at `path` loaded into this program as a module, read afresh (its folder's cached modules forgotten), everything under its folder held to `grant` — `#{ name, fs: false \| "read" \| true, fs_roots: [folders], proc: false \| true \| [programs], net, db, env }`, a key left out denied, never the host's builtins (`gui`, `tty`, loading code, the profiler). `Ok(module)`, or `Err(message)` with the grant before it kept (packages.md, "Modules loaded at run time") |
+| `runtime.load_module(path, grant)` | the olang file at `path` loaded into this program as a module, read afresh (its folder's cached modules forgotten), everything under its folder held to `grant` — `#{ name, fs: false \| "read" \| true, fs_roots: [folders], proc: false \| true \| [programs], net, db, env }`, a key left out denied, never the host's builtins (`gui`, `tty`, loading code, the profiler). `Ok(module)`, or `Err(message)` with the grant before it kept ([Modules loaded at run time](packages.md#modules-loaded-at-run-time)) |
 | `runtime.unload_module(path)` · `runtime.module_grant(path)` · `runtime.module_permits(path, builtin, args)` | forget a loaded module's grant (true when there was one); the grant as it holds (`()` when none); whether its code would be allowed `builtin(args…)` — `Ok(())` or `Err(why)`, the same gate |
 | `runtime.call_budget(f, args, ms)` | `f(args…)` stopped past `ms` (an interrupt on this thread only) and its failure caught: `#{ ok, value, error, frames, over, us }` |
 | `runtime.last_error()` | the error a boundary on this thread caught last (`attempt`, `call_budget`, `load_module`) with its frames, `#{ message, frames: [#{ path, line, function }] }`, innermost first (line 0: an expression body); `()` when none |
@@ -1723,7 +1711,7 @@ freed but not yet returned.
 
 ```olang no-run
 let m = runtime.memory()
-let mb = (key) => to_string(map_get(m, key) / 1048576) + " MB"
+let mb = (key) => to_string(m[key] / 1048576) + " MB"
 println("program " + mb("program") + ", values " + mb("values"))
 ```
 
@@ -1795,11 +1783,11 @@ true` among the options they are `Bytes`, exactly as the program wrote
 them.
 `os.args()` is the program's argv (`[script, arg1, ...]`).
 
-Most of `os` cannot fail, and as of 0.64 says so: `args`, `arch`,
+Most of `os` cannot fail, and returns its value directly: `args`, `arch`,
 `os_type`, `family`, `pid`, `path_separator`, `temp_dir`, `username`,
 `is_tty`, `stdin_is_tty`, `color_enabled`, `flush`, `has_env`, `list_env`, `set_env`, `remove_env`,
-`interrupted`, and `reset_interrupt` all return their value directly.
-The ones that keep `Result` are the ones that genuinely can fail:
+`interrupted`, and `reset_interrupt`. The ones that return `Result` can
+genuinely fail:
 `get_env` (the variable may be absent), `cwd`, `chdir`, `home_dir`,
 `hostname`, `exe_path`, `exec`, `read_line`, `stdin`, `stdin_lines`, and
 `on_interrupt`.
@@ -1929,7 +1917,7 @@ Where `proc` pipes a child's stdin and stdout, `pty` gives it a terminal
 of its own: the child leads a new session with the pty's slave as its
 controlling terminal (job control, `^C`, window sizes and full-screen
 programs work), and the program holds the master side. What a terminal
-emulator (olang Studio's) runs a shell in. macOS and Linux (an `Err`
+emulator runs a shell in. macOS and Linux (an `Err`
 elsewhere: `pty.available()`); capability-gated as `proc`.
 
 | Function | Description |
@@ -2078,7 +2066,7 @@ println(term.table(["name", "commits"], [["ada", "128"], ["evelyn", "12"]]))
 
 // A download loop redrawing one line in place:
 for i in range(0, 21) {
-    print("\r" + term.bar(to_float(i) / 20.0, 24))
+    print("\r" + term.bar(i / 20.0, 24))
     os.flush()
     time.sleep(30)
 }
@@ -2256,29 +2244,19 @@ program leaves when it chooses (or `os.exit`s, which restores).
 Nothing can restore after SIGKILL or a stack overflow (the runtime
 aborts without a hook); `reset` in the shell is the remedy there.
 
-`tests/tty_test.rs` holds the guarantee to account: a real olang
-program in a pseudo-terminal enters raw mode and the alternate screen,
-then raises, exits, ends, receives SIGTERM, SIGHUP, or SIGINT, panics,
-or suspends — and the test asserts the leave sequences reached the
-terminal after the enter, and that the terminal's settings are cooked
-again, exactly as before.
-
 **Platforms.** On Unix (macOS, Linux, the BSDs) the module reads and
-decodes stdin itself — the decoder is `src/stdlib/tty/decode.rs`, tested
-byte by byte — because crossterm's parser is private, consumes query
-replies, and has no Esc timeout. On Windows it uses crossterm: console
-raw mode and mouse capture, and the console's input records for keys,
-mouse, resize, and focus, output as VT sequences (Windows Terminal and
-ConPTY consoles). There, `tty.query` and `tty.suspend` answer `Err`,
-bracketed paste arrives as keys, `kitty_keys` has no effect, and the
-guard restores on leave, program end, `os.exit`, raise, and panic (a
-console process has no SIGTERM). The restore tests have run on macOS;
-Linux is compiled and clippy-clean, Windows is compiled against a
-stand-in of the crate paths and clippy-clean — neither has been run.
+decodes stdin itself. On Windows it uses the console's raw mode, mouse
+capture and input records, with output as VT sequences (Windows
+Terminal and ConPTY consoles); there `tty.query` and `tty.suspend`
+answer `Err`, bracketed paste arrives as keys, `kitty_keys` has no
+effect, and the guard restores on leave, program end, `os.exit`, raise,
+and panic (a console process has no SIGTERM). The restore guarantee is
+tested on macOS; the Linux and Windows builds are unverified
+([Platforms](stability.md#platforms)).
 
 ## `gui` — windows drawn by olang
 
-The engine under Loom, olang's desktop framework (`loom/SPEC.md`): a
+The engine under Loom, olang's desktop framework: a
 program lays its view out itself and sends `gui` **positioned, keyed
 nodes**; `gui` draws them on the GPU (or with the software reference),
 edits text fields (input methods included), hit-tests, keeps the
@@ -2307,7 +2285,7 @@ Native-only; on in the released binaries (the `gui` cargo feature).
 | `gui.set(w, props)` | `title`, `size`, `min`, `visible`, `cursor`, `focus`, `background`, `zoom` (the text size, 0.5 to 3: the window keeps its pixels and its boxes, reads, and events are in units of `zoom` logical pixels, so a program lays out in less room at a larger size; a `resize` event says the new size), `appearance` (`"light"`, `"dark"`, or `"system"`: the title bar and the platform's own controls in the appearance the program draws in), `scripted` (`true`: a script drives the window through `gui.input`, and a person's keys, pointer, wheel and drops on it are not taken — a test's window is not moved by the mouse passing over it), `tab` (macOS window tabs: `"next"`, `"previous"` tab chosen, `"merge"` every window into this one's tab bar, `"detach"` this tab into a window of its own, `"bar"` the bar shown or hidden; a `tabs` event follows), `corner` (`"continuous"` or `"round"`: the corners of every rounded box whose style says none), `flash` (`true`: the repaint rainbow — every region a frame draws tinted with that frame's colour, unseen by damage, so a region keeps the tint of the frame that last drew it; `false` draws the window whole again; `gui.platform()` says `flash`) |
 | `gui.fonts(sources, opts?)` | register fonts: paths or Bytes, TTF/OTF/TTC, optionally brotli-compressed → the number of faces added. Registered fonts come before the system's. `#{ "background": true }`: the sources are read now, then decompressed and registered on a thread of their own while the program goes on — whatever shapes or measures text meanwhile waits until they are in — and it answers the number of sources (Loom's `run` registers its bundled fonts so: they were tens of milliseconds of a window's first frame) |
 | `gui.clipboard_read()` / `gui.clipboard_write(text)` | the platform clipboard (headless windows' editing uses a private one) |
-| `gui.clipboard_image()` | the clipboard's image (a screenshot copied, an image copied in another program) → `Ok(#{ png, width, height })`, `png` its PNG Bytes (a TIFF is turned into one), or `Err` when it holds none. macOS only so far: elsewhere an `Err` that says so (`gui.platform().clipboard_image`) |
+| `gui.clipboard_image()` | the clipboard's image (a screenshot copied, an image copied in another program) → `Ok(#{ png, width, height })`, `png` its PNG Bytes (a TIFF is turned into one), or `Err` when it holds none. macOS only: elsewhere an `Err` that says so (`gui.platform().clipboard_image`) |
 | `gui.image_info(source)` | a picture's size and format from its header, a path or Bytes → `Ok(#{ width, height, format })` (`"png"`, `"jpeg"`, `"webp"`, `"gif"`, `"svg"`; a JPEG's turned as its EXIF orientation says, an SVG's in its own units), or `Err`. It reads the file: call it from a task |
 | `gui.dialog(kind, opts)` | the platform's dialog: `"open"`, `"open_many"`, `"save"`, `"folder"` (`title`, `directory`, `name`, `filters: [#{ name, extensions }]`) → a path, a list, or `()` when cancelled; `"message"` (`title`, `text`, `level`, `buttons`: `ok`, `ok_cancel`, `yes_no`, `yes_no_cancel`) → the button |
 | `gui.context_menu(window, items, at)` | a native context menu (macOS: NSMenu `popUpMenuPositioningItem:atLocation:inView:`) over `window` at `at` `#{ x, y }` (the content's logical pixels): `items` `[#{ id, label, keys?, enabled?, checked?, submenu? } or "separator"]`, keys shown as the menu bar shows them. `true` when shown — the window then hears `context` with the chosen item's `id` (`()` when dismissed); `false` on a headless window or a platform without one (`gui.platform().context_menu`): the program draws its own. A script arms a choice with `gui.input(w, #{ kind: "context_pick", label })`: the next menu shows, then closes as though that item was chosen (`picked: true`). ⌃-click arrives as the right button |
@@ -2624,8 +2602,8 @@ the glyph and shape caches hold.
 
 **Platforms.** Run on macOS (the GPU renderer, the menu bar, the
 accessibility tree as NSAccessibility). Linux is Wayland only: with no
-`WAYLAND_DISPLAY`, `gui.open` answers `Err`. Windows is compiled, not
-yet run.
+`WAYLAND_DISPLAY`, `gui.open` answers `Err`. Windows builds but is
+unverified ([Platforms](stability.md#platforms)).
 
 ## `http` — HTTP
 
@@ -2675,7 +2653,7 @@ let resp = unwrap(http.get("https://api.example.com/me", #{
     "headers": #{ "accept": "application/json" },
 }))
 println(to_string(resp.status))
-println(show(map_get(resp.headers, "content-type")))
+println(show(resp.headers["content-type"]))
 let data = unwrap(json.parse(resp.body))
 println(data.message)
 ```
@@ -2736,8 +2714,7 @@ a client dribbling one byte at a time from holding a worker forever,
 which per-read timeouts alone cannot. Header values a handler returns
 are flattened to one line (CR and LF become spaces), so interpolating
 untrusted text into a header cannot split the response or inject
-headers. The abuse suite in `tests/http_abuse_test.rs` pins all of
-this.
+headers.
 
 ```olang no-run
 fn handle(req) = {
@@ -2781,8 +2758,7 @@ in-process database, so the examples below run in the test suite.
 
 Values: NULL is `()`, INTEGER an `Int`, REAL a `Float`, TEXT a `String`.
 A BLOB is `Bytes` from `db.query_rows` and `db.next`; `db.query` and
-`db.query_one` answer it as a `String` (invalid UTF-8 replaced), as they
-always have. A `Bool` binds as `1`/`0`, `Bytes` as a BLOB.
+`db.query_one` answer it as a `String` (invalid UTF-8 replaced). A `Bool` binds as `1`/`0`, `Bytes` as a BLOB.
 
 ```olang
 let conn = unwrap(db.open(":memory:"))
@@ -2940,8 +2916,7 @@ that never waits for that lock.
 
 ## `dom` — the browser
 
-When olang runs in a browser (as the WebAssembly build behind the
-playground), the page itself becomes a device the program can drive:
+When olang runs in a browser (the [WebAssembly build](wasm.md)), the page itself becomes a device the program can drive:
 `dom` is that device's API. olang does not wrap the DOM object model:
 it treats the page as a *rendering target with controls*. You query
 elements, wire events, render by writing HTML, reach for node-level
@@ -3031,28 +3006,15 @@ loop never misses a beat. See `examples/web/app/static/primes.ol` and
 counter whose progress bar fills while an animation dial proves the
 main thread stayed live.
 
-**Declarative views: the `ui` module.** `use ui` (an embedded olang
-package) builds pages as values: `h(tag, attrs, children)` makes a node,
-strings are text (escaped on render), `hk` adds a reconciliation key,
-and `html(tree)` renders to a string — pure and testable anywhere.
-`ui.render(el, children)` mounts a keyed list and reconciles against
-the previous render: unchanged children are untouched (input state and
-focus survive), changed ones re-render in place, added and removed keys
-insert and remove surgically, and reorders reposition without
-rebuilding. See `examples/web/app/static/notes.ol` — a small SPA at
+**Declarative views.** The [`ui`](#ui-viz-and-dash--views-charts-and-dashboards)
+package builds pages as values, and `ui.render(el, children)` mounts a
+keyed list and reconciles it against the previous render: unchanged
+children are untouched (input state and focus survive), changed ones
+re-render in place, added and removed keys insert and remove
+surgically, and reorders reposition without rebuilding. See
+`examples/web/app/static/notes.ol` — a small single-page app at
 `/notes.html` combining `ui.render`, `push_state`/`on_route`
 navigation, and localStorage persistence.
-
-| Function | Purpose |
-|---|---|
-| `h(tag, attrs, children)` | Build a virtual node — a tag, an attribute map, and a list of child nodes or text strings |
-| `hk(key, tag, attrs, children)` | Like `h`, plus a stable reconciliation key for keyed lists |
-| `esc(s)` | HTML-escape a string (`&` `<` `>` `"` → entities); applied automatically to text on render |
-| `html(node)` | Render a node tree to an HTML string — pure, testable without a browser |
-| `render(el, children)` | Mount and reconcile a keyed child list into a live DOM element (browser only) |
-
-`h`, `hk`, `esc`, and `html` are pure and run anywhere; only `render`
-needs the browser.
 
 `dom` is the one browser-only module: in a native build every call but
 `dom.available` reports that it needs the wasm build, mirroring how
@@ -3125,21 +3087,23 @@ named, equal-length Series. Operators
 are vectorized (`s * 2.0` runs one kernel over the whole column;
 `s > 2` yields a Bool mask for `ods.filter`), nulls propagate through
 arithmetic and are skipped by reductions, and the Frame verbs —
-`read_csv`, `select`, `drop`, `rename`, `with_column`, `filter`,
-`distinct`, `sort_by`, `group_by`, `join`, `to_records` — all chain
-with `|>`. CSV and JSON lines each have
+`read_csv`, `select`, `drop`, `rename`, `with`, `filter`,
+`distinct`, `sort_by`, `group_by`, `join`, `to_records` — all chain,
+as methods or with `|>`. CSV and JSON lines each have
 a text parser, a file reader, a streaming reader, and a serializer; the
 calls that reach the filesystem are the module's only ones that demand
 the `fs` capability, and the text parsers and serializers stay pure.
 
 ```olang
+use ods { col }
 let sales = ods.read_csv("region,amount,qty\neast,25.5,10\nwest,320.0,3\neast,80.0,4\n")
-let full = ods.with_column(sales, "revenue", sales["amount"] * sales["qty"])
-let summary = full
-    |> ods.group_by("region", [["total", "sum", "revenue"], ["n", "count"]])
-    |> ods.sort_by("total", true)
-for rec in ods.to_records(summary) {
-    println(`${rec.region}: ${rec.total}`)
+let summary = sales
+    .with({ revenue: col("amount") * col("qty") })
+    .group_by("region")
+    .agg({ total: col("revenue").sum(), n: ods.count() })
+    .sort_by("total", descending: true)
+for rec in summary.to_records() {
+    println(`${rec.region}: ${rec.total} over ${rec.n} sales`)
 }
 ```
 
@@ -3164,8 +3128,7 @@ concurrently and reports the lowest-numbered bad line, exactly as a
 sequential scan would; `ods.sort_by`, joins, and `ods.group_by` sort,
 probe, gather, and aggregate across cores above ~100k rows. Every
 fan-out joins in a fixed order, so results are cell-identical to the
-sequential run (a grouped float `sum` may differ in the last ULPs, as
-its reference already notes), and `set_parallel(false)` turns all of it
+sequential run (a grouped float `sum` may differ in the last ULPs), and `set_parallel(false)` turns all of it
 off. Measured at 1M rows: JSONL parse 4.3× faster, CSV parse 2.7×,
 sort_by ~1.9×.
 
@@ -3177,7 +3140,7 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 | Group | Verbs |
 |---|---|
 | Create | `series(list\|range)` · `try_series(list)` (the Result form: a mixed-type list is `Err`, not a raise) · `zeros(n)` (n float zeros) · `ones(n)` · `full(n, v)` · `full_like(s, v)` · `linspace(a, b, n)` (n evenly spaced floats, inclusive) · `arange(stop)` / `arange(start, stop, step = 1)` (Int from Ints, else Float; `stop` excluded) · `repeat(s, k)` (each element `k` times, or a list of counts) · `tile(s, k)` (the column `k` times) |
-| Math | `abs` `exp` `exp2` `expm1` `ln` `ln1p` `log2` `log10` `sqrt` `cbrt` `sin` `cos` `tan` `asin` `acos` `atan` `sinh` `cosh` `tanh` `sigmoid` `logit` `sign` `floor` `ceil` `trunc` — each `ods.exp(s)`, the scalar `math.*` function over the column (Int widens to Float, except where the answer is whole) · `pow(s, p)` · `round(s, digits = 0)` · `map(s, "sin")` — the older spelling, by name |
+| Math | `abs` `exp` `exp2` `expm1` `ln` `ln1p` `log2` `log10` `sqrt` `cbrt` `sin` `cos` `tan` `asin` `acos` `atan` `sinh` `cosh` `tanh` `sigmoid` `logit` `sign` `floor` `ceil` `trunc` — each `ods.exp(s)`, the scalar `math.*` function over the column (Int widens to Float, except where the answer is whole) · `pow(s, p)` · `round(s, digits = 0)` · `map(s, "sin")` — a math function by name |
 | Conditionals | `where(mask, a, b)` (null mask → null) · `select(masks, values, default = ())` (first mask that holds) · `clip(s, lo, hi = ())` (`()` an open bound) · `between(s, lo, hi, closed = "both")` or `between(s, [lo, hi] \| ())` — `"left"`, `"right"`, `"neither"` |
 | Comparisons | `eq(a, b)` · `ne(a, b)` — elementwise masks between two Series (against a *scalar*, use the `s == v` / `s != v` operators) |
 | Nulls | `is_null(s)` · `not_null(s)` · `is_nan(s)` (masks) · `fill_null(s, v)` — `v` a value, a Series, or a method `"ffill"`, `"bfill"`, `"linear"`, `"mean"`, `"median"` (the first three take a `limit`) · `coalesce(a, b, …)` (first non-null) · `interpolate(s, limit = ())` · `null_count(s)` |
@@ -3210,18 +3173,17 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 | Expressions | `col(name)` · `lit(v)` · `alias(expr, name)` · `over(agg, keys)` — an aggregation within groups, given back to every row. Every column function and operator takes an expression and gives one; [Expressions](ods.md#expressions--odscol) |
 | Whole rows | `distinct(f, names = all)` · `drop_null(f, names = all)` — duplicates and missing data, first occurrence kept |
 | Reshape | `pivot(f, index, columns, values, agg, fill = ())` long→wide · `crosstab(a, b, values = (), agg = "count", normalize = (), name = "row")` — counts (or an aggregate) of each pair of values, `normalize` `"all"`, `"rows"` or `"columns"` · `unpivot(f, ids, value_columns = the rest)` wide→long, emitting `name`/`value` |
-| Sample | `sample(f, n)` (also on a Series) — n random rows, without replacement, in original order; seeded by `random.seed` |
+| Sample | `sample(f, n, rng:)` (also on a Series) — n random rows, without replacement, in original order; drawn from `rng` (a [`random.rng`](#generators-randomrng) or an Int seed), else seeded by `random.seed` |
 | Aggregate / join | `group_by(f, keys)` → a GroupBy, then `agg(by, { name: expr })` (e.g. `col("x").sum()`, `ods.count()`, `col("x").quantile(0.9)`) · `size(by)` · `transform(by, expr)` · `apply(by, fn)` (once per group) · `groups(by)` (`(key, frame)` pairs) · `sum(by)`, `mean(by)`, … over every column — or `group_by(f, keys, aggs)` with the aggs an object, or `[name, op, column]` triples, op one of count, sum, mean, min, max, median, std, var, first, last, n_unique, any, all, argmax, argmin (`[name, "count"]` counts rows) · `join(a, b, on, on_b = on, how = "inner", suffix = "_right", validate = ())` — `on` a name or a list, `how` inner/left/full/semi/anti, `validate` `"many_to_one"`, `"one_to_many"` or `"one_to_one"` · `join_left` · `join_full` · `join_semi` · `join_anti` (the same, `how` fixed) · `asof_join(a, b, on, by = (), direction = "backward", tolerance = (), suffix = "_right")` — each left row takes the right row nearest at or before it (`"forward"`, `"nearest"`) · `concat(frames)` |
 | Time | `resample(f, on, every, aggs, by = ())` — rows grouped by the start of their `every` bucket (`"15m"`, `"1h"`, `"1d"`, `"1w"`, `"1mo"`, `"1q"`, `"1y"`) of a Date or Datetime column (buckets of its type) or an ISO date/time text column, sorted by time · `floor(s, every)` — each value's bucket start, in the value's shape |
 | Matrices | `matrix(f, cols = every numeric, nulls = "raise")` — a [Matrix](#mat--matrices) of the columns (or of a list of Series), sharing null-free Float columns; `nulls: "drop"` leaves out rows with a null · `corr(f, cols = every numeric, method = "pearson")` (or `"spearman"`) · `cov(f, cols)` — labelled Frames: a `term` column, then one per variable; a column with nulls pairs over the rows both columns have |
 | Masks | `m1 & m2` · `m1 \| m2` · `m1 ^ m2` · `!m` · `eq(s, v)` · `ne(s, v)` · `is_in(s, values)` · `contains(s, text, case = true)` · `all_of(masks)` · `any_of(masks)` · `not(mask)` — three-valued, like SQL; parenthesize a comparison `&` joins |
 
 The stack has its own chapter, **[The data stack](ods.md)**: the
-reasons for the columnar model (with the measured 50× rewrite behind
-it), every Series and Frame verb with its semantics, null handling,
-joins and grouped aggregation, and the performance characteristics,
-each explained with examples. Engineering history and benchmark method
-live in [that chapter's design record](ods.md#the-design-record).
+columnar model, every Series and Frame verb with its semantics, null
+handling, expressions, joins and grouped aggregation, each explained
+with examples. Measured performance is in
+[Writing fast olang](performance.md).
 
 ## `mat` — matrices
 
@@ -3398,17 +3360,22 @@ thread count.
 
 ```olang
 use ml
-let n = 120
-let sqft = map(range(0, n), (i) => 600.0 + to_float((i * 37) % 100) * 20.0)
-let hood = map(range(0, n), (i) => if i % 3 == 0 => "east" else => "west")
-let price = map(range(0, n), (i) => 50.0 + 0.2 * sqft[i] + (if hood[i] == "east" => 30.0 else => 0.0) + to_float((i * 13) % 7))
-let homes = ods.frame([["sqft", sqft], ["hood", hood], ["price", price]])
+use ods { col }
+let i = ods.arange(120)
+let homes = ods.frame({
+    sqft: ((i * 37) % 100).cast("Float") * 20.0 + 600.0,
+    hood: ods.where(i % 3 == 0, "east", "west"),
+    noise: ((i * 13) % 7).cast("Float"),
+})
+let homes = homes.with({
+    price: col("sqft") * 0.2 + 50.0 + ods.where(col("hood") == "east", 30.0, 0.0) + col("noise"),
+})
 let s = ml.split(homes, test: 0.25, seed: 7)
 let fit = ml.linear(s.train, y: "price", x: ["sqft", "hood"])
 println(fit.params.sqft > 0.19)                       // true
 let pred = ml.predict(fit, s.test)
-println(ml.rmse(s.test["price"], pred) < 5.0)          // true
-println(ods.n_rows(ml.cross_validate(fit, homes, folds: 4)))   // 4
+println(ml.rmse(s.test.price, pred) < 5.0)            // true
+println(ml.cross_validate(fit, homes, folds: 4).n_rows())   // 4
 ```
 
 **On a Frame.** The models are a Frame's methods:
@@ -3416,8 +3383,8 @@ println(ods.n_rows(ml.cross_validate(fit, homes, folds: 4)))   // 4
 n_trees: 200)` and `pts.kmeans(k: 4)` are `learn.linear(homes, …)` and
 the rest (`linear`, `ridge`, `lasso`, `elastic_net`, `logistic`, `tree`,
 `forest`, `boost`, `knn`, `naive_bayes`, `kmeans`, `gmm`, `pca`). The
-other learn functions are not, since a method's name hides a column's:
-`judged.silhouette` still reads a column.
+other learn functions are not methods of a Frame, so a column named
+like one (`judged.silhouette`) still reads as a column.
 
 **Formulas.** Every supervised model also takes a formula where `y` and
 `x` go: `learn.linear(f, "price ~ sqft + C(hood) + C(kind):C(hour) +
@@ -3443,15 +3410,15 @@ formula:
 let n = 48
 let f = ods.frame({
     x: ods.arange(n) * 0.25,
-    kind: ods.series(map(range(0, n), (i) => ["flat", "house", "loft"][i % 3])),
+    kind: ods.tile(ods.series(["flat", "house", "loft"]), n / 3),
     hour: ods.arange(n) % 4,
 })
 let f = f.with({ y: f.x * 2.0 + f.x * f.x * 0.5 + f.hour * 0.1 + 1.0 })
-let fit = learn.linear(f, "y ~ x + I(x^2) + C(kind):C(hour)")
+let fit = f.linear("y ~ x + I(x^2) + C(kind):C(hour)")
 println(len(fit.features))                       // 13
-println(math.round(map_get(fit.params, "I(x^2)") * 1000.0) / 1000.0)   // 0.5
-println(ods.columns(fit.conf_int(0.9)))          // ["term", "lo", "hi"]
-println(ods.n_rows(fit.predict(f, interval: "prediction")))   // 48
+println(math.round(fit.params["I(x^2)"] * 1000.0) / 1000.0)   // 0.5
+println(fit.conf_int(0.9).columns())             // ["term", "lo", "hi"]
+println(fit.predict(f, interval: "prediction").n_rows())   // 48
 ```
 
 | Function | Description |
@@ -3518,15 +3485,13 @@ in `predict` gives the error curve on any rows:
 
 ```olang
 use ml
-let n = 400
-let t = map(range(0, n), (i) => to_float(i))
-let y = map(range(0, n), (i) => math.sin(t[i] / 20.0) + to_float(i % 7) * 0.05)
-let f = ods.frame([["t", ods.series(t)], ["y", ods.series(y)]])
+let t = ods.arange(400).cast("Float")
+let f = ods.frame({ t: t, y: (t / 20.0).sin() + (ods.arange(400) % 7).cast("Float") * 0.05 })
 let m = ml.boost(f, y: "y", x: ["t"], trees: 200, validation_tail: 80, patience: 10, seed: 1)
-println(ods.len(m.valid_loss) > m.best_iter)            // true: a loss each round
-let recent = ods.tail(f, 80)
-let first = ml.rmse(recent["y"], ml.predict(m, recent, trees: 1))
-let kept = ml.rmse(recent["y"], ml.predict(m, recent))
+println(len(m.valid_loss) > m.best_iter)                // true: a loss each round
+let recent = f.tail(80)
+let first = ml.rmse(recent.y, ml.predict(m, recent, trees: 1))
+let kept = ml.rmse(recent.y, ml.predict(m, recent))
 println(kept < first)                                   // true
 ```
 
@@ -3606,18 +3571,12 @@ file.
 
 ```olang
 let x = ods.linspace(0.0, 6.28, 50)
-let y = ods.series(map(ods.to_list(x), (v) => math.sin(v)))
-let svg = plot.line(x, y, #{ "title": "sin(t)", "x_label": "t" })
-println(to_string(str.contains(svg, "<svg")))
+let svg = plot.line(x, x.sin(), title: "sin(t)", x_label: "t")
+println(str.contains(svg, "<svg"))
 ```
 
-**[The data stack](ods.md#plot--charts-as-svg-text)** covers the
-SVG-as-text philosophy, each chart type, and null handling per chart.
-
----
-
-Next: [Packages](packages.md) for multi-file programs and dependencies, or
-[Internals](internals.md) for how the runtime executes all of this.
+**[The data stack](ods.md#plot--charts-as-svg-text)** covers each chart
+type and how each handles nulls.
 
 ## `gg` — a grammar of graphics
 
@@ -3635,9 +3594,11 @@ it.
 
 ```olang
 use gg
-let f = ods.frame([["size", ods.series([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])],
-                   ["price", ods.series([2.1, 3.9, 6.2, 7.8, 10.1, 12.2])],
-                   ["kind", ods.series(["a", "b", "a", "b", "a", "b"])]])
+let f = ods.frame({
+    size: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+    price: [2.1, 3.9, 6.2, 7.8, 10.1, 12.2],
+    kind: ["a", "b", "a", "b", "a", "b"],
+})
 let p = gg.plot(f, gg.aes(x: "size", y: "price", color: "kind"))
     |> gg.point(size: 2)
     |> gg.smooth(method: "lm", se: false)

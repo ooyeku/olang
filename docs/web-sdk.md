@@ -5,10 +5,9 @@ Part of [the olang book](README.md) · [olang in the browser](wasm.md) ·
 
 `frameworks/web-sdk` is the foundation layer for building full-stack
 web applications in olang — one process serving a JSON API and a wasm
-frontend, with one route table driving both sides. It is deliberately
-two things at once: directly usable (a working app is two small
-files), and foundational — the primitives a future olang web framework
-would build on rather than reinvent.
+frontend, with one route table driving both sides. A working app is
+two small files, and its primitives (views as data, one store, one
+route table) are the parts a larger framework builds on.
 
 ## Table of contents
 
@@ -31,7 +30,7 @@ Everything else is built from these:
 
 1. **Views are data.** An HTML tree is maps and lists — an element is
    `#{ "tag", "attrs", "children" }` — so a framework can transform,
-   inspect, or diff views: the Open AST philosophy applied to markup.
+   inspect, or diff views.
    Rendering escapes by default; `raw` is the one opt-out.
 2. **`mount` + re-render.** One place where data becomes pixels. A
    repaint hands the node tree to the host as data (`dom.patch`) and the
@@ -275,7 +274,7 @@ summed over every pass, with the latest alone under `last` — `view_ms`
 in the view function, `serialize_ms` and `patch_ms` inside `dom.patch`,
 the `nodes` handed over, and `memo_hits` / `memo_misses`. The tree
 crosses as JSON: 0.16 ms for a thousand nodes, measured in the dom
-harness, which is why it is not a binary encoding.
+harness.
 
 Two events carry files: a `"drop"` on any element and a `"paste"` on a
 text control deliver `files` as `[#{ "name", "type", "size", "base64" }]`
@@ -496,9 +495,9 @@ year — a new build is a new URL), and `/olang.wasm`, revalidated by
 ETag. Both negotiate `Accept-Encoding`: the brotli or gzip form,
 computed once at boot, is served with its `Content-Encoding`. The
 runtime is the browser profile — no `re` module and no RSA, which a
-page never calls and which were a third of the code: 4.9 MB, 1.4 MB
-gzipped, 1.2 MB brotli. The website's playground carries the whole
-stdlib (`cargo xtask wasm --full` builds both). A binary built without
+page never calls and which are a third of the code: 4.9 MB, 1.4 MB
+gzipped, 1.2 MB brotli. The full profile with the whole stdlib is a
+separate build ([The wasm build](wasm.md#the-wasm-build)). A binary built without
 the runtime serves the shell and answers the runtime's URLs with a 503
 that names the build. The shim yields to the browser between instantiating the
 runtime and running the bundle, so the shell paints first, and records

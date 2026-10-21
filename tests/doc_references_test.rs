@@ -129,16 +129,10 @@ fn references(text: &str, modules: &[String]) -> BTreeSet<String> {
     found
 }
 
-/// Named on purpose while not existing. The design record discusses
-/// options the project has *not* taken, and naming them concretely is
-/// what makes that record useful — but each one has to be listed here,
+/// Names the book mentions on purpose although they do not exist, each
 /// with its reason, so an accidental reference to a removed function can
-/// never hide among them.
-const DELIBERATELY_HYPOTHETICAL: &[(&str, &str)] = &[(
-    "ods.fma",
-    "ods.md's design record weighs fused kernels as a future option, \
-         pre-approved if the stated gate trips; it is not claimed to exist",
-)];
+/// never hide among them. Empty: the book names no such function.
+const DELIBERATELY_HYPOTHETICAL: &[(&str, &str)] = &[];
 
 /// What `reference` is, by `typeof`: in scope, after `use` of its module,
 /// or (for a collections short name) after `use collections { heap }`.

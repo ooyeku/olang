@@ -9,10 +9,9 @@ describes what annotations mean, where they are enforced, what the checker
 proves, and how to adopt types incrementally.
 
 Part of [the olang book](README.md) · [Language reference](language.md) ·
-[Command-line tooling](tooling.md) · [Stability and compatibility](stability.md)
+[Command-line tooling](tooling.md)
 
-Every plain `olang` block in this chapter is executed by the test suite;
-blocks marked `no-run` show programs that fail deliberately.
+Blocks marked `no-run` show programs that fail on purpose.
 
 ## Table of contents
 
@@ -22,21 +21,13 @@ blocks marked `no-run` show programs that fail deliberately.
 - [The static checker](#the-static-checker)
 - [Element types — where the checker goes deeper](#element-types--where-the-checker-goes-deeper)
 - [Adopting types gradually](#adopting-types-gradually)
-- [What is deliberately not checked](#what-is-deliberately-not-checked)
-- [Stability](#stability)
+- [What is not checked](#what-is-not-checked)
 
 ## The idea: annotations are promises
 
-A dynamically typed language allows a program to run without declaring the
-types of values. This is convenient during exploration, but it defers the
-detection of type errors to runtime, sometimes far from the cause. A
-statically typed language detects those errors before the program runs, at
-the cost of requiring annotations throughout.
-
-olang takes a gradual position: the author chooses, at each site, whether to
-annotate. Unannotated code behaves as it does in any dynamically typed
-language. An annotation, wherever it appears, changes the contract from
-documentation to enforcement:
+The author chooses, at each site, whether to annotate. Unannotated code
+behaves as it does in any dynamically typed language; an annotation,
+wherever it appears, is enforced:
 
 ```olang
 fn label(n: Int) -> String = `#${n}`
@@ -63,19 +54,18 @@ annotation forms — `Int`, `Float`, `String`, `Bool`, `[T]`, `(A, B)`,
 Three rules make enforcement predictable:
 
 1. **Unannotated code is fully dynamic.** No annotation, no check, no
-   cost. A program that never mentions a type runs exactly as it did
-   before olang was gradually typed. Adding types to one function judges
-   that function's boundaries and nothing else.
+   cost. Adding types to one function judges that function's boundaries
+   and nothing else.
 
 2. **Containers check shallowly at runtime.** `List<Int>` promises "a
    List", verified in O(1) at the boundary — the runtime never walks a
    million elements to admit an argument. Element types are the *static
-   checker's* concern, and it takes them seriously
+   checker's* concern
    ([below](#element-types--where-the-checker-goes-deeper)).
 
 3. **`Int` and `Float` are strict.** An `Int` does not satisfy a `Float`
-   annotation — there is no silent widening, matching how struct fields
-   have always been enforced. Write `to_float(n)` when you mean it.
+   annotation — there is no silent widening, at a parameter as at a
+   struct field. Write `to_float(n)` when you mean it.
 
 ## Runtime enforcement
 
@@ -168,9 +158,7 @@ Details worth knowing:
   count is annotation-sized). Branches keep their own rules — a
   `Result<Int, String> | Int` union applies the payload check when the
   value is a Result. A union containing an unenforceable branch (e.g. a
-  generic parameter) is entirely unchecked rather than wrongly strict —
-  rejecting a value the unenforceable branch might have accepted would
-  break the gradual contract.
+  generic parameter) is entirely unchecked rather than wrongly strict.
 
   ```olang no-run
   fn tag(x: Int | String) = show(x)
@@ -180,18 +168,15 @@ Details worth knowing:
 
 - **Generic type parameters are erased.** In `fn first<T>(xs: List<T>)
   -> T`, the `T` has no runtime identity and is never checked — but the
-  `List` base still is, and trait *bounds* on generics are enforced as
-  they always were.
+  `List` base still is, and trait *bounds* on generics are enforced.
 - **Checks are precomputed.** The work happens once, at declaration; a
   call pays one tag comparison per annotated site. Unannotated
-  parameters cost literally nothing.
+  parameters cost nothing.
 
 ## The static checker
 
-Runtime enforcement means a broken promise fails *at the boundary*
-instead of corrupting state three calls later. The static checker moves
-the same failure earlier still — to the terminal, or the editor, at the
-moment the mistake is typed:
+The static checker reports a broken promise before the program runs, in
+the terminal or in the editor:
 
 ```bash
 olang check
@@ -199,12 +184,12 @@ olang check
 
 `olang check [paths]` walks every `.ol` file, and the same pass runs
 inside `olang lsp`, so editors show these as error squiggles as you type
-(see [Editors](editors.md)). Its discipline is **no false positives**: a
+(see [Editors](editors.md)). It reports **no false positives**: a
 diagnostic appears only when an annotation is provably dishonest.
 Everything it cannot prove stays silent, and unannotated code is never
-judged — the checker will never ask you to add types to satisfy it.
+judged.
 
-What it proves today:
+What it proves:
 
 - **Literal arguments against annotated parameters** — `f("hello")` when
   `f` declares `x: Int`.
@@ -221,8 +206,7 @@ What it proves today:
 - **Element types inside container literals** — the next section.
 
 Every diagnostic is positioned in the source, rendered with the line and
-a caret, and carries one of two labels — because the checker is honest
-about its relationship to the runtime:
+a caret, and carries one of two labels:
 
 - *"this would fail at runtime"* — the runtime's own enforcement rejects
   this too, and the message is the runtime's error text **word for
@@ -232,14 +216,14 @@ about its relationship to the runtime:
   O(1) checks would let this run, but an annotation in the flagged chain
   is provably false.
 
-`olang check` exits non-zero when anything is found, so it slots
-directly into CI. Command details live in
+`olang check` exits non-zero when anything is found. Command details
+are in
 [Tooling](tooling.md#olang-check).
 
 ## Element types — where the checker goes deeper
 
-Rule 2 says the runtime checks `List<Int>` shallowly. The checker is
-where the element promise gets teeth. Container **literals** decompose
+The runtime checks `List<Int>` shallowly; the checker checks the
+elements. Container **literals** decompose
 against their annotations element by element, with the path spelled out:
 
 ```olang no-run
@@ -272,7 +256,7 @@ binding to a parameter declared `List<Int>` is flagged with the full
 types (`expects List<Int>, got List<String>`) even though no literal is
 in sight.
 
-The conservatism is deliberate and symmetric. An empty list satisfies
+The checker is conservative. An empty list satisfies
 any element type; a list whose elements the checker cannot type stays
 silent; a generic `List<T>` erases the element promise but keeps the
 base. When the checker speaks, the annotation is provably false — there
@@ -321,19 +305,13 @@ The practical playbook, in the order that pays:
 4. **Run `olang check` in CI.** It is fast (a parse plus one pass per
    file), silent on dynamic code, and every finding is real.
 
-A program can live indefinitely at any point on this spectrum — fully
-dynamic scripts, typed cores with dynamic edges, or annotations
-everywhere. All of `examples/` runs with the enforcement on; annotations
-that were already honest cost nothing to keep.
+A program can stay at any point on this spectrum: fully dynamic
+scripts, typed cores with dynamic edges, or annotations everywhere.
 
-## What is deliberately not checked
+## What is not checked
 
-Knowing the boundaries tells you what an annotation cannot promise:
-
-- **Deep runtime container checks.** The runtime will not walk a
-  container at a boundary — that would turn an O(1) call into O(n).
-  Shallow at runtime, deep in the checker, is the permanent division of
-  labor.
+- **Deep runtime container checks.** The runtime does not walk a
+  container at a boundary; element types are the checker's.
 - **Generic type parameters** — erased at runtime, `Unknown` to the
   checker. Their trait bounds are enforced separately.
 - **Signature types inside function annotations.** The runtime checks
@@ -344,26 +322,11 @@ Knowing the boundaries tells you what an annotation cannot promise:
   side's *base* type; structure inside the payload (list elements, a
   nested Result's own payload) is the checker's territory, like every
   other deep promise.
-- **Reserved forms** — intersection (`A & B`) annotations are not
-  accepted at all: writing one is a parse error, not an unenforced
-  promise
-  ([Stability](stability.md#reserved--not-accepted-and-additive-if-they-ever-are)).
-  Unions and literal types both left the reserved list in 0.50, when
-  they gained semantics.
+- **Intersections** — `A & B` annotations are not accepted: writing
+  one is a parse error, not an unenforced promise.
 - **The checker never speculates.** No inference across module
   boundaries, no narrowing from `if typeof(x) == ...`, no guesses about
   dynamic code. Anything short of proof is silence.
-
-## Stability
-
-The gradual-typing contract is part of the language's
-[stability commitment](stability.md): annotation forms keep parsing,
-enforcement semantics are locked by the doc tests in this chapter and
-the regression suites, and the checker's no-false-positive discipline is
-a fixed rule — new checker capabilities may prove *more*, but a clean
-program stays clean. Enforcement landed as the one deliberate breaking
-change of 0.48.0, recorded in [CHANGELOG.md](../CHANGELOG.md); programs
-whose annotations were honest noticed nothing.
 
 ---
 

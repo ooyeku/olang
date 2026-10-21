@@ -9,8 +9,8 @@ virtual machine (the OVM) and the Cranelift JIT. It covers what each tier
 compiles, how each stays faithful to the interpreter, and what each does not
 compile. The set of constructs a tier does not support is documented as
 precisely as the set it does, because a program's behavior depends on knowing
-where a tier falls back. For the rationale behind the tiered architecture, see
-[Architecture and internals](internals.md#why-an-interpreter-is-the-authority).
+where a tier falls back. The rule every tier follows is in
+[Architecture and internals](internals.md#the-interpreter-is-the-authority).
 
 ## Table of contents
 
@@ -63,10 +63,10 @@ which is why the default can never change program behavior.
 **Callees compile at their first call.** When a function calls a user
 function that has no id yet, the compiler gives the callee one on the spot
 and emits a direct call to it; the callee is *owed* — compiled when that
-call first runs, not before its caller. Compiling a caller used to compile
-everything it could reach first, down the whole call graph: olang Studio's
-first frame compiled ~1,800 functions (235 ms) to run ~480 of them; now it
-compiles those ~480 (45 ms). The rules are the eager route's, only later:
+call first runs, not before its caller, so a program compiles only the
+functions it calls (a large desktop application's first frame: ~480
+functions in 45 ms, against ~1,800 in 235 ms if every reachable function
+compiled with its caller). The rules are the eager route's, only later:
 
 - a callee is owed only where the eager route would have compiled it by
   name (not the registry's, not a builtin, not ambiguous, not already
@@ -100,9 +100,9 @@ The decision logic lives in `src/ovm/tier.rs`.
 ### The compile cache
 
 A compile is kept between runs (`src/compile_cache.rs`,
-`src/ovm/bytecode/cached.rs`): olang Studio's first frame compiled ~545
-functions (~65 ms) at every launch from trees the parse cache had kept,
-and now takes ~8 ms to use what an earlier launch compiled.
+`src/ovm/bytecode/cached.rs`): a large application whose first frame
+compiles ~545 functions (~65 ms) takes ~8 ms to use what an earlier
+launch compiled.
 
 - **An entry** is one compile: the function's bytecode and its lambdas'
   (a group), each constant written as where it came from — a literal, or
@@ -155,45 +155,9 @@ and now takes ~8 ms to use what an earlier launch compiled.
   entries kept.
 
 **Native code is not kept.** What the JIT emits holds this run's
-addresses, and it is specialized on the argument kinds its first call
-saw. Keeping it exactly — the bar, since a cached body that is wrong
-for one run is a miscompile no test of a single run catches — needs
-three changes, none of them a cache's own (looked at again for
-0.88; the ~15 ms of olang Studio's launch in 26 groups was not worth a
-partial version):
-
-1. **Code that holds no address of this run.** Cranelift relocates the
-   calls it is told about (the ~60 `olang_jit_*` helpers are imports
-   declared by name, so those are already symbols), but jit.rs also
-   bakes addresses in as immediates (`iconst`): the interrupt flag a
-   poll loads (`interrupt::flag_address`), a call counter's cell
-   (`CALL_COUNTERS`), a string or list constant's `Arc` (the constant
-   tables), a struct shape's `Arc` passed to `olang_jit_make_struct`, and
-   the expected shape a field read's guard compares with — a guard that
-   compares pointers, so a shape must be the very one this run interned.
-   Each would become a load from a per-group table of slots (or a data
-   symbol Cranelift relocates), filled when the group is installed: the
-   shape found again by its type and fields, the constant rebuilt from
-   its value, the flag and counters this run's.
-2. **The relocations kept.** `JITModule` applies relocations and
-   forgets them (`finalize_definitions`); the bytes with their
-   relocation list come from compiling each function with
-   `Context::compile` and reading `MachBufferFinalized::relocs()` before
-   the module is given it, members of a group named by their member
-   index.
-3. **A loader.** Map `MAP_JIT` memory (macOS), write with the thread's write
-   protection off (`pthread_jit_write_protect_np`), apply the
-   relocations (each helper by name, each member by index), turn
-   protection back on, invalidate the instruction cache, and enter the
-   group into the dispatch tables and the inline caches as a fresh
-   compile would — keyed by the bytecode entry's key, the argument
-   kinds, the CPU features Cranelift compiled for, and the build of
-   olang, with `--verify-tiers` able to re-run a loaded body against
-   the VM.
-
-Of the three, the first is most of the work and most of the risk: it
-touches every constant-carrying instruction the JIT lowers and the
-guards that make native code sound.
+addresses (helpers, interned struct shapes, constants, the interrupt flag)
+and is specialized on the argument kinds its first call saw, so it
+compiles again each run.
 
 ### What can be promoted
 
@@ -347,7 +311,7 @@ Anything else causes the function to stay interpreted:
 None of these are errors. They are compile-time rejections that fall back to
 the interpreter, which is why enabling the tier can never break a program.
 A refusal's reason names the construct (``it contains a `par for` loop``),
-as `--ovm-stats=json` and olang Studio's tier map report it.
+as `--ovm-stats=json` reports it.
 
 ## Correctness policy
 
@@ -368,13 +332,8 @@ rule is enforced by three test suites:
 - `tests/tier_agreement_test.rs` runs the *corpus* — every runnable
   example in this book and every standalone example program — under
   `--no-ovm` and under `--ovm-tier=1`, comparing stdout, stderr, and
-  exit status. It exists because the two suites above call functions
-  that a person thought to write down, and the first divergence it
-  found was one nobody would have: the interpreter read `()` as Unit
-  while the compiler built a zero-element tuple, so a hot function
-  comparing `x == ()` answered differently from a cold one. Nothing
-  failed. The fast tier simply won, and it was noticed by accident
-  while adding an unrelated feature.
+  exit status, so it catches divergences in code no one thought to
+  write a differential case for.
 
 The contract covers more than results: **runtime error traces are
 tier-identical too**. When a program dies at depth, the reported error
@@ -414,12 +373,10 @@ as deep as it is, and grow the stack as they go.
 wrapped (`AstList`, `AstMap`), in O(1). A wrapped map of at most
 `AST_MAP_PROMOTE` (256) entries that is written (`map_set`,
 `map_update`) a collection the VM built becomes the VM's own map, its
-entries wrapped where they are: left a wrapper, every such write
-converted the value into the interpreter's form, and a program state
-that crossed in once (a loop entered from the tree-walker, as an
-application's event loop is) converted what it set into it every turn.
-A native can read the VM's values where they are and answer in the
-VM's form (`flat_vm_native`: Loom's flat layout, its diff and its frame
+entries wrapped where they are, so a program state that crossed in once
+(a loop entered from the tree-walker, as an application's event loop is)
+is not converted again on every write. A native can read the VM's values where they are and answer in the
+VM's form (`flat_vm_native`: the `gui` engine's flat layout, its diff and its frame
 index read last frame's answers without converting them, and answer
 typed lists and VM maps the passes read natively). What a native builds
 from the interpreter's values (a placement) is better answered wrapped:
@@ -430,12 +387,6 @@ The VM-to-interpreter conversion keeps what it converted by identity
 (`TO_AST_CACHE`, `ovm/value.rs`) and lets a dead entry go two at a time
 as entries are added, so freeing what died is spread over the turns
 that made it, never a sweep that frees several frames' worth at once.
-
-NaN-boxing the value to 8 bytes was prototyped (canonicalized floats,
-48-bit small integers and pointers) and priced at roughly 10% on the
-most value-bound workloads, against the cost of manual reference
-counting at every register move. The prototype was deleted; the verdict
-and its evidence are recorded in the [CHANGELOG](../CHANGELOG.md).
 
 ## Bytecode VM
 
@@ -533,8 +484,7 @@ calls to other olang functions, return, the float `math.*` builtins,
 struct field reads and construction, list indexing and `for` iteration,
 tuple returns, and strings — including template strings, whose scalar
 interpolations stringify natively with the interpreter's exact rules
-(so a report or CSV builder that formats its result no longer keeps
-its whole function off native). Compilation is
+(so a report or CSV builder that formats its result compiles). Compilation is
 **type-specialized, lazy, and call-graph aware**: on a function's first
 call, the JIT plans every function reachable through its call sites,
 runs kind inference to a global fixpoint across the group (callee
@@ -598,16 +548,15 @@ no refcount is ever touched on the way in):
   allocation and follows the struct discipline exactly.
 
 Allocation inside loops is governed by the **scratch watermark**. The
-scratch model owns every value a native call builds, which naively
-means an allocating loop holds all its garbage until the call returns
-— so early versions simply refused to compile them. The watermark
+scratch model owns every value a native call builds, so an allocating
+loop would hold all its garbage until the call returns. The watermark
 lifts that: when liveness analysis proves that no heap value built in
 the loop body survives into the next iteration, the compiled loop
 records the scratch depth at entry and truncates back to it at every
 taken back-edge — per-iteration values die per iteration, exactly as
 they would on bytecode. Loops whose allocations *do* cross iterations
 (accumulators that grow a list, say) still refuse and drive the native
-constructors call by call. One deliberate refusal rule remains: mixed
+constructors call by call. One refusal rule remains: mixed
 string/number `+` (formatting) stays on bytecode.
 
 Before any of that, the plan pass rewrites the bytecode it was handed
@@ -652,8 +601,8 @@ and interpreted and must agree byte-for-byte.
 ### On-stack replacement
 
 A hot loop inside a function the whole-function JIT refused — a
-`println` in the prologue, a formatting epilogue — no longer strands
-its iterations on the dispatch loop. When a frame's back-edge counter
+`println` in the prologue, a formatting epilogue — still runs its
+iterations natively. When a frame's back-edge counter
 crosses a threshold, the loop region is synthesized into a standalone
 function: its parameters are the registers the loop reads, its return
 value the registers it writes that outlive it. The synthesized
@@ -716,8 +665,8 @@ Domain-constrained math (`sqrt`, `asin`, `acos`, `ln`, `log2`,
 `log10`) compiles behind a guard: an out-of-domain argument branches
 to deoptimization, and the bytecode re-run raises the interpreter's
 exact domain error. Native code never computes the NaN the checked
-path would have refused, and one `math.sqrt` in a loop body no longer
-keeps the whole region on bytecode.
+path would have refused, and one `math.sqrt` in a loop body does not
+keep the whole region on bytecode.
 
 ## Compile-time knowledge
 
@@ -761,8 +710,8 @@ refused; then one `bridge-call: <name>(<layouts>) calls=… us=…` line per
 builtin or function value that still crossed the bridge, most expensive
 first, its arguments named by their layout in the VM (`map(AstList,Closure)`:
 a wrapped list mapped by a compiled lambda), and the time each spent
-converting and running there. A refused function no longer takes its callers with it — a
-caller compiles and calls it through the bridge — and a name is
+converting and running there. A refused function does not take its
+callers with it: a caller compiles and calls it through the bridge — and a name is
 resolved against its module's finished scope, so a private helper
 written below its caller, a builtin with no native arm (`drop`,
 `map_get_in`, `map_get_or`, `attempt`), and a dispatch with a hundred
@@ -789,7 +738,7 @@ construction. The measured exception: the collection builtins (`len`,
 boundary conversion, each mirroring the interpreter's checks in the same
 order with the same messages — the boundary tax on `map_get`/`map_set`
 is what environment-threading code lives on, and a UI's per-node loops
-(Loom's layout and diff) on the rest, so these earn their second
+on the rest, so these earn their second
 implementation and are held to the differential suite like everything
 else. `show`, `to_string` and `typeof` answer in the VM too, rendering
 through the interpreter's own `Value::to_string` (one implementation);
@@ -825,11 +774,7 @@ interpreter would.
 
 `BytecodeVm::round_trips` is the single definition of which values survive
 the boundary; the tier uses it to decide whether a call's arguments and
-result can cross. It is deliberately the *only* copy of that knowledge —
-a duplicate list in the tier is the kind of thing that silently drifts
-(omit `Ok`/`Err` from it and every call passing a `Result` quietly falls
-back to the interpreter, costing speed while changing nothing observable —
-the hardest regression class to notice).
+result can cross, and is the only copy of that knowledge.
 
 A user function shadows a builtin of the same name, matching the interpreter's
 environment lookup: declaring `fn clamp(...)` makes calls to `clamp` resolve to
@@ -843,8 +788,8 @@ implemented identically — same algorithm, plain loops, the language's
 natural containers, no vectorization libraries — in olang, C++, Rust,
 Go, Java, JavaScript (Node), Lua, Python, and R. Every implementation
 prints a checksum the runner validates across languages, and times its
-own measured section; the runner medians the repetitions. Since the
-tier is on by default, the olang numbers are what a plain
+own measured section; the runner medians the repetitions. The tiers
+are on by default, so the olang numbers are what a plain
 `olang program.ol` gets, with no flags.
 
 Median milliseconds on an Apple M5 Pro (6P+12E, 24 GB), macOS 27.0 (Node 26, OpenJDK 25,
@@ -875,8 +820,8 @@ For data-frame workloads the comparison that matters is
 [`benchmarks/run.sh`](../benchmarks/), the checksum-locked pipeline
 against pandas and Polars; the ods engine runs the full pipeline
 within ~25% of Polars and about 7× ahead of pandas. The
-[data stack chapter](ods.md#performance-characteristics) holds the
-per-operation numbers.
+[Writing fast olang](performance.md#the-data-stack-against-other-engines)
+holds the per-operation numbers.
 
 Against its own interpreter (`--no-ovm`), the tiers are worth roughly
 275× (fib, bytecode + JIT) to ~900× (N-body): the whole N-body simulation —
@@ -884,12 +829,9 @@ construction, stepping, capturing lambdas, struct building, field
 access, `math.sqrt` — runs as 6 promoted functions, 0 rejected, with 7
 tier crossings.
 
-Two later additions moved the remaining hot spots: the scratch
-watermark plus scalar replacement put allocating kernels ahead of the
-JavaScript JITs on the project's benchmark suite, and the VM's in-place `+=` string append (an `AddAssign` fusion the
-compiler applies when the right-hand side cannot observe the target)
-turned quadratic string building linear — a 150×-class win on
-build-a-report workloads. Reproduce any of this with
+The VM appends to a string in place (`s = s + x`, fused when the
+right-hand side cannot observe the target), so building a string in a
+loop is linear. Reproduce any of this with
 [`olang bench`](tooling.md#olang-bench), which isolates each kernel in
 a subprocess and compares runs against saved baselines.
 
@@ -915,7 +857,7 @@ These are real boundaries, stated so you can predict them:
 2. ***Assigning* to a global is uncompiled** (reads bake as snapshot
    constants). Background tasks (`spawn`) and
    `par for` stay interpreted — the compiler refuses the parallel loop
-   fail-closed; it is interpreter-owned by design.
+   fail-closed.
 3. **Bridged builtin calls cost a value round trip.** Builtins outside
    the native set convert arguments and results between the OVM and AST
    value models per call. The native set spans the higher-order
@@ -931,18 +873,12 @@ These are real boundaries, stated so you can predict them:
 - **Tracing garbage collection.** Memory is reference-counted; `gc.rs` holds
   only the safepoint flags the interpreter polls. olang values are
   immutable and acyclic, so there are no cycles to collect.
-- **NaN-boxing.** An 8-byte value scheme was prototyped, priced at
-  roughly 10%, and deleted; the verdict is recorded in the
-  [CHANGELOG](../CHANGELOG.md).
-- **Automatic SIMD vectorization** and pipeline fusion. If bulk numeric
-  throughput matters, the honest route is explicit vectorized
-  operations — which is what [the ods data stack](stdlib.md#ods--series-and-frames)
-  provides — rather than a speculative auto-vectorizer inside the VM.
-- **Speculative adaptive optimization** — polymorphic inline caches,
+- **Automatic SIMD vectorization.** Bulk numeric work belongs in
+  vectorized column operations, which
+  [the ods data stack](stdlib.md#ods--series-and-frames) provides.
+- **Speculative adaptive optimization**: polymorphic inline caches,
   speculation with side-exit deopt, feedback-driven inlining,
-  background tiering. These are deliberate omissions, not accidental
-  gaps, and a tracing JIT and a tracing garbage collector are rejected
-  outright. On-stack replacement is the exception: it is implemented
+  background tiering, tracing. On-stack replacement is implemented
   (see [On-stack replacement](#on-stack-replacement)) in a
   non-speculative form — a loop region either compiles under the same
   pure whitelist as a whole function or stays on bytecode, and a

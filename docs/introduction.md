@@ -1,25 +1,24 @@
 # Introduction
 
 olang is a dynamically typed, functional programming language implemented in
-Rust. This chapter describes what the language is, the goals that shape its
-design, and the kinds of programs it is suited to. It assumes general
-programming experience but no prior exposure to olang.
+Rust. This chapter describes what the language is, what comes with it, and
+how this book is organized. It assumes general programming experience but no
+prior exposure to olang.
 
 Part of [the olang book](README.md).
 
 ## What olang is
 
 An olang program is built from expressions. Functions are values, data is
-immutable, and computation is usually expressed as a pipeline that transforms
-data through a sequence of small functions. The language provides pattern
-matching, algebraic data types, and `Result`-based error handling, and it
-includes a substantial standard library: text and collection utilities,
-file and network access, an embedded SQL database, a data-analysis stack, and
-more.
+immutable, and computation is usually written as a pipeline that passes data
+through a sequence of small functions. The language has pattern matching,
+algebraic data types, traits, and `Result`-based error handling, and it ships
+with a large standard library: text and collections, files and processes,
+HTTP, an embedded SQL database, a data-analysis stack, a terminal toolkit,
+desktop windows, and a browser runtime.
 
-The following program reads a small dataset, groups it, and reports a summary.
-It illustrates the language's typical shape: literal data, a pipeline of
-transformations, and pattern matching.
+The following program declares a record type, computes a mean with a
+pipeline, and classifies it with `match`:
 
 ```olang
 type Reading = struct { station: String, celsius: Float }
@@ -30,94 +29,74 @@ let readings = [
     Reading { station: "south", celsius: 24.0 },
 ]
 
-let total = readings
-    |> map((r) => r.celsius)
-    |> fold(0.0, (acc, c) => acc + c)
+fn feel(c) = match c {
+    c if c < 18.0 => "cool",
+    c if c < 25.0 => "comfortable",
+    _ => "hot"
+}
 
-println(`mean: ${total / to_float(len(readings))}`)
+let mean = readings |> map((r) => r.celsius) |> average
+println(`mean ${mean}, ${feel(mean)}`)   // mean 21.5, comfortable
 ```
 
-## Design goals
+## What comes with it
 
-olang is organized around a small number of goals. They explain most of the
-language's specific choices, and they recur throughout the book.
+**Three execution tiers.** A tree-walking interpreter defines the language's
+semantics. Hot functions are compiled to a bytecode VM, and hot numeric code
+further to native code by a JIT. Each faster tier either reproduces the
+interpreter's result exactly or declines and falls back, so a program means
+the same thing whichever tier runs it, and nothing needs configuring.
+[Writing fast olang](performance.md) describes the program shapes the tiers
+optimize; [The execution model](ovm.md) describes the machinery and its
+measured performance.
 
-### Openness
+**Concurrency without shared mutable state.** Values are immutable and
+closures capture by value. `spawn` runs a function on an operating-system
+thread; `par_map`, `par_filter` and `par for` spread work across cores with
+no global interpreter lock; channels carry messages between threads. See
+[Concurrency](language.md#concurrency).
 
-A program's structure, its compiled artifacts, and its execution are all
-available to olang programs as data.
+**Gradual typing.** Code without annotations runs fully dynamically. Each
+annotation is enforced at runtime on every tier, and `olang check` reports
+the violations it can prove before the program runs, so types can be added
+one function or field at a time. See [Types and gradual typing](types.md).
 
-- A program's abstract syntax tree is a stable, documented format, returned by
-  `meta.parse` as ordinary olang values. Program-analysis tools are written in
-  olang.
-- A binary produced by `olang build` embeds its own source, a checksum, and
-  the capabilities it may use. `olang inspect` reads these back.
-- A run can be recorded to a portable trace and replayed exactly with `olang
-  record` and `olang replay`.
+**A built-in data stack.** Typed columns and data frames (`ods`), matrices,
+statistical inference and time series (`stats`), machine learning with model
+formulas (`learn`, `ml`), and charts (`plot`, and the grammar of graphics
+`gg`) run as native code beneath the language. See [The data stack](ods.md).
 
-These properties depend on other design decisions — a stabilized syntax,
-immutable values, and a narrow boundary around side effects — and are
-described in full in the [Openness](openness.md) chapter.
+**Programs as data.** `meta.parse` returns a program's syntax tree as
+ordinary olang values, so linters and codemods are olang programs. A binary
+built with `olang build` carries its own source, manifest and capability
+grant, which `olang inspect` reads back and verifies. `olang record` logs a
+run's nondeterministic inputs and `olang replay` reproduces the run exactly.
+See [`meta`](stdlib.md#meta--the-program-as-data-the-open-ast),
+[The transparent binary](packages.md#the-transparent-binary) and
+[Record and replay](tooling.md#olang-record-and-olang-replay--the-open-timeline).
 
-### Predictable execution
+**One toolchain.** `olang` runs, tests, formats, checks, profiles, builds and
+documents programs, and serves the language server; `otc` scaffolds projects
+and manages dependencies. See [Command-line tooling](tooling.md) and
+[Packages and dependencies](packages.md).
 
-olang runs on three tiers: a tree-walking interpreter, a bytecode virtual
-machine, and a native-code JIT. The interpreter defines the language's
-semantics. The faster tiers are optimizations: each either reproduces the
-interpreter's result exactly or declines to run the function and falls back.
-A program therefore means the same thing regardless of which tier executes
-it, and performance requires no configuration. The repository carries a
-cross-language benchmark suite ([`benchmarks/xlang/`](../benchmarks/xlang/)) whose current
-standings are tabulated in
-[The execution model: OVM and JIT](ovm.md#performance), and a
-checksum-locked data-pipeline benchmark against pandas and Polars
-([`benchmarks/`](../benchmarks/)). The model itself is described in
-[Architecture and internals](internals.md) and
-[The execution model: OVM and JIT](ovm.md).
+The same language runs in the browser as WebAssembly, where an olang program
+drives the page ([olang in the browser](wasm.md)), and the
+[web SDK](web-sdk.md) builds full-stack applications on that.
 
-### Safe concurrency
+## Platforms and stability
 
-Because values are immutable and closures capture by value, concurrent code
-cannot share mutable state through ordinary variables. `spawn` runs a function
-on an operating-system thread, and `par_map`, `par_filter`, and `par for`
-distribute work across cores without a global interpreter lock. Communication
-between threads is explicit, through channels. See the concurrency section of
-the [Language reference](language.md).
-
-### Gradual typing
-
-Code without type annotations runs fully dynamically. Annotations are
-optional, and each one is enforced at runtime on every tier; the `olang check`
-static checker additionally reports violations it can prove before the program
-runs. Types can be added to a program incrementally, one function or field at
-a time. See [Types and gradual typing](types.md).
-
-## When to use olang
-
-olang supports complete programs across several domains: command-line
-tools, data analysis, automation, HTTP services, and browser frontends,
-each demonstrated by a working program in
-[`examples/`](../examples/). The standard library and data stack make most
-such programs self-contained, and the tooling — a test runner, formatter,
-static checker, and executable builder — supports a project without
-additional dependencies. The implementation is heavily tested: every
-documented behavior is locked by an executed example, and the execution
-tiers are verified against each other on every change.
-
-Two considerations apply before 1.0. The third-party package ecosystem is
-small, so programs rely chiefly on the standard library. The language surface
-is closed: the breaking releases (0.48, 0.61 through 0.65, 0.68, and 0.88)
-have shipped, and 0.88 is the last release before 1.0. The 1.0
-compatibility promise applies to macOS; Linux and Windows are unsupported
-previews. [Stability and compatibility](stability.md) is the authoritative
-statement of what is stable, including the [platforms](stability.md#platforms)
-1.0 covers.
+olang 1.0 promises compatibility on macOS. Linux and Windows are unsupported
+previews. The third-party package ecosystem is small, so programs rely
+chiefly on the standard library. [Stability and
+compatibility](stability.md) is the authoritative statement of what is
+stable, including the [platforms](stability.md#platforms) it covers.
 
 ## How to read this book
 
 If you are new to the language, continue with [Installation](installation.md)
-and then [A tour of olang](tour.md), which teaches the language by building one
-program from start to finish. The [Language reference](language.md) and
+and then [A tour of olang](tour.md), which teaches the language by building
+one program from start to finish. The [Language reference](language.md) and
 [Common pitfalls](pitfalls.md) are useful to keep at hand afterward. The
-[book index](README.md) lists suggested reading paths for other goals,
-including library use and contributing to the implementation.
+[book's contents](README.md) list the remaining chapters and suggest reading
+paths for other goals.

@@ -7,13 +7,14 @@ Part of [the olang book](README.md) ·
 
 olang's tiers require no configuration: a plain `olang program.ol` runs
 the interpreter, promotes hot functions to the bytecode VM, and compiles
-qualifying code to native machine code. Every tier reproduces the
-interpreter's results exactly or declines. What the tiers *cannot* do is
-rewrite a program into a shape they optimize well. This chapter states
-the shapes that reach the fast path, how to see which tier is running
-your code, and how to verify the result — knowledge drawn from building
-the repository's own benchmarks and data workstreams, where each idiom
-below made a measured difference of between 2× and several hundred times.
+qualifying code to native machine code with the JIT. Every tier
+reproduces the interpreter's results exactly or declines. What the tiers
+cannot do is rewrite a program into a shape they optimize well. This
+chapter states the shapes that reach the fast path, how to see which
+tier is running your code and verify the result, and what the data stack
+costs against NumPy, pandas, Polars and scikit-learn. [The execution
+model](ovm.md) describes the tiers themselves and holds the
+cross-language standings.
 
 ## Table of contents
 
@@ -24,13 +25,14 @@ below made a measured difference of between 2× and several hundred times.
 - [Reading the tier's decisions](#reading-the-tiers-decisions)
 - [Verifying a hot program](#verifying-a-hot-program)
 - [Bulk data belongs in ods](#bulk-data-belongs-in-ods)
+- [The data stack against other engines](#the-data-stack-against-other-engines)
 - [Automatic parallelism in ods](#automatic-parallelism-in-ods)
 - [The expression engine](#the-expression-engine)
 - [Text, dates and categories](#text-dates-and-categories)
 - [Frames: grouping, joins and time](#frames-grouping-joins-and-time)
 - [Statistics and time series](#statistics-and-time-series)
 - [Matrices and formulas](#matrices-and-formulas)
-- [Trees over categories](#trees-over-categories)
+- [Against scikit-learn](#against-scikit-learn)
 - [What a program costs in memory](#what-a-program-costs-in-memory)
 
 ## Put hot loops in functions
@@ -56,9 +58,8 @@ let total = sum_values(values, n)
 ```
 
 Moving the repository's n-body benchmark loop from the top level into a
-function changed nothing about the algorithm and made it 24× faster,
-because the loop nest became an on-stack-replacement region compiled as
-a whole. When a script has one hot section, wrap that section in a
+function makes it 24× faster, because the loop nest becomes an
+on-stack-replacement region compiled as a whole. When a script has one hot section, wrap that section in a
 function and call it once.
 
 ## The rebind forms
@@ -104,8 +105,8 @@ because they are what people write and mean exactly the same thing:
 
 The second is every reducer: `fold` hands its accumulator over rather
 than sharing it, so a `fold` that builds a list or a map extends it in
-place — 20,000 keys through `fold` and `map_set` took 3.5 s in 0.86.0
-and take 5 ms, which is what the loop took. A temporary that *is* read
+place — 20,000 keys through `fold` and `map_set` take about 5 ms, as the
+equivalent loop does. A temporary that *is* read
 again holds a second reference, and a prepend (`out = [x] + out`) moves
 every element; neither can happen in place, and `olang check` says so
 where the loop is written (class `copy` of
@@ -113,8 +114,8 @@ where the loop is written (class `copy` of
 
 One ordering rule follows from the semantics: the arguments after the
 first are evaluated *before* the value is taken, so
-`m = map_set(m, k, map_get(m, k) + 1)` reads the live map and then
-updates it, exactly as the interpreter does.
+`m = map_set(m, k, m[k] + 1)` reads the live map and then updates it,
+exactly as the interpreter does.
 
 ## Homogeneous lists are typed lists
 
@@ -197,11 +198,12 @@ reporting, never a behavior to code around.
 The idioms above make scalar loops fast; they do not make olang a
 vector engine. For column-scale numeric work — millions of rows,
 aggregation, joins, sorting — the [data stack](ods.md) executes
-operations in parallel native code and holds its own measured standings
-against NumPy, pandas, and Polars. The division of labor is simple:
-express per-element logic in olang functions, keep bulk transformation
-in `Series` and `Frame` operations, and cross between the two at the
-edges rather than inside loops.
+operations in native code, in parallel on large columns. Express
+per-element logic in olang functions, keep bulk transformation in
+Series and Frame operations, and cross between the two at the edges
+rather than inside loops: a pipeline that calls `to_list`, maps a
+lambda and rebuilds a Series pays the per-element cost the columns
+avoid. The rest of this chapter measures the data stack.
 
 ### Methods and names cost nothing
 
@@ -225,6 +227,54 @@ in the interpreter (it calls the function by name rather than reading it
 from the module first). A method with names binds them when it runs,
 once its receiver says which function it is: one small vector more. On a
 column of any size the kernel is the cost.
+
+## The data stack against other engines
+
+Column kernels on 10M elements against NumPy 2.5, and grouping on 10M
+rows against Polars 1.43, on an Apple M5 Pro (18 threads), best of
+fifteen:
+
+| Operation | ods, one thread | ods, parallel | Reference |
+|---|---:|---:|---|
+| `sum` / `mean` | 1.01 ms | 0.41 ms | NumPy 1.12 ms |
+| `std` | 2.06 ms | | NumPy 5.11 ms |
+| `sort` | 121.5 ms | 24.1 ms | NumPy 324.3 ms |
+| `mean` with 10% nulls | 4.71 ms | | NumPy `nanmean` 7.84 ms |
+| OLS fit, 1M rows × 20 predictors | 90 ms | 36.4 ms | NumPy `lstsq` 137.8 ms |
+| group-by, 1,000 groups | 27.2 ms | | Polars 24.0 ms (18 threads) |
+
+A dense `sum` keeps eight accumulators so that it vectorizes, so its
+order of additions differs from left to right, as NumPy's pairwise sum
+does.
+
+**The pipeline benchmark.** [`benchmarks/run.sh`](../benchmarks/) runs
+one end-to-end ETL pass over a generated 1M-row CSV — load, clean,
+filter, group, join, sort, a daily rolling series, write — written with
+identical semantics in olang, pandas 3.0.5 and Polars 1.44.1. Every
+stage prints a checksum, and the runner refuses a result where any
+checksum disagrees across engines or repetitions. Medians of seven runs
+on an Apple M5 Pro, each engine as it ships (ods with its automatic
+parallelism, pandas single-threaded, Polars on its thread pool), timed
+inside each process:
+
+| Stage | ods | pandas | Polars |
+|---|---|---|---|
+| load (1M-row CSV) | 10 ms | 174 ms | 7 ms |
+| clean (drop nulls, derive) | 12 ms | 54 ms | 6 ms |
+| filter | 9 ms | 9 ms | 5 ms |
+| group (2 keys, 3 aggs) | 4 ms | 50 ms | 8 ms |
+| join (dimension table) | 0 ms | 1 ms | 1 ms |
+| sort | 0 ms | 0 ms | 0 ms |
+| daily (group, sort, rolling 7) | 2 ms | 21 ms | 6 ms |
+| write CSV | 0 ms | 1 ms | 1 ms |
+| **whole pipeline** | **38 ms** | **310 ms** | **34 ms** |
+
+The CSV reader finds delimiters and parses each field into its column's
+typed builder in one scan per chunk of records, in parallel; an unquoted
+numeric column is parsed straight from the file without becoming text.
+A quote anywhere, or a row whose field count disagrees with the header,
+takes the general parser. `benchmarks/run.sh [reps] [rows]` reproduces
+the table.
 
 ## Automatic parallelism in ods
 
@@ -268,40 +318,6 @@ microseconds per call, sequential / parallel:
 | `group_by`, 1,000 groups | 145 / 145 | 620 / 619 | 1,193 / 1,029 | 2,417 / 1,393 | 22,441 / 7,960 |
 | `join` against 1,000 rows | 444 / 444 | 2,160 / 1,682 | 4,706 / 2,956 | 9,641 / 5,600 | 94,150 / 66,053 |
 
-In 1.0.0-rc.2 every Series kernel went parallel at the language's
-list threshold (10,000 elements), and arithmetic called its operator
-through a function pointer at every element. At 15,000 elements the
-parallel `ods.mean(s * t)` took ten times the sequential one, and a
-notebook built of medium columns ran several times slower on all cores
-than on one. `benchmarks/ods_parallel.ol` measures the operations as a
-program calls them (milliseconds per call; the machine's 18 threads,
-then `OLANG_PARALLELISM=1`):
-
-| Operation | n | rc.2, all threads | rc.2, one | now, all threads | now, one |
-|---|---|---|---|---|---|
-| `ods.mean(s * t)` | 15,000 | 0.150 | 0.015 | 0.004 | 0.005 |
-| `ods.mean(s / t)` | 15,000 | 0.201 | 0.023 | 0.005 | 0.005 |
-| `ods.dot(s, t)` | 15,000 | 0.175 | 0.015 | 0.011 | 0.011 |
-| `ods.mean(s * t)` | 50,000 | 0.198 | 0.034 | 0.014 | 0.014 |
-| `ods.mean(s / t)` | 50,000 | 0.297 | 0.069 | 0.016 | 0.016 |
-| `ods.mean(s * t)` | 1M | 0.420 | 0.536 | 0.252 | 0.281 |
-| `ods.mean(s / t)` | 1M | 0.771 | 1.234 | 0.329 | 0.357 |
-| `group_by` | 1M | 1.40 | 5.27 | 1.33 | 4.22 |
-| `ods.mean(s * t)` | 10M | 2.16 | 5.49 | 1.53 | 3.01 |
-| `ods.mean(s / t)` | 10M | 4.12 | 12.02 | 2.48 | 3.98 |
-| `ods.len(s + 1.5)` | 10M | 1.40 | 4.02 | 0.70 | 1.31 |
-| `group_by` | 10M | 8.95 | 49.05 | 8.10 | 39.33 |
-
-The repository's notebooks under `olmd/`, `olang test` wall time
-(fastest of three):
-
-| Notebook | rc.2, all threads | rc.2, one | now, all threads | now, one |
-|---|---|---|---|---|
-| churn | 2.22 s (18.1 s system) | 0.53 s | 0.35 s | 0.35 s |
-| segments | 0.78 s | 0.78 s | 0.63 s | 0.63 s |
-| energy | 0.20 s | 0.21 s | 0.21 s | 0.21 s |
-| housing, workspace, experiment, sales | unchanged (0.01–0.16 s) | | | |
-
 `learn`'s models parallelize by work rather than by rows. The runtime's
 list threshold (10,000 elements under `olang run`) is about olang
 closures, so the model kernels ignore it and use their own measured
@@ -315,8 +331,7 @@ thresholds:
 - k-means assignment: a million row × centre × feature operations;
 - kNN queries: 2 million query × training pairs.
 
-The comparison with scikit-learn is in
-[the data stack](ods.md#against-scikit-learn).
+The comparison with scikit-learn is [below](#against-scikit-learn).
 
 ## The expression engine
 
@@ -334,8 +349,8 @@ own path, so it costs what it did.
 Measured with `cargo bench -p olang-ods --bench expr` (the engine) and
 `olang-ods/benches/expr.py` (the same shapes in NumPy 2.5.1 and pandas
 3.0.5), 10M rows, 10% nulls where marked, 1,000 groups; milliseconds,
-fastest of seven, Apple M5 Pro (18 threads). "Eager" is the kernel per
-operation, materializing each intermediate, as ods did before.
+fastest of seven, Apple M5 Pro (18 threads). "Eager" is a kernel per
+operation, materializing each intermediate, for comparison.
 
 | Kernel | ods, one thread | ods, parallel | eager, one thread | NumPy / pandas |
 |---|---|---|---|---|
@@ -454,7 +469,7 @@ twenty levels, and the group-bys 1,000.
 A Category against a level is its codes compared once, row by row into
 a mask, where pandas' is one NumPy comparison of its small codes: a
 microsecond-scale gap on a sub-millisecond kernel. The rows from
-`col(cat)` down are the D6 gaps' kernels (pandas 3.0.6).
+`col(cat)` down were measured against pandas 3.0.6.
 
 The parts parallelize past the engine's thresholds (a part costs four
 operations, so a column of 500,000 rows fans out); the text kernels and
@@ -462,7 +477,7 @@ parsing run on one thread, as pandas' do, and are ahead of it there.
 
 ## Frames: grouping, joins and time
 
-The Frame verbs of the data-ergonomics round, as a program calls them
+The Frame verbs, as a program calls them
 (`benchmarks/frames.ol`), against pandas 3.0.5 on the same data
 (`benchmarks/frames_pandas.py`, which writes it: a million rows of an
 hourly timestamp as ISO text, two Int keys of 1,000 and 50 values, two
@@ -557,21 +572,18 @@ the lags on the pool) when there are at most 8·log₂ n of them, and
 otherwise transforms the series as a half-length complex FFT (the
 stages that fit in cache run block by block); the choice depends on the
 shape alone. Holt-Winters fits by bounded Nelder–Mead from the best of
-a coarse grid, a few hundred passes of Winters' recursions; statsmodels
-was not available offline to time beside it, and against the energy
-notebook's own 32-point grid of olang loops (50 ms on the same hours)
-the fit takes half the time and finds a lower error.
+a coarse grid, a few hundred passes of Winters' recursions.
 
-The notebooks' hand-written forms, timed in olang on the notebooks'
-sizes:
+The built-ins against the same work written in olang, on the sizes of
+the repository's notebooks (milliseconds):
 
-| Pattern | Before (the notebook's code) | After |
+| Work | Written in olang | Built-in |
 |---|---:|---:|
-| energy: ACF to 336 lags by a `stats.corr` per lag | 67.1 | 0.83 (`stats.ts.acf`) |
-| energy: MAD by `median(map(…, "abs"))` | 0.61 | 0.19 (`stats.mad`) |
-| experiment: 2,000 bootstrap lifts, an olang closure per index | 175 | 0.78 (`stats.bootstrap([b, a], compare: "ratio")`) |
-| experiment: power by 600 simulated tests | 9.3 | 0.06 (`stats.power_t`, exact) |
-| generators: 10,000 weighted picks, Poisson counts and lognormals, row by row | 14.0 | 0.41 (`random.rng` columns) |
+| ACF to 336 lags by a `stats.corr` per lag | 67.1 | 0.83 (`stats.ts.acf`) |
+| MAD by `median(map(…, "abs"))` | 0.61 | 0.19 (`stats.mad`) |
+| 2,000 bootstrap ratios, an olang closure per index | 175 | 0.78 (`stats.bootstrap([b, a], compare: "ratio")`) |
+| power by 600 simulated tests | 9.3 | 0.06 (`stats.power_t`, exact) |
+| 10,000 weighted picks, Poisson counts and lognormals, row by row | 14.0 | 0.41 (`random.rng` columns) |
 
 ## Matrices and formulas
 
@@ -614,19 +626,60 @@ A formula fit spends its time building the 71 dense cell columns and
 their Gram matrix. pandas' `get_dummies` with `lstsq` does the same work
 in 761 ms.
 
-## Trees over categories
+## Against scikit-learn
+
+Fit times on 80,000 training rows (sklearn's `make_friedman1` with 10
+features for regression, `make_classification` with 20 for
+classification), and the test score on the other 20,000 rows: RMSE for
+regression, AUC for classification. These were measured on an Apple M5
+Pro (18 cores) against scikit-learn 1.9 with numpy 2. Each time is the
+best of three runs, one for the slowest.
+
+| Model | olang `learn` | scikit-learn | Score (olang / sklearn) |
+|---|---:|---:|---|
+| OLS, 10 features | 1.6 ms | 5.1 ms (`LinearRegression`) | 2.636 / 2.636 |
+| Lasso, alpha 0.01 | 1.5 ms | 1.5 ms | 2.637 / 2.637 |
+| Logistic, C = 1 | 17 ms | 19 ms (lbfgs) | 0.9618 / 0.9618 |
+| Decision tree, depth 8 (classification) | 188 ms | 673 ms | 0.9627 / 0.9623 |
+| Random forest, 100 trees (classification) | 525 ms | 1,416 ms (`n_jobs=-1`), 18,759 ms (one core) | 0.9757 / 0.9753 |
+| Random forest, 100 trees (regression) | 1,004 ms | 2,498 ms (`n_jobs=-1`) | 1.205 / 1.206 |
+| Boosting, 100 trees of depth 3 (regression) | 168 ms | 13,711 ms (`GradientBoosting`), 186 ms (`HistGradientBoosting`) | 1.259 / 1.307, 1.276 |
+| Boosting, 300 trees of 31 leaves (regression) | 459 ms | 2,360 ms (`HistGradientBoosting`) | 1.046 / 1.054 |
+| Boosting, 100 trees of depth 3 (classification) | 194 ms | 27,281 ms (`GradientBoosting`), 210 ms (`HistGradientBoosting`) | 0.9732 / 0.9740, 0.9736 |
+| Boosting, 300 trees of 31 leaves (classification) | 525 ms | 2,395 ms (`HistGradientBoosting`) | 0.9751 / 0.9753 |
+| k-nearest neighbours, k = 5 (fit and predict 20,000) | 349 ms | 235 ms | 0.9742 / 0.9742 |
+| k-means, k = 8, 10 starts (100,000 rows) | 599 ms | 902 ms | inertia 62,572 / 62,571 |
+| Gaussian naive Bayes | 10 ms | 8 ms | 0.9344 / 0.9344 |
+| PCA, 20 columns (100,000 rows) | 3.7 ms | 1.9 ms | the same components |
+
+At 20,000 rows the picture is the same. kNN is at parity there (17 ms
+against 17 ms), and the forest takes 64 ms against sklearn's 214 ms.
+
+- **Boosting.** It is the histogram method, so the fair comparison is
+  `HistGradientBoosting`. It is about as fast at 100 small trees and
+  4–5 times faster at 300 trees of 31 leaves. Against the exact
+  `GradientBoosting` it is 80–140 times faster, at equal or better
+  test scores.
+- **Forests and trees.** Trees grow in parallel, and each split's sort
+  is cheap, so forests are 2.5–3 times faster than sklearn on all
+  cores.
+- **Where sklearn wins.** kNN at 80,000 × 20,000 rows: sklearn's
+  brute-force search is a BLAS matrix product, and `learn` uses no
+  BLAS, so it runs in the browser build. Naive Bayes and
+  PCA: both take a few milliseconds either way.
+
+### Trees over categories
 
 A forest or tree one-hot encodes a Category or String column with every
 level, as scikit-learn's `OneHotEncoder` feeds its forests. A 0/1 column
 (a level, or a Bool) has one threshold, so a split on it is one pass over
 the node's rows, with no sort; the split found is the one the sort finds.
-churn's forest (20,000 rows; 6 numeric columns and region, contract and
-segment as 16 features; 300 trees, `min_samples_leaf: 20`), the fastest
-of five on an Apple M5 Pro:
+A churn model's forest (20,000 rows; 6 numeric columns and region,
+contract and segment as 16 features; 300 trees, `min_samples_leaf: 20`),
+the fastest of five on an Apple M5 Pro:
 
 | Fit | ms |
 |---|---:|
-| `learn.forest`, before the 0/1 path | 101 |
 | `learn.forest` | 86 |
 | scikit-learn 1.9 `RandomForestClassifier(n_jobs=-1)` on `get_dummies` | 234 |
 
@@ -644,49 +697,38 @@ declared in, and consecutive top-level declarations share one: the
 scope as it stood before the first of the run. Anything else at the top
 level between two declarations (a `let`, a `use`, a type) starts a new
 run. The builtins and stdlib modules every file starts from are one
-map shared by every module and interpreter in the process. The meaning
-is unchanged from a snapshot per declaration — a
+map shared by every module and interpreter in the process. A
 function sees the siblings declared before it as they were then, a
 sibling shadows a builtin of its name, and a later redefinition does not
 reach back — because each run keeps a table of its members by position,
 consulted after the closure by both tiers.
 
-The table compares 0.85.0 with 0.86.0, measured on an Apple M5 Pro
-(6P+12E, 24 GB), macOS 27.0:
+Measured on an Apple M5 Pro (6P+12E, 24 GB), macOS 27.0:
 
-| Program | Resident, 0.85.0 | Resident, 0.86.0 | `runtime.memory()` heap |
-|---|---|---|---|
-| idle (`time.sleep`) | 10 MB | 10 MB | 0.3 MB |
-| the same after `runtime.wasm()` | 99 MB | 10 MB | 0.3 MB |
-| one file of 4,000 one-line functions | 137 MB | 32 MB | 12 MB |
-| the same as an imported module | 140 MB | 39 MB | 12 MB |
-| an application of 56 files and three packages, served with 18 http workers | 950 MB | 445 MB | 97 MB |
-| twenty thousand closures created in a function, on the interpreter | 2.9 GB of heap | 82 MB | 60 MB |
+| Program | Resident | `runtime.memory()` heap |
+|---|---|---|
+| idle (`time.sleep`) | 10 MB | 0.3 MB |
+| the same after `runtime.wasm()` | 10 MB | 0.3 MB |
+| one file of 4,000 one-line functions | 32 MB | 12 MB |
+| the same as an imported module | 39 MB | 12 MB |
+| an application of 56 files and three packages, served with 18 http workers | 330 MB | 97 MB |
+| twenty thousand closures created in a function, on the interpreter | 82 MB | 60 MB |
 
-The served application has since fallen to 330 MB resident with the flat
-expression grammar described below.
-
-A value is 40 bytes (176 in 0.85.0): a function, an enum value, a
-constructor and a type are each one shared allocation the value points
-at, so a list slot and a scope-map entry are a quarter of what they
-were. A closure captures the bindings its body can name — not every
-binding in scope, which on the interpreter was a three-hundred-entry
-map rebuilt per closure — and every closure made from one lambda
-expression shares one resolved body.
+A value is 40 bytes: a function, an enum value, a constructor and a
+type are each one shared allocation the value points at. A closure
+captures the bindings its body can name, not every binding in scope,
+and every closure made from one lambda expression shares one resolved
+body.
 
 The difference between resident memory and the heap is memory that was
-freed and is still resident, and most of it was the parser's. The
-grammar's token queue cost about a hundred bytes per byte of source
-while every operand opened and closed a rule per precedence level; a
-binary expression is now parsed flat and its tree built by precedence
-climbing, which cut the queue by two thirds, and a source of 16 KB or
-more is parsed a run of top-level statements at a time, which bounds it
-by a chunk (640 KB for a 90 KB file, from 10 MB). Booting the served
-application above made 436 allocations of 4 MB or more in 0.86.0 and
-makes three — single statements too large to split — and the system
-allocator's cache of freed large blocks, which it keeps resident, fell
-from 122 MB to 8: the process's physical footprint at boot is 143 MB,
-from 303. It does not grow with the life of the process.
+freed and is still resident, most of it the parser's. A binary
+expression is parsed flat and its tree built by precedence climbing,
+and a source of 16 KB or more is parsed a run of top-level statements at
+a time, which bounds the parser's working memory by a chunk (640 KB for
+a 90 KB file). Booting the served application above makes three
+allocations of 4 MB or more, single statements too large to split, and
+its physical footprint at boot is 143 MB. It does not grow with the
+life of the process.
 
 [`runtime.memory()`](stdlib.md#runtime--what-this-binary-carries) reports
 the heap by share — the loaded program, the running program's values,

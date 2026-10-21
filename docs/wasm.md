@@ -30,7 +30,6 @@ execute. The code they show runs in [`examples/web/app/`](../examples/web/app/).
 - [Reading a real frontend](#reading-a-real-frontend)
 - [Running it](#running-it)
 - [The sandbox and its limits](#the-sandbox-and-its-limits)
-- [Choosing this architecture](#choosing-this-architecture)
 
 ## The same language, end to end
 
@@ -80,16 +79,19 @@ Three layers, each with a single job.
 The engine is an ordinary build of the olang crate for the
 `wasm32-unknown-unknown` target, packaged by the small
 [`playground/`](../playground/) crate as a cdylib. It contains the
-parser, the interpreter, the bytecode tier, and the full standard
-library minus the operating-system modules — including the entire
-[data stack](ods.md), which is pure Rust precisely so it would survive
-this build.
+parser, the interpreter, the bytecode tier, and the standard library
+minus the operating-system modules, including the entire
+[data stack](ods.md).
 
-Notably absent: `wasm-bindgen` or any binding generator. The boundary
-is a hand-rolled C ABI of a few exported functions, because the
-interface is genuinely small and a generator would add a build step,
-generated glue, and a second place where types are defined, in
-exchange for automating about a dozen signatures:
+Two profiles build from it:
+
+| Profile | Command | Output | Contents |
+|---|---|---|---|
+| browser | `cargo xtask wasm` | `target/wasm32-unknown-unknown/release/olang_playground.wasm`, embedded in the next build of `olang` | everything above except the `re` module and RSA, which are a third of the code and nothing a page needs |
+| full | `cargo xtask wasm --full` | `target/wasm-full/olang.wasm` | the whole standard library, for a playground that runs any program |
+
+The boundary is a plain C ABI of a few exported functions, with no
+binding generator:
 
 | Export | Contract |
 |---|---|
@@ -123,9 +125,8 @@ assigns `innerHTML`, and so on. Elements cross the boundary as opaque
 integer handles the shim mints; olang never holds a DOM object, only a
 number naming one.
 
-This is the security story as much as the plumbing story: the
-capability list *is* the import list, so what browser olang can touch
-is auditable in one screen of JavaScript.
+What browser olang can touch is exactly this import list, one screen of
+JavaScript.
 
 ### The persistent session and event re-entry
 
@@ -153,9 +154,8 @@ browser's loop drives it, one re-entry at a time.
 
 ## The `dom` module
 
-The module's philosophy is the opposite of a widget toolkit's: olang
-does not wrap the DOM object model — it treats the page as a
-*rendering target with controls*. You query elements, wire events,
+The `dom` module does not wrap the DOM object model: it treats the page
+as a rendering target with controls. You query elements, wire events,
 render by writing HTML, reach for node-level operations when a full
 re-render would be too blunt, draw scenes onto canvases, and schedule
 work with timers and animation frames. Everything else is ordinary
@@ -312,9 +312,8 @@ the browser and returns immediately; when the response arrives, the
 callback receives its **body text** — parse it with `json.parse` if it
 is JSON. A non-empty body is sent with a JSON content type. A network
 failure delivers `{"error": "..."}`, so one check of the `error` key
-covers the failure path uniformly. There is deliberately no status code in
-the callback: design the API so the body says what happened, and the
-client stays one honest branch.
+covers the failure path uniformly. The callback receives no status code,
+so an API serving a browser client says what happened in the body.
 
 ```olang no-run
 dom.fetch("GET", "/api/issues", "", (resp) => {
@@ -466,7 +465,7 @@ state (closures capture by value), animation state lives in the DOM
 like everything else — the orbits demo keeps its bodies as JSON in a
 hidden input, loading and saving each frame.
 
-The host keeps the loop honest about power. All `on_frame` handlers
+All `on_frame` handlers
 share one animation loop capped near 60fps (a 120Hz ProMotion display
 doubles fill rate for no visible gain in a data animation), and
 `dom.draw` / `dom.draw_points` skip painting entirely for a canvas
@@ -502,7 +501,7 @@ forecast for zoom.
 
 ## Declarative views: the `ui` module
 
-`dom.set_html` with string building is honest and fine at small scale,
+`dom.set_html` with string building is fine at small scale,
 but a re-render replaces *everything* in the container, so focus and
 cursor position inside it die. `dom.morph` with a `data-key` per row is
 the first remedy, and the one the tracker takes: the same markup, but
@@ -540,7 +539,7 @@ focus, scroll) or when most of it doesn't change per event.
 
 ## Routing and storage
 
-Two small surfaces make single-page applications honest. Navigation:
+Two small surfaces serve single-page applications. Navigation:
 `dom.push_state(path)` updates the URL without a reload,
 `dom.location()` reads it back as a Map of `path` and `query`, and
 `dom.on_route(handler)` fires on back/forward with the same shape —
@@ -587,19 +586,16 @@ an animation dial — driven by `dom.on_frame` on the main thread —
 never stutters.
 
 The worker side rides `olang-worker.js`, a page-served harness that
-instantiates the wasm with inert DOM stubs (the playground sandbox's
-posture) and bridges the two live imports over `postMessage`. Same
-capability story as everything else: the import list is the whole
-surface, and a worker's is two functions long.
+instantiates the wasm with inert DOM stubs and bridges the two live
+imports over `postMessage`: a worker's whole surface is those two
+functions.
 
 ## Reading a real frontend
 
 [`examples/web/app/static/app.ol`](../examples/web/app/static/app.ol) is the
-tracker's complete frontend: ~330 lines of olang for a full product —
-live search, status filters, sortable columns, an issue drawer with
-comments, a stats strip, and an activity ticker. Its JavaScript
-predecessor needed 574 lines for a bare grid. The guided reading
-follows.
+tracker's complete frontend: about 330 lines of olang for live search,
+status filters, sortable columns, an issue drawer with comments, a stats
+strip, and an activity ticker. The guided reading follows.
 
 **State lives in the DOM.** The client state that must exist — sort
 column and order, the active status filter, the selected issue — is
@@ -638,11 +634,9 @@ POST and re-open the drawer.
 **Boot.** Twelve `dom.on` registrations, each on an element present at boot,
 followed by a first `reload()`.
 
-The frontend uses no component classes, no virtual DOM, no state container,
-and no lifecycle methods. The architecture described in this chapter — a
-server-rendered page reloaded on change, with the DOM as the source of truth —
-provides the structure those abstractions would otherwise supply, so the
-program is roughly as long as its behavior requires.
+The frontend uses no component classes, virtual DOM, state container, or
+lifecycle methods: a page reloaded from the server on change, with the DOM
+as the source of truth, supplies that structure.
 
 Then read the companion pages in ascending order of machinery, each
 linked from the tracker's header: `orbit.ol` (the draw-list and frame
@@ -659,10 +653,11 @@ page.
 
 ## Running it
 
-The browser runtime is the wasm the `olang` binary embeds: `cargo xtask
-wasm` (or `make wasm`) builds it once, and the next `cargo build` or
-`cargo install --path .` of olang carries it — `make install` and
-`setup.sh` do both. There is no artifact to copy into an app:
+The browser runtime is the wasm the `olang` binary embeds. Release
+binaries carry it; from source, `cargo xtask wasm` (or `make wasm`)
+builds it and the next `cargo build` or `cargo install --path .` of olang
+embeds it, and `cargo xtask install` does both. There is no artifact to
+copy into an app:
 
 ```bash
 cd examples/web/app
@@ -705,11 +700,9 @@ and network access exists only as `dom.fetch` / `dom.fetch_json`,
 which go through the browser and are therefore subject to the page's
 same-origin rules like any other web request. A `dom.worker` instance
 is the same sandbox again, minus the DOM: its import surface is
-`post` and `on_message`, period. On the website's /playground, where
-arbitrary code runs with no dom bridge at all, the page runs the
-engine inside a Web Worker it terminates on timeout — which is what
-bounds an infinite loop. Sandboxing comes from the platform, not from
-trust in the engine.
+`post` and `on_message`. A page that runs arbitrary code, such as a
+playground, runs the engine inside a Web Worker it terminates on
+timeout; that is what bounds an infinite loop.
 
 **Speed.** The browser runs the interpreter and the bytecode tier —
 the same execution model as the CLI's default. The third tier, the
@@ -728,27 +721,6 @@ progress while the page stays live.
 the page; a handler error and everything the program prints go to the
 browser console. `println` debugging works in the browser exactly as
 it does natively — open the console.
-
-## Choosing this architecture
-
-Where browser olang is at its best today: applications shaped like
-the tracker. Tools, dashboards, admin panels, internal apps — pages
-with real interactivity backed by an API, where the stateless loop
-fits naturally and rendering is honest HTML. In that shape it replaces
-the entire frontend toolchain with one source file served as text, and
-it keeps the whole system in one language.
-
-The considered alternative — compiling olang *to JavaScript* — would
-trade the runtime for reach: transpiled output could tap the browser's
-own JIT. What that would cost is exactly what this architecture
-guarantees: the wasm engine is the same tested interpreter as the CLI,
-so browser behavior is native behavior by construction rather than by
-a compiler's promise. A second backend is a second place semantics can
-drift, and this book's execution-model chapters show how much
-machinery exists to prevent precisely that. The direction the project
-takes lives in [the roadmap](roadmap.md); the architecture described
-here is the one that ships, and programs written to the `dom` module's
-contract are the ones any future backend would have to honor.
 
 ---
 

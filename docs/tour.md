@@ -7,8 +7,7 @@ testing — and applies it to the same data, so by the end you have seen a
 complete, realistic olang program grow from a list of strings into a
 statistical report with a chart.
 
-Every code block runs exactly as shown: the test suite executes them all
-on every change, so the tour cannot drift from the language.
+Every code block runs exactly as shown.
 
 Part of [the olang book](README.md) ·
 [Language](language.md) · [Standard library](stdlib.md) ·
@@ -16,7 +15,7 @@ Part of [the olang book](README.md) ·
 
 ## Table of contents
 
-- [Installing](#installing)
+- [Running a program](#running-a-program)
 - [Hello](#hello)
 - [Values and bindings](#values-and-bindings)
 - [Everything is an expression](#everything-is-an-expression)
@@ -29,37 +28,17 @@ Part of [the olang book](README.md) ·
 - [The data stack](#the-data-stack)
 - [Testing](#testing)
 - [The whole program](#the-whole-program)
-- [The playground](#the-playground)
 - [Where to next](#where-to-next)
 
-## Installing
+## Running a program
 
-Build from source with Cargo:
-
-```bash
-git clone https://github.com/ooyeku/olang.git
-cd olang
-cargo install --path .
-```
-
-Two ways to run:
+With olang installed ([Installation](installation.md)), save a program in a
+file and pass it to `olang`; with no file, `olang` starts the REPL:
 
 ```bash
-olang program.ol          # run a file (args after the file reach os.args())
+olang program.ol          # run a file (arguments after it reach os.args())
 olang                     # start the REPL (:help lists commands)
 ```
-
-Or run nothing at all: the website's **/playground** runs the whole
-language — including everything on this tour — as WebAssembly, sandboxed
-in your browser.
-
-Performance is not something you configure. olang executes on three
-tiers: a tree-walking interpreter defines the semantics, hot functions
-are promoted to a bytecode VM, and hot numeric functions compile further
-to native machine code. Each tier either agrees with the interpreter
-exactly or declines and falls back — so the fast path can never change
-what a program means. You write the program; the runtime decides how to
-run it.
 
 ## Hello
 
@@ -422,25 +401,30 @@ measures the speedup on real kernels.
 
 Our report wants statistics, and olang builds the tools in: `ods`
 (typed columns and tables), `stats` (inference), and `plot` (SVG
-charts) — no import, no flag, available in the playground too.
+charts), all in scope without an import.
 
 A **Series** is a typed, null-aware column. Operators on it are
-vectorized — one native kernel over the whole column instead of an
-interpreted loop — and comparisons yield masks for filtering:
+vectorized (one native kernel over the whole column instead of an
+interpreted loop), and comparisons yield masks for filtering. A
+Series' functions are also its methods:
 
 ```olang
 let temps = ods.series([21.5, 19.0, 23.5, 24.0, 18.5])
 let fahrenheit = temps * 1.8 + 32.0
-println(`mean ${ods.mean(fahrenheit)}F, max ${ods.max(fahrenheit)}F`)
+println(`mean ${fahrenheit.mean()}F, max ${fahrenheit.max()}F`)
 
-let warm = ods.filter(temps, temps > 20.0)
-println(to_string(ods.to_list(warm)))
+let warm = temps.filter(temps > 20.0)
+println(warm.to_list())                  // [21.5, 23.5, 24.0]
 ```
 
 A **Frame** is a table of named Series. `ods.read_csv` turns the log,
-unchanged, into one, which can then be grouped and aggregated:
+unchanged, into one. `group_by` partitions its rows, and `agg` computes
+one column per entry from expressions over the columns, written with
+`col`. A method chain may start each step on a line of its own:
 
 ```olang
+use ods { col }
+
 let log = [
     "north,2026-08-01,21.5",
     "north,2026-08-02,19.0",
@@ -451,34 +435,34 @@ let log = [
 let f = ods.read_csv("station,day,temp\n" + join(log, "\n"))
 
 let summary = f
-    |> ods.group_by("station", [["avg", "mean", "temp"], ["n", "count"]])
-    |> ods.sort_by("avg", true)
+    .group_by("station")
+    .agg({ avg: col("temp").mean(), n: ods.count() })
+    .sort_by("avg", descending: true)
 
-for rec in ods.to_records(summary) {
+for rec in summary.to_records() {
     println(`${rec.station}: ${rec.avg}`)
 }
 ```
 
 From there, `stats.t_test` asks whether the two stations really differ,
-`stats.lm` fits a trend line, and `plot.line` renders the chart — as a
-complete SVG document in a string, ready to write to disk or serve over
-HTTP:
+and `plot.line` renders a chart as a complete SVG document in a string,
+ready to write to disk or serve over HTTP:
 
 ```olang
 let north = ods.series([21.5, 19.0, 23.5])
 let south = ods.series([24.0, 18.5, 22.0])
 let t = stats.t_test(north, south)
-println(`p = ${t.p_value < 1.0}`)
+println(`difference ${t.diff}, p = ${t.p_value > 0.05}`)
 
-let x = ods.series([1.0, 2.0, 3.0])
-let svg = plot.line(x, north, #{ "title": "north station" })
-println(to_string(str.contains(svg, "<svg")))
+let svg = plot.line(ods.series([1.0, 2.0, 3.0]), north, title: "north station")
+println(str.contains(svg, "<svg"))
 ```
 
-[The data stack](ods.md) is the full chapter — every Series and Frame
-verb, the complete `stats` and `plot` modules, and the performance
-story; [`examples/data-processing/statlab/`](../examples/data-processing/statlab/) is a complete
-statistical study built on this stack.
+[The data stack](ods.md) is the full chapter: every Series and Frame
+verb, expressions, matrices, inference and time series, machine
+learning with model formulas, and the grammar of graphics.
+[`examples/data-processing/statlab/`](../examples/data-processing/statlab/)
+is a complete statistical study built on this stack.
 
 ## Testing
 
@@ -544,13 +528,12 @@ let log = [
 let readings = log |> map(parse) |> filter(is_ok) |> map(unwrap)
 let rejected = len(log) - len(readings)
 
-let rows = readings
-    |> map((r) => `${r.station},${r.day},${r.temp}`)
-let f = ods.read_csv("station,day,temp\n" + join(rows, "\n"))
-let summary = f |> ods.group_by("station", [["avg", "mean", "temp"], ["n", "count"]])
+let summary = ods.frame_from_records(readings)
+    .group_by("station")
+    .agg({ avg: ods.col("temp").mean(), n: ods.count() })
 
 println("=== station report ===")
-for rec in ods.to_records(summary) {
+for rec in summary.to_records() {
     println(str.fmt("{}: {} readings, avg {} ({})",
         rec.station, rec.n, rec.avg, band(rec.avg)))
 }
@@ -562,28 +545,12 @@ In a real deployment the log would arrive via `fs.read_file` or
 thing might sit behind `http.serve` — the same code, wrapped in I/O.
 [`examples/`](../examples/) is full of programs that take that step.
 
-## The playground
-
-The website's **/playground** is the entire language compiled to
-WebAssembly: interpreter, bytecode tier, and the full data stack,
-running sandboxed in your browser. No code leaves the page. It is the
-fastest way to try everything on this tour — and because it is the
-same engine, not a lookalike, what works there works installed.
-
-The playground engine also powers olang in the browser as a *frontend*
-language: the `dom` module lets an olang program drive a real page —
-queries, events, fetch — which is how
-[`examples/web/app/`](../examples/web/app/) serves an issue tracker whose
-frontend is itself written in olang.
-[olang in the browser](wasm.md) tells that story whole, architecture
-to application.
-
 ## Where to next
 
 - [The language reference](language.md) — every construct, precisely.
 - [The standard library](stdlib.md) — every builtin and module.
 - [The data stack](ods.md) — Series, Frames, inference, and charts, in depth.
-- [olang in the browser](wasm.md) — the same language as a frontend language.
+- [olang in the browser](wasm.md) — the same language driving a web page.
 - [Packages](packages.md) — multi-file programs and dependencies.
 - [`examples/`](../examples/) — complete programs: a task CLI, a template
   engine, a regex engine, a parser combinator library, a Lisp interpreter

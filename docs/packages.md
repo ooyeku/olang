@@ -9,13 +9,17 @@ artifact: dependencies are fetched as source and resolved by the same `use`
 mechanism as local modules, so a dependency is used the same way as code
 written in the same project.
 
-Projects are managed by the companion tool `otc`, whose division of labor
-with the `olang` binary is one sentence: everything that touches a *file*
-lives in `olang` (run, repl, test, fmt, check, bench, profile);
-everything that touches a *project* lives in `otc`. The workflow is
-local-first — your own libraries, on your own machine, by name — with
-git and registry sources available underneath for when a dependency
-lives elsewhere.
+Projects are managed by the companion tool `otc`. Everything that
+touches a *file* lives in `olang` (run, repl, test, fmt, check, bench,
+profile; see [Command-line tooling](tooling.md)); everything that touches
+a *project* lives in `otc`. The workflow is local-first: your own
+libraries, on your own machine, by name, with git and registry sources
+for a dependency that lives elsewhere.
+
+This chapter covers scaffolding a project, the manifest, dependencies
+and the library shelf, the home directory and toolchains, the project
+benchmark harness, the lockfile, capabilities, and the transparent
+binary `olang build` writes.
 
 ## Table of contents
 
@@ -23,6 +27,8 @@ lives elsewhere.
 - [The manifest](#the-manifest)
 - [Commands](#commands)
 - [The library shelf](#the-library-shelf)
+  - [The starter libraries](#the-starter-libraries)
+  - [Pinning and drift](#pinning-and-drift)
 - [The home directory](#the-home-directory)
 - [Updating and toolchains](#updating-and-toolchains)
 - [Benchmarks](#benchmarks)
@@ -53,12 +59,12 @@ routes, `serve` with the server-rendered first paint), `lib/pages.ol`
 (the view, rendered by the server into the shell and by the browser on
 every change), and `client.ol` (`mount`, `action`, `call`). The
 manifest depends on the shelf's `web` and `validate`; `otc install`
-resolves them. Every seam a real app grows along appears exactly once.
-`--web-bare` keeps the previous shape — the raw stdlib with the router,
-static routes, escaping, and schema hand-rolled — for studying what the
-SDK packages. Its README covers the one artifact the scaffold cannot
-write from source (the wasm runtime; the scaffold copies one in when it
-can find it, and the API works without it).
+resolves them. `--web-bare` writes the same application on the raw
+stdlib, with the router, static routes, escaping and schema written by
+hand, for studying what the SDK provides. Its README covers the one
+artifact the scaffold cannot write from source: the wasm runtime, which
+the scaffold copies in when it can find one (`OLANG_WASM`, or beside
+`otc`); the API works without it.
 
 A name may be hyphenated (`otc new open-track-query --lib`): the
 directory keeps it, and the package is imported by the identifier form
@@ -103,11 +109,8 @@ test "area works" {
 }
 ```
 
-Nothing forces the split — a one-file library that `share`s directly from
-`index.ol` is still a valid package, and the resolver does not care. The
-scaffold starts with `lib/` because a library that grows without one puts
-everything in the root module by default, and the seam is harder to
-introduce later than to keep.
+Nothing forces the split: a one-file library that `share`s directly from
+`index.ol` is a valid package too.
 
 That is all a consumable library is: an `olang.toml` (so the resolver can
 find the package and name it) plus a root module with `share`d bindings.
@@ -128,20 +131,19 @@ httplib  = { git = "https://github.com/u/httplib", tag = "v1.2.0" }
 json     = "^1.0"                                          # registry version
 ```
 
-**The olang it is written for.** `olang = "0.88"` under `[package]` names
+**The olang it is written for.** `olang = "1.0"` under `[package]` names
 the oldest olang the package runs on, as Cargo's `rust-version` names the
-oldest Rust: `"0.88"` is 0.88.0 or newer (0.89 and every 1.x satisfy it),
-`"1"` and `"1.0"` are 1.0.0 or newer, `"0.88.2"` that release or newer. It
-is a version of one to three numbers and nothing else; `olang check`
-reports any other value. An olang older than the pin still runs the
+oldest Rust: `"1"` and `"1.0"` are 1.0.0 or newer (every 1.x satisfies
+them), `"1.2.1"` that release or newer. It is a version of one to three
+numbers and nothing else; `olang check` reports any other value. An olang older than the pin still runs the
 project, and says so on standard error first. `otc
 install` resolves it to the newest installed toolchain that satisfies it
 (see [Updating and toolchains](#updating-and-toolchains)) and records that
 version in `olang.lock`; `otc toolchain which` prints the binary a
 project's pin resolves to. A pin nothing installed satisfies is said, with
-the command that installs one (`otc toolchain install 0.88`) — never run
-for you. An editor runs the project's children with the pinned toolchain
-when it is installed (olang Studio does, and says the version it runs).
+the command that installs one (`otc toolchain install 1.0.0`), which is
+never run for you. An editor runs the project's children with the pinned
+toolchain when it is installed.
 
 A path dependency's own path dependencies are followed, at any depth,
 each resolved against the manifest that names it: an application that
@@ -160,6 +162,27 @@ dependency name resolves inside that package:
 use geometry { area, ORIGIN }
 println(to_string(area(5, 5)))
 ```
+
+### Other sections
+
+| Section | Holds | Described in |
+|---|---|---|
+| `[package] lock` | `"auto"` or `"never"`: whether incidental runs may write `olang.lock` | [The lockfile](#the-lockfile) |
+| `[package] assets` | files and folders a built application carries | [`olang build`](tooling.md#olang-build) |
+| `[capabilities]` | what the package's code may touch, and each dependency's attenuation | [Capabilities](#capabilities) |
+| `[check] rules` | rules files (`rules = ["tools/rules.ol"]`, relative to the project root) that `olang check` runs with no `--rules` | [Project rules](tooling.md#project-rules) |
+| `[check] promote` | advisory classes `olang check` treats as errors | [Promoting advisories](tooling.md#promoting-advisories) |
+| `[check] native` | functions pinned to native code | [What the tier refuses](tooling.md#what-the-tier-refuses) |
+
+```toml
+[check]
+rules = ["tools/rules.ol"]
+promote = ["exhaustiveness", "shape"]
+```
+
+`olang check` and `olang doctor` warn about a key or section they do
+not read (a near miss such as `[dependancies]`), and leave other tools'
+sections alone.
 
 ### How `use` finds a package
 
@@ -186,14 +209,13 @@ otc list --format json       # the same as data: #{ format, kind: "deps", packag
 otc install                  # fetch dependencies, honoring olang.lock
 otc install --frozen         # fail if resolution would rewrite the lock (CI)
 otc install --update         # re-resolve everything, rewrite the lock
-otc lib add|list|remove      # your library shelf (next section)
+otc lib add|list|remove|restore   # your library shelf (next section)
 otc bench                    # the project benchmark harness (below)
 ```
 
 Every command finds the project root by walking up to the nearest
-`olang.toml` — and `otc add` in a directory with none **creates one**,
-so a project starts at the moment you first need a dependency, with no
-separate init step to know about. `add` takes one argument with two
+`olang.toml`, and `otc add` in a directory with none **creates one**:
+there is no separate init step. `add` takes one argument with two
 readings: anything with a path separator (or a leading `.`) is a
 directory, recorded relative to the project root no matter where the
 command ran; a bare name is looked up on your shelf. Either way the
@@ -204,8 +226,7 @@ existing dependency's source requires `--force`.
 Dependencies that live elsewhere still work — write them into
 `olang.toml` directly (`{ git = "URL", tag = "v1.0" }`, or a registry
 requirement with `OLANG_REGISTRY` set) and `otc install` resolves them
-with the same lockfile discipline. The local forms are the ones with
-first-class commands because they are the daily workflow.
+with the same lockfile discipline.
 
 You rarely need `otc install` day to day: **running a file inside a
 package resolves dependencies automatically**. `olang main.ol` reads
@@ -213,56 +234,234 @@ package resolves dependencies automatically**. `olang main.ol` reads
 
 ## The library shelf
 
-The shelf answers "how do I use my own library from another project
-without remembering where it lives". Register a library once, per user:
+The shelf is a per-user catalog of libraries kept by name, so a project
+can depend on a local library without recording where it lives. It needs
+no server, account or network: the shelf is one small TOML file, and the
+libraries are ordinary directories of olang source. A shelvable library
+is a directory with an `index.ol` (the entry point `use` resolves) or an
+`olang.toml` naming it; `otc new <name> --lib` scaffolds that shape.
+
+Register a library once, per user, from anywhere:
 
 ```bash
-otc lib add ~/code/geometry     # registers under its package name
-otc lib add ~/code/sdk --rev 4f2a91c   # as it stands at that commit; the lock carries the rev
-otc lib list                    # what is shelved, and where each points
-otc lib list --format json      # #{ format, kind: "shelf", shelf, libraries }, each #{ name, dir, rev, starter, status }
-otc lib remove geometry
+otc lib add ~/code/geometry            # registers under its package name
+otc lib add . --name geo               # the current directory, under a chosen name
+otc lib add ~/code/sdk --rev 4f2a91c   # the library as it stands at that commit
+otc lib list                           # every shelved library, and where it points
+otc lib list --format json             # #{ format, kind: "shelf", shelf, libraries }, each #{ name, dir, rev, starter, status }
+otc lib remove geometry                # take it off the shelf
+otc lib restore textkit                # re-shelve a starter (or refresh it)
+otc lib restore                        # re-shelve every starter
 ```
 
-From then on, any project anywhere:
+Then, from any project:
 
 ```bash
-otc add geometry
+otc add geometry       # the manifest gains geometry = { shelf = "geometry" }
 ```
 
-The manifest records only the name — `geometry = { shelf = "geometry" }`
-— so `olang.toml` stays free of machine-specific paths. The lockfile
-pins the directory the shelf resolved to, plus a content checksum, so a
-library that moves or disappears is noticed at the next install rather
-than silently drifted past (editing a shelved library is normal
-development and reported informationally, never as tampering). The
-shelf itself is one small TOML file at `~/.olang/shelf.toml`
-(`OLANG_SHELF` overrides the location). Its first line, `version = 1`, is
-the shelf's format version; every installed toolchain shares the file,
-so one that finds a newer version refuses it by name instead of
-rewriting it without what it does not know.
+The manifest records only the name, so `olang.toml` stays free of
+machine-specific paths and means the same thing on every machine that
+has a `geometry` on its shelf. The lockfile pins what the name resolved
+to — the directory and a checksum of its contents — so a library that
+moves or disappears is noticed at the next install (see
+[Pinning and drift](#pinning-and-drift)).
 
-A fresh shelf arrives stocked with the curated starter libraries —
-`textkit`, `validate`, `markdown` — removable and restorable like
-anything else (`otc lib restore`). A shelved starter lags the copy a
-newer toolchain ships — the shelf is seeded once — so `otc install`
-says when one is behind and names the `otc lib restore <name>` that
-refreshes it; a release note that changes a starter names the version
-that carries it. The shelf has its own chapter:
-[The library shelf](shelf.md) covers the model, the commands, the
-starter libraries' full APIs, and pinning in detail.
+`otc lib list` marks each entry: `(starter)` for a shipped library,
+`pinned at <sha>` for one shelved at a commit, and `(missing — directory
+is gone; re-register, remove, or restore)` when a registered directory
+has disappeared.
+
+Removing a user library forgets the registration only: the source
+directory is untouched, and projects that depend on it keep their
+lockfile pin until their next install. Removing a starter also deletes
+its materialized directory, since the shelf owns that copy; `otc lib
+restore <name>` writes it back. Restoring a starter that is present
+overwrites it with the running toolchain's copy, which is how starters
+pick up a newer toolchain's changes. `otc install` says when a shelved
+starter is behind the toolchain's copy and names the `otc lib restore`
+that refreshes it.
+
+| Path or variable | Holds |
+|---|---|
+| `~/.olang/shelf.toml` | the shelf: name → directory. Its first line, `version = 1`, is the format version; every installed toolchain shares the file, and one that finds a newer version refuses it by name rather than rewriting it. |
+| `~/.olang/shelf/<name>/` | the materialized starter libraries |
+| `~/.olang/shelf/pins/<name>-<sha>/` | libraries shelved at a commit |
+| `OLANG_SHELF` | the shelf file's location (starters materialize into `shelf/` beside it) |
+| `OLANG_HOME` | the whole `~/.olang` root, the shelf included ([the home directory](#the-home-directory)) |
+
+A shelf is seeded with the starter libraries once, when its file is
+first created. Starters removed on purpose are not reseeded.
+
+### The starter libraries
+
+Three libraries ship with every shelf, so a new installation can `otc
+add textkit` at once. Each is pure olang, with no capabilities and no
+effects, documented with `///` comments and tested by its own `test`
+blocks. Their sources are compiled into the binary, so seeding works
+offline, and the materialized copies are versioned with the toolchain
+that wrote them.
+
+#### textkit — text layout and humane formatting
+
+| Function | Does |
+|---|---|
+| `rpad(s, w)` / `lpad(s, w)` | pad right/left with spaces to width `w`; longer strings pass through |
+| `center(s, w)` | center in width `w`, extra space to the right |
+| `rule(w)` | a horizontal rule of `w` box-drawing dashes |
+| `wrap(text, width)` | greedy word wrap, returned as a list of lines |
+| `columns(rows, gap)` | align rows of cells into columns, `gap` spaces apart |
+| `table(headers, rows)` | a finished table: headers, rule, aligned body |
+| `money(cents)` | integer cents as currency: exact, comma-grouped, negative-safe |
+| `human_bytes(n)` | a byte count at a readable scale: `"1.5 KB"` |
+| `human_duration(ms)` | milliseconds as people say it: `"3.2s"`, `"5m 07s"` |
+| `slugify(s)` | a URL- and filename-safe slug: `"hello-world"` |
+
+```olang no-run
+use textkit { money, table, human_duration }
+
+println(money(123456789))     // $1,234,567.89
+println(money(-150))          // -$1.50
+println(table(["op", "time"],
+    [["parse", human_duration(3200)], ["run", human_duration(412)]]))
+// op     time
+// ────────────
+// parse  3.2s
+// run    412ms
+```
+
+Amounts kept in integer cents stay exact; `money` is the display edge.
+
+#### validate — declarative checks for map-shaped input
+
+Data from a form, a JSON body, a CSV row or a config file is a map of
+unknowns. `validate.check` holds it against a rule list and reports
+every problem, each naming its field.
+
+| Function | Does |
+|---|---|
+| `check(m, rules)` | `Ok(m)`, or `Err(problems)`: one `"field: problem"` string per failure |
+| `ok(m, rules)` | the verdict alone, as a Bool |
+
+A rule is `[field, kind]` or `[field, kind, opts]`. Kinds: `"str"`,
+`"int"`, `"float"`, `"num"`, `"bool"`, `"list"`, `"map"`, `"any"`, and
+`"date"` (an ISO day the value must parse as). Options: `required: false`
+(absent is fine; present still checks), `min`/`max` (numeric bounds,
+length bounds for strings and lists, ISO days for a date), `one_of` (an
+allowed-values list), `pattern` (a regex the whole string must match),
+and `where` (a function of the value answering a `Result`, whose `Err`
+message becomes the field's problem). The input is a map or a parsed
+JSON object.
+
+```olang no-run
+use validate { check, ok }
+
+let rules = [
+    ["date",   "str", #{ "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" }],
+    ["amount", "int", #{ "min": 1 }],
+    ["kind",   "str", #{ "one_of": ["expense", "income"] }],
+    ["note",   "str", #{ "required": false, "max": 200 }],
+]
+
+match check(#{ "date": "2026-8-25", "amount": 0, "kind": "loan" }, rules) {
+    Ok(row) => println("valid"),
+    Err(problems) => for p in problems { println(p) }
+}
+// date: does not match ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
+// amount: below minimum 1
+// kind: must be one of ["expense", "income"]
+
+let even = [["n", "int", #{ "where": (v) => if v % 2 == 0 => Ok(v) else => Err("must be even") }]]
+println(show(check(#{ "n": 3 }, even)))   // Err(["n: must be even"])
+```
+
+#### markdown — a Markdown renderer
+
+`markdown.to_html(text)` turns a Markdown document into HTML: headings,
+paragraphs, `` `code` `` spans and fenced blocks, **strong**,
+*emphasis*, links, bulleted and numbered lists, block quotes and
+horizontal rules. Inline markers nest; an unmatched marker is literal
+text; everything else is escaped, so untrusted input renders as text
+rather than markup. GitHub-style task lists render as disabled
+checkboxes (`<li class="task">`, `class="task done"` for `[x]`), in
+source order, so a click in the page maps back to the n-th task line.
+
+| Function | Does |
+|---|---|
+| `to_html(md)` | a whole Markdown document, as HTML |
+| `render_inline(s)` | one line's inline spans, for a caller with its own block structure |
+| `escape(s)` | HTML-escape text: `&`, `<`, `>` become entities |
+
+```olang no-run
+use markdown { to_html }
+
+println(to_html("# Notes\n\nShip the **shelf** first."))
+// <h1>Notes</h1>
+// <p>Ship the <strong>shelf</strong> first.</p>
+```
+
+#### Documentation in the REPL
+
+Shelved libraries are olang source, so their `///` comments answer
+`:help` in the REPL once a library is imported, and `olang doc` renders
+them as an API page:
+
+```text
+olang> use textkit { money }
+olang> :help money
+
+═══ money ═══
+
+  share fn money(cents)
+
+  Integer cents as currency, negative-safe and comma-grouped:
+  `money(123456789)` is "$1,234,567.89", `money(-150)` is "-$1.50".
+  Keeping amounts in cents end to end is what makes them exact.
+```
+
+### Pinning and drift
+
+`otc add` and `otc install` write `olang.lock` with the directory the
+shelf resolved and a checksum of its contents. From there:
+
+- **A moved or deleted library** fails the next install, naming the
+  library and the path that stopped existing.
+- **An edited library** is normal development: the change is reported
+  at install, never treated as tampering, and the lock re-pins.
+- **`otc install --frozen`** replays the lockfile exactly and fails on
+  any drift.
+- **A library shelved at a commit** does not follow its checkout. `otc
+  lib add <path> --rev <commit>` writes the repository's tree at that
+  commit into the shelf's own directory (`shelf/pins/<name>-<sha>`),
+  registers the name there, and records the full commit id. The lock of
+  every project that depends on the name then carries `rev`: on a
+  machine whose shelf holds the library at another commit, or following
+  a directory, a run fails and names the `otc lib add <path> --rev <sha>`
+  that satisfies it, and the snapshot's checksum is verified as a
+  fetched dependency's is. Re-registering the name without `--rev`
+  unpins it. Two machines resolve the same library this way from
+  checkouts each keeps moving.
+- **Re-shelving is picked up by `otc install`.** After `otc lib add
+  <path> --rev <new-sha>`, or `otc lib add <path>` to follow the
+  directory again, the next `otc install` reports the move (`shelf
+  library 'sdk' moved: the lock had it at 4f2a91c…, the shelf has it at
+  9b03e7d… — re-pinning`) and re-resolves that entry; `--frozen` refuses
+  the drift. A library that follows its directory has no directory in
+  the lock, so re-registering it at another path needs no re-pin.
+
+A lockfile pin on a starter behaves like any other: after `otc lib
+restore`, the next `otc install` in each project re-pins it, visibly.
 
 ## The home directory
 
 Everything the toolchain writes under the user's home lives in
-`~/.olang`, whose layout is a stated contract (defined once in the
-runtime, `src/home.rs`):
+`~/.olang`, whose layout is part of the stability promise:
 
 ```text
 ~/.olang/
   bin/          shims pointing at the default toolchain
   toolchains/   <version>/bin/{olang, otc} — managed by `otc update`
-  shelf/        registered library copies
+  shelf/        starter libraries and libraries shelved at a commit
   shelf.toml    the shelf manifest
   cache/        git dependency clones (prunable)
   state/        warm hints, REPL history (regenerable)
@@ -273,12 +472,12 @@ manage it:
 
 - **`otc doctor`** audits an installation: every `olang`/`otc` on
   PATH with its version and origin (cargo, Homebrew, olang-home) and
-  which copy wins; version agreement between `olang` and `otc`; legacy
-  files and directories from older layouts; shelf entries whose paths
-  no longer resolve; and the sizes of the prunable parts. The default
-  run is read-only; `otc doctor --fix` applies the safe repairs —
-  removing legacy scaffolding, migrating the REPL history — and never
-  touches installations owned by other package managers.
+  which copy wins; version agreement between `olang` and `otc`; files
+  and directories the layout does not hold; shelf entries whose paths do
+  not resolve; and the sizes of the prunable parts. The default
+  run is read-only; `otc doctor --fix` applies the safe repairs (stray
+  files removed, the REPL history moved into `state/`) and never touches
+  installations owned by other package managers.
 - **`otc clean`** reclaims the prunable parts: the dependency cache by
   default, `--state` for regenerable runtime state, `--all` for both.
   Sizes are reported as they are reclaimed. The shelf and the
@@ -302,11 +501,11 @@ Multiple releases install side by side:
 ```bash
 otc toolchain list              # installed versions, default marked
 otc toolchain list --format json  # #{ format, kind: "toolchains", dir, default, toolchains }
-otc toolchain install 0.87.0    # add a specific release
-otc toolchain default 0.87.0    # switch the shims
-otc toolchain remove 0.87.0     # remove (the default refuses)
+otc toolchain install 1.0.0     # add a specific release
+otc toolchain default 1.0.0     # switch the shims
+otc toolchain remove 1.0.0      # remove (the default refuses)
 otc toolchain which             # the olang this project's pin resolves to
-otc toolchain link 0.89.0 ../olang   # a local build as a toolchain (a binary, or a checkout's target/release/olang)
+otc toolchain link 1.1.0 ../olang    # a local build as a toolchain (a binary, or a checkout's target/release/olang)
 ```
 
 A toolchain is a folder `~/.olang/toolchains/<version>/` holding
@@ -332,7 +531,8 @@ completion directory.
 
 ```bash
 otc bench                        # every bench in bench/
-otc bench sums --runs 7          # filter by name, more repetitions
+otc bench sums --runs 7          # filter by name, more repetitions (default 5)
+otc bench --sizes 1000,4000      # override every bench's sizes
 otc bench --save base.json       # store medians as a baseline
 otc bench --against base.json --fail-on-regress   # the CI gate
 otc bench --profile              # rerun the slowest point under `olang profile`
@@ -367,11 +567,9 @@ println(`CHECKSUM ${out}`)
 
 An accidentally quadratic bench announces itself:
 `⚠ growth: ~O(n²) — check for a copy-per-iteration (exponent 1.99)`.
-Every real performance bug this codebase has hunted appeared as a curve
-before it was a number, which is why the harness fits curves.
 
-The two output conventions are contracts, not decoration. A `CHECKSUM`
-line must agree across every repetition or the measurement is refused —
+The two output lines are part of the harness's contract. A `CHECKSUM`
+line must agree across every repetition or the measurement is refused:
 a timing whose answer wobbles is measuring something else. A `TIME`
 line (milliseconds) makes the bench self-timed, excluding interpreter
 startup and setup; without one the harness uses wall clock and
@@ -522,8 +720,7 @@ replayed, a stale one is resolved past in memory and left byte-for-byte
 as it was, and a project without one gets none. The *explicit* commands
 `otc install`, `otc add` and `otc remove` still write the lock, and say
 that they did so on purpose — the flag is about writes nobody asked for,
-not about forbidding the lock. (A third value, "readonly", would mean
-the same thing, so there is none.) `olang check` warns about any other
+not about forbidding the lock. `olang check` warns about any other
 value, which reads as `"auto"`.
 
 Fetched sources are cached content-addressed by commit under
@@ -545,28 +742,18 @@ constraint; there is no silent duplication of incompatible versions.
 
 ## The registry
 
-Registry distribution is currently **dormant surface**: the resolution
-machinery below works and is exercised by tests, but the CLI leads with
-the local workflow, and no public registry exists yet. This section
-documents the mechanism for when distribution matters.
+There is no public registry, and `otc` has no publish command; the
+local workflow (paths and the shelf) and git sources cover distribution.
+Registry resolution works against any index you point it at.
 
-A registry is just a git repository of TOML index files — one `<name>.toml`
-per package, listing each published version with its git source, commit, and
-checksum. There is no hosted service required to start.
+A registry is a git repository of TOML index files: one `<name>.toml`
+per package, listing each published version with its git source, commit
+and checksum. An entry records the release's *registry* dependencies so
+MVS can resolve through it, so a library meant for a registry depends on
+registry versions itself, not on paths or git branches.
 
-Publish a release:
-
-```text
-(publishing is part of the dormant registry surface; the index format
-below is what a release writes)
-```
-
-The published entry records the release's *registry* dependencies so MVS
-can resolve through it; a library meant for the registry should therefore
-depend on registry versions itself, not on paths or git branches.
-
-Point installs at a registry with the `OLANG_REGISTRY` environment variable
-(a local directory or a checkout of the index repo).
+Point installs at a registry with the `OLANG_REGISTRY` environment
+variable (a local directory or a checkout of the index repository).
 
 ## Trust model
 
@@ -575,8 +762,8 @@ From then on the checksums bite: the lockfile records a sha256 of each
 fetched source tree, and **every later install re-verifies fetched
 (git/registry) content against it** — a mismatch is a hard error, not a
 warning. A registry release's published checksum is likewise enforced at
-fetch time, and the registry index itself is append-only: publishing
-refuses to rewrite an already-published version. Path and shelf
+fetch time, and an already-published version in an index is never
+rewritten. Path and shelf
 dependencies report drift informationally — editing one is normal
 development. Pin
 git dependencies by `rev` (not just `tag`) when you need the source to be
@@ -590,9 +777,8 @@ block in `olang.toml` gates the effectful stdlib surface — `fs`,
 `os` — at the module boundary; pure computation is never gated.
 
 `proc` means "may affect processes", including this one: it covers the
-`proc` module, `os.exec`, and `os.exit`. Terminating the host is a
-larger power than spawning a child, so a dependency refused the second
-does not get the first.
+`proc` module, `os.exec`, and `os.exit`, so a dependency refused `proc`
+can neither start a child nor end the host.
 
 ```toml
 [capabilities]
@@ -603,9 +789,8 @@ db = true
 env = true
 ```
 
-Absent, capabilities are wide open — a program with no manifest, or a
-manifest with no `[capabilities]`, runs unrestricted, so this is
-opt-in and never breaks existing code. A denied call is a runtime
+Absent, capabilities are wide open: a program with no manifest, or a
+manifest with no `[capabilities]`, runs unrestricted. A denied call is a runtime
 error naming the capability, the call, and the grant that refused it.
 
 A grant that cannot be honoured is refused, never ignored. A key
@@ -644,18 +829,12 @@ The data stack is gated the same way and at the level it actually uses.
 `ods.write_jsonl` require it at write level. Every other function in
 `ods`, `stats`, and `plot` — including the parsers that take text,
 `ods.read_csv` and `ods.read_jsonl` — reaches nothing and needs no grant.
-That split is deliberate: a data module that could be handed a path would
-be a filesystem capability under another name.
 
 ### Asking what you were granted
 
-A denial stops the program. That is deliberate: a call that needed a
-capability it did not have is a mistake in how the program was deployed,
-and continuing past it would run a program the manifest does not
-describe.
-
-A program that can run with less access checks its grant before making
-the call. The `caps` module reports it:
+A denial stops the program: it is not a `Result` to recover from. A
+program that can run with less access checks its grant before making the
+call. The `caps` module reports it:
 
 ```olang
 let plan = if caps.allowed("fs") => "cache to disk" else => "in memory"
@@ -668,9 +847,7 @@ println(show(all.net))
 attenuated dependency sees what *that dependency* was given, which is the
 same set the gate would enforce a moment later.
 
-None of the three is itself gated. Asking what you hold reaches nothing
-and reveals nothing a caller could not learn by making the call and
-reading the error, so the escape hatch stays available under the
+None of the three is itself gated, so a program can ask under the
 tightest restriction.
 
 Enforcement is by *attribution*: when code that lives in `leftpad`'s
@@ -714,9 +891,9 @@ olang --trace-caps program.ol
 ```
 
 Capabilities the program did not use are set to their most restrictive
-value, so applying the generated block can only reduce access. The
-profiler observes every effect on either tier, so a promoted function's
-demands appear in the profile alongside an interpreted one's.
+value, so applying the generated block can only reduce access. The trace
+sees every effect on every tier, so a compiled function's demands appear
+beside an interpreted one's.
 
 Add `--write` to fold the block directly into the package's `olang.toml`:
 
@@ -735,27 +912,21 @@ olang caps path/to/pkg     # or a specific package directory
 olang caps ./tool          # a built binary (defers to inspect --caps)
 ```
 
-Capabilities are enforced on **both** tiers, at the one dispatch point
+Capabilities are enforced on every tier, at the one dispatch point
 every builtin passes through. A compiled function carries the file it was
-declared in, the bytecode tier keeps a stack of those files as it
-executes, and the gate reads the innermost one — the same attribution the
-interpreter takes from its own call stack. A promoted function in an
-attenuated dependency is therefore judged by *that dependency's* grant,
-exactly as the interpreted one was — and this holds across threads: a
-dependency's code reached through `spawn`, `par_map`, `par for`, or an
-`http.serve` handler runs on a worker with its own bytecode tier, and
-that tier carries the same gate, so a worker cannot exercise a
-capability the main thread would have been refused.
-
-A capability-restricted run keeps the full tier and the full speed; earlier
-releases switched the bytecode tier off under a manifest, at a cost of
-roughly two orders of magnitude on hot numeric code.
+declared in, the bytecode VM keeps a stack of those files as it
+executes, and the gate reads the innermost one, the same attribution the
+interpreter takes from its own call stack. A compiled function in an
+attenuated dependency is therefore judged by that dependency's grant,
+and this holds across threads: a dependency's code reached through
+`spawn`, `par_map`, `par for`, or an `http.serve` handler runs on a
+worker whose tiers carry the same gate. A capability-restricted run
+keeps every tier and its full speed.
 
 ### Modules loaded at run time
 
 A host can load code it did not write into its own running program — a
-plugin — and hold that code to a grant of its own. olang Studio's plugins
-run this way (studio/docs/plugins.md):
+plugin — and hold that code to a grant of its own:
 
 ```olang no-run
 let grant = #{ "name": "tier-map", "fs": "read", "fs_roots": ["/work/project"], "proc": ["olang"] }
@@ -802,37 +973,37 @@ match runtime.load_module("/work/plugins/tier-map/plugin.ol", grant) {
   structure, for a host deciding whether a reloaded module's state still
   fits it.
 
-tests/runtime_modules_test.rs runs each of these through the binary.
-
 ## The transparent binary
 
-An `olang build` executable embeds its complete source, its `olang.toml`
-and `olang.lock`, its capability manifest, and a checksum over all of
-them. `olang inspect` reads and verifies these files without external
-context:
+An executable written by [`olang build`](tooling.md#olang-build) embeds
+its complete source, its `olang.toml` and `olang.lock`, its capability
+manifest, and a checksum over all of them. `olang inspect` reads and
+verifies these files without any other context:
 
 ```bash
-olang inspect ./tool             # Print a summary: version, checksum, capabilities.
-olang inspect ./tool --source    # Print the embedded source.
-olang inspect ./tool --manifest  # Print the embedded olang.toml.
-olang inspect ./tool --caps      # Print the resolved capability grant.
-olang inspect ./tool --format json  # The summary as data, every check's verdict.
-olang inspect ./tool --verify    # Verify the checksum.
-olang inspect ./tool --against . # Compare the binary to a source tree.
-olang inspect ./tool -o dir/     # Extract source, manifest, and lockfile.
+olang inspect ./tool             # a summary: version, checksum, capabilities
+olang inspect ./tool --source    # the embedded source
+olang inspect ./tool --manifest  # the embedded olang.toml
+olang inspect ./tool --lockfile  # the embedded olang.lock
+olang inspect ./tool --caps      # the resolved capability grant
+olang inspect ./tool --format json  # the summary as data, every check's verdict
+olang inspect ./tool --verify    # verify the checksum
+olang inspect ./tool --against . # compare the binary to a source tree
+olang inspect ./tool -o dir/     # extract source, manifest, and lockfile
 ```
 
 The `--verify` checksum covers the source, the compiled **AST** (the bytes
-that actually run), the manifest, and the lockfile — so verification fails
-if the executed program or the capability grant is changed, not only the
-source text. Both `--verify` and `--against` additionally confirm that the
-embedded source **parses to the AST that runs**, so `--source` is honest: a
-binary whose AST was swapped while its source was left clean is reported as
-`DIVERGES`. `--against <dir>` compares the embedded source, manifest, and
-lockfile to a checkout and reports whether the binary was built from that
-source tree.
+that run), the manifest, and the lockfile, so verification fails if the
+executed program or the capability grant is changed, not only the source
+text. Both `--verify` and `--against` also confirm that the embedded
+source **parses to the AST that runs**, so `--source` shows what runs: a
+binary whose AST was swapped while its source was left clean is reported
+as `DIVERGES`. `--against <dir>` compares the embedded source, manifest,
+and lockfile to a checkout, reports each file as match, differ or
+missing, and exits non-zero on any mismatch: it answers whether the
+binary was built from that source tree.
 
-A transparent binary serves two additional purposes. It is a software bill
-of materials, because it records its exact sources and dependency
-versions. It also enforces the capability manifest it carries, so a
-restricted tool remains restricted wherever it runs.
+A transparent binary is also a software bill of materials, since it
+records its exact sources and dependency versions, and it enforces the
+capability manifest it carries, so a restricted tool stays restricted
+wherever it runs. `olang caps ./tool` prints that grant.

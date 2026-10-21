@@ -5,9 +5,8 @@ Part of [the olang book](README.md) · [Language reference](language.md).
 A small number of olang behaviors commonly surprise newcomers, particularly
 programmers arriving from Rust, Python, or JavaScript, where the equivalent
 construct behaves differently. This chapter collects those behaviors in one
-place. Each is intentional; each entry describes the behavior and the idiom
-that works with it. The first two — missing map keys and integer
-division — account for most early confusion.
+place. Each entry describes the behavior and the idiom that works with
+it; the [Language reference](language.md) has the full rules.
 
 ## Table of contents
 
@@ -20,7 +19,7 @@ division — account for most early confusion.
 7. [Functions can't be compared with `==`, even inside a list](#functions-cant-be-compared-with--even-inside-a-list)
 8. [Closures capture by value, at creation](#closures-capture-by-value-at-creation)
 9. [Definition order: functions are hoisted, values are not](#definition-order-functions-are-hoisted-values-are-not)
-10. [Indexing: a negative index raises, no slicing, maps use `.`](#indexing-a-negative-index-raises-no-slicing-maps-use-)
+10. [Indexing: a negative index raises, and `[]` does not slice or write a map](#indexing-a-negative-index-raises-and--does-not-slice-or-write-a-map)
 11. [`ods.read_csv` takes text; `ods.read_csv_file` takes a path](#odsread_csv-takes-text-odsread_csv_file-takes-a-path)
 12. [Empty-collection builtins raise](#empty-collection-builtins-raise)
 13. [`to_string` and `show` agree — a string is already its text](#to_string-and-show-agree--a-string-is-already-its-text)
@@ -34,9 +33,9 @@ division — account for most early confusion.
 
 ## Missing map keys return Unit, not a Result
 
-`m.key` (and `map_get(m, "key")`, which it is) on a key that is not
-present returns **`Unit`** (`()`), not an error and not a `Result`.
-It is the most frequent source of early confusion.
+`m.key` and `m["key"]` (both exactly `map_get(m, "key")`) on a key that
+is not present return **`Unit`** (`()`), not an error and not a
+`Result`.
 
 ```olang no-run
 let m = #{ "a": 1 }
@@ -81,16 +80,14 @@ println(show(7 / 2.0))     // 3.5   (one float is enough)
 println(show(7 % 3))       // 1     (remainder)
 ```
 
-Series are the exception, on purpose: `/` between two Int Series (or
-an Int Series and an Int) is true division and yields a Float Series,
-because a ratio between measure columns is what data code means and a
-truncated one is a silent wrong answer. `ods.cast(s / t, "Int")` when
-the integer quotient is wanted.
+Series are the exception: `/` between two Int Series (or an Int Series
+and an Int) is true division and yields a Float Series, since a ratio
+of columns is what data code means. `(s / t).cast("Int")` gives the
+integer quotient.
 
 Floats never overflow into `inf`: `1e308 * 10.0`, `math.exp(1000.0)`,
-and `str.parse_float("1e999")` are errors (the last an `Err`), so a
-computation that runs off the end of the number line stops where it
-happened rather than printing `inf` three functions later.
+and `str.parse_float("1e999")` are errors (the last an `Err`), so the
+computation stops where it went out of range.
 
 ## `to_string` prints values, not columns
 
@@ -122,9 +119,6 @@ println(if len(xs) > 0 => "has items" else => "empty")   // empty
 println(if name != () => "named" else => "anonymous")      // anonymous
 ```
 
-(Before the 1.0 freeze pass a condition took any value: `false`, `0`,
-`0.0`, `""`, an empty list, tuple or range, and `()` were false.)
-
 ## A line starting with `-x` is a new statement
 
 A binary operator at the start of a line continues the expression above
@@ -149,15 +143,11 @@ uses (class `no_effect`). Any expression statement that is only a
 literal, a name, or arithmetic or a comparison over them is reported
 the same way when it is not a block's last line.
 
-(Before the 1.0 freeze pass every leading `-` continued the line above,
-so `println("x")` over `-1` raised "cannot apply '-' to Unit and Int".
-From the freeze pass through 1.0.0-rc.2 no leading `-` or `+` continued,
-so `let a = 1.0 + 2.0` over `    - 10.0` silently bound `3.0`.)
-
-Since 0.69 the precedence table reads conventionally, and since the
-freeze pass the bitwise operators take Rust's order: `1 << 4 * 2` is
-`1 << 8`; the [operator table](language.md#operators-and-precedence)
-has the full ordering.
+Precedence reads conventionally (`&&` above `||`, arithmetic above
+ranges and pipelines), and the bitwise operators take Rust's order:
+`1 << 4 * 2` is `1 << 8`. The
+[operator table](language.md#operators-and-precedence) has the full
+ordering.
 
 ```olang
 println(show(true || false && false))    // true — && binds tighter, as expected
@@ -222,10 +212,9 @@ A top-level name is not captured: a function reads it when it runs, so
 a top-level `let mut` the program reassigns is seen as it is at the
 call ([language.md](language.md#closures-capture-by-value)).
 
-This is load-bearing — it is what makes modules, safe parallelism, and
-tier promotion sound. So *assigning* to a captured binding from inside a
-closure is an error, not a silent no-op: the write could only reach the
-closure's own snapshot, so the program is refused before it runs.
+*Assigning* to a captured binding from inside a closure is therefore
+an error, not a silent no-op: the write could only reach the closure's
+own snapshot, so the program is refused before it runs.
 
 ```text
 cannot assign to 'n': it is captured from an enclosing scope, and functions
@@ -282,7 +271,7 @@ let h = 1
 Rule of thumb: functions can be referenced from anywhere in the file;
 `let` values must be bound before they are read.
 
-## Indexing: a negative index raises, no slicing, maps use `.`
+## Indexing: a negative index raises, and `[]` does not slice or write a map
 
 `[i]` indexing works on lists, tuples, and strings, from 0, and an
 index outside them raises — a **negative index included**: it does not
@@ -301,33 +290,29 @@ Three limits of `[]`:
 
 - **No slicing.** `xs[1..3]` is a runtime type error — use `take`/`skip`
   (`take(skip(xs, 1), 2)`).
-- **Maps are not subscriptable.** `m["k"]` fails; read `m.k`, or
-  `map_get(m, k)` for a key that is not an identifier or is computed.
-  A Frame *is* — `f["amount"]` is its column — which is easy to
-  over-generalize: the string subscript belongs to the data stack's types,
-  not to maps.
+- **`m[k]` reads, never writes.** On a map, an object, a struct or a
+  parsed JSON object, `m[k]` is `map_get(m, k)` (`()` when absent);
+  `m[k] = v` is refused. Write a key with `#{ ...m, "k": v }` or
+  `map_set`.
 - **Element assignment only; no field assignment.** `xs[i] = v` on a
   `let mut` list and `m.k[i] = v` one level into a map work
   ([Lists](language.md#lists)). `p.x = 5`, `m.k = v` and deeper paths do
   not parse; write `#{ ...m, "k": v }`, `map_set`, or `map_set_in`.
-  Frames are not lists: `f["a"] = x` is not the way to add a column;
-  `ods.with_column(f, "a", x)` is.
+  A Frame's column is read with `f["a"]`, and added with
+  `f.with({ a: x })` or `f.with_column("a", x)`, not `f["a"] = x`.
 
 ## `ods.read_csv` takes text; `ods.read_csv_file` takes a path
 
-The two are one word apart and do different things, and the mistake used
-to be silent. `ods.read_csv` parses CSV *text*, so handing it a path
-parsed the path itself — a Frame with one column literally named
-`data/sales.csv`, zero rows, and no error anywhere. Nothing failed until
-some later operation returned an answer that made no sense.
+The two are one word apart and do different things: `ods.read_csv`
+parses CSV *text*, and `ods.read_csv_file` reads a file.
 
 ```olang no-run
 let sales = unwrap(ods.read_csv_file("data/sales.csv"))     // from disk
 let sales = ods.read_csv(unwrap(fs.read_file("data/sales.csv")))  // from text
 ```
 
-A single-line argument ending in `.csv`, `.tsv`, or `.txt` is now refused
-outright, naming `read_csv_file` and `open_csv`. The same pairing holds
+A single-line argument to `read_csv` ending in `.csv`, `.tsv`, or `.txt`
+is refused, naming `read_csv_file` and `open_csv`. The same pairing holds
 for JSON lines: `ods.read_jsonl` takes text, `ods.read_jsonl_file` takes
 a path. The file-reading halves require the `fs` capability; the text
 parsers reach nothing and need no grant.
@@ -346,11 +331,8 @@ println(smallest)   // 1
 ## `to_string` and `show` agree — a string is already its text
 
 `to_string("ada")` is `ada`, exactly what `show("ada")` and `${...}`
-interpolation produce. Until 0.81 it was `"ada"` *with quotes* — the
-printed shape rather than the value — and generic code that stringified
-values read from maps (query matching, key building, sort keys) grew
-quotes and silently stopped comparing equal. Strings inside a container
-still print quoted in every form, because that is the container's
+interpolation produce. Strings inside a container print quoted in
+every form, because that is the container's
 printed shape: `to_string(["a", "b"])` and `show(["a", "b"])` are both
 `["a", "b"]`.
 
@@ -397,7 +379,7 @@ fn name(c) = match c {
     Green => "green",
     other => "other: " + show(other)   // `other` binds; a typo like `Gren` would too
 }
-println(name(Blue))   // other: Color.Blue
+println(name(Blue))   // other: Blue
 ```
 
 ## A block's bindings end with the block
@@ -456,11 +438,10 @@ let inner = `${2 + 2}`
 println(`the answer starts with ${inner}`)
 ```
 
-Neither mistake has to wait for output any more: `olang check` warns on
-an escape-looking `\n`, `\t`, or `\r` inside a template (spell it `\\n`
-to mark the two characters deliberate — same output, no warning), and
-the parse error a nested backtick produces now says that templates do
-not nest.
+`olang check` warns on an escape-looking `\n`, `\t`, or `\r` inside a
+template (spell it `\\n` to mark the two characters deliberate — same
+output, no warning), and the parse error a nested backtick produces
+says that templates do not nest.
 
 ## A bare `use` can shadow an earlier named import
 
@@ -507,8 +488,6 @@ A few things that are easy to forget rather than truly surprising:
 
 ---
 
-None of these are bugs — they are the consequences of a few simple rules
-(Unit for absence, values-not-references in closures, C-style argv,
-integer arithmetic that is checked). For the precise semantics behind each, the
-[Language reference](language.md) is the authority; for the standard-library
-functions mentioned here, see [the stdlib chapter](stdlib.md).
+For the precise semantics behind each entry, see the
+[Language reference](language.md); for the standard-library functions
+mentioned here, see [the stdlib chapter](stdlib.md).

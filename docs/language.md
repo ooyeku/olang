@@ -7,10 +7,8 @@ Part of [the olang book](README.md) · [A tour of olang](tour.md) ·
 [Stability and compatibility](stability.md)
 
 This chapter is the complete reference for the olang language: every
-construct, its syntax, and its behavior, each with a runnable example. Code
-blocks marked `olang` are executed by the test suite
-(`tests/doc_examples_test.rs`) on every change, so the reference stays
-consistent with the interpreter.
+construct, its syntax, and its behavior, each with a runnable example. Every
+`olang` block runs as written.
 
 ## Table of contents
 
@@ -303,12 +301,9 @@ println(to_string(fixed + counter))
 ```
 
 Assignment is not a declaration. A bare `counter = 1` for a name that
-was never bound is an error, not an implicit `let` — the two mistakes
-this rules out (a typo silently creating a new variable, and a write
-that was meant to update something else) are among the most expensive
-in a dynamic language. Both errors are reported before the program
-runs, so they cannot hide behind a branch that only executes in
-production:
+was never bound is an error, not an implicit `let`, and so is an
+assignment to a binding not declared `mut`. Both are reported before
+the program runs, whichever branch they sit in:
 
 ```text
 cannot assign to 'total': it is not declared in this scope. Declare it
@@ -320,10 +315,9 @@ cannot assign to 'n': it is not declared mutable. Declare it with
 `let mut n = ...`, or bind a new value with `let n = ...` to shadow it
 ```
 
-The second message names the alternative deliberately. Shadowing — a
-fresh `let` of the same name — is always available and is often the
-better answer, because it produces a new binding rather than a mutable
-one:
+Shadowing — a fresh `let` of the same name — is always available and
+is often the better answer, because it produces a new binding rather
+than a mutable one:
 
 ```olang
 let raw = "  42 "
@@ -339,9 +333,8 @@ is wanted). Every tier agrees.
 
 ### The mutability model
 
-It is worth being precise about what assignment does, because olang
-separates two things that many languages fuse: *bindings* are
-reassignable when declared `mut`, *values* are never mutable.
+olang separates two things: *bindings* are reassignable when declared
+`mut`, *values* are never mutable.
 
 - A **binding** is a name-to-value association. Assignment (`counter =
   counter + 1`) points the name at a different value. This is allowed
@@ -369,10 +362,8 @@ println(to_string(a))   // [1, 2] — a never changes
 println(to_string(b))   // [1, 2, 3]
 ```
 
-This one property underwrites much of the language: closures can
-snapshot their environment cheaply, `spawn` and `par_map` can hand
-values to other threads without locks, and the execution tiers can
-share values by reference without defensive copies.
+Closures snapshot their environment cheaply because of it, and `spawn`
+and `par_map` hand values to other threads without locks.
 
 Assignment (`name = expr`) only updates an existing `let mut` binding;
 it never creates one.
@@ -563,19 +554,10 @@ enclosing binding is refused there too. A cell does not help across that
 boundary — cells are thread-confined — so results come back as values
 from `par_map` or over a channel.
 
-This is a deliberate design, not a missing feature, and three major
-pieces of the language rest on it:
-
-- **Parallelism is safe by construction.** `spawn`, `par_map`, and
-  `par for` hand closures to other threads. Because a closure owns an
-  immutable snapshot, no thread can see another's writes — there is
-  nothing shared to race on, and no locks exist in the language.
-- **Modules are self-contained.** A module's functions read its own
-  scope; nothing a caller does can reach in and alter what they see.
-- **The execution tiers can optimize.** A captured snapshot is a
-  compile-time constant to the bytecode compiler and the JIT, and so is
-  a top-level binding the program never rebinds; a function that reads
-  one the program does rebind is run where the binding is read live.
+Because a closure owns an immutable snapshot, a closure handed to
+another thread (`spawn`, `par_map`, `par for`) cannot see another
+thread's writes: there is nothing shared to race on, and the language
+has no locks.
 
 **Programming without shared mutable state.** The idiom that replaces
 "mutate an outer variable from inside a callback" is: *make the data
@@ -614,9 +596,7 @@ dom.on(dom.query("#add"), "click", (id) => {
 reload()
 ```
 
-No handler holds state, so capture-by-value costs nothing — and the
-architecture that falls out (event → request → re-render) is the same
-one large frameworks arrive at deliberately. The
+No handler holds state, so capture-by-value costs nothing. The
 [dom chapter](stdlib.md#dom--the-browser) develops this pattern in
 full with a working application.
 
@@ -662,12 +642,9 @@ equals another only when it holds the same cell (`[a] == [a]` is true,
 
 **A cell belongs to the thread that created it.** Reading or writing
 one from another thread is an error, and sending one through a channel
-is refused at the send. This is what keeps the guarantee that made
-capture-by-value worth its cost in the first place: two threads still
-cannot reach the same mutable location, so the absence of data races
-remains structural rather than a matter of discipline. A cell created
-*inside* a task, and used only there, is perfectly ordinary — the rule
-is about crossing, not about tasks.
+is refused at the send, so two threads never reach the same mutable
+location. A cell created *inside* a task, and used only there, is
+ordinary: the rule is about crossing, not about tasks.
 
 ```olang
 let readings = cell([])
@@ -747,17 +724,6 @@ println(to_string(hits))                     // 4: 0..(n-1)
 When in doubt, parenthesize — especially comparisons feeding `&&`, which
 read best fully grouped: `(a >= lo) && (a <= hi)`. See
 [Common pitfalls](pitfalls.md) for worked examples.
-
-> **History.** Before the 1.0 freeze pass the bitwise operators shared
-> one level, tighter than `*` (`1 + 2 << 3` was 17), and comparisons
-> chained left to right (`1 == 1 == 1` was `false`).
->
-> Before 0.69, `&&` and `||` shared one level, and `|>` and
-> ranges bound *tighter* than arithmetic — `0..n-1` was a runtime error
-> and `x + 1 |> f` piped only the `1`. Re-ordering them to the readings
-> above was the third and final deliberate pre-1.0 breaking change
-> ([Stability](stability.md)); code that parenthesized mixed operators,
-> as this book always advised, is unaffected.
 
 ### Evaluation order
 
@@ -843,7 +809,7 @@ The precise rules:
 - **Struct equality includes the type name**: two structs with the same
   fields but different declared types are not equal.
 - **Equality across unrelated kinds answers rather than raising.** `1 ==
-  "1"` is `false` and `true != 1` is `true` (since 0.83), so `x == ()`
+  "1"` is `false` and `true != 1` is `true`, so `x == ()`
   asks "is this nothing?" of any value — Unit is the absence value (a
   missing map key, an absent substring, a JSON null). Ordering is
   stricter: `<`, `<=`, `>`, `>=` between kinds they cannot order (`1 <
@@ -942,7 +908,7 @@ only for native values: two Series give their dot product, and a
 Matrix its product. Anything else raises `` `@` needs a Matrix or Series
 on each side ``. It binds like `*`. Unlike every other operator it
 never continues a line: a line that starts with `@` is a macro call or
-a decorator, as it always was.
+a decorator.
 
 ```olang
 let w = ods.series([0.5, 0.25, 0.25])
@@ -1106,19 +1072,14 @@ and the data stack's do:
 
 ```olang
 let sales = ods.read_csv("region,amount\neast,25.5\nwest,320.0\n")
-println(to_string(ods.to_list(sales["amount"])))   // a Frame takes a column name
+println(sales["amount"].to_list())                 // a Frame takes a column name
 println(to_string(sales["amount"][1]))             // a Series takes a position
 ```
 
 A value that defines no subscript reports that it cannot be indexed,
-naming its type. Subscripting is always read-only: there is no
-`value[k] = x` for a native value, because these values are immutable and
-an assignment that silently produced a copy would be a trap.
-
-The rule such a type is expected to follow is the one the Frame follows:
-**one key, one reading.** A Frame accepts a String (a column) and a Bool
-mask (rows), which are disjoint by type, and refuses a row position
-outright rather than adding a third meaning. See
+naming its type. Subscripting a native value is read-only: there is no
+`value[k] = x`. A Frame accepts a String (a column) and a Bool mask
+(rows), and refuses a row position; see
 [The data stack](ods.md#reaching-a-column).
 
 ### Tuples
@@ -1302,15 +1263,7 @@ println(o.name + " " + j.name)
 println(to_string(o.email == () && j.email == ()))   // true: absent is ()
 ```
 
-> **History.** Before 0.88 a map was read with `map_get` only, `.` on
-> a map was a type error, and `.` on an object or a parsed JSON object
-> raised on a missing field. `.` reading a map's key was added (roadmap
-> E1, after a review found 77% of the workspace's 24,000 `map_get`
-> calls read an identifier key off a name), and made exactly `map_get`
-> on the three map-like kinds, so that rewriting one as the other never
-> changes a program; an object's or a JSON object's absent field
-> reading `Unit` is the one change of meaning, ruled here. A misspelt
-> key is caught by `olang check` rather than at run time.
+A misspelt key is reported by `olang check` before the program runs.
 
 **Disambiguation note:** `{ ... }` containing statements is a
 [block](#blocks-are-expressions); `{ name: expr }` is an object literal.
@@ -1439,19 +1392,17 @@ rather than reaching the outer 'tally'. Produce a value per item and combine
 them — `sum(par_map(xs, (x) => ...))` — or send results over a `chan`
 ```
 
-A [cell](stdlib.md#cell--mutable-locations) is deliberately not the
-answer here, unlike the closure case: cells are confined to the thread
+A [cell](stdlib.md#cell--mutable-locations) is not the answer here,
+unlike the closure case: cells are confined to the thread
 that created them, so one made outside the loop is unreachable from a
 worker.
 
-Confinement is a property a value carries, not a rule about cells. Any
-value holding a mutable location declares itself confined, and every
-crossing then refuses it without knowing what it is: reading one from a
-`spawn`ed task fails, and `chan.send` refuses to carry it. A streaming
-[CSV or JSON-lines reader](ods.md#files-larger-than-memory) is the second
-such value — it holds a file position — and it inherited both refusals
-without a line of code written for it. To use one across threads, read on
-the thread that opened it and send the *rows*.
+Any value holding a mutable location is confined to its thread the
+same way: reading one from a `spawn`ed task fails, and `chan.send`
+refuses to carry it. A streaming
+[CSV or JSON-lines reader](ods.md#files-larger-than-memory) is one — it
+holds a file position — so read on the thread that opened it and send
+the *rows*.
 
 ```olang no-run
 par for (i, chunk) in enumerate(chunks) {
@@ -1619,7 +1570,7 @@ would. An annotation and a default apply to the whole argument:
 
 ```olang
 let pairs = [(1, 2.0), (2, 3.0)]
-println(map(pairs, ((i, w)) => to_float(i) * w))   // [2.0, 6.0]
+println(map(pairs, ((i, w)) => i * w))   // [2.0, 6.0]
 fn dot((a, b), (c, d)) = a * c + b * d
 fn first_and_rest([h, ...rest]) = `${h} then ${len(rest)}`
 fn area({ w, h }: { w: Int, h: Int }) = w * h
@@ -1641,7 +1592,7 @@ map given by position. `:help` and the editor show each signature:
 let s = ods.series([3.0, 1.0, 4.0, 1.0, 5.0])
 println(to_string(ods.rolling(s, window: 2, agg: "max")))
 println(to_string(stats.norm.cdf(1.0, std: 2.0)))     // mean defaults to 0.0
-let chart = plot.line(s, s, title: "doubled", width: 400)   // was #{ "title": … }
+let chart = plot.line(s, s, title: "doubled", width: 400)
 println(to_string(str.contains(chart, "<svg")))
 ```
 
@@ -1828,9 +1779,7 @@ println(total)   // 2
 A pipeline meant to stay inside the lambda is written in its body's
 parentheses or braces: `xs |> (v) => (v |> f)`. A lambda that is not a
 stage, such as `let h = (v) => v |> f` or an argument to `map`, keeps
-its whole expression as its body. Before 0.88 a lambda stage took the
-stages after it into its body, so the first line above answered `5`
-and the second `[0]`.
+its whole expression as its body.
 
 ## User-defined types
 
@@ -1940,15 +1889,14 @@ macro's output too, so a macro that splices `type Task = { ... }`
 beside each declaration gives every hook's record a checked shape. An
 alias may be declared below its first use.
 
-### What is not supported (yet)
+### What type declarations cannot express
 
 Union type *declarations* (`type Id = Int | String`) are aliases of the
 union annotation, checked as `x: Int | String` is ([Types](types.md));
 a discriminated union with payloads is still an enum. An enum variant
 takes positional fields only: `C { n: Int }` is a parse error (declare
 `C(Int)`, or a struct type and `C(Point)`). Intersection annotations
-(`A & B`) are not accepted at all; writing one is a parse error. See
-[Stability](stability.md) for the full list.
+(`A & B`) are not accepted; writing one is a parse error.
 
 ## Traits
 
@@ -2097,9 +2045,7 @@ println(to_string(is_err(parse_both("2", "oops"))))
 `Result` covers *expected* failure — the file that might be missing, the
 input that might be malformed. A **runtime error** is different: a type
 error, a failed assertion, a division by zero. Those are bugs, and olang
-does not offer a way to catch one mid-expression. `try`/`catch` used to
-look like that mechanism and was not (it destructured `Result`s); it was
-removed in 0.65, and `match` and `unwrap_or` say the same thing.
+has no construct that catches one mid-expression.
 
 What exists instead is a boundary you place yourself: `attempt(f)` calls
 `f()` and answers `Ok(value)`, or `Err(message)` when a runtime error
@@ -2144,10 +2090,7 @@ let jobs = [spawn risky(1), spawn risky(9)]
 println(to_string(jobs |> map((j) => match task.join(j) { Ok(v) => v, Err(e) => -1 })))
 ```
 
-That is the whole recovery story, and it is deliberate. A supervisor
-recovers because the thing it supervises runs somewhere it can watch,
-not because it wrapped an expression in a handler. Anywhere else, a
-runtime error stops the program — which is what you want from a bug.
+Anywhere else, a runtime error stops the program.
 
 ### `error` declarations
 
@@ -2203,11 +2146,10 @@ point*:
     → inner
 ```
 
-The trace is a property of the language, not of a tier: the same
-program reports the same span, frames, and message whether it ran
-interpreted, on the bytecode VM, or through a JIT deoptimization —
-[the execution tiers](ovm.md#correctness-policy) are held to
-trace-identical error reporting by the test suite. One shape note:
+The same program reports the same span, frames, and message whether it
+ran on the interpreter, the bytecode VM, or through a JIT
+deoptimization ([the execution tiers](ovm.md#correctness-policy)). One
+shape note:
 statements inside block bodies pinpoint the failing statement, while a
 single-expression function body (`fn f(x) = ...`) attributes the error
 to the nearest enclosing located statement — its call site.
@@ -2290,12 +2232,9 @@ if the task finished within `ms` milliseconds (`Ok(Ok(v))`, or
 `Ok(Err(e))` when it raised) and `Err("timed out")` otherwise. The
 budget can also be given as `#{ timeout_ms }`.
 
-Be precise about what that means: it bounds how long you *wait*, not
-how long the task *works*. An OS thread cannot be cancelled from
-outside without leaving whatever it was touching in an unknown state,
-so olang does not offer a cancel that would be a lie. A timed-out task
-runs to completion and its result stays collectible from the same
-handle:
+It bounds how long you *wait*, not how long the task *works*: olang
+has no task cancellation. A timed-out task runs to completion and its
+result stays collectible from the same handle:
 
 ```olang
 fn slow(n) = { time.sleep(80); n }
@@ -2339,8 +2278,7 @@ println(to_string(total) + " (" + show(unwrap(task.join(worker))) + ")")
 For the common case — the same function over every element — reach for
 `par_map`, `par_filter`, or `par for` instead of spawning by hand. They
 run on a worker pool, carry the same snapshot semantics as `spawn`, and
-are differential-tested against their sequential counterparts, so
-swapping `map` for `par_map` cannot change results:
+give the results their sequential counterparts give, in the same order:
 
 ```olang
 let squares = par_map([1, 2, 3, 4, 5], (n) => n * n)
@@ -2578,20 +2516,13 @@ label("seven")
 // Type error: parameter 'n' of label expects Int, got String
 ```
 
-Three rules keep enforcement predictable. Unannotated code is fully
-dynamic — no checks, no cost, no judgment. Container annotations check
-shallowly at runtime: `List<Int>` promises "a List" in O(1); element
-types are the static checker's concern — and it takes them:
-[`olang check`](tooling.md#olang-check) (and the language server in your
-editor) decomposes literals element by element, so `[1, "a"]` against
-`List<Int>` is flagged before the program runs, with no false positives.
-A tuple annotation checks the length as well: `(Int, Int)` refuses a
-3-tuple. `()` accepts only Unit, so `Int | ()` is an Int or nothing. A
-lambda's return annotation (`(x) -> Int => …`) is checked as a named
-function's. And `Int`/`Float` are strict — an `Int` does not satisfy a
-`Float` annotation, matching struct-field enforcement. Generic type
-parameters are erased at runtime and never checked (their trait
-*bounds* are).
+Unannotated code is fully dynamic. Container annotations check
+shallowly at runtime (`List<Int>` promises "a List"; element types are
+[`olang check`](tooling.md#olang-check)'s), a tuple annotation checks
+the length, `()` accepts only Unit, `Int` and `Float` are strict (an
+`Int` does not satisfy `Float`), and generic type parameters are erased
+(their trait *bounds* are checked).
+[Runtime enforcement](types.md#runtime-enforcement) states each rule.
 
 ```olang
 let count: Int = 3
@@ -2605,8 +2536,7 @@ Annotation forms: `Int`, `Float`, `String`, `Bool`, `Map`, custom type
 names, `[T]` lists, `(A, B)` tuples, `Map<K, V>`, `(A, B) -> R` functions,
 `Result<T, E>`, `A | B` unions, scalar literals
 (`"open" | "done"` is a lightweight enum), record shapes
-`{ name: Type, ... }`, generic applications `Name<T>`, `()` unit, and
-(reserved) intersection forms.
+`{ name: Type, ... }`, generic applications `Name<T>`, and `()` unit.
 
 A record shape names the keys a map or anonymous record carries. The
 runtime does not enforce it — a map's keys are data — but
@@ -2625,10 +2555,9 @@ true false struct enum
 await yield async defer const pub
 ```
 
-Twenty-one words, and that is the whole list, fixed at 1.0. The last
-six mean nothing yet: they are reserved for forms the language may add
-(an `await`, a `defer`), and a program that names something with one is
-refused with an error that says so. A member after `.` and a key are
+Twenty-one words, and that is the whole list. The last six have no
+meaning: they are reserved, and a program that names something with
+one is refused with an error that says so. A member after `.` and a key are
 not names, so `http.defer()` and `{ "const": 1 }` are untouched.
 
 **Eight more that introduce declarations are *contextual*, not
@@ -2673,8 +2602,7 @@ Each keyword and contextual word, in one line:
 `mut` and `par` are *contextual* too: `mut` is special only right after
 `let`, and `par` only directly before `for` (`par for x in xs`). `Ok`,
 `Err` and `Result` are ordinary names with built-in meaning rather than
-reserved words — as are `try`, `catch` and `Promise`, which named
-constructs olang no longer has.
+reserved words, as are `try`, `catch` and `Promise`.
 
 `spawn`, `assert`, `assert_eq` and `assert_ne` are **statement-position
 keywords**: at the start of an expression they are the language's own
@@ -2693,8 +2621,7 @@ not syntax: mask-skipped by the parser with line numbers preserved, so
 line.
 
 The full grammar is [`grammar.pest`](../grammar.pest) at the repository
-root — pest PEG syntax, and the single source of truth the parser is
-generated from. The precedence table in
+root, in pest's PEG syntax; the parser is generated from it. The precedence table in
 [Operators](#operators-and-precedence) mirrors its expression hierarchy.
 
 ---

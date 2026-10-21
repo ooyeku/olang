@@ -2,34 +2,20 @@
 
 Part of [the olang book](README.md) · [Architecture and internals](internals.md)
 
-This chapter is olang's **compatibility contract**: the authoritative
-statement of what is guaranteed, what may still change, and what a version
-number means. Where the README, an old comment, or any other text disagrees
-with what is written here and in the reference chapters, this document is
-correct.
+This chapter is olang's **compatibility contract**: what is guaranteed, what
+may still change, and what a version number means. Where any other text
+disagrees with what is written here and in the reference chapters, this
+chapter is correct.
 
-The language surface is **closed**. The syntax and behavior documented in
-[the language reference](language.md) and [the stdlib reference](stdlib.md)
-are a commitment, not a snapshot. The deliberate breaking changes before
-1.0 have shipped, each recorded in the CHANGELOG:
-gradual-typing enforcement in 0.48; the scope, mutability,
-stdlib-convention and error-model changes across 0.61–0.65; operator
-precedence in 0.68; and, in 0.88, the last release before 1.0, the
-settling of records (a missing field of an object reads as `()`), of
-modules (a missing member reads as `()`), of how a lambda stage in a
-pipeline ends, and of a map's order (its keys as they were first set)
-([Settled before 1.0](#settled-before-10)). Earlier
-editions of this chapter called 0.61 and then 0.68 the final deliberate
-break; 0.88's changes were made because 1.0 freezes what it ships. What remains before the 1.0 tag is
-the release itself. The guarantees below hold now and are what 1.0
-commits to permanently; the [semver contract](#versioning) states what
-could ever change them and at what cost.
+The syntax and behavior documented in [the language reference](language.md)
+and [the stdlib reference](stdlib.md) are a commitment, not a snapshot. The
+guarantees below are what 1.0 commits to; the [semver contract](#versioning)
+states what could ever change them.
 
 ## Table of contents
 
 - [The 1.0 commitment](#the-10-commitment)
 - [Platforms](#platforms)
-- [Settled before 1.0](#settled-before-10)
 - [What each surface guarantees](#what-each-surface-guarantees)
 - [Tools and file formats](#tools-and-file-formats)
 - [Versioning](#versioning)
@@ -58,63 +44,29 @@ could ever change them and at what cost.
 verified on (Apple silicon; the Intel build is made from the same
 source), and every guarantee in this chapter is made for it. Linux and
 Windows are **unsupported previews**: Linux binaries are released and
-its headless tests pass, Windows compiles and has not been run, and a
-program is welcome to run on either, but no behaviour there is
-promised — the desktop engine's windows on Windows and Wayland, the
-terminal layer on Windows, and the capabilities `gui.platform()`
-reports false are untried or incomplete (the roadmap's [parked
-platforms](roadmap.md#platforms-parked)). A difference between macOS and
-a preview platform is not a break of this contract. When a platform is
-supported, this section will say so, and that is an addition.
-
-## Settled before 1.0
-
-These rules were decided in 0.88 and in the pass that followed it, so
-that 1.0 ships them; they are part of the commitment and will not be
-reversed:
-
-- **A missing field of an object or a parsed JSON object reads as `()`**,
-  as a map's missing key does (`o.k`, `map_get(o, "k")`). A declared
-  struct's missing field raises. Code written against this rule keeps
-  working under every 1.x release; it is not a breaking change after
-  1.0, because it is the 1.0 behaviour. `olang check` reports a read of a
-  key no construction of the value has, and of a field a declared struct
-  never has, as the safety net.
-- **A module's missing member reads as `()`**; calling it raises naming
-  the nearest member.
-- **A field of `()` reads as `()`** (`s.pp.cur` when `s.pp` is absent),
-  and `map_get((), k)` is `()`; a field of any other non-record value
-  (`5.k`) and a declared struct's missing field still raise. `r?.f` is
-  reserved: a parse error, so it stays free to mean optional chaining.
-- **An unparenthesized lambda stage in a pipeline ends at the next
-  `|>`.**
-- **`??`'s level** is below the arithmetic, the pipeline and the ranges,
-  above the comparisons.
-- **A map keeps its keys in the order they were first set**, as a
-  Python dict and a JavaScript object do; an object's (and a parsed JSON
-  object's) fields keep theirs. Iteration (`entries`, `map_keys`,
-  `map_values`), printing, `meta.lit`, `json.stringify` and
-  `http.encode_query` follow it; setting a key again keeps its place,
-  removing one closes the gap. Equality ignores the order (`#{ "a": 1,
-  "b": 2 } == #{ "b": 2, "a": 1 }`). A record's columns follow it too:
-  `ods.frame_from_records` and `ods.read_jsonl` take the keys in the
-  order first met, `db.query`'s rows the SELECT's.
+its headless tests pass, Windows compiles and is unverified, and a
+program may run on either, but no behaviour there is promised. The
+desktop engine's windows on Windows and Wayland, the terminal layer on
+Windows, and the capabilities `gui.platform()` reports false are untried
+or incomplete. A difference between macOS and a preview platform is not
+a break of this contract. When a platform is supported, this section
+will say so, and that is an addition.
 
 ## What each surface guarantees
 
-Not every part of olang carries the same promise, and the honest thing is
-to say which carries which. Four tiers, from the frozen core outward:
+Not every part of olang carries the same promise. Four tiers, from the
+frozen core outward:
 
 | Tier | What you can rely on | Examples |
 |---|---|---|
 | **Stable** | Syntax and behavior are frozen. A documented program keeps parsing and keeps giving the same result, under the semver contract above. | the core language, macros, the listed stdlib modules, `cell`, `testing` |
-| **Stable in behavior, evolving in scope** | Every documented function behaves as written, permanently. The *set* of functions grows additively; nothing existing changes. | concurrency, the OVM/JIT tiers, the data stack, gradual typing, `runtime`, `asset`, `collections` |
+| **Stable in behavior, evolving in scope** | Every documented function behaves as written, permanently. The *set* of functions grows additively; nothing existing changes. | concurrency, the execution tiers, the data stack, gradual typing, `runtime`, `asset`, `collections` |
 | **Experimental** | The model is settled and tested, but the surface may still change: a minor release may change or remove an Experimental function, option or field, with a CHANGELOG note saying what to change ([Versioning](#versioning)). Build on it knowing that. | capabilities and `caps`, `http.serve`, `dom`, `gui`, `tty`, `pty`, `vt` |
 | **Reserved** | Not accepted at all. Writing one is a parse error, and if it ever gains meaning that will be purely additive. | intersection annotations (`A & B`) |
 
 Every module stdlib.md documents sits in exactly one tier. A name the
 reference calls internal — the `collections` layouts, `gui.flatten`,
-the `gui.flat_` family and `gui.roles` (Loom's layout internals), the
+the `gui.flat_` family and `gui.roles` (layout internals), the
 `ods` probes — is in none: it is outside the contract and may change in
 any release.
 
@@ -137,18 +89,12 @@ helpers), `testing` (the `assert_*` family, `snapshot` and its helpers,
 `test_summary` and `reset_tests`), `set_parallel`, and the global
 builtins. The embedded olang modules (`colx`, `mathx`) and packages
 (`cli`, `term`, `ui`, `viz`, `dash`) follow the same append-mostly rule.
-`cell` and `testing`'s session state (`test_summary`, `reset_tests`),
-Experimental before, are promoted: `cell`'s model — one mutable
-location, confined to its creating thread, refused at `chan.send`,
-re-entrant `cell.update` rejected — is the scope and mutability
-commitment below, and every program in the corpus that mutates shared
-state is built on it.
+`cell`'s model (one mutable location, confined to its creating thread,
+refused at `chan.send`, re-entrant `cell.update` rejected) is part of the
+scope and mutability rules below.
 
-**Scope and mutability settled in 0.61.0**, as the second deliberate
-breaking change before 1.0 (recorded in the CHANGELOG; the later ones
-are listed at the top of this chapter). Three rules that were advisory warnings in 0.50–0.60
-became enforced errors, checked statically before a program runs and
-therefore identical on every tier:
+**Scope and mutability.** These rules are checked statically before a
+program runs, and are therefore identical on every tier:
 
 - Every block scopes its bindings. A `let` inside `{ ... }`, a loop
   body, an `if` branch, or a `match` arm ends with that block.
@@ -157,45 +103,34 @@ therefore identical on every tier:
 - `let` is immutable, `let mut` is not. Assigning to a binding not
   declared `mut` is an error; shadowing with a fresh `let` is always
   available.
+- Assigning to a binding *captured* from an enclosing scope is an error
+  (the write could only reach the closure's snapshot), and
+  [`cell`](stdlib.md#cell--mutable-locations) is the one mutable
+  location. A closure captures the local bindings it names by value; a
+  top-level name is never captured, so every function reads its binding
+  as it is when the function runs.
 
-0.62.0 completed the model with a fourth rule and the primitive that
-makes it livable: assigning to a binding *captured* from an enclosing
-scope is an error (the write could only reach the closure's snapshot),
-and [`cell`](stdlib.md#cell--mutable-locations) is the one mutable
-location, confined to the thread that created it. A closure captures the
-local bindings it names by value; a top-level name is never captured —
-every function reads its binding as it is when the function runs, on
-every tier (settled before 1.0; language.md, "Closures capture by
-value").
+**The stdlib conventions.** An operation that cannot fail returns its
+value; one that can fail for reasons the caller could handle returns
+`Result`; one *called wrongly* raises. A lookup that finds nothing
+answers `()`.
 
-**The stdlib conventions settled in 0.64.0.** One rule decides what
-every function returns, so its shape follows from what it does: an
-operation that cannot fail returns its value, one that can fail for
-reasons the caller could handle returns `Result`, and one *called
-wrongly* raises. That third tier is what makes the second trustworthy —
-before it, `unwrap_or(f(x), default)` could not tell a missing file from
-a typo'd call. The same release freed seven declaration keywords
-(`share`, `error`, `test`, `type`, `trait`, `impl`, `use`) as ordinary
-identifiers and made `fs.join` variadic.
-
-**The error model settled in 0.65.0.** `Result` with `?` carries
-expected failure. A runtime error is a bug and stops the program: there
-is no construct that catches one *mid-expression*, and `try`/`catch` —
-which never did, despite looking like it — was removed. Recovery is
-*structural*, at the boundaries that already isolate a failing unit, and
-each boundary is a whole call: `attempt(f)` answers `Err(message)` when
+**The error model.** `Result` with `?` carries expected failure. A
+runtime error is a bug and stops the program: no construct catches one
+mid-expression. Recovery happens at the boundaries that already isolate a
+failing unit, each a whole call: `attempt(f)` answers `Err(message)` when
 a runtime error ended `f()`, `runtime.call_budget(f, args, ms)` reports
-the error (or the time running out) that ended its call, a spawned
-task's failure becomes `Err(e)` from `task.join`, and an `http.serve`
-handler's becomes a logged 500 with the server still serving. Nothing
-resumes inside the call that failed. `try` and `catch` are ordinary identifiers, as is `Promise`.
-The reserved-word list is fixed at 1.0: twenty-one
+the error (or the time running out) that ended its call, a spawned task's
+failure becomes `Err(e)` from `task.join`, and an `http.serve` handler's
+becomes a logged 500 with the server still serving. Nothing resumes inside
+the call that failed.
+
+**Reserved words.** The reserved-word list is fixed at 1.0: twenty-one
 words, six of them (`await`, `yield`, `async`, `defer`, `const`, `pub`)
-reserved for forms the language may add. It will not grow after 1.0 —
-that is the promise that keeps every identifier a program uses valid
-forever; a new form uses one of the six, a contextual word, a builtin,
-or an `@` macro. The *contextual* declaration words (eight,
-after `meta` joined in 0.68) may gain members additively, since a
+reserved for forms the language may add. It does not grow after 1.0, so
+every identifier a program uses stays valid; a new form uses one of the
+six, a contextual word, a builtin, or an `@` macro. The eight
+*contextual* declaration words may gain members additively, since a
 contextual word never stops being an ordinary identifier.
 
 **Absence and the sentinels.** Where an operation finds nothing, or
@@ -228,26 +163,16 @@ i64 arrive exactly, decimals take the standard IEEE reading, and an
 integer outside i64 (or a float text that overflows f64) is an `Err`
 naming the value — never a silently-lossy conversion.
 
-**Macros stabilized in 0.68** ([Macros](macros.md)), graduated after
-meeting every criterion the experimental entry set: source-mapped
-runtime error spans, an expansion-aware language server, a
-ten-thousand-program fuzz corpus run clean, and three macro libraries
-imported by real programs in the corpus. Both fuzz campaigns are
-committed as seeded, deterministic generators rather than historical
-claims: `tests/macro_fuzz_corpus_test.rs` and
-`tests/tier_fuzz_corpus_test.rs` run a 150-seed smoke corpus on every
-`cargo test`, and their `#[ignore]`d `*_full_campaign` tests reproduce
-the complete 10,000-seed runs on demand. What is frozen is the model,
-not its incidentals:
+**Macros** ([Macros](macros.md)). What is frozen is the model, not its
+incidentals:
 
 - The syntax forms — `meta fn` declarations, `@name(args)` in
   expression position, `@name` decorators stacked on `type`, `fn`, and
   `let` declarations — and their additive nature (`@` was unused;
   `meta` is an ordinary identifier except directly before `fn`).
-- The five laws: every expansion site says `@`; a macro reaches only
+- The rules: every expansion site says `@`; a macro reaches only
   the sites that name it; the parse is total (arguments are ordinary
-  olang under the one grammar, and no token or reader macros will ever
-  exist); expansion is pure, with the effectful and nondeterministic
+  olang under the one grammar; there are no token or reader macros); expansion is pure, with the effectful and nondeterministic
   modules refusing at expansion time; expansion cannot hide
   (`olang expand`, embedded expanded source, site-attributed errors).
 - The exchange contract: a meta fn receives argument and declaration
@@ -261,31 +186,26 @@ not its incidentals:
   at its original line; an error in generated code points at its `@`
   site and names the macro.
 
-Free to change, deliberately: exact error and diagnostic wording,
+Free to change: exact error and diagnostic wording,
 `olang expand`'s whitespace and presentation, the LSP's rendering of
 mapped findings, and the expansion fuel — which may increase but never
 drop below 16 rounds. The blocked-at-expansion module set may grow as
 new effectful modules enter the language (an addition that keeps the
 purity promise), and never shrinks.
 
-These rules are part of the commitment above and are permanent under the
-[semver contract](#versioning): changing any of them would be a 2.0, and
-2.0 is the version that is not meant to happen. The language surface is
-complete and closed; what [the roadmap](roadmap.md) still holds is
-additive.
+These rules are permanent under the [semver contract](#versioning):
+changing any of them would be a 2.0.
 
 ### Stable in behavior, evolving in scope
 
 - **Concurrency** — the documented API (`spawn`, `task.join`,
   `task.join_timeout`, `chan`, `par_map`, `par_filter`, `par for`) is
-  stable as of 0.63, which removed `async`/`await` and the `Promise`
-  API and left one model: threads. `spawn` runs on a real OS thread and
+  stable, and its model is threads. `spawn` runs on a real OS thread and
   returns a task handle; `par_map`/`par_filter` carry spawn's snapshot
-  semantics and are differential-tested against `map`/`filter`;
-  `task.join_timeout` bounds the wait, never the work, because an OS
-  thread cannot be cancelled. The scheduling model may gain further
+  semantics;
+  `task.join_timeout` bounds the wait, never the work. The scheduling model may gain further
   capability without changing what existing programs observe.
-- **The OVM and JIT tiers** — which functions get promoted or compiled
+- **The execution tiers** — which functions get promoted or compiled
   to native code, and how fast they run, changes freely; results never
   do.
 - **`runtime`** — the introspection module (memory, frames, the last
@@ -297,14 +217,12 @@ additive.
   the auto-loaded `collections` (heap, deque, table, …), behave as
   documented; their sets grow. The collections' internal layouts are
   not part of the contract.
-- **The data stack (`ods`, `stats`, `plot`)** — the documented functions
-  behave as the stdlib chapters state, pinned by doc tests, engine
-  property tests, and scipy/NumPy reference constants; the *scope* grows
-  (new dtypes, verbs, statistics, chart kinds) under the append-mostly
-  rule. Design decisions and their measured justifications live in
-  [the ods chapter's design record](ods.md#the-design-record), including
-  recorded deferrals (lazy evaluation, faer) with the conditions that
-  would reopen them.
+- **The data stack** (`ods`, `mat`, `stats`, `learn`, `ml`,
+  `random`'s generators, `plot`, `gg`) — the documented functions
+  behave as [The data stack](ods.md) and the stdlib reference state,
+  pinned by doc tests, engine property tests, and SciPy/NumPy reference
+  values; the *scope* grows (new dtypes, verbs, statistics, models,
+  chart kinds) under the append-mostly rule.
 - **Gradual typing** — olang is gradually typed, as documented in
   [the Types chapter](types.md): annotations are enforced at runtime
   (parameters, returns, `let` bindings, struct fields — shallow
@@ -315,10 +233,7 @@ additive.
   statically. All documented annotation forms keep parsing; the
   enforcement semantics are locked by the chapter's doc tests; the
   checker's no-false-positive discipline is a fixed rule — it may learn
-  to prove *more*, but a clean program stays clean. Enforcement landed
-  as the one deliberate breaking change of 0.48.0 (recorded in the
-  CHANGELOG); reserved annotation forms below remain unenforced until
-  their semantics land.
+  to prove *more*, but a clean program stays clean.
 
 ### Experimental — may change in a minor release
 
@@ -334,41 +249,37 @@ entry saying so; nothing graduates silently.
   carries. The model (opt-in restriction, shrink-only attenuation, gate
   at the effectful-module boundary, source-carrying binaries) is
   settled, but the gated surface may grow (new modules) and the bundle
-  format may change. Enforcement runs on every tier, so a restricted
-  run keeps full speed: the grant a program is given is independent of
-  how fast its code happens to be running.
+  format may change. Enforcement runs on every tier.
 - **`http.serve`** — the request/response API (the `HttpRequest`
   fields, string and response-struct returns) is integration-tested; the
   execution model (a bounded worker pool, a blocking caller, listening
   on `127.0.0.1` unless the `bind` option names another address) and
   its options may still change.
-- **The `dom` module** — browser-only, and young: the function surface
-  may grow and its payload conventions change as frontend programs
-  demand more; the element-handle model and the stateless pattern it
-  supports are its core.
-- **`gui`, `tty`, `pty` and `vt`** — the desktop and terminal engines
-  Loom, Studio, Heddle and heddle-sql are built on. Their surface still
-  grows with the engines (the roadmap's desktop rows), so a node's
-  fields, an event's payload or an option may change in a minor release.
-  The libraries built on them (Loom, Heddle) are where a program meets
-  them, and they absorb those changes.
+- **The `dom` module** — browser-only: the function surface may grow
+  and its payload conventions change; the element-handle model and the
+  stateless pattern it supports are its core.
+- **`gui`, `tty`, `pty` and `vt`** — the desktop and terminal engines.
+  Their surface still grows, so a node's fields, an event's payload or an
+  option may change in a minor release. A program usually meets them
+  through a library built on them, which absorbs those changes.
 
 ### Reserved — not accepted, and additive if they ever are
 
-One type-level form is named in the grammar's design but rejected by
-the parser: an intersection type annotation (`A & B`). Writing one is a
-parse error, not a construct waiting for semantics, and if it is ever
-accepted it will be additive, since no program can contain one now.
-A union *alias*, `type Id = Int | String`, is not reserved: it parses
-and is enforced as the union annotation it names (language.md, "Type
-annotations"), as union and literal-type annotations have been since
-0.50.
+Two forms are rejected by the parser so they stay free:
+
+- an intersection type annotation (`A & B`);
+- `r?.f`, kept for optional chaining.
+
+Writing either is a parse error; if one is ever accepted it will be
+additive, since no program can contain one now. A union *alias*,
+`type Id = Int | String`, is not reserved: it parses and is enforced as
+the union annotation it names ([Type annotations](language.md#type-annotations)).
 
 
 ## Tools and file formats
 
-Studio, CI scripts and editors drive the tools, so the tools have a
-contract too, tiered as the language is:
+Editors, CI scripts and other programs drive the tools, so the tools
+have a contract too, tiered as the language is:
 
 | Surface | Tier | What holds |
 |---|---|---|
@@ -398,8 +309,7 @@ number means exactly this:
 - **Major** (`1.0 → 2.0`) — the only version that may break a documented
   program, and the bar is deliberately high: a change that would break a
   documented example of a Stable surface is a 2.0 change, not a 1.x one,
-  no matter how small. The intent is that 2.0 never needs to happen; it
-  exists so the promise above can be absolute rather than hedged.
+  no matter how small.
 
 **Experimental surfaces are the exception, and the only one.** A
 surface the [Experimental tier](#experimental--may-change-in-a-minor-release)
@@ -412,10 +322,9 @@ program written against this book — its syntax, its documented behavior,
 its stdlib signatures and `Result` conventions — stops parsing, stops
 running, or produces a different result. Error and diagnostic text is
 not behavior in this sense ([above](#stable)), and neither is an
-Experimental surface's change in a minor release. This is not a matter of judgment:
-every documented example is executed in CI (`doc_examples_test`), so a
-breaking change is a *failing test*, and shipping it in anything below a
-major version is a release bug.
+Experimental surface's change in a minor release. Every documented
+example is executed in CI (`doc_examples_test`), so a breaking change is
+a failing test.
 
 **Deprecation.** After 1.0, a stdlib function that has to be renamed
 keeps its old name as an alias for at least one minor release, the
@@ -426,23 +335,18 @@ never removed in the release that renames it.
 was a *bug* — `&&` not short-circuiting, `?` aborting instead of
 propagating — is a fix, not a break, and lands in a minor or patch
 release. Such changes are recorded in [CHANGELOG.md](../CHANGELOG.md)
-under Fixed, with the reasoning, so the distinction between "we fixed
-what was wrong" and "we changed what was right" is always on the record.
+under Fixed, with the reasoning.
 
-**Before the 1.0 tag.** Until 1.0.0 is tagged, a minor release may still
-settle a rule, as 0.68 and 0.88 did — each such change listed in the
-CHANGELOG and found by `olang check` where it can be. 0.88 is the last
-release before 1.0: from 1.0 the contract above binds every release,
-and the 1.0 release changes the number and the promise's *formality*,
-not the code's behavior.
+**Release candidates.** Until 1.0.0 is tagged, a release candidate may
+still settle a rule, each such change listed in the CHANGELOG and found
+by `olang check` where it can be.
 
 ## How this is enforced
 
 - Every code block in the book runs in CI (`doc_examples_test`).
 - Every `module.function` the book *names in passing* is resolved against
-  the real binary (`doc_references_test`). Running the examples proves
-  the examples; this covers the far larger surface the prose mentions
-  without demonstrating, which is where a rename quietly leaves a lie.
+  the real binary (`doc_references_test`), which covers the surface the
+  prose mentions without demonstrating.
 - Every fixed bug lands with a regression test (one file per area under
   `tests/`).
 - The examples — real programs — run end-to-end via
@@ -451,13 +355,9 @@ not the code's behavior.
   `bytecode_differential_test` call individual functions on both tiers;
   `tier_agreement_test` runs every runnable book example and every
   standalone example program as a whole program under `--no-ovm` and
-  under `--ovm-tier=1` and diffs stdout, stderr, and exit status. The
-  second exists because the first cannot catch a divergence that needs a
-  whole program to express — and the first one found was exactly that.
+  under `--ovm-tier=1` and diffs stdout, stderr, and exit status.
 - `colx`/`mathx` differential tests exercise the language against its own
   stdlib.
 
-If you find documented behavior that does not match the implementation,
-that is a bug in one of them — please file it. The book is the contract,
-and this chapter is where the contract is stated; every other chapter is
-bound by it.
+Documented behavior that does not match the implementation is a bug in
+one of them.

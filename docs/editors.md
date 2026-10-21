@@ -1,14 +1,12 @@
 # Editor support
 
 olang includes a language server: `olang lsp` speaks the Language Server
-Protocol over stdio from the same binary that runs programs. Building the
-server into the compiler means there is no separate installation and no
-version skew between what the editor reports and what the runtime does, and
-every diagnostic comes from the real parser rather than a reimplementation of
-it. This chapter covers what the server provides and how to configure the
-supported editors.
+Protocol over stdio from the same binary that runs programs, so there is
+no separate installation, and the editor's diagnostics come from the
+parser and checker the runtime uses. This chapter covers what the server
+provides and how to configure VS Code, Zed and other editors.
 
-Part of [the olang book](README.md).
+Part of [the olang book](README.md) · [Command-line tooling](tooling.md)
 
 ## What the server provides
 
@@ -24,6 +22,11 @@ Part of [the olang book](README.md).
 | Rename | those places; refuses keywords and standard-library names the file does not bind itself, with a reason |
 | Signature help | the signature and active parameter as you type a call — local functions and every registry entry alike |
 | Formatting | the `olang fmt` engine — AST-verified, whitespace-only |
+| Semantic tokens | names colored by what they bind (a parameter, a function, a module, a type), as olang scopes them |
+| Inlay hints | parameter names at call sites, from the file's own declarations and the stdlib's signatures; an argument that already reads as its parameter's name is not hinted |
+| Code actions | "Add /// documentation" on an undocumented declaration; "Declare with `let mut`" on an assignment the scoping pass refuses |
+| Workspace symbols | every declaration in every `.ol` file under the workspace root whose name contains the query |
+| Notebooks | an `.olmd` file is one document: its cells are one module on the file's own lines ([Notebooks](notebooks.md#commands)) |
 | Files renamed, moved or deleted | `workspace/didRenameFiles` and `workspace/didDeleteFiles` (registered for olang files and folders): the open documents follow a rename (a folder's too), the old name's problems are cleared, and every open document is checked again — an importer of the name that went or came hears it at once, without an edit |
 
 Positions cross the wire in UTF-16 code units, the protocol's default,
@@ -37,8 +40,9 @@ so navigation keeps working while you type.
 Positions come from the AST itself: `fn`, `let`, and `type` declarations
 carry the source span of the name they bind.
 
-The server re-parses whole files on every edit. olang files are small and
-the parser is fast, so the server keeps no incremental parse state.
+Edits arrive incrementally (a keystroke sends its range and text); the
+server parses and checks the whole file again on each one, and keeps
+each imported module's parse until that module's source changes.
 
 ## VS Code
 
@@ -50,8 +54,8 @@ client that launches `olang lsp`. The client probes the binary before
 starting: a missing or wrong `olang.serverPath` produces an actionable
 error with a button to the setting, instead of silently doing nothing.
 A [notebook](notebooks.md) (`.olmd`) opens as markdown, its ```` ```olang ````
-cells highlighted with the olang grammar; the language server does not
-read notebooks yet.
+cells highlighted with the olang grammar; the extension starts the
+language server for `.ol` files only.
 
 To install from the repo:
 
@@ -60,6 +64,17 @@ cd editors/vscode && npm install && npx vsce package && code --install-extension
 ```
 
 If `olang` is not on VS Code's PATH, set `olang.serverPath` in settings.
+
+### If the server does not start
+
+The client resolves the `olang` binary in order: the `olang.serverPath`
+setting, then `PATH`, then the well-known install locations (`~/.olang/bin`,
+`~/.cargo/bin`, `/usr/local/bin`, `/opt/homebrew/bin`) — a GUI-launched
+editor often carries a minimal `PATH` that contains none of them. When
+nothing resolves, the extension says so with a button to the setting
+rather than failing silently. `olang --version --verbose` and `otc
+doctor` show which binary a `PATH` resolves and where it came from, when
+an old copy (in `~/.cargo/bin`, say) shadows a newer install.
 
 ## Zed
 
@@ -79,20 +94,6 @@ authoritative). Install it as a dev extension:
 The grammar reference in `extension.toml` points at this repository
 (`editors/tree-sitter-olang`), so the dev-extension flow needs the repo
 present locally or the ref pushed.
-
-### If the server does not start
-
-The client resolves the `olang` binary in order: the `olang.serverPath`
-setting, then `PATH`, then the well-known install locations (`~/.olang/bin`,
-`~/.cargo/bin`, `/usr/local/bin`, `/opt/homebrew/bin`) — a GUI-launched
-editor often carries a minimal `PATH` that contains none of them. When
-nothing resolves, the extension says so with a button to the setting
-rather than failing silently. One historical trap worth knowing: LSP
-clients append `--stdio` to the server command by convention, and
-versions of `olang` before 0.69 rejected the flag and exited before the
-first protocol byte — if the output channel shows
-`unexpected argument '--stdio'`, an old binary is being resolved
-(`~/.cargo/bin` shadowing a newer install is the usual culprit).
 
 ## Any other LSP editor
 

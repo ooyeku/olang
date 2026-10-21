@@ -7,16 +7,15 @@ Part of [the olang book](README.md) · [Language reference](language.md) ·
 
 This chapter describes how the olang runtime is implemented. It is written for
 readers changing the implementation and for readers studying how a language is
-built. The runtime is organized around a small number of design decisions;
-each is presented with its reasons, its alternatives, and its consequences.
-The bytecode and JIT tiers are covered in detail in
+built: the pipeline, the rules every execution tier follows, the value
+model, modules, errors, testing, and where each part lives. The bytecode and JIT tiers are covered in detail in
 [The execution model: OVM and JIT](ovm.md), and the rules governing what may
 change are in [Stability and compatibility](stability.md).
 
 ## Table of contents
 
 - [The pipeline](#the-pipeline)
-- [Why an interpreter is the authority](#why-an-interpreter-is-the-authority)
+- [The interpreter is the authority](#the-interpreter-is-the-authority)
 - [The refusal ladder](#the-refusal-ladder)
 - [How promotion, inference, and deopt work](#how-promotion-inference-and-deopt-work)
 - [The scratch-ownership model](#the-scratch-ownership-model)
@@ -50,10 +49,7 @@ native machine code (JIT)       src/ovm/jit.rs — Cranelift, on by default
 **`grammar.pest`** is the single source of truth for syntax. pest generates
 the parser from it at build time; every syntax change starts here. The
 expression hierarchy in the grammar *is* the operator-precedence table
-documented in the [language reference](language.md#operators-and-precedence)
-— precedence is defined once, in the grammar, and documented from it,
-rather than existing separately in a Pratt parser's table where the two
-could drift.
+documented in the [language reference](language.md#operators-and-precedence).
 
 **`src/parser.rs`** walks pest's pairs into the AST (`src/ast.rs`). The AST
 is uninterpreted structure: `Statement`, `Expr`, `Pattern`, `TypeDefinition`,
@@ -77,42 +73,26 @@ are compiled to register bytecode and re-executed there, and bytecode
 that qualifies for the JIT whitelist compiles further to native machine
 code via Cranelift (`src/ovm/jit.rs`). Both are on by default.
 
-## Why an interpreter is the authority
+## The interpreter is the authority
 
-The first design decision everything else hangs on: **the tree-walking
-interpreter defines the language, and every faster tier must agree with
-it exactly.**
+**The tree-walking interpreter defines the language, and every faster tier
+must agree with it exactly**: the error a bad index raises and its message,
+what `for` does with a range, how `Int` and `Float` compare inside a
+structure, when a closure snapshots its environment. The interpreter is in
+effect an executable specification, one small `match` arm per construct.
 
-The slowest component is chosen as the authority because a dynamic
-language's semantics are concentrated in its details: which error a bad
-index raises and with what message, what `for` does with a range as opposed
-to a list, how `Int` and `Float` interact inside a structural comparison, and
-the exact point at which a closure snapshots its environment. A prose
-specification is difficult to keep synchronized with that level of detail,
-but an implementation captures it directly. A tree-walking interpreter is in
-effect an executable specification — one small `match` arm per construct —
-which makes it inexpensive to write and straightforward to audit.
-
-With a trusted oracle in place, "is the optimizer correct?" stops being
-a matter of argument and becomes a testable property: run the program
-both ways, compare. The differential suites
+Whether an optimizing tier is correct is therefore a testable property:
+run the program both ways and compare. The differential suites
 (`tests/bytecode_differential_test.rs`, `tests/bytecode_tier_test.rs`,
 `tests/jit_test.rs`) do exactly that, over arithmetic edge cases,
 overflow errors, aliasing, recursion, and every guard boundary the JIT
 has. `tests/tier_agreement_test.rs` asks the same question at the other
 scale: it runs every runnable example in this book and every standalone
 example program as a *whole program* under `--no-ovm` and under
-`--ovm-tier=1`, and diffs stdout, stderr, and exit status. Both are
-needed. A per-function test cannot express a divergence that takes a
-whole program to produce, and the first divergence the whole-program
-harness found was exactly that shape — a closure whose captures were
-shared between instances, which needed one call site reached twice to
-show at all. This is the same shape every mature tiered VM (V8, JSC, LuaJIT,
-PyPy) converged on: keep the simplest tier forever, because it is the
-semantic reference, the deopt target, and the one component you can
-reason about when the others disagree.
+`--ovm-tier=1`, and diffs stdout, stderr, and exit status, which catches
+divergences that only a whole program produces.
 
-The practical rule this buys: any observable difference between
+Any observable difference between
 `--no-ovm` (pure interpreter) and the default tiered execution is, by
 definition, a bug in the tier — never a "new behavior". When
 investigating anything surprising, run both modes first.
@@ -131,9 +111,8 @@ session verified.
 
 ## The refusal ladder
 
-The second decision: **when a tier cannot reproduce the interpreter
-exactly, it must refuse — never approximate.** Fail-closed, with a rung
-per tier:
+**When a tier cannot reproduce the interpreter exactly, it refuses; it
+never approximates.** Each tier has its rung:
 
 - The bytecode compiler returns `CompilationFailed` for anything outside
   its supported subset (global assignment, `return` crossing bytecode
@@ -146,21 +125,10 @@ per tier:
   **deopts**: the native run is abandoned and the call re-executes on
   the tier below, which owns every error message.
 
-Refusal is the default because the alternative is worse. An optimizer that
-approximates an unsupported construct produces divergences that appear and
-disappear with warmup: the same function gives different answers on its first
-and its thousandth call. Such bugs are non-deterministic, difficult to
-reproduce in isolation, and invisible to unit tests that do not cross the
-promotion threshold. Refusal converts this class of bug into a performance
-question — why a function did not promote — which is observable through
-`--ovm-stats`, harmless, and fixable incrementally.
-
-The ladder also makes the system extensible. Supporting a new construct in a
-tier is additive: implement it exactly, extend the differential tests, and
-functions that use it begin to promote. No semantic regression is possible,
-because the failure mode of an incomplete implementation is a refusal rather
-than a wrong answer. Falling back to a lower tier is always correct;
-diverging from the interpreter's result is never acceptable.
+A refusal costs speed, never correctness: it shows up as a function that
+did not promote, which `--ovm-stats` reports. Supporting a new construct in
+a tier is additive: implement it exactly, extend the differential tests,
+and functions that use it begin to promote.
 
 ## How promotion, inference, and deopt work
 
@@ -185,13 +153,10 @@ so helpers, call chains, and mutual recursion stay native rather than
 bouncing through the VM at every boundary.
 
 Each compiled function guards its entry on the exact argument kinds it
-was specialized for; any other shape runs on bytecode. And this is
-where a third design decision quietly pays for the other two: **the JIT
-whitelist admits only pure operations**. Because a qualifying function
-has no side effects, a deopt can simply *re-execute the whole call* on
-bytecode — no partially-performed effects to undo, no resume-point
-bookkeeping. Purity turns deoptimization from the hardest problem in
-JIT engineering into a retry. The on-stack replacement machinery that
+was specialized for; any other shape runs on bytecode. **The JIT
+whitelist admits only pure operations**, so a deopt re-executes the whole
+call on bytecode: there are no partially performed effects to undo and no
+resume points to keep. The on-stack replacement machinery that
 enters hot loops natively mid-frame keeps this exact discipline: a
 failed native region is discarded and the loop resumes on bytecode
 from its head, never from a mid-loop resume point. The JIT never reproduces an error message either; it only ever
@@ -214,8 +179,7 @@ creation. If the call completes, ownership of the return value transfers
 once, at the entry boundary, where a retain helper resolves the borrowed
 pointer into an owned `Arc`; the scratch list then drops whatever else
 was built. If the call deopts at any point, the scratch list drops
-everything. Leaking and dangling are both structurally impossible — not
-prevented by careful code, but unrepresentable in the ownership scheme.
+everything, so a value can neither leak nor dangle.
 
 Arguments travel the other direction on the same discipline: structs,
 lists, and strings pass into native code as **borrowed** pointers. JIT
@@ -225,7 +189,7 @@ field indices per interned shape at compile time, and every read goes
 through one guarded helper that deopts on any surprise, so no layout
 assumption can leak into the VM.
 
-Two refusal rules, set by measurement, keep the model where it wins:
+Two refusal rules keep the model where it pays:
 allocation compiles only in straight-line code (constructors), while
 **allocating loops stay on bytecode and drive the native constructors
 call by call** — an unbounded native loop of allocations would hold its
@@ -243,17 +207,10 @@ objects, modules, and parsed JSON objects), `Enum` / `EnumConstructor`,
 `Function` (parameters, body, closure snapshot), `Builtin`, `Ok` / `Err`,
 `Range`, `Unit`.
 
-Two of those `Arc`s are load-bearing rather than incidental, and both
-were arrived at by measurement. A list is `Arc<Vec<Value>>` rather than
-`Arc<[Value]>`: a boxed slice cannot grow, so `xs = xs + [item]` in a
-loop would have to reallocate every iteration, where `Arc::make_mut` on
-a uniquely-held `Vec` pushes in place. Reads are identical, since a
-`Vec` derefs to the same slice. And a struct's fields are behind an
-`Arc` for the same reason a map's are: without it, passing a struct to
-a function copied every field, so the language punished its own type
-system — a recursive type written the readable way copied the whole
-tree on every descent, and bare lists were the only way to get a tree
-that behaved like one.
+A list is `Arc<Vec<Value>>`, so `xs = xs + [item]` in a loop pushes in
+place through `Arc::make_mut` when the list is held once. A struct's
+fields sit behind an `Arc` as a map's do, so passing a struct to a
+function, or descending a recursive type, copies nothing.
 
 Conventions the code relies on:
 
@@ -279,16 +236,13 @@ Conventions the code relies on:
   `ErrPropagation`) that the loop evaluators and the function-call boundary
   intercept. They are errors only if they escape to top level.
 
-Memory management is **reference counting, no tracing collector**.
-olang's values are overwhelmingly immutable and acyclic (nothing in the
-language constructs a cycle of values), so deterministic reclamation
-when the last reference drops is both sufficient and simpler than a GC —
-there are no pauses to tune and no object graphs to trace.
+Memory management is **reference counting, with no tracing collector**.
+Nothing in the language constructs a cycle of values, so a value is
+reclaimed when its last reference drops, with no pauses.
 
-Freeing is iterative. Rust's drop glue frees a nested value by
-recursion, a stack frame per level, so a list of a million links built
-from an enum aborted the process when it was freed — sooner in an http
-worker's smaller stack. `Value` and `OvmValue` each implement `Drop`:
+Freeing is iterative, so a deeply nested value (a list of a million
+links built from an enum) frees without overflowing the stack, an http
+worker's smaller one included. `Value` and `OvmValue` each implement `Drop`:
 anything shared or flat returns at an inlined first check; a container
 the value alone owns is freed by ordinary recursion, counted per thread,
 and a value met more than 64 levels down is queued for the outermost
@@ -343,15 +297,10 @@ default to "no", so an existing implementation is unaffected by either:
 - `confined_to()` names the thread a value belongs to. `spawn` and
   `chan.send` ask the value instead of naming the types they know, so a
   new value holding mutable state is refused at every crossing the moment
-  it answers. The streaming reader inherited both refusals from the
-  `cell` that came before it without code of its own.
+  it answers.
 - `index(key)` defines what `value[key]` means, and is reached from the
   index path of both tiers. A value that does not implement it keeps the
   language's own "cannot be indexed" error.
-
-The pattern is the point: each is a question asked of the value, so the
-correctness of a new native type is a property of that type rather than a
-list elsewhere that someone must remember to extend.
 
 ## Errors
 
@@ -359,10 +308,9 @@ list elsewhere that someone must remember to extend.
 CLI format them with source context and suggestions
 (`src/interpreter/errors.rs`, `src/help.rs`). Language-level fallibility is
 `Value::Ok`/`Value::Err` — the interpreter only raises hard errors for
-genuine violations (type errors, undefined names, arity, overflow). The
-two layers mirror the language's own philosophy: expected failures are
-values a program handles; contract violations are errors a programmer
-fixes.
+genuine violations (type errors, undefined names, arity, overflow):
+expected failures are values a program handles, contract violations are
+errors a programmer fixes.
 
 ## Testing strategy
 
@@ -382,14 +330,6 @@ that owns it:
 | JIT parity | `jit_test.rs` | every guard edge agrees byte-for-byte, tiered vs interpreted |
 | Engine properties | `ods_*_test.rs` (+ `olang-ods` unit tests) | Series/Frame/stats kernels against naive references and scipy constants |
 | Feature regression | one file per fixed bug area | fixed bugs stay fixed |
-
-Behind the layers sits a working method: **dogfooding as the discovery
-mechanism**. Build a real program in olang (a CLI, an engine, a
-validator, a web app), fix every root cause it surfaces, land the
-program as an example with regression tests, repeat in a new domain.
-The examples directory is that method's sediment — each program exists
-because building it made the language better, and keeps running in CI
-so it stays true.
 
 Gates for every change: `cargo test --workspace`, `cargo clippy
 --workspace --all-targets` (zero warnings), `cargo fmt --check`, and —
@@ -428,8 +368,7 @@ runnable example — the doc test will hold you to it. Check
 **An example program**: a directory under `examples/` with a `main.ol`.
 An `olang.toml` makes it a package, which about half the examples are and
 half do not need — `run_all.ol` discovers either, by looking for the
-`main.ol`. Register it in `examples/README.md`, which is also where the
-website's example gallery gets its entries.
+`main.ol`. Register it in `examples/README.md`.
 
 ## Repository map
 
@@ -441,14 +380,15 @@ src/
   interpreter/            reference semantics (core eval, environment,
                           modules, patterns, ops, errors, spawn registry)
   analyze.rs              static hints (unused/undefined)
-  scoping.rs              lexical scope + mutability validation (the 0.61 rules)
+  scoping.rs              lexical scope + mutability validation
   resolve.rs              slot resolution: identifiers → frame slots
   builtin.rs              global builtins
   stdlib/                 native modules + embedded/ (olang-source)
   native.rs               module registry for native values (both tiers)
   caps.rs                 capability manifests + per-dependency attenuation
   timeline.rs             the Open Timeline: record / replay a run's inputs
-  ods/                    the data stack modules: series, frame, stats, plot
+  ods/                    the data stack modules: series, frame, expr, group,
+                          matrix, stats, ts, learn, rng, plot, gg
   ovm/                    bytecode tier: compiler (bytecode.rs), value
                           model (value.rs), tier manager (tier.rs),
                           Cranelift JIT (jit.rs), on-stack replacement
@@ -463,8 +403,8 @@ src/
   clock.rs, output.rs     native/wasm seams (time, print routing)
   log.rs, version.rs      diagnostics routing, build version
 olang-ods/                pure-Rust engine crate behind src/ods/
-playground/               cdylib crate: the language as wasm for the website
-website/                  static site incl. /playground
+playground/               cdylib crate: the language as wasm (the browser runtime)
+xtask/                    `cargo xtask wasm` / `install`: builds the runtime
 docs/                     this book
 examples/                 runnable programs + run_all.ol harness
 tests/                    integration suites

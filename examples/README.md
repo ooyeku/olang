@@ -39,8 +39,7 @@ test boots each one instead. Everything else runs, including
 exits cleanly.
 
 **Where to start.** [`demo/`](concurrency/demo/) is the guided tour: Harborline is one
-system that reaches for nearly every part of the language at once, and
-[the Harborline chapter](../docs/demo.md) walks through it. To learn one
+system that reaches for nearly every part of the language at once. To learn one
 feature at a time, [the book](../docs/README.md) teaches each with its own
 runnable snippets. `tests/example_programs_test.rs` pins the flagship —
 every `demo/` module must parse, and a bounded soak run must finish with
@@ -50,8 +49,7 @@ failure rather than something a reader discovers.
 ## The programs
 
 The first three demonstrate the package manager and the capability model
-(see [docs/packages.md](../docs/packages.md) and
-[docs/openness.md](../docs/openness.md)); the rest are complete
+(see [docs/packages.md](../docs/packages.md)); the rest are complete
 programs grouped by nothing in particular — read the one whose subject
 you care about.
 
@@ -75,7 +73,6 @@ you care about.
   so there is no hidden mutation; invariants are asserted every simulated day
   and a violation fails the process. Designed to run for hours in bounded
   memory — `olang main.ol --ticks 48 --fast` for two days in a second.
-  Walked through in [the Harborline chapter](../docs/demo.md)
 - [`taskcli/`](tools/taskcli/) — a persistent task tracker as a real multi-file
   package: SQLite storage (`lib/store.ol`), a reporting module using `col`
   and pipelines (`lib/report.ol`), a domain module (`lib/model.ol`), and a
@@ -263,10 +260,10 @@ you care about.
   hands a parsed program back as ordinary values: a list of statement maps
   you walk with the same `map`/`filter`/`fold` as any data. It reports a
   program's imports and every bare `unwrap(...)` grouped by enclosing
-  function — a linter as a script rather than a compiler change, which is
-  the "open code" pillar of [openness](../docs/openness.md)
-- [`macros/`](language/macros/) — the macro system dogfooded (experimental,
-  [the Macros chapter](../docs/macros.md)): `@bake` evaluates an
+  function — a linter as a script rather than a compiler change (see
+  [`meta`](../docs/stdlib.md#meta--the-program-as-data-the-open-ast))
+- [`macros/`](language/macros/) — the macro system in use
+  ([the Macros chapter](../docs/macros.md)): `@bake` evaluates an
   expression at expansion time and splices the result as a literal —
   compile-time computation in one userland line; `@unless` adds control
   flow the language "doesn't have"; `@dbg` prints an expression's source

@@ -1,8 +1,7 @@
 //! Every olang code block in the documentation must work.
 //!
-//! Extracts fenced code blocks from README.md and the book chapters
-//! (docs/tour.md, docs/language.md, docs/types.md, docs/stdlib.md,
-//! docs/ods.md, docs/wasm.md) and runs them through
+//! Extracts fenced code blocks from README.md and the book's chapters
+//! (one test per chapter below) and runs them through
 //! the real parser and interpreter (with the bytecode tier, the default
 //! execution model). Fence conventions:
 //!
@@ -138,11 +137,6 @@ fn types_chapter_examples_work() {
 }
 
 #[test]
-fn openness_chapter_examples_work() {
-    run_doc_file("docs/openness.md", include_str!("../docs/openness.md"));
-}
-
-#[test]
 fn ods_chapter_examples_work() {
     run_doc_file("docs/ods.md", include_str!("../docs/ods.md"));
 }
@@ -150,7 +144,6 @@ fn ods_chapter_examples_work() {
 #[test]
 fn wasm_chapter_examples_work() {
     run_doc_file("docs/wasm.md", include_str!("../docs/wasm.md"));
-    run_doc_file("docs/shelf.md", include_str!("../docs/shelf.md"));
     // The web SDK's `@store` reaches its chapter through `use web`, which
     // the expander resolves via the shelf. Register this checkout's copy
     // on a private shelf so the test does not depend on the developer's.
@@ -185,19 +178,12 @@ fn performance_chapter_examples_work() {
 }
 
 #[test]
-fn demo_md_examples() {
-    run_doc_file("docs/demo.md", include_str!("../docs/demo.md"));
-}
-
-#[test]
 fn macros_chapter_examples_work() {
     run_doc_file("docs/macros.md", include_str!("../docs/macros.md"));
 }
 
-// The book's remaining chapters with runnable examples. They had none of
-// their code exercised until the 1.0 audit noticed the gap: an example
-// nothing runs is a claim nothing checks, and these two carry the
-// packaging and tooling instructions a new user follows first.
+// The packaging and tooling chapters: the instructions a new user
+// follows first.
 #[test]
 fn packages_chapter_examples_work() {
     run_doc_file("docs/packages.md", include_str!("../docs/packages.md"));
@@ -206,9 +192,4 @@ fn packages_chapter_examples_work() {
 #[test]
 fn tooling_chapter_examples_work() {
     run_doc_file("docs/tooling.md", include_str!("../docs/tooling.md"));
-}
-
-#[test]
-fn whats_new_examples_work() {
-    run_doc_file("docs/whats-new.md", include_str!("../docs/whats-new.md"));
 }

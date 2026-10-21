@@ -4,15 +4,16 @@ Part of [the olang book](README.md) · [Language reference](language.md) ·
 [Standard library reference](stdlib.md) ·
 [Architecture and internals](internals.md)
 
-This chapter documents the developer tools built into the `olang` binary: the
-test runner, the formatter, the static checker, the documentation generator,
-the standalone-executable builder, the benchmark runner, and the record and
-replay commands. Everything that touches a *project* — scaffolding (`otc new`, with
-`--lib` and `--web` shapes), local dependencies and the library shelf
-(`otc add`, `otc lib`), and the project benchmark harness (`otc bench`,
-with scaling curves and complexity detection) — is the companion tool
-`otc`, described in [Packages and dependencies](packages.md); the
-language server has [its own chapter](editors.md).
+This chapter is the reference for the `olang` command line: running
+programs, the test runner, the formatter, the rewriting tools, the
+static checker, the REPL and its editor protocol, benchmarks and the
+profiler, standalone executables, documentation, record and replay, and
+tier statistics. Everything that touches a *project* — scaffolding,
+dependencies, the library shelf, toolchains and the project benchmark
+harness — is the companion tool `otc`, described in
+[Packages and dependencies](packages.md). Notebooks have
+[their own chapter](notebooks.md), and so does the language server
+([Editor support](editors.md)).
 
 ## Table of contents
 
@@ -66,6 +67,7 @@ language server has [its own chapter](editors.md).
 | `olang doc [path]` | Generate HTML (or `--format markdown` Markdown) API reference |
 | `olang expand FILE` | Print a file after [macro expansion](macros.md) — the program the runtime actually receives |
 | `olang <notebook.olmd>` | Run a [notebook](#notebooks-olmd): markdown whose `olang` blocks are the program; `run`, `test`, `check`, `fmt` and `expand` take one |
+| `olang notebook export\|pin\|app <notebook.olmd>` | A notebook's page, its pinned outputs, or a web app made from it ([Notebooks](notebooks.md#commands)) |
 | `olang bench [path]` | Run benchmarks |
 | `olang profile <file>` | Run under the sampling profiler; report time per function and tier |
 | `olang lsp` | Start the language server (LSP over stdio) |
@@ -110,7 +112,7 @@ consumer ignores fields it does not know. The documents:
 | `olang check --tier --format json` | `tier-check` |
 | `olang test --format json` | events, the first `run` |
 | `olang bench --format json` | events, the first `start` with `kind` `bench` |
-| `olang bench --save FILE` | `bench-baseline` (a baseline without `format`, from before 0.89, reads as 1; a newer one is refused) |
+| `olang bench --save FILE` | `bench-baseline` (a baseline without `format` reads as 1; a newer format is refused) |
 | `olang profile --format json` | `profile` |
 | `olang inspect --format json` | `inspect`; with `--caps`, `caps` |
 | `olang caps --format json` | `caps`: `#{ path, manifest, package, grant, declared, dependencies }`, a grant `#{ fs, net, proc, db, env }` with `fs` `true`, `"read"` or `false` |
@@ -184,8 +186,7 @@ set in the environment, so a library can choose test-time behavior
 
 In a directory run, a module that is itself one of the files under the
 path runs its blocks as that file and not again when another file
-imports it (they were counted twice whenever the importer came first);
-a module outside the path — a package — still runs its blocks once, at
+imports it; a module outside the path — a package — still runs its blocks once, at
 its first import.
 
 `olang test --watch` re-runs the tests whenever a `.ol` file under the
@@ -200,8 +201,7 @@ and `OLANG_UPDATE_SNAPSHOTS=1` (or the generic `UPDATE_SNAPSHOTS=1`)
 accepts the new form. A library with an update variable of its own
 passes it: `testing.snapshot(name, value, #{ "update": true })`. It is
 for the long HTML and SVG strings a test would otherwise inline; commit
-the directory. (Before 0.88 a String was written with quotes around
-it; such a snapshot still matches, and an update rewrites it bare.)
+the directory.
 
 ```text
 examples/language/markdown/main.ol
@@ -226,7 +226,7 @@ its conversion contract this way).
 
 ### `olang test --format json`
 
-For an editor (olang Studio's tests panel): the run as it goes, one JSON
+For an editor: the run as it goes, one JSON
 object a line on stdout, each with an `event`. The human report is not
 printed; everything else about the run — which files and blocks run,
 `--only`, several paths, `--verify-tiers`, `--ovm-stats`, the exit
@@ -264,7 +264,7 @@ are absolute paths.
 
 **`--record-args`** (with `--format json`) asks for the `args` events: an
 editor binds a function's parameters from them when a line inside the
-function is evaluated (olang Studio's ⌘↩). Every call that enters through
+function is evaluated. Every call that enters through
 the interpreter is seen — a block's own calls, and the calls of code the
 tiers did not compile; the last one of each function is kept. Without
 the flag nothing is recorded: one branch a call.
@@ -335,10 +335,7 @@ spacing —
 - braces breathe (`{ ok: true }`, `#{ "a": 1 }`); empty pairs glue
   (`{}`, `#{}`)
 
-The rules were calibrated against every `.ol` file in the repository —
-the shipped style is the specification.
-
-What it deliberately does **not** do: re-indent, re-wrap, or reflow
+What it does **not** do: re-indent, re-wrap, or reflow
 lines — leading whitespace and line structure are the author's, so a
 method chain written a step to a line (`    .filter(…)`) keeps its
 lines and their indent, each step respaced as its own line. Two
@@ -347,7 +344,7 @@ spaces before `=>` (match-arm tables) and before a trailing comment.
 Template-string, raw-string, and comment interiors are content and are
 never touched.
 
-**The safety property is absolute**: before writing, the formatted
+**The safety property**: before writing, the formatted
 source is re-parsed and must produce an AST identical to the
 original's (source positions aside). A file whose formatting would
 change its meaning — or that doesn't parse — is skipped and reported,
@@ -357,7 +354,11 @@ Formatting is idempotent: a formatted tree passes `--check`.
 
 ## `olang fix maps`
 
-Rewrites map reads into [`.` and `??`](language.md#maps): every
+`olang fix` rewrites a program into a shorter idiom, exactly: the new
+program answers what the old one did for every input. Each rewrite is
+its own subcommand.
+
+`olang fix maps` rewrites map reads into [`.` and `??`](language.md#maps): every
 `map_get(chain, "ident")` becomes `chain.ident`, and every
 `map_get_or(x, "k", d)` becomes `x.k ?? d`.
 
@@ -394,8 +395,7 @@ the file is left untouched and reported. A second run changes nothing.
 
 ## `olang fix guards`, `defaults`, `first-last`, `units`
 
-Four rewrites into the language's current idioms, built as `olang fix
-maps` is: the places come from the grammar's parse tree, the text is changed
+Four more rewrites, built as `olang fix maps` is: the places come from the grammar's parse tree, the text is changed
 only there (layout and comments stay byte for byte), parentheses are
 added only where precedence needs them, and a file whose rewrite would
 read back as a different program is left untouched and reported. Each
@@ -477,9 +477,10 @@ left, as for `olang fix maps`.
 
 ## `olang check`
 
-Everything the compiler can tell you before the program runs. It began
-as the static side of gradual typing ([the Types chapter](types.md)
-tells that story) and now reports three distinct classes of finding.
+Everything the compiler can tell you before the program runs, in three
+classes of finding: type errors an annotation provably contradicts (the
+static side of [gradual typing](types.md)), scope and mutability errors
+that refuse a program before it runs, and advisory warnings.
 
 ```bash
 olang check               # every .ol file under the current directory
@@ -548,8 +549,7 @@ nothing, as does a local that takes a builtin's name.
 
 A name a file uses and nothing in it defines or imports is an error:
 natively it is an undefined variable the moment that line runs, and in
-a browser bundle too, which keeps each module's scope (it once resolved
-such a name from whichever module was spliced beside the file).
+a browser bundle too, which keeps each module's scope.
 A bare `use m` brings every name of `m`, an imported type brings its
 variants, and a module is its own namespace; when a bare `use` cannot be
 resolved, what it brings is unknown and nothing is reported.
@@ -582,11 +582,10 @@ flagged chain is provably false.
 
 ### Scope and mutability
 
-The second class is not about types at all. The rules settled in
-0.61–0.62 — every block scopes its bindings, `let` is required for a
-first binding, `let mut` is required to reassign, and a closure cannot
-assign to a binding it captured — are validated by one pass that runs
-*before* execution. `olang check` reports exactly what `olang run`
+The second class is not about types at all. The scope rules — every
+block scopes its bindings, `let` is required for a first binding, `let
+mut` is required to reassign, and a closure cannot assign to a binding
+it captured — are validated by one pass that runs *before* execution. `olang check` reports exactly what `olang run`
 would, in the same words and at the same position, because both call
 the same validator:
 
@@ -761,7 +760,7 @@ refused ones, for an editor's gutter (its `format` is its own, not
 `--ovm-stats`'s):
 
 ```json
-{"format":1,"kind":"tier-check","olang":"0.88.0","refused":1,"errors":0,
+{"format":1,"kind":"tier-check","olang":"1.0.0","refused":1,"errors":0,
  "files":[{"file":"/p/main.ol","error":null,"functions":[
    {"name":"fib","line":5,"col":4,"end_line":6,"verdict":"bytecode","reason":null,"code":null,
     "docs":null,"ambiguous":false,"pinned":"olang.toml","allowed":false,"error":false},
@@ -847,7 +846,7 @@ that is refused, the reason is its own.
 
 <a id="tier-unsupported"></a>
 **`unsupported`** — the body uses a form the bytecode compiler does not
-have yet (the message names it). Worth a finding: most such gaps close.
+compile (the message names it).
 
 ### Project rules
 
@@ -873,8 +872,41 @@ a problem, as it is with `--rules`. The language server does not run
 project rules (they are olang, run in a sandbox, once per check); the
 editor shows the checker's own findings.
 
-A project can also promote the checker's own advisories to errors
-without writing a rule. In `olang.toml`:
+Define a rule as a top-level function whose name begins with `rule_`. The
+function takes one argument: the file's AST, flattened to a list of nodes.
+Each node is a map with at least a `kind` field and a `line` field; a
+`match` arm's `pattern` and a function's `parameters` are nodes too (a
+pattern's `form` and `variant`, a parameter's `type` with its `form` and
+`fields`), so an exhaustiveness or a record-shape rule is written here
+rather than in a tool of its own. The
+function returns a list of findings. A finding is a message string or a
+map with `message` and `line` fields.
+
+```olang
+// rules.ol
+share fn rule_no_bare_unwrap(nodes) =
+    nodes
+      |> filter((n) => n.kind == "call" && n.target == "unwrap")
+      |> map((n) => #{ "message": "bare unwrap(): use match or ?", "line": n.line })
+```
+
+`olang check` runs each rule against every checked file except the rules
+file itself. It reports each finding with the file name, line number, and
+rule name. Findings count as problems, so any finding produces a non-zero
+exit.
+
+The command applies the following behaviors:
+
+- A rule that raises an error is reported with its name.
+- A rules file that defines no `rule_*` functions is an error.
+- A finding on a line that an `// allow: <rule name>` comment covers
+  (`// allow: rule_no_bare_unwrap`, [as an advisory's](#allowing-one-line))
+  is not reported; `// allow: all` does not cover a rule.
+
+### Promoting advisories
+
+A project promotes the checker's own advisories to errors in
+`olang.toml`, without writing a rule:
 
 ```toml
 [check]
@@ -917,37 +949,6 @@ olang.toml that olang does not read (a near miss such as
 `[dependancies]` or `autors`; other tools' sections, Loom's `[bundle]`
 and Studio's `[plugin]`, pass).
 
-Define a rule as a top-level function whose name begins with `rule_`. The
-function takes one argument: the file's AST, flattened to a list of nodes.
-Each node is a map with at least a `kind` field and a `line` field; a
-`match` arm's `pattern` and a function's `parameters` are nodes too (a
-pattern's `form` and `variant`, a parameter's `type` with its `form` and
-`fields`), so an exhaustiveness or a record-shape rule is written here
-rather than in a tool of its own. The
-function returns a list of findings. A finding is a message string or a
-map with `message` and `line` fields.
-
-```olang
-// rules.ol
-share fn rule_no_bare_unwrap(nodes) =
-    nodes
-      |> filter((n) => n.kind == "call" && n.target == "unwrap")
-      |> map((n) => #{ "message": "bare unwrap(): use match or ?", "line": n.line })
-```
-
-`olang check` runs each rule against every checked file except the rules
-file itself. It reports each finding with the file name, line number, and
-rule name. Findings count as problems, so any finding produces a non-zero
-exit.
-
-The command applies the following behaviors:
-
-- A rule that raises an error is reported with its name.
-- A rules file that defines no `rule_*` functions is an error.
-- A finding on a line that an `// allow: <rule name>` comment covers
-  (`// allow: rule_no_bare_unwrap`, [as an advisory's](#allowing-one-line))
-  is not reported; `// allow: all` does not cover a rule.
-
 ## `olang eval`
 
 `olang eval '<source>'` parses and runs the text with the REPL's
@@ -977,10 +978,9 @@ says).
 ## `olang repl --serve`
 
 `olang repl --serve` is the REPL as a protocol, for an editor that keeps
-one long-lived REPL per project (olang Studio does). It speaks
-line-delimited JSON over stdio: one request a line in, one reply a line
-out, each reply carrying the request's `id`. The interactive REPL is
-unchanged.
+one long-lived REPL per project. It speaks line-delimited JSON over
+stdio: one request a line in, one reply a line out, each reply carrying
+the request's `id`.
 
 The session is bound to the project the working directory is in, as
 `olang eval` is: the project's dependencies and shelf libraries resolve.
@@ -988,7 +988,7 @@ What a program prints while the session serves is collected and sent with
 the evaluation that printed it (`out`); stdout belongs to the protocol.
 
 **Handshake.** On start the server says
-`{"event":"hello","protocol":1,"olang":"0.88.0","root":…,"pid":…,"ops":[…],"features":["bind","pure","cell","caps","profile","distinct"]}`
+`{"event":"hello","protocol":1,"olang":"1.0.0","root":…,"pid":…,"ops":[…],"features":["bind","pure","cell","caps","profile","distinct"]}`
 (`features`: what an `eval` takes beyond the protocol's first version —
 `scene`: a gg plot value is said with its scene, below; `daterange`:
 a table view's range filter takes a Date or Datetime column, below;
@@ -1080,7 +1080,7 @@ with its controls live, and `text`, its value's words: what a published
 app swaps in.
 
 **A notebook's kernel.** `olang repl --serve --notebook x.olmd` serves
-one notebook (olang Studio starts one per notebook it shows). The
+one notebook to an editor. The
 notebook is read with olang's notebook reader ([Notebooks](notebooks.md)):
 
 - its folder is the working directory, wherever the server is started,
@@ -1318,7 +1318,7 @@ view's rows, `total` the table's; each row's `i` its index in the whole
 table, so `ods.take` reads it. The view's order is cached by handle,
 filters and sort, and let go with the handle. `"summary": true` adds
 `sum`, the view's column summaries as a table's `sum` has them (`sampled`
-past a million rows). Without `filters` a view is the table, as before.
+past a million rows). Without `filters` a view is the whole table.
 
 **A chart (C).** A chart's description, as `plot.describe` answers it
 ([the data stack](ods.md#a-charts-description)), with each xy series at
@@ -1335,8 +1335,7 @@ carried.
 (`plot.gg_scene`'s JSON). `ops` are drawn in order, in plot pixels:
 `rect`, `line`, `path` (`d`: its vertices in tenths of a pixel, flat,
 each after the first as its step from the one before; a path no pointer
-reads drops the vertices that land where the last did; v1 sent `pts`,
-flat pixels), `points` (`x`, `y`, `r`, `fill` an
+reads drops the vertices that land where the last did), `points` (`x`, `y`, `r`, `fill` an
 index or one each into `pal`, `shape`), `text` (`y` the line's middle,
 `align`), `clip`/`unclip`; a frame colour is a role (`@ink`, `@ink2`,
 `@grid`, `@axis`, `@surface`, `@strip`, `@panel`), a data colour
@@ -1414,14 +1413,14 @@ row into exit code 1 — that flag is what makes a saved baseline a
 standing guard for performance work.
 
 **As data.** `--format json` prints line-delimited events instead of the
-table, for an editor (olang Studio's benches):
+table, for an editor:
 
 ```bash
 olang bench fib.ol --format json --against base.json --profile profiles/
 ```
 
 ```
-{"event":"start","olang":"0.88.0","runs":7,"in_task":false,"files":["/…/fib.ol"],"against":"base.json"}
+{"event":"start","olang":"1.0.0","runs":7,"in_task":false,"files":["/…/fib.ol"],"against":"base.json"}
 {"event":"result","name":"fib","file":"/…/fib.ol","median_s":0.0392,"min_s":0.039,"max_s":0.0413,"cv_pct":3.1,"runs":7,
  "times_s":[…],"stable_output":true,"baseline_s":0.0371,"delta_pct":5.6,"threshold_pct":6.3,"verdict":"same",
  "profile":"profiles/fib.json"}
@@ -1436,7 +1435,7 @@ colours as words; `regressed` is true when any row is `slower`, which
 file once more, untimed, under `olang profile --format json`, and leaves
 that profile in `DIR/<name>.json`: the flame graph that explains a
 regression, beside the number that shows it. `--save` writes the
-baseline as before.
+baseline as it does without `--format`.
 
 ## `olang profile`
 
@@ -1637,27 +1636,9 @@ self-contained tool built exactly this way — `cli` for its arguments,
 external.
 
 A built binary also embeds its exact source, its `olang.toml` and
-`olang.lock`, its capability manifest, and a checksum over all of them.
-Use `olang inspect` to read and verify these files. `--source` prints the
-source, `--caps` prints the capability grant, and `-o dir/` extracts all
-embedded files. Two flags perform checks:
-
-```bash
-olang inspect ./tool --verify      # Verify the binary's checksum.
-olang inspect ./tool --against .   # Compare the binary to a source tree.
-```
-
-`--verify` recomputes the checksum. The checksum covers the source, the
-compiled AST (the bytes that execute), the manifest, and the lockfile, so
-verification fails if the running program or the capability grant is
-changed, not only the source text. `--verify` also checks that the source
-parses to the embedded AST, so `--source` reflects what actually runs.
-`--against <dir>` compares the embedded source, manifest, and lockfile to a
-checkout, reports each file as match/differ/missing, and confirms the
-embedded AST is what that source parses to — exiting non-zero on any
-mismatch. Use `--against` to confirm a binary was built from a specific
-source tree. For the full model, see [Capabilities and the transparent
-binary](packages.md#capabilities).
+`olang.lock`, its capability manifest, and a checksum over all of them,
+which `olang inspect` reads and verifies: see
+[The transparent binary](packages.md#the-transparent-binary).
 
 ## `olang doc`
 
@@ -1689,58 +1670,45 @@ their reference from source rather than by hand.
 
 ## Notebooks: `.olmd`
 
-A notebook is a markdown file whose name ends `.olmd`; its fenced blocks
-whose info string begins with `olang` are code cells, and the rest is
-prose. The commands read it as a program: the cells' code with every
-other line made empty, so every diagnostic, error frame and test
-location is a line and column of the notebook itself. The format — cells
-and their options, front matter, params, capabilities, the YAML subset —
-is [its own chapter](notebooks.md).
+A notebook (`.olmd`) is markdown whose `olang` cells are one program.
+`olang run`, `test`, `check`, `fmt` and `expand` take a notebook as they
+take a `.ol` file, every location they report is a line of the notebook,
+and `olang notebook` exports, pins and publishes one. The format, its
+params and capabilities, and what each command does with a notebook are
+in [Notebooks](notebooks.md).
 
 ```bash
 olang sales.olmd                          # run it (or `olang run sales.olmd`)
-olang run sales.olmd --param region=west  # override a front matter param (or a control cell)
-olang run sales.olmd --for region=east,west  # once a parameter set
-olang notebook export sales.olmd         # sales.html: a self-contained page (--pdf, --json)
-olang notebook pin sales.olmd            # pinned cells' outputs written into the file
-olang notebook app experiment.olmd       # a web-sdk app: olang run experiment-app/main.ol
-olang test notes/                         # .olmd files are found beside .ol files
-olang check sales.olmd --format json      # the file's lines; the notebook's own problems coded `notebook`
-olang fmt sales.olmd                      # each cell formatted; prose byte for byte
-olang expand sales.olmd                   # the program the runtime receives
+olang run sales.olmd --param region=west  # override a front matter param
+olang notebook export sales.olmd          # sales.html: a self-contained page
 ```
-
-- **Params.** The front matter's `params` are top-level `let`s placed on
-  the front matter's own lines. `--param NAME=VALUE` (repeatable, on
-  `run`, `test` and `check`; for `run` before the notebook or after it)
-  overrides one; the value is olang source when it parses as a literal
-  and a String otherwise. A `--param` the notebook does not declare is
-  an error, as is a cell that defines a param's name again.
-- **Capabilities.** The front matter's `capabilities` is the run's grant
-  in `[capabilities]` vocabulary, intersected with the enclosing
-  project's `olang.toml` grant and with `--deny`/`OLANG_DENY`. An
-  unknown key or value refuses to run, with its line.
-- **Where it runs.** A notebook runs in its own folder (its working
-  directory is the notebook's), and `use` resolves as for a `.ol` file
-  beside it, the enclosing project's dependencies included.
-- **`no-run` cells** are checked by `olang check` and formatted by
-  `olang fmt`, and left out of a run and of `olang test`.
-- **Refusals.** A fence never closed, a bad cell option and front
-  matter outside the subset are diagnostics: a run and `olang test`
-  print them as `file:line:column: error: …` and refuse the notebook,
-  and `olang check` counts them.
-- **The REPL.** `:run x.olmd` runs a notebook in its folder, under its
-  grant.
-- **A kernel.** `olang repl --serve --notebook x.olmd` serves the
-  notebook to an editor (olang Studio's notebook pane): its params bound,
-  its grant, its folder, and `eval` by cell ([the protocol](#olang-repl---serve)).
-- **The notebook's rules.** `olang check` holds an `.olmd` to "one name,
-  one cell" and "top to bottom" ([Notebooks](notebooks.md#the-program)).
 
 ## The REPL
 
-Bare `olang` (or `olang repl`) starts the interactive REPL. The doc
-comment convention of [`olang doc`](#olang-doc) reaches it: `:help
+Bare `olang` (or `olang repl`) starts the interactive REPL. Anything
+without a leading colon is olang; a line starting with `:` is a command,
+and `:help` lists them:
+
+| Command | Does |
+|---|---|
+| `:help <name>`, `:help <module>` | a function's documentation, a module's functions (`:help list` every function, `:help syntax`, `:help examples`) |
+| `:help search <q>`, `:search <q>` | functions found by keyword |
+| `:env` | the session's bindings |
+| `:type <expr>`, `:time <expr>`, `:benchmark <expr>` | a value's type; an expression's wall-clock time; five timed runs |
+| `:inspect <name>`, `:watch`, `:trace`, `:debug`, `:stack` | a variable in detail; a watched variable or traced function; stepping through an expression |
+| `:profile <code>`, `:ovm`, `:stats` | the sampling profiler over code; what the bytecode tier compiled and ran |
+| `:history`, `:!n`, `:clear` | this session's inputs; input `n` again; the screen, the environment or the history |
+| `:cd`, `:pwd`, `:ls` | the working directory |
+| `:sh <cmd>`, `!<cmd>` | a shell command |
+| `:run <file>` | a program or a notebook, in its folder |
+| `:pkg`, `:pkg load <dir>` | the current package's dependencies resolved again; another package by path ([In the REPL](packages.md#in-the-repl)) |
+| `:tutorial` | the guided tutorials |
+| `:ml`, `:end`, `:cancel` | multi-line input (below) |
+
+`it` holds the last printed result, and TAB completes. The same
+commands run over [`olang repl --serve`](#olang-repl---serve).
+
+The doc comment convention of [`olang doc`](#olang-doc) reaches it: `:help
 <name>` answers from the builtin registry first; when the name is not a builtin, it answers
 from the user's own documented code — a `///` block above a
 declaration entered in the session, in a file the session `:run`, or
@@ -1791,8 +1759,8 @@ olang --watch script.ol       # rerun whenever any .ol or .olmd file nearby chan
 ```
 
 Each run is a child process, so a crash or an `os.exit` ends the run,
-never the watcher. Changes are detected by polling every `.ol` file at
-or below the script's directory (module edits trigger reruns too); a
+never the watcher. Changes are detected by polling every `.ol` and
+`.olmd` file at or below the script's directory (module edits trigger reruns too); a
 save landing mid-run queues an immediate rerun. Ctrl+C stops both.
 
 ## `olang record` and `olang replay` — the Open Timeline
@@ -1857,15 +1825,12 @@ replays from the log, so the revived handle is never really used. A
 task that diverges from its stream fails the replay: the verdict is
 "clean" only when every thread reproduced.
 
-Two boundaries remain. Record/replay runs on the interpreter tier (the
+Two limits apply. Record/replay runs on the interpreter tier (the
 one dispatch point that sees every builtin), so a recorded run forgoes
 the bytecode tier — a debugging tool, not a hot path. And an
 `http.serve` worker is not traced: its requests arrive in an order no
 trace can pin, so its effects run live and a recorded server says so
-once on stderr. (Roadmap:
-`replay --why`, which carries value provenance during replay to answer
-"where did this number come from?" — a chain back to the recorded
-inputs.)
+once on stderr.
 
 ## Tier statistics (`--ovm-stats=json`)
 
@@ -1873,8 +1838,8 @@ inputs.)
 where every function ran, and writes it as JSON at exit (to `PATH`, or
 `ovm-stats.json` in the working directory) — at a normal end, an error,
 or `os.exit`. `OLANG_OVM_STATS=json[:PATH]` does the same for any
-command, `olang test` included. `--ovm-stats` alone still prints the
-one-line summary.
+command, `olang test` included. `--ovm-stats` alone prints a one-line
+summary.
 
 A `PATH` that is a directory — written with a trailing `/`, or one that
 exists — gets a file a process, `<pid>.json`, and the processes the run
@@ -1884,7 +1849,7 @@ bench prog.ol` leaves the bench's own file and one for each of its runs
 reader adds them up, function by function.
 
 ```json
-{"format":1,"kind":"ovm-stats","olang":"0.88.0","threshold":1,"interval_us":250,
+{"format":1,"kind":"ovm-stats","olang":"1.0.0","threshold":1,"interval_us":250,
  "sampled_ms":41.2,"ms_per_sample":0.31,
  "tiers_ms":{"interpreter":3.1,"bytecode":0.9,"native":36.4,"builtin":0.3},
  "functions":[
@@ -2032,7 +1997,7 @@ nothing should depend on them.
 | `OLANG_VERIFY_SELFTEST` | no | Make `--verify-tiers` see a divergence, to test what reports one. |
 | `OLANG_WARM_DIR` | no | Where the warm tier profiles live (tests). |
 | `GUI_TRACE` | no | The `gui` platform layer's event trace. |
-| `OLANG`, `OLANG_WASM` | no | `otc bench` and `otc web`: the olang binary and the browser runtime to use instead of the ones found beside `otc`. |
+| `OLANG`, `OLANG_WASM` | no | `otc bench` and `otc new --web`: the olang binary and the browser runtime to use instead of the ones found beside `otc`. |
 
 The build reads `OLANG_BUILD_*` and `OLANG_RUNTIME_WASM*`, set by
 olang's own `build.rs`; they are not read at run time.
@@ -2044,8 +2009,7 @@ parsed olang program as ordinary olang values. A project can use it to write
 its own linters, code transformations, and code generators in olang rather
 than as changes to the compiler; `olang check --rules` runs such tools
 alongside the built-in checker. The `meta` module is documented in the
-[standard library reference](stdlib.md#meta--the-program-as-data-the-open-ast),
-and the [Openness](openness.md) chapter describes the program-as-data model.
+[standard library reference](stdlib.md#meta--the-program-as-data-the-open-ast).
 A complete example is [`examples/language/metatool`](../examples/language/metatool/main.ol).
 
 ## The examples harness
