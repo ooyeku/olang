@@ -196,7 +196,14 @@ impl_decl   = { impl_kw ~ identifier ~ for_kw ~ identifier ~ "{" ~ NL* ~ (functi
 type_params  = { "<" ~ type_param ~ ("," ~ type_param)* ~ ">" }
 type_param   = { identifier ~ (":" ~ identifier ~ ("+" ~ identifier)*)? }
 param_list   = { NL* ~ parameter ~ (NL* ~ "," ~ NL* ~ parameter)* ~ NL* }
-parameter    = { identifier ~ (":" ~ type_annotation)? ~ ("=" ~ expr)? }
+parameter    = { (param_pattern | identifier) ~ (":" ~ type_annotation)? ~ ("=" ~ expr)? }
+// A parameter may destructure its argument as `let` does: a tuple, a
+// list or an object pattern — `((i, w)) => i * w`, `fn f([a, b]) = …`,
+// `({ x, y }) => x + y`. The parser binds the argument to the pattern at
+// the top of the body (`Parser::destructure_params`), so every tier runs
+// it as the `let` it is, and a value the pattern does not match raises as
+// that `let` would.
+param_pattern = { tuple_pattern | list_pattern | anonymous_struct_pattern }
 
 // Variable declarations. `mut` is a contextual keyword: it marks intent (all
 // bindings are assignable), and must be followed by the actual binding.
@@ -290,7 +297,19 @@ pipe_op       = { "|>" }
 // comparisons, as Kotlin's `?:` — `a.n ?? 0 > 3` is `(a.n ?? 0) > 3`.
 coalesce_op   = { "??" }
 unary_expr    = { unary_op* ~ call_expr }
-call_expr   = { primary ~ ( function_call | ("." ~ member_name) | ("[" ~ expr ~ "]") | postfix_op )* }
+call_expr   = { primary ~ ( function_call | ("." ~ member_name) | lead_member | ("[" ~ expr ~ "]") | postfix_op )* }
+// A method chain may put each step on a line of its own, the `.` first:
+//
+//     let x = f
+//         .with({ a: 1 })
+//         .filter((r) => r.a > 0)
+//
+// A line that starts with one `.` and a name continues the expression
+// above; a line could never start with `.` before, so no program changes
+// meaning. Exactly one `.`: `..` (a range) and `...` (a spread, a rest)
+// never continue a line, and a number never starts with `.`. Comments and
+// blank lines may sit between the steps.
+lead_member = _{ NL+ ~ "." ~ !"." ~ member_name }
 // A member after `.`: any word, a keyword included (`http.defer`).
 member_name = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
@@ -390,7 +409,11 @@ struct_literal = { (identifier ~ "{" ~ field_value_list ~ "}") | (type_name_uppe
 type_name_upper = ${ &ASCII_ALPHA_UPPER ~ identifier }
 anonymous_object = { "{" ~ field_value_list? ~ "}" }
 field_value_list = { NL* ~ field_value ~ (NL* ~ "," ~ NL* ~ field_value)* ~ NL* ~ ","? ~ NL* }
-field_value = { spread | (identifier ~ ":" ~ expr) }
+// An object's key is a name or, for one that is not a name, a string:
+// `{ "P(B > A)": 0.9, n: 3 }` (read back with `o["P(B > A)"]` or
+// `map_get`). A declared struct's literal names its fields; the parser
+// refuses a quoted one there.
+field_value = { spread | ((identifier | string) ~ ":" ~ expr) }
 // `...e` inside a `#{ }` or `{ }` literal: e's entries, in order with the
 // written ones — a later key wins. The parser builds it as a call (see
 // `Parser::spread_literal`), so no tier has a form of its own for it.

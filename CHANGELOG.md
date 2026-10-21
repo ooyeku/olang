@@ -39,6 +39,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   left out is the panel's, as ggplot's `-Inf`/`Inf` are
   (`gg.annotate(p, "rect", xmin: 3, xmax: 5)` is a band the panel's
   height), and an infinite edge is drawn there too.
+- **Language gaps from the notebooks (D6).** A method chain may put a
+  step on a line of its own, the `.` first (`let x = f` over
+  `    .with({…})` over `    .filter(…)`): a line that starts with one
+  `.` and a name continues the expression above, comments and blank
+  lines between; `..` and `...` never do, so no program changes
+  meaning. `m[k]` reads a map, an object, a struct or a parsed JSON
+  object exactly as `map_get(m, k)` does (`()` for an absent key, an
+  Int, Float or Bool key read as its text), so a formula term
+  `fit.params["log_price:product_x"]` needs no `map_get`; `()["k"]` is
+  `()`, and `m[k] = v` stays refused. A parameter destructures its
+  argument as `let` does — a tuple, list or object pattern in a lambda
+  or a `fn` (`((i, w)) => i * w`, `fn dot((a, b), (c, d))`), bound at
+  the top of the body, so every tier runs the same `let`. An object
+  literal's key may be a string (`{ "P(B > A)": 0.9 }`); a declared
+  struct's literal refuses one. The language server follows a chain's
+  leading-dot step to its receiver for completion, and the tree-sitter
+  and VS Code grammars color the step and the `@` operator.
+  tests/language_d6_gaps_test.rs (three tiers).
+- **`[check] rules` in olang.toml.** `rules = ["tools/rules.ol"]`
+  (relative to the project's root) runs those rules files on `olang
+  check` with no `--rules`; `--rules FILE` names the one file instead.
+
 - **Matrices (data ergonomics D4).** A native `Matrix`: column-major
   Floats whose columns are shared `Arc`s, so `ods.matrix(f, cols)` (or
   `ods.matrix([s1, s2])`) over null-free Float columns copies nothing;
@@ -998,6 +1020,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   right): each layer's codes are now the scale's.
 - **`gg.aes` holds a Series.** `gg.aes(ymin: f.y - 1.0)` raised "cannot
   compare Series[Float] with ()".
+- **`olang fmt` spaced the matrix product as a macro.** `V @ V.t()`
+  became `V @V.t()` and `V @ (V.t())` `V @(V.t())`: `@` glued right
+  wherever it stood. After a value it is the binary operator and
+  breathes; at a line's start, after an opener, a comma, `=` or a
+  keyword it begins a macro call or a decorator and glues.
+- **The profiler lost a function handed straight to `map`.**
+  `map(sizes, detect)` charged every sample to `map`: the VM's fused
+  loop for `map`, `filter` and `fold` called the callee without its
+  shadow frame. It pushes one, so the path reads `map → detect`.
 
 - **Importing an enum and its variants by name.** `use lib.util { Shape,
   Circle, Dot }` raised "importing `Circle` would replace `Circle`": the

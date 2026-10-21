@@ -530,6 +530,9 @@ pub fn tokens(text: &str, is_builtin: &dyn Fn(&str) -> bool, modules: &[&str]) -
     let mut depth: i32 = 0;
     // a `fn`'s parameter list being read: (the scope, the depth inside it)
     let mut reading_params: Option<i32> = None;
+    // inside a parameter's annotation or default (`: T`, `= e`), until
+    // the `,` that ends the parameter: no name there is a parameter
+    let mut param_tail = false;
     // a `let` or `for` pattern being read, until `=` or `in`
     let mut binding: Option<&str> = None;
     let mut last_line_seen = u32::MAX;
@@ -581,6 +584,15 @@ pub fn tokens(text: &str, is_builtin: &dyn Fn(&str) -> bool, modules: &[&str]) -
                 if p == "=" && binding.is_some() {
                     binding = None;
                 }
+                if let Some(d) = reading_params
+                    && depth == d + 1
+                {
+                    match p {
+                        ":" | "=" => param_tail = true,
+                        "," => param_tail = false,
+                        _ => {}
+                    }
+                }
                 if is_operator(p) {
                     push(T_OPERATOR, 0);
                 }
@@ -591,7 +603,10 @@ pub fn tokens(text: &str, is_builtin: &dyn Fn(&str) -> bool, modules: &[&str]) -
                         .take_while(|q| {
                             lambda_param[*q]
                                 || lx[*q].kind == Lx::Punct
-                                    && matches!(word(&lx[*q]), "(" | ")" | ",")
+                                    && matches!(
+                                        word(&lx[*q]),
+                                        "(" | ")" | "," | "[" | "]" | "{" | "}" | "..." | ":"
+                                    )
                         })
                         .filter(|q| lambda_param[*q])
                         .map(|q| word(&lx[q]).to_string())
@@ -650,11 +665,15 @@ pub fn tokens(text: &str, is_builtin: &dyn Fn(&str) -> bool, modules: &[&str]) -
                     push(T_FUNCTION, M_DECLARATION);
                     if nw == "(" {
                         reading_params = Some(depth);
+                        param_tail = false;
                     }
                     continue;
                 }
+                // a parameter's name, or a name its pattern binds
+                // (`fn dot((a, b), [c, ...d])`)
                 if let Some(d) = reading_params
-                    && depth == d + 1
+                    && depth > d
+                    && !param_tail
                     && !(pw == ":" || pw == "=")
                 {
                     if let Some(s) = scopes.last_mut() {
@@ -838,6 +857,28 @@ mod tests {
         assert!(
             k.contains(&("x".into(), "property", 0)) || k.contains(&("x".into(), "variable", 0))
         );
+    }
+
+    #[test]
+    fn a_parameter_pattern_binds_parameters() {
+        let k = kinds(
+            "fn dot((a, b): (Int, Int), c = f(x)) = a + c\nlet g = ((i, w)) => i * w\nlet h = ({ p, q }) => p",
+        );
+        assert!(k.contains(&("a".into(), "parameter", M_DECLARATION)));
+        assert!(k.contains(&("b".into(), "parameter", M_DECLARATION)));
+        assert!(k.contains(&("c".into(), "parameter", M_DECLARATION)));
+        assert!(k.contains(&("Int".into(), "type", 0)));
+        assert!(!k.contains(&("x".into(), "parameter", M_DECLARATION)));
+        assert!(k.contains(&("a".into(), "parameter", 0)));
+        assert!(k.contains(&("w".into(), "parameter", 0)));
+        assert!(k.contains(&("p".into(), "parameter", 0)));
+    }
+
+    #[test]
+    fn a_chain_step_on_its_own_line_is_a_method() {
+        let k = kinds("let x = f\n    .with(a)\n    .rows");
+        assert!(k.contains(&("with".into(), "method", 0)));
+        assert!(k.contains(&("rows".into(), "property", 0)));
     }
 
     #[test]

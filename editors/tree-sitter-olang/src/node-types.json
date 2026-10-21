@@ -31,6 +31,25 @@
     }
   },
   {
+    "type": "chain_step",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "member",
+          "named": true
+        },
+        {
+          "type": "open_call",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "delimiter",
     "named": true,
     "fields": {}
@@ -163,6 +182,10 @@
         },
         {
           "type": "call",
+          "named": true
+        },
+        {
+          "type": "chain_step",
           "named": true
         },
         {
@@ -384,6 +407,10 @@
   },
   {
     "type": "?",
+    "named": false
+  },
+  {
+    "type": "@",
     "named": false
   },
   {

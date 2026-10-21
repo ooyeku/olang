@@ -2412,19 +2412,26 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                             message: format!("A {} cannot be indexed", handle.0.type_name()),
                         }),
                     },
-                    // A map (or struct/object) is read by key, not position:
-                    // `[]` never applies, so say so rather than complaining
-                    // about the key's type.
-                    (Value::Map(_), _) => Err(InterpreterError::TypeError {
-                        message: "a Map is not indexed with `[]`; read a key with \
-                                  `map_get(m, key)`"
-                            .to_string(),
-                    }),
-                    (Value::Struct { .. }, _) => Err(InterpreterError::TypeError {
-                        message: "a struct or object is read by field (`value.name`) or with \
-                                  `map_get(value, name)`, not with `[]`"
-                            .to_string(),
-                    }),
+                    // A map, an object or a struct is read by key: `v[k]`
+                    // is exactly `map_get(v, k)` — the key's value, or `()`
+                    // when it is absent — so a key that is not a name
+                    // (`fit.params["log_price:product_x"]`) or one computed
+                    // at run time reads as `.` reads a name.
+                    (ref record @ (Value::Map(_) | Value::Struct { .. }), ref key) => {
+                        let fields = match record {
+                            Value::Map(m) => m.as_ref(),
+                            Value::Struct { fields, .. } => fields,
+                            _ => unreachable!("matched a map or a struct"),
+                        };
+                        match crate::builtin::index_key(key) {
+                            Some(k) => Ok(fields.get(k.as_ref()).cloned().unwrap_or(Value::Unit)),
+                            None => Err(InterpreterError::TypeError {
+                                message: crate::builtin::INDEX_KEY_ERROR.to_string(),
+                            }),
+                        }
+                    }
+                    // An absent record's key is absent, as `().k` is.
+                    (Value::Unit, Value::String(_)) => Ok(Value::Unit),
                     (_, Value::Integer(_)) => Err(InterpreterError::TypeError {
                         message: "Only lists, tuples, and strings can be indexed".to_string(),
                     }),

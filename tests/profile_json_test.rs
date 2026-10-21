@@ -143,6 +143,52 @@ fn a_json_profile_names_frames_with_their_place_and_each_frame_s_tier() {
     assert!(out.contains("TIME BY TIER") && out.contains("FUNCTIONS"));
 }
 
+/// A named function handed straight to `map` (`map(sizes, detect)`) runs
+/// in the VM's fused loop; its time was charged to `map` alone, the
+/// callee's frame missing from every sample.
+#[test]
+fn a_named_function_handed_to_map_has_its_own_frame() {
+    let main = r#"fn detect(n) = {
+    let mut acc = 0.0
+    for i in 0..n {
+        acc = acc + math.sqrt(to_float(i)) * 1.0001
+    }
+    acc
+}
+let SIZES = [100000, 200000, 400000, 800000]
+for _ in 0..6 {
+    let r = map(SIZES, detect)
+}
+println("done")
+"#;
+    let dir = project("hof", main);
+    let (code, _out, err) = olang(
+        &dir,
+        &[
+            "profile", "main.ol", "--format", "json", "--output", "p.json", "--interval", "500",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    let doc = read(&dir.join("p.json"));
+    let (di, _) = frame_named(&doc, "detect").expect("detect has a frame");
+    let (mi, _) = frame_named(&doc, "map").expect("map has a frame");
+    // most samples have detect under map
+    let samples = doc["samples"].as_u64().unwrap();
+    let under: u64 = doc["stacks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|s| {
+            let f: Vec<u64> = s["f"].as_array().unwrap().iter().map(|x| x.as_u64().unwrap()).collect();
+            let m = f.iter().position(|&x| x == mi as u64);
+            let d = f.iter().position(|&x| x == di as u64);
+            matches!((m, d), (Some(m), Some(d)) if m < d)
+        })
+        .map(|s| s["n"].as_u64().unwrap())
+        .sum();
+    assert!(under * 2 > samples, "detect under map in {under} of {samples} samples");
+}
+
 #[test]
 fn a_live_profile_writes_snapshots_while_it_runs() {
     let dir = project("live", &MAIN.replace("ROUNDS", "2500"));

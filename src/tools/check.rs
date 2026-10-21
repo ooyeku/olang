@@ -426,9 +426,34 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
 
     // Project-authored lints: run the rules file's `rule_*` functions over
     // each target file's meta AST. Findings count as problems (you opted
-    // into the rule, so a hit should gate).
+    // into the rule, so a hit should gate). `--rules` names the file; with
+    // none, each project's `[check] rules` (relative to its root) run over
+    // the files checked inside that project.
     if let Some(rules_path) = rules {
         problems += run_rules(rules_path, &files);
+    } else {
+        for root in &roots {
+            let Ok(manifest) = crate::pkg::manifest::Manifest::load(root) else {
+                continue;
+            };
+            let listed = manifest.check.map(|c| c.rules).unwrap_or_default();
+            if listed.is_empty() {
+                continue;
+            }
+            let inside: Vec<PathBuf> = files
+                .iter()
+                .filter(|f| {
+                    std::path::absolute(f)
+                        .ok()
+                        .and_then(|a| crate::pkg::manifest::Manifest::find_root(&a))
+                        .is_some_and(|r| &r == root)
+                })
+                .cloned()
+                .collect();
+            for rel in listed {
+                problems += run_rules(&root.join(rel), &inside);
+            }
+        }
     }
 
     let warn_note = match warnings {

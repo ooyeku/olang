@@ -972,6 +972,11 @@ impl Scopes {
         for param in list.into_inner().filter(|k| k.as_rule() == Rule::parameter) {
             let kids: Vec<_> = param.into_inner().collect();
             if let Some(name) = kids.first() {
+                if name.as_rule() == Rule::param_pattern {
+                    // `((i, w)) => …`: each name the pattern binds
+                    self.bind_all(name.clone());
+                    continue;
+                }
                 let ok = kids
                     .iter()
                     .find(|k| k.as_rule() == Rule::type_annotation)

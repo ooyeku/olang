@@ -31,6 +31,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "chain_step"
+        },
+        {
+          "type": "SYMBOL",
           "name": "call"
         },
         {
@@ -291,6 +295,47 @@
               }
             ]
           }
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "ALIAS",
+              "content": {
+                "type": "IMMEDIATE_TOKEN",
+                "content": {
+                  "type": "STRING",
+                  "value": "("
+                }
+              },
+              "named": true,
+              "value": "open_call"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
+    "chain_step": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "."
+        },
+        {
+          "type": "ALIAS",
+          "content": {
+            "type": "IMMEDIATE_TOKEN",
+            "content": {
+              "type": "PATTERN",
+              "value": "[a-z_][A-Za-z0-9_]*"
+            }
+          },
+          "named": true,
+          "value": "member"
         },
         {
           "type": "CHOICE",
@@ -675,6 +720,10 @@
         {
           "type": "STRING",
           "value": "^"
+        },
+        {
+          "type": "STRING",
+          "value": "@"
         }
       ]
     },

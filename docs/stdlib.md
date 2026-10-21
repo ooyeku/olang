@@ -366,7 +366,8 @@ updated in place, so `m = map_set(m, k, v)`, `m = map_set_in(m, path, v)`,
 `m = map_update(m, k, f)` and `m = map_merge(m, other)` cost the keys
 they write, not the map's size. An identifier key reads as `m.key`
 (exactly `map_get(m, "key")`) and defaults with `m.key ?? d` (exactly
-`map_get_or(m, "key", d)`, the default evaluated only when used).
+`map_get_or(m, "key", d)`, the default evaluated only when used), and
+any key as `m[k]` (exactly `map_get(m, k)`).
 
 | Function | Description |
 |---|---|

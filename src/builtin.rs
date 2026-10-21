@@ -3669,6 +3669,7 @@ impl BuiltinFunctions {
     }
 
     fn map_get(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        // `v[k]` reads the same way (`index_key`); the two must agree.
         if args.len() != 2 {
             return Err(InterpreterError::ArityMismatch {
                 expected: 2,
@@ -3984,9 +3985,9 @@ impl BuiltinFunctions {
                 message: "Index must be an integer".to_string(),
             }),
             (Value::Map(_), _) => Err(InterpreterError::TypeError {
-                message:
-                    "a Map is not indexed with `[]`; write a key with `map_set(m, key, value)`"
-                        .to_string(),
+                message: "`m[k] = v` does not write a map (`m[k]` reads one): write a key \
+                          with `map_set(m, key, value)` or `#{ ...m, key: value }`"
+                    .to_string(),
             }),
             (other, _) => Err(InterpreterError::TypeError {
                 message: format!(
@@ -4712,4 +4713,23 @@ fn range_list(start: i64, end: i64, step: i64) -> Result<Value, InterpreterError
         }
     }
     Ok(Value::List(result.into()))
+}
+
+/// What `v[k]` on a map, an object or a struct says when `k` is not a key:
+/// every tier words it the same (tier agreement).
+pub const INDEX_KEY_ERROR: &str =
+    "a map or object is indexed by a key: a String (or an Int, Float or Bool, read as its text)";
+
+/// The key `v[k]` reads on a map, an object or a struct — `map_get`'s:
+/// a string as itself, an integer, float or boolean as its text. None for
+/// anything else.
+pub fn index_key(key: &Value) -> Option<std::borrow::Cow<'_, str>> {
+    use std::borrow::Cow;
+    match key {
+        Value::String(s) => Some(Cow::Borrowed(s.as_str())),
+        Value::Integer(i) => Some(Cow::Owned(i.to_string())),
+        Value::Float(f) => Some(Cow::Owned(crate::ast::float_key_text(*f))),
+        Value::Boolean(b) => Some(Cow::Owned(b.to_string())),
+        _ => None,
+    }
 }

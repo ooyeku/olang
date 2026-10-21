@@ -42,6 +42,11 @@ pub struct CheckConfig {
     /// tier statistics names one that falls back (src/tier_stats.rs).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub native: Vec<String>,
+    /// Project rules files (`olang check --rules`), relative to the
+    /// project's root: `olang check` with no `--rules` runs each over the
+    /// project's files, so the path is written once, here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rules: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -93,7 +98,7 @@ pub const PACKAGE_KEYS: &[&str] = &[
 ];
 
 /// The keys `[check]` takes.
-pub const CHECK_KEYS: &[&str] = &["promote", "native"];
+pub const CHECK_KEYS: &[&str] = &["promote", "native", "rules"];
 
 /// The advisory classes `[check] promote` names, each a stable name for
 /// one kind of finding. `all` is every one of these: the classes the
