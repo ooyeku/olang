@@ -71,7 +71,7 @@ true
 ["name", "lines", "commits"]
 ["name", "lines", "commits"]
 #{"b": 1, "a": #{"d": 2, "c": 3}}
-Ok("q=x&page=2")
+q=x&page=2
 "#;
 
 #[test]

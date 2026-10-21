@@ -17,7 +17,93 @@
 
 use crate::ast::Value;
 use crate::native::{NativeHandle, NativeObject};
-use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError};
+#[cfg(target_arch = "wasm32")]
+use hosted as crossbeam_channel;
+use crossbeam_channel::{Receiver, Sender, TryRecvError};
+#[cfg(not(target_arch = "wasm32"))]
+use crossbeam_channel::RecvTimeoutError;
+
+/// The browser runtime's queue: one thread, so a lock around a deque,
+/// with the part of crossbeam-channel's surface this module uses that
+/// never waits. crossbeam's own receiver reads std's clock on every
+/// `try_recv` (its timer flavors), and std has no clock there.
+#[cfg(target_arch = "wasm32")]
+mod hosted {
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
+
+    struct State<T> {
+        queue: VecDeque<T>,
+        cap: Option<usize>,
+        senders: usize,
+    }
+
+    pub struct Sender<T>(Arc<Mutex<State<T>>>);
+    pub struct Receiver<T>(Arc<Mutex<State<T>>>);
+
+    pub enum TryRecvError {
+        Empty,
+        Disconnected,
+    }
+
+    #[allow(dead_code)]
+    pub enum TrySendError<T> {
+        Full(T),
+        Disconnected(T),
+    }
+
+    fn make<T>(cap: Option<usize>) -> (Sender<T>, Receiver<T>) {
+        let state = Arc::new(Mutex::new(State {
+            queue: VecDeque::new(),
+            cap,
+            senders: 1,
+        }));
+        (Sender(state.clone()), Receiver(state))
+    }
+
+    pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
+        make(None)
+    }
+
+    pub fn bounded<T>(cap: usize) -> (Sender<T>, Receiver<T>) {
+        make(Some(cap))
+    }
+
+    impl<T> Sender<T> {
+        pub fn try_send(&self, value: T) -> Result<(), TrySendError<T>> {
+            let mut s = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            if s.cap.is_some_and(|c| s.queue.len() >= c) {
+                return Err(TrySendError::Full(value));
+            }
+            s.queue.push_back(value);
+            Ok(())
+        }
+    }
+
+    impl<T> Clone for Sender<T> {
+        fn clone(&self) -> Self {
+            self.0.lock().unwrap_or_else(|e| e.into_inner()).senders += 1;
+            Sender(self.0.clone())
+        }
+    }
+
+    impl<T> Drop for Sender<T> {
+        fn drop(&mut self) {
+            self.0.lock().unwrap_or_else(|e| e.into_inner()).senders -= 1;
+        }
+    }
+
+    impl<T> Receiver<T> {
+        pub fn try_recv(&self) -> Result<T, TryRecvError> {
+            let mut s = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            match s.queue.pop_front() {
+                Some(v) => Ok(v),
+                None if s.senders == 0 => Err(TryRecvError::Disconnected),
+                None => Err(TryRecvError::Empty),
+            }
+        }
+    }
+}
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
@@ -68,7 +154,7 @@ const STALL_TICK_MS: u64 = 250;
 struct ParkSite {
     thread: String,
     what: String,
-    since: std::time::Instant,
+    since: crate::clock::Instant,
 }
 
 fn parked() -> &'static Mutex<HashMap<u64, ParkSite>> {
@@ -107,7 +193,7 @@ fn park(what: String) -> u64 {
     let site = ParkSite {
         thread: std::thread::current().name().unwrap_or("?").to_string(),
         what,
-        since: std::time::Instant::now(),
+        since: crate::clock::Instant::now(),
     };
     parked().lock().unwrap().insert(token, site);
     PARK_GEN.fetch_add(1, Ordering::SeqCst);
@@ -171,7 +257,7 @@ fn stall_tick(last_gen: &mut Option<u64>) {
 pub struct ParkToken {
     token: u64,
     last_gen: std::cell::Cell<Option<u64>>,
-    last_tick: std::cell::Cell<std::time::Instant>,
+    last_tick: std::cell::Cell<crate::clock::Instant>,
 }
 
 /// Park the current thread under `what`. `None` on wasm, where there
@@ -183,7 +269,7 @@ pub fn parked_token(what: String) -> Option<ParkToken> {
     Some(ParkToken {
         token: park(what),
         last_gen: std::cell::Cell::new(None),
-        last_tick: std::cell::Cell::new(std::time::Instant::now()),
+        last_tick: std::cell::Cell::new(crate::clock::Instant::now()),
     })
 }
 
@@ -192,7 +278,7 @@ impl ParkToken {
         if (self.last_tick.get().elapsed().as_millis() as u64) < STALL_TICK_MS {
             return;
         }
-        self.last_tick.set(std::time::Instant::now());
+        self.last_tick.set(crate::clock::Instant::now());
         let mut last = self.last_gen.get();
         stall_tick(&mut last);
         self.last_gen.set(last);
@@ -384,12 +470,28 @@ pub fn fresh_channel() -> Value {
 #[derive(Clone)]
 pub struct ChannelSender(Arc<Chan>);
 
+/// A send that never waits: `false` when the channel is closed (or a
+/// bounded one is full).
+#[cfg(target_arch = "wasm32")]
+fn send_now(t: &Sender<Value>, value: Value) -> bool {
+    t.try_send(value).is_ok()
+}
+
+/// A send: a full bounded channel waits for room, natively.
+#[cfg(not(target_arch = "wasm32"))]
+fn send_now(t: &Sender<Value>, value: Value) -> bool {
+    t.send(value).is_ok()
+}
+
 impl ChannelSender {
     /// Send a value; `false` once the channel is closed.
     pub fn send(&self, value: Value) -> bool {
         let tx = self.0.tx.lock().unwrap().clone();
         let sent = match tx {
-            Some(Tx::Unbounded(t)) | Some(Tx::Bounded(t)) => t.send(value).is_ok(),
+            // try_send: a full bounded queue is a send refused, never a
+            // wait, and crossbeam's waiting send (which reads std's
+            // clock, absent in a browser) stays out of the wasm build
+            Some(Tx::Unbounded(t)) | Some(Tx::Bounded(t)) => send_now(&t, value),
             None => false,
         };
         if sent {
@@ -456,7 +558,9 @@ fn chan_send(mut args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         return Ok(err("channel is closed"));
     };
     match tx {
-        Tx::Unbounded(t) => Ok(match t.send(value) {
+        // try_send: an unbounded queue is never full, and crossbeam's
+        // waiting `send` reads std's clock, which a browser does not have
+        Tx::Unbounded(t) => Ok(match t.try_send(value) {
             Ok(()) => {
                 chan.depth.fetch_add(1, Ordering::Relaxed);
                 ok(Value::Unit)
@@ -464,16 +568,17 @@ fn chan_send(mut args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
             Err(_) => err("channel is closed"),
         }),
         // A bounded send against a full queue is an unbounded wait: poll
-        // under a park entry so the stall detector sees it (and wasm,
-        // which has no second thread to drain anything, keeps the plain
-        // blocking send it always had).
+        // under a park entry so the stall detector sees it. The browser
+        // has no second thread to drain the queue, so a full one is an
+        // error there rather than a wait that never ends.
         #[cfg(target_arch = "wasm32")]
-        Tx::Bounded(t) => Ok(match t.send(value) {
+        Tx::Bounded(t) => Ok(match t.try_send(value) {
             Ok(()) => {
                 chan.depth.fetch_add(1, Ordering::Relaxed);
                 ok(Value::Unit)
             }
-            Err(_) => err("channel is closed"),
+            Err(crossbeam_channel::TrySendError::Full(_)) => err(NO_THREAD_SEND),
+            Err(crossbeam_channel::TrySendError::Disconnected(_)) => err("channel is closed"),
         }),
         #[cfg(not(target_arch = "wasm32"))]
         Tx::Bounded(t) => {
@@ -482,7 +587,7 @@ fn chan_send(mut args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
             let mut parked_mark: Option<crate::profile::Blocked> = None;
             let mut token: Option<u64> = None;
             let mut last_gen: Option<u64> = None;
-            let mut last_tick = std::time::Instant::now();
+            let mut last_tick = crate::clock::Instant::now();
             let outcome = loop {
                 match t.try_send(value) {
                     Ok(()) => {
@@ -498,10 +603,10 @@ fn chan_send(mut args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
                             chan.send_waiting.fetch_add(1, Ordering::Relaxed);
                         }
                         if last_tick.elapsed().as_millis() as u64 >= STALL_TICK_MS {
-                            last_tick = std::time::Instant::now();
+                            last_tick = crate::clock::Instant::now();
                             stall_tick(&mut last_gen);
                         }
-                        std::thread::sleep(std::time::Duration::from_millis(1));
+                        crate::clock::sleep(std::time::Duration::from_millis(1));
                     }
                 }
             };
@@ -577,11 +682,7 @@ fn chan_ask(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let rx = &reply_chan.rx;
-        Ok(match rx.recv() {
-            Ok(v) => ok(v),
-            Err(_) => err("channel is closed"),
-        })
+        Ok(wait_hosted(&reply_chan, None))
     }
 }
 
@@ -614,11 +715,41 @@ fn chan_recv(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let rx = &chan.rx;
-        Ok(match rx.recv() {
-            Ok(v) => ok(v),
-            Err(_) => err("channel is closed"),
-        })
+        Ok(wait_hosted(&chan, None))
+    }
+}
+
+/// What a full bounded channel answers in the browser runtime.
+#[cfg(target_arch = "wasm32")]
+const NO_THREAD_SEND: &str =
+    "channel is full, and the browser runtime has no other thread to drain it";
+
+/// A wait in the browser runtime, which has one thread and no std clock:
+/// a value already queued is taken; otherwise, with a limit, the host's
+/// clock is polled until it passes; without one nothing else can ever
+/// send, so the wait is an error instead of a hang.
+#[cfg(target_arch = "wasm32")]
+fn wait_hosted(chan: &Chan, limit_ms: Option<u64>) -> Value {
+    let started = crate::clock::Instant::now();
+    loop {
+        match chan.rx.try_recv() {
+            Ok(v) => {
+                chan.depth.fetch_sub(1, Ordering::Relaxed);
+                return ok(v);
+            }
+            Err(TryRecvError::Disconnected) => return err("channel is closed"),
+            Err(TryRecvError::Empty) => match limit_ms {
+                None => {
+                    return err(
+                        "channel is empty, and the browser runtime has no other thread to send to it",
+                    );
+                }
+                Some(ms) if started.elapsed().as_millis() as u64 >= ms => {
+                    return err("timed out");
+                }
+                Some(_) => std::hint::spin_loop(),
+            },
+        }
     }
 }
 
@@ -647,8 +778,13 @@ fn chan_recv_timeout(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
     }
     .ok_or("chan.recv_timeout expects a channel and a non-negative number of milliseconds (or #{ timeout_ms })")?;
     let chan = chan_of(&args[0])?;
+    #[cfg(target_arch = "wasm32")]
+    return Ok(wait_hosted(&chan, Some(ms)));
+    #[cfg(not(target_arch = "wasm32"))]
     let _parked = crate::profile::blocked();
+    #[cfg(not(target_arch = "wasm32"))]
     let rx = &chan.rx;
+    #[cfg(not(target_arch = "wasm32"))]
     Ok(
         match rx.recv_timeout(std::time::Duration::from_millis(ms)) {
             Ok(v) => {

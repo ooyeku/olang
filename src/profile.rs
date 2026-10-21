@@ -651,7 +651,7 @@ pub struct Session {
     /// the run goes (src/profile_live.rs).
     shared: Arc<Mutex<Collected>>,
     interval_us: u64,
-    started: std::time::Instant,
+    started: crate::clock::Instant,
 }
 
 #[derive(Default)]
@@ -715,7 +715,7 @@ fn start_sampler(interval_us: u64) -> Session {
         .spawn(move || {
             let interval = std::time::Duration::from_micros(interval_us.max(50));
             while !stop_for_thread.load(Ordering::Relaxed) {
-                std::thread::sleep(interval);
+                crate::clock::sleep(interval);
                 let mut out = shared_for_thread.lock().unwrap_or_else(|e| e.into_inner());
                 sample_once(&mut out);
             }
@@ -726,7 +726,7 @@ fn start_sampler(interval_us: u64) -> Session {
         handle: Some(handle),
         shared,
         interval_us,
-        started: std::time::Instant::now(),
+        started: crate::clock::Instant::now(),
     }
 }
 
@@ -1749,7 +1749,7 @@ mod tests {
         // Push a small stack and keep it live across several ticks.
         assert!(push("outer", Tier::Interpreter));
         assert!(push("inner", Tier::Vm));
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        crate::clock::sleep(std::time::Duration::from_millis(20));
         pop();
         pop();
         let report = session.finish(std::time::Duration::from_millis(20), 10, "test.ol");

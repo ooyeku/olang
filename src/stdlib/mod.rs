@@ -17,6 +17,7 @@ pub mod dates;
 pub mod db;
 pub mod dom;
 pub mod embedded;
+pub mod features;
 #[cfg(feature = "native")]
 pub mod fs;
 #[cfg(feature = "native")]
@@ -29,6 +30,7 @@ pub mod gui;
 pub mod http;
 pub mod json;
 pub mod math;
+pub mod md;
 pub mod meta;
 #[cfg(feature = "native")]
 pub mod os;
@@ -45,6 +47,7 @@ pub mod string;
 pub mod task;
 pub mod testing;
 pub mod time;
+pub mod tokens;
 pub mod toml_mod;
 #[cfg(feature = "native")]
 pub mod tty;
@@ -88,6 +91,7 @@ pub fn get_stdlib() -> crate::ast::ValueMap {
     stdlib.insert("bytes".to_string(), bytes::create_bytes_module());
     stdlib.insert("compress".to_string(), compress::create_compress_module());
     stdlib.insert("meta".to_string(), meta::create_meta_module());
+    stdlib.insert("md".to_string(), md::create_md_module());
     stdlib.insert("col".to_string(), collections::create_collections_module());
     stdlib.insert("crypto".to_string(), crypto::create_crypto_module());
     #[cfg(feature = "native")]

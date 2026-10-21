@@ -83,12 +83,26 @@ parser, the interpreter, the bytecode tier, and the standard library
 minus the operating-system modules, including the entire
 [data stack](ods.md).
 
-Two profiles build from it:
+Two profiles build from it, both with `cargo xtask wasm`, and the next
+build of `olang` embeds both:
 
-| Profile | Command | Output | Contents |
-|---|---|---|---|
-| browser | `cargo xtask wasm` | `target/wasm32-unknown-unknown/release/olang_playground.wasm`, embedded in the next build of `olang` | everything above except the `re` module and RSA, which are a third of the code and nothing a page needs |
-| full | `cargo xtask wasm --full` | `target/wasm-full/olang.wasm` | the whole standard library, for a playground that runs any program |
+| Profile | Contents | Raw | gzip | brotli | From olang |
+|---|---|---|---|---|---|
+| browser | everything above except the `re` module and RSA | 9.2 MB | 2.8 MB | 2.3 MB | `runtime.wasm()` |
+| full | the whole standard library, for a playground that runs any program | 10.9 MB | 3.3 MB | 2.7 MB | `runtime.wasm("full")` |
+
+`re` alone is 1.3 MB of the difference, 0.3 MB brotli: a seventh more on
+the wire for every page of every app, which a frontend that matches no
+patterns does not pay. A program asks which profile it is in, and what
+a profile has, with [`runtime.features()`](stdlib.md#runtime--what-this-binary-carries).
+
+The build refuses an artifact that can reach std's unsupported-platform
+code: the clock (`Instant::now`, `SystemTime::now`), `thread::sleep`, the
+environment, paths, pipes and processes all panic on this target, and a
+panic in wasm is a trap that leaves the instance unusable. Time goes
+through the host's clocks (`src/clock.rs`) and a wait spins on them, so
+no path reaches those panics, and `cargo xtask wasm` fails, naming the
+one it found, if one does.
 
 The boundary is a plain C ABI of a few exported functions, with no
 binding generator:
@@ -719,7 +733,10 @@ progress while the page stays live.
 
 **Failure surfaces.** A parse or runtime error at boot renders into
 the page; a handler error and everything the program prints go to the
-browser console. `println` debugging works in the browser exactly as
+browser console. What the browser cannot do — start a thread, open a
+file — is a runtime error the program can catch, never a trap; a
+panic in the runtime itself would be one, and `olang_last_panic` then
+names it, after which a host starts a fresh instance. `println` debugging works in the browser exactly as
 it does natively — open the console.
 
 ---

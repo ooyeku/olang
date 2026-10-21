@@ -56,6 +56,21 @@ pub fn sleep_ms(ms: u64) {
     }
 }
 
+/// Block for `d`: `std::thread::sleep` natively; the browser has no
+/// scheduler to sleep on (std's sleep panics there), so it spins on the
+/// host clock, as `sleep_ms` does.
+pub fn sleep(d: std::time::Duration) {
+    #[cfg(feature = "native")]
+    std::thread::sleep(d);
+    #[cfg(not(feature = "native"))]
+    {
+        let start = Instant::now();
+        while start.elapsed() < d {
+            std::hint::spin_loop();
+        }
+    }
+}
+
 /// Wall-clock "now" in UTC on every target.
 pub fn utc_now() -> chrono::DateTime<chrono::Utc> {
     #[cfg(feature = "native")]
@@ -104,25 +119,78 @@ mod hosted {
         0.0
     }
 
-    /// Monotonic instant backed by the host's `performance.now()`.
-    #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+    /// Monotonic instant backed by the host's `performance.now()`, in
+    /// microseconds: the operations of `std::time::Instant` a program
+    /// of this crate uses, none of which reaches std's clock (which
+    /// panics on this target).
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct Instant {
-        ms: f64,
+        us: u64,
     }
 
     impl Instant {
         pub fn now() -> Self {
+            let ms = unsafe { host_now_ms() };
             Self {
-                ms: unsafe { host_now_ms() },
+                us: (ms.max(0.0) * 1000.0) as u64,
             }
         }
 
         pub fn elapsed(&self) -> Duration {
-            Self::now().duration_since(*self)
+            Self::now().saturating_duration_since(*self)
         }
 
         pub fn duration_since(&self, earlier: Instant) -> Duration {
-            Duration::from_secs_f64((self.ms - earlier.ms).max(0.0) / 1000.0)
+            self.saturating_duration_since(earlier)
+        }
+
+        pub fn saturating_duration_since(&self, earlier: Instant) -> Duration {
+            Duration::from_micros(self.us.saturating_sub(earlier.us))
+        }
+
+        pub fn checked_duration_since(&self, earlier: Instant) -> Option<Duration> {
+            self.us.checked_sub(earlier.us).map(Duration::from_micros)
+        }
+
+        pub fn checked_add(&self, d: Duration) -> Option<Instant> {
+            let add = u64::try_from(d.as_micros()).ok()?;
+            Some(Instant {
+                us: self.us.checked_add(add)?,
+            })
+        }
+
+        pub fn checked_sub(&self, d: Duration) -> Option<Instant> {
+            let sub = u64::try_from(d.as_micros()).ok()?;
+            Some(Instant {
+                us: self.us.checked_sub(sub)?,
+            })
+        }
+    }
+
+    impl std::ops::Add<Duration> for Instant {
+        type Output = Instant;
+        fn add(self, d: Duration) -> Instant {
+            self.checked_add(d).unwrap_or(Instant { us: u64::MAX })
+        }
+    }
+
+    impl std::ops::AddAssign<Duration> for Instant {
+        fn add_assign(&mut self, d: Duration) {
+            *self = *self + d;
+        }
+    }
+
+    impl std::ops::Sub<Duration> for Instant {
+        type Output = Instant;
+        fn sub(self, d: Duration) -> Instant {
+            self.checked_sub(d).unwrap_or(Instant { us: 0 })
+        }
+    }
+
+    impl std::ops::Sub<Instant> for Instant {
+        type Output = Duration;
+        fn sub(self, earlier: Instant) -> Duration {
+            self.saturating_duration_since(earlier)
         }
     }
 

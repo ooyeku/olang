@@ -19,6 +19,10 @@ pub fn create_compress_module() -> Value {
         ("gunzip", 1),
         #[cfg(feature = "native")]
         ("brotli", 1),
+        #[cfg(feature = "native")]
+        ("brotli_level", 2),
+        #[cfg(feature = "native")]
+        ("unbrotli", 1),
         ("deflate", 1),
         ("inflate", 1),
         ("gzip_level", 2),
@@ -65,6 +69,26 @@ pub fn call_compress_function(
         "brotli" => {
             let input = input_bytes(&args, "brotli", 1)?;
             Ok(bytes::to_value(brotli(input, 5)?))
+        }
+        #[cfg(feature = "native")]
+        "brotli_level" => {
+            let input = input_bytes(&args, "brotli_level", 2)?;
+            let quality = match args.get(1) {
+                Some(Value::Integer(n)) if (0..=11).contains(n) => *n as u32,
+                _ => return Err("compress.brotli_level: quality must be an integer 0..=11".into()),
+            };
+            Ok(bytes::to_value(brotli(input, quality)?))
+        }
+        #[cfg(feature = "native")]
+        "unbrotli" => {
+            let input = input_bytes(&args, "unbrotli", 1)?;
+            let mut out = Vec::new();
+            Ok(
+                match ::brotli::Decompressor::new(input, 4096).read_to_end(&mut out) {
+                    Ok(_) => Value::Ok(Box::new(bytes::to_value(out))),
+                    Err(e) => err(format!("unbrotli: {}", e)),
+                },
+            )
         }
         "gunzip" => {
             let input = input_bytes(&args, "gunzip", 1)?;
@@ -161,10 +185,27 @@ mod tests {
         assert!(matches!(bad, Value::Err(_)));
     }
 
+    #[cfg(feature = "native")]
+    #[test]
+    fn brotli_round_trips_at_every_quality() {
+        let text = "olang ".repeat(3000);
+        for q in [0, 5, 11] {
+            let packed = call_compress_function("brotli_level", vec![s(&text), Value::Integer(q)]).unwrap();
+            assert!(bytes::bytes_of(&packed).unwrap().len() < text.len() / 10);
+            match &call_compress_function("unbrotli", vec![packed]).unwrap() {
+                Value::Ok(inner) => assert_eq!(bytes::bytes_of(&inner).unwrap(), text.as_bytes()),
+                other => panic!("expected Ok, got {:?}", other),
+            }
+        }
+        assert!(matches!(call_compress_function("unbrotli", vec![s("not brotli at all")]).unwrap(), Value::Err(_)));
+        assert!(call_compress_function("brotli_level", vec![s("x"), Value::Integer(12)]).is_err());
+    }
+
     #[test]
     fn module_lists_its_functions() {
-        // gzip, gzip_level, gunzip, deflate, inflate — and brotli natively.
-        let expected = if cfg!(feature = "native") { 6 } else { 5 };
+        // gzip, gzip_level, gunzip, deflate, inflate — and brotli,
+        // brotli_level and unbrotli natively.
+        let expected = if cfg!(feature = "native") { 8 } else { 5 };
         match &create_compress_module() {
             Value::Struct { fields, .. } => assert_eq!(fields.len(), expected),
             _ => panic!("module"),

@@ -41,7 +41,28 @@ pub fn brotli() -> Option<&'static [u8]> {
     embedded().and_then(|_| non_empty(BR))
 }
 
-/// Bytes of the binary's image the embedded runtime accounts for.
+/// Bytes of the binary's image the embedded runtimes account for.
 pub fn embedded_bytes() -> usize {
-    BYTES.len() + GZ.len() + BR.len()
+    BYTES.len() + GZ.len() + BR.len() + FULL_GZ.len() + FULL_BR.len()
+}
+
+// The full profile (the whole stdlib): its served forms and hash only.
+static FULL_GZ: &[u8] = include_bytes!(env!("OLANG_RUNTIME_FULL_GZ"));
+static FULL_BR: &[u8] = include_bytes!(env!("OLANG_RUNTIME_FULL_BR"));
+static FULL_HASH: &str = include_str!(env!("OLANG_RUNTIME_FULL_HASH"));
+
+/// The full runtime brotli-compressed (quality 5), when this binary
+/// carries it.
+pub fn full_brotli() -> Option<&'static [u8]> {
+    non_empty(FULL_BR)
+}
+
+/// The full runtime gzipped (level 6).
+pub fn full_gzipped() -> Option<&'static [u8]> {
+    full_brotli().and_then(|_| non_empty(FULL_GZ))
+}
+
+/// The full runtime's content hash, as `hash()` is the browser one's.
+pub fn full_hash() -> Option<&'static str> {
+    full_brotli().map(|_| FULL_HASH)
 }

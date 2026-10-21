@@ -1096,7 +1096,7 @@ let lines = [unwrap(proc.read_line(q)), unwrap(proc.read_line(q)), unwrap(proc.r
 let ww = proc.wait(q)
 [typeof(bin.stdout), len(bin.stdout), bin.stdout[0], text.stdout, typeof(all), len(all), lines,
  typeof(crypto.random_bytes(4)), len(crypto.random_bytes(4)),
- http.decode_query("t=a&t=b&one=x"), unwrap(http.encode_query(#{ "t": ["a", "b"], "n": 1 })),
+ http.decode_query("t=a&t=b&one=x"), http.encode_query(#{ "t": ["a", "b"], "n": 1 }),
  match attempt(() => http.encode_query(#{ "deep": #{ "x": 1 } })) { Err(e) => str.contains(e, "deep"), Ok(v) => false }]
 "#;
     let mut query = olang::ast::ValueMap::default();

@@ -170,7 +170,7 @@ impl SafepointManager {
         self.safepoint_requested.store(true, Ordering::Relaxed);
 
         // Brief pause to allow running threads to notice the flag
-        std::thread::sleep(Duration::from_millis(1));
+        crate::clock::sleep(Duration::from_millis(1));
 
         Ok(())
     }
@@ -184,7 +184,7 @@ impl SafepointManager {
     pub fn safepoint_poll(&self) -> Result<(), GcError> {
         if self.safepoint_requested.load(Ordering::Relaxed) {
             // Brief pause to allow coordination to proceed
-            std::thread::sleep(Duration::from_millis(1));
+            crate::clock::sleep(Duration::from_millis(1));
         }
         Ok(())
     }

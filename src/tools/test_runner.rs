@@ -98,7 +98,7 @@ pub fn run_paths(
     show_missing: bool,
     options: &Options,
 ) -> i32 {
-    let started = std::time::Instant::now();
+    let started = crate::clock::Instant::now();
     let path: &Path = match paths.first() {
         Some(p) => p,
         None => Path::new("."),

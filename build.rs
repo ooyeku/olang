@@ -85,7 +85,52 @@ fn main() {
         "cargo:rustc-env=OLANG_RUNTIME_WASM_HASH={}",
         hash_dest.display()
     );
+    embed_full(&manifest_dir, &out_dir, !target_is_wasm && native);
     build_info(&manifest_dir);
+}
+
+/// The full profile (the whole stdlib, `cargo xtask wasm` stages it at
+/// `target/wasm-full/olang.wasm`; `OLANG_WASM_FULL` names another): only
+/// its gzip and brotli forms and its hash are embedded, the forms a page
+/// is served. `runtime.wasm("full")` decodes the brotli form for the raw
+/// bytes when a program asks for them.
+fn embed_full(manifest_dir: &std::path::Path, out_dir: &std::path::Path, embed: bool) {
+    println!("cargo:rerun-if-env-changed=OLANG_WASM_FULL");
+    let artifact = env::var("OLANG_WASM_FULL")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| manifest_dir.join("target").join("wasm-full").join("olang.wasm"));
+    println!("cargo:rerun-if-changed={}", artifact.display());
+    let bytes = if embed {
+        fs::read(&artifact).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let seen = out_dir.join("olang_runtime_full.wasm");
+    let gz_dest = out_dir.join("olang_runtime_full.wasm.gz");
+    let br_dest = out_dir.join("olang_runtime_full.wasm.br");
+    let hash_dest = out_dir.join("olang_runtime_full.wasm.hash");
+    let unchanged = fs::read(&seen).map(|have| have == bytes).unwrap_or(false)
+        && gz_dest.exists()
+        && br_dest.exists()
+        && hash_dest.exists();
+    if !unchanged {
+        let (gz, br, hash) = if bytes.is_empty() {
+            (Vec::new(), Vec::new(), String::new())
+        } else {
+            (gzip(&bytes), brotli(&bytes), hash16(&bytes))
+        };
+        fs::write(&gz_dest, gz).expect("write the gzipped full runtime into OUT_DIR");
+        fs::write(&br_dest, br).expect("write the brotli full runtime into OUT_DIR");
+        fs::write(&hash_dest, hash).expect("write the full runtime hash into OUT_DIR");
+        fs::write(&seen, &bytes).expect("write the full runtime into OUT_DIR");
+    }
+    for (var, path) in [
+        ("OLANG_RUNTIME_FULL_GZ", &gz_dest),
+        ("OLANG_RUNTIME_FULL_BR", &br_dest),
+        ("OLANG_RUNTIME_FULL_HASH", &hash_dest),
+    ] {
+        println!("cargo:rustc-env={var}={}", path.display());
+    }
 }
 
 /// What `runtime.build()` reports (src/version.rs): the commit the binary

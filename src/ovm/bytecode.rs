@@ -1505,7 +1505,7 @@ fn bridge_stats_on() -> bool {
 /// Counts one bridged call when dropped (every way out of the call).
 struct BridgeCount {
     name: String,
-    t0: std::time::Instant,
+    t0: crate::clock::Instant,
 }
 
 impl Drop for BridgeCount {
@@ -7957,7 +7957,7 @@ impl BytecodeVm {
                 ValueData::AstFunction(f) => format!("fn {}", f.name.as_deref().unwrap_or("<lambda>")),
                 _ => format!("fn <{}>", callee.type_name()),
             },
-            t0: std::time::Instant::now(),
+            t0: crate::clock::Instant::now(),
         });
         let callee_ast = callee
             .to_ast()
@@ -10065,7 +10065,7 @@ impl BytecodeVm {
                 "{name}({})",
                 args.iter().map(|a| a.layout_name()).collect::<Vec<_>>().join(",")
             ),
-            t0: std::time::Instant::now(),
+            t0: crate::clock::Instant::now(),
         });
 
         let mut ast_args = Vec::with_capacity(args.len());

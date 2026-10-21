@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`md`, Markdown in the standard library.** `md.render(src, opts)`
+  answers `#{ html, headings, title }` for CommonMark with GitHub's
+  tables, task lists, strikethrough, footnotes and bare-URL autolinks,
+  every heading anchored by GitHub's slug; `code`, `link` and `heading`
+  hooks draw blocks, rewrite targets (raw HTML's `href` and `src` too)
+  and headings; `shift`, `html` (keep, escape, drop), `safe`,
+  `highlight`, `anchors` and `inline` options. `md.headings`, `md.slug`,
+  `md.front` (YAML or TOML front matter) and `md.text` beside it. On
+  every profile, the browser's included.
+- **`meta.tokens` and `meta.highlight`.** olang source as tokens that
+  cover it exactly (kind, text, character offsets, line), from the
+  language server's lexer, and as HTML spans `ol-KIND`; in the browser
+  runtime too.
+- **`runtime.features(profile?)`** says what a runtime has: its modules
+  and whether it has threads, files, the network, processes, SQLite,
+  windows, a DOM and the JIT, for this runtime or (natively) the browser
+  and full profiles. **`runtime.wasm("full")`** serves the whole-stdlib
+  profile, which the binary now embeds (gzip and brotli) beside the
+  browser one; `cargo xtask wasm` builds both and takes `-j N`.
+- **`compress.brotli_level(data, q)` and `compress.unbrotli(b)`.**
+- **The web SDK's `serve` takes `"not_found": (req) => response`**, the
+  answer for a path no route has (a site's HTML 404) in place of the
+  JSON envelope.
+
 - **Frames and dtypes after the D6 notebooks.** `+` joins text in an
   expression as it does eagerly (`"n=" + col("n").cast("String")`,
   `col("s") + "!"`, a Category as its text). `add_months` takes an Int
@@ -810,6 +834,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **`http.encode_query` answers the text**, not a `Result`: it cannot
+  fail but by misuse, which raises.
+
 - **`unpivot` widens Int beside Float to Float**, as `concat` does,
   instead of refusing; any other mix still asks for a cast.
 - **A Datetime's reductions stay Datetimes in an expression**:
@@ -1000,6 +1027,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `impl`, `error` and `catch` before a `(`, `[` or `.`).
 
 ### Fixed
+
+- **The browser runtime reaches no clock or sleep that panics there.**
+  `ods.read_csv` trapped the instance ("time not implemented on this
+  platform"): every timing on a path the wasm build compiles goes
+  through the host's clocks, waits spin on them, and `cargo xtask wasm`
+  refuses an artifact that can reach std's unsupported-platform panics.
 
 - **`ods.eq` and `ods.ne` of a Category panicked** ("a deferred
   expression cannot raise"): the deferred comparison passed the type

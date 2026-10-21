@@ -311,6 +311,13 @@ pub fn bind_only_module() -> Value {
             arity: 2,
         }),
     );
+    module.insert(
+        "features".to_string(),
+        Value::Builtin(crate::ast::BuiltinFunction {
+            name: "runtime.features".to_string(),
+            arity: 0,
+        }),
+    );
     Value::Struct {
         type_name: "Module".to_string(),
         fields: Arc::new(module),

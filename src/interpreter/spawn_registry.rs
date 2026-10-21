@@ -18,7 +18,7 @@ enum TaskSlot {
 /// `task.list()` can report elapsed time.
 struct Entry {
     slot: TaskSlot,
-    started: std::time::Instant,
+    started: crate::clock::Instant,
     /// Channels declared to die with this task (`task.watch`): closed
     /// when the task ends, however it ends.
     watched: Vec<Value>,
@@ -94,7 +94,7 @@ pub(crate) fn register(id: u64, handle: JoinHandle<Result<Value, String>>) {
         id,
         Entry {
             slot: TaskSlot::Running(handle),
-            started: std::time::Instant::now(),
+            started: crate::clock::Instant::now(),
             watched: Vec::new(),
             finished: false,
         },
@@ -157,7 +157,7 @@ fn forget(id: u64) {
 /// the memoized result path is shared with `join`.
 pub(crate) fn join_until(
     id: u64,
-    deadline: std::time::Instant,
+    deadline: crate::clock::Instant,
 ) -> Option<Option<Result<Value, String>>> {
     loop {
         let ready = {
@@ -174,10 +174,10 @@ pub(crate) fn join_until(
         if ready {
             return Some(join(id));
         }
-        if std::time::Instant::now() >= deadline {
+        if crate::clock::Instant::now() >= deadline {
             return Some(None);
         }
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        crate::clock::sleep(std::time::Duration::from_millis(1));
     }
 }
 
@@ -256,7 +256,7 @@ fn join_inner(
                 if let Some(p) = park {
                     p.tick();
                 }
-                std::thread::sleep(std::time::Duration::from_millis(1));
+                crate::clock::sleep(std::time::Duration::from_millis(1));
             }
         }
     }

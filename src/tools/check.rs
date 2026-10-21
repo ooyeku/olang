@@ -3189,7 +3189,7 @@ impl Checker {
                     "str", "col", "math", "json", "toml", "csv", "re", "dates", "time", "base64",
                     "fs", "os", "db", "crypto", "chan", "task", "cell", "proc", "bytes",
                     "compress", "bigint", "random", "caps", "runtime", "asset", "vec", "meta",
-                    "testing",
+                    "testing", "md",
                 ];
                 if bound(self, module) || !MIN_REGISTERED.contains(&module.as_str()) {
                     return;

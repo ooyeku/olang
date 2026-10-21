@@ -6726,12 +6726,92 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
         );
         self.doc_ex(
             "runtime.wasm",
-            "runtime.wasm()",
+            "runtime.wasm(profile?)",
             "Result",
             "runtime",
-            "The browser runtime this olang binary embeds: Ok(#{ \"bytes\", \"hash\", \"gzip\", \"br\", \"version\" }) — the wasm, the first sixteen hex digits of its SHA-256 (the name in /olang.<hash>.wasm), its compressed forms, and the olang version — or Err naming how to build a binary that carries one (cargo xtask wasm, then reinstall).",
+            "The browser runtime this olang binary embeds: Ok(#{ \"bytes\", \"hash\", \"gzip\", \"br\", \"version\", \"profile\" }) — the wasm, the first sixteen hex digits of its SHA-256 (the name in /olang.<hash>.wasm), its compressed forms, the olang version and the profile — or Err naming how to build a binary that carries one (cargo xtask wasm, then reinstall). runtime.wasm(\"full\") is the whole-stdlib profile (with re), for a playground.",
             &[r##"let rt = unwrap(runtime.wasm())
 route("GET", "/olang." + map_get(rt, "hash") + ".wasm", (req, p) => { status: 200, body: map_get(rt, "br"), headers: #{ "Content-Type": "application/wasm", "Content-Encoding": "br" } })"##],
+        );
+        self.doc_ex(
+            "runtime.features",
+            "runtime.features(profile?)",
+            "Map",
+            "runtime",
+            "What a runtime has: #{ \"profile\", \"modules\", \"threads\", \"fs\", \"net\", \"processes\", \"db\", \"gui\", \"dom\", \"jit\" }. With no argument, this one; natively also \"browser\" or \"full\", the profiles runtime.wasm serves.",
+            &[r##"contains(runtime.features("browser").modules, "re")  // false"##],
+        );
+        self.doc_ex(
+            "md.render",
+            "md.render(src, opts?)",
+            "Map",
+            "md",
+            "Markdown (CommonMark and GitHub's tables, task lists, strikethrough, footnotes, bare-URL autolinks) as #{ \"html\", \"headings\", \"title\" }: headings carry GitHub's anchors. Options: code, link and heading hooks (functions answering a String, or () for the default), shift, html (\"keep\", \"escape\", \"drop\"), safe, highlight, anchors, inline.",
+            &[r##"md.render("# Hi\n\nText [a](x.md)", #{ "link": (u) => str.replace(u, ".md", "/") }).html"##],
+        );
+        self.doc_ex(
+            "md.headings",
+            "md.headings(src)",
+            "List",
+            "md",
+            "A document's outline: [#{ \"level\", \"text\", \"slug\", \"html\" }], slugs GitHub's and unique on the page.",
+            &[r##"md.headings("# A\n## B")  // [#{ "level": 1, "text": "A", ... }, ...]"##],
+        );
+        self.doc_ex(
+            "md.slug",
+            "md.slug(text)",
+            "String",
+            "md",
+            "The anchor GitHub gives a heading: lower-cased, letters, digits, - and _ kept, spaces to -, the rest dropped.",
+            &[r##"md.slug("`http` — HTTP")  // "http--http""##],
+        );
+        self.doc_ex(
+            "md.front",
+            "md.front(src)",
+            "Result",
+            "md",
+            "Front matter split off: Ok(#{ \"data\", \"body\", \"format\" }) — the YAML (---) or TOML (+++) block as a Map, the text after it, and \"yaml\", \"toml\" or \"\" when there is none; Err for a block that does not parse.",
+            &[r##"unwrap(md.front("---\ntitle: Hi\n---\nBody")).data.title  // "Hi""##],
+        );
+        self.doc_ex(
+            "md.text",
+            "md.text(src)",
+            "String",
+            "md",
+            "A document's plain text, a block a line: what a search index or a description reads.",
+            &[r##"md.text("# A *b*\n\nc")  // "A b\nc""##],
+        );
+        self.doc_ex(
+            "meta.tokens",
+            "meta.tokens(source)",
+            "List",
+            "meta",
+            "olang source as tokens covering it exactly: [#{ \"kind\", \"text\", \"start\", \"end\", \"line\" }], offsets in characters, the texts joined are the source. Kinds: keyword constant ident function type module property string interpolation number comment operator punct macro space.",
+            &[r##"map(meta.tokens("let x = 1"), (t) => t.kind)  // ["keyword", "space", "ident", ...]"##],
+        );
+        self.doc_ex(
+            "meta.highlight",
+            "meta.highlight(source)",
+            "String",
+            "meta",
+            "olang source as HTML for inside a <code>: each token but a space a <span class=\"ol-KIND\">, its text escaped.",
+            &[r##"meta.highlight("let x = 1")"##],
+        );
+        self.doc_ex(
+            "compress.brotli_level",
+            "compress.brotli_level(data, quality)",
+            "Bytes",
+            "Bytes",
+            "Brotli at a quality 0..=11: 11 the smallest output, for a file compressed once and served many times.",
+            &[r##"compress.brotli_level(page, 11)"##],
+        );
+        self.doc_ex(
+            "compress.unbrotli",
+            "compress.unbrotli(b)",
+            "Result",
+            "Bytes",
+            "Brotli decoded: Ok(Bytes), or Err for bytes that are not brotli.",
+            &[r##"unwrap(compress.unbrotli(compress.brotli("hi")))"##],
         );
         self.doc_ex(
             "runtime.memory",
@@ -7357,11 +7437,10 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
             name: "http.encode_query".to_string(),
             description: "Encode a map or record into a URL query string: each value a string, number, Bool or a list of them (the name repeated); a nested value raises".to_string(),
             syntax: "http.encode_query(params)".to_string(),
-            parameters: vec!["params: Struct - Key-value pairs to encode as query parameters".to_string()],
-            return_type: "Result<String, Error>".to_string(),
+            parameters: vec!["params: Map or record - Key-value pairs to encode as query parameters".to_string()],
+            return_type: "String".to_string(),
             examples: vec![
-                "http.encode_query(Q { q: \"hello world\", limit: \"10\" })  // Ok(\"q=hello%20world&limit=10\")".to_string(),
-                "type Q = struct { q: String, limit: String }  // encode_query takes a struct".to_string(),
+                "http.encode_query(#{ \"q\": \"hello world\", \"limit\": 10 })  // \"q=hello%20world&limit=10\"".to_string(),
             ],
             category: "HTTP".to_string(),
             see_also: vec!["http.decode_query".to_string(), "http.parse_url".to_string()],

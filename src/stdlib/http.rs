@@ -1729,8 +1729,8 @@ fn parse_url(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     }
 }
 
-/// Encode query parameters from a struct
-/// Usage: http.encode_query(params_struct) -> Result<String, Error>
+/// `http.encode_query(map)` -> String: a pure encoder, so it answers the
+/// text; a value with no query form is a misuse and raises.
 fn encode_query(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
         return Err(format!("encode_query expects 1 argument, got {}", args.len()).into());
@@ -1782,11 +1782,7 @@ fn encode_query(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             ));
         }
     }
-    {
-        Ok(Value::Ok(Box::new(Value::String(Arc::new(
-            query_pairs.join("&"),
-        )))))
-    }
+    Ok(Value::String(Arc::new(query_pairs.join("&"))))
 }
 
 /// Decode query string into a struct  
@@ -2056,9 +2052,8 @@ mod tests {
 
         let params_struct = struct_val("QueryParams", params);
         let result = encode_query(vec![params_struct]).unwrap();
-        let encoded = assert_ok(&result);
 
-        if let Value::String(query_string) = encoded {
+        if let Value::String(query_string) = &result {
             let query = query_string.as_ref();
             // Query parameters can be in any order, so check individual parts
             assert!(query.contains("name=John%20Doe"));
@@ -2349,9 +2344,8 @@ mod tests {
 
         let params_struct = struct_val("QueryParams", params);
         let result = encode_query(vec![params_struct]).unwrap();
-        let encoded = assert_ok(&result);
 
-        if let Value::String(query_string) = encoded {
+        if let Value::String(query_string) = &result {
             let query = query_string.as_ref();
             assert!(query.contains("John%20%26%20Jane")); // URL-encoded "John & Jane"
             assert!(query.contains("test%40example.com")); // URL-encoded "test@example.com"
@@ -2359,7 +2353,7 @@ mod tests {
         } else {
             panic!(
                 "Expected string result from encode_query, got: {:?}",
-                encoded
+                result
             );
         }
     }
@@ -2393,8 +2387,7 @@ mod tests {
         let params_struct = struct_val("QueryParams", original_params.clone());
 
         // Encode
-        let encoded_result = encode_query(vec![params_struct]).unwrap();
-        let encoded = assert_ok(&encoded_result);
+        let encoded = encode_query(vec![params_struct]).unwrap();
 
         // Decode
         let decoded_result = decode_query(vec![encoded.clone()]).unwrap();
@@ -2422,7 +2415,7 @@ mod tests {
             Value::List(Arc::new(vec![string_val("item1"), string_val("item2")])),
         );
         let encoded = encode_query(vec![Value::Map(Arc::new(params.clone()))]).unwrap();
-        match assert_ok(&encoded) {
+        match &encoded {
             Value::String(q) => assert_eq!(
                 q.as_str(),
                 "simple_string=hello&simple_int=42&list=item1&list=item2"

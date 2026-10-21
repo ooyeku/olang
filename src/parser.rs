@@ -5942,7 +5942,8 @@ mod tests {
     // failing test rather than a stuck suite.
     #[test]
     fn test_deeply_nested_parens_parse_in_linear_time() {
-        use std::time::{Duration, Instant};
+        use crate::clock::Instant;
+use std::time::Duration;
 
         // Recursive-descent AST building needs a deep stack for 100 nested
         // levels; a debug test thread's default 2 MiB stack overflows on the

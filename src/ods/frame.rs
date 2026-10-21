@@ -2090,7 +2090,7 @@ fn read_csv_borrowed(
         1
     };
     let timing = std::env::var_os("OLANG_ODS_TIMING").is_some();
-    let t0 = std::time::Instant::now();
+    let t0 = crate::clock::Instant::now();
 
     // Ranges are absolute into the full text, so spans recorded by the
     // scan index the shared Arc directly.
@@ -2115,7 +2115,7 @@ fn read_csv_borrowed(
     if timing {
         eprintln!("[ods-timing] fused-scan={:?}", t0.elapsed());
     }
-    let t1 = std::time::Instant::now();
+    let t1 = crate::clock::Instant::now();
 
     // Transpose to per-column chunk lists and reconcile each column —
     // columns are independent, so large tables merge one per core.

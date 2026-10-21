@@ -88,7 +88,7 @@ impl Logger {
     pub fn log(&self, level: LogLevel, module: &str, message: &str) {
         if level <= self.level {
             let timestamp = if self.show_timestamp {
-                format!("[{}] ", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S%.3f"))
+                format!("[{}] ", crate::clock::utc_now().format("%Y-%m-%d %H:%M:%S%.3f"))
             } else {
                 String::new()
             };

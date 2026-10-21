@@ -48,6 +48,7 @@ fn every_callable_module_has_help_entries() {
         "tty",
         "testing",
         "meta",
+        "md",
         "dom",
         "ods",
         "stats",

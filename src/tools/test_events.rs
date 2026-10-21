@@ -160,7 +160,7 @@ struct RunState {
     failed: u64,
     skipped: u64,
     files: u64,
-    started: Option<std::time::Instant>,
+    started: Option<crate::clock::Instant>,
 }
 
 static STATE: Mutex<Option<RunState>> = Mutex::new(None);
@@ -182,7 +182,7 @@ thread_local! {
 pub fn run_started(files: &[String], count: usize, only: Option<&str>) {
     with_state(|s| {
         *s = RunState {
-            started: Some(std::time::Instant::now()),
+            started: Some(crate::clock::Instant::now()),
             ..RunState::default()
         }
     });

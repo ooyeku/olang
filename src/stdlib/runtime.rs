@@ -16,6 +16,7 @@ fn builtin(name: &str, arity: usize) -> Value {
 pub fn create_runtime_module() -> Value {
     let mut module = crate::ast::ValueMap::default();
     module.insert("wasm".to_string(), builtin("wasm", 0));
+    module.insert("features".to_string(), builtin("features", 0));
     module.insert("version".to_string(), builtin("version", 0));
     module.insert("memory".to_string(), builtin("memory", 0));
     module.insert("profile_start".to_string(), builtin("profile_start", 0));
@@ -331,52 +332,98 @@ fn runtime_memory(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
 /// `/olang.<hash>.wasm`), its gzip and brotli forms, and the olang version
 /// it is — or `Err` naming how to build a binary that carries one.
 fn runtime_wasm(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    if !args.is_empty() {
-        return Err(format!("runtime.wasm expects 0 arguments, got {}", args.len()).into());
+    match args.as_slice() {
+        [] => runtime_wasm_browser(),
+        [Value::String(p)] if p.as_str() == "browser" => runtime_wasm_browser(),
+        [Value::String(p)] if p.as_str() == "full" => runtime_wasm_full(),
+        [Value::String(p)] => Err(format!(
+            "runtime.wasm: the profile is \"browser\" or \"full\", got \"{p}\""
+        )
+        .into()),
+        [other] => Err(format!(
+            "runtime.wasm: the profile must be a string, got {}",
+            other.type_name()
+        )
+        .into()),
+        _ => Err(format!("runtime.wasm expects 0 or 1 argument(s), got {}", args.len()).into()),
     }
+}
+
+fn no_runtime(profile: &str) -> Value {
+    Value::Err(Box::new(Value::String(Arc::new(format!(
+        "this olang binary carries no {profile} runtime: build the wasm first (`cargo xtask wasm`), then rebuild or reinstall olang (`cargo xtask install`)"
+    )))))
+}
+
+fn runtime_wasm_browser() -> Result<Value, Box<dyn std::error::Error>> {
     let Some(bytes) = crate::runtime_wasm::embedded() else {
-        return Ok(Value::Err(Box::new(Value::String(Arc::new(
-            "this olang binary carries no browser runtime: build the wasm first (`cargo xtask wasm`, or `make wasm`), then rebuild or reinstall olang (`make install`)"
-                .to_string(),
-        )))));
+        return Ok(no_runtime("browser"));
     };
     // Built once per process, and every bytes value borrows the binary's
     // own image: a program that asks per request pays a handle clone, and
     // no form of the runtime is ever copied to the heap.
     static ANSWER: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
-    if let Some(answer) = ANSWER.get() {
-        return Ok(Value::Ok(Box::new(answer.clone())));
-    }
+    let answer = ANSWER.get_or_init(|| {
+        runtime_answer(
+            "browser",
+            crate::stdlib::bytes::static_value(bytes),
+            crate::runtime_wasm::hash().unwrap_or_default(),
+            crate::runtime_wasm::gzipped(),
+            crate::runtime_wasm::brotli(),
+        )
+    });
+    Ok(Value::Ok(Box::new(answer.clone())))
+}
+
+/// The full profile: its served forms are slices of the binary; its raw
+/// bytes are the brotli form decoded, once per process, on first ask.
+fn runtime_wasm_full() -> Result<Value, Box<dyn std::error::Error>> {
+    let Some(br) = crate::runtime_wasm::full_brotli() else {
+        return Ok(no_runtime("full"));
+    };
+    static ANSWER: std::sync::OnceLock<Result<Value, String>> = std::sync::OnceLock::new();
+    let answer = ANSWER.get_or_init(|| {
+        let mut raw = Vec::new();
+        std::io::Read::read_to_end(&mut brotli::Decompressor::new(br, 4096), &mut raw)
+            .map_err(|e| format!("runtime.wasm: the embedded full runtime does not decode: {e}"))?;
+        Ok(runtime_answer(
+            "full",
+            crate::stdlib::bytes::to_value(raw),
+            crate::runtime_wasm::full_hash().unwrap_or_default(),
+            crate::runtime_wasm::full_gzipped(),
+            Some(br),
+        ))
+    });
+    Ok(match answer {
+        Ok(v) => Value::Ok(Box::new(v.clone())),
+        Err(e) => err_value(e.clone()),
+    })
+}
+
+fn runtime_answer(
+    profile: &str,
+    bytes: Value,
+    hash: &str,
+    gz: Option<&'static [u8]>,
+    br: Option<&'static [u8]>,
+) -> Value {
     let mut out = crate::ast::ValueMap::default();
-    out.insert(
-        "bytes".to_string(),
-        crate::stdlib::bytes::static_value(bytes),
-    );
-    out.insert(
-        "hash".to_string(),
-        Value::String(Arc::new(
-            crate::runtime_wasm::hash().unwrap_or_default().to_string(),
-        )),
-    );
+    out.insert("bytes".to_string(), bytes);
+    out.insert("hash".to_string(), Value::String(Arc::new(hash.to_string())));
     out.insert(
         "gzip".to_string(),
-        crate::runtime_wasm::gzipped()
-            .map(crate::stdlib::bytes::static_value)
-            .unwrap_or(Value::Unit),
+        gz.map(crate::stdlib::bytes::static_value).unwrap_or(Value::Unit),
     );
     out.insert(
         "br".to_string(),
-        crate::runtime_wasm::brotli()
-            .map(crate::stdlib::bytes::static_value)
-            .unwrap_or(Value::Unit),
+        br.map(crate::stdlib::bytes::static_value).unwrap_or(Value::Unit),
     );
     out.insert(
         "version".to_string(),
         Value::String(Arc::new(crate::version::VERSION.to_string())),
     );
-    let answer = Value::Map(Arc::new(out));
-    let answer = ANSWER.get_or_init(|| answer).clone();
-    Ok(Value::Ok(Box::new(answer)))
+    out.insert("profile".to_string(), Value::String(Arc::new(profile.to_string())));
+    Value::Map(Arc::new(out))
 }
 
 // ── a host's calls: modules loaded at run time ───────────────────────

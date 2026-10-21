@@ -890,6 +890,15 @@ impl BuiltinFunctions {
                 .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 
+        // Markdown: `md.render` with hooks calls them on this interpreter
+        if let Some(md_function) = name.strip_prefix("md.") {
+            if md_function == "render" {
+                return md_render(arguments, interpreter);
+            }
+            return crate::stdlib::md::call_md_function(md_function, arguments)
+                .map_err(InterpreterError::runtime);
+        }
+
         // Handle bytes functions
         if let Some(bytes_function) = name.strip_prefix("bytes.") {
             return crate::stdlib::bytes::call_bytes_function(bytes_function, arguments)
@@ -965,6 +974,9 @@ impl BuiltinFunctions {
         }
         if name == "runtime.preset" {
             return crate::controls::preset(arguments).map_err(InterpreterError::runtime);
+        }
+        if name == "runtime.features" {
+            return crate::stdlib::features::call(&arguments).map_err(InterpreterError::runtime);
         }
         #[cfg(feature = "native")]
         if let Some(runtime_function) = name.strip_prefix("runtime.") {
@@ -4518,6 +4530,103 @@ fn db_transaction(
 }
 
 /// `__snapshots__` beside the file being run.
+/// `md.render(src, opts)`: the hooks in `opts` are olang functions, run
+/// here on the calling interpreter; one that raises ends the render with
+/// its own error.
+fn md_render(
+    arguments: Vec<Value>,
+    interpreter: &mut crate::interpreter::Interpreter,
+) -> Result<Value, InterpreterError> {
+    use crate::stdlib::md;
+    md::check_arity("render", &arguments).map_err(InterpreterError::runtime)?;
+    let src = match &arguments[0] {
+        Value::String(s) => s.clone(),
+        other => {
+            return Err(InterpreterError::runtime(format!(
+                "md.render: the text must be a string, got {}",
+                other.type_name()
+            )));
+        }
+    };
+    let (opts, hooks) = md::read_options(arguments.get(1)).map_err(InterpreterError::runtime)?;
+
+    struct Interp<'a> {
+        interpreter: &'a mut crate::interpreter::Interpreter,
+        code: Option<Value>,
+        link: Option<Value>,
+        heading: Option<Value>,
+        raised: Option<InterpreterError>,
+    }
+    fn s(v: &str) -> Value {
+        Value::String(std::sync::Arc::new(v.to_string()))
+    }
+    impl Interp<'_> {
+        fn call(&mut self, hook: &str, f: Value, args: Vec<Value>) -> Result<Option<String>, String> {
+            let answer = match self.interpreter.call_function_optimized(&f, args) {
+                Ok(v) => v,
+                Err(e) => {
+                    let message = e.to_string();
+                    self.raised = Some(e);
+                    return Err(message);
+                }
+            };
+            match &answer {
+                Value::String(t) => Ok(Some(t.as_ref().clone())),
+                Value::Unit => Ok(None),
+                other => {
+                    let message = format!(
+                        "md.render: the `{hook}` hook must answer a String or (), got {}",
+                        other.type_name()
+                    );
+                    self.raised = Some(InterpreterError::runtime(message.clone()));
+                    Err(message)
+                }
+            }
+        }
+    }
+    impl md::Hooks for Interp<'_> {
+        fn has_link(&self) -> bool {
+            self.link.is_some()
+        }
+        fn code(&mut self, lang: &str, info: &str, text: &str) -> Result<Option<String>, String> {
+            match self.code.clone() {
+                Some(f) => self.call("code", f, vec![s(lang), s(info), s(text)]),
+                None => Ok(None),
+            }
+        }
+        fn link(&mut self, url: &str) -> Result<md::LinkAnswer, String> {
+            match self.link.clone() {
+                Some(f) => Ok(match self.call("link", f, vec![s(url)])? {
+                    Some(u) => md::LinkAnswer::To(u),
+                    None => md::LinkAnswer::Drop,
+                }),
+                None => Ok(md::LinkAnswer::Keep),
+            }
+        }
+        fn heading(&mut self, level: u8, slug: &str, html: &str) -> Result<Option<String>, String> {
+            match self.heading.clone() {
+                Some(f) => self.call(
+                    "heading",
+                    f,
+                    vec![Value::Integer(level as i64), s(slug), s(html)],
+                ),
+                None => Ok(None),
+            }
+        }
+    }
+    let mut h = Interp {
+        interpreter,
+        code: hooks.get("code").cloned(),
+        link: hooks.get("link").cloned(),
+        heading: hooks.get("heading").cloned(),
+        raised: None,
+    };
+    match md::render(&src, opts, &mut h) {
+        Ok(r) => Ok(md::rendered_value(r)),
+        Err(message) => Err(h.raised.take().unwrap_or_else(|| InterpreterError::runtime(message))),
+    }
+}
+
 fn snapshot_dir(interpreter: &mut crate::interpreter::Interpreter) -> std::path::PathBuf {
     interpreter
         .current_file_for_snapshots()

@@ -58,6 +58,9 @@ pub struct Token {
     pub len: u32,
     pub kind: u32,
     pub mods: u32,
+    /// Byte range in the text.
+    pub a: usize,
+    pub b: usize,
 }
 
 const HARD_KEYWORDS: &[&str] = &[
@@ -84,6 +87,8 @@ struct Lexeme {
     /// UTF-16 column of `a` on its line.
     col: u32,
     len16: u32,
+    /// A template's `${` or the `}` that closes it.
+    interp: bool,
 }
 
 fn is_ident_start(c: char) -> bool {
@@ -123,6 +128,7 @@ fn lex(text: &str) -> Vec<Lexeme> {
                             line: pl,
                             col: pc,
                             len16: units,
+                            interp: false,
                         });
                     }
                     pl += 1;
@@ -141,6 +147,7 @@ fn lex(text: &str) -> Vec<Lexeme> {
                     line: pl,
                     col: pc,
                     len16: units,
+                    interp: false,
                 });
             }
             (pl, pc + units)
@@ -187,6 +194,7 @@ fn lex(text: &str) -> Vec<Lexeme> {
                     line,
                     col,
                     len16: 2,
+                    interp: true,
                 });
                 i += 2;
                 col += 2;
@@ -220,6 +228,7 @@ fn lex(text: &str) -> Vec<Lexeme> {
                 line,
                 col,
                 len16: units,
+                interp: false,
             });
             col += units;
             i = end;
@@ -298,6 +307,7 @@ fn lex(text: &str) -> Vec<Lexeme> {
                     line,
                     col,
                     len16: 2,
+                    interp: true,
                 });
                 i += 2;
                 col += 2;
@@ -329,6 +339,7 @@ fn lex(text: &str) -> Vec<Lexeme> {
                 line,
                 col,
                 len16: (j - i) as u32,
+                interp: false,
             });
             col += (j - i) as u32;
             i = j;
@@ -352,6 +363,7 @@ fn lex(text: &str) -> Vec<Lexeme> {
                 line,
                 col,
                 len16: units,
+                interp: false,
             });
             col += units;
             i = j;
@@ -383,6 +395,7 @@ fn lex(text: &str) -> Vec<Lexeme> {
                         line,
                         col,
                         len16: 1,
+                        interp: true,
                     });
                     i += 1;
                     col += 1;
@@ -399,11 +412,22 @@ fn lex(text: &str) -> Vec<Lexeme> {
             line,
             col,
             len16: c.len_utf16() as u32 * if w == 2 { 2 } else { 1 },
+            interp: false,
         });
         col += if w == 2 { 2 } else { c.len_utf16() as u32 };
         i += w;
     }
     out
+}
+
+/// The byte ranges of every template interpolation's `${` and of the `}`
+/// that closes it.
+pub fn interpolation_marks(text: &str) -> Vec<(usize, usize)> {
+    lex(text)
+        .into_iter()
+        .filter(|l| l.interp)
+        .map(|l| (l.a, l.b))
+        .collect()
 }
 
 fn is_operator(p: &str) -> bool {
@@ -556,6 +580,8 @@ pub fn tokens(text: &str, is_builtin: &dyn Fn(&str) -> bool, modules: &[&str]) -
                 len: l.len16,
                 kind,
                 mods,
+                a: l.a,
+                b: l.b,
             })
         };
         match l.kind {

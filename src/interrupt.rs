@@ -32,7 +32,8 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use crate::clock::Instant;
+use std::time::Duration;
 
 static ARMED: AtomicBool = AtomicBool::new(false);
 static REQUESTED: AtomicBool = AtomicBool::new(false);
@@ -216,7 +217,7 @@ mod tests {
     fn a_budget_trips_only_its_own_thread() {
         budget_begin(5);
         let other = std::thread::spawn(|| {
-            std::thread::sleep(Duration::from_millis(30));
+            crate::clock::sleep(Duration::from_millis(30));
             pending()
         });
         let start = Instant::now();

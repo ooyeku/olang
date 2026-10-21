@@ -18,7 +18,7 @@ use colored::Colorize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Instant;
+use crate::clock::Instant;
 
 /// The format number of `--format json`'s events and of a saved baseline.
 pub const FORMAT: u32 = 1;

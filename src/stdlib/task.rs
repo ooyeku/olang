@@ -249,7 +249,7 @@ fn task_join_timeout(args: Vec<Value>) -> Result<Value, InterpreterError> {
         )
     })?;
     let id = task_id(&args[0]).map_err(raise)?;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(ms);
+    let deadline = crate::clock::Instant::now() + std::time::Duration::from_millis(ms);
     match spawn_registry::join_until(id, deadline) {
         // Finished in time: `Ok` of what `task.join` answers (`Ok(v)`, or
         // `Err(failure)` when it raised); `Err("timed out")` is the wait

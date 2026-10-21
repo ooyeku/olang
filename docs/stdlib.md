@@ -27,6 +27,7 @@ a file system, a network, or a browser.
 - [`json` — JSON](#json--json)
 - [`toml` — TOML](#toml--toml)
 - [`csv` — CSV](#csv--csv)
+- [`md` — Markdown](#md--markdown)
 - [`re` — regular expressions](#re--regular-expressions)
 - [`dates` — dates and times](#dates--dates-and-times)
 - [`time` — clocks and sleeping](#time--clocks-and-sleeping)
@@ -36,7 +37,7 @@ a file system, a network, or a browser.
 - [`random` — randomness](#random--randomness)
 - [`crypto` — hashing and encryption](#crypto--hashing-and-encryption)
 - [`bytes` — binary data](#bytes--binary-data)
-- [`compress` — gzip and deflate](#compress--gzip-and-deflate)
+- [`compress` — gzip, brotli and deflate](#compress--gzip-brotli-and-deflate)
 - [`base64` — base64](#base64--base64)
 - [`fs` — file system](#fs--file-system)
 - [`meta` — the program as data](#meta--the-program-as-data-the-open-ast)
@@ -853,6 +854,60 @@ let total = rows |> fold(0, (acc, r) => acc + unwrap(str.parse_int(r.score)))
 println(`${rows[0].name}, total ${total}`)
 ```
 
+## `md` — Markdown
+
+CommonMark with GitHub's extensions — tables, task lists,
+strikethrough, footnotes and bare-URL autolinks — rendered to HTML,
+with GitHub's heading anchors, the document's outline, its front
+matter, and hooks that draw code blocks, links and headings the
+caller's way. The parser is pulldown-cmark; every profile carries it,
+the browser's included.
+
+| Function | Result |
+|---|---|
+| `md.render(src, opts?)` | `#{ "html", "headings", "title" }`: the HTML; the outline, `[#{ "level", "text", "slug", "html" }]` in order (`text` plain, `html` the heading's inner HTML); and the first level-one heading's text (`""` when none). Every heading carries `id="slug"`, GitHub's anchor, a repeat on the page numbered `-1`, `-2` as GitHub numbers it. Footnotes are gathered at the end in a `<section class="footnotes">`. A front-matter block is skipped (`md.front` reads it) |
+| `md.headings(src)` | the outline alone, as `render` answers it |
+| `md.slug(text)` | the anchor GitHub gives a heading whose text is `text`: lower-cased; letters, digits, `-` and `_` kept; a space a `-`; the rest dropped |
+| `md.front(src)` | `Ok(#{ "data", "body", "format" })`: the front matter as a Map, the text after it, and `"yaml"` (a `---` block), `"toml"` (`+++`) or `""` when there is none (`data` is then `#{}`). `Err(message)` naming the line of a block that does not parse |
+| `md.text(src)` | the document's plain text, a block a line: what a search index or a page description reads |
+
+`render`'s options, every one optional:
+
+| Option | Meaning |
+|---|---|
+| `code: (lang, info, text) => html` | draws a code block: `lang` is the fence's first word, `info` the whole info string (`"olang no-run"`), `text` the code without its last line break. `()` keeps the default, `<pre><code class="language-lang">` |
+| `link: (url) => url` | every link and image target — written links, autolinks, and `href` and `src` inside raw HTML — rewritten. `()` drops the link and keeps its text (an image keeps its alt text) |
+| `heading: (level, slug, html) => html` | draws a heading; `()` keeps `<hN id="slug">html</hN>` |
+| `shift: n` | every heading `n` levels down (to `h6` at most); `title` still reads the source's level one |
+| `html: "keep" \| "escape" \| "drop"` | raw HTML in the source: written through (the default), shown as text, or left out |
+| `safe: true` | for text from strangers: raw HTML is escaped (unless `html: "drop"`), and a link whose scheme is not `http`, `https` or `mailto` is dropped (`data:` PNG, GIF, JPEG and WebP stay for images) |
+| `highlight: true` | `olang` and `ol` blocks no `code` hook drew are highlighted by `meta.highlight` |
+| `anchors: false` | headings without ids |
+| `inline: true` | a text of one paragraph answers that paragraph's inside, no `<p>`: a title or a summary set in a line |
+
+A hook is an ordinary function, called on the tier that called
+`render`; one that raises ends the render with its error. Front matter
+is YAML's everyday subset — nested maps and lists by indentation, flow
+lists and maps (`[a, b]`, `{ k: v }`), quoted and plain strings,
+numbers, Bools, `null`, block scalars (`|`, `>`), comments — or TOML,
+read as `toml.parse` reads it. A date stays its text, as in `toml`:
+`dates.parse` makes it a `Date`.
+
+```olang
+let page = "---\ntitle: Getting started\ntags: [intro, setup]\n---\n# Start\n\nSee [the tour](tour.md) and https://olang.dev.\n\n```olang\nprintln(1)\n```\n"
+let f = unwrap(md.front(page))
+println(f.data.title)                     // Getting started
+println(f.data.tags)                      // ["intro", "setup"]
+let doc = md.render(f.body, #{
+    "link": (u) => if str.ends_with(u, ".md") => "/book/" + str.replace(u, ".md", "/") else => u,
+    "code": (lang, info, text) => if lang == "olang" => "<pre class=\"ol\">" + meta.highlight(text) + "</pre>" else => ()
+})
+println(doc.title)                        // Start
+println(map(doc.headings, (h) => h.slug)) // ["start"]
+println(str.contains(doc.html, "href=\"/book/tour/\""))
+println(md.slug("`http` — HTTP"))         // http--http
+```
+
 ## `re` — regular expressions
 
 Rust regex syntax (no backtracking, so patterns run in linear time and a
@@ -862,9 +917,9 @@ because the *pattern* can be malformed — the usual shape is one
 for a pattern that arrives at runtime.
 
 The browser runtime the web SDK ships omits this module (the engine and
-its Unicode tables are a fifth of the runtime's code); a page that calls
-`re.*` hears so. The full browser profile (`cargo xtask wasm --full`,
-see [olang in the browser](wasm.md)) carries it.
+its Unicode tables are 1.3 MB of a 10 MB runtime, 0.3 MB brotli); a page
+that calls `re.*` hears so. The full profile, `runtime.wasm("full")`
+(see [olang in the browser](wasm.md)), carries it.
 
 | Function | Description |
 |---|---|
@@ -1092,6 +1147,11 @@ fail, but messages already queued are still received before `recv`
 starts reporting the close — so a consumer loop can simply `match` on
 `recv` and stop on `Err`.
 
+The browser runtime has one thread, so nothing can arrive while it
+waits: there `recv` and `ask` on an empty channel, and `send` on a full
+bounded one, answer `Err` at once, and `recv_timeout` polls the page's
+clock until its limit.
+
 ### The stall detector
 
 A `chan.recv` that no live thread can ever satisfy does not hang the
@@ -1297,10 +1357,12 @@ println(base64.encode(b))                              // aGkh
 println(show(bytes.from_string("hi!") == b))           // true
 ```
 
-## `compress` — gzip and deflate
+## `compress` — gzip, brotli and deflate
 
-In-memory compression for the wire and the disk, on every target: the
-codec is pure Rust, so the browser runtime carries it too. Every
+In-memory compression for the wire and the disk. gzip and deflate are
+on every target, the browser runtime's included; brotli is native (its
+encoder is nearly a megabyte of wasm, and a page decodes brotli
+itself). Every
 function takes a string or `Bytes` and answers `Bytes`; the decoders
 return `Result`, since arbitrary input may not be compressed data.
 
@@ -1309,7 +1371,8 @@ return `Result`, since arbitrary input may not be compressed data.
 | `compress.gzip(data)` | gzip at the default level (6) |
 | `compress.gzip_level(data, n)` | gzip at level `n`, 0..=9 |
 | `compress.brotli(data)` | brotli at quality 5 — what `Content-Encoding: br` carries; a quarter of the bytes for a wasm |
-| `compress.gunzip(b)` | `Ok(Bytes)` or `Err(message)` |
+| `compress.brotli_level(data, q)` | brotli at quality `q`, 0..=11: 11 is the smallest output, for a file compressed once and served many times |
+| `compress.gunzip(b)` / `compress.unbrotli(b)` | `Ok(Bytes)` or `Err(message)` |
 | `compress.deflate(data)` / `compress.inflate(b)` | raw deflate, no gzip header, and its inverse |
 
 An `http.serve` handler that compresses a large JSON body sets
@@ -1492,6 +1555,8 @@ over these nodes, beside the type checker
 | `meta.expand(source)` | `Ok(text)` \| `Err(message)` — the program after macro expansion, as source: every `meta fn` removed and every `@` site replaced by what it generated (what `olang expand FILE` prints) |
 | `meta.encode(source, options?)` | `Ok(bytes)` \| `Err(message)` — the parsed program (macros expanded) as a program image: bytes the runtime loads without parsing, behind a header naming the olang version that wrote it, which is the only version that loads it. `#{ "hot": [names] }` names the functions the loading runtime compiles at declaration rather than at their first call. What the web SDK's `serve` hands the browser in place of the source bundle |
 | `meta.unresolved(source)` | `Ok(list)` of every name the program uses that nothing in it defines or imports and the language does not provide, in order of first use; `Err` when the source does not parse. How the web SDK's bundler warns of a module that uses a name it does not import, undefined in the browser as natively |
+| `meta.tokens(source)` | the source as tokens that cover it exactly — their `text`s joined are `source` — `[#{ "kind", "text", "start", "end", "line" }]`, `start` and `end` in characters, `line` from 1. `kind` is one of `keyword` `constant` (`true`, `Ok`, an ALL-CAPS name) `ident` `function` (a call's or a definition's name) `type` `module` `property` `string` (a template's text pieces; a string a line) `interpolation` (`${` and its `}`) `number` `comment` `operator` `punct` `macro` (`@name`) `space`. Any text lexes, finished or not: the language server's lexer |
+| `meta.highlight(source)` | the source as HTML for inside a `<code>`: each token but a space a `<span class="ol-KIND">`, its text escaped. The same in the browser runtime, so a page's build and its playground colour alike |
 | `meta.exports(path)` | at expansion time, `Ok(map)` of the literal values the module the expanding file imports as `path` binds at its top level (`let`/`share let` of a number, string, list, map, or tuple literal), by name; `Err` for a path the file does not import, and at runtime |
 
 Nodes are discriminated-union maps. Top-level statements carry `line` and
@@ -1655,17 +1720,31 @@ println(to_string(unwrap(meta.eval("2 + 3"))))     // 5
 println(meta.lit([1, "a"]))                        // [1, "a"]
 ```
 
+`meta.tokens` is the lexical view `meta.parse` leaves out — comments,
+spaces, a string's extent — for a highlighter, a formatter's helper or
+an editor:
+
+```olang
+let toks = meta.tokens("let n = 1 // one")
+println(map(filter(toks, (t) => t.kind != "space"), (t) => t.kind))   // ["keyword", "ident", "operator", "number", "comment"]
+println(join(map(toks, (t) => t.text), "") == "let n = 1 // one")      // true
+println(meta.highlight("x |> f"))
+```
+
 ## `runtime` — what this binary carries
 
-The olang binary carries its browser runtime (olang compiled for
-`wasm32-unknown-unknown`, the browser profile the web SDK ships), embedded at build time from the artifact `cargo xtask
-wasm` builds. The web SDK's `serve` reads it from here, so an app has no
+The olang binary carries its browser runtimes (olang compiled for
+`wasm32-unknown-unknown`): the browser profile the web SDK ships and the
+full one, the whole standard library, both embedded at build time from
+the artifacts `cargo xtask wasm` builds. The web SDK's `serve` reads it from here, so an app has no
 wasm file to build, copy, or keep in step with the binary; a program
 that serves its own routes reads the same bytes.
 
 | Function | Result |
 |---|---|
-| `runtime.wasm()` | `Ok(#{ "bytes", "hash", "gzip", "br", "version" })` — the runtime's bytes, the first sixteen hex digits of their SHA-256 (the name in `/olang.<hash>.wasm` and the ETag), the gzip and brotli forms, and the olang version it is. Every form and the hash are made when the binary is built and are slices of its own image: the call computes nothing, copies nothing to the heap, and may be made per request; `Err(message)` naming how to build a binary that carries one |
+| `runtime.wasm()` | `Ok(#{ "bytes", "hash", "gzip", "br", "version", "profile" })` — the browser runtime's bytes, the first sixteen hex digits of their SHA-256 (the name in `/olang.<hash>.wasm` and the ETag), the gzip and brotli forms, the olang version it is, and `"browser"`. Every form and the hash are made when the binary is built and are slices of its own image: the call computes nothing, copies nothing to the heap, and may be made per request; `Err(message)` naming how to build a binary that carries one |
+| `runtime.wasm("full")` | the same for the full profile, the whole standard library (`re` and RSA too), for a playground that runs any program: its gzip and brotli forms are slices of the binary; its `bytes` are the brotli form decoded, once per process, on first ask |
+| `runtime.features()` / `runtime.features(profile)` | what a runtime has: `#{ "profile", "modules", "threads", "fs", "net", "processes", "db", "gui", "dom", "jit" }` — its name, the modules a program can call there (sorted), and whether it can start threads (`spawn`, `task`, `par_map` workers), reach files, the network, processes, SQLite, windows, a page's DOM, and native code. With no argument, this runtime; the native binary also answers for `"browser"` and `"full"`, the profiles `runtime.wasm` serves, and the browser runtime for itself |
 | `runtime.version()` | the olang version string |
 | `runtime.memory()` | `#{ "heap", "program", "values", "embedded", "tasks" }`, in bytes — where the process's memory is (below) |
 | `runtime.profile_start()` / `runtime.profile_start(interval_us)` | begin sampling this process with the profiler behind `olang profile` (every 1,000 µs by default): `Ok(())`, or `Err` when a profile is already running |
@@ -1678,7 +1757,7 @@ that serves its own routes reads the same bytes.
 | `runtime.call_budget(f, args, ms)` | `f(args…)` stopped past `ms` (an interrupt on this thread only) and its failure caught: `#{ ok, value, error, frames, over, us }` |
 | `runtime.last_error()` | the error a boundary on this thread caught last (`attempt`, `call_budget`, `load_module`) with its frames, `#{ message, frames: [#{ path, line, function }] }`, innermost first (line 0: an expression body); `()` when none |
 | `runtime.shape(value)` | a value's shape as text — kind, a map's sorted keys with theirs, a list's first item's — what a host compares to keep a reloaded module's state |
-| `runtime.bind(node, value)` | a control a host binds (what `ui.slider` and its kin answer): `value` with no host; in a notebook's kernel the value the editor set for the evaluating cell's control while it still fits. Also in the browser build, where `runtime` has nothing else |
+| `runtime.bind(node, value)` | a control a host binds (what `ui.slider` and its kin answer): `value` with no host; in a notebook's kernel the value the editor set for the evaluating cell's control while it still fits. Also in the browser build, where `runtime` has this, `preset` and `features` |
 | `runtime.preset(value, name)` | the next control the program binds with no host answers `value`, held to the control's kind and range or options (an error naming `name` when it does not fit): what `olang run x.olmd --param region=west` sets for a notebook's control cell |
 
 ```olang no-run
@@ -1688,6 +1767,21 @@ fn wasm(req, params) = {
     headers: #{ "Content-Type": "application/wasm", "Content-Encoding": "br",
                 "ETag": "\"" + rt.hash + "\"" }
 }
+```
+
+Whether a program runs in the browser is a check over its tokens and a
+profile's features:
+
+```olang
+let browser = runtime.features("browser")
+fn runs_in(feat, src) = {
+    let toks = filter(meta.tokens(src), (t) => t.kind != "space")
+    let modules = map(filter(toks, (t) => t.kind == "module"), (t) => t.text)
+    all(modules, (m) => contains(feat.modules, m)) && (feat.threads || !any(toks, (t) => t.text == "spawn"))
+}
+println(runs_in(browser, "println(str.to_upper(\"hi\"))"))   // true
+println(runs_in(browser, "re.find(\"a\", \"abc\")"))     // false
+println(runs_in(runtime.features("full"), "re.find(\"a\", \"abc\")"))   // true
 ```
 
 `runtime.memory()` answers from a counting layer over the system
@@ -2625,7 +2719,7 @@ values for a header sent more than once, as `set-cookie` is), and
 | `http.get(url[, opts])` / `http.post(url, body[, opts])` / `http.put` / `http.delete` | requests |
 | `http.request(method, url, body[, opts])` | any method |
 | `http.parse_url(url)` | split a URL into parts: `Ok({ scheme, host, port, path, query, fragment })`, `port`, `query` and `fragment` `()` when the URL names none |
-| `http.encode_query(map)` / `http.decode_query(s)` | query strings — `encode_query` takes a `#{}` map or a `{ }` record, keys in its order, each value a string, a number, a Bool or a list of them (the name repeated for each); anything nested raises. `decode_query` answers a map: a name given once its string, a name given more than once a list of its strings in order (`"t=a&t=b"` is `#{ "t": ["a", "b"] }`) |
+| `http.encode_query(map)` / `http.decode_query(s)` | query strings — `encode_query` answers the text (`"q=a%20b&page=2"`, no `?`): it takes a `#{}` map or a `{ }` record, keys in its order, each value a string, a number, a Bool or a list of them (the name repeated for each); anything nested raises. `decode_query` answers a map: a name given once its string, a name given more than once a list of its strings in order (`"t=a&t=b"` is `#{ "t": ["a", "b"] }`) |
 | `http.serve(port, handler[, options])` | serve `handler(request)` on a bounded worker pool; blocks the calling program |
 | `http.response(status, body)` / `http.response_with_headers(status, body, headers)` | build responses: an `HttpResponse` of the client's shape, `{ status, body, headers, success }`, `headers` a map |
 | `http.shutdown()` | ask every running `http.serve` to drain: no new connections, in-flight requests finish (up to `drain_ms`), and `serve` returns `Ok` — what an [`os.on_shutdown`](#os--operating-system) handler calls |

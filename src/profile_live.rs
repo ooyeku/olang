@@ -74,7 +74,7 @@ struct Live {
     stop: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
     state: Arc<Mutex<State>>,
-    started: std::time::Instant,
+    started: crate::clock::Instant,
 }
 
 static LIVE: Mutex<Option<Live>> = Mutex::new(None);
@@ -104,7 +104,7 @@ fn start_as(spec: LiveSpec, by_program: bool) -> bool {
     // editor's "profile this file" writes it before the child starts):
     // waiting for the first period would miss a run shorter than it.
     let attached_now = spec.from_start || attach_wanted(spec.dir.as_deref());
-    let started = std::time::Instant::now();
+    let started = crate::clock::Instant::now();
     let mut first = State {
         session: if attached_now {
             Some(crate::profile::start(spec.interval_us))
@@ -135,12 +135,12 @@ fn start_as(spec: LiveSpec, by_program: bool) -> bool {
                 // sleep in short steps, so finishing does not wait a period;
                 // an attach (or a detach) is looked for every ATTACH_POLL_MS,
                 // not only at a snapshot, so sampling starts when asked
-                let until = std::time::Instant::now() + every;
-                let mut polled = std::time::Instant::now();
-                while std::time::Instant::now() < until && !sp.load(Ordering::Relaxed) {
-                    std::thread::sleep(std::time::Duration::from_millis(10).min(every));
+                let until = crate::clock::Instant::now() + every;
+                let mut polled = crate::clock::Instant::now();
+                while crate::clock::Instant::now() < until && !sp.load(Ordering::Relaxed) {
+                    crate::clock::sleep(std::time::Duration::from_millis(10).min(every));
                     if !from_start && polled.elapsed().as_millis() as u64 >= ATTACH_POLL_MS {
-                        polled = std::time::Instant::now();
+                        polled = crate::clock::Instant::now();
                         let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
                         follow_attach(&mut s, dir.as_deref(), interval_us);
                     }
@@ -236,7 +236,7 @@ pub fn finish(exit_code: Option<i32>) -> Option<J> {
 
 fn document(
     s: &mut State,
-    started: std::time::Instant,
+    started: crate::clock::Instant,
     label: &str,
     done: bool,
     exit_code: Option<i32>,
@@ -269,7 +269,7 @@ fn document(
 
 /// Add a point of the series: what each tier sampled since the last one
 /// and the process's vital signs now.
-fn point(s: &mut State, started: std::time::Instant) {
+fn point(s: &mut State, started: crate::clock::Instant) {
     let (tiers, ticks) = match &s.session {
         Some(session) => session.tier_samples(),
         None => ([0; 4], 0),

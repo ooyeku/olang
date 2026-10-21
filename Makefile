@@ -49,11 +49,10 @@ prepush:
 	cargo build --release
 	cd examples && ../target/release/olang run run_all.ol
 
-# Build the browser runtime: the profile the web SDK and the examples
-# ship, which the next `cargo build` of olang embeds in the binary
-# (build.rs), so no app copies a file. `cargo xtask wasm --full` also
-# writes the whole-stdlib profile to target/wasm-full/olang.wasm for a
-# playground. Needs `rustup target add wasm32-unknown-unknown` once.
+# Build the browser runtimes: the profile the web SDK and the examples
+# ship and the whole-stdlib one (target/wasm-full/olang.wasm), which the
+# next `cargo build` of olang embeds in the binary (build.rs), so no app
+# copies a file. Needs `rustup target add wasm32-unknown-unknown` once.
 wasm:
 	cargo xtask wasm
 # Local cross-check of everything a release ships: the release binaries,

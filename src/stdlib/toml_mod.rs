@@ -89,7 +89,7 @@ fn toml_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// private Number wrapper as a visible one-key object; the explicit walk
 /// keeps every number a plain Number and renders datetimes as their
 /// string form (the documented shape) without the wrapper dance.
-fn toml_to_json(v: toml::Value) -> serde_json::Value {
+pub(crate) fn toml_to_json(v: toml::Value) -> serde_json::Value {
     match v {
         toml::Value::String(s) => serde_json::Value::String(s),
         toml::Value::Integer(i) => serde_json::Value::Number(serde_json::Number::from(i)),

@@ -62,10 +62,10 @@ pub fn process_start_epoch_us() -> Option<u64> {
 /// first use.
 #[cfg(feature = "native")]
 pub fn since_start_ms() -> f64 {
-    static FALLBACK: OnceLock<std::time::Instant> = OnceLock::new();
-    let fallback = *FALLBACK.get_or_init(std::time::Instant::now);
+    static FALLBACK: OnceLock<crate::clock::Instant> = OnceLock::new();
+    let fallback = *FALLBACK.get_or_init(crate::clock::Instant::now);
     if let Some(start) = process_start_epoch_us() {
-        let now = std::time::SystemTime::now()
+        let now = crate::clock::system_now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_micros() as u64)
             .unwrap_or(0);
@@ -197,7 +197,7 @@ pub fn finished() {
 /// Times a span into a counter when dropped (nothing when the trace is
 /// off).
 pub struct Span {
-    what: Option<(Counter, std::time::Instant)>,
+    what: Option<(Counter, crate::clock::Instant)>,
 }
 
 impl Span {
@@ -205,7 +205,7 @@ impl Span {
     pub fn start(what: Counter) -> Span {
         Span {
             what: if on() {
-                Some((what, std::time::Instant::now()))
+                Some((what, crate::clock::Instant::now()))
             } else {
                 None
             },

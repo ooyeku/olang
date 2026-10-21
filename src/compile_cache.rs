@@ -376,7 +376,7 @@ const VARIANTS: usize = 4;
 const STALE_SECS: u64 = 14 * 86_400;
 
 fn now_secs() -> u64 {
-    std::time::SystemTime::now()
+    crate::clock::system_now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
@@ -780,7 +780,8 @@ struct Pending {
 /// process asks (`flush`).
 fn writer(rx: std::sync::mpsc::Receiver<Job>) {
     use std::sync::mpsc::RecvTimeoutError;
-    use std::time::{Duration, Instant};
+    use crate::clock::Instant;
+use std::time::Duration;
     let mut pending: HashMap<PathBuf, Pending> = HashMap::new();
     let mut since: Option<Instant> = None;
     let mut evicted = false;
@@ -902,7 +903,7 @@ pub fn evict(cap: u64) {
     let Ok(read) = std::fs::read_dir(&dir) else {
         return;
     };
-    let now = std::time::SystemTime::now();
+    let now = crate::clock::system_now();
     let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = Vec::new();
     let mut total = 0u64;
     for e in read.flatten() {

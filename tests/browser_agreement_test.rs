@@ -175,3 +175,56 @@ fn a_client_bundle_keeps_each_modules_names_its_own_in_the_browser() {
         "<code>x</code>\n#{\"kind\": \"code\", \"min\": 1, \"max\": 2}\n[\"fields\", \"client\"]\n"
     );
 }
+
+/// What a page or a playground calls that once trapped the instance or
+/// had no browser form: `ods.read_csv` (it read std's clock), a timed
+/// wait, `md`, `meta.tokens`, and `runtime.features`, which in the
+/// browser names its own profile as the native binary describes it.
+const WEB: &str = r##"fn work() = 1
+let f = ods.read_csv("a,b\n1,2\n3,4\n")
+println(ods.columns(f))
+println(unwrap(csv.parse("x,y\n1,2")))
+time.sleep(1)
+println(chan.recv_timeout(chan.new(), 5))
+let r = md.render("# Hi\n\n| a |\n|---|\n| 1 |\n\nhttps://olang.dev\n", #{ "link": (u) => u + "?x" })
+println(r.html)
+println(md.slug("`http` — HTTP"))
+println(join(map(meta.tokens("let x = `a ${b}` // c"), (t) => t.kind), ","))
+println(meta.highlight("x |> f"))
+let feat = runtime.features()
+println([feat.profile, feat.threads, feat.fs, feat.dom])
+println(join(feat.modules, ","))
+println(attempt(() => task.join(spawn work())))
+"##;
+
+#[test]
+fn csv_markdown_tokens_and_features_run_in_the_browser() {
+    let Some(wasm) = wasm() else { return };
+    let ws = workspace("web");
+    let program = ws.join("web.ol");
+    std::fs::write(&program, WEB).unwrap();
+    let browser = in_browser(&wasm, &program);
+    assert!(!browser.contains("ERROR"), "{browser}");
+    // natively, the same program with the browser profile's facts
+    let native_src = WEB
+        .replace("runtime.features()", "runtime.features(\"browser\")")
+        .replace(
+            "println(attempt(() => task.join(spawn work())))\n",
+            "",
+        );
+    let native_program = ws.join("native.ol");
+    std::fs::write(&native_program, &native_src).unwrap();
+    let native = Command::new(env!("CARGO_BIN_EXE_olang"))
+        .arg(&native_program)
+        .output()
+        .expect("olang");
+    let native = String::from_utf8_lossy(&native.stdout).to_string();
+    let browser_lines: Vec<&str> = browser.lines().collect();
+    let native_lines: Vec<&str> = native.lines().collect();
+    // everything but the last line (spawn: no thread in a browser)
+    assert_eq!(&browser_lines[..browser_lines.len() - 1], &native_lines[..]);
+    assert!(
+        browser_lines.last().unwrap().starts_with("Err("),
+        "spawn in the browser is a catchable error: {browser}"
+    );
+}

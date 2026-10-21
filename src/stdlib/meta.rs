@@ -42,6 +42,8 @@ pub fn create_meta_module() -> Value {
     module.insert("exports".to_string(), builtin("exports", 1));
     module.insert("unresolved".to_string(), builtin("unresolved", 1));
     module.insert("rename".to_string(), builtin("rename", 2));
+    module.insert("tokens".to_string(), builtin("tokens", 1));
+    module.insert("highlight".to_string(), builtin("highlight", 1));
     Value::Struct {
         type_name: "Module".to_string(),
         fields: std::sync::Arc::new(module),
@@ -69,6 +71,26 @@ pub fn call_meta_function(
         "exports" => meta_exports(args),
         "unresolved" => meta_unresolved(args),
         "rename" => meta_rename(args),
+        "tokens" | "highlight" => {
+            let src = match args.as_slice() {
+                [Value::String(s)] => s.clone(),
+                [other] => {
+                    return Err(format!(
+                        "meta.{name}: the source must be a string, got {}",
+                        other.type_name()
+                    )
+                    .into());
+                }
+                _ => {
+                    return Err(format!("meta.{name} expects 1 argument, got {}", args.len()).into());
+                }
+            };
+            Ok(if name == "tokens" {
+                crate::stdlib::tokens::tokens_value(&src)
+            } else {
+                Value::String(std::sync::Arc::new(crate::stdlib::tokens::highlight(&src)))
+            })
+        }
         _ => Err(format!("Unknown meta function: {}", name).into()),
     }
 }
