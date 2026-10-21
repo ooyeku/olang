@@ -357,9 +357,12 @@ impl<'a> Walker<'a> {
                 continue;
             }
             let mut name = None;
+            let mut pattern = None;
             for c in param.into_inner() {
                 match c.as_rule() {
-                    Rule::identifier if name.is_none() => name = Some(c),
+                    Rule::identifier if name.is_none() && pattern.is_none() => name = Some(c),
+                    // `((i, w)) => …`: the names the pattern binds
+                    Rule::param_pattern if pattern.is_none() => pattern = Some(c),
                     Rule::type_annotation => {}
                     // a default reads the parameters before it
                     _ => self.walk(c),
@@ -367,6 +370,9 @@ impl<'a> Walker<'a> {
             }
             if let Some(n) = name {
                 self.bind_pair(&n);
+            }
+            if let Some(p) = pattern {
+                self.pattern(p);
             }
         }
     }

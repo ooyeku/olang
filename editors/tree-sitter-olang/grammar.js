@@ -11,7 +11,7 @@ module.exports = grammar({
   rules: {
     source_file: ($) => repeat($._token),
     _token: ($) =>
-      choice($.share, $.keyword, $.boolean, $.dotted, $.call,
+      choice($.share, $.keyword, $.boolean, $.dotted, $.chain_step, $.call,
              $.type_identifier, $.identifier, $.number, $.char,
              $.template, $.raw_string, $.string, $.macro_name,
              $.pipe, $.arrow, $.hash_brace, $.operator,
@@ -33,6 +33,12 @@ module.exports = grammar({
       seq(field("module", $.identifier),
           repeat1(seq(token.immediate("."),
                       alias(token.immediate(/[a-z_][A-Za-z0-9_]*/), $.member))),
+          optional(alias(token.immediate("("), $.open_call))),
+    // A method chain's step on a line of its own — `    .filter(...)`
+    // under `let x = f` — colored as the dotted path's members are.
+    chain_step: ($) =>
+      seq(".",
+          alias(token.immediate(/[a-z_][A-Za-z0-9_]*/), $.member),
           optional(alias(token.immediate("("), $.open_call))),
     // foo( — any call site, so function names read as functions.
     call: ($) =>
@@ -68,7 +74,7 @@ module.exports = grammar({
     hash_brace: () => "#{",
     operator: () =>
       choice("==","!=","<=",">=","&&","||","..=","..",
-             "+","-","*","/","%","<",">","=","!","?","|","&","^"),
+             "+","-","*","/","%","<",">","=","!","?","|","&","^","@"),
     bracket: () => choice("{","}","(",")","[","]"),
     delimiter: () => choice(",",":",";",".","#"),
   },

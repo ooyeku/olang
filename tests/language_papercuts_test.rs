@@ -310,7 +310,7 @@ fn main() = {
 main()
 "#;
     let err = agree(src).expect_err("a map");
-    assert!(err.contains("a Map is not indexed with `[]`"), "{err}");
+    assert!(err.contains("`m[k] = v` does not write a map"), "{err}");
 }
 
 #[test]

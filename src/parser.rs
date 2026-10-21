@@ -1620,12 +1620,13 @@ impl Parser {
         pairs: Pairs<Rule>,
     ) -> Result<(Expr, Vec<(Rule, String)>, Vec<Expr>), ParseError> {
         let mut parameters = Vec::new();
+        let mut lets = Vec::new();
         let mut return_type = None;
         let mut body = None;
         let mut spill = (Vec::new(), Vec::new());
         for pair in pairs {
             match pair.as_rule() {
-                Rule::param_list => parameters = self.build_param_list(pair.into_inner())?,
+                Rule::param_list => (parameters, lets) = self.build_param_list(pair.into_inner())?,
                 Rule::type_annotation => {
                     return_type = Some(self.build_type_annotation(pair.into_inner())?)
                 }
@@ -1645,7 +1646,7 @@ impl Parser {
             Expr::Lambda {
                 parameters,
                 return_type,
-                body: Box::new(body),
+                body: Box::new(Self::destructure_params(lets, body)),
             },
             spill.0,
             spill.1,
@@ -2258,6 +2259,7 @@ impl Parser {
 
     fn build_lambda(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
         let mut parameters = Vec::new();
+        let mut lets = Vec::new();
         let mut return_type = None;
         let mut body = None;
 
@@ -2267,7 +2269,7 @@ impl Parser {
         for pair in pairs.by_ref() {
             match pair.as_rule() {
                 Rule::param_list => {
-                    parameters = self.build_param_list(pair.into_inner())?;
+                    (parameters, lets) = self.build_param_list(pair.into_inner())?;
                 }
                 Rule::type_annotation => {
                     return_type = Some(self.build_type_annotation(pair.into_inner())?);
@@ -2289,7 +2291,7 @@ impl Parser {
         Ok(Expr::Lambda {
             parameters,
             return_type,
-            body: Box::new(body_expr),
+            body: Box::new(Self::destructure_params(lets, body_expr)),
         })
     }
 
@@ -2307,26 +2309,76 @@ impl Parser {
         Ok(Expr::Spawn(Box::new(spawned_expr)))
     }
 
-    fn build_param_list(&self, pairs: Pairs<Rule>) -> Result<Vec<Parameter>, ParseError> {
+    /// A parameter list's parameters, and a `let` for each one written
+    /// as a pattern (`((i, w)) => …`): the parameter takes the pattern's
+    /// own text as its name — never a name a program can write, so it
+    /// shadows nothing — and the `let` destructures it at the top of the
+    /// body (`destructure_params`). Every tier then runs the pattern as
+    /// the `let` it is.
+    fn build_param_list(
+        &self,
+        pairs: Pairs<Rule>,
+    ) -> Result<(Vec<Parameter>, Vec<Statement>), ParseError> {
         let mut params = Vec::new();
+        let mut lets = Vec::new();
 
         for pair in pairs {
             if pair.as_rule() == Rule::parameter {
-                params.push(self.build_parameter(pair.into_inner())?);
+                let (param, destructure) = self.build_parameter(pair.into_inner())?;
+                params.push(param);
+                lets.extend(destructure);
             }
         }
 
-        Ok(params)
+        Ok((params, lets))
     }
 
-    fn build_parameter(&self, mut pairs: Pairs<Rule>) -> Result<Parameter, ParseError> {
-        let name = pairs
-            .next()
-            .ok_or_else(|| ParseError::InvalidSyntax {
-                message: "Missing parameter name".to_string(),
-            })?
-            .as_str()
-            .to_string();
+    /// A body that first binds its pattern parameters (`build_param_list`).
+    fn destructure_params(lets: Vec<Statement>, body: Expr) -> Expr {
+        if lets.is_empty() {
+            return body;
+        }
+        let mut statements = lets;
+        match body {
+            Expr::Block(inner) => statements.extend(inner),
+            other => statements.push(Statement::Expression(other)),
+        }
+        Expr::Block(statements)
+    }
+
+    fn build_parameter(
+        &self,
+        mut pairs: Pairs<Rule>,
+    ) -> Result<(Parameter, Option<Statement>), ParseError> {
+        let first = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing parameter name".to_string(),
+        })?;
+        let mut destructure = None;
+        let name = if first.as_rule() == Rule::param_pattern {
+            let (line, column) = self.line_col(first.as_span().start_pos());
+            let name = first.as_str().split_whitespace().collect::<Vec<_>>().join(" ");
+            let inner = first
+                .into_inner()
+                .next()
+                .ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing parameter pattern".to_string(),
+                })?;
+            let pattern = self.build_base_pattern(inner)?;
+            destructure = Some(Statement::Located {
+                line: line as u32,
+                column: column as u32,
+                stmt: Box::new(Statement::LetDecl(LetDecl {
+                    pattern,
+                    type_annotation: None,
+                    value: Some(Expr::Identifier(name.clone())),
+                    name_span: Some((line as u32, column as u32)),
+                    mutable: false,
+                })),
+            });
+            name
+        } else {
+            first.as_str().to_string()
+        };
 
         let mut type_annotation = None;
         let mut default_value = None;
@@ -2344,11 +2396,14 @@ impl Parser {
             }
         }
 
-        Ok(Parameter {
-            name,
-            type_annotation,
-            default_value,
-        })
+        Ok((
+            Parameter {
+                name,
+                type_annotation,
+                default_value,
+            },
+            destructure,
+        ))
     }
 
     fn build_type_annotation(&self, mut pairs: Pairs<Rule>) -> Result<TypeAnnotation, ParseError> {
@@ -3650,10 +3705,11 @@ impl Parser {
             .to_string();
 
         let mut parameters = Vec::new();
+        let mut lets = Vec::new();
         let mut default_body = None;
         for pair in pairs {
             match pair.as_rule() {
-                Rule::param_list => parameters = self.build_param_list(pair.into_inner())?,
+                Rule::param_list => (parameters, lets) = self.build_param_list(pair.into_inner())?,
                 Rule::expr => default_body = Some(self.build_expr(pair.into_inner())?),
                 // return-type annotation is accepted but not retained at runtime
                 _ => {}
@@ -3662,7 +3718,7 @@ impl Parser {
         Ok(crate::ast::TraitMethod {
             name,
             parameters,
-            default_body,
+            default_body: default_body.map(|body| Self::destructure_params(lets, body)),
         })
     }
 
@@ -3734,6 +3790,7 @@ impl Parser {
         let mut type_params = Vec::new();
         let mut type_param_bounds = Vec::new();
         let mut parameters = Vec::new();
+        let mut lets = Vec::new();
         let mut return_type = None;
         let mut body_expr = None;
 
@@ -3745,7 +3802,7 @@ impl Parser {
                     type_param_bounds = bounds;
                 }
                 Rule::param_list => {
-                    parameters = self.build_param_list(pair.into_inner())?;
+                    (parameters, lets) = self.build_param_list(pair.into_inner())?;
                 }
                 Rule::type_annotation => {
                     return_type = Some(self.build_type_annotation(pair.into_inner())?);
@@ -3767,6 +3824,7 @@ impl Parser {
         let body = body_expr.ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing function body".to_string(),
         })?;
+        let body = Self::destructure_params(lets, body);
 
         Ok(FunctionDecl {
             name,
@@ -3968,17 +4026,32 @@ impl Parser {
             .as_str()
             .to_string();
 
-        let mut fields = Vec::new();
+        let mut items = Vec::new();
         for pair in pairs {
             if pair.as_rule() == Rule::field_value_list {
-                for field_pair in pair.into_inner() {
-                    if field_pair.as_rule() == Rule::field_value {
-                        fields.push(self.build_field_value(field_pair.into_inner())?);
-                    }
-                }
+                items.extend(
+                    pair.into_inner()
+                        .filter(|field_pair| field_pair.as_rule() == Rule::field_value),
+                );
             } else if pair.as_rule() == Rule::field_value {
-                fields.push(self.build_field_value(pair.into_inner())?);
+                items.push(pair);
             }
+        }
+        let mut fields = Vec::new();
+        for item in items {
+            if let Some(key) = item.clone().into_inner().next()
+                && key.as_rule() == Rule::string
+            {
+                return Err(ParseError::invalid_syntax_at(
+                    format!(
+                        "a declared struct's literal names its fields: `{type_name} {{ name: … }}`, \
+                         not a quoted key (an object `{{ \"k\": v }}` or a map `#{{ \"k\": v }}` \
+                         takes one)"
+                    ),
+                    PositionInfo::from_pair(&key),
+                ));
+            }
+            fields.push(self.build_field_value(item.into_inner())?);
         }
 
         Ok(Expr::StructLiteral(StructLiteral { type_name, fields }))
@@ -3998,13 +4071,15 @@ impl Parser {
                     .to_string(),
             });
         }
-        let name = pairs
-            .next()
-            .ok_or_else(|| ParseError::InvalidSyntax {
-                message: "Missing field name".to_string(),
-            })?
-            .as_str()
-            .to_string();
+        let key = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing field name".to_string(),
+        })?;
+        // `{ "P(B > A)": 0.9 }`: a key that is not a name, quoted.
+        let name = if key.as_rule() == Rule::string {
+            self.unquote_string(key.as_str())?
+        } else {
+            key.as_str().to_string()
+        };
 
         let value = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing field value".to_string(),

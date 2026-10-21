@@ -2854,7 +2854,23 @@ impl BytecodeVm {
         self.stats.bytecode_cache_hits += 1;
         self.stats.function_calls += 1;
         let caps_pushed = self.push_caps_frame(bytecode);
+        // The callee's profiling frame, as `execute` pushes it: a named
+        // function handed straight to `map` (`map(sizes, detect)`) or
+        // `fold` runs here, and without its frame its time was charged to
+        // the builtin alone.
+        let profiled = crate::profile::push_at(
+            bytecode
+                .debug_info
+                .function_name
+                .as_deref()
+                .unwrap_or("<anonymous>"),
+            bytecode.def_file.as_deref(),
+            crate::profile::Tier::Vm,
+        );
         let result = self.execute_bytecode(bytecode);
+        if profiled {
+            crate::profile::pop();
+        }
         self.pop_caps_frame(caps_pushed);
         self.execution_state.pop_frame(saved);
         self.call_depth -= 1;
@@ -2888,7 +2904,23 @@ impl BytecodeVm {
         self.stats.bytecode_cache_hits += 1;
         self.stats.function_calls += 1;
         let caps_pushed = self.push_caps_frame(bytecode);
+        // The callee's profiling frame, as `execute` pushes it: a named
+        // function handed straight to `map` (`map(sizes, detect)`) or
+        // `fold` runs here, and without its frame its time was charged to
+        // the builtin alone.
+        let profiled = crate::profile::push_at(
+            bytecode
+                .debug_info
+                .function_name
+                .as_deref()
+                .unwrap_or("<anonymous>"),
+            bytecode.def_file.as_deref(),
+            crate::profile::Tier::Vm,
+        );
         let result = self.execute_bytecode(bytecode);
+        if profiled {
+            crate::profile::pop();
+        }
         self.pop_caps_frame(caps_pushed);
         self.execution_state.pop_frame(saved);
         self.call_depth -= 1;
@@ -10492,17 +10524,28 @@ impl BytecodeVm {
         }
 
         match &object.data {
-            ValueData::Map(_) | ValueData::AstMap(_) => {
-                return Err(BytecodeError::TypeError(
-                    "a Map is not indexed with `[]`; read a key with `map_get(m, key)`".to_string(),
-                ));
+            // `v[k]` on a map, an object or a struct is `map_get(v, k)`,
+            // as on the interpreter (`builtin::index_key`).
+            ValueData::Map(_)
+            | ValueData::AstMap(_)
+            | ValueData::Struct(_)
+            | ValueData::AstStruct(..) => {
+                if !matches!(
+                    index.data,
+                    ValueData::String(_)
+                        | ValueData::Integer(_)
+                        | ValueData::Float(_)
+                        | ValueData::Boolean(_)
+                ) {
+                    return Err(BytecodeError::TypeError(
+                        crate::builtin::INDEX_KEY_ERROR.to_string(),
+                    ));
+                }
+                return Self::native_map_get(object, index, "[]");
             }
-            ValueData::Struct(_) | ValueData::AstStruct(..) => {
-                return Err(BytecodeError::TypeError(
-                    "a struct or object is read by field (`value.name`) or with \
-                     `map_get(value, name)`, not with `[]`"
-                        .to_string(),
-                ));
+            // An absent record's key is absent, as `().k` is.
+            ValueData::Unit if matches!(index.data, ValueData::String(_)) => {
+                return Ok(OvmValue::new_unit());
             }
             _ => {}
         }

@@ -48,7 +48,7 @@ language server has [its own chapter](editors.md).
 |---|---|
 | `olang <file> [args]` | Run a program (`olang run <file>` is the explicit form) |
 | `olang` | Start the REPL (`olang repl`) |
-| `olang check [path]` | Type-check without running; `--rules FILE` adds project lints; `--tier` lists the functions the bytecode tier refuses, with the reason |
+| `olang check [path]` | Type-check without running; `--rules FILE` adds project lints (or `[check] rules` in olang.toml); `--tier` lists the functions the bytecode tier refuses, with the reason |
 | `olang doctor [path]` | Audit a project: the manifest, its dependencies, the lock, the browser runtime the binary carries, stale runtime copies |
 | `olang eval SOURCE` | Evaluate one expression and print its value, with the working directory's project libraries in scope |
 | `olang fmt [path]` | Format sources in place; `--check` reports instead of writing |
@@ -322,7 +322,10 @@ to one, and the file ends with exactly one newline.
 **Token respacing**: each code line is re-emitted with canonical
 spacing —
 
-- one space around binary operators, `=`, `=>`, `->`, and `|>`
+- one space around binary operators, `=`, `=>`, `->`, and `|>` — the
+  matrix product too (`V @ V.t()`); an `@` that begins a macro call or
+  a decorator (a line's start, after `(`, `,`, `=` or a keyword) glues
+  to its name (`@json`, `@retry(3, f)`)
 - `f(x, y)`, not `f( x ,y )`: commas glue left and breathe right,
   parentheses hug their contents
 - calls and indexing glue to their value (`f(x)`, `xs[i]`); a keyword
@@ -336,7 +339,9 @@ The rules were calibrated against every `.ol` file in the repository —
 the shipped style is the specification.
 
 What it deliberately does **not** do: re-indent, re-wrap, or reflow
-lines — leading whitespace and line structure are the author's. Two
+lines — leading whitespace and line structure are the author's, so a
+method chain written a step to a line (`    .filter(…)`) keeps its
+lines and their indent, each step respaced as its own line. Two
 alignments are recognized as intentional and preserved: two or more
 spaces before `=>` (match-arm tables) and before a trailing comment.
 Template-string, raw-string, and comment interiors are content and are
@@ -853,6 +858,20 @@ built-in type checks:
 ```bash
 olang check --rules rules.ol .
 ```
+
+A project names its rules files once, in `olang.toml`, and `olang check`
+with no `--rules` runs them over the project's files (a path is
+relative to the project's root; `--rules` names the one file instead):
+
+```toml
+[check]
+rules = ["tools/rules.ol"]
+```
+
+A listed file that cannot be read, does not parse or defines no rule is
+a problem, as it is with `--rules`. The language server does not run
+project rules (they are olang, run in a sandbox, once per check); the
+editor shows the checker's own findings.
 
 A project can also promote the checker's own advisories to errors
 without writing a rule. In `olang.toml`:

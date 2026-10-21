@@ -231,13 +231,11 @@ pub fn context(prefix: &str) -> Option<Context> {
 
 fn dot_context(prefix: &str, toks: &[T], dot: usize, typed: String) -> Option<Context> {
     let j = dot.checked_sub(1)?;
-    if !matches!(
+    let glued = matches!(
         toks[j].tok,
         Tok::Ident(_) | Tok::Close(')') | Tok::Close(']')
-    ) || toks[j].end != toks[dot].start
-    {
-        return None;
-    }
+    ) && toks[j].end == toks[dot].start;
+    let j = if glued { j } else { chain_above(toks, dot)? };
     let s = postfix_start(toks, j)?;
     Some(Context {
         receiver: prefix[toks[s].start..toks[j].end].to_string(),
@@ -459,6 +457,11 @@ fn postfix_start(toks: &[T], j: usize) -> Option<usize> {
                     && matches!(toks[k - 2].tok, Tok::Ident(_) | Tok::Close(_))
                 {
                     k -= 2;
+                } else if let Some(above) = (k >= 1 && toks[k - 1].tok == Tok::Dot)
+                    .then(|| chain_above(toks, k - 1))
+                    .flatten()
+                {
+                    k = above;
                 } else {
                     return Some(k);
                 }
@@ -466,6 +469,20 @@ fn postfix_start(toks: &[T], j: usize) -> Option<usize> {
             _ => return None,
         }
     }
+}
+
+/// A chain's step on a line of its own (`    .filter(…)`): the dot first
+/// on its line continues the value the line above ends with, which is
+/// the receiver. The index of that value's last token.
+fn chain_above(toks: &[T], dot: usize) -> Option<usize> {
+    let mut k = dot.checked_sub(1)?;
+    if toks[k].tok != Tok::Newline {
+        return None;
+    }
+    while toks[k].tok == Tok::Newline {
+        k = k.checked_sub(1)?;
+    }
+    matches!(toks[k].tok, Tok::Ident(_) | Tok::Close(')') | Tok::Close(']')).then_some(k)
 }
 
 fn matching_open(toks: &[T], close: usize) -> Option<usize> {
@@ -1137,6 +1154,16 @@ mod tests {
             at("ods.head(sales, 8)[\""),
             Some(("ods.head(sales, 8)".into(), Want::Any, "".into()))
         );
+        // a chain's step on a line of its own: the receiver is the line above
+        assert_eq!(
+            at("let x = cfg\n    .na"),
+            Some(("cfg".into(), Want::Keys, "na".into()))
+        );
+        assert_eq!(
+            at("let x = f\n    .with(a)\n    .").map(|c| c.0),
+            Some("f\n    .with(a)".into())
+        );
+        assert_eq!(at("let r = 0\n..").map(|c| c.0), None);
         // not a column's place
         assert_eq!(at("println(\"hello"), None);
         assert_eq!(at("ods.group_by(\""), None);

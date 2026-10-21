@@ -47,6 +47,9 @@
 (dotted (member) @property)
 (dotted (member) @function . (open_call))
 (dotted (open_call) @punctuation.bracket)
+(chain_step (member) @property)
+(chain_step (member) @function . (open_call))
+(chain_step (open_call) @punctuation.bracket)
 
 ; The olang marks, last so nothing shadows them.
 (pipe) @punctuation.special

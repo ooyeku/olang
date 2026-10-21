@@ -71,6 +71,21 @@ let net = 100
 println(`${words} ${total} ${price} ${net}`)   // a-b-c 3 -7.0 90
 ```
 
+A method chain breaks the same way, before its `.`: a line that starts
+with one `.` and a name continues the expression above it, so each step
+of a chain may take a line of its own, with comments and blank lines
+between. `..` (a range) and `...` (a spread) never continue a line.
+
+```olang
+let f = ods.frame({ city: ["Oslo", "Lima", "Rome"], price: [4.0, 2.5, 3.5] })
+let cheap = f
+    .with({ eur: ods.col("price") * 0.9 })
+    // the steps may carry comments
+    .filter(ods.col("eur") < 3.5)
+    .sort_by("eur")
+println(cheap.city.to_list())   // ["Lima", "Rome"]
+```
+
 Statements are one of: a declaration (`let`, `fn`, `type`, `trait`, `impl`,
 `error`, `test`), a module statement (`use`, `share`), or an expression.
 A top-level function is declared once per file: a second `fn` of the
@@ -395,6 +410,10 @@ let [first, second] = [10, 20]
 let [head, ...tail] = [1, 2, 3, 4]
 println(`${x + y + first + second + head} tail: ${tail}`)
 ```
+
+A function's or a lambda's parameter destructures the same way — a
+tuple, a list or an object pattern where a name goes:
+[Parameters](#parameters-annotations-defaults-named-arguments).
 
 Struct patterns work in `let` too:
 
@@ -1163,17 +1182,25 @@ println(to_string(sort(map_keys(scores2))))
 
 **`m.key` reads a key** whose name is an identifier: it is exactly
 `map_get(m, "key")`. A missing key is `Unit`, and a chain reads nested
-maps. A key that is not an identifier (`"content-type"`), or one
-computed at run time, is read with `map_get(m, k)`:
+maps. A key that is not an identifier (`"content-type"`,
+`"log_price:product_x"`), or one computed at run time, is read with
+**`m[k]`**, which is exactly `map_get(m, k)` too — `Unit` when the key
+is absent, an Int, Float or Bool key read as its text:
 
 ```olang
-let p = #{ "running": true, "pp": #{ "cur": 3 } }
+let p = #{ "running": true, "pp": #{ "cur": 3 }, "content-type": "csv" }
 println(to_string(p.running))              // true
 println(to_string(p.pp.cur))               // 3
 println(to_string(p.live_id == ()))        // true: absent is ()
 let key = "running"
-println(to_string(map_get(p, key)))        // true
+println(to_string(p[key]))                 // true
+println(p["content-type"] + " " + to_string(p["pp"]["cur"]))   // csv 3
+println(to_string(p["gone"] ?? 0))         // 0
 ```
+
+`[]` reads; it does not write (`m[k] = v` is refused, saying so). A key
+that is not a String, Int, Float or Bool raises, and `()["k"]` is `()`,
+as `().k` is.
 
 `map_get` (and `.`) is the **raw read**: on a missing key it returns
 `Unit`, and distinguishing absent from stored-null takes `map_has_key`.
@@ -1220,7 +1247,7 @@ not. `.` reads a key; `m.k = v` is not an assignment form, so a key is
 written with a spread (`#{ ...m, "k": v }`) or `map_set`. The one write
 through `.` is an element of a list held at a key, `m.k[i] = v`.
 
-The `map_*` accessors also read **any struct-like value** —
+The `map_*` accessors, and `[]`, also read **any struct-like value** —
 anonymous objects, structs, and parsed JSON objects — so dynamic key access
 works uniformly:
 
@@ -1228,6 +1255,7 @@ works uniformly:
 let obj = { a: 1, b: 2 }
 let key = "b"
 println(to_string(map_get(obj, key)))
+println(to_string(obj[key]))       // 2
 ```
 
 ### Anonymous objects
@@ -1242,9 +1270,12 @@ println(`${user.name} is ${user.age}`)
 Objects and maps are both read with `.`, and `.key` on either is
 `map_get(v, "key")`: the key's value, or `Unit` when it is absent. The
 same holds for a **parsed JSON object** (`json.parse`), which carries
-outside data, where absence is ordinary. They differ in their keys: an
-object's are identifiers written in its literal, a map's are any
-strings (a key that is not an identifier is read with `map_get`). A
+outside data, where absence is ordinary. Their keys are any strings: an
+object literal's key is a name or, for one that is not a name, a quoted
+string (`{ "P(B > A)": 0.9, n: 3 }`), and a key that is not a name is
+read with `o["P(B > A)"]` or `map_get`. An object whose keys are not
+all names prints as the map it reads as (`#{"P(B > A)": 0.9, "n": 3}`).
+A declared struct's literal names its fields and takes no quoted key. A
 **declared struct** is the record with fixed fields: reading a field
 it does not have raises. A `{ ... }` with `identifier: value` pairs is
 an object; `#{ ... }` is always a map.
@@ -1580,6 +1611,22 @@ println(window(5, label: "custom"))
 Parameters without defaults are required; a call must cover them
 positionally or by name, and positional arguments may not follow named
 ones. Lambdas take defaults with the same rules.
+
+A parameter may **destructure** its argument, as a `let` does: a tuple,
+a list or an object pattern where a name goes. The pattern binds at the
+top of the body, so an argument it does not match raises as that `let`
+would. An annotation and a default apply to the whole argument:
+
+```olang
+let pairs = [(1, 2.0), (2, 3.0)]
+println(map(pairs, ((i, w)) => to_float(i) * w))   // [2.0, 6.0]
+fn dot((a, b), (c, d)) = a * c + b * d
+fn first_and_rest([h, ...rest]) = `${h} then ${len(rest)}`
+fn area({ w, h }: { w: Int, h: Int }) = w * h
+println(`${dot((1, 2), (3, 4))} ${first_and_rest([5, 6, 7])} ${area({ w: 2, h: 3 })}`)   // 11 5 then 2 6
+```
+
+A pattern parameter has no name of its own, so it is not passed by name.
 
 A builtin takes names when its module registers its parameters: the
 data stack (`ods`, `stats`, `plot`, `learn`), a Date's functions, and

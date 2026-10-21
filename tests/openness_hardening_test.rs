@@ -486,6 +486,68 @@ share fn rule_no_bare_unwrap(nodes) =
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `[check] rules` in olang.toml: `olang check` with no `--rules` runs
+/// the project's rules files (paths relative to its root) over its files,
+/// and `--rules` names the one file instead.
+#[test]
+fn check_runs_the_rules_the_project_file_names() {
+    let dir = tmp("rules-toml");
+    std::fs::create_dir_all(dir.join("tools")).unwrap();
+    std::fs::write(
+        dir.join("olang.toml"),
+        "[package]\nname = \"t\"\nversion = \"0.1.0\"\n\n[check]\nrules = [\"tools/rules.ol\"]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("tools/rules.ol"),
+        r#"
+share fn rule_no_bare_unwrap(nodes) =
+    nodes
+      |> filter((n) => n.kind == "call" && n.target == "unwrap")
+      |> map((n) => #{ "message": "bare unwrap()", "line": n.line })
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("app.ol"),
+        "fn load(p) = {\n    let a = fs.read_file(p).unwrap()\n    a\n}\n",
+    )
+    .unwrap();
+    let run = |args: &[&str]| {
+        Command::new(olang_bin())
+            .args(args)
+            .current_dir(&dir)
+            .output()
+            .expect("olang check")
+    };
+    let hit = run(&["check", "."]);
+    let err = String::from_utf8_lossy(&hit.stderr);
+    assert_eq!(hit.status.code(), Some(1), "stderr: {err}");
+    assert!(err.contains("app.ol:2: [rule_no_bare_unwrap]"), "stderr: {err}");
+    // the rules file itself is not linted, and a sub-directory's check
+    // still finds the project's rules
+    let sub = Command::new(olang_bin())
+        .args(["check", "app.ol"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert_eq!(sub.status.code(), Some(1));
+    // `--rules` names the file instead
+    std::fs::write(dir.join("none.ol"), "share fn rule_none(nodes) = []\n").unwrap();
+    let named = run(&["check", ".", "--rules", "none.ol"]);
+    assert!(named.status.success(), "{}", String::from_utf8_lossy(&named.stderr));
+    // a listed file that is not there is a problem
+    std::fs::write(
+        dir.join("olang.toml"),
+        "[package]\nname = \"t\"\nversion = \"0.1.0\"\n\n[check]\nrules = [\"tools/gone.ol\"]\n",
+    )
+    .unwrap();
+    let gone = run(&["check", "."]);
+    assert_eq!(gone.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&gone.stderr).contains("gone.ol"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// S7: `check --rules` runs the rules file in a sandbox with no
 /// capabilities, so a hostile rules.ol cannot touch the filesystem, network,
 /// or processes when it is loaded.

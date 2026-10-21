@@ -357,14 +357,25 @@ fn respace(indent: &str, toks: &[Tok], tail: Option<&str>) -> String {
         .collect();
     let toks = &toks[..];
     // A `-`/`+` after anything but a value is a sign and glues to its
-    // operand; `!`, `...`, and `@` always do. At the start of a line the
+    // operand; `!` and `...` always do. At the start of a line the
     // author's spacing is the meaning: `- d` continues the line above,
     // `-d` is a negation that starts a statement (`+` is never a sign).
+    // `@` after a value is the matrix product (`V @ V.t()`) and breathes
+    // as every binary operator does; anywhere else — a line's start, after
+    // `(`, `,`, `=` or a keyword — it begins a macro call or a decorator
+    // (`@json`, `@retry(3, f)`) and glues to its name. The grammar reads it
+    // the same way: `@` never starts a continuation line. A decorator's
+    // name is no value either: `@arbitrary @builder @json` stacks three.
     let mut glue_right = vec![false; toks.len()];
     for (i, t) in toks.iter().enumerate() {
         if t.kind == TokKind::Op {
             glue_right[i] = match t.text.as_str() {
-                "!" | "..." | "@" => true,
+                "!" | "..." => true,
+                "@" => {
+                    i == 0
+                        || !value_like(&toks[i - 1])
+                        || (i >= 2 && toks[i - 2].text == "@" && glue_right[i - 2])
+                }
                 "-" if i == 0 => toks.get(1).is_some_and(|n| n.gap == 0),
                 "+" if i == 0 => false,
                 "-" | "+" => !value_like(&toks[i - 1]),
@@ -777,6 +788,42 @@ mod tests {
         assert_eq!(
             format_source("let s = a\n-b\nprintln(s)\n"),
             "let s = a\n-b\nprintln(s)\n"
+        );
+    }
+
+    #[test]
+    fn the_matrix_product_breathes_and_a_macro_glues() {
+        assert_eq!(format_source("let I = V @V.t()\n"), "let I = V @ V.t()\n");
+        assert_eq!(
+            format_source("let I = V@(V.t())\n"),
+            "let I = V @ (V.t())\n"
+        );
+        assert_eq!(format_source("let g = X.t()@X\n"), "let g = X.t() @ X\n");
+        assert_eq!(format_source("let y = m[0] @b\n"), "let y = m[0] @ b\n");
+        // a macro call or a decorator: `@` begins it and glues
+        assert_eq!(format_source("@json\n"), "@json\n");
+        assert_eq!(
+            format_source("@arbitrary @builder @json\n"),
+            "@arbitrary @builder @json\n"
+        );
+        assert_eq!(
+            format_source("let r = @retry(3, f)\n"),
+            "let r = @retry(3, f)\n"
+        );
+        assert_eq!(
+            format_source("let r = f(@m(x), V @ W)\n"),
+            "let r = f(@m(x), V @ W)\n"
+        );
+        assert_eq!(format_source("return @m(x)\n"), "return @m(x)\n");
+    }
+
+    #[test]
+    fn a_leading_dot_chain_keeps_its_lines_and_indent() {
+        let src = "let x = f\n    .with({ a: 1 })\n    .filter((r) => r.a > 0)\n";
+        assert_eq!(format_source(src), src);
+        assert_eq!(
+            format_source("let x = f\n    . with( { a:1 } )\n"),
+            "let x = f\n    .with({ a: 1 })\n"
         );
     }
 
