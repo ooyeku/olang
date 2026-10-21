@@ -62,6 +62,18 @@ impl G<'_> {
         p_num(&self.l.params, k)
     }
     fn rect(&self, i: usize, x0: f64, x1: f64, y0: f64, y1: f64, fill: Option<Paint>, stroke: Option<Paint>, sw: f64) -> Option<Item> {
+        // an infinite edge is the panel's: -inf its low end, inf its high
+        let edge = |v: f64, (a, b): (f64, f64)| {
+            if v == f64::NEG_INFINITY {
+                a.min(b)
+            } else if v == f64::INFINITY {
+                a.max(b)
+            } else {
+                v
+            }
+        };
+        let (x0, x1) = (edge(x0, self.pc.x_range()), edge(x1, self.pc.x_range()));
+        let (y0, y1) = (edge(y0, self.pc.y_range()), edge(y1, self.pc.y_range()));
         if ![x0, x1, y0, y1].iter().all(|v| v.is_finite()) {
             return None;
         }

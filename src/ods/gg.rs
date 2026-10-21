@@ -76,7 +76,15 @@ fn column_of(series: &Series) -> Column {
                 .collect(),
             true,
         ),
-        Series::Cat { .. } => column_of(&series.key_view()),
+        // A Category keeps its levels: their order is the scale's.
+        Series::Cat { levels, .. } => {
+            let levels: Vec<String> = levels.iter().map(str::to_string).collect();
+            let texts = match column_of(&series.key_view()) {
+                Column::Str(v) => v,
+                _ => Vec::new(),
+            };
+            Column::Cat(texts, std::sync::Arc::new(levels))
+        }
         Series::F64 { .. } | Series::I64 { .. } => Column::Num(
             (0..series.len())
                 .map(|i| match series.scalar_at(i) {

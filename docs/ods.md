@@ -2195,10 +2195,12 @@ How the pieces fit:
 - **Fits are maps.** `fit.params`, `fit.coef`, `fit.r2`, `fit.importance`
   and `fit.oob_score` are entries, so they read like fields without
   method calls. `fit.model` is the native model, and `fit.spec` is how
-  to fit it again.
+  to fit it again: its `kind`, `y`, `x` and `options` (`fit.spec.options.seed`
+  is the seed a forest was grown with).
 - **Evaluation refits natively.** `ml.cross_validate(fit, f)`,
   `ml.learning_curve` and `ml.grid_search` take a model or a spec
-  (`ml.spec("forest", y: "churn", options: #{ "n_trees": 200 })`) and
+  (`ml.spec("forest", y: "churn", options: { n_trees: 200 })`; options
+  are a map or an object, and an unknown key is an error) and
   refit it fold by fold in Rust, in parallel. `ml.cross_validate` also
   takes a `(train) => model` function, which runs once per fold.
 - **Seeds make results exact.** Each random step draws from its own

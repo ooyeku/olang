@@ -192,10 +192,24 @@ fn to_cat(c: &Column, order: Option<&Vec<String>>) -> Col {
             to_cat(&Column::Str(texts), order)
         }
         Column::Time(..) => to_cat(&as_text(c), order),
+        // a Category's own order unless the scale gives one
+        Column::Cat(v, levels) => to_cat(&Column::Str(v.clone()), Some(order.unwrap_or(levels))),
     }
 }
 
-/// A date column's values as their text (`2024-03-01`, or with a time).
+/// `into` with the levels of `more` it lacks appended, in their order:
+/// several Category columns on one scale order it level list by level
+/// list.
+fn merge_order(into: &mut Vec<String>, more: &[String]) {
+    for l in more {
+        if !into.contains(l) {
+            into.push(l.clone());
+        }
+    }
+}
+
+/// A date column's values as their text (`2024-03-01`, or with a time);
+/// a Category's as its text.
 fn as_text(c: &Column) -> Column {
     match c {
         Column::Time(v, dt) => Column::Str(
@@ -203,6 +217,7 @@ fn as_text(c: &Column) -> Column {
                 .map(|t| t.is_finite().then(|| time_text(*t, *dt)))
                 .collect(),
         ),
+        Column::Cat(v, _) => Column::Str(v.clone()),
         c => c.clone(),
     }
 }
@@ -324,6 +339,9 @@ pub fn build(spec: &Spec, opts: &RenderOptions) -> super::Result<Built> {
 
     // ── read each layer's aesthetics ──
     let mut raws: Vec<RawLayer> = Vec::new();
+    // the level order of each aesthetic mapped to a Category: its scale's
+    // order when the scale gives none
+    let mut cat_order: BTreeMap<Aes, Vec<String>> = BTreeMap::new();
     for layer in &spec.layers {
         let (dstat, dpos) = geom_defaults(&layer.geom).ok_or_else(|| {
             crate::OdsError::InvalidArgument(format!("gg: unknown geom \"{}\"", layer.geom))
@@ -394,6 +412,7 @@ pub fn build(spec: &Spec, opts: &RenderOptions) -> super::Result<Built> {
                         Column::Time(v, dt) => {
                             Column::Time(vec![v.first().copied().unwrap_or(f64::NAN); n], *dt)
                         }
+                        Column::Cat(v, l) => Column::Cat(vec![v.first().cloned().flatten(); n], l.clone()),
                     },
                 };
                 if col.len() != n {
@@ -406,6 +425,9 @@ pub fn build(spec: &Spec, opts: &RenderOptions) -> super::Result<Built> {
                     ));
                 }
                 titles.insert(*a, src.title().to_string());
+                if let Column::Cat(_, levels) = &col {
+                    merge_order(cat_order.entry(*a).or_default(), levels);
+                }
                 let scale_wants_disc = match a {
                     Aes::Shape | Aes::Linetype | Aes::Group | Aes::Label => true,
                     // a constant colour or the like is one level (ggplot's aes(colour = "all"))
@@ -424,6 +446,17 @@ pub fn build(spec: &Spec, opts: &RenderOptions) -> super::Result<Built> {
                     }
                     (Column::Num(v), _) if !scale_wants_disc => Col::Num(v.clone()),
                     (Column::Num(_), _) => {
+                        let order = np.get(a).and_then(|s| super::p_strs(&s.params, "limits"));
+                        to_cat(&col, order.as_ref())
+                    }
+                    (Column::Cat(..), Some(axis)) => {
+                        let ps = if axis == 'x' { &sx } else { &sy };
+                        if matches!(ps.kind, PosKind::Time { .. }) {
+                            return bad(format!("{} = \"{}\": a Category on a date axis", a.name(), src.title()));
+                        }
+                        to_cat(&col, ps.dlimits.as_ref())
+                    }
+                    (Column::Cat(..), None) => {
                         let order = np.get(a).and_then(|s| super::p_strs(&s.params, "limits"));
                         to_cat(&col, order.as_ref())
                     }
@@ -493,7 +526,16 @@ pub fn build(spec: &Spec, opts: &RenderOptions) -> super::Result<Built> {
                 return bad(format!("the {} axis mixes dates and categories", axis));
             }
             ps.kind = PosKind::Discrete;
-            ps.levels = sorted_levels(levels.into_iter(), ps.dlimits.as_ref());
+            // limits order the axis; else the Categories mapped to it do
+            let mut order: Option<Vec<String>> = ps.dlimits.clone();
+            if order.is_none() {
+                for (a, lv) in &cat_order {
+                    if a.axis() == Some(axis) {
+                        merge_order(order.get_or_insert_with(Vec::new), lv);
+                    }
+                }
+            }
+            ps.levels = sorted_levels(levels.into_iter(), order.as_ref());
         } else if ps.kind == PosKind::Discrete && ps.levels.is_empty() {
             ps.levels = ps.dlimits.clone().unwrap_or_default();
         }
@@ -810,8 +852,21 @@ pub fn build(spec: &Spec, opts: &RenderOptions) -> super::Result<Built> {
             }
         }
         if disc {
-            let order = super::p_strs(&sc.params, "limits");
+            let order = super::p_strs(&sc.params, "limits").or_else(|| cat_order.get(&a).cloned());
             let lv = sorted_levels(levels.into_iter(), order.as_ref());
+            // each layer's codes become the scale's: a layer's own levels
+            // (a constant's one, say) need not be the scale's first ones
+            let index: HashMap<&str, u32> = lv.iter().enumerate().map(|(i, l)| (l.as_str(), i as u32)).collect();
+            let shared = Arc::new(lv.clone());
+            for l in layers.iter_mut() {
+                if let Some(Col::Cat(codes, own)) = l.frame.cols.get(&a) {
+                    let codes: Vec<u32> = codes
+                        .iter()
+                        .map(|&c| if c == NA { NA } else { index.get(own[c as usize].as_str()).copied().unwrap_or(NA) })
+                        .collect();
+                    l.frame.cols.insert(a, Col::Cat(codes, shared.clone()));
+                }
+            }
             sc.train_discrete(lv, app)?;
         } else {
             sc.train_continuous(lo, hi, app)?;
@@ -947,6 +1002,14 @@ fn setup_geom(geom: &str, f: &mut LFrame, p: &Params) {
                 f.set_num(Aes::Ymax, y.iter().map(|v| v + h / 2.0).collect());
             }
         }
+        // a rect's edge left out is the panel's (ggplot's -Inf / Inf)
+        "rect" if n > 0 => {
+            for (a, edge) in [(Aes::Xmin, f64::NEG_INFINITY), (Aes::Xmax, f64::INFINITY), (Aes::Ymin, f64::NEG_INFINITY), (Aes::Ymax, f64::INFINITY)] {
+                if f.num(a).is_none() {
+                    f.set_num(a, vec![edge; n]);
+                }
+            }
+        }
         _ => {}
     }
 }
@@ -1048,8 +1111,10 @@ fn facet_panels(spec: &Spec, raws: &mut [RawLayer]) -> super::Result<FacetLayout
     };
     let vars_r = fs.rows.clone();
     let vars_c = if fs.kind == "grid" { fs.cols.clone() } else { vec![] };
-    // each layer's per-row key texts for a list of variables
-    let key_of = |r: &RawLayer, vars: &[String]| -> Option<Vec<String>> {
+    // each layer's per-row key texts for a list of variables, and each
+    // key's parts (one text per variable)
+    let mut parts: HashMap<String, Vec<String>> = HashMap::new();
+    let mut key_of = |r: &RawLayer, vars: &[String]| -> Option<Vec<String>> {
         if vars.is_empty() {
             return Some(vec![String::new(); r.data_n]);
         }
@@ -1058,18 +1123,40 @@ fn facet_panels(spec: &Spec, raws: &mut [RawLayer]) -> super::Result<FacetLayout
         Some(
             (0..r.data_n)
                 .map(|i| {
-                    cols.iter()
+                    let p: Vec<String> = cols
+                        .iter()
                         .map(|c| match c {
                             Column::Num(v) => fmt_value(v[i]),
                             Column::Str(v) => v[i].clone().unwrap_or_else(|| "NA".into()),
                             Column::Time(v, dt) => time_text(v[i], *dt),
+                            Column::Cat(v, _) => v[i].clone().unwrap_or_else(|| "NA".into()),
                         })
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                        .collect();
+                    let key = p.join(", ");
+                    if !parts.contains_key(&key) {
+                        parts.insert(key.clone(), p);
+                    }
+                    key
                 })
                 .collect(),
         )
     };
+    // a Category variable's panels follow its levels; others sort naturally
+    let order_of = |vars: &[String]| -> Vec<Option<Vec<String>>> {
+        vars.iter()
+            .map(|v| {
+                let mut order: Option<Vec<String>> = None;
+                for r in raws.iter() {
+                    if let Some(Column::Cat(_, lv)) = r.layer.data.as_ref().or(spec.data.as_ref()).and_then(|d| d.get(v)) {
+                        merge_order(order.get_or_insert_with(Vec::new), lv);
+                    }
+                }
+                order
+            })
+            .collect()
+    };
+    let order_r = order_of(&vars_r);
+    let order_c = order_of(&vars_c);
     let mut rk: Vec<Option<Vec<String>>> = Vec::new();
     let mut ck: Vec<Option<Vec<String>>> = Vec::new();
     let mut rset: BTreeSet<String> = BTreeSet::new();
@@ -1092,10 +1179,27 @@ fn facet_panels(spec: &Spec, raws: &mut [RawLayer]) -> super::Result<FacetLayout
     if rset.is_empty() {
         return bad(format!("facet: no layer's data has the column{} {}", if vars_r.len() + vars_c.len() > 1 { "s" } else { "" }, [vars_r.clone(), vars_c.clone()].concat().join(", ")));
     }
+    let panel_cmp = |orders: &[Option<Vec<String>>], a: &String, b: &String| -> std::cmp::Ordering {
+        let (pa, pb) = (parts.get(a), parts.get(b));
+        let (Some(pa), Some(pb)) = (pa, pb) else { return natural_cmp(a, b) };
+        for (k, (x, y)) in pa.iter().zip(pb.iter()).enumerate() {
+            let c = match orders.get(k).and_then(|o| o.as_ref()) {
+                Some(o) => {
+                    let rank = |t: &String| o.iter().position(|l| l == t).unwrap_or(usize::MAX);
+                    rank(x).cmp(&rank(y)).then_with(|| natural_cmp(x, y))
+                }
+                None => natural_cmp(x, y),
+            };
+            if c != std::cmp::Ordering::Equal {
+                return c;
+            }
+        }
+        std::cmp::Ordering::Equal
+    };
     let mut rl: Vec<String> = rset.into_iter().collect();
-    rl.sort_by(|a, b| natural_cmp(a, b));
+    rl.sort_by(|a, b| panel_cmp(&order_r, a, b));
     let mut cl: Vec<String> = cset.into_iter().collect();
-    cl.sort_by(|a, b| natural_cmp(a, b));
+    cl.sort_by(|a, b| panel_cmp(&order_c, a, b));
     let (free_x, free_y) = match fs.scales.as_str() {
         "free" => (true, true),
         "free_x" => (true, false),

@@ -206,7 +206,8 @@ share fn params(model) = learn.params(model)
 share fn score(model, data, metric) = learn.score(model, data, metric)
 
 /// How to fit, without fitting: for `cross_validate`, `learning_curve`
-/// and `grid_search`, which refit it natively.
+/// and `grid_search`, which refit it natively. `options` is a map or an
+/// object (`{ n_trees: 200 }`); an unknown key raises.
 share fn spec(kind, y = (), x = (), options = #{}) = learn.spec(kind, y, x, options)
 
 /// Fit a spec (or refit a model's) on new data.
@@ -256,8 +257,8 @@ share fn partial_dependence(model, data, feature, grid = (), points = 50, sample
 share fn learning_curve(fit, data, sizes = (), folds = 5, metric = (), seed = ()) =
     learn.learning_curve(fit, data, opts(#{ "sizes": sizes, "folds": folds, "metric": metric, "seed": seed }))
 
-/// Cross-validated search over a grid of options (`#{ "max_depth": [3,
-/// 5, 8] }`): `#{ results, best, best_score, metric, model }`, the model
+/// Cross-validated search over a grid of options (`{ max_depth: [3,
+/// 5, 8] }`, or the same as a map): `#{ results, best, best_score, metric, model }`, the model
 /// refit on all of `data` with the best options.
 share fn grid_search(fit, data, grid, folds = 5, metric = (), seed = ()) =
     learn.grid_search(fit, data, grid, opts(#{ "folds": folds, "metric": metric, "seed": seed }))

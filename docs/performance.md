@@ -30,6 +30,7 @@ below made a measured difference of between 2× and several hundred times.
 - [Frames: grouping, joins and time](#frames-grouping-joins-and-time)
 - [Statistics and time series](#statistics-and-time-series)
 - [Matrices and formulas](#matrices-and-formulas)
+- [Trees over categories](#trees-over-categories)
 - [What a program costs in memory](#what-a-program-costs-in-memory)
 
 ## Put hot loops in functions
@@ -612,6 +613,28 @@ rows, as pandas does.
 A formula fit spends its time building the 71 dense cell columns and
 their Gram matrix. pandas' `get_dummies` with `lstsq` does the same work
 in 761 ms.
+
+## Trees over categories
+
+A forest or tree one-hot encodes a Category or String column with every
+level, as scikit-learn's `OneHotEncoder` feeds its forests. A 0/1 column
+(a level, or a Bool) has one threshold, so a split on it is one pass over
+the node's rows, with no sort; the split found is the one the sort finds.
+churn's forest (20,000 rows; 6 numeric columns and region, contract and
+segment as 16 features; 300 trees, `min_samples_leaf: 20`), the fastest
+of five on an Apple M5 Pro:
+
+| Fit | ms |
+|---|---:|
+| `learn.forest`, before the 0/1 path | 101 |
+| `learn.forest` | 86 |
+| scikit-learn 1.9 `RandomForestClassifier(n_jobs=-1)` on `get_dummies` | 234 |
+
+The same forest over hand-made dummies without the reference levels (14
+features) takes 78 ms. The difference is `max_features`: √16 rounds to
+4 features a split, √14 to 3. Given `max_features: 4`, the 14 columns
+take as long as the 16. Dropping a level would change which features a
+split can choose, and so the model. It would not save any encoding work.
 
 ## What a program costs in memory
 

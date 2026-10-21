@@ -3309,6 +3309,7 @@ Series of `n` draws (Int for `poisson` and `binom`).
 | `stats.power_t(effect, n, alpha = 0.05, alternative = "two-sided", kind = "two-sample", ratio = 1.0)` | the power of a t-test by the noncentral t (statsmodels' `TTestIndPower`/`TTestPower`): `effect` is Cohen's d, `n` the first group's size (`ratio` the second's over it), `kind` `"two-sample"`, `"one-sample"` or `"paired"` |
 | `stats.n_for_power(effect, power = 0.8, alpha = 0.05, alternative = "two-sided", kind = "two-sample", ratio = 1.0)` | the `n` (a Float, per group) at which `power_t` reaches `power` |
 | `stats.mann_whitney(a, b, alternative = "two-sided")` | the Mann–Whitney U test by the normal approximation with tie and continuity corrections (SciPy's `method="asymptotic"`): `u` (of `a`), `z`, `p_value`, `effect` (U / n₁n₂, the chance a value of `a` exceeds one of `b`) |
+| `stats.prop_z_test(count, nobs, value = 0.0, alternative = "two-sided", level = 0.95)` | the z-test of proportions (statsmodels' `proportions_ztest`): two counts of successes out of two `nobs` (each a list of two or a Series) test p₁ − p₂ against `value` with the pooled proportion's variance; one count and one `nobs` test p against `value` with the sample proportion's. A map of `z`, `p_value`, the proportions (`prop_a`, `prop_b`, or `prop`), `diff` (p₁ − p₂, or p − `value`), `se` (the test's) and `ci` (Wald's interval of p₁ − p₂, or of p, at `level`). `alternative` is `"two-sided"`, `"greater"` or `"less"` |
 | `stats.spearman(a, b)` | Spearman's rank correlation over the complete pairs: `rho`, `p_value`, `n` |
 
 **Robust statistics and the bootstrap.**
@@ -3371,8 +3372,9 @@ Bayes, k-means, Gaussian mixtures and PCA, and the metrics to judge
 them. Every kernel is Rust (`olang-ods`), parallel past measured sizes,
 and pinned against scikit-learn in the test suite. `learn` functions
 take their options by name (`learn.forest(f, y: "churn", n_trees: 300,
-seed: 1)`) or in one trailing map, and an unknown option is an error
-naming the options there are. **`use ml`** adds short names for a few
+seed: 1)`) or in one trailing map or object (`#{ "n_trees": 300 }` and
+`{ n_trees: 300 }` are the same options), and an unknown option is an
+error naming the options there are. **`use ml`** adds short names for a few
 options and the forms that call an olang function (below).
 
 A fit returns a Map: `fit.params.sqft`, `fit.r2`, `fit.coef` (a Frame of
@@ -3408,10 +3410,20 @@ println(ml.rmse(s.test["price"], pred) < 5.0)          // true
 println(ods.n_rows(ml.cross_validate(fit, homes, folds: 4)))   // 4
 ```
 
+**On a Frame.** The models are a Frame's methods:
+`homes.linear("price ~ sqft + C(hood)")`, `homes.forest(y: "sold",
+n_trees: 200)` and `pts.kmeans(k: 4)` are `learn.linear(homes, …)` and
+the rest (`linear`, `ridge`, `lasso`, `elastic_net`, `logistic`, `tree`,
+`forest`, `boost`, `knn`, `naive_bayes`, `kmeans`, `gmm`, `pca`). The
+other learn functions are not, since a method's name hides a column's:
+`judged.silhouette` still reads a column.
+
 **Formulas.** Every supervised model also takes a formula where `y` and
 `x` go: `learn.linear(f, "price ~ sqft + C(hood) + C(kind):C(hour) +
 I(sqft^2)")`. The notation is R's and patsy's, parsed natively: `+` adds
-a term, `a:b` is an interaction, `a * b` is `a + b + a:b`, `-` removes a
+a term, `a:b` is an interaction, `a * b` is `a + b + a:b`, `a / b` is
+`a + a:b` (b nested in a; `(a + b) / c` is `a + b + a:b:c`), `(a + b +
+c)^2` (or `**`) is every interaction of up to two of them, `-` removes a
 term, and `- 1` (or `+ 0`) drops the intercept. `C(x)` treats a column
 as categorical whatever its type, so an Int hour becomes 24 levels. A
 String or Category column named bare is categorical too. `I(…)` is
@@ -3463,12 +3475,12 @@ println(ods.n_rows(fit.predict(f, interval: "prediction")))   // 48
 | `learn.predict(model, f, opts)` | values, class labels or clusters; `interval`: `"confidence"` or `"prediction"` (an OLS interval Frame at `level`); `kind`: `"prob"` (positive class, or a Frame for 3+ classes), `"probs"`, `"link"`, `"confidence"` / `"prediction"` (an OLS interval Frame at `level`); `trees: k` a boosted model's prediction from its first k trees (staged) |
 | `learn.importance(model)`, `learn.summary(model, opts)`, `learn.params(model)` | importances (impurity, or abs(coef)) / the model as a Frame / estimates by term |
 | `learn.score(model, f, metric)` | one metric against the target column of `f` |
-| `learn.spec(kind, y, x, opts)` / `learn.fit(spec, f)` | how to fit, without fitting / fit a spec or refit a model |
+| `learn.spec(kind, y, x, opts)` / `learn.fit(spec, f)` | how to fit, without fitting (a map of `kind`, `y`, `x` and `options`, the options checked now, as the fit checks them) / fit a spec or refit a model |
 | `learn.cross_validate(spec, f, opts)` | per-fold scores (`folds`, `metrics`, `seed`); stratified for classifiers |
 | `learn.permutation_importance(model, f, opts)` | `metric`, `repeats`, `seed` |
 | `learn.partial_dependence(model, f, feature, opts)` | the mean prediction over a grid (`grid`, `points`, `sample`) |
 | `learn.learning_curve(spec, f, opts)` | train and test scores by training size (`sizes`, `folds`, `metric`) |
-| `learn.grid_search(spec, f, grid, opts)` | `#{ results, best, best_score, metric, model }` |
+| `learn.grid_search(spec, f, grid, opts)` | `#{ results, best, best_score, metric, model }`; the grid a map or an object of option to values (`{ max_depth: [2, 3, 4] }`), each key an option of the spec's kind |
 | `learn.rmse`, `learn.mse`, `learn.mae`, `learn.mape`, `learn.r2` `(y, pred)` | regression metrics |
 | `learn.accuracy(y, pred)`, `learn.precision`, `learn.recall`, `learn.f1` `(y, pred, opts)` | label metrics; `average` binary/macro/micro/weighted, `pos` |
 | `learn.log_loss`, `learn.brier`, `learn.auc`, `learn.average_precision` `(y, p, opts)` | probability metrics; `pos` names the positive class |
@@ -3647,7 +3659,9 @@ are names or `#hex`, sizes are ggplot's units (a point's `size` 1.5, a
 line's `linewidth` 0.5), a text's `size` is pixels. Strings mapped to a
 position that all read as ISO dates (`2024-03-01`, `2024-03-01 14:30`)
 make a date axis; other strings are categories, sorted naturally unless a
-scale's `limits` orders them. Errors say what is wrong and what exists: a
+scale's `limits` orders them. A Category column keeps its levels' order
+(`to_category(levels: ["Jan", "Feb", "Mar"])`) on an axis, in a legend and
+in a facet's panels; `limits` still overrides it. Errors say what is wrong and what exists: a
 missing column lists the frame's.
 
 | Building | Purpose |
@@ -3670,19 +3684,19 @@ Every geom takes `mapping` and `data` (a layer's own, else the plot's;
 | `area(p, …)` · `ribbon(p, …)` | an area from zero (stacked by group), a band from `ymin` to `ymax` |
 | `bar(p, …)` · `col(p, …)` | bars counting each x, bars of height y (stacked; `position: "dodge"` or `"fill"`) |
 | `histogram(p, bins, binwidth, boundary, center, breaks, …)` · `freqpoly(p, …)` | binned counts as bars, as a line |
-| `density(p, bw, adjust, kernel, n, trim, …)` | a kernel density estimate: `bw` `"nrd0"` (Silverman's rule, the default), `"nrd"`, `"scott"` or a number; kernels gaussian, epanechnikov, rectangular, triangular, biweight |
+| `density(p, bw, adjust, kernel, n, trim, linewidth, linetype, …)` | a kernel density estimate: `bw` `"nrd0"` (Silverman's rule, the default), `"nrd"`, `"scott"` or a number; kernels gaussian, epanechnikov, rectangular, triangular, biweight |
 | `boxplot(p, width, coef, outliers, linewidth, …)` | median, hinges, whiskers at 1.5 IQR, outliers |
 | `violin(p, scale, trim, bw, adjust, draw_quantiles, …)` | each group's density mirrored (`scale` `"area"`, `"count"`, `"width"`) |
 | `errorbar(p, width, position, …)` · `pointrange(p, position, …)` · `linerange(p, position, …)` · `crossbar(p, width, position, …)` | intervals from `ymin` to `ymax`; `position: gg.position_dodge(width: 0.5)` sets groups side by side (each with `alpha`, `linewidth`) |
 | `summary(p, fun, level, mult, geom, alpha, fill, linewidth, position, …)` | y summarised at each x: `fun` `"mean_se"` (default), `"mean_cl_normal"` (a t interval at `level`), `"mean_sdl"`, `"median_hilow"`, `"mean"`, `"median"`, drawn as a point range (or `geom`: `"errorbar"`, `"crossbar"`, `"point"`, `"line"`, `"col"`, styled as that geom is) |
 | `smooth(p, method, se, level, span, degree, k, n, fullrange, …)` | a smoother and its standard-error band: `"lm"` (a polynomial of `degree`), `"loess"` (local quadratic, `span` 0.75), `"gam"` (penalized cubic regression spline, smoothness by REML as ggplot asks of mgcv; `k` 10, or a third of the distinct x when fewer than 30, at least 4), `"auto"` (loess under 1,000 points, gam over) |
 | `text(p, label, size, hjust, vjust, nudge_x, nudge_y, check_overlap, fontface, …)` · `label(p, …)` | text at each point; text on a box. Without a colour, text on a filled tile, bar or rect beneath it (or a label's own fill) takes the dark ink or the light, whichever reads, in either appearance |
-| `tile(p, width, height, …)` · `raster(p, …)` · `rect(p, …)` | heatmap tiles; tiles that abut; rectangles from `xmin`… |
+| `tile(p, width, height, …)` · `raster(p, …)` · `rect(p, …)` | heatmap tiles; tiles that abut; rectangles from `xmin`… (an edge not mapped is the panel's) |
 | `hline(p, yintercept)` · `vline(p, xintercept)` · `abline(p, slope, intercept)` | reference lines (a number or a list); an abline is cut to its panel (a coord's limits, a fixed ratio) |
 | `rug(p, sides, length, …)` · `segment(p, …)` | ticks along the axes; segments to (`xend`, `yend`) |
 | `hex(p, bins, binwidth)` · `bin2d(p, bins, binwidth)` | 2-D bins filled by count |
 | `ecdf(p, …)` · `qq(p, mean, sd, …)` · `qq_line(p, …)` | the empirical cdf; a normal Q-Q plot of `sample` and its quartile line |
-| `annotate(p, geom, x, y, xend, yend, xmin, xmax, ymin, ymax, label, …)` | one mark from constants: a note, a band, a line |
+| `annotate(p, geom, x, y, xend, yend, xmin, xmax, ymin, ymax, label, …)` | one mark from constants: a note, a band, a line. A rect's edge left out is the panel's, as ggplot's `-Inf`/`Inf` are: `annotate(p, "rect", xmin: 3, xmax: 5)` is a band the panel's full height (an infinite value is its edge too) |
 
 Positions: a layer's `position` is a name or one of `position_stack(reverse)`,
 `position_fill(reverse)`, `position_dodge(width)`, `position_dodge2(width, padding)`,
