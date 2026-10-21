@@ -497,8 +497,11 @@ and it captures them **by value**: the closure carries a snapshot of
 those bindings as they were at the moment the closure was created. A
 **top-level** name is different: it is never captured. Every function,
 wherever it was declared, reads a top-level name's binding as it is
-when the function runs. Three rules follow, and they affect how olang
-programs are structured.
+when the function runs. The name is always the one in the file the
+function was written in, wherever it runs: a closure the program hands
+to a module, run there by `map`, `par_map`, `spawn` or an `http.serve`
+handler on a worker, reads the program's `routes`, never the module's.
+Three rules follow, and they affect how olang programs are structured.
 
 **Rule one: later rebinding of a local does not reach into a closure.**
 

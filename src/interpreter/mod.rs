@@ -3901,6 +3901,20 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         self.module_scopes.clone()
     }
 
+    /// Which file is the program, for an interpreter that runs another's
+    /// code (a bridge) without loading that file itself. Its tier keys a
+    /// function's top-level names by file, and the program's file is the
+    /// one whose names are the host's globals: without it, a closure the
+    /// program wrote, run on a bridge or on a worker the bridge cloned,
+    /// read a like-named function of some module instead of the
+    /// program's own binding.
+    pub fn set_entry_file(&mut self, file: Option<String>) {
+        if let Some(tier) = self.bytecode_tier.as_mut() {
+            tier.set_entry_file(file.clone());
+        }
+        self.entry_file = file;
+    }
+
     pub fn set_module_scopes(&mut self, scopes: HashMap<String, Arc<ImHashMap<String, Value>>>) {
         // This interpreter's own tier needs them too: a bridge is a full
         // interpreter, and the bridge its tier builds would otherwise

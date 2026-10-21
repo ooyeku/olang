@@ -4392,6 +4392,9 @@ impl BytecodeVm {
     }
 
     pub fn set_entry_file(&mut self, file: Option<String>) {
+        if let Some(bridge) = self.builtin_interpreter.as_mut() {
+            bridge.set_entry_file(file.clone());
+        }
         self.entry_file = file;
     }
 
@@ -7823,6 +7826,12 @@ impl BytecodeVm {
             // function the bridge runs checks the aliased annotation, as
             // it does on the main interpreter.
             interp.set_type_aliases(self.type_aliases.clone());
+            // Which file is the program, before the tier is enabled (it
+            // copies it): the bridge's tier, and every worker it clones
+            // for par_map or a task, resolves a program closure's
+            // top-level names in the program's scope only when it knows
+            // the program's file.
+            interp.set_entry_file(self.entry_file.clone());
             // Tier first: seed_bridge_state forwards the declaration
             // tables into an existing tier, so order matters here.
             if std::env::var_os("OLANG_BRIDGE_TIER_OFF").is_none() {

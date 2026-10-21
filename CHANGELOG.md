@@ -1053,6 +1053,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A closure reads its own file's top-level names wherever it runs.**
+  A closure the program handed to a module, run there by `par_map`,
+  `par_filter`, `spawn`, a channel's sender, `col.max_by`,
+  `cell.update`, `runtime.call_budget` or an `http.serve` handler, read
+  a name the program binds at its top level as a module's like-named
+  function on the compiled tiers (`[<function: routes>]` for the
+  program's `let routes`), silently. The interpreter those builtins call
+  back through now knows which file is the program, and so does every
+  worker it starts.
+
 - **The browser runtime reaches no clock or sleep that panics there.**
   `ods.read_csv` trapped the instance ("time not implemented on this
   platform"): every timing on a path the wasm build compiles goes
