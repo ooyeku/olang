@@ -101,8 +101,11 @@ pub fn install(root: &Path, options: &InstallOptions) -> Result<DependencyMap, P
     // byte-identical. Only a manifest edit the lock doesn't cover — or an
     // explicit refresh — re-resolves.
     if !options.refresh
-        && let Some(map) = replay_lock(root, &manifest, options)?
+        && let Some(mut map) = replay_lock(root, &manifest, options)?
     {
+        if let Some((_, e)) = transitive_shelf(&mut map, options).into_iter().next() {
+            return Err(e);
+        }
         return Ok(map);
     }
 
@@ -190,8 +193,8 @@ pub fn install(root: &Path, options: &InstallOptions) -> Result<DependencyMap, P
             .release(name, version)
             .map_err(|e| PkgError::Registry(e.to_string()))?;
         let git_ref = cache::GitRef::Rev(release.rev.clone());
-        let fetched =
-            cache::fetch_git(&release.git, &git_ref, options.offline).map_err(|e| PkgError::Fetch(e.to_string()))?;
+        let fetched = cache::fetch_git(&release.git, &git_ref, options.offline)
+            .map_err(|e| PkgError::Fetch(e.to_string()))?;
         verify_checksum(name, release.checksum.as_deref(), &fetched.dir)?;
         dep_map.insert(name.clone(), fetched.dir.clone());
         lock.package.insert(
@@ -230,7 +233,71 @@ pub fn install(root: &Path, options: &InstallOptions) -> Result<DependencyMap, P
     if !lock_readonly() && !options.offline && (options.explicit || !manifest.lock_never()) {
         lock.save(root).map_err(PkgError::Lock)?;
     }
+    if let Some((_, e)) = transitive_shelf(&mut dep_map, options).into_iter().next() {
+        return Err(e);
+    }
     Ok(dep_map)
+}
+
+/// A dependency's own shelf dependencies that the project does not name,
+/// at any depth, added to `map`: each as the dependency's own `olang.lock`
+/// pins it — that commit's snapshot, its checksum verified — or, where
+/// that lock pins no commit, as this machine's shelf holds it (skipped
+/// when the shelf does not hold it). A pinned dependency's lock is part
+/// of its snapshot, so the project's lock pins these through it; they are
+/// not written into the project's lock. A name
+/// the project or a nearer package maps keeps that mapping. Returns the
+/// pinned ones that could not be produced, by name.
+fn transitive_shelf(map: &mut DependencyMap, options: &InstallOptions) -> Vec<(String, PkgError)> {
+    let mut failed = Vec::new();
+    let mut queue: Vec<PathBuf> = map.values().cloned().collect();
+    let mut seen: std::collections::HashSet<PathBuf> = queue.iter().cloned().collect();
+    while let Some(dir) = queue.pop() {
+        let Ok(sub) = Manifest::load(&dir) else {
+            continue;
+        };
+        let sub_lock = Lockfile::load(&dir).ok();
+        for (name, dep) in &sub.dependencies {
+            let Dependency::Shelf { shelf: sname } = dep else {
+                continue;
+            };
+            if map.contains_key(name) || failed.iter().any(|(n, _)| n == name) {
+                continue;
+            }
+            let pinned = sub_lock
+                .as_ref()
+                .and_then(|l| l.package.get(name))
+                .filter(|l| {
+                    matches!(&l.source, LockedSource::Shelf { shelf, rev: Some(_) } if shelf == sname)
+                });
+            let resolved = match pinned {
+                Some(locked) => locked_dir(&dir, name, locked, options)
+                    .and_then(|d| verify_checksum(name, locked.checksum.as_deref(), &d).map(|_| d)),
+                // Unpinned and not on this shelf: left to the `use` that
+                // names it, as before it was looked for here.
+                None => match resolve_dependency(&dir, name, dep, &Default::default(), options) {
+                    Ok((d, _)) => Ok(d),
+                    Err(_) => continue,
+                },
+            };
+            match resolved {
+                Ok(target) => {
+                    map.insert(name.clone(), target.clone());
+                    if seen.insert(target.clone()) {
+                        queue.push(target);
+                    }
+                }
+                Err(e) => failed.push((
+                    name.clone(),
+                    PkgError::Resolve(format!(
+                        "'{}', which {} depends on: {}",
+                        name, sub.package.name, e
+                    )),
+                )),
+            }
+        }
+    }
+    failed
 }
 
 /// Whether this process may not write `olang.lock` (`OLANG_LOCK_READONLY=1`).
@@ -261,14 +328,22 @@ pub fn install_lenient(
             let resolution = Default::default();
             let lock = Lockfile::load(root).ok();
             for (name, dep) in &manifest.dependencies {
-                // A shelf library the lock pins at a commit this shelf does
-                // not hold is resolvable — and is not the code the lock
-                // means. It is missing, by that reason, rather than run.
+                // A shelf library the lock pins at a commit is that
+                // commit's snapshot, as the lock replays it; one this
+                // machine cannot produce is missing, by that reason, rather
+                // than run at whatever commit the shelf holds.
                 if let Some(locked) = lock.as_ref().and_then(|l| l.package.get(name))
-                    && matches!(locked.source, LockedSource::Shelf { rev: Some(_), .. })
-                    && let Err(e) = locked_dir(root, name, locked, options)
+                    && matches!(&locked.source, LockedSource::Shelf { shelf, rev: Some(_) }
+                        if matches!(dep, Dependency::Shelf { shelf: s } if s == shelf))
                 {
-                    missing.push((name.clone(), e.to_string()));
+                    match locked_dir(root, name, locked, options).and_then(|dir| {
+                        verify_checksum(name, locked.checksum.as_deref(), &dir).map(|_| dir)
+                    }) {
+                        Ok(dir) => {
+                            map.insert(name.clone(), dir);
+                        }
+                        Err(e) => missing.push((name.clone(), e.to_string())),
+                    }
                     continue;
                 }
                 match resolve_dependency(root, name, dep, &resolution, options) {
@@ -277,6 +352,9 @@ pub fn install_lenient(
                     }
                     Err(e) => missing.push((name.clone(), e.to_string())),
                 }
+            }
+            for (name, e) in transitive_shelf(&mut map, options) {
+                missing.push((name, e.to_string()));
             }
             if missing.is_empty() {
                 missing.push(("<dependencies>".to_string(), first.to_string()));
@@ -336,8 +414,8 @@ fn resolve_dependency(
             } else {
                 cache::GitRef::Default
             };
-            let fetched =
-                cache::fetch_git(git, &git_ref, options.offline).map_err(|e| PkgError::Fetch(e.to_string()))?;
+            let fetched = cache::fetch_git(git, &git_ref, options.offline)
+                .map_err(|e| PkgError::Fetch(e.to_string()))?;
             let checksum = cache::checksum_dir(&fetched.dir).ok();
             let deps = sub_dependency_names(&fetched.dir);
             Ok((
@@ -402,8 +480,12 @@ fn resolve_dependency(
             let release = reg
                 .release(name, version)
                 .map_err(|e| PkgError::Registry(e.to_string()))?;
-            let fetched = cache::fetch_git(&release.git, &cache::GitRef::Rev(release.rev.clone()), options.offline)
-                .map_err(|e| PkgError::Fetch(e.to_string()))?;
+            let fetched = cache::fetch_git(
+                &release.git,
+                &cache::GitRef::Rev(release.rev.clone()),
+                options.offline,
+            )
+            .map_err(|e| PkgError::Fetch(e.to_string()))?;
             verify_checksum(name, release.checksum.as_deref(), &fetched.dir)?;
             Ok((
                 fetched.dir.clone(),
@@ -528,10 +610,12 @@ fn replay_lock(
         if manifest.dependencies.contains_key(name) {
             continue;
         }
-        // A path entry is a dependency's own path dependency (locked by
+        // A path or shelf entry is a dependency's own (locked by
         // `install`), legitimate on the same terms.
         match &locked.source {
-            LockedSource::Registry { .. } | LockedSource::Path { .. } => {
+            LockedSource::Registry { .. }
+            | LockedSource::Path { .. }
+            | LockedSource::Shelf { .. } => {
                 let needed = lock
                     .package
                     .values()
@@ -553,10 +637,14 @@ fn replay_lock(
         // a project whose lock was written elsewhere, a moved checkout) is
         // not a reason to fail: re-resolve from the manifest instead.
         // Not so a pinned shelf library: the lock says which commit the
-        // name means, and quietly re-resolving to whatever the shelf holds
-        // is the drift the pin exists to stop.
+        // name means, and that commit's snapshot is what runs — never
+        // whatever the shelf holds now, the drift the pin exists to stop.
+        // A snapshot is the same tree on every machine: its checksum holds.
         if matches!(locked.source, LockedSource::Shelf { rev: Some(_), .. }) {
-            locked_dir(root, name, locked, options)?;
+            let dir = locked_dir(root, name, locked, options)?;
+            verify_checksum(name, locked.checksum.as_deref(), &dir)?;
+            map.insert(name.clone(), dir);
+            continue;
         }
         if matches!(
             locked.source,
@@ -623,6 +711,47 @@ pub fn moved_shelf_pins(root: &Path) -> Vec<(String, Option<String>, Option<Stri
         .collect()
 }
 
+/// One line per shelf library whose lock entry is behind (or otherwise
+/// off) the shelf's pin, for a doctor to say: information, not a fault —
+/// the lock's commit is what runs, and `otc install` moves it. Says
+/// whether the locked commit's snapshot is here, can be made again, or
+/// neither.
+pub fn lock_behind_shelf(root: &Path) -> Vec<String> {
+    let Ok(shelf) = shelf::Shelf::load() else {
+        return Vec::new();
+    };
+    let short = |r: &Option<String>| match r {
+        Some(r) => format!("at {}", r.chars().take(12).collect::<String>()),
+        None => "following its directory".to_string(),
+    };
+    moved_shelf_pins(root)
+        .into_iter()
+        .map(|(name, was, now)| {
+            let held = match &was {
+                Some(rev) if !shelf::Shelf::is_pin(&name, rev) => {
+                    "; that is not a commit id".to_string()
+                }
+                Some(rev) if shelf::Shelf::pin_dir(&name, rev).is_dir() => {
+                    "; its snapshot is here and is what runs".to_string()
+                }
+                Some(_) if shelf.repo_of(&name).is_some_and(|r| r.exists()) => format!(
+                    "; its snapshot is made again from {} when the project runs",
+                    shelf.repo_of(&name).map(|r| r.display().to_string()).unwrap_or_default()
+                ),
+                Some(_) => "; its snapshot is not here, and the shelf knows no repository to make it from".to_string(),
+                None => String::new(),
+            };
+            format!(
+                "olang.lock has shelf library '{}' {}, the shelf has it {}{} (`otc install` moves the lock to the shelf)",
+                name,
+                short(&was),
+                short(&now),
+                held
+            )
+        })
+        .collect()
+}
+
 /// Produce the on-disk directory a lock entry pins, fetching if needed.
 fn locked_dir(
     root: &Path,
@@ -639,23 +768,13 @@ fn locked_dir(
             let shelf =
                 shelf::Shelf::load().map_err(|e| PkgError::Resolve(format!("shelf: {}", e)))?;
             // A lock that pins a revision is a promise about what the name
-            // means: a shelf holding the library at another commit, or
-            // following a checkout, does not keep it.
-            if let Some(wanted) = rev
-                && shelf.rev_of(shelf_name) != Some(wanted.as_str())
-            {
-                return Err(PkgError::Resolve(format!(
-                    "the lock pins shelf library '{}' at {}, and this machine's shelf has {}                      (shelve that commit: `otc lib add <path> --rev {}`)",
-                    shelf_name,
-                    &wanted[..wanted.len().min(12)],
-                    match shelf.rev_of(shelf_name) {
-                        Some(have) => format!("it at {}", &have[..have.len().min(12)]),
-                        None if shelf.resolve(shelf_name).is_some() =>
-                            "it following its directory".to_string(),
-                        None => "no such library".to_string(),
-                    },
-                    &wanted[..wanted.len().min(12)],
-                )));
+            // means: that commit's snapshot is used, whatever commit the
+            // shelf holds the name at now (`otc install` moves the lock to
+            // the shelf's pin). The shelf keeps its snapshots under
+            // `pins/`, and makes a missing one again from the library's
+            // repository when it knows it.
+            if let Some(wanted) = rev {
+                return pinned_shelf_dir(&shelf, shelf_name, wanted);
             }
             shelf.resolve(shelf_name).cloned().ok_or_else(|| {
                 PkgError::Resolve(format!(
@@ -666,9 +785,11 @@ fn locked_dir(
             })
         }
         LockedSource::Git { git, rev, .. } => {
-            Ok(cache::fetch_git(git, &cache::GitRef::Rev(rev.clone()), options.offline)
-                .map_err(|e| PkgError::Fetch(e.to_string()))?
-                .dir)
+            Ok(
+                cache::fetch_git(git, &cache::GitRef::Rev(rev.clone()), options.offline)
+                    .map_err(|e| PkgError::Fetch(e.to_string()))?
+                    .dir,
+            )
         }
         LockedSource::Registry { .. } => {
             let version = locked.version.as_deref().ok_or_else(|| {
@@ -685,12 +806,80 @@ fn locked_dir(
             let release = reg
                 .release(name, &version)
                 .map_err(|e| PkgError::Registry(e.to_string()))?;
-            Ok(
-                cache::fetch_git(&release.git, &cache::GitRef::Rev(release.rev.clone()), options.offline)
-                    .map_err(|e| PkgError::Fetch(e.to_string()))?
-                    .dir,
+            Ok(cache::fetch_git(
+                &release.git,
+                &cache::GitRef::Rev(release.rev.clone()),
+                options.offline,
             )
+            .map_err(|e| PkgError::Fetch(e.to_string()))?
+            .dir)
         }
+    }
+}
+
+/// The directory a project's shelf dependency `name` (shelf library
+/// `shelf_name`) reads from, for the tools that read a project without
+/// installing it (a check, the language server, macro expansion): the
+/// snapshot the project's lock pins, as a run uses, else what the shelf
+/// holds now. None when neither is here.
+pub fn shelf_dependency_dir(root: &Path, name: &str, shelf_name: &str) -> Option<PathBuf> {
+    let shelf = shelf::Shelf::load().ok()?;
+    let locked_rev = Lockfile::load(root).ok().and_then(|l| {
+        l.package.get(name).and_then(|p| match &p.source {
+            LockedSource::Shelf {
+                shelf,
+                rev: Some(rev),
+            } if shelf == shelf_name => Some(rev.clone()),
+            _ => None,
+        })
+    });
+    match locked_rev {
+        Some(rev) => shelf.pinned_copy(shelf_name, &rev).ok().flatten(),
+        None => shelf.resolve(shelf_name).cloned(),
+    }
+}
+
+/// The snapshot of shelf library `name` at commit `wanted`, which a lock
+/// pins: the shelf's pin when it is that commit, else `pins/<name>-<rev>`,
+/// else one made again from the library's repository. Neither there nor
+/// makeable is an error that names the library, both commits and the
+/// commands that settle it.
+fn pinned_shelf_dir(shelf: &shelf::Shelf, name: &str, wanted: &str) -> Result<PathBuf, PkgError> {
+    if !shelf::Shelf::is_pin(name, wanted) {
+        return Err(PkgError::Lock(format!(
+            "the lock pins shelf library {:?} at {:?}, which is not a commit id \
+             (run `otc install` to pin it again)",
+            name, wanted
+        )));
+    }
+    let short = |r: &str| r[..r.len().min(12)].to_string();
+    let has = match shelf.rev_of(name) {
+        Some(have) => format!("the shelf has it at {}", short(have)),
+        None if shelf.resolve(name).is_some() => {
+            "the shelf has it following its directory".to_string()
+        }
+        None => "the shelf does not hold it".to_string(),
+    };
+    match shelf.pinned_copy(name, wanted) {
+        Ok(Some(dir)) => Ok(dir),
+        Ok(None) => Err(PkgError::Resolve(format!(
+            "the lock pins shelf library '{name}' at {wanted_s}, which this machine does not hold \
+             ({pin} is not there, and the shelf knows no repository to make it from); {has}. \
+             Run `otc install` to move the lock to the shelf's pin, \
+             or shelve that commit: `otc lib add <path> --rev {wanted_s}`",
+            wanted_s = short(wanted),
+            pin = shelf::Shelf::pin_dir(name, wanted).display(),
+        ))),
+        Err(e) => Err(PkgError::Resolve(format!(
+            "the lock pins shelf library '{name}' at {wanted_s}, which this machine does not hold, \
+             and it could not be made from {repo}: {e}; {has}. \
+             Run `otc install` to move the lock to the shelf's pin",
+            wanted_s = short(wanted),
+            repo = shelf
+                .repo_of(name)
+                .map(|r| r.display().to_string())
+                .unwrap_or_default(),
+        ))),
     }
 }
 

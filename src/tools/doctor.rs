@@ -10,13 +10,25 @@ struct Finding {
     ok: bool,
     /// Said, marked `!`, but not a finding: the exit code ignores it.
     warn: bool,
+    /// Information, marked `·`: neither a finding nor a warning.
+    note: bool,
     line: String,
+}
+
+fn note(line: impl Into<String>) -> Finding {
+    Finding {
+        ok: true,
+        warn: false,
+        note: true,
+        line: line.into(),
+    }
 }
 
 fn ok(line: impl Into<String>) -> Finding {
     Finding {
         ok: true,
         warn: false,
+        note: false,
         line: line.into(),
     }
 }
@@ -25,6 +37,7 @@ fn warn(line: impl Into<String>) -> Finding {
     Finding {
         ok: true,
         warn: true,
+        note: false,
         line: line.into(),
     }
 }
@@ -33,6 +46,7 @@ fn bad(line: impl Into<String>) -> Finding {
     Finding {
         ok: false,
         warn: false,
+        note: false,
         line: line.into(),
     }
 }
@@ -46,7 +60,9 @@ pub fn run(path: &Path) -> i32 {
     let findings = audit(&root);
     let problems = findings.iter().filter(|f| !f.ok).count();
     for f in &findings {
-        let mark = if f.warn {
+        let mark = if f.note {
+            "·"
+        } else if f.warn {
             "!"
         } else if f.ok {
             "✓"
@@ -197,6 +213,11 @@ fn audit(root: &Path) -> Vec<Finding> {
                 }
             }
         }
+    }
+
+    // ── a lock behind the shelf: what runs is the lock's commit ──────
+    for line in crate::pkg::lock_behind_shelf(root) {
+        out.push(note(line));
     }
 
     // ── the pin a consumer keeps on olang itself ─────────────────────

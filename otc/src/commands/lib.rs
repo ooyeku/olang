@@ -179,6 +179,7 @@ fn remove(name: &str) -> anyhow::Result<()> {
     if shelf.revs.remove(name).is_some() && shelf.owns(&dir) {
         let _ = std::fs::remove_dir_all(&dir);
     }
+    shelf.repos.remove(name);
     shelf.save().map_err(|e| anyhow::anyhow!("{}", e))?;
     println!("Removed '{}' from your shelf", name);
     if olang::pkg::starter::get(name).is_some() {

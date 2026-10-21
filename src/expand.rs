@@ -675,8 +675,9 @@ fn collect_sites(
 /// The directory a package import resolves to, or None for a plain
 /// relative module. The nearest manifest (from `base_dir`, else the
 /// working directory) is consulted first: a `{ path = ... }` dependency
-/// points at its directory, a `{ shelf = ... }` one at the shelf entry it
-/// names. Failing that, the bare name is looked up on the shelf directly.
+/// points at its directory, a `{ shelf = ... }` one at the commit the
+/// project's lock pins it at (else the shelf entry it names). Failing
+/// that, the bare name is looked up on the shelf directly.
 pub(crate) fn package_dir(
     name: &str,
     base_dir: Option<&std::path::Path>,
@@ -693,9 +694,7 @@ pub(crate) fn package_dir(
         match dep {
             Dependency::Path { path } => return Some(root.join(path)),
             Dependency::Shelf { shelf } => {
-                return crate::pkg::shelf::Shelf::load()
-                    .ok()
-                    .and_then(|s| s.libraries.get(shelf).cloned());
+                return crate::pkg::shelf_dependency_dir(&root, name, shelf);
             }
             _ => {}
         }

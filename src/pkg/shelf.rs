@@ -43,6 +43,11 @@ pub struct Shelf {
     /// pointer at a checkout that moves; the rest follow their directory.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub revs: BTreeMap<String, String>,
+    /// Library name -> the repository directory a pinned library was
+    /// shelved from. A lock that pins another commit of it, whose
+    /// snapshot is gone from `pins/`, is recreated from here.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub repos: BTreeMap<String, PathBuf>,
 }
 
 impl Default for Shelf {
@@ -51,6 +56,7 @@ impl Default for Shelf {
             version: SHELF_VERSION,
             libraries: BTreeMap::new(),
             revs: BTreeMap::new(),
+            repos: BTreeMap::new(),
         }
     }
 }
@@ -152,6 +158,7 @@ impl Shelf {
         self.libraries.insert(name.clone(), dir);
         // Re-registering a name by directory unpins it.
         self.revs.remove(&name);
+        self.repos.remove(&name);
         Ok(name)
     }
 
@@ -170,10 +177,42 @@ impl Shelf {
         let repo = std::fs::canonicalize(path).map_err(|e| {
             ShelfError::NotALibrary(format!("'{}' is not reachable: {}", path.display(), e))
         })?;
+        let (staging, sha) = Self::snapshot(&repo, rev)?;
+        // Named like any other library: from the snapshot's own manifest.
+        let name = match self.add(&staging, explicit_name) {
+            Ok(name) => name,
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(&staging);
+                return Err(e);
+            }
+        };
+        let name = if explicit_name.is_none() && name.starts_with(".staging-") {
+            repo.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or(name)
+        } else {
+            name
+        };
+        let pinned = Self::pin_dir(&name, &sha);
+        let _ = std::fs::remove_dir_all(&pinned);
+        std::fs::rename(&staging, &pinned).map_err(|e| ShelfError::Io(e.to_string()))?;
+        self.libraries.retain(|_, dir| dir != &staging);
+        let pinned = std::fs::canonicalize(&pinned).unwrap_or(pinned);
+        self.libraries.insert(name.clone(), pinned);
+        self.revs.insert(name.clone(), sha.clone());
+        self.repos.insert(name.clone(), repo);
+        Ok((name, sha))
+    }
+
+    /// The tree of the library at `repo` as it stands at commit `rev`,
+    /// unpacked into a staging directory under `pins/`: the staging
+    /// directory and the full commit id. The library may sit below the
+    /// repository's root; its own subtree is what is taken.
+    fn snapshot(repo: &Path, rev: &str) -> Result<(PathBuf, String), ShelfError> {
         let git = |args: &[&str]| -> Result<std::process::Output, ShelfError> {
             std::process::Command::new("git")
                 .arg("-C")
-                .arg(&repo)
+                .arg(repo)
                 .args(args)
                 .output()
                 .map_err(|e| ShelfError::Io(format!("git: {}", e)))
@@ -188,8 +227,6 @@ impl Shelf {
             )));
         }
         let sha = String::from_utf8_lossy(&resolved.stdout).trim().to_string();
-        // The library may sit below the repository's root: archive the
-        // subtree it occupies.
         let prefix = git(&["rev-parse", "--show-prefix"])?;
         let prefix = String::from_utf8_lossy(&prefix.stdout).trim().to_string();
         let tree = if prefix.is_empty() {
@@ -206,7 +243,7 @@ impl Shelf {
         let archive = std::process::Command::new("git")
             .arg("-C")
             .arg(if top.is_empty() {
-                repo.as_path()
+                repo
             } else {
                 Path::new(&top)
             })
@@ -250,32 +287,87 @@ impl Shelf {
                 "tar could not unpack the archive".to_string(),
             ));
         }
-        // Named like any other library: from the snapshot's own manifest.
-        let name = match self.add(&staging, explicit_name) {
-            Ok(name) => name,
-            Err(e) => {
-                let _ = std::fs::remove_dir_all(&staging);
-                return Err(e);
+        Ok((staging, sha))
+    }
+
+    /// Where the snapshot of library `name` at commit `rev` lives:
+    /// `pins/<name>-<first 12 hex digits>` under the shelf's directory.
+    pub fn pin_dir(name: &str, rev: &str) -> PathBuf {
+        let short: String = rev.chars().take(12).collect();
+        Self::home()
+            .join("pins")
+            .join(format!("{}-{}", name, short))
+    }
+
+    /// Whether a lock's `rev` and shelf name can name a snapshot under
+    /// `pins/`: a commit id (7 to 64 hex digits) and a plain name, never
+    /// a path. A lock is committed, and a clone's lock is not trusted to
+    /// point outside the shelf.
+    pub fn is_pin(name: &str, rev: &str) -> bool {
+        (7..=64).contains(&rev.len())
+            && rev.bytes().all(|b| b.is_ascii_hexdigit())
+            && !name.is_empty()
+            && !name.starts_with('.')
+            && !name.contains(['/', '\\'])
+    }
+
+    /// The repository a library can be snapshotted from again: the one
+    /// it was shelved from at a commit, else the directory it follows.
+    pub fn repo_of(&self, name: &str) -> Option<&PathBuf> {
+        self.repos.get(name).or_else(|| {
+            if self.revs.contains_key(name) {
+                None
+            } else {
+                self.libraries.get(name)
             }
+        })
+    }
+
+    /// The snapshot of library `name` at commit `rev`, whatever commit
+    /// the shelf now holds the name at. The shelf keeps every snapshot it
+    /// made under `pins/`; one that is gone is made again from the
+    /// library's repository when the shelf knows it. The shelf's own
+    /// registration is left as it is. `Ok(None)`: no snapshot, and no
+    /// repository to make one from.
+    pub fn pinned_copy(&self, name: &str, rev: &str) -> Result<Option<PathBuf>, ShelfError> {
+        if !Self::is_pin(name, rev) {
+            return Err(ShelfError::NotALibrary(format!(
+                "{:?} at {:?} does not name a commit of a shelf library",
+                name, rev
+            )));
+        }
+        if self.rev_of(name) == Some(rev)
+            && let Some(dir) = self.resolve(name)
+            && dir.exists()
+        {
+            return Ok(Some(dir.clone()));
+        }
+        let pinned = Self::pin_dir(name, rev);
+        if pinned.is_dir() {
+            return Ok(Some(std::fs::canonicalize(&pinned).unwrap_or(pinned)));
+        }
+        let Some(repo) = self.repo_of(name) else {
+            return Ok(None);
         };
-        let name = if explicit_name.is_none() && name.starts_with(".staging-") {
-            repo.file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or(name)
+        if !repo.exists() {
+            return Ok(None);
+        }
+        let (staging, sha) = Self::snapshot(repo, rev)?;
+        if !sha.starts_with(rev) {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(ShelfError::NotALibrary(format!(
+                "'{}' names commit {} as {}, not the commit the lock pins",
+                repo.display(),
+                &rev[..rev.len().min(12)],
+                sha
+            )));
+        }
+        if !pinned.is_dir() {
+            std::fs::rename(&staging, &pinned).map_err(|e| ShelfError::Io(e.to_string()))?;
         } else {
-            name
-        };
-        let pinned =
-            Self::home()
-                .join("pins")
-                .join(format!("{}-{}", name, &sha[..sha.len().min(12)]));
-        let _ = std::fs::remove_dir_all(&pinned);
-        std::fs::rename(&staging, &pinned).map_err(|e| ShelfError::Io(e.to_string()))?;
-        self.libraries.retain(|_, dir| dir != &staging);
-        let pinned = std::fs::canonicalize(&pinned).unwrap_or(pinned);
-        self.libraries.insert(name.clone(), pinned);
-        self.revs.insert(name.clone(), sha.clone());
-        Ok((name, sha))
+            let _ = std::fs::remove_dir_all(&staging);
+        }
+        Ok(Some(std::fs::canonicalize(&pinned).unwrap_or(pinned)))
     }
 
     /// The commit a shelf name is pinned at, if it is.

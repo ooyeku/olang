@@ -1,7 +1,7 @@
 //! `otc lib add <path> --rev <commit>`: a shelved library pinned at a
 //! commit is a snapshot the shelf owns, the commit travels in
 //! `olang.lock`, and a shelf that holds the library at another commit —
-//! or following its checkout — does not satisfy that lock.
+//! or following its checkout — does not move what that lock runs.
 //!
 //! The first test runs a program, so it sets the shelf's location in
 //! this process's environment; the second only drives `otc`, which is
@@ -114,15 +114,11 @@ fn a_shelved_library_pinned_at_a_commit_travels_in_the_lock() {
     let lock = std::fs::read_to_string(app.join("olang.lock")).unwrap();
     assert!(lock.contains(&format!("rev = \"{first}\"")), "{lock}");
 
-    // The shelf drifts to the checkout: the lock is not satisfied, and the
-    // program is told which commit to shelve instead of running "two".
+    // The shelf drifts to the checkout: the lock still pins the first
+    // commit, and its snapshot is what runs, not the checkout's "two".
     let (ok, _) = otc(&root, &shelf, &["lib", "add", &lib_path]);
     assert!(ok);
-    let refused = run_program(&app).unwrap_err();
-    assert!(
-        refused.contains("pins shelf library 'greeter'") && refused.contains(&first[..12]),
-        "{refused}"
-    );
+    assert_eq!(run_program(&app).as_deref(), Ok("\"one\""));
 
     // Shelved at that commit again, it runs; an unknown commit is refused.
     let (ok, _) = otc(&root, &shelf, &["lib", "add", &lib_path, "--rev", &first]);
