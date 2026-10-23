@@ -978,10 +978,16 @@ match runtime.load_module("/work/plugins/tier-map/plugin.ol", grant) {
 - **Afresh, and safely replaced.** A load forgets the modules cached from
   that folder first, so an edited file is read again; a load that fails
   keeps the grant before it, and the module value the host already holds
-  still runs. `runtime.unload_module` forgets the grant;
-  `runtime.module_grant` says it; `runtime.module_permits(path, builtin,
+  still runs. `runtime.module_grant` says the grant; `runtime.module_permits(path, builtin,
   args)` asks the same gate before the host performs an effect on the
   module's behalf (a process it asked for).
+- **Unloaded is refused, not the host's.** `runtime.unload_module`
+  leaves a tombstone for the folder: code defined under it that still
+  runs — a closure the host kept, the module's functions, a thread it
+  started, a `par_map` over its closure — is refused every capability
+  ("module <dir> was unloaded"), on every tier, rather than running with
+  the host's authority. Its pure computation still answers. A later
+  `load_module` of the folder replaces the tombstone with the new grant.
 - **A time budget per call.** `runtime.call_budget(f, args, ms)` stops
   the call past `ms` — an interrupt aimed at the calling thread only, so
   the program's other threads run on — catches its failure, and answers

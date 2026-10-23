@@ -560,7 +560,7 @@ fn host_load_module(
         Err(e) if crate::interpreter::Interpreter::is_control_signal(&e) => Err(e),
         Err(e) => {
             // The previous version's grant stands, as its code does.
-            crate::caps::unregister_module(&dir);
+            crate::caps::remove_module(&dir);
             if let Some(old) = before {
                 crate::caps::register_module(old);
             }

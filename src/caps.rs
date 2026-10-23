@@ -396,6 +396,10 @@ pub struct ModuleGrant {
     pub fs_roots: Option<Vec<PathBuf>>,
     /// The programs `proc` may run; None: any.
     pub proc_allow: Option<Vec<String>>,
+    /// The module was unloaded (`runtime.unload_module`): a tombstone. Its
+    /// code may still run — a closure the host holds, a thread it started
+    /// — and is refused every capability, never the host's authority.
+    pub unloaded: bool,
 }
 
 static MODULES_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -420,13 +424,14 @@ pub fn module_for(path: &std::path::Path) -> Option<ModuleGrant> {
     ms.iter().find(|g| path.starts_with(&g.dir)).cloned()
 }
 
-/// The grant registered for `dir` exactly, if any.
+/// The grant registered for `dir` exactly, if any (an unloaded module's
+/// tombstone is none).
 pub fn module_at(dir: &std::path::Path) -> Option<ModuleGrant> {
     modules()
         .read()
         .unwrap()
         .iter()
-        .find(|g| g.dir == dir)
+        .find(|g| g.dir == dir && !g.unloaded)
         .cloned()
 }
 
@@ -445,8 +450,26 @@ pub fn register_module(grant: ModuleGrant) -> Option<ModuleGrant> {
     old
 }
 
-/// Forget the grant of the module at `dir`; whether there was one.
+/// Unload the module at `dir`: its grant becomes a tombstone, so code
+/// defined under the folder that still runs (a closure the host kept, a
+/// thread the module started) is refused every capability rather than
+/// falling to the host's grant. A later `register_module` of the folder
+/// replaces it. Whether a loaded module was there.
 pub fn unregister_module(dir: &std::path::Path) -> bool {
+    let mut ms = modules().write().unwrap();
+    let Some(g) = ms.iter_mut().find(|g| g.dir == dir && !g.unloaded) else {
+        return false;
+    };
+    g.caps = Caps::none();
+    g.fs_roots = Some(Vec::new());
+    g.proc_allow = Some(Vec::new());
+    g.unloaded = true;
+    true
+}
+
+/// Forget the grant at `dir` altogether (a load that failed puts the
+/// previous one back); whether there was one.
+pub fn remove_module(dir: &std::path::Path) -> bool {
     let mut ms = modules().write().unwrap();
     let before = ms.len();
     ms.retain(|g| g.dir != dir);
@@ -637,12 +660,24 @@ pub fn pinned_program(prog: &str) -> Option<PathBuf> {
 /// `heads` the programs its first argument names when that is an argv
 /// (one) or a pipeline's stages (one each; None for one not a string).
 /// None when allowed; otherwise the denial's message.
+/// What a call from an unloaded module's code is refused with.
+pub fn unloaded_denial(grant: &ModuleGrant, full_name: &str) -> String {
+    format!(
+        "module {} was unloaded: {} is refused to its code (runtime.unload_module)",
+        grant.dir.display(),
+        full_name
+    )
+}
+
 pub fn scope_denial(
     grant: &ModuleGrant,
     full_name: &str,
     strings: &[Option<&str>],
     heads: &[Option<&str>],
 ) -> Option<String> {
+    if grant.unloaded && (host_only(full_name) || required(full_name).is_some()) {
+        return Some(unloaded_denial(grant, full_name));
+    }
     if host_only(full_name) {
         return Some(format!(
             "capability 'host' denied: {} is the host's, and module '{}' was loaded by it (runtime.load_module)",
@@ -819,6 +854,7 @@ pub fn grant_from_value(
         },
         fs_roots,
         proc_allow,
+        unloaded: false,
     })
 }
 

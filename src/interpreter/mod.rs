@@ -6431,6 +6431,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 Some(t) => g.caps.intersect(t.app),
                 None => g.caps,
             };
+            if g.unloaded {
+                return Some((caps, Some(format!("unloaded:{}", g.dir.display()))));
+            }
             return Some((caps, Some(format!("module:{}", g.name))));
         }
         let table = self.caps.clone()?;
@@ -6595,6 +6598,11 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         let (caps, package) = self.current_caps()?;
         let denied = crate::caps::check(&caps, full_name)?;
         Some(match package {
+            Some(pkg) if pkg.starts_with("unloaded:") => format!(
+                "module {} was unloaded: {} is refused to its code (runtime.unload_module)",
+                &pkg["unloaded:".len()..],
+                full_name
+            ),
             Some(pkg) if pkg.starts_with("module:") => format!(
                 "capability '{}' denied: {} requires it, and module '{}' is granted {} (runtime.load_module)",
                 denied,
@@ -6654,6 +6662,11 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             return None;
         }
         Some(match package {
+            Some(pkg) if pkg.starts_with("unloaded:") => format!(
+                "module {} was unloaded: {} is refused to its code (runtime.unload_module)",
+                &pkg["unloaded:".len()..],
+                full_name
+            ),
             Some(pkg) => format!(
                 "capability 'fs' denied: {} reaches the filesystem (needs fs={}), and dependency '{}' is granted {} (olang.toml [capabilities.dependencies.{}])",
                 full_name,
