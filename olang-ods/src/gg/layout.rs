@@ -1261,7 +1261,7 @@ fn alt_text(b: &Built, title: &str) -> String {
         "qq" => "A Q-Q plot",
         _ => "A plot",
     };
-    let mut s = format!("{}", kind);
+    let mut s = kind.to_string();
     if !title.is_empty() {
         s.push_str(&format!(": {}", title));
     }

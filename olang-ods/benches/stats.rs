@@ -206,7 +206,7 @@ fn main() {
         .map(|t| {
             1000.0
                 + 0.001 * t as f64
-                + 80.0 * (((t % 24) as f64) / 24.0 * 6.283).sin()
+                + 80.0 * (((t % 24) as f64) / 24.0 * std::f64::consts::TAU).sin()
                 + 10.0 * walk[t]
         })
         .collect();

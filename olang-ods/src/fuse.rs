@@ -3296,8 +3296,8 @@ impl Fold {
                         if self.dense {
                             let (ch, rem) = x.as_chunks::<8>();
                             for c in ch {
-                                for k in 0..8 {
-                                    self.acc8[k] += c[k];
+                                for (acc, v) in self.acc8.iter_mut().zip(c) {
+                                    *acc += v;
                                 }
                             }
                             self.rem += rem.iter().sum::<f64>();

@@ -631,7 +631,7 @@ pub fn prop_ztest(
         )));
     }
     for (c, n) in count.iter().zip(nobs) {
-        if !(*n > 0.0) || !(*c >= 0.0) || c > n {
+        if n.is_nan() || *n <= 0.0 || c.is_nan() || *c < 0.0 || c > n {
             return Err(bad(format!(
                 "each count lies in [0, nobs] and each nobs is positive; got {} of {}",
                 c, n

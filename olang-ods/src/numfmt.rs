@@ -434,6 +434,7 @@ fn general(x: f64, p: Option<usize>, alternate: bool) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::approx_constant)] // 3.14159 here is a number to format, not π
 mod tests {
     use super::*;
 

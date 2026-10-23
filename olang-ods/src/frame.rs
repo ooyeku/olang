@@ -2473,12 +2473,12 @@ pub(crate) fn aggregate_by_rows(
         let (value_ids, n_values) = group_ids_single(col);
         let mut mark = vec![u32::MAX; n_values];
         let mut counts = vec![0i64; n_groups];
-        for g in 0..n_groups {
+        for (g, count) in counts.iter_mut().enumerate() {
             for &r in rows_of(g) {
                 let v = value_ids[r as usize] as usize;
                 if mark[v] != g as u32 {
                     mark[v] = g as u32;
-                    counts[g] += 1;
+                    *count += 1;
                 }
             }
         }

@@ -172,7 +172,7 @@ pub fn autocov_par(x: &[f64], nlags: usize, par: bool) -> Vec<f64> {
     // alone, never on the thread count, so every pool gives the same bits.
     let lags = nlags.min(n.saturating_sub(1));
     let log2n = (usize::BITS - n.leading_zeros()) as usize;
-    if lags + 1 <= 8 * log2n {
+    if lags < 8 * log2n {
         return autocov_direct(x, mean, lags, par);
     }
     let m = (2 * n).next_power_of_two().max(4);

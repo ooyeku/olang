@@ -529,13 +529,13 @@ impl Series {
                         last = Some(vals[hi - 1]);
                         continue;
                     }
-                    for i in lo..hi {
-                        if (bits >> (i - lo)) & 1 == 1 {
-                            last = Some(vals[i]);
-                            out.push(vals[i]);
+                    for (j, &v) in vals[lo..hi].iter().enumerate() {
+                        if (bits >> j) & 1 == 1 {
+                            last = Some(v);
+                            out.push(v);
                         } else {
                             if last.is_some() {
-                                words[w] |= 1 << (i - lo);
+                                words[w] |= 1 << j;
                             }
                             out.push(last.unwrap_or_default());
                         }

@@ -839,15 +839,15 @@ fn loess_at(
     let k = deg + 1;
     let mut xtwx = vec![0.0; k * k];
     let mut ws = Vec::with_capacity(q);
-    for i in lo..lo + q {
-        let u = ((xs[i] - x0) / h).abs();
+    for &xi in &xs[lo..lo + q] {
+        let u = ((xi - x0) / h).abs();
         let w = if u < 1.0 {
             (1.0 - u * u * u).powi(3)
         } else {
             0.0
         };
         ws.push(w);
-        let d = (xs[i] - x0) / h;
+        let d = (xi - x0) / h;
         let mut pa = 1.0;
         for a in 0..k {
             let mut pb = 1.0;
@@ -866,8 +866,8 @@ fn loess_at(
         let d = (xs[i] - x0) / h;
         let mut li = 0.0;
         let mut pb = 1.0;
-        for b in 0..k {
-            li += inv[b] * pb;
+        for &ib in &inv[..k] {
+            li += ib * pb;
             pb *= d;
         }
         li *= ws[j];
@@ -1049,7 +1049,15 @@ pub fn fit_gam(xs: &[f64], ys: &[f64], k: usize, grid: &[f64]) -> super::Result<
     // σ² profiled out, −2 log Lr = (n − 2) log(rss + λ βᵀPβ) + log|BᵀB + λP|
     // − (k − 2) log λ (GCV undersmooths a few points into a wiggle)
     let rank = (nb - 2) as f64;
-    let mut best: Option<(f64, Vec<f64>, Vec<f64>, f64, f64)> = None;
+    // the best λ's fit: its REML score, β, (BᵀB + λP)⁻¹, edf and rss
+    struct Best {
+        reml: f64,
+        beta: Vec<f64>,
+        inv: Vec<f64>,
+        edf: f64,
+        rss: f64,
+    }
+    let mut best: Option<Best> = None;
     for e in -16..=16 {
         let lambda = scale * 10f64.powf(e as f64 * 0.5);
         let a: Vec<f64> = btb.iter().zip(&pen).map(|(b, p)| b + lambda * p).collect();
@@ -1084,11 +1092,23 @@ pub fn fit_gam(xs: &[f64], ys: &[f64], k: usize, grid: &[f64]) -> super::Result<
         };
         let reml =
             (n as f64 - 2.0) * (rss + lambda * pen_beta).max(1e-300).ln() + ld - rank * lambda.ln();
-        if best.as_ref().is_none_or(|b| reml < b.0) {
-            best = Some((reml, beta, inv, edf, rss));
+        if best.as_ref().is_none_or(|b| reml < b.reml) {
+            best = Some(Best {
+                reml,
+                beta,
+                inv,
+                edf,
+                rss,
+            });
         }
     }
-    let (_, beta, inv, edf, rss) =
+    let Best {
+        beta,
+        inv,
+        edf,
+        rss,
+        ..
+    } =
         best.ok_or_else(|| crate::OdsError::InvalidArgument("gg: smooth: gam did not fit".into()))?;
     let df = (n as f64 - edf).max(1.0);
     let s2 = rss / df;
@@ -1505,16 +1525,12 @@ mod tests {
         let grid = linspace(0.5, 9.5, 10);
         let l = fit_loess(&x, &y, 0.3, 2, &grid).unwrap();
         let g = fit_gam(&x, &y, 10, &grid).unwrap();
-        for i in 0..grid.len() {
+        for (i, &gx) in grid.iter().enumerate() {
+            assert!((l.y[i] - gx.sin()).abs() < 0.08, "loess at {}", gx);
             assert!(
-                (l.y[i] - grid[i].sin()).abs() < 0.08,
-                "loess at {}",
-                grid[i]
-            );
-            assert!(
-                (g.y[i] - grid[i].sin()).abs() < 0.08,
+                (g.y[i] - gx.sin()).abs() < 0.08,
                 "gam at {}: {}",
-                grid[i],
+                gx,
                 g.y[i]
             );
             assert!(l.se[i] > 0.0 && l.se[i] < 0.1);

@@ -72,6 +72,8 @@ impl G<'_> {
     fn param(&self, k: &str) -> Option<f64> {
         p_num(&self.l.params, k)
     }
+    // A rect's four edges and its paint, as Item::Rect spells them.
+    #[allow(clippy::too_many_arguments)]
     fn rect(
         &self,
         i: usize,
@@ -115,6 +117,8 @@ impl G<'_> {
             },
         })
     }
+    // A segment's two ends and its stroke, as Item::Line spells them.
+    #[allow(clippy::too_many_arguments)]
     fn line(
         &self,
         x0: f64,
@@ -563,7 +567,7 @@ fn boxplot(g: &G, rows: &[usize], items: &mut Vec<Item>) {
             let ys: Vec<f32> = o[i].iter().map(|v| g.pc.map(x, *v).1 as f32).collect();
             let tipcol = o[i]
                 .iter()
-                .map(|v| super::build::axis_value(if g.pc.flip { &g.b.sy } else { &g.b.sy }, *v))
+                .map(|v| super::build::axis_value(&g.b.sy, *v))
                 .collect();
             items.push(Item::Points(Points {
                 xs,

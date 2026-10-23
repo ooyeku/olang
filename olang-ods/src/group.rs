@@ -365,7 +365,7 @@ pub fn crosstab(
     let (nr, nc) = (rows.len(), cols.len());
     let cells = nr
         .checked_mul(nc)
-        .filter(|&c| c <= u32::MAX as usize - 1)
+        .filter(|&c| c < u32::MAX as usize)
         .ok_or_else(|| OdsError::InvalidArgument("crosstab: too many cells".to_string()))?;
     // Each row's cell; a row with a null on either side goes to a spare
     // cell past the table, which is dropped.
@@ -401,7 +401,7 @@ pub fn crosstab(
         .map(|j| (0..nr).filter_map(|i| cell_f64(i * nc + j)).sum())
         .collect();
     let total: f64 = row_total.iter().sum();
-    for j in 0..nc {
+    for (j, &col_tot) in col_total.iter().enumerate() {
         let name = scalar_name(cols.scalar_at(j), fmt_f64);
         if name == row_name {
             return Err(OdsError::InvalidArgument(format!(
@@ -427,7 +427,7 @@ pub fn crosstab(
                         let d = match normalize {
                             Normalize::All => total,
                             Normalize::Rows => row_total[i],
-                            _ => col_total[j],
+                            _ => col_tot,
                         };
                         if d == 0.0 { 0.0 } else { x / d }
                     })

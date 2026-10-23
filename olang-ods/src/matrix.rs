@@ -1080,8 +1080,11 @@ pub enum CorrMethod {
     Spearman,
 }
 
+/// A column's floats and, when some are not, which rows are usable.
+pub type FloatColumn = (Arc<Vec<f64>>, Option<Vec<bool>>);
+
 /// A numeric column as Floats and which rows are usable (valid, not NaN).
-pub fn float_column(s: &Series, name: &str) -> Result<(Arc<Vec<f64>>, Option<Vec<bool>>)> {
+pub fn float_column(s: &Series, name: &str) -> Result<FloatColumn> {
     let (vals, validity) = float_values(s, name)?;
     let nan = vals.iter().any(|v| v.is_nan());
     let mask = if validity.is_some() || nan {
@@ -1191,12 +1194,7 @@ fn pair_stat(
 /// row-major `k × k`. Null-free columns take one pass (centred columns'
 /// Gram matrix); a column with nulls (or NaN) pairs over the rows both
 /// have, as pandas does.
-pub fn corr_cov(
-    cols: &[(Arc<Vec<f64>>, Option<Vec<bool>>)],
-    method: CorrMethod,
-    corr: bool,
-    par: bool,
-) -> Vec<f64> {
+pub fn corr_cov(cols: &[FloatColumn], method: CorrMethod, corr: bool, par: bool) -> Vec<f64> {
     let k = cols.len();
     let n = cols.first().map(|c| c.0.len()).unwrap_or(0);
     let mut out = vec![f64::NAN; k * k];
@@ -1204,7 +1202,7 @@ pub fn corr_cov(
         if n < 2 {
             return out;
         }
-        let prep = |c: &(Arc<Vec<f64>>, Option<Vec<bool>>)| -> Arc<Vec<f64>> {
+        let prep = |c: &FloatColumn| -> Arc<Vec<f64>> {
             let v = if method == CorrMethod::Spearman {
                 ranks(&c.0)
             } else {
@@ -1348,11 +1346,11 @@ mod tests {
             assert!((x - y).abs() < 1e-9, "{x} vs {y}");
         }
         // A v = λ v, and the vectors are orthonormal
-        for j in 0..n {
+        for (j, &val) in vals.iter().enumerate().take(n) {
             let col = vecs.column(j);
             let av = m.matvec(&col, false).unwrap();
             for i in 0..n {
-                assert!((av[i] - vals[j] * col[i]).abs() < 1e-9);
+                assert!((av[i] - val * col[i]).abs() < 1e-9);
             }
         }
         let vtv = vecs.gram(false);

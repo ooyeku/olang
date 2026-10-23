@@ -112,9 +112,9 @@ fn dodge(f: &mut LFrame, p: &Params) -> super::Result<()> {
     let xmax = f.num(Aes::Xmax).cloned();
     // the groups at each (panel, x)
     let mut at: BTreeMap<(u32, i64), Vec<u32>> = BTreeMap::new();
-    for i in 0..n {
-        if x[i].is_finite() {
-            let e = at.entry((f.panel[i], key(x[i]))).or_default();
+    for (i, &xi) in x.iter().enumerate().take(n) {
+        if xi.is_finite() {
+            let e = at.entry((f.panel[i], key(xi))).or_default();
             if !e.contains(&f.group[i]) {
                 e.push(f.group[i]);
             }

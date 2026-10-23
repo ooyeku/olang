@@ -298,11 +298,11 @@ fn multi_key_order_is_lexicographic_and_stable() {
             (0..n)
                 .map(|_| {
                     let x = rng.next();
-                    (x % 20 != 0).then(|| format!("k{}", x % 13))
+                    (!x.is_multiple_of(20)).then(|| format!("k{}", x % 13))
                 })
                 .collect(),
         );
-        let c = Series::from_bool((0..n).map(|_| rng.next() % 2 == 0).collect());
+        let c = Series::from_bool((0..n).map(|_| rng.next().is_multiple_of(2)).collect());
         for dirs in [
             [false, false, false],
             [true, false, true],

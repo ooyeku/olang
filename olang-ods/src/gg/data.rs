@@ -177,12 +177,11 @@ pub fn fmt_value(v: f64) -> String {
     let mag = a.log10().floor() as i32;
     let d = (5 - mag).clamp(0, 10) as usize;
     let s = format!("{:.*}", d, v);
-    let s = if s.contains('.') {
+    if s.contains('.') {
         s.trim_end_matches('0').trim_end_matches('.').to_string()
     } else {
         s
-    };
-    s
+    }
 }
 
 /// A layer's frame as the pipeline computes it.
@@ -391,6 +390,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)] // a number to format, not π
     fn values_format_compactly() {
         assert_eq!(fmt_value(3.0), "3");
         assert_eq!(fmt_value(3.14159265), "3.14159");

@@ -463,7 +463,7 @@ pub fn power_t(
     } else {
         (n - 1.0, n)
     };
-    if !(df > 0.0) {
+    if df.is_nan() || df <= 0.0 {
         return Err(bad(format!("power_t: n too small ({})", n)));
     }
     let nc = effect * nobs.sqrt();

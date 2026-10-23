@@ -400,7 +400,7 @@ fn group3(int_part: &str) -> String {
     let digits = int_part.trim_start_matches('-');
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -721,10 +721,10 @@ impl PosScale {
         if let Some(f) = p_str(p, "date_labels") {
             self.labels = Labels::Date(f.to_string());
         }
-        if let Some(Param::Nums(v)) = p.get("expand") {
-            if v.len() == 2 {
-                self.expand = Some((v[0], v[1]));
-            }
+        if let Some(Param::Nums(v)) = p.get("expand")
+            && v.len() == 2
+        {
+            self.expand = Some((v[0], v[1]));
         }
         if let Some(s) = p_str(p, "prefix") {
             self.prefix = s.to_string();

@@ -207,6 +207,8 @@ fn resample_into(rng: &mut Pcg64, xs: &[f64], buf: &mut Vec<f64>) {
 /// `n` resamples of `a` (and of `b`, resampled on its own, when given),
 /// the statistic of each, and the percentile interval at `level`.
 /// Resample `i` draws from stream `i + 1` of `seed`.
+// The bootstrap's knobs are its arguments, as ods.bootstrap's options are.
+#[allow(clippy::too_many_arguments)]
 pub fn bootstrap(
     a: &Series,
     b: Option<&Series>,

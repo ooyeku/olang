@@ -242,7 +242,7 @@ pub fn pt(t: f64, df: f64) -> f64 {
 
 /// Student t quantile: bisection on the cdf, started from the normal's.
 pub fn qt(p: f64, df: f64) -> f64 {
-    if !(df > 0.0) || !df.is_finite() || df > 1e6 {
+    if !df.is_finite() || df <= 0.0 || df > 1e6 {
         return qnorm(p);
     }
     if p <= 0.0 {

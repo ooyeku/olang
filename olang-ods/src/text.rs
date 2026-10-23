@@ -547,6 +547,39 @@ pub fn iso_kind(s: &Series) -> Option<DType> {
     any.then_some(if time { DType::Datetime } else { DType::Date })
 }
 
+/// A number column as text by a format spec (`crate::numfmt`): one pass,
+/// one text buffer. A null stays null.
+pub fn format_numbers(s: &Series, spec: &crate::numfmt::Spec) -> Result<Series> {
+    let validity = s.validity();
+    let valid = |i: usize| validity.is_none_or(|v| v.get(i));
+    let (col, ok) = match s {
+        Series::F64 { values, .. } => build(s.len(), |i, out| {
+            if !valid(i) {
+                return false;
+            }
+            spec.format_into(values[i], out);
+            true
+        }),
+        Series::I64 { values, .. } => build(s.len(), |i, out| {
+            if !valid(i) {
+                return false;
+            }
+            spec.format_i64(values[i], out);
+            true
+        }),
+        other => {
+            return Err(OdsError::TypeMismatch(format!(
+                "format: needs a number column, got {}",
+                other.dtype()
+            )));
+        }
+    };
+    Ok(Series::Str {
+        col,
+        validity: validity_from(&ok),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -592,37 +625,4 @@ mod tests {
         assert_eq!(d.scalar_at(0), Scalar::Date(19783));
         assert_eq!(d.scalar_at(1), Scalar::Null);
     }
-}
-
-/// A number column as text by a format spec (`crate::numfmt`): one pass,
-/// one text buffer. A null stays null.
-pub fn format_numbers(s: &Series, spec: &crate::numfmt::Spec) -> Result<Series> {
-    let validity = s.validity();
-    let valid = |i: usize| validity.is_none_or(|v| v.get(i));
-    let (col, ok) = match s {
-        Series::F64 { values, .. } => build(s.len(), |i, out| {
-            if !valid(i) {
-                return false;
-            }
-            spec.format_into(values[i], out);
-            true
-        }),
-        Series::I64 { values, .. } => build(s.len(), |i, out| {
-            if !valid(i) {
-                return false;
-            }
-            spec.format_i64(values[i], out);
-            true
-        }),
-        other => {
-            return Err(OdsError::TypeMismatch(format!(
-                "format: needs a number column, got {}",
-                other.dtype()
-            )));
-        }
-    };
-    Ok(Series::Str {
-        col,
-        validity: validity_from(&ok),
-    })
 }

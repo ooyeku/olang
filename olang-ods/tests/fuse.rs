@@ -594,11 +594,10 @@ impl Gen {
     }
 }
 
-fn columns(
-    rng: &mut Rng,
-    n: usize,
-    nulls: f64,
-) -> (Vec<Arc<Expr>>, Vec<Arc<Expr>>, Vec<Arc<Expr>>) {
+/// Columns of each kind: floats, ints, bools.
+type Columns = (Vec<Arc<Expr>>, Vec<Arc<Expr>>, Vec<Arc<Expr>>);
+
+fn columns(rng: &mut Rng, n: usize, nulls: f64) -> Columns {
     let mut f = Vec::new();
     let mut i = Vec::new();
     let mut b = Vec::new();
@@ -664,10 +663,10 @@ fn show(e: &Expr) -> String {
 fn smallest(e: &Arc<Expr>, n: usize, i: usize) -> String {
     if let Expr::Op(_, args) = e.as_ref() {
         for a in args {
-            if let (Ok(w), Ok(g)) = (reference(a, i), a.eval(n, false)) {
-                if !same(val(&g, i), w) {
-                    return smallest(a, n, i);
-                }
+            if let (Ok(w), Ok(g)) = (reference(a, i), a.eval(n, false))
+                && !same(val(&g, i), w)
+            {
+                return smallest(a, n, i);
             }
         }
         let kids: Vec<String> = args
