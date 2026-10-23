@@ -89,8 +89,12 @@ let null_svg = plot.hist(gaps, 30,
     #{ "title": "bootstrap distribution of the gap", "x_label": "mean difference" })
 let fit_svg = plot.scatter(x1, y,
     #{ "title": "y vs x1 (n=5,000)", "x_label": "x1", "y_label": "y" })
-unwrap(fs.write_file("bootstrap.svg", null_svg))
-unwrap(fs.write_file("fit.svg", fit_svg))
+// beside this file, wherever it is run from: an example writes only
+// into its own folder (a run from elsewhere left them in the caller's)
+let here = fs.dirname(os.args()[0])
+let out_dir = if here == "" => "." else => here
+unwrap(fs.write_file(fs.join([out_dir, "bootstrap.svg"]), null_svg))
+unwrap(fs.write_file(fs.join([out_dir, "fit.svg"]), fit_svg))
 let elapsed = time.monotonic_ms() - t_start
 println("wrote bootstrap.svg, fit.svg · total " + show(elapsed) + "ms")
 

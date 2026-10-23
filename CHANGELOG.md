@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`meta.highlight(src, lang)` and `meta.tokens(src, lang)`** for
+  Python, Rust, JavaScript (TypeScript), shell, TOML, JSON and Markdown
+  beside olang: the same `ol-KIND` classes, tokens that cover the text
+  exactly, in the browser runtime too. `md.render`'s `highlight: true`
+  colours each fence in its own language.
+- **`runtime.features(profile).needs`**: the functions of a profile's
+  modules that reach a power it lacks (`#{ "ods.open_csv": "fs",
+  "gg.save": "fs", "spawn": "threads", … }`), so a host can tell a block
+  that names `ods` will still not run in the browser.
+- **`olang notebook export --paper transparent`** draws a chart's twins
+  and text on no paper, and a chart's outputs carry `svg.paper` (each
+  appearance's paper colour) either way, so a page lays a chart on its
+  own background without cutting it out.
 - **`md`, Markdown in the standard library.** `md.render(src, opts)`
   answers `#{ html, headings, title }` for CommonMark with GitHub's
   tables, task lists, strikethrough, footnotes and bare-URL autolinks,
@@ -845,6 +858,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **A `select` of reductions and literals alone answers one row**, as
+  polars does: `f.select({ n: ods.lit(1), lo: col("t").min() })` is a
+  1-row Frame. With any column among them the rows are kept and the
+  scalars repeat; `with` always keeps the rows.
+- **A tuple pattern matches a list of its length**: `((a, b)) =>` over
+  `[[1, 2], [3, 4]]`, `let (a, b) = [1, 2]`, a `match` arm and a `for`
+  binding read a list as they read a tuple, on every tier.
+- **`runtime.features` answers for any profile from any runtime**:
+  `runtime.features("browser")` inside the full browser runtime no
+  longer raises.
+- **`runtime.unload_module` leaves a tombstone.** Code from an unloaded
+  module's folder that still runs (a closure the host kept, its
+  functions, a thread it started, a `par_map` over its closure) is
+  refused every capability ("module <dir> was unloaded") on every tier,
+  where it used to run with the host's authority; a later `load_module`
+  of the folder replaces the tombstone.
 - **`http.encode_query` answers the text**, not a `Result`: it cannot
   fail but by misuse, which raises.
 - **A module's missing member raises, read or called, on every tier**:
@@ -1053,6 +1082,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`olang check` keeps a builtin that a namespace import does not
+  name.** With `use gg` beside `use web { el }`, `find(xs, f)` was
+  checked as the web SDK's `find(routes, method, path)` ("Missing
+  required argument: path"); a `use` with no items (a stdlib module's
+  bare form, or `use m {}`) brings no names in.
+- **`meta.tokens` calls `spawn` a keyword** where the grammar reads it as
+  one (`spawn { … }`, `spawn f(x)`), and the reserved words (`await`,
+  `const`, `pub`, …) and `use … { a as b }`'s `as` too; `meta.tokens`'
+  `meta` is the module unless `meta fn` follows. The language server
+  colours the same way.
+- **The statlab example writes its charts beside itself**, not into the
+  directory it is run from.
+- **Seven CHANGELOG blocks that are fragments** (or show an error on
+  purpose) are marked `no-run`, so a site's "Run" link does not offer
+  them.
 - **A closure reads its own file's top-level names wherever it runs.**
   A closure the program handed to a module, run there by `par_map`,
   `par_filter`, `spawn`, a channel's sender, `col.max_by`,
@@ -6150,7 +6194,7 @@ check` where it can be (the full guide is docs/migrating.md):
   `ods` calls in this repository**, and `ods.column(raw, "amount") *
   ods.column(raw, "quantity")` is 62 characters to say one multiply.
 
-  ```olang
+  ```olang no-run
   let sales = ods.with_column(raw, "revenue", raw["amount"] * raw["quantity"])
   let big   = sales[sales["revenue"] > 100.0]
   ```
@@ -6225,7 +6269,7 @@ check` where it can be (the full guide is docs/migrating.md):
   until the file no longer fits. `ods.open_csv` returns a reader that
   hands back one chunk at a time, each an ordinary Frame:
 
-  ```olang
+  ```olang no-run
   let r = unwrap(ods.open_csv("events.csv"))
   let mut total = 0.0
   loop {
@@ -6576,7 +6620,7 @@ check` where it can be (the full guide is docs/migrating.md):
   The same loop gave two different answers depending on the length of the
   list it was given.
 
-  ```olang
+  ```olang no-run
   let mut a = 0
   par for x in [1] { a = a + 1 }        // a == 1
   let mut b = 0
@@ -6617,7 +6661,7 @@ twice over.
   97 corpus files, including a shell, a load tester, and two fullstack
   apps, it was used **zero times**.
 
-  ```olang
+  ```olang no-run
   match f(x) { Ok(v) => v, Err(e) => fallback }   // the general form
   unwrap_or(f(x), fallback)                       // when the fallback is a value
   ```
@@ -6754,7 +6798,7 @@ against one rule, because there is exactly one chance to do this: after
 `unwrap`/`unwrap_or` raise on a non-`Result`, so every affected call site
 fails loudly rather than silently. The fix is to delete the wrapper:
 
-```olang
+```olang no-run
 let args = os.args()                  // was: unwrap(os.args())
 if fs.exists(path) => ...             // was: unwrap_or(fs.exists(path), false)
 let tty = os.is_tty()                 // was: unwrap_or(os.is_tty(), false)
@@ -7013,7 +7057,7 @@ below.
 Run `olang check .` — it lists every site with the exact fix in the
 message. The three rewrites:
 
-```olang
+```olang no-run
 // A binding you reassign now needs `mut`
 let mut total = 0
 for n in xs { total = total + n }
@@ -7028,7 +7072,7 @@ if ready => { resolved = compute() }
 
 For a value you compute in stages, prefer shadowing over `mut`:
 
-```olang
+```olang no-run
 let raw = read_input()
 let raw = str.trim(raw)
 let raw = str.lower(raw)
