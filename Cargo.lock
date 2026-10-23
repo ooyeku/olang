@@ -3605,7 +3605,7 @@ dependencies = [
 
 [[package]]
 name = "olang"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -3716,7 +3716,7 @@ dependencies = [
 
 [[package]]
 name = "olang-playground"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "olang",
 ]
