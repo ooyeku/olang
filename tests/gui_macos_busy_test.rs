@@ -72,7 +72,8 @@ mod mac {
             source: *const c_void,
             units: u32,
             wheel_count: u32,
-            wheel1: i32, ...
+            wheel1: i32,
+            ...
         ) -> *mut c_void;
         fn CFRelease(cf: *const c_void);
     }
@@ -108,7 +109,8 @@ mod mac {
     fn ns_window() -> Retained<AnyObject> {
         let cls = AnyClass::get(c"NSApplication").unwrap();
         let app: Retained<AnyObject> = unsafe { msg_send![cls, sharedApplication] };
-        let wins: Retained<objc2_foundation::NSArray<AnyObject>> = unsafe { msg_send![&*app, windows] };
+        let wins: Retained<objc2_foundation::NSArray<AnyObject>> =
+            unsafe { msg_send![&*app, windows] };
         wins.to_vec()
             .into_iter()
             .find(|w| {
@@ -142,7 +144,8 @@ mod mac {
             if cg.is_null() {
                 return;
             }
-            let ev: Option<Retained<AnyObject>> = unsafe { msg_send![ev_cls, eventWithCGEvent: cg] };
+            let ev: Option<Retained<AnyObject>> =
+                unsafe { msg_send![ev_cls, eventWithCGEvent: cg] };
             unsafe { CFRelease(cg) };
             if let Some(ev) = ev {
                 let _: () = unsafe { msg_send![&*view, scrollWheel: &*ev] };
@@ -192,15 +195,24 @@ mod mac {
                     let f1 = platform::frames_presented();
                     std::thread::sleep(Duration::from_millis(400));
                     let turning = platform::frames_presented() - f1;
-                    say(format!("frames while busy: {}", platform::frames_presented() > frames0 && turning >= 2));
-                    println!("frames presented during the turn: {} (spinner: {turning} in 400 ms)", platform::frames_presented() - frames0);
+                    say(format!(
+                        "frames while busy: {}",
+                        platform::frames_presented() > frames0 && turning >= 2
+                    ));
+                    println!(
+                        "frames presented during the turn: {} (spinner: {turning} in 400 ms)",
+                        platform::frames_presented() - frames0
+                    );
                     // the turn ends: no longer said
                     let t = Instant::now();
                     while turn_watch::shown() && t.elapsed() < Duration::from_secs(3) {
                         std::thread::sleep(Duration::from_millis(10));
                     }
                     say(format!("shown after: {}", turn_watch::shown()));
-                    olang::stdlib::gui::emit(vec![olang::stdlib::gui::values::event("test_done", vec![])]);
+                    olang::stdlib::gui::emit(vec![olang::stdlib::gui::values::event(
+                        "test_done",
+                        vec![],
+                    )]);
                 });
                 let program = Parser::new().parse(PROGRAM).expect("parses");
                 let v = Interpreter::new().eval_program(program);

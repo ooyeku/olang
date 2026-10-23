@@ -176,8 +176,9 @@ pub fn elementwise(func: &str, args: &[Value]) -> Option<Result<Value, String>> 
         }
         match func {
             // `ods.map(s, "exp")`: the same kernel as `ods.exp(s)`.
-            "map" if args.len() == 2
-                && matches!(&args[1], Value::String(n) if Math::parse(n).is_some()) =>
+            "map"
+                if args.len() == 2
+                    && matches!(&args[1], Value::String(n) if Math::parse(n).is_some()) =>
             {
                 let Value::String(name) = &args[1] else {
                     unreachable!()
@@ -190,11 +191,19 @@ pub fn elementwise(func: &str, args: &[Value]) -> Option<Result<Value, String>> 
                     return Err(format!("ods.map: a {} series is not numeric", t));
                 }
                 let wide = build(func, Op::Cast(DType::F64), vec![opnd(func, args, 0)?])?;
-                build(func, Op::Math(m), vec![operand(&wide).expect("a built value")])
+                build(
+                    func,
+                    Op::Math(m),
+                    vec![operand(&wide).expect("a built value")],
+                )
             }
             "pow" => {
                 want_n(func, args, 2, 2)?;
-                build(func, Op::Bin(BinOp::Pow), vec![opnd(func, args, 0)?, opnd(func, args, 1)?])
+                build(
+                    func,
+                    Op::Bin(BinOp::Pow),
+                    vec![opnd(func, args, 0)?, opnd(func, args, 1)?],
+                )
             }
             "round" => {
                 want_n(func, args, 1, 2)?;
@@ -202,20 +211,33 @@ pub fn elementwise(func: &str, args: &[Value]) -> Option<Result<Value, String>> 
                     None => 0,
                     Some(v) => want_int(func, "the number of digits", v)?,
                 };
-                let d = i32::try_from(d).map_err(|_| format!("ods.round: {} digits is too many", d))?;
+                let d =
+                    i32::try_from(d).map_err(|_| format!("ods.round: {} digits is too many", d))?;
                 build(func, Op::Round(d), vec![opnd(func, args, 0)?])
             }
             "clip" => {
                 want_n(func, args, 2, 3)?;
-                let hi = if args.len() == 3 { opnd(func, args, 2)? } else { null() };
-                build(func, Op::Clip, vec![opnd(func, args, 0)?, opnd(func, args, 1)?, hi])
+                let hi = if args.len() == 3 {
+                    opnd(func, args, 2)?
+                } else {
+                    null()
+                };
+                build(
+                    func,
+                    Op::Clip,
+                    vec![opnd(func, args, 0)?, opnd(func, args, 1)?, hi],
+                )
             }
             "where" => {
                 want_n(func, args, 3, 3)?;
                 build(
                     func,
                     Op::Where,
-                    vec![opnd(func, args, 0)?, opnd(func, args, 1)?, opnd(func, args, 2)?],
+                    vec![
+                        opnd(func, args, 0)?,
+                        opnd(func, args, 1)?,
+                        opnd(func, args, 2)?,
+                    ],
                 )
             }
             "coalesce" => {
@@ -230,7 +252,11 @@ pub fn elementwise(func: &str, args: &[Value]) -> Option<Result<Value, String>> 
             }
             "fill_null" => {
                 want_n(func, args, 2, 2)?;
-                build(func, Op::Coalesce, vec![opnd(func, args, 0)?, opnd(func, args, 1)?])
+                build(
+                    func,
+                    Op::Coalesce,
+                    vec![opnd(func, args, 0)?, opnd(func, args, 1)?],
+                )
             }
             "between" => {
                 want_n(func, args, 2, 4)?;
@@ -273,7 +299,11 @@ pub fn elementwise(func: &str, args: &[Value]) -> Option<Result<Value, String>> 
                         ));
                     }
                 };
-                build(func, Op::Between(closed), vec![opnd(func, args, 0)?, lo, hi])
+                build(
+                    func,
+                    Op::Between(closed),
+                    vec![opnd(func, args, 0)?, lo, hi],
+                )
             }
             "is_null" | "not_null" | "is_nan" => {
                 want_n(func, args, 1, 1)?;
@@ -300,7 +330,11 @@ pub fn elementwise(func: &str, args: &[Value]) -> Option<Result<Value, String>> 
             "eq" | "ne" => {
                 want_n(func, args, 2, 2)?;
                 let op = if func == "eq" { BinOp::Eq } else { BinOp::Ne };
-                build(func, Op::Bin(op), vec![opnd(func, args, 0)?, opnd(func, args, 1)?])
+                build(
+                    func,
+                    Op::Bin(op),
+                    vec![opnd(func, args, 0)?, opnd(func, args, 1)?],
+                )
             }
             "select" => {
                 // np.select: the first mask that holds picks its value.
@@ -325,7 +359,10 @@ pub fn elementwise(func: &str, args: &[Value]) -> Option<Result<Value, String>> 
                 for (m, v) in masks.iter().zip(values.iter()).rev() {
                     let m = operand(m).ok_or("ods.select: each mask is a Bool Series or Expr")?;
                     let v = operand(v).ok_or_else(|| {
-                        format!("ods.select: a value must be a Series, an Expr or a value, got {}", v.type_name())
+                        format!(
+                            "ods.select: a value must be a Series, an Expr or a value, got {}",
+                            v.type_name()
+                        )
                     })?;
                     // A null mask does not hold.
                     let held = build(func, Op::Coalesce, vec![m, lit(Scalar::Bool(false))])?;
@@ -352,7 +389,11 @@ pub fn elementwise(func: &str, args: &[Value]) -> Option<Result<Value, String>> 
                 if items.len() == 1 {
                     return Ok(items[0].clone());
                 }
-                let op = if func == "all_of" { BinOp::And } else { BinOp::Or };
+                let op = if func == "all_of" {
+                    BinOp::And
+                } else {
+                    BinOp::Or
+                };
                 let mut acc = operand(&items[0]).ok_or("a mask")?;
                 for m in &items[1..] {
                     let v = build(func, Op::Bin(op), vec![acc, operand(m).ok_or("a mask")?])?;
@@ -398,7 +439,10 @@ pub fn eager(func: &str, args: &[Value]) -> Option<Result<Value, String>> {
                 want_n(func, args, 2, 2)?;
                 let n = want_count(func, "the length", &args[0])?;
                 let v = value_to_scalar(&args[1]).ok_or_else(|| {
-                    format!("ods.full: the value must be a number, String, Bool or (), got {}", args[1].type_name())
+                    format!(
+                        "ods.full: the value must be a number, String, Bool or (), got {}",
+                        args[1].type_name()
+                    )
                 })?;
                 Ok(sv(column::full(n, &v)))
             }
@@ -411,7 +455,10 @@ pub fn eager(func: &str, args: &[Value]) -> Option<Result<Value, String>> {
                 want_n(func, args, 2, 2)?;
                 let s = want_series(func, args, 0)?;
                 let v = value_to_scalar(&args[1]).ok_or_else(|| {
-                    format!("ods.full_like: the value must be a number, String, Bool or (), got {}", args[1].type_name())
+                    format!(
+                        "ods.full_like: the value must be a number, String, Bool or (), got {}",
+                        args[1].type_name()
+                    )
                 })?;
                 Ok(sv(s.full_like(&v)))
             }
@@ -424,15 +471,22 @@ pub fn eager(func: &str, args: &[Value]) -> Option<Result<Value, String>> {
                 };
                 match (&a, &b, &step) {
                     (Value::Integer(a), Value::Integer(b), Value::Integer(s)) => {
-                        column::arange_i64(*a, *b, *s).map(sv).map_err(|x| format!("ods.{}", x))
+                        column::arange_i64(*a, *b, *s)
+                            .map(sv)
+                            .map_err(|x| format!("ods.{}", x))
                     }
                     _ => {
                         let f = |v: &Value| match v {
                             Value::Integer(x) => Ok(*x as f64),
                             Value::Float(x) => Ok(*x),
-                            other => Err(format!("ods.arange: start, stop and step are numbers, got {}", other.type_name())),
+                            other => Err(format!(
+                                "ods.arange: start, stop and step are numbers, got {}",
+                                other.type_name()
+                            )),
                         };
-                        column::arange_f64(f(&a)?, f(&b)?, f(&step)?).map(sv).map_err(|x| format!("ods.{}", x))
+                        column::arange_f64(f(&a)?, f(&b)?, f(&step)?)
+                            .map(sv)
+                            .map_err(|x| format!("ods.{}", x))
                     }
                 }
             }
@@ -443,7 +497,13 @@ pub fn eager(func: &str, args: &[Value]) -> Option<Result<Value, String>> {
                     Value::Integer(_) => Ok(sv(s.repeat(want_count(func, "times", &args[1])?))),
                     v => {
                         let counts: Vec<i64> = match (series_of(v), v) {
-                            (Some(Series::I64 { values, validity: None }), _) => values.as_ref().clone(),
+                            (
+                                Some(Series::I64 {
+                                    values,
+                                    validity: None,
+                                }),
+                                _,
+                            ) => values.as_ref().clone(),
                             (_, Value::List(items)) => items
                                 .iter()
                                 .map(|x| want_int(func, "each count", x))
@@ -455,13 +515,17 @@ pub fn eager(func: &str, args: &[Value]) -> Option<Result<Value, String>> {
                                 ));
                             }
                         };
-                        s.repeat_each(&counts).map(sv).map_err(|x| format!("ods.repeat: {}", x))
+                        s.repeat_each(&counts)
+                            .map(sv)
+                            .map_err(|x| format!("ods.repeat: {}", x))
                     }
                 }
             }
             "tile" => {
                 want_n(func, args, 2, 2)?;
-                Ok(sv(want_series(func, args, 0)?.tile(want_count(func, "n", &args[1])?)))
+                Ok(sv(
+                    want_series(func, args, 0)?.tile(want_count(func, "n", &args[1])?)
+                ))
             }
             "argmax" | "argmin" => {
                 want_n(func, args, 1, 1)?;
@@ -478,7 +542,11 @@ pub fn eager(func: &str, args: &[Value]) -> Option<Result<Value, String>> {
                     None => 1,
                     Some(v) => want_int(func, "the lag", v)?,
                 };
-                let r = if func == "diff" { s.diff(lag) } else { s.pct_change(lag) };
+                let r = if func == "diff" {
+                    s.diff(lag)
+                } else {
+                    s.pct_change(lag)
+                };
                 r.map(sv).map_err(|x| format!("ods.{}: {}", func, x))
             }
             "cumprod" => {
@@ -487,7 +555,10 @@ pub fn eager(func: &str, args: &[Value]) -> Option<Result<Value, String>> {
             }
             "mode" => {
                 want_n(func, args, 1, 1)?;
-                want_series(func, args, 0)?.mode().map(scalar_to_value).map_err(e)
+                want_series(func, args, 0)?
+                    .mode()
+                    .map(scalar_to_value)
+                    .map_err(e)
             }
             "any" | "all" => {
                 want_n(func, args, 1, 1)?;
@@ -521,7 +592,8 @@ pub fn eager(func: &str, args: &[Value]) -> Option<Result<Value, String>> {
                     let out = items
                         .iter()
                         .map(|v| {
-                            let sc = value_to_scalar(v).ok_or("ods.searchsorted: a value is a number or a String")?;
+                            let sc = value_to_scalar(v)
+                                .ok_or("ods.searchsorted: a value is a number or a String")?;
                             one(&sc).map(|p| Value::Integer(p as i64))
                         })
                         .collect::<Result<Vec<_>, _>>()?;
@@ -542,13 +614,19 @@ pub fn eager(func: &str, args: &[Value]) -> Option<Result<Value, String>> {
             "first" | "last" => {
                 want_n(func, args, 1, 1)?;
                 let s = want_series(func, args, 0)?;
-                Ok(scalar_to_value(if func == "first" { s.first() } else { s.last() }))
+                Ok(scalar_to_value(if func == "first" {
+                    s.first()
+                } else {
+                    s.last()
+                }))
             }
             "interpolate" => {
                 want_n(func, args, 1, 2)?;
                 let s = want_series(func, args, 0)?;
                 let limit = limit_arg(func, args.get(1))?;
-                s.interpolate(limit).map(sv).map_err(|x| format!("ods.{}", x))
+                s.interpolate(limit)
+                    .map(sv)
+                    .map_err(|x| format!("ods.{}", x))
             }
             "fill_null" => {
                 // The method forms (the value forms are elementwise).
@@ -561,7 +639,10 @@ pub fn eager(func: &str, args: &[Value]) -> Option<Result<Value, String>> {
                 match m.as_str() {
                     "ffill" => Ok(sv(s.fill_direction(true, limit))),
                     "bfill" => Ok(sv(s.fill_direction(false, limit))),
-                    "linear" => s.interpolate(limit).map(sv).map_err(|x| format!("ods.fill_null: {}", x)),
+                    "linear" => s
+                        .interpolate(limit)
+                        .map(sv)
+                        .map_err(|x| format!("ods.fill_null: {}", x)),
                     _ => {
                         if limit.is_some() {
                             return Err(format!("ods.fill_null: \"{}\" takes no limit", m));
@@ -583,7 +664,9 @@ pub fn eager(func: &str, args: &[Value]) -> Option<Result<Value, String>> {
                         format!("ods.recode: the default is a value, got {}", v.type_name())
                     })?),
                 };
-                s.recode(&from, &to, &unmapped).map(sv).map_err(|x| format!("ods.recode: {}", x))
+                s.recode(&from, &to, &unmapped)
+                    .map(sv)
+                    .map_err(|x| format!("ods.recode: {}", x))
             }
             _ => Err(format!("ods.{} is handled elsewhere", func)),
         }
@@ -612,8 +695,13 @@ fn recode_map(s: &Series, m: &Value) -> Result<(Series, Series), String> {
         Value::List(items) => items
             .iter()
             .map(|p| match p {
-                Value::List(kv) | Value::Tuple(kv) if kv.len() == 2 => Ok((kv[0].clone(), kv[1].clone())),
-                other => Err(format!("ods.recode: each pair is [from, to], got {}", other)),
+                Value::List(kv) | Value::Tuple(kv) if kv.len() == 2 => {
+                    Ok((kv[0].clone(), kv[1].clone()))
+                }
+                other => Err(format!(
+                    "ods.recode: each pair is [from, to], got {}",
+                    other
+                )),
             })
             .collect::<Result<_, _>>()?,
         other => {
@@ -626,10 +714,16 @@ fn recode_map(s: &Series, m: &Value) -> Result<(Series, Series), String> {
     let key = |v: &Value| -> Result<Value, String> {
         Ok(match (s.dtype(), v) {
             (DType::I64, Value::String(t)) => Value::Integer(t.trim().parse().map_err(|_| {
-                format!("ods.recode: the key \"{}\" is not an Int, as the column is", t)
+                format!(
+                    "ods.recode: the key \"{}\" is not an Int, as the column is",
+                    t
+                )
             })?),
             (DType::F64, Value::String(t)) => Value::Float(t.trim().parse().map_err(|_| {
-                format!("ods.recode: the key \"{}\" is not a number, as the column is", t)
+                format!(
+                    "ods.recode: the key \"{}\" is not a number, as the column is",
+                    t
+                )
             })?),
             (DType::Bool, Value::String(t)) => match t.as_str() {
                 "true" => Value::Boolean(true),
@@ -639,7 +733,10 @@ fn recode_map(s: &Series, m: &Value) -> Result<(Series, Series), String> {
             (_, v) => v.clone(),
         })
     };
-    let froms = pairs.iter().map(|(k, _)| key(k)).collect::<Result<Vec<_>, _>>()?;
+    let froms = pairs
+        .iter()
+        .map(|(k, _)| key(k))
+        .collect::<Result<Vec<_>, _>>()?;
     let tos: Vec<Value> = pairs.into_iter().map(|(_, v)| v).collect();
     let list = |items: Vec<Value>| -> Result<Series, String> {
         super::series::series_from_list(&items).map_err(|x| x.replace("ods.series", "ods.recode"))

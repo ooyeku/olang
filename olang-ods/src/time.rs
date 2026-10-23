@@ -104,7 +104,10 @@ impl Every {
             Unit::Month => {
                 let (y, m, _) = civil_from_days(days);
                 let months = (y * 12 + (m - 1)).div_euclid(n) * n;
-                (days_from_civil(months.div_euclid(12), months.rem_euclid(12) + 1, 1), 0)
+                (
+                    days_from_civil(months.div_euclid(12), months.rem_euclid(12) + 1, 1),
+                    0,
+                )
             }
             Unit::Year => {
                 let (y, _, _) = civil_from_days(days);
@@ -184,7 +187,15 @@ fn parse_iso(text: &str) -> Option<(i64, i64, Shape)> {
     let days = days_from_civil(y, m, d);
     let rest = &b[10..];
     if rest.is_empty() {
-        return Some((days, 0, Shape { sep: None, seconds: false, typed: None }));
+        return Some((
+            days,
+            0,
+            Shape {
+                sep: None,
+                seconds: false,
+                typed: None,
+            },
+        ));
     }
     let sep = rest[0];
     if !(sep == b'T' || sep == b' ') || rest.len() < 6 || rest[3] != b':' {
@@ -209,7 +220,15 @@ fn parse_iso(text: &str) -> Option<(i64, i64, Shape)> {
     if !tail.is_empty() || hh > 23 || mm > 59 || ss > 60 {
         return None;
     }
-    Some((days, hh * 3600 + mm * 60 + ss, Shape { sep: Some(sep), seconds, typed: None }))
+    Some((
+        days,
+        hh * 3600 + mm * 60 + ss,
+        Shape {
+            sep: Some(sep),
+            seconds,
+            typed: None,
+        },
+    ))
 }
 
 fn days_in_month(y: i64, m: i64) -> i64 {
@@ -271,18 +290,29 @@ pub fn buckets(s: &Series, every: Every) -> Result<(Series, Shape)> {
                     values: std::sync::Arc::new(out),
                     validity: validity.clone(),
                 },
-                shape.unwrap_or(Shape { sep: None, seconds: false, typed: None }),
+                shape.unwrap_or(Shape {
+                    sep: None,
+                    seconds: false,
+                    typed: None,
+                }),
             ))
         }
         // A Date's days, a Datetime's microseconds: no text to read.
         Series::Date { values, validity } => Ok((
             Series::I64 {
                 values: std::sync::Arc::new(
-                    values.iter().map(|&d| every.floor(d as i64, 0).0 * 86_400).collect(),
+                    values
+                        .iter()
+                        .map(|&d| every.floor(d as i64, 0).0 * 86_400)
+                        .collect(),
                 ),
                 validity: validity.clone(),
             },
-            Shape { sep: None, seconds: false, typed: Some(crate::DType::Date) },
+            Shape {
+                sep: None,
+                seconds: false,
+                typed: Some(crate::DType::Date),
+            },
         )),
         Series::Datetime { values, validity } => Ok((
             Series::I64 {
@@ -300,7 +330,11 @@ pub fn buckets(s: &Series, every: Every) -> Result<(Series, Shape)> {
                 ),
                 validity: validity.clone(),
             },
-            Shape { sep: Some(b'T'), seconds: true, typed: Some(crate::DType::Datetime) },
+            Shape {
+                sep: Some(b'T'),
+                seconds: true,
+                typed: Some(crate::DType::Datetime),
+            },
         )),
         other => Err(OdsError::TypeMismatch(format!(
             "a time bucket needs a Date, a Datetime or ISO date or date-time text, got a {} column",
@@ -318,7 +352,12 @@ pub fn format_buckets(codes: &Series, every: Every, shape: Shape) -> Series {
     match shape.typed {
         Some(crate::DType::Date) => {
             return Series::Date {
-                values: std::sync::Arc::new(values.iter().map(|&t| t.div_euclid(86_400) as i32).collect()),
+                values: std::sync::Arc::new(
+                    values
+                        .iter()
+                        .map(|&t| t.div_euclid(86_400) as i32)
+                        .collect(),
+                ),
                 validity: validity.clone(),
             };
         }
@@ -336,7 +375,13 @@ pub fn format_buckets(codes: &Series, every: Every, shape: Shape) -> Series {
         .map(|(i, &t)| {
             validity.as_ref().is_none_or(|v| v.get(i)).then(|| {
                 let mut o = String::with_capacity(19);
-                write_iso(&mut o, t.div_euclid(86_400), t.rem_euclid(86_400), every, shape);
+                write_iso(
+                    &mut o,
+                    t.div_euclid(86_400),
+                    t.rem_euclid(86_400),
+                    every,
+                    shape,
+                );
                 o
             })
         })
@@ -358,7 +403,10 @@ mod tests {
 
     fn fl(text: &str, every: &str) -> String {
         let s = Series::from_str_values(vec![text.to_string()]);
-        match floor(&s, Every::parse(every).unwrap()).unwrap().scalar_at(0) {
+        match floor(&s, Every::parse(every).unwrap())
+            .unwrap()
+            .scalar_at(0)
+        {
             crate::Scalar::Str(t) => t,
             _ => panic!(),
         }

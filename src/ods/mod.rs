@@ -13,10 +13,10 @@ mod columns;
 pub mod dtypes;
 pub mod expr;
 mod frame;
+pub mod gg;
 mod group;
 mod learn;
 pub mod matrix;
-pub mod gg;
 mod plot;
 pub mod rng;
 mod series;
@@ -26,9 +26,9 @@ mod ts;
 
 pub use frame::{OdsFrame, frame_of};
 pub use group::{ApplyState, apply_finish, apply_groups, is_callable as apply_callable};
+pub use matrix::matrix_frame;
 pub use series::{OdsSeries, make_series_value, series_of};
 pub use table::scalar_text;
-pub use matrix::matrix_frame;
 
 /// A Frame's bytes in the columnar file format (`ods.write_frame`'s), or
 /// None for anything else: what a recorded run keeps of a Frame it read.

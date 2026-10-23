@@ -74,8 +74,22 @@ impl Clipboard for NoClip {
 const W: f64 = 420.0;
 const H: f64 = 300.0;
 const WORDS: &[&str] = &[
-    "Loom", "damage", "tile", "glyph", "atlas", "caret", "scroll", "W", "fifty", "olang", "∑", "é",
-    "Résumé", "Quick brown fox", "1234567890", "ffi",
+    "Loom",
+    "damage",
+    "tile",
+    "glyph",
+    "atlas",
+    "caret",
+    "scroll",
+    "W",
+    "fifty",
+    "olang",
+    "∑",
+    "é",
+    "Résumé",
+    "Quick brown fox",
+    "1234567890",
+    "ffi",
 ];
 
 fn colour(r: &mut Rng) -> Value {
@@ -102,7 +116,10 @@ fn style(r: &mut Rng) -> Value {
         f.push(("clip", Value::Boolean(true)));
     }
     if r.chance(25) {
-        f.push(("corner", s(if r.chance(70) { "continuous" } else { "round" })));
+        f.push((
+            "corner",
+            s(if r.chance(70) { "continuous" } else { "round" }),
+        ));
     }
     if r.chance(12) {
         f.push((
@@ -159,7 +176,15 @@ fn canvas_ops(r: &mut Rng) -> Value {
                             cmd(vec![
                                 cmd(vec![s("M"), n(a[0]), n(a[1])]),
                                 cmd(vec![s("Q"), n(b[0]), n(b[1]), n(c[0]), n(c[1])]),
-                                cmd(vec![s("C"), n(d[0]), n(d[1]), n(a[0]), n(c[1]), n(b[0]), n(a[1])]),
+                                cmd(vec![
+                                    s("C"),
+                                    n(d[0]),
+                                    n(d[1]),
+                                    n(a[0]),
+                                    n(c[1]),
+                                    n(b[0]),
+                                    n(a[1]),
+                                ]),
                             ]),
                         ),
                     ]
@@ -222,7 +247,12 @@ fn picture_path() -> String {
         let dir = std::env::temp_dir().join(format!("gui-damage-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let mut pm = tiny_skia::Pixmap::new(40, 30).expect("a pixmap");
-        for (x, y, c) in [(0, 0, [220, 38, 38]), (20, 0, [37, 99, 235]), (0, 15, [22, 163, 74]), (20, 15, [245, 158, 11])] {
+        for (x, y, c) in [
+            (0, 0, [220, 38, 38]),
+            (20, 0, [37, 99, 235]),
+            (0, 15, [22, 163, 74]),
+            (20, 15, [245, 158, 11]),
+        ] {
             let mut p = tiny_skia::Paint::default();
             p.set_color_rgba8(c[0], c[1], c[2], 200);
             pm.fill_rect(
@@ -244,12 +274,39 @@ fn picture_path() -> String {
 /// three ways).
 fn hostile(r: &mut Rng, f: &mut Vec<(&str, Value)>) {
     match r.below(6) {
-        0 => f.push(("box", tup(&[r.f(-1e6, 1e6), r.f(-1e6, 1e6), r.f(0.0, 1e6), r.f(0.0, 1e6)]))),
+        0 => f.push((
+            "box",
+            tup(&[r.f(-1e6, 1e6), r.f(-1e6, 1e6), r.f(0.0, 1e6), r.f(0.0, 1e6)]),
+        )),
         1 => f.push(("box", tup(&[r.f(0.0, W), r.f(0.0, H), 0.0, 0.0]))),
-        2 => f.push(("style", m(vec![("bg", colour(r)), ("radius", Value::Float(1e6)), ("border", colour(r)), ("border_width", Value::Float(500.0))]))),
-        3 => f.push(("style", m(vec![("size", Value::Float(if r.chance(50) { 0.5 } else { 900.0 })), ("color", colour(r))]))),
-        4 => f.push(("style", m(vec![("bg", colour(r)), ("opacity", Value::Float(0.0))]))),
-        _ => f.push(("style", m(vec![("bg", s("#00000000")), ("border", colour(r)), ("border_width", Value::Float(0.25))]))),
+        2 => f.push((
+            "style",
+            m(vec![
+                ("bg", colour(r)),
+                ("radius", Value::Float(1e6)),
+                ("border", colour(r)),
+                ("border_width", Value::Float(500.0)),
+            ]),
+        )),
+        3 => f.push((
+            "style",
+            m(vec![
+                ("size", Value::Float(if r.chance(50) { 0.5 } else { 900.0 })),
+                ("color", colour(r)),
+            ]),
+        )),
+        4 => f.push((
+            "style",
+            m(vec![("bg", colour(r)), ("opacity", Value::Float(0.0))]),
+        )),
+        _ => f.push((
+            "style",
+            m(vec![
+                ("bg", s("#00000000")),
+                ("border", colour(r)),
+                ("border_width", Value::Float(0.25)),
+            ]),
+        )),
     }
 }
 
@@ -337,7 +394,10 @@ impl World {
             ("role", s("region")),
             ("box", tup(&[150.0, 0.0, 260.0, 250.0])),
             ("content", tup(&[260.0, 2400.0])),
-            ("style", m(vec![("bg", s("#ffffff")), ("clip", Value::Boolean(true))])),
+            (
+                "style",
+                m(vec![("bg", s("#ffffff")), ("clip", Value::Boolean(true))]),
+            ),
         ]));
         for i in 0..80 {
             ops.push(m(vec![
@@ -346,7 +406,13 @@ impl World {
                 ("role", s("text")),
                 ("box", tup(&[4.0, i as f64 * 30.0, 250.0, 26.0])),
                 ("text", s(&format!("{} {i}", WORDS[i % WORDS.len()]))),
-                ("style", m(vec![("bg", colour(r)), ("radius", Value::Float(r.f(0.0, 8.0)))])),
+                (
+                    "style",
+                    m(vec![
+                        ("bg", colour(r)),
+                        ("radius", Value::Float(r.f(0.0, 8.0))),
+                    ]),
+                ),
             ]));
         }
         let mut keys = vec!["root".to_string()];
@@ -356,9 +422,13 @@ impl World {
             keys.push(k);
         }
         let mut out = Vec::new();
-        st.apply(&Value::List(Arc::new(ops)), &mut out).expect("applies");
+        st.apply(&Value::List(Arc::new(ops)), &mut out)
+            .expect("applies");
         st.apply(
-            &Value::List(Arc::new(vec![m(vec![("op", s("focus")), ("key", s("field"))])])),
+            &Value::List(Arc::new(vec![m(vec![
+                ("op", s("focus")),
+                ("key", s("field")),
+            ])])),
             &mut out,
         )
         .expect("focus");
@@ -375,7 +445,8 @@ impl World {
             // a node changed
             0 | 1 => {
                 let k = self.keys[1 + r.below(self.keys.len() as u64 - 1) as usize].clone();
-                let parents: Vec<String> = self.keys.iter().take_while(|p| **p != k).cloned().collect();
+                let parents: Vec<String> =
+                    self.keys.iter().take_while(|p| **p != k).cloned().collect();
                 let op = node(r, &k, &parents);
                 let _ = self.st.apply(&Value::List(Arc::new(vec![op])), &mut out);
             }
@@ -384,7 +455,11 @@ impl World {
                 let k = format!("n{}", self.next);
                 self.next += 1;
                 let op = node(r, &k, &self.keys);
-                if self.st.apply(&Value::List(Arc::new(vec![op])), &mut out).is_ok() {
+                if self
+                    .st
+                    .apply(&Value::List(Arc::new(vec![op])), &mut out)
+                    .is_ok()
+                {
                     self.keys.push(k);
                 }
             }
@@ -400,7 +475,13 @@ impl World {
             }
             // the long list scrolled a little (often by whole pixels)
             4 if r.chance(60) => {
-                let at = self.st.scene.nodes.get("big").map(|n| n.offset.1).unwrap_or(0.0) as f64;
+                let at = self
+                    .st
+                    .scene
+                    .nodes
+                    .get("big")
+                    .map(|n| n.offset.1)
+                    .unwrap_or(0.0) as f64;
                 let by = r.f(-80.0, 80.0);
                 let by = if r.chance(70) { by.round() } else { by };
                 let _ = self.st.apply(
@@ -461,7 +542,9 @@ impl World {
                 );
             }
             // the window's focus (rings and carets) or nothing at all
-            8 => self.st.input(Input::Focused(r.chance(50)), &mut clip, &mut out),
+            8 => self
+                .st
+                .input(Input::Focused(r.chance(50)), &mut clip, &mut out),
             _ => {}
         }
     }
@@ -521,7 +604,9 @@ fn gpu_agrees(soft_px: &[u8], gpu_px: &[u8]) -> Result<(), String> {
     if over * 200 <= n && mean < 2.0 {
         Ok(())
     } else {
-        Err(format!("{over} of {n} pixels differ by more than 48 (mean {mean:.3})"))
+        Err(format!(
+            "{over} of {n} pixels differ by more than 48 (mean {mean:.3})"
+        ))
     }
 }
 
@@ -530,7 +615,11 @@ fn fuzz(seed: u64, steps: usize, scale: f32, with_gpu: bool) -> (usize, usize, u
     let mut r = Rng(seed.max(1));
     let mut world = World::new(&mut r, scale);
     let mut kept = soft::Retained::default();
-    let g = if with_gpu { gpu::gpu(None, None).ok() } else { None };
+    let g = if with_gpu {
+        gpu::gpu(None, None).ok()
+    } else {
+        None
+    };
     let mut target = g
         .as_ref()
         .map(|g| gpu::Target::new(g.clone(), wgpu::TextureFormat::Rgba8Unorm));
@@ -576,7 +665,11 @@ fn fuzz(seed: u64, steps: usize, scale: f32, with_gpu: bool) -> (usize, usize, u
             let damaged = t.rgba();
             let whole_gpu = g.render_rgba(&dl);
             assert!(
-                if gpu_moved { within(&damaged, &whole_gpu, MOVED_TOLERANCE) } else { damaged == whole_gpu },
+                if gpu_moved {
+                    within(&damaged, &whole_gpu, MOVED_TOLERANCE)
+                } else {
+                    damaged == whole_gpu
+                },
                 "seed {seed} step {step} at {scale}x: the GPU frame drawn over its damage ({d:?}, moved: {gpu_moved}) is not the whole frame: {}",
                 first_difference(&damaged, &whole_gpu, dl.width)
             );
@@ -605,17 +698,26 @@ fn fuzz(seed: u64, steps: usize, scale: f32, with_gpu: bool) -> (usize, usize, u
                             worst = (d, i);
                         }
                     }
-                    eprintln!("worst at ({}, {}) by {}", worst.1 % dl.width as usize, worst.1 / dl.width as usize, worst.0);
+                    eprintln!(
+                        "worst at ({}, {}) by {}",
+                        worst.1 % dl.width as usize,
+                        worst.1 / dl.width as usize,
+                        worst.0
+                    );
                     for (i, p) in dl.prims.iter().enumerate() {
                         let txt = format!("{p:?}");
                         eprintln!("{i}: {}", &txt[..txt.len().min(300)]);
                     }
                 }
-                panic!("seed {seed} step {step} at {scale}x: the GPU and software frames disagree: {e}");
+                panic!(
+                    "seed {seed} step {step} at {scale}x: the GPU and software frames disagree: {e}"
+                );
             }
         }
     }
-    eprintln!("seed {seed} at {scale}x: {partial} drawn in part, {unchanged} unchanged, {whole} whole, {moved} moved");
+    eprintln!(
+        "seed {seed} at {scale}x: {partial} drawn in part, {unchanged} unchanged, {whole} whole, {moved} moved"
+    );
     (partial, unchanged, whole)
 }
 
@@ -648,7 +750,11 @@ fn an_unchanged_frame_draws_nothing_and_a_caret_move_draws_a_tile_or_two() {
     let dl = world.st.display_list();
     assert_eq!(*kept.render(&dl), Damage::Full);
     let dl = world.st.display_list();
-    assert_eq!(*kept.render(&dl), Damage::None, "the same frame again draws nothing");
+    assert_eq!(
+        *kept.render(&dl),
+        Damage::None,
+        "the same frame again draws nothing"
+    );
     // the caret moves one character
     let mut out = Vec::new();
     world.st.input(
@@ -692,7 +798,10 @@ fn the_glyph_atlas_takes_more_pages_and_evicts_the_least_recently_drawn() {
                 ("parent", s("root")),
                 ("role", s("text")),
                 ("box", tup(&[0.0, i as f64 * 110.0, 900.0, 110.0])),
-                ("text", s("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")),
+                (
+                    "text",
+                    s("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"),
+                ),
                 (
                     "style",
                     m(vec![
@@ -703,18 +812,25 @@ fn the_glyph_atlas_takes_more_pages_and_evicts_the_least_recently_drawn() {
             ]));
         }
         let mut out = Vec::new();
-        st.apply(&Value::List(Arc::new(ops)), &mut out).expect("applies");
+        st.apply(&Value::List(Arc::new(ops)), &mut out)
+            .expect("applies");
         let dl = st.display_list();
         target.render(&dl);
         // whatever the atlas went through, the frame is the reference's
         let damaged = target.rgba();
         let whole = g.render_rgba(&dl);
-        assert!(damaged == whole, "round {round}: the frame is drawn whole and right");
+        assert!(
+            damaged == whole,
+            "round {round}: the frame is drawn whole and right"
+        );
         let soft_px = soft::rgba(&soft::render(&dl));
         gpu_agrees(&soft_px, &whole).unwrap_or_else(|e| panic!("round {round}: {e}"));
     }
     let stats = g.stats();
-    assert!(stats.atlas_pages >= 2, "the atlas grew past a page: {stats:?}");
+    assert!(
+        stats.atlas_pages >= 2,
+        "the atlas grew past a page: {stats:?}"
+    );
     assert!(stats.atlas_pages <= 4, "and stays bounded: {stats:?}");
 }
 
@@ -728,7 +844,9 @@ let r2 = gui.read(w, "render")
 [r.frames_drawn >= 0, r.texture_bytes >= 0, r.atlas_pages != (), r2.raster_glyphs != ()]"#,
         )
         .expect("parses");
-    let v = olang::Interpreter::new().eval_program(program).expect("runs");
+    let v = olang::Interpreter::new()
+        .eval_program(program)
+        .expect("runs");
     assert_eq!(format!("{v}"), "[true, true, true, true]");
 }
 
@@ -775,7 +893,8 @@ fn scrolled(scale: f32) -> WinState {
         ]));
     }
     let mut out = Vec::new();
-    st.apply(&Value::List(Arc::new(ops)), &mut out).expect("applies");
+    st.apply(&Value::List(Arc::new(ops)), &mut out)
+        .expect("applies");
     st
 }
 
@@ -790,7 +909,10 @@ fn a_scroll_moves_the_kept_frame_and_draws_only_what_it_uncovered() {
             .as_ref()
             .map(|g| gpu::Target::new(g.clone(), wgpu::TextureFormat::Rgba8Unorm));
         let mut moved = 0;
-        for (i, to) in [0.0, 40.0, 100.0, 90.0, 400.0, 413.0, 0.0].into_iter().enumerate() {
+        for (i, to) in [0.0, 40.0, 100.0, 90.0, 400.0, 413.0, 0.0]
+            .into_iter()
+            .enumerate()
+        {
             let mut out = Vec::new();
             st.apply(
                 &Value::List(Arc::new(vec![m(vec![
@@ -816,7 +938,10 @@ fn a_scroll_moves_the_kept_frame_and_draws_only_what_it_uncovered() {
             }
             // a scroll by less than a fifth of the view
             if (1..=3).contains(&i) {
-                assert!(!kept.last_shifts.is_empty(), "a scroll to {to} moves the kept frame");
+                assert!(
+                    !kept.last_shifts.is_empty(),
+                    "a scroll to {to} moves the kept frame"
+                );
                 assert!(
                     d.area(dl.width, dl.height) * 2 < (dl.width * dl.height) as i64,
                     "a scroll by {to} draws less than half the window: {d:?}"
@@ -824,7 +949,10 @@ fn a_scroll_moves_the_kept_frame_and_draws_only_what_it_uncovered() {
             }
             if let (Some(g), Some(t)) = (&g, target.as_mut()) {
                 t.render(&dl);
-                assert_eq!(t.last_shifts, kept.last_shifts, "both renderers move the same");
+                assert_eq!(
+                    t.last_shifts, kept.last_shifts,
+                    "both renderers move the same"
+                );
                 let damaged = t.rgba();
                 let whole = g.render_rgba(&dl);
                 assert!(
@@ -834,7 +962,10 @@ fn a_scroll_moves_the_kept_frame_and_draws_only_what_it_uncovered() {
                 );
             }
         }
-        assert!(moved >= 3, "scrolls by whole pixels move the kept frame ({moved})");
+        assert!(
+            moved >= 3,
+            "scrolls by whole pixels move the kept frame ({moved})"
+        );
     }
 }
 
@@ -869,7 +1000,8 @@ fn measure_damaged_against_whole_frames() {
         }
         ops.extend(extra);
         let mut out = Vec::new();
-        st.apply(&Value::List(Arc::new(ops)), &mut out).expect("applies");
+        st.apply(&Value::List(Arc::new(ops)), &mut out)
+            .expect("applies");
         st.input(Input::Focused(true), &mut NoClip, &mut out);
     };
     type Step = Box<dyn Fn(&mut WinState, usize)>;
@@ -895,13 +1027,25 @@ fn measure_damaged_against_whole_frames() {
                         ("wrap", Value::Boolean(false)),
                     ]),
                 ),
-                ("style", m(vec![("bg", s("#ffffff")), ("font", s("mono")), ("size", Value::Integer(13))])),
+                (
+                    "style",
+                    m(vec![
+                        ("bg", s("#ffffff")),
+                        ("font", s("mono")),
+                        ("size", Value::Integer(13)),
+                    ]),
+                ),
             ]),
             m(vec![("op", s("focus")), ("key", s("ed"))]),
         ],
         Box::new(|st, _| {
             st.input(
-                Input::Key { key: "x".into(), text: Some("x".into()), mods: Mods::default(), repeat: false },
+                Input::Key {
+                    key: "x".into(),
+                    text: Some("x".into()),
+                    mods: Mods::default(),
+                    repeat: false,
+                },
                 &mut NoClip,
                 &mut Vec::new(),
             )
@@ -916,10 +1060,21 @@ fn measure_damaged_against_whole_frames() {
                 ("parent", s("root")),
                 ("role", s("text")),
                 ("box", tup(&[280.0, 20.0, 880.0, 700.0])),
-                ("text", s(&(0..40).map(|i| format!("A paragraph of text, line {i}")).collect::<Vec<_>>().join("\n"))),
+                (
+                    "text",
+                    s(&(0..40)
+                        .map(|i| format!("A paragraph of text, line {i}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")),
+                ),
                 ("style", m(vec![("wrap", Value::Boolean(true))])),
             ]),
-            m(vec![("key", s("caret")), ("parent", s("root")), ("box", tup(&[400.0, 60.0, 2.0, 18.0])), ("style", m(vec![("bg", s("#2563eb"))]))]),
+            m(vec![
+                ("key", s("caret")),
+                ("parent", s("root")),
+                ("box", tup(&[400.0, 60.0, 2.0, 18.0])),
+                ("style", m(vec![("bg", s("#2563eb"))])),
+            ]),
         ],
         Box::new(|st, i| {
             let bg = if i % 2 == 0 { "#ffffff" } else { "#2563eb" };
@@ -944,15 +1099,30 @@ fn measure_damaged_against_whole_frames() {
                     ("parent", s("root")),
                     ("role", s("listitem")),
                     ("box", tup(&[280.0, 10.0 + i as f64 * 26.0, 600.0, 24.0])),
-                    ("text", s(&format!("Row {i} — a list row with some text in it"))),
+                    (
+                        "text",
+                        s(&format!("Row {i} — a list row with some text in it")),
+                    ),
                     ("focusable", Value::Boolean(false)),
-                    ("style", m(vec![("bg", s("#ffffff")), ("hover", m(vec![("bg", s("#e0e7ff"))]))])),
+                    (
+                        "style",
+                        m(vec![
+                            ("bg", s("#ffffff")),
+                            ("hover", m(vec![("bg", s("#e0e7ff"))])),
+                        ]),
+                    ),
                 ])
             })
             .collect(),
         Box::new(|st, i| {
             st.input(
-                Input::Pointer { action: PointerAction::Move, x: 400.0, y: 12.0 + (i % 30) as f32 * 26.0, button: "left".into(), clicks: 0 },
+                Input::Pointer {
+                    action: PointerAction::Move,
+                    x: 400.0,
+                    y: 12.0 + (i % 30) as f32 * 26.0,
+                    button: "left".into(),
+                    clicks: 0,
+                },
                 &mut NoClip,
                 &mut Vec::new(),
             )
@@ -973,15 +1143,31 @@ fn measure_damaged_against_whole_frames() {
             ("key", s(&c)),
             ("parent", s("nb")),
             ("box", tup(&[20.0, i as f64 * 180.0 + 10.0, 860.0, 170.0])),
-            ("style", m(vec![("bg", s("#ffffff")), ("border", s("#e4e4e7")), ("border_width", Value::Integer(1)), ("radius", Value::Integer(8))])),
+            (
+                "style",
+                m(vec![
+                    ("bg", s("#ffffff")),
+                    ("border", s("#e4e4e7")),
+                    ("border_width", Value::Integer(1)),
+                    ("radius", Value::Integer(8)),
+                ]),
+            ),
         ]));
         cells.push(m(vec![
             ("key", s(&format!("ct{i}"))),
             ("parent", s(&c)),
             ("role", s("text")),
             ("box", tup(&[12.0, 10.0, 836.0, 60.0])),
-            ("text", s(&format!("let df = read_csv(\"sales.csv\")\nlet by = group_by(df, \"region\")\n{i}"))),
-            ("style", m(vec![("font", s("mono")), ("size", Value::Integer(13))])),
+            (
+                "text",
+                s(&format!(
+                    "let df = read_csv(\"sales.csv\")\nlet by = group_by(df, \"region\")\n{i}"
+                )),
+            ),
+            (
+                "style",
+                m(vec![("font", s("mono")), ("size", Value::Integer(13))]),
+            ),
         ]));
         let draw: Vec<Value> = (0..12)
             .map(|j| {
@@ -1009,7 +1195,11 @@ fn measure_damaged_against_whole_frames() {
         cells,
         Box::new(|st, i| {
             let _ = st.apply(
-                &Value::List(Arc::new(vec![m(vec![("op", s("scroll")), ("key", s("nb")), ("to", tup(&[0.0, 24.0 * (i + 1) as f64]))])])),
+                &Value::List(Arc::new(vec![m(vec![
+                    ("op", s("scroll")),
+                    ("key", s("nb")),
+                    ("to", tup(&[0.0, 24.0 * (i + 1) as f64])),
+                ])])),
                 &mut Vec::new(),
             );
         }),
@@ -1017,7 +1207,12 @@ fn measure_damaged_against_whole_frames() {
     // a terminal flood
     scenarios.push((
         "flood",
-        vec![m(vec![("key", s("term")), ("parent", s("root")), ("box", tup(&[270.0, 0.0, 930.0, h])), ("style", m(vec![("bg", s("#111111"))]))])],
+        vec![m(vec![
+            ("key", s("term")),
+            ("parent", s("root")),
+            ("box", tup(&[270.0, 0.0, 930.0, h])),
+            ("style", m(vec![("bg", s("#111111"))])),
+        ])],
         Box::new(|st, f| {
             let ops: Vec<Value> = (0..45)
                 .map(|r| {
@@ -1026,8 +1221,22 @@ fn measure_damaged_against_whole_frames() {
                         ("parent", s("term")),
                         ("role", s("text")),
                         ("box", tup(&[8.0, 4.0 + r as f64 * 17.0, 910.0, 17.0])),
-                        ("text", s(&format!("[{}] building target/release/deps/olang-{}.o", f + r, (f + r) * 7919 % 100000))),
-                        ("style", m(vec![("font", s("mono")), ("size", Value::Integer(12)), ("color", s("#d4d4d4"))])),
+                        (
+                            "text",
+                            s(&format!(
+                                "[{}] building target/release/deps/olang-{}.o",
+                                f + r,
+                                (f + r) * 7919 % 100000
+                            )),
+                        ),
+                        (
+                            "style",
+                            m(vec![
+                                ("font", s("mono")),
+                                ("size", Value::Integer(12)),
+                                ("color", s("#d4d4d4")),
+                            ]),
+                        ),
                     ])
                 })
                 .collect();
@@ -1042,9 +1251,14 @@ fn measure_damaged_against_whole_frames() {
         let mut st = WinState::new(5, true, "measure", w as f32, h as f32, 2.0);
         base(&mut st, extra);
         let mut kept = soft::Retained::default();
-        let mut t = g.as_ref().map(|g| gpu::Target::new(g.clone(), wgpu::TextureFormat::Rgba8Unorm));
-        let mut whole_t = g.as_ref().map(|g| gpu::Target::new(g.clone(), wgpu::TextureFormat::Rgba8Unorm));
-        let (mut list, mut sd, mut sf, mut gd, mut gf, mut area) = (vec![], vec![], vec![], vec![], vec![], vec![]);
+        let mut t = g
+            .as_ref()
+            .map(|g| gpu::Target::new(g.clone(), wgpu::TextureFormat::Rgba8Unorm));
+        let mut whole_t = g
+            .as_ref()
+            .map(|g| gpu::Target::new(g.clone(), wgpu::TextureFormat::Rgba8Unorm));
+        let (mut list, mut sd, mut sf, mut gd, mut gf, mut area) =
+            (vec![], vec![], vec![], vec![], vec![], vec![]);
         for i in 0..40 {
             if i > 0 {
                 step(&mut st, i);
@@ -1096,9 +1310,15 @@ fn a_code_editor_scrolled_is_drawn_whole_moved_or_not() {
     let _turn = gpu_turn();
     for scale in [1.0f32, 2.0] {
         let mut st = WinState::new(4, true, "editor", 500.0, 300.0, scale);
-        let text: Vec<String> = (0..400).map(|i| format!("let line_{i} = compute({i}) // a comment")).collect();
+        let text: Vec<String> = (0..400)
+            .map(|i| format!("let line_{i} = compute({i}) // a comment"))
+            .collect();
         let ops = vec![
-            m(vec![("key", s("root")), ("box", tup(&[0.0, 0.0, 500.0, 300.0])), ("style", m(vec![("bg", s("#ffffff"))]))]),
+            m(vec![
+                ("key", s("root")),
+                ("box", tup(&[0.0, 0.0, 500.0, 300.0])),
+                ("style", m(vec![("bg", s("#ffffff"))])),
+            ]),
             m(vec![
                 ("key", s("ed")),
                 ("parent", s("root")),
@@ -1113,30 +1333,48 @@ fn a_code_editor_scrolled_is_drawn_whole_moved_or_not() {
                         ("wrap", Value::Boolean(false)),
                     ]),
                 ),
-                ("style", m(vec![("font", s("mono")), ("size", Value::Integer(13))])),
+                (
+                    "style",
+                    m(vec![("font", s("mono")), ("size", Value::Integer(13))]),
+                ),
             ]),
             m(vec![("op", s("focus")), ("key", s("ed"))]),
         ];
         let mut out = Vec::new();
-        st.apply(&Value::List(Arc::new(ops)), &mut out).expect("applies");
+        st.apply(&Value::List(Arc::new(ops)), &mut out)
+            .expect("applies");
         st.input(Input::Focused(true), &mut NoClip, &mut out);
         let mut kept = soft::Retained::default();
         let g = gpu::gpu(None, None).ok();
-        let mut target = g.as_ref().map(|g| gpu::Target::new(g.clone(), wgpu::TextureFormat::Rgba8Unorm));
+        let mut target = g
+            .as_ref()
+            .map(|g| gpu::Target::new(g.clone(), wgpu::TextureFormat::Rgba8Unorm));
         let mut moved = 0;
         for i in 0..50 {
             if i > 0 {
                 let input = if i % 10 < 7 {
-                    Input::Key { key: "down".into(), text: None, mods: Mods::default(), repeat: false }
+                    Input::Key {
+                        key: "down".into(),
+                        text: None,
+                        mods: Mods::default(),
+                        repeat: false,
+                    }
                 } else {
-                    Input::Wheel { dx: 0.0, dy: -20.0, mods: None }
+                    Input::Wheel {
+                        dx: 0.0,
+                        dy: -20.0,
+                        mods: None,
+                    }
                 };
                 st.input(input, &mut NoClip, &mut out);
             }
             let dl = st.display_list();
             kept.render(&dl);
             if std::env::var_os("GUI_FUZZ_DEBUG").is_some() {
-                eprintln!("{i}: {:?} {:?} {:?}", dl.scrolls, kept.last_shifts, kept.last);
+                eprintln!(
+                    "{i}: {:?} {:?} {:?}",
+                    dl.scrolls, kept.last_shifts, kept.last
+                );
             }
             if !kept.last_shifts.is_empty() {
                 moved += 1;
@@ -1151,7 +1389,11 @@ fn a_code_editor_scrolled_is_drawn_whole_moved_or_not() {
             if let (Some(g), Some(t)) = (&g, target.as_mut()) {
                 t.render(&dl);
                 let (a, b) = (t.rgba(), g.render_rgba(&dl));
-                assert!(within(&a, &b, MOVED_TOLERANCE), "at {scale}x, step {i}: the GPU's: {}", first_difference(&a, &b, dl.width));
+                assert!(
+                    within(&a, &b, MOVED_TOLERANCE),
+                    "at {scale}x, step {i}: the GPU's: {}",
+                    first_difference(&a, &b, dl.width)
+                );
             }
         }
         // its rows are a fractional height apart (15.13 px at 13 px), so

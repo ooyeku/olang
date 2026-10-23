@@ -24,7 +24,9 @@ fn run(src: &str) -> Result<Value, String> {
     let src = src.to_string();
     big(move || {
         let program = Parser::new().parse(&src).map_err(|e| e.to_string())?;
-        Interpreter::new().eval_program(program).map_err(|e| e.to_string())
+        Interpreter::new()
+            .eval_program(program)
+            .map_err(|e| e.to_string())
     })
 }
 
@@ -48,7 +50,10 @@ fn counts_past_what_a_list_or_string_holds_are_errors_not_aborts() {
     }
     assert_eq!(run("len(range(0, 10, 3))").unwrap(), Value::Integer(4));
     assert_eq!(run("len(range(10, 0, -3))").unwrap(), Value::Integer(4));
-    assert_eq!(run("len(str.repeat(\"ab\", 3))").unwrap(), Value::Integer(6));
+    assert_eq!(
+        run("len(str.repeat(\"ab\", 3))").unwrap(),
+        Value::Integer(6)
+    );
 }
 
 #[test]
@@ -76,7 +81,10 @@ fn brackets_nested_past_the_limit_are_a_parse_error_not_a_stack_overflow() {
     let src = format!(
         "// {many}\nlet a = \"{many}\"\nlet b = r\"{many}\"\nlet c = `{many} ${{len([1, 2])}} {many}`\nlet d = '('\nlen(a) + len(b) + str.length(c) + (if d == '(' => 1 else => 0)\n"
     );
-    assert_eq!(run(&src).expect("runs"), Value::Integer(5000 + 5000 + 10003 + 1));
+    assert_eq!(
+        run(&src).expect("runs"),
+        Value::Integer(5000 + 5000 + 10003 + 1)
+    );
     // a real depth parses
     let src = format!("{}1{}\n", "(".repeat(200), ")".repeat(200));
     assert_eq!(run(&src).expect("runs"), Value::Integer(1));
@@ -91,7 +99,9 @@ fn a_notebooks_front_matter_nested_past_the_limit_is_a_diagnostic_not_a_stack_ov
     );
     let nb = big(move || olang::notebook::parse(&text));
     assert!(
-        nb.diagnostics.iter().any(|d| format!("{:?}", d).contains("nested more than")),
+        nb.diagnostics
+            .iter()
+            .any(|d| format!("{:?}", d).contains("nested more than")),
         "{:?}",
         nb.diagnostics.iter().take(2).collect::<Vec<_>>()
     );
@@ -99,11 +109,14 @@ fn a_notebooks_front_matter_nested_past_the_limit_is_a_diagnostic_not_a_stack_ov
 
 #[test]
 fn a_git_dependencys_url_or_ref_that_reads_as_an_option_is_refused_before_git_runs() {
-    use olang::pkg::cache::{fetch_git, CacheError, GitRef};
+    use olang::pkg::cache::{CacheError, GitRef, fetch_git};
     for (url, r) in [
         ("--upload-pack=touch /tmp/olang-pwned;", GitRef::Default),
         ("-c", GitRef::Default),
-        ("https://example.invalid/x.git", GitRef::Rev("--output=/tmp/x".into())),
+        (
+            "https://example.invalid/x.git",
+            GitRef::Rev("--output=/tmp/x".into()),
+        ),
         ("https://example.invalid/x.git", GitRef::Branch("-q".into())),
     ] {
         match fetch_git(url, &r, false) {

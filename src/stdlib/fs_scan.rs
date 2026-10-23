@@ -562,9 +562,15 @@ fn contains_ascii_folded(bytes: &[u8], needle: &[u8]) -> bool {
             .iter()
             .position(|c| *c == b.to_ascii_lowercase())
             .unwrap_or(0)
-            + if b.is_ascii_alphabetic() { 0 } else { COMMON.len() }
+            + if b.is_ascii_alphabetic() {
+                0
+            } else {
+                COMMON.len()
+            }
     };
-    let at = (0..needle.len()).max_by_key(|&i| rank(needle[i])).unwrap_or(0);
+    let at = (0..needle.len())
+        .max_by_key(|&i| rank(needle[i]))
+        .unwrap_or(0);
     let (lo, up) = (needle[at], needle[at].to_ascii_uppercase());
     let found = |i: usize| -> bool {
         i >= at

@@ -98,7 +98,12 @@ fn embed_full(manifest_dir: &std::path::Path, out_dir: &std::path::Path, embed: 
     println!("cargo:rerun-if-env-changed=OLANG_WASM_FULL");
     let artifact = env::var("OLANG_WASM_FULL")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| manifest_dir.join("target").join("wasm-full").join("olang.wasm"));
+        .unwrap_or_else(|_| {
+            manifest_dir
+                .join("target")
+                .join("wasm-full")
+                .join("olang.wasm")
+        });
     println!("cargo:rerun-if-changed={}", artifact.display());
     let bytes = if embed {
         fs::read(&artifact).unwrap_or_default()

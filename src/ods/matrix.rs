@@ -188,7 +188,11 @@ fn dense_column(s: &Series, name: &str, func: &str) -> R<Arc<Vec<f64>>> {
 
 /// Named columns of a matrix: from a Frame (the named ones, or every
 /// numeric one) or a list of Series.
-fn named_columns<'a>(func: &str, data: &'a Value, cols: Option<&Value>) -> R<Vec<(String, &'a Series)>> {
+fn named_columns<'a>(
+    func: &str,
+    data: &'a Value,
+    cols: Option<&Value>,
+) -> R<Vec<(String, &'a Series)>> {
     if let Some(f) = frame_of(data) {
         let names: Vec<String> = match cols {
             None | Some(Value::Unit) => f
@@ -196,7 +200,10 @@ fn named_columns<'a>(func: &str, data: &'a Value, cols: Option<&Value>) -> R<Vec
                 .iter()
                 .zip(f.columns())
                 .filter(|(_, s)| {
-                    matches!(s, Series::F64 { .. } | Series::I64 { .. } | Series::Bool { .. })
+                    matches!(
+                        s,
+                        Series::F64 { .. } | Series::I64 { .. } | Series::Bool { .. }
+                    )
                 })
                 .map(|(n, _)| n.clone())
                 .collect(),
@@ -287,7 +294,9 @@ fn build(func: &str, data: &Value, cols: Option<&Value>, nulls: &str) -> R<Matri
         "drop" => {
             let parts = named
                 .iter()
-                .map(|(name, s)| matrix::float_column(s, name).map_err(|e| format!("{}: {}", func, e)))
+                .map(|(name, s)| {
+                    matrix::float_column(s, name).map_err(|e| format!("{}: {}", func, e))
+                })
                 .collect::<R<Vec<_>>>()?;
             if parts.iter().all(|(_, m)| m.is_none()) {
                 return Matrix::from_columns(n, parts.into_iter().map(|(v, _)| v).collect())
@@ -383,7 +392,12 @@ fn float_series(v: Vec<f64>) -> Value {
 fn int_arg(func: &str, v: Option<&Value>, what: &str) -> R<i64> {
     match v {
         Some(Value::Integer(i)) => Ok(*i),
-        Some(other) => Err(format!("{}: {} must be an Int, got {}", func, what, other.type_name())),
+        Some(other) => Err(format!(
+            "{}: {} must be an Int, got {}",
+            func,
+            what,
+            other.type_name()
+        )),
         None => Err(format!("{}: missing {}", func, what)),
     }
 }
@@ -424,7 +438,9 @@ fn matmul_values(func: &str, lhs: &Value, rhs: &Value) -> R<Value> {
                 Some(s) => dense_column(s, "the Series", func)?,
                 None => Arc::new(floats(func, rhs)?),
             };
-            a.matvec_shared(&v, par()).map(float_series).map_err(|e| e.to_string())
+            a.matvec_shared(&v, par())
+                .map(float_series)
+                .map_err(|e| e.to_string())
         }
         // vᵀX: a row vector times a matrix.
         (None, Some(b)) if is_vector(lhs) => {
@@ -432,7 +448,8 @@ fn matmul_values(func: &str, lhs: &Value, rhs: &Value) -> R<Value> {
                 Some(s) => dense_column(s, "the Series", func)?,
                 None => Arc::new(floats(func, lhs)?),
             };
-            b.t().matvec_shared(&v, par())
+            b.t()
+                .matvec_shared(&v, par())
                 .map(float_series)
                 .map_err(|_| {
                     format!(
@@ -514,10 +531,7 @@ pub fn ods_dispatch(func: &str, args: &[Value]) -> R<Value> {
             let k = parts.len();
             let vals = matrix::corr_cov(&parts, method, func == "corr", par());
             let names: Vec<String> = named.iter().map(|(n, _)| n.clone()).collect();
-            let mut out = vec![(
-                "term".to_string(),
-                Series::from_str_values(names.clone()),
-            )];
+            let mut out = vec![("term".to_string(), Series::from_str_values(names.clone()))];
             for (j, n) in names.iter().enumerate() {
                 if n == "term" {
                     return Err(format!(
@@ -525,7 +539,10 @@ pub fn ods_dispatch(func: &str, args: &[Value]) -> R<Value> {
                         full
                     ));
                 }
-                out.push((n.clone(), Series::from_f64((0..k).map(|i| vals[i * k + j]).collect())));
+                out.push((
+                    n.clone(),
+                    Series::from_f64((0..k).map(|i| vals[i * k + j]).collect()),
+                ));
             }
             Frame::new(out)
                 .map(OdsFrame::into_value)
@@ -554,7 +571,9 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> R<Value> {
             other => Err(format!(
                 "{}: needs a list of rows (lists of numbers), got {}",
                 f,
-                other.map(|v| v.type_name()).unwrap_or_else(|| "nothing".to_string())
+                other
+                    .map(|v| v.type_name())
+                    .unwrap_or_else(|| "nothing".to_string())
             )),
         },
         "identity" => {
@@ -571,7 +590,8 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> R<Value> {
         "matmul" => matmul_values(
             f,
             a0.ok_or_else(|| format!("{}: missing the left side", f))?,
-            args.get(1).ok_or_else(|| format!("{}: missing the right side", f))?,
+            args.get(1)
+                .ok_or_else(|| format!("{}: missing the right side", f))?,
         ),
         "col" => {
             let m = want_matrix(f, a0, "the matrix")?;
@@ -624,7 +644,9 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> R<Value> {
         }
         "solve" => {
             let a = want_matrix(f, a0, "the matrix")?;
-            let b = args.get(1).ok_or_else(|| format!("{}: missing the right-hand side", f))?;
+            let b = args
+                .get(1)
+                .ok_or_else(|| format!("{}: missing the right-hand side", f))?;
             if is_vector(b) {
                 let v = floats(f, b)?;
                 let n = v.len();
@@ -721,7 +743,9 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> R<Value> {
             let m = want_matrix(f, a0, "the matrix")?;
             Ok(Value::List(Arc::new(
                 (0..m.rows())
-                    .map(|i| Value::List(Arc::new(m.row(i).into_iter().map(Value::Float).collect())))
+                    .map(|i| {
+                        Value::List(Arc::new(m.row(i).into_iter().map(Value::Float).collect()))
+                    })
                     .collect(),
             )))
         }

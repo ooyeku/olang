@@ -14,7 +14,7 @@ use super::series::series_of;
 use crate::ast::Value;
 use olang_ods::gg::{
     Aes, Appearance, Column, CoordSpec, Data, FacetSpec, Layer, Param, Params, RenderOptions,
-    Scene, ScaleSpec, Source, Spec,
+    ScaleSpec, Scene, Source, Spec,
 };
 use olang_ods::{Scalar, Series};
 
@@ -37,7 +37,11 @@ fn get<'a>(m: &'a crate::ast::ValueMap, k: &str) -> Option<&'a Value> {
 fn text(v: &Value, what: &str) -> Result<String, String> {
     match v {
         Value::String(s) => Ok(s.as_ref().clone()),
-        other => Err(format!("gg: {} must be a String, got {}", what, other.type_name())),
+        other => Err(format!(
+            "gg: {} must be a String, got {}",
+            what,
+            other.type_name()
+        )),
     }
 }
 
@@ -45,7 +49,11 @@ fn texts(v: &Value, what: &str) -> Result<Vec<String>, String> {
     match v {
         Value::List(items) => items.iter().map(|i| text(i, what)).collect(),
         Value::String(s) => Ok(vec![s.as_ref().clone()]),
-        other => Err(format!("gg: {} must be a list of Strings, got {}", what, other.type_name())),
+        other => Err(format!(
+            "gg: {} must be a list of Strings, got {}",
+            what,
+            other.type_name()
+        )),
     }
 }
 
@@ -142,7 +150,10 @@ fn param_of(v: &Value) -> Option<Param> {
         Value::Boolean(b) => Param::Bool(*b),
         Value::String(s) => Param::Str(s.as_ref().clone()),
         Value::List(items) | Value::Tuple(items) => {
-            if items.iter().all(|i| matches!(i, Value::Integer(_) | Value::Float(_) | Value::Unit)) {
+            if items
+                .iter()
+                .all(|i| matches!(i, Value::Integer(_) | Value::Float(_) | Value::Unit))
+            {
                 Param::Nums(
                     items
                         .iter()
@@ -193,7 +204,12 @@ fn params_of(v: Option<&Value>) -> Result<Params, String> {
                 }
             }
         }
-        Some(other) => return Err(format!("gg: params must be a map, got {}", other.type_name())),
+        Some(other) => {
+            return Err(format!(
+                "gg: params must be a map, got {}",
+                other.type_name()
+            ));
+        }
     }
     Ok(p)
 }
@@ -201,7 +217,10 @@ fn params_of(v: Option<&Value>) -> Result<Params, String> {
 /// `after_stat(name)` or `..name..`: a stat's variable.
 fn stat_name(s: &str) -> Option<String> {
     let t = s.trim();
-    if let Some(r) = t.strip_prefix("after_stat(").and_then(|r| r.strip_suffix(')')) {
+    if let Some(r) = t
+        .strip_prefix("after_stat(")
+        .and_then(|r| r.strip_suffix(')'))
+    {
         return Some(r.trim().to_string());
     }
     if t.len() > 4 && t.starts_with("..") && t.ends_with("..") {
@@ -212,14 +231,20 @@ fn stat_name(s: &str) -> Option<String> {
 
 /// `constant(text)`: a String constant mapping (gg.constant).
 fn constant_text(s: &str) -> Option<String> {
-    s.trim().strip_prefix("constant(").and_then(|r| r.strip_suffix(')')).map(str::to_string)
+    s.trim()
+        .strip_prefix("constant(")
+        .and_then(|r| r.strip_suffix(')'))
+        .map(str::to_string)
 }
 
 fn mapping_of(v: Option<&Value>, n_hint: usize) -> Result<Vec<(Aes, Source)>, String> {
     let mut out = Vec::new();
     let Some(v) = v else { return Ok(out) };
     let Value::Map(m) = v else {
-        return Err(format!("gg: a mapping must be gg.aes(…) (a map), got {}", v.type_name()));
+        return Err(format!(
+            "gg: a mapping must be gg.aes(…) (a map), got {}",
+            v.type_name()
+        ));
     };
     for (k, v) in m.iter() {
         if matches!(v, Value::Unit) {
@@ -245,7 +270,8 @@ fn mapping_of(v: Option<&Value>, n_hint: usize) -> Result<Vec<(Aes, Source)>, St
                 Some(series) => Source::Values(k.clone(), column_of(series)),
                 None => match other {
                     Value::List(items) => {
-                        let series = super::series::series_from_list(items).map_err(|e| format!("gg: {} = a list: {}", k, e))?;
+                        let series = super::series::series_from_list(items)
+                            .map_err(|e| format!("gg: {} = a list: {}", k, e))?;
                         Source::Values(k.clone(), column_of(&series))
                     }
                     _ => {
@@ -275,7 +301,10 @@ fn columns_named(m: &[(Aes, Source)], into: &mut Vec<String>) {
 /// A spec map read into the renderer's spec.
 pub fn spec_of(v: &Value) -> Result<Spec, String> {
     let Value::Map(m) = v else {
-        return Err(format!("gg: expects a plot (gg.plot(…)), got {}", v.type_name()));
+        return Err(format!(
+            "gg: expects a plot (gg.plot(…)), got {}",
+            v.type_name()
+        ));
     };
     if !m.contains_key(MARK) {
         return Err("gg: expects a plot made by gg.plot(…)".to_string());
@@ -289,9 +318,18 @@ pub fn spec_of(v: &Value) -> Result<Spec, String> {
     columns_named(&spec.mapping, &mut wanted);
     let facet = match get(m, "facet") {
         Some(Value::Map(f)) => {
-            let kind = get(f, "kind").map(|k| text(k, "facet kind")).transpose()?.unwrap_or_else(|| "wrap".into());
-            let rows = get(f, "rows").map(|v| texts(v, "facet rows")).transpose()?.unwrap_or_default();
-            let cols = get(f, "cols").map(|v| texts(v, "facet cols")).transpose()?.unwrap_or_default();
+            let kind = get(f, "kind")
+                .map(|k| text(k, "facet kind"))
+                .transpose()?
+                .unwrap_or_else(|| "wrap".into());
+            let rows = get(f, "rows")
+                .map(|v| texts(v, "facet rows"))
+                .transpose()?
+                .unwrap_or_default();
+            let cols = get(f, "cols")
+                .map(|v| texts(v, "facet cols"))
+                .transpose()?
+                .unwrap_or_default();
             let num = |k: &str| match get(f, k) {
                 Some(Value::Integer(i)) if *i > 0 => Some(*i as usize),
                 _ => None,
@@ -304,7 +342,10 @@ pub fn spec_of(v: &Value) -> Result<Spec, String> {
                 cols,
                 ncol: num("ncol"),
                 nrow: num("nrow"),
-                scales: get(f, "scales").map(|v| text(v, "facet scales")).transpose()?.unwrap_or_else(|| "fixed".into()),
+                scales: get(f, "scales")
+                    .map(|v| text(v, "facet scales"))
+                    .transpose()?
+                    .unwrap_or_else(|| "fixed".into()),
             })
         }
         _ => None,
@@ -315,13 +356,18 @@ pub fn spec_of(v: &Value) -> Result<Spec, String> {
             let Value::Map(lm) = l else {
                 return Err(format!("gg: a layer must be a map, got {}", l.type_name()));
             };
-            let geom = get(lm, "geom").map(|g| text(g, "geom")).transpose()?.ok_or("gg: a layer needs a geom")?;
+            let geom = get(lm, "geom")
+                .map(|g| text(g, "geom"))
+                .transpose()?
+                .ok_or("gg: a layer needs a geom")?;
             let mapping = mapping_of(get(lm, "mapping"), 0)?;
             columns_named(&mapping, &mut wanted);
             let layer = Layer {
                 geom,
                 stat: get(lm, "stat").map(|g| text(g, "stat")).transpose()?,
-                position: get(lm, "position").map(|g| text(g, "position")).transpose()?,
+                position: get(lm, "position")
+                    .map(|g| text(g, "position"))
+                    .transpose()?,
                 mapping,
                 data: None,
                 inherit: !matches!(get(lm, "inherit"), Some(Value::Boolean(false))),
@@ -346,8 +392,14 @@ pub fn spec_of(v: &Value) -> Result<Spec, String> {
         for sv in ss.iter() {
             let Value::Map(sm) = sv else { continue };
             spec.scales.push(ScaleSpec {
-                aes: get(sm, "aes").map(|v| text(v, "scale aes")).transpose()?.unwrap_or_default(),
-                kind: get(sm, "kind").map(|v| text(v, "scale kind")).transpose()?.unwrap_or_else(|| "continuous".into()),
+                aes: get(sm, "aes")
+                    .map(|v| text(v, "scale aes"))
+                    .transpose()?
+                    .unwrap_or_default(),
+                kind: get(sm, "kind")
+                    .map(|v| text(v, "scale kind"))
+                    .transpose()?
+                    .unwrap_or_else(|| "continuous".into()),
                 params: params_of(get(sm, "params"))?,
             });
         }
@@ -368,7 +420,10 @@ pub fn spec_of(v: &Value) -> Result<Spec, String> {
             }
         };
         spec.coord = CoordSpec {
-            kind: get(c, "kind").map(|v| text(v, "coord")).transpose()?.unwrap_or_else(|| "cartesian".into()),
+            kind: get(c, "kind")
+                .map(|v| text(v, "coord"))
+                .transpose()?
+                .unwrap_or_else(|| "cartesian".into()),
             ratio: match get(c, "ratio") {
                 Some(Value::Integer(i)) => Some(*i as f64),
                 Some(Value::Float(f)) => Some(*f),
@@ -381,7 +436,14 @@ pub fn spec_of(v: &Value) -> Result<Spec, String> {
     if let Some(Value::Map(l)) = get(m, "labels") {
         for (k, v) in l.iter() {
             if let Value::String(t) = v {
-                spec.labels.insert(if k == "colour" { "color".into() } else { k.clone() }, t.as_ref().clone());
+                spec.labels.insert(
+                    if k == "colour" {
+                        "color".into()
+                    } else {
+                        k.clone()
+                    },
+                    t.as_ref().clone(),
+                );
             }
         }
     }
@@ -391,7 +453,9 @@ pub fn spec_of(v: &Value) -> Result<Spec, String> {
 
 /// The appearance a host asks for (`OLANG_PLOT_THEME`, as plot reads it).
 fn host_appearance() -> Option<Appearance> {
-    std::env::var("OLANG_PLOT_THEME").ok().and_then(|t| Appearance::parse(&t))
+    std::env::var("OLANG_PLOT_THEME")
+        .ok()
+        .and_then(|t| Appearance::parse(&t))
 }
 
 /// A spec value's scene (zoomed to a horizontal range when given).
@@ -428,7 +492,11 @@ pub const FUNCTIONS: &[(&str, usize)] = &[("gg", 1), ("gg_scene", 1)];
 
 pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
     if args.len() != 1 {
-        return Err(format!("plot.{} expects 1 argument (a gg plot), got {}", func, args.len()));
+        return Err(format!(
+            "plot.{} expects 1 argument (a gg plot), got {}",
+            func,
+            args.len()
+        ));
     }
     let scene = scene_of(&args[0], None)?;
     Ok(match func {

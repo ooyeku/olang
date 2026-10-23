@@ -887,7 +887,11 @@ fn heat_t(scale: HeatScale, lo: f64, hi: f64) -> impl Fn(f64) -> f64 {
     let reach = lo.abs().max(hi.abs());
     move |v: f64| {
         if scale == HeatScale::Diverging {
-            if reach > 0.0 { 0.5 + v / (2.0 * reach) } else { 0.5 }
+            if reach > 0.0 {
+                0.5 + v / (2.0 * reach)
+            } else {
+                0.5
+            }
         } else if hi > lo {
             (v - lo) / (hi - lo)
         } else {
@@ -1979,27 +1983,51 @@ mod tests {
     fn heatmap_diverging_is_centred_on_zero() {
         let xs = vec!["a".to_string(), "b".to_string(), "c".to_string()];
         let ys = vec!["r".to_string()];
-        let opts = PlotOptions { scale: HeatScale::Diverging, ..PlotOptions::default() };
+        let opts = PlotOptions {
+            scale: HeatScale::Diverging,
+            ..PlotOptions::default()
+        };
         // -0.33..1: zero is the middle colour, -0.33 a third of the way to cold
         let s = render_heatmap(&xs, &ys, &[vec![-0.33, 0.0, 1.0]], &opts).unwrap();
         let mid = ramp_color(HeatScale::Diverging, Theme::Light, 0.5);
         let coldest = ramp_color(HeatScale::Diverging, Theme::Light, 0.0);
         let low = ramp_color(HeatScale::Diverging, Theme::Light, 0.5 - 0.33 / 2.0);
-        assert!(s.contains(&format!("fill=\"{mid}\"")), "0 is the middle colour");
-        assert!(s.contains(&format!("fill=\"{low}\"")), "-0.33 a third of the way to cold");
-        assert!(!s.contains(&format!("fill=\"{coldest}\"")), "nothing reaches the coldest");
+        assert!(
+            s.contains(&format!("fill=\"{mid}\"")),
+            "0 is the middle colour"
+        );
+        assert!(
+            s.contains(&format!("fill=\"{low}\"")),
+            "-0.33 a third of the way to cold"
+        );
+        assert!(
+            !s.contains(&format!("fill=\"{coldest}\"")),
+            "nothing reaches the coldest"
+        );
         // the other scales still span the least to the most
-        let auto = render_heatmap(&xs, &ys, &[vec![-0.33, 0.0, 1.0]], &PlotOptions::default()).unwrap();
+        let auto =
+            render_heatmap(&xs, &ys, &[vec![-0.33, 0.0, 1.0]], &PlotOptions::default()).unwrap();
         assert!(auto.contains(&ramp_color(HeatScale::Auto, Theme::Light, 0.0)));
     }
 
     #[test]
     fn heatmap_row_labels_fit_their_margin() {
         let xs = vec!["x".to_string()];
-        let ys = vec!["cluster 0".to_string(), "a much longer row label than fits".to_string()];
+        let ys = vec![
+            "cluster 0".to_string(),
+            "a much longer row label than fits".to_string(),
+        ];
         let s = render_heatmap(&xs, &ys, &[vec![1.0], vec![2.0]], &PlotOptions::default()).unwrap();
         // the cells start right of the widest label (9 characters: 79 units)
-        let first_x: f64 = s.split("<rect x=\"").nth(2).unwrap().split('"').next().unwrap().parse().unwrap();
+        let first_x: f64 = s
+            .split("<rect x=\"")
+            .nth(2)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
         let (room, chars) = row_label_room(&ys, PlotOptions::default().width as f64, 56.0);
         assert!(first_x >= room, "cells at {first_x}, labels need {room}");
         assert!(room <= PlotOptions::default().width as f64 / 3.0 + 0.01);

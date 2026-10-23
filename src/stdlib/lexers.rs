@@ -40,7 +40,11 @@ pub fn tokens(src: &str, lang: &str) -> Vec<Tok> {
         "shell" => shell(src),
         "toml" => toml(src),
         "markdown" => markdown(src),
-        _ => vec![Tok { kind: "ident", a: 0, b: src.len() }],
+        _ => vec![Tok {
+            kind: "ident",
+            a: 0,
+            b: src.len(),
+        }],
     };
     out.retain(|t| t.b > t.a);
     out
@@ -89,7 +93,8 @@ fn ident_end(src: &str, mut i: usize) -> usize {
 /// The end of a number from `i` (a digit there).
 fn number_end(src: &str, i: usize) -> usize {
     let b = src.as_bytes();
-    let hexy = b[i] == b'0' && matches!(b.get(i + 1), Some(b'x' | b'X' | b'b' | b'B' | b'o' | b'O'));
+    let hexy =
+        b[i] == b'0' && matches!(b.get(i + 1), Some(b'x' | b'X' | b'b' | b'B' | b'o' | b'O'));
     let mut j = i + 1;
     while j < b.len() {
         let c = b[j];
@@ -171,14 +176,27 @@ const PYTHON: Spec = Spec {
     ],
     constants: &["True", "False", "None", "self", "cls"],
     types: &[
-        "int", "float", "str", "bool", "list", "dict", "set", "tuple", "bytes", "object", "type",
-        "complex", "frozenset",
+        "int",
+        "float",
+        "str",
+        "bool",
+        "list",
+        "dict",
+        "set",
+        "tuple",
+        "bytes",
+        "object",
+        "type",
+        "complex",
+        "frozenset",
     ],
     line_comments: &["#"],
     block_comment: None,
     quotes: &['"', '\''],
     triple: true,
-    prefixes: &["f", "r", "b", "u", "rb", "br", "fr", "rf", "F", "R", "B", "U"],
+    prefixes: &[
+        "f", "r", "b", "u", "rb", "br", "fr", "rf", "F", "R", "B", "U",
+    ],
     rust: false,
     template: false,
     decorators: true,
@@ -214,14 +232,59 @@ const RUST: Spec = Spec {
 
 const JS: Spec = Spec {
     keywords: &[
-        "break", "case", "catch", "class", "const", "continue", "debugger", "default", "delete",
-        "do", "else", "export", "extends", "finally", "for", "function", "if", "import", "in",
-        "instanceof", "let", "new", "of", "return", "static", "super", "switch", "this", "throw",
-        "try", "typeof", "var", "void", "while", "with", "yield", "async", "await", "from", "as",
-        "interface", "type", "enum", "implements", "declare", "readonly", "get", "set",
+        "break",
+        "case",
+        "catch",
+        "class",
+        "const",
+        "continue",
+        "debugger",
+        "default",
+        "delete",
+        "do",
+        "else",
+        "export",
+        "extends",
+        "finally",
+        "for",
+        "function",
+        "if",
+        "import",
+        "in",
+        "instanceof",
+        "let",
+        "new",
+        "of",
+        "return",
+        "static",
+        "super",
+        "switch",
+        "this",
+        "throw",
+        "try",
+        "typeof",
+        "var",
+        "void",
+        "while",
+        "with",
+        "yield",
+        "async",
+        "await",
+        "from",
+        "as",
+        "interface",
+        "type",
+        "enum",
+        "implements",
+        "declare",
+        "readonly",
+        "get",
+        "set",
     ],
     constants: &["true", "false", "null", "undefined", "NaN", "Infinity"],
-    types: &["string", "number", "boolean", "any", "unknown", "never", "object", "bigint"],
+    types: &[
+        "string", "number", "boolean", "any", "unknown", "never", "object", "bigint",
+    ],
     line_comments: &["//"],
     block_comment: Some(("/*", "*/")),
     quotes: &['"', '\''],
@@ -253,7 +316,9 @@ const JSON: Spec = Spec {
 };
 
 fn all_caps(w: &str) -> bool {
-    w.chars().any(|c| c.is_uppercase()) && w.chars().all(|c| c.is_uppercase() || c.is_ascii_digit() || c == '_')
+    w.chars().any(|c| c.is_uppercase())
+        && w.chars()
+            .all(|c| c.is_uppercase() || c.is_ascii_digit() || c == '_')
 }
 
 fn code(src: &str, spec: &Spec) -> Vec<Tok> {
@@ -262,7 +327,8 @@ fn code(src: &str, spec: &Spec) -> Vec<Tok> {
     let n = src.len();
     // the last word token's text, for `def name` / `class Name`
     let mut last_word: &str = "";
-    let push = |out: &mut Vec<Tok>, kind: &'static str, a: usize, b: usize| out.push(Tok { kind, a, b });
+    let push =
+        |out: &mut Vec<Tok>, kind: &'static str, a: usize, b: usize| out.push(Tok { kind, a, b });
     while i < n {
         let c = ch(src, i).expect("in range");
         let rest = &src[i..];
@@ -395,8 +461,18 @@ fn code(src: &str, spec: &Spec) -> Vec<Tok> {
             i = e;
             continue;
         }
-        if c.is_ascii_digit() || (c == '.' && src.as_bytes().get(i + 1).is_some_and(u8::is_ascii_digit) && !out.last().is_some_and(|t| t.kind == "ident" || t.kind == "property")) {
-            let e = if c == '.' { number_end(src, i + 1) } else { number_end(src, i) };
+        if c.is_ascii_digit()
+            || (c == '.'
+                && src.as_bytes().get(i + 1).is_some_and(u8::is_ascii_digit)
+                && !out
+                    .last()
+                    .is_some_and(|t| t.kind == "ident" || t.kind == "property"))
+        {
+            let e = if c == '.' {
+                number_end(src, i + 1)
+            } else {
+                number_end(src, i)
+            };
             push(&mut out, "number", i, e);
             i = e;
             continue;
@@ -423,9 +499,12 @@ fn code(src: &str, spec: &Spec) -> Vec<Tok> {
                 .rev()
                 .find(|t| t.kind != "space")
                 .is_some_and(|t| &src[t.a..t.b] == "." || &src[t.a..t.b] == "?.");
-            let called = src.as_bytes().get(e) == Some(&b'(')
-                || (spec.rust && src[e..].starts_with("::<"));
-            let kind = if spec.rust && src.as_bytes().get(e) == Some(&b'!') && src.as_bytes().get(e + 1) != Some(&b'=') {
+            let called =
+                src.as_bytes().get(e) == Some(&b'(') || (spec.rust && src[e..].starts_with("::<"));
+            let kind = if spec.rust
+                && src.as_bytes().get(e) == Some(&b'!')
+                && src.as_bytes().get(e + 1) != Some(&b'=')
+            {
                 e += 1;
                 "macro"
             } else if prev_dot {
@@ -464,7 +543,11 @@ fn code(src: &str, spec: &Spec) -> Vec<Tok> {
                 if e > i && spec.line_comments.iter().any(|lc| src[e..].starts_with(lc)) {
                     break;
                 }
-                if e > i && spec.block_comment.is_some_and(|(o, _)| src[e..].starts_with(o)) {
+                if e > i
+                    && spec
+                        .block_comment
+                        .is_some_and(|(o, _)| src[e..].starts_with(o))
+                {
                     break;
                 }
                 e += d.len_utf8();
@@ -506,7 +589,11 @@ fn shell(src: &str) -> Vec<Tok> {
         let c = ch(src, i).expect("in range");
         if c == '\n' {
             let e = spaces(src, i);
-            out.push(Tok { kind: "space", a: i, b: e });
+            out.push(Tok {
+                kind: "space",
+                a: i,
+                b: e,
+            });
             i = e;
             command = true;
             line_start = true;
@@ -520,13 +607,22 @@ fn shell(src: &str) -> Vec<Tok> {
                 }
                 e += d.len_utf8();
             }
-            out.push(Tok { kind: "space", a: i, b: e });
+            out.push(Tok {
+                kind: "space",
+                a: i,
+                b: e,
+            });
             i = e;
             continue;
         }
         // a prompt: `$ ` or `% ` or `> ` opening a console line
-        if line_start && matches!(c, '$' | '%' | '>') && matches!(ch(src, i + 1), Some(' ') | None) {
-            out.push(Tok { kind: "punct", a: i, b: i + 1 });
+        if line_start && matches!(c, '$' | '%' | '>') && matches!(ch(src, i + 1), Some(' ') | None)
+        {
+            out.push(Tok {
+                kind: "punct",
+                a: i,
+                b: i + 1,
+            });
             i += 1;
             line_start = false;
             command = true;
@@ -535,20 +631,32 @@ fn shell(src: &str) -> Vec<Tok> {
         line_start = false;
         if c == '#' {
             let e = line_end(src, i);
-            out.push(Tok { kind: "comment", a: i, b: e });
+            out.push(Tok {
+                kind: "comment",
+                a: i,
+                b: e,
+            });
             i = e;
             continue;
         }
         if c == '\'' {
             let e = string_end(src, i + 1, "'", false, true);
-            out.push(Tok { kind: "string", a: i, b: e });
+            out.push(Tok {
+                kind: "string",
+                a: i,
+                b: e,
+            });
             i = e;
             command = false;
             continue;
         }
         if c == '"' {
             let e = string_end(src, i + 1, "\"", true, true);
-            out.push(Tok { kind: "string", a: i, b: e });
+            out.push(Tok {
+                kind: "string",
+                a: i,
+                b: e,
+            });
             i = e;
             command = false;
             continue;
@@ -561,7 +669,11 @@ fn shell(src: &str) -> Vec<Tok> {
                 Some(d) if d.is_ascii_digit() || "?#@*!$-".contains(d) => i + 2,
                 _ => i + 1,
             };
-            let kind = if e == i + 2 && ch(src, i + 1) == Some('(') { "punct" } else { "property" };
+            let kind = if e == i + 2 && ch(src, i + 1) == Some('(') {
+                "punct"
+            } else {
+                "property"
+            };
             if kind == "punct" {
                 command = true;
             }
@@ -572,7 +684,11 @@ fn shell(src: &str) -> Vec<Tok> {
         if c == '\\' {
             let e = next_i(src, i);
             let e = if e < n { next_i(src, e) } else { e };
-            let kind = if src[i..e].ends_with('\n') { "punct" } else { "string" };
+            let kind = if src[i..e].ends_with('\n') {
+                "punct"
+            } else {
+                "string"
+            };
             out.push(Tok { kind, a: i, b: e });
             i = e;
             continue;
@@ -586,7 +702,15 @@ fn shell(src: &str) -> Vec<Tok> {
                 e += 1;
             }
             let t = &src[i..e];
-            out.push(Tok { kind: if matches!(t, "(" | ")" | "`") { "punct" } else { "operator" }, a: i, b: e });
+            out.push(Tok {
+                kind: if matches!(t, "(" | ")" | "`") {
+                    "punct"
+                } else {
+                    "operator"
+                },
+                a: i,
+                b: e,
+            });
             if !matches!(t, ">" | ">>" | "<" | "2>" | ")") {
                 command = true;
             }
@@ -609,10 +733,22 @@ fn shell(src: &str) -> Vec<Tok> {
             && w[..eq].chars().all(is_id)
             && w.chars().next().is_some_and(is_id_start)
         {
-            out.push(Tok { kind: "property", a: i, b: i + eq });
-            out.push(Tok { kind: "operator", a: i + eq, b: i + eq + 1 });
+            out.push(Tok {
+                kind: "property",
+                a: i,
+                b: i + eq,
+            });
+            out.push(Tok {
+                kind: "operator",
+                a: i + eq,
+                b: i + eq + 1,
+            });
             if i + eq + 1 < e {
-                out.push(Tok { kind: "string", a: i + eq + 1, b: e });
+                out.push(Tok {
+                    kind: "string",
+                    a: i + eq + 1,
+                    b: e,
+                });
             }
             i = e;
             continue;
@@ -628,8 +764,17 @@ fn shell(src: &str) -> Vec<Tok> {
         } else {
             "ident"
         };
-        command = SHELL_KEYWORDS.contains(&w) && command && !matches!(w, "for" | "case" | "select" | "export" | "local" | "readonly" | "function" | "return");
-        out.push(Tok { kind, a: i, b: e.max(next_i(src, i).min(n)) });
+        command = SHELL_KEYWORDS.contains(&w)
+            && command
+            && !matches!(
+                w,
+                "for" | "case" | "select" | "export" | "local" | "readonly" | "function" | "return"
+            );
+        out.push(Tok {
+            kind,
+            a: i,
+            b: e.max(next_i(src, i).min(n)),
+        });
         i = e.max(next_i(src, i).min(n));
     }
     out
@@ -655,13 +800,21 @@ fn toml(src: &str) -> Vec<Tok> {
                 key = true;
                 header = false;
             }
-            out.push(Tok { kind: "space", a: i, b: e });
+            out.push(Tok {
+                kind: "space",
+                a: i,
+                b: e,
+            });
             i = e;
             continue;
         }
         if c == '#' {
             let e = line_end(src, i);
-            out.push(Tok { kind: "comment", a: i, b: e });
+            out.push(Tok {
+                kind: "comment",
+                a: i,
+                b: e,
+            });
             i = e;
             continue;
         }
@@ -669,7 +822,11 @@ fn toml(src: &str) -> Vec<Tok> {
         let first = src[at_line_start..i].trim().is_empty();
         if c == '[' && first && nest.is_empty() {
             let e = if rest.starts_with("[[") { i + 2 } else { i + 1 };
-            out.push(Tok { kind: "punct", a: i, b: e });
+            out.push(Tok {
+                kind: "punct",
+                a: i,
+                b: e,
+            });
             header = true;
             key = true;
             i = e;
@@ -677,7 +834,11 @@ fn toml(src: &str) -> Vec<Tok> {
         }
         if header && c == ']' {
             let e = if rest.starts_with("]]") { i + 2 } else { i + 1 };
-            out.push(Tok { kind: "punct", a: i, b: e });
+            out.push(Tok {
+                kind: "punct",
+                a: i,
+                b: e,
+            });
             header = false;
             i = e;
             continue;
@@ -685,7 +846,11 @@ fn toml(src: &str) -> Vec<Tok> {
         if rest.starts_with("\"\"\"") || rest.starts_with("'''") {
             let q = &rest[..3];
             let e = string_end(src, i + 3, q, q == "\"\"\"", true);
-            out.push(Tok { kind: "string", a: i, b: e });
+            out.push(Tok {
+                kind: "string",
+                a: i,
+                b: e,
+            });
             i = e;
             continue;
         }
@@ -703,7 +868,11 @@ fn toml(src: &str) -> Vec<Tok> {
             continue;
         }
         if c == '=' {
-            out.push(Tok { kind: "operator", a: i, b: i + 1 });
+            out.push(Tok {
+                kind: "operator",
+                a: i,
+                b: i + 1,
+            });
             key = false;
             i += 1;
             continue;
@@ -711,25 +880,41 @@ fn toml(src: &str) -> Vec<Tok> {
         if c == '[' || c == '{' {
             nest.push(c as u8);
             key = c == '{';
-            out.push(Tok { kind: "punct", a: i, b: i + 1 });
+            out.push(Tok {
+                kind: "punct",
+                a: i,
+                b: i + 1,
+            });
             i += 1;
             continue;
         }
         if c == ']' || c == '}' {
             nest.pop();
             key = false;
-            out.push(Tok { kind: "punct", a: i, b: i + 1 });
+            out.push(Tok {
+                kind: "punct",
+                a: i,
+                b: i + 1,
+            });
             i += 1;
             continue;
         }
         if c == ',' {
             key = nest.last() == Some(&b'{');
-            out.push(Tok { kind: "punct", a: i, b: i + 1 });
+            out.push(Tok {
+                kind: "punct",
+                a: i,
+                b: i + 1,
+            });
             i += 1;
             continue;
         }
         if c == '.' && (key || header) {
-            out.push(Tok { kind: "punct", a: i, b: i + 1 });
+            out.push(Tok {
+                kind: "punct",
+                a: i,
+                b: i + 1,
+            });
             i += 1;
             continue;
         }
@@ -745,7 +930,11 @@ fn toml(src: &str) -> Vec<Tok> {
         }
         if e == i {
             e = next_i(src, i);
-            out.push(Tok { kind: "punct", a: i, b: e });
+            out.push(Tok {
+                kind: "punct",
+                a: i,
+                b: e,
+            });
             i = e;
             continue;
         }
@@ -786,50 +975,98 @@ fn markdown(src: &str) -> Vec<Tok> {
             .chars()
             .take_while(|&d| d == '`' || d == '~')
             .collect();
-        let is_fence = indent < 4 && marker.len() >= 3 && marker.chars().all(|d| d == marker.chars().next().unwrap_or('`'));
+        let is_fence = indent < 4
+            && marker.len() >= 3
+            && marker
+                .chars()
+                .all(|d| d == marker.chars().next().unwrap_or('`'));
         if let Some(open) = &fence {
-            if is_fence && marker.starts_with(open.as_str()) && trimmed[marker.len()..].trim().is_empty() {
+            if is_fence
+                && marker.starts_with(open.as_str())
+                && trimmed[marker.len()..].trim().is_empty()
+            {
                 push_line(&mut out, src, i, le, "punct");
                 fence = None;
             } else {
                 push_line(&mut out, src, i, le, "string");
             }
         } else if is_fence {
-            out.push(Tok { kind: "space", a: i, b: i + indent });
-            out.push(Tok { kind: "punct", a: i + indent, b: i + indent + marker.len() });
-            out.push(Tok { kind: "type", a: i + indent + marker.len(), b: le });
+            out.push(Tok {
+                kind: "space",
+                a: i,
+                b: i + indent,
+            });
+            out.push(Tok {
+                kind: "punct",
+                a: i + indent,
+                b: i + indent + marker.len(),
+            });
+            out.push(Tok {
+                kind: "type",
+                a: i + indent + marker.len(),
+                b: le,
+            });
             fence = Some(marker);
         } else if indent < 4 && trimmed.starts_with('#') && {
             let h = trimmed.chars().take_while(|&d| d == '#').count();
             h <= 6 && trimmed[h..].chars().next().is_none_or(char::is_whitespace)
         } {
-            out.push(Tok { kind: "space", a: i, b: i + indent });
-            out.push(Tok { kind: "keyword", a: i + indent, b: le });
+            out.push(Tok {
+                kind: "space",
+                a: i,
+                b: i + indent,
+            });
+            out.push(Tok {
+                kind: "keyword",
+                a: i + indent,
+                b: le,
+            });
         } else if indent < 4 && trimmed.starts_with('>') {
-            out.push(Tok { kind: "space", a: i, b: i + indent });
-            out.push(Tok { kind: "comment", a: i + indent, b: le });
+            out.push(Tok {
+                kind: "space",
+                a: i,
+                b: i + indent,
+            });
+            out.push(Tok {
+                kind: "comment",
+                a: i + indent,
+                b: le,
+            });
         } else {
-            out.push(Tok { kind: "space", a: i, b: i + indent });
+            out.push(Tok {
+                kind: "space",
+                a: i,
+                b: i + indent,
+            });
             let mut j = i + indent;
             // a list item's marker
             let digits = trimmed.bytes().take_while(u8::is_ascii_digit).count();
-            let m = if trimmed.starts_with(['-', '*', '+'])
-                && trimmed[1..].starts_with(' ')
-            {
+            let m = if trimmed.starts_with(['-', '*', '+']) && trimmed[1..].starts_with(' ') {
                 1
-            } else if digits > 0 && trimmed[digits..].starts_with(['.', ')']) && trimmed[digits + 1..].starts_with(' ') {
+            } else if digits > 0
+                && trimmed[digits..].starts_with(['.', ')'])
+                && trimmed[digits + 1..].starts_with(' ')
+            {
                 digits + 1
             } else {
                 0
             };
             if m > 0 {
-                out.push(Tok { kind: "punct", a: j, b: j + m });
+                out.push(Tok {
+                    kind: "punct",
+                    a: j,
+                    b: j + m,
+                });
                 j += m;
             }
             inline(src, j, le, &mut out);
         }
         if le < n {
-            out.push(Tok { kind: "space", a: le, b: le + 1 });
+            out.push(Tok {
+                kind: "space",
+                a: le,
+                b: le + 1,
+            });
         }
         i = le + 1;
     }
@@ -839,7 +1076,11 @@ fn markdown(src: &str) -> Vec<Tok> {
 /// A line as one token of `kind`, its leading spaces as a space.
 fn push_line(out: &mut Vec<Tok>, src: &str, a: usize, b: usize, kind: &'static str) {
     let s = spaces(src, a).min(b);
-    out.push(Tok { kind: "space", a, b: s });
+    out.push(Tok {
+        kind: "space",
+        a,
+        b: s,
+    });
     out.push(Tok { kind, a: s, b });
 }
 
@@ -857,7 +1098,11 @@ fn inline(src: &str, mut i: usize, end: usize, out: &mut Vec<Tok>) {
                 }
                 e += d.len_utf8();
             }
-            out.push(Tok { kind: "space", a: i, b: e });
+            out.push(Tok {
+                kind: "space",
+                a: i,
+                b: e,
+            });
             i = e;
             continue;
         }
@@ -868,37 +1113,69 @@ fn inline(src: &str, mut i: usize, end: usize, out: &mut Vec<Tok>) {
                 .find(&close)
                 .map(|k| i + ticks + k + ticks)
                 .unwrap_or(i + ticks);
-            out.push(Tok { kind: if e > i + ticks { "string" } else { "punct" }, a: i, b: e });
+            out.push(Tok {
+                kind: if e > i + ticks { "string" } else { "punct" },
+                a: i,
+                b: e,
+            });
             i = e;
             continue;
         }
-        if c == '<' && ch(src, i + 1).is_some_and(|d| d.is_ascii_alphabetic() || d == '/' || d == '!')
+        if c == '<'
+            && ch(src, i + 1).is_some_and(|d| d.is_ascii_alphabetic() || d == '/' || d == '!')
             && let Some(k) = rest.find('>')
         {
             let inner = &rest[1..k];
-            let kind = if inner.contains("://") || inner.contains('@') { "property" } else { "type" };
-            out.push(Tok { kind, a: i, b: i + k + 1 });
+            let kind = if inner.contains("://") || inner.contains('@') {
+                "property"
+            } else {
+                "type"
+            };
+            out.push(Tok {
+                kind,
+                a: i,
+                b: i + k + 1,
+            });
             i += k + 1;
             continue;
         }
-        if c == ']' && rest[1..].starts_with('(')
+        if c == ']'
+            && rest[1..].starts_with('(')
             && let Some(k) = rest.find(')')
         {
-            out.push(Tok { kind: "punct", a: i, b: i + 2 });
-            out.push(Tok { kind: "property", a: i + 2, b: i + k });
-            out.push(Tok { kind: "punct", a: i + k, b: i + k + 1 });
+            out.push(Tok {
+                kind: "punct",
+                a: i,
+                b: i + 2,
+            });
+            out.push(Tok {
+                kind: "property",
+                a: i + 2,
+                b: i + k,
+            });
+            out.push(Tok {
+                kind: "punct",
+                a: i + k,
+                b: i + k + 1,
+            });
             i += k + 1;
             continue;
         }
         if "*_~[]!\\|".contains(c) {
-            let e = if c == '\\' { next_i(src, next_i(src, i).min(end)).min(end).max(i + 1) } else {
+            let e = if c == '\\' {
+                next_i(src, next_i(src, i).min(end)).min(end).max(i + 1)
+            } else {
                 let mut e = i;
                 while ch(src, e) == Some(c) && e < end {
                     e += 1;
                 }
                 e
             };
-            out.push(Tok { kind: if c == '\\' { "string" } else { "operator" }, a: i, b: e });
+            out.push(Tok {
+                kind: if c == '\\' { "string" } else { "operator" },
+                a: i,
+                b: e,
+            });
             i = e;
             continue;
         }
@@ -913,7 +1190,11 @@ fn inline(src: &str, mut i: usize, end: usize, out: &mut Vec<Tok>) {
             e = next_i(src, i);
         }
         let w = &src[i..e];
-        let kind = if w.starts_with("http://") || w.starts_with("https://") { "property" } else { "ident" };
+        let kind = if w.starts_with("http://") || w.starts_with("https://") {
+            "property"
+        } else {
+            "ident"
+        };
         out.push(Tok { kind, a: i, b: e });
         i = e;
     }

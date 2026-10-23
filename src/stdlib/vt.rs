@@ -3086,7 +3086,11 @@ mod tests {
         }
         t.feed(zalgo.as_bytes());
         let row = t.row;
-        let marks = t.line(row).extra_at(0).map(|x| x.chars().count()).unwrap_or(0);
+        let marks = t
+            .line(row)
+            .extra_at(0)
+            .map(|x| x.chars().count())
+            .unwrap_or(0);
         assert!(marks > 0 && marks <= MAX_MARKS, "{marks}");
         // a repeat is a line's worth at most
         let mut r = Term::new(3, 10, 0);

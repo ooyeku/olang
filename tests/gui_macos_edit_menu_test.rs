@@ -129,7 +129,8 @@ mod mac {
     fn view() -> Retained<AnyObject> {
         let cls = AnyClass::get(c"NSApplication").unwrap();
         let app: Retained<AnyObject> = unsafe { msg_send![cls, sharedApplication] };
-        let wins: Retained<objc2_foundation::NSArray<AnyObject>> = unsafe { msg_send![&*app, windows] };
+        let wins: Retained<objc2_foundation::NSArray<AnyObject>> =
+            unsafe { msg_send![&*app, windows] };
         for w in wins.to_vec() {
             let t: Option<Retained<NSString>> = unsafe { msg_send![&*w, title] };
             if t.is_some_and(|t| t.to_string() == "olang edit menu") {
@@ -174,7 +175,8 @@ mod mac {
                     let mask: usize = unsafe { msg_send![&*it, keyEquivalentModifierMask] };
                     (
                         t.to_string(),
-                        a.map(|a| a.name().to_string_lossy().into_owned()).unwrap_or_default(),
+                        a.map(|a| a.name().to_string_lossy().into_owned())
+                            .unwrap_or_default(),
                         key.to_string(),
                         mask,
                     )
@@ -192,8 +194,9 @@ mod mac {
             let title = NSString::from_str("probe");
             let key = NSString::from_str("");
             let alloc: objc2::rc::Allocated<AnyObject> = unsafe { msg_send![cls, alloc] };
-            let it: Retained<AnyObject> =
-                unsafe { msg_send![alloc, initWithTitle: &*title, action: Sel::register(sel), keyEquivalent: &*key] };
+            let it: Retained<AnyObject> = unsafe {
+                msg_send![alloc, initWithTitle: &*title, action: Sel::register(sel), keyEquivalent: &*key]
+            };
             let b: Bool = unsafe { msg_send![&*v, validateMenuItem: &*it] };
             b.as_bool()
         })
@@ -229,7 +232,9 @@ mod mac {
             std::thread::spawn(|| {
                 let prober = std::thread::spawn(|| {
                     let say = |s: String| CHECKS.lock().unwrap().push(s);
-                    wait_for("the window's first frame", || platform::frames_presented() > 0);
+                    wait_for("the window's first frame", || {
+                        platform::frames_presented() > 0
+                    });
                     let id = the_window();
                     wait_for("the Edit menu", || on_main(|| edit_items().len() > 9));
                     let items = on_main(edit_items);
@@ -237,18 +242,37 @@ mod mac {
                     // Start Dictation…, Emoji & Symbols), each shown once
                     // (their other keys are hidden alternates)
                     let titles: Vec<&str> = items.iter().map(|i| i.0.as_str()).collect();
-                    let ours = titles.iter().position(|t| *t == "Toggle Comment").map_or(titles.len(), |i| i + 1);
+                    let ours = titles
+                        .iter()
+                        .position(|t| *t == "Toggle Comment")
+                        .map_or(titles.len(), |i| i + 1);
                     say(format!("titles={:?}", &titles[..ours]));
-                    let extra: Vec<&str> = titles[ours..].iter().copied().filter(|t| *t != "-" && *t != "(hidden)").collect();
+                    let extra: Vec<&str> = titles[ours..]
+                        .iter()
+                        .copied()
+                        .filter(|t| *t != "-" && *t != "(hidden)")
+                        .collect();
                     let mut once = extra.clone();
                     once.sort();
                     once.dedup();
                     println!("AppKit's own: {extra:?}");
-                    assert_eq!(once.len(), extra.len(), "AppKit's items added more than once: {extra:?}");
+                    assert_eq!(
+                        once.len(),
+                        extra.len(),
+                        "AppKit's items added more than once: {extra:?}"
+                    );
                     let copy = items.iter().find(|i| i.0 == "Copy").cloned().unwrap();
                     say(format!("copy={}/{}/{}", copy.1, copy.2, copy.3 == 1 << 20));
-                    let pms = items.iter().find(|i| i.0 == "Paste and Match Style").cloned().unwrap();
-                    say(format!("paste_plain={}/{}", pms.1, pms.3 == (1 << 20) | (1 << 19) | (1 << 17)));
+                    let pms = items
+                        .iter()
+                        .find(|i| i.0 == "Paste and Match Style")
+                        .cloned()
+                        .unwrap();
+                    say(format!(
+                        "paste_plain={}/{}",
+                        pms.1,
+                        pms.3 == (1 << 20) | (1 << 19) | (1 << 17)
+                    ));
                     // the field focused, nothing selected
                     say(format!(
                         "field: copy={} cut={} delete={} paste={} select_all={} undo={}",
@@ -261,19 +285,32 @@ mod mac {
                     ));
                     choose(c"selectAll:");
                     wait_for("a selection", || enabled(c"copy:"));
-                    say(format!("selected: copy={} delete={}", enabled(c"copy:"), enabled(c"delete:")));
+                    say(format!(
+                        "selected: copy={} delete={}",
+                        enabled(c"copy:"),
+                        enabled(c"delete:")
+                    ));
                     // Services: the selection offered, and written
                     let offered = on_main(|| {
                         let v = view();
                         let t = NSString::from_str("public.utf8-plain-text");
                         let none: *const AnyObject = std::ptr::null();
-                        let r: *mut AnyObject = unsafe { msg_send![&*v, validRequestorForSendType: &*t, returnType: none] };
+                        let r: *mut AnyObject = unsafe {
+                            msg_send![&*v, validRequestorForSendType: &*t, returnType: none]
+                        };
                         let pb = pasteboard();
                         let types = objc2_foundation::NSArray::from_retained_slice(&[t.clone()]);
-                        let w: Bool = unsafe { msg_send![&*v, writeSelectionToPasteboard: &*pb, types: &*types] };
-                        let got: Option<Retained<NSString>> = unsafe { msg_send![&*pb, stringForType: &*t] };
+                        let w: Bool = unsafe {
+                            msg_send![&*v, writeSelectionToPasteboard: &*pb, types: &*types]
+                        };
+                        let got: Option<Retained<NSString>> =
+                            unsafe { msg_send![&*pb, stringForType: &*t] };
                         let _: () = unsafe { msg_send![&*pb, releaseGlobally] };
-                        (r == Retained::as_ptr(&v) as *mut AnyObject, w.as_bool(), got.map(|g| g.to_string()))
+                        (
+                            r == Retained::as_ptr(&v) as *mut AnyObject,
+                            w.as_bool(),
+                            got.map(|g| g.to_string()),
+                        )
                     });
                     say(format!("services send: {offered:?}"));
                     choose(c"delete:");
@@ -308,7 +345,10 @@ mod mac {
                     ));
                     choose(c"copy:");
                     std::thread::sleep(Duration::from_millis(300));
-                    olang::stdlib::gui::emit(vec![olang::stdlib::gui::values::event("test_done", vec![])]);
+                    olang::stdlib::gui::emit(vec![olang::stdlib::gui::values::event(
+                        "test_done",
+                        vec![],
+                    )]);
                 });
                 let program = Parser::new().parse(PROGRAM).expect("parses");
                 let v = Interpreter::new().eval_program(program);

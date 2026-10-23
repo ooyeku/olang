@@ -32,7 +32,8 @@ fn text_of<'a>(func: &str, s: &'a Series) -> Result<(Text<'a>, Option<&'a Bitmap
             func,
             other.dtype(),
             match other.dtype() {
-                DType::Date | DType::Datetime => " (its parts are year(), month(), …; cast(s, \"String\") writes it as text)",
+                DType::Date | DType::Datetime =>
+                    " (its parts are year(), month(), …; cast(s, \"String\") writes it as text)",
                 _ => " (cast(s, \"String\") makes it text)",
             }
         ))),
@@ -66,7 +67,11 @@ fn validity_from(ok: &[bool]) -> Option<Bitmap> {
 
 /// New text per cell: `f(cell, out)` appends the cell's new text and
 /// says whether it has one (false: null). A null stays null.
-pub fn transform(func: &str, s: &Series, mut f: impl FnMut(&str, &mut String) -> bool) -> Result<Series> {
+pub fn transform(
+    func: &str,
+    s: &Series,
+    mut f: impl FnMut(&str, &mut String) -> bool,
+) -> Result<Series> {
     let (t, validity) = text_of(func, s)?;
     let valid = |i: usize| validity.is_none_or(|v| v.get(i));
     match t {
@@ -131,16 +136,18 @@ fn reslice(func: &str, s: &Series, f: impl Fn(&str) -> Option<(usize, usize)>) -
             let spans = codes
                 .iter()
                 .enumerate()
-                .map(|(i, &c)| match valid(i).then(|| per[c as usize]).flatten() {
-                    Some(sp) => {
-                        ok.push(true);
-                        sp
-                    }
-                    None => {
-                        ok.push(false);
-                        (0, 0)
-                    }
-                })
+                .map(
+                    |(i, &c)| match valid(i).then(|| per[c as usize]).flatten() {
+                        Some(sp) => {
+                            ok.push(true);
+                            sp
+                        }
+                        None => {
+                            ok.push(false);
+                            (0, 0)
+                        }
+                    },
+                )
                 .collect();
             (levels, spans, ok)
         }
@@ -178,16 +185,18 @@ fn per_cell<T: Copy + Default>(
             codes
                 .iter()
                 .enumerate()
-                .map(|(i, &c)| match valid(i).then(|| per[c as usize]).flatten() {
-                    Some(v) => {
-                        ok.push(true);
-                        v
-                    }
-                    None => {
-                        ok.push(false);
-                        T::default()
-                    }
-                })
+                .map(
+                    |(i, &c)| match valid(i).then(|| per[c as usize]).flatten() {
+                        Some(v) => {
+                            ok.push(true);
+                            v
+                        }
+                        None => {
+                            ok.push(false);
+                            T::default()
+                        }
+                    },
+                )
                 .collect()
         }
     };
@@ -238,9 +247,17 @@ pub fn trim(s: &Series, start: bool, end: bool) -> Result<Series> {
         _ => "trim_end",
     };
     reslice(func, s, |t| {
-        let a = if start { t.len() - t.trim_start().len() } else { 0 };
+        let a = if start {
+            t.len() - t.trim_start().len()
+        } else {
+            0
+        };
         let rest = &t[a..];
-        let l = if end { rest.trim_end().len() } else { rest.len() };
+        let l = if end {
+            rest.trim_end().len()
+        } else {
+            rest.len()
+        };
         Some((a, l))
     })
 }
@@ -383,10 +400,17 @@ pub fn split_n(s: &Series, sep: &str, i: i64) -> Result<Series> {
 pub fn pad(s: &Series, width: usize, fill: &str, start: bool) -> Result<Series> {
     let func = if start { "pad_start" } else { "pad_end" };
     if fill.is_empty() {
-        return Err(OdsError::InvalidArgument(format!("{}: the fill is empty", func)));
+        return Err(OdsError::InvalidArgument(format!(
+            "{}: the fill is empty",
+            func
+        )));
     }
     transform(func, s, |t, out| {
-        let have = if t.is_ascii() { t.len() } else { t.chars().count() };
+        let have = if t.is_ascii() {
+            t.len()
+        } else {
+            t.chars().count()
+        };
         let pad = |out: &mut String| {
             for c in fill.chars().cycle().take(width.saturating_sub(have)) {
                 out.push(c);
@@ -425,9 +449,10 @@ pub fn to_float(s: &Series) -> Result<Series> {
 /// Each cell read as a Datetime: ISO 8601 without a format, else the
 /// format's; null where it does not read.
 pub fn to_datetime(s: &Series, fmt: Option<&str>) -> Result<Series> {
-    let f = fmt.map(Format::reader).transpose().map_err(|e| {
-        OdsError::InvalidArgument(format!("to_datetime: {}", e))
-    })?;
+    let f = fmt
+        .map(Format::reader)
+        .transpose()
+        .map_err(|e| OdsError::InvalidArgument(format!("to_datetime: {}", e)))?;
     let (v, validity) = per_cell("to_datetime", s, |t| match &f {
         None => temporal::parse_iso(t.trim()).map(|(us, _)| us),
         Some(f) => f.parse(t.trim()),
@@ -538,7 +563,8 @@ mod tests {
 
     #[test]
     fn kernels_keep_nulls_and_spans() {
-        let s = Series::from_str_options(vec![Some(" Old Town ".into()), None, Some("ÉTÉ x".into())]);
+        let s =
+            Series::from_str_options(vec![Some(" Old Town ".into()), None, Some("ÉTÉ x".into())]);
         assert_eq!(
             texts(&lower(&trim(&s, true, true).unwrap()).unwrap()),
             vec![Some("old town".into()), None, Some("été x".into())]
@@ -547,7 +573,10 @@ mod tests {
             texts(&split_n(&s, " ", -1).unwrap()),
             vec![Some("".into()), None, Some("x".into())]
         );
-        assert_eq!(texts(&substring(&s, 1, Some(4)).unwrap())[2], Some("TÉ ".into()));
+        assert_eq!(
+            texts(&substring(&s, 1, Some(4)).unwrap())[2],
+            Some("TÉ ".into())
+        );
         assert_eq!(
             texts(&pad(&Series::from_str_values(vec!["7".into()]), 3, "0", true).unwrap()),
             vec![Some("007".into())]
@@ -555,7 +584,11 @@ mod tests {
         let m = contains(&s, "old", false).unwrap();
         assert_eq!(m.scalar_at(0), Scalar::Bool(true));
         assert_eq!(m.scalar_at(1), Scalar::Null);
-        let d = to_date(&Series::from_str_values(vec!["2024-03-01".into(), "x".into()]), None).unwrap();
+        let d = to_date(
+            &Series::from_str_values(vec!["2024-03-01".into(), "x".into()]),
+            None,
+        )
+        .unwrap();
         assert_eq!(d.scalar_at(0), Scalar::Date(19783));
         assert_eq!(d.scalar_at(1), Scalar::Null);
     }

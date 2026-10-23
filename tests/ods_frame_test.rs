@@ -2624,9 +2624,15 @@ fn group_by_median_std_var_first_last_n_unique() {
          [ods.to_list(p[\"x\"]), ods.to_list(ods.rolling(ods.series([1.0, 2.0, 4.0]), 2, \"std\"))]",
     )
     .expect("pivot");
-    assert_eq!(shown(&v), "[[2.0], [(), 0.7071067811865476, 1.4142135623730951]]");
-    let err = eval("ods.group_by(ods.frame([[\"g\", [1]]]), \"g\", [[\"m\", \"mode\", \"g\"]])", None)
-        .unwrap_err();
+    assert_eq!(
+        shown(&v),
+        "[[2.0], [(), 0.7071067811865476, 1.4142135623730951]]"
+    );
+    let err = eval(
+        "ods.group_by(ods.frame([[\"g\", [1]]]), \"g\", [[\"m\", \"mode\", \"g\"]])",
+        None,
+    )
+    .unwrap_err();
     assert!(err.contains("n_unique"), "{err}");
     let err = eval("ods.rolling(ods.series([1.0]), 1, \"first\")", None).unwrap_err();
     assert!(err.contains("not a rolling aggregation"), "{err}");

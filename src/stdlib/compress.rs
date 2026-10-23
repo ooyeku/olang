@@ -190,14 +190,18 @@ mod tests {
     fn brotli_round_trips_at_every_quality() {
         let text = "olang ".repeat(3000);
         for q in [0, 5, 11] {
-            let packed = call_compress_function("brotli_level", vec![s(&text), Value::Integer(q)]).unwrap();
+            let packed =
+                call_compress_function("brotli_level", vec![s(&text), Value::Integer(q)]).unwrap();
             assert!(bytes::bytes_of(&packed).unwrap().len() < text.len() / 10);
             match &call_compress_function("unbrotli", vec![packed]).unwrap() {
                 Value::Ok(inner) => assert_eq!(bytes::bytes_of(&inner).unwrap(), text.as_bytes()),
                 other => panic!("expected Ok, got {:?}", other),
             }
         }
-        assert!(matches!(call_compress_function("unbrotli", vec![s("not brotli at all")]).unwrap(), Value::Err(_)));
+        assert!(matches!(
+            call_compress_function("unbrotli", vec![s("not brotli at all")]).unwrap(),
+            Value::Err(_)
+        ));
         assert!(call_compress_function("brotli_level", vec![s("x"), Value::Integer(12)]).is_err());
     }
 

@@ -85,10 +85,10 @@ impl NativeObject for OdsGroupBy {
     }
 
     fn native_eq(&self, other: &dyn NativeObject) -> bool {
-        other.as_any().downcast_ref::<OdsGroupBy>().is_some_and(|o| {
-            o.keys == self.keys
-                && Arc::ptr_eq(&o.g, &self.g)
-        })
+        other
+            .as_any()
+            .downcast_ref::<OdsGroupBy>()
+            .is_some_and(|o| o.keys == self.keys && Arc::ptr_eq(&o.g, &self.g))
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -182,7 +182,9 @@ impl OdsGroupBy {
                             self.frame.names().join(", ")
                         )
                     })?;
-                    self.g.aggregate(c, s.op).map_err(|e| format!("ods.{}: {}", func, e))?
+                    self.g
+                        .aggregate(c, s.op)
+                        .map_err(|e| format!("ods.{}: {}", func, e))?
                 };
                 out.push((s.out_name, col));
             }
@@ -318,7 +320,9 @@ fn agg_value_with(
             ));
         }
         LExpr::Over(..) => {
-            return Err("over gives a value to every row, so it cannot stand in an aggregation".to_string());
+            return Err(
+                "over gives a value to every row, so it cannot stand in an aggregation".to_string(),
+            );
         }
         LExpr::Call(func, args) if func == "count" && args.is_empty() => GVal::Col(g.size()),
         LExpr::Call(func, args) if expr::agg_of(func).is_some() => {
@@ -341,7 +345,10 @@ fn agg_value_with(
                 Some(c) => c.clone(),
                 None => expr::eval_on(f, x)?,
             };
-            GVal::Col(g.aggregate(&col, op).map_err(|e| format!("ods.{}: {}", func, e))?)
+            GVal::Col(
+                g.aggregate(&col, op)
+                    .map_err(|e| format!("ods.{}: {}", func, e))?,
+            )
         }
         LExpr::Op(op, kids) => {
             let vals = kids
@@ -364,12 +371,21 @@ fn agg_value_with(
             }
         }
         LExpr::Call(func, args) => {
-            fn arg(f: &Frame, keys: &[String], g: &Grouping, a: &LArg, pre: &Pre) -> Result<Value, String> {
+            fn arg(
+                f: &Frame,
+                keys: &[String],
+                g: &Grouping,
+                a: &LArg,
+                pre: &Pre,
+            ) -> Result<Value, String> {
                 Ok(match a {
                     LArg::E(e) => gval_value(agg_value_with(f, keys, g, e, pre)?),
                     LArg::V(v) => v.clone(),
                     LArg::L(items) => Value::List(Arc::new(
-                        items.iter().map(|x| arg(f, keys, g, x, pre)).collect::<Result<_, _>>()?,
+                        items
+                            .iter()
+                            .map(|x| arg(f, keys, g, x, pre))
+                            .collect::<Result<_, _>>()?,
                     )),
                 })
             }
@@ -481,7 +497,10 @@ pub struct ApplyState {
 /// what `apply_finish` combines the results with.
 pub fn apply_groups(args: &[Value]) -> Result<(Vec<Value>, ApplyState), String> {
     if args.len() != 2 {
-        return Err(format!("ods.apply expects a GroupBy and a function, got {} arguments", args.len()));
+        return Err(format!(
+            "ods.apply expects a GroupBy and a function, got {} arguments",
+            args.len()
+        ));
     }
     let by = want_group_by("apply", args)?;
     let parts = by.g.split(&by.frame).map_err(|e| e.to_string())?;
@@ -513,7 +532,11 @@ pub fn apply_finish(state: ApplyState, results: Vec<Value>) -> Result<Value, Str
             .collect()
     };
     if n == 0 {
-        return keys_at(&[]).and_then(|k| Frame::new(k).map(OdsFrame::into_value).map_err(|e| e.to_string()));
+        return keys_at(&[]).and_then(|k| {
+            Frame::new(k)
+                .map(OdsFrame::into_value)
+                .map_err(|e| e.to_string())
+        });
     }
     if results.iter().all(|r| frame_of(r).is_some()) {
         let mut frames = Vec::with_capacity(n);
@@ -524,7 +547,11 @@ pub fn apply_finish(state: ApplyState, results: Vec<Value>) -> Result<Value, Str
                 .filter(|(k, _)| rf.column(k).is_err())
                 .collect();
             pairs.extend(rf.names().iter().cloned().zip(rf.columns().iter().cloned()));
-            frames.push(Frame::new(pairs).map(OdsFrame::into_value).map_err(|e| e.to_string())?);
+            frames.push(
+                Frame::new(pairs)
+                    .map(OdsFrame::into_value)
+                    .map_err(|e| e.to_string())?,
+            );
         }
         return super::call("concat", vec![Value::List(Arc::new(frames))]);
     }
@@ -540,9 +567,12 @@ pub fn apply_finish(state: ApplyState, results: Vec<Value>) -> Result<Value, Str
         }
         let mut pairs = keys_at(&rows)?;
         pairs.push(("value".to_string(), series_from_list(&values)?));
-        return Frame::new(pairs).map(OdsFrame::into_value).map_err(|e| e.to_string());
+        return Frame::new(pairs)
+            .map(OdsFrame::into_value)
+            .map_err(|e| e.to_string());
     }
-    let record = |r: &Value| expr::entries(r).filter(|_| matches!(r, Value::Map(_) | Value::Struct { .. }));
+    let record =
+        |r: &Value| expr::entries(r).filter(|_| matches!(r, Value::Map(_) | Value::Struct { .. }));
     if results.iter().all(|r| record(r).is_some()) {
         let mut records = Vec::with_capacity(n);
         for (g, r) in results.iter().enumerate() {
@@ -560,7 +590,9 @@ pub fn apply_finish(state: ApplyState, results: Vec<Value>) -> Result<Value, Str
     if results.iter().all(|r| value_to_scalar(r).is_some()) {
         let mut pairs = keys_at(&(0..n).collect::<Vec<_>>())?;
         pairs.push(("value".to_string(), series_from_list(&results)?));
-        return Frame::new(pairs).map(OdsFrame::into_value).map_err(|e| e.to_string());
+        return Frame::new(pairs)
+            .map(OdsFrame::into_value)
+            .map_err(|e| e.to_string());
     }
     Ok(Value::List(Arc::new(results)))
 }
@@ -580,7 +612,9 @@ fn want_str(func: &str, what: &str, v: Option<&Value>) -> Result<String, String>
             "ods.{}: {} must be a String, got {}",
             func,
             what,
-            other.map(|v| v.type_name()).unwrap_or_else(|| "nothing".to_string())
+            other
+                .map(|v| v.type_name())
+                .unwrap_or_else(|| "nothing".to_string())
         )),
     }
 }
@@ -603,7 +637,9 @@ fn want_int(func: &str, what: &str, v: Option<&Value>) -> Result<i64, String> {
             "ods.{}: {} must be an Int, got {}",
             func,
             what,
-            other.map(|v| v.type_name()).unwrap_or_else(|| "nothing".to_string())
+            other
+                .map(|v| v.type_name())
+                .unwrap_or_else(|| "nothing".to_string())
         )),
     }
 }
@@ -697,7 +733,9 @@ pub fn dispatch(func: &str, args: &[Value]) -> Option<Result<Value, String>> {
                 return Some(Err(format!(
                     "ods.group_by: argument 1 must be a Frame, got {} — in a pipeline, \
                      `f |> ods.group_by(keys)` groups f",
-                    args.first().map(|v| v.type_name()).unwrap_or_else(|| "nothing".to_string())
+                    args.first()
+                        .map(|v| v.type_name())
+                        .unwrap_or_else(|| "nothing".to_string())
                 )));
             };
             match arg(args, 2) {
@@ -711,7 +749,11 @@ pub fn dispatch(func: &str, args: &[Value]) -> Option<Result<Value, String>> {
                             Ok(k) => k,
                             Err(e) => return Some(Err(e)),
                         },
-                        None => return Some(Err("ods.group_by expects a Frame and its key columns".to_string())),
+                        None => {
+                            return Some(Err(
+                                "ods.group_by expects a Frame and its key columns".to_string()
+                            ));
+                        }
                     };
                     new_group_by(f, keys).and_then(|by| match spec {
                         None => Ok(Value::Native(NativeHandle::new(by))),
@@ -726,7 +768,8 @@ pub fn dispatch(func: &str, args: &[Value]) -> Option<Result<Value, String>> {
         "crosstab" if holds_expr(args) => Ok(call_node(func, args)),
         "crosstab" => crosstab(args),
         "runs" | "run_id" if holds_expr(args) => Ok(call_node(func, args)),
-        "runs" => want_series(func, args, 0).and_then(|s| olang_ods::group::runs(s).map(frame_value).map_err(err)),
+        "runs" => want_series(func, args, 0)
+            .and_then(|s| olang_ods::group::runs(s).map(frame_value).map_err(err)),
         "run_id" => run_id(args),
         "resample" => resample(args),
         // `floor(s, every)`: the start of each time's bucket. ISO text
@@ -735,7 +778,9 @@ pub fn dispatch(func: &str, args: &[Value]) -> Option<Result<Value, String>> {
             if holds_expr(args) {
                 Ok(call_node(func, args))
             } else {
-                let Value::String(every) = &args[1] else { unreachable!("matched") };
+                let Value::String(every) = &args[1] else {
+                    unreachable!("matched")
+                };
                 match series_of(&args[0]) {
                     Some(s) if s.dtype() == DType::Str => Every::parse(&every)
                         .and_then(|e| olang_ods::time::floor(s, e))
@@ -754,15 +799,21 @@ pub fn dispatch(func: &str, args: &[Value]) -> Option<Result<Value, String>> {
             _ => pivot_fill(args),
         },
         "rename" if matches!(args.get(1), Some(Value::Struct { .. })) => rename_object(args),
-        "frame" if matches!(args.first(), Some(Value::Map(_) | Value::Struct { .. })) => frame_object(args),
+        "frame" if matches!(args.first(), Some(Value::Map(_) | Value::Struct { .. })) => {
+            frame_object(args)
+        }
         "agg" | "size" | "transform" | "groups" => Err(format!(
             "ods.{}: argument 1 must be a GroupBy (from ods.group_by(f, keys)), got {}",
             func,
-            args.first().map(|v| v.type_name()).unwrap_or_else(|| "nothing".to_string())
+            args.first()
+                .map(|v| v.type_name())
+                .unwrap_or_else(|| "nothing".to_string())
         )),
         "apply" => Err(format!(
             "ods.apply: argument 1 must be a GroupBy (from ods.group_by(f, keys)), got {}",
-            args.first().map(|v| v.type_name()).unwrap_or_else(|| "nothing".to_string())
+            args.first()
+                .map(|v| v.type_name())
+                .unwrap_or_else(|| "nothing".to_string())
         )),
         _ => return None,
     })
@@ -778,7 +829,11 @@ fn groups(by: &OdsGroupBy) -> Result<Value, String> {
             let key = if keys.len() == 1 {
                 scalar_to_value(keys[0].1.scalar_at(g))
             } else {
-                Value::Tuple(Arc::new(keys.iter().map(|(_, s)| scalar_to_value(s.scalar_at(g))).collect()))
+                Value::Tuple(Arc::new(
+                    keys.iter()
+                        .map(|(_, s)| scalar_to_value(s.scalar_at(g)))
+                        .collect(),
+                ))
             };
             Value::Tuple(Arc::new(vec![key, OdsFrame::into_value(part)]))
         })
@@ -803,7 +858,11 @@ fn transform(by: &OdsGroupBy, spec: Option<&Value>) -> Result<Value, String> {
     let mut pairs = Vec::with_capacity(items.len());
     for (name, v) in items {
         let e = expr_of(&v).ok_or_else(|| {
-            format!("ods.transform: '{}' must be an aggregation expression, got {}", name, v.type_name())
+            format!(
+                "ods.transform: '{}' must be an aggregation expression, got {}",
+                name,
+                v.type_name()
+            )
         })?;
         pairs.push((name, one(e)?));
     }
@@ -817,18 +876,30 @@ fn slice(args: &[Value]) -> Result<Value, String> {
         Some(v) => match (frame_of(v), series_of(v)) {
             (Some(f), _) => f.n_rows(),
             (_, Some(s)) => s.len(),
-            _ => return Err(format!("ods.slice: argument 1 must be a Frame or a Series, got {}", v.type_name())),
+            _ => {
+                return Err(format!(
+                    "ods.slice: argument 1 must be a Frame or a Series, got {}",
+                    v.type_name()
+                ));
+            }
         },
         None => return Err("ods.slice expects a Frame or Series, a start and a length".to_string()),
     };
     let start = want_int("slice", "start", args.get(1))?;
-    let start = if start < 0 { (len as i64 + start).max(0) as usize } else { (start as usize).min(len) };
+    let start = if start < 0 {
+        (len as i64 + start).max(0) as usize
+    } else {
+        (start as usize).min(len)
+    };
     let n = match arg(args, 2) {
         None => len - start,
         v => {
             let n = want_int("slice", "the length", v)?;
             if n < 0 {
-                return Err(format!("ods.slice: the length cannot be negative, got {}", n));
+                return Err(format!(
+                    "ods.slice: the length cannot be negative, got {}",
+                    n
+                ));
             }
             (n as usize).min(len - start)
         }
@@ -853,7 +924,10 @@ fn row(args: &[Value]) -> Result<Value, String> {
     let n = f.n_rows() as i64;
     let at = if i < 0 { n + i } else { i };
     if at < 0 || at >= n {
-        return Err(format!("ods.row: row {} is out of range for a Frame of {} rows", i, n));
+        return Err(format!(
+            "ods.row: row {} is out of range for a Frame of {} rows",
+            i, n
+        ));
     }
     let mut m = ValueMap::default();
     for (name, col) in f.names().iter().zip(f.columns()) {
@@ -883,13 +957,22 @@ fn lookup(args: &[Value]) -> Result<Value, String> {
         )
     })?;
     let ix = of.key_index(&key_col)?;
-    let key = args.get(2).ok_or("ods.lookup expects a Frame, a key column, a key and a value column")?;
+    let key = args
+        .get(2)
+        .ok_or("ods.lookup expects a Frame, a key column, a key and a value column")?;
     let many: Option<Vec<Scalar>> = match (series_of(key), key) {
         (Some(s), _) => Some((0..s.len()).map(|i| s.scalar_at(i)).collect()),
         (_, Value::List(items)) => Some(
             items
                 .iter()
-                .map(|v| value_to_scalar(v).ok_or_else(|| format!("ods.lookup: a key is a number, String or Bool, got {}", v.type_name())))
+                .map(|v| {
+                    value_to_scalar(v).ok_or_else(|| {
+                        format!(
+                            "ods.lookup: a key is a number, String or Bool, got {}",
+                            v.type_name()
+                        )
+                    })
+                })
                 .collect::<Result<_, _>>()?,
         ),
         _ => None,
@@ -897,13 +980,21 @@ fn lookup(args: &[Value]) -> Result<Value, String> {
     match many {
         Some(keys) => {
             let idx: Vec<Option<usize>> = keys.iter().map(|k| ix.get(k)).collect();
-            Ok(OdsSeries::into_value(olang_ods::group::take_opt(values, &idx)))
+            Ok(OdsSeries::into_value(olang_ods::group::take_opt(
+                values, &idx,
+            )))
         }
         None => {
             let k = value_to_scalar(key).ok_or_else(|| {
-                format!("ods.lookup: the key is a number, String or Bool, got {}", key.type_name())
+                format!(
+                    "ods.lookup: the key is a number, String or Bool, got {}",
+                    key.type_name()
+                )
             })?;
-            Ok(ix.get(&k).map(|r| scalar_to_value(values.scalar_at(r))).unwrap_or(Value::Unit))
+            Ok(ix
+                .get(&k)
+                .map(|r| scalar_to_value(values.scalar_at(r)))
+                .unwrap_or(Value::Unit))
         }
     }
 }
@@ -915,7 +1006,10 @@ fn crosstab(args: &[Value]) -> Result<Value, String> {
     let values = match arg(args, 2) {
         None => None,
         Some(v) => Some(series_of(v).ok_or_else(|| {
-            format!("ods.crosstab: values must be a Series, got {}", v.type_name())
+            format!(
+                "ods.crosstab: values must be a Series, got {}",
+                v.type_name()
+            )
         })?),
     };
     let op = match arg(args, 3) {
@@ -927,10 +1021,18 @@ fn crosstab(args: &[Value]) -> Result<Value, String> {
                 AggOp::NAMES.join(", ")
             )
         })?,
-        Some(other) => return Err(format!("ods.crosstab: agg must be a String, got {}", other.type_name())),
+        Some(other) => {
+            return Err(format!(
+                "ods.crosstab: agg must be a String, got {}",
+                other.type_name()
+            ));
+        }
     };
     if values.is_none() && op != AggOp::Count {
-        return Err(format!("ods.crosstab: agg \"{}\" needs values to aggregate", op.name()));
+        return Err(format!(
+            "ods.crosstab: agg \"{}\" needs values to aggregate",
+            op.name()
+        ));
     }
     let normalize = match arg(args, 4) {
         None | Some(Value::Boolean(false)) => Normalize::None,
@@ -946,15 +1048,28 @@ fn crosstab(args: &[Value]) -> Result<Value, String> {
                 ));
             }
         },
-        Some(other) => return Err(format!("ods.crosstab: normalize must be a String or Bool, got {}", other.type_name())),
+        Some(other) => {
+            return Err(format!(
+                "ods.crosstab: normalize must be a String or Bool, got {}",
+                other.type_name()
+            ));
+        }
     };
     let name = match arg(args, 5) {
         None => "row".to_string(),
         v => want_str("crosstab", "name", v)?,
     };
-    olang_ods::group::crosstab(a, b, values, op, normalize, &name, &crate::ast::format_float)
-        .map(frame_value)
-        .map_err(|e| format!("ods.{}", e))
+    olang_ods::group::crosstab(
+        a,
+        b,
+        values,
+        op,
+        normalize,
+        &name,
+        &crate::ast::format_float,
+    )
+    .map(frame_value)
+    .map_err(|e| format!("ods.{}", e))
 }
 
 /// `ods.run_id(s)` or `ods.run_id([s1, s2, …])`.
@@ -962,7 +1077,14 @@ fn run_id(args: &[Value]) -> Result<Value, String> {
     let cols: Vec<&Series> = match args.first() {
         Some(Value::List(items)) => items
             .iter()
-            .map(|v| series_of(v).ok_or_else(|| format!("ods.run_id: each column must be a Series, got {}", v.type_name())))
+            .map(|v| {
+                series_of(v).ok_or_else(|| {
+                    format!(
+                        "ods.run_id: each column must be a Series, got {}",
+                        v.type_name()
+                    )
+                })
+            })
             .collect::<Result<_, _>>()?,
         _ => vec![want_series("run_id", args, 0)?],
     };
@@ -976,11 +1098,18 @@ fn rolling(args: &[Value]) -> Result<Value, String> {
     let s = want_series("rolling", args, 0)?;
     let window = match args.get(1) {
         Some(Value::Integer(w)) if *w >= 1 => *w as usize,
-        Some(Value::Integer(w)) => return Err(format!("ods.rolling: the window must be at least 1, got {}", w)),
+        Some(Value::Integer(w)) => {
+            return Err(format!(
+                "ods.rolling: the window must be at least 1, got {}",
+                w
+            ));
+        }
         other => {
             return Err(format!(
                 "ods.rolling: the window must be an Int, got {}",
-                other.map(|v| v.type_name()).unwrap_or_else(|| "nothing".to_string())
+                other
+                    .map(|v| v.type_name())
+                    .unwrap_or_else(|| "nothing".to_string())
             ));
         }
     };
@@ -997,7 +1126,10 @@ fn rolling(args: &[Value]) -> Result<Value, String> {
         v => {
             let m = want_int("rolling", "min_periods", v)?;
             if m < 0 {
-                return Err(format!("ods.rolling: min_periods cannot be negative, got {}", m));
+                return Err(format!(
+                    "ods.rolling: min_periods cannot be negative, got {}",
+                    m
+                ));
             }
             Some(m as usize)
         }
@@ -1044,7 +1176,12 @@ fn join(func: &str, args: &[Value]) -> Result<Value, String> {
                         ));
                     }
                 },
-                Some(other) => return Err(format!("ods.join: how must be a String, got {}", other.type_name())),
+                Some(other) => {
+                    return Err(format!(
+                        "ods.join: how must be a String, got {}",
+                        other.type_name()
+                    ));
+                }
             };
             (how, 5)
         }
@@ -1099,7 +1236,10 @@ fn join(func: &str, args: &[Value]) -> Result<Value, String> {
 
 fn pivot_fill(args: &[Value]) -> Result<Value, String> {
     let fill = value_to_scalar(&args[5]).ok_or_else(|| {
-        format!("ods.pivot: fill must be a number, String or Bool, got {}", args[5].type_name())
+        format!(
+            "ods.pivot: fill must be a number, String or Bool, got {}",
+            args[5].type_name()
+        )
     })?;
     let index = string_list("pivot", args, 1)?;
     let out = super::call("pivot", args[..5].to_vec())?;
@@ -1149,9 +1289,10 @@ fn resample(args: &[Value]) -> Result<Value, String> {
     let on = want_str("resample", "on (the time column)", args.get(1))?;
     let every = want_str("resample", "every (the interval)", args.get(2))?;
     let every = Every::parse(&every).map_err(|e| format!("ods.resample: {}", e))?;
-    let spec = args.get(3).filter(|v| !matches!(v, Value::Unit)).ok_or(
-        "ods.resample expects the aggregations, like { total: col(\"x\").sum() }",
-    )?;
+    let spec = args
+        .get(3)
+        .filter(|v| !matches!(v, Value::Unit))
+        .ok_or("ods.resample expects the aggregations, like { total: col(\"x\").sum() }")?;
     let by = match arg(args, 4) {
         None => Vec::new(),
         Some(v) => names_of("resample", "by", v)?,
@@ -1167,8 +1308,8 @@ fn resample(args: &[Value]) -> Result<Value, String> {
     // Group on each row's bucket as an Int (seconds since the epoch):
     // no text per row, and the sort is an integer sort. The buckets are
     // written as text once each, at the end.
-    let (codes, shape) =
-        olang_ods::time::buckets(time, every).map_err(|e| format!("ods.resample: '{}': {}", on, e))?;
+    let (codes, shape) = olang_ods::time::buckets(time, every)
+        .map_err(|e| format!("ods.resample: '{}': {}", on, e))?;
     const BUCKET: &str = "\u{0}bucket";
     let f = f.with_column(BUCKET, codes).map_err(err)?;
     let mut keys = by.clone();
@@ -1186,7 +1327,10 @@ fn resample(args: &[Value]) -> Result<Value, String> {
     let mut pairs = Vec::with_capacity(sorted.n_cols());
     for (name, col) in sorted.names().iter().zip(sorted.columns()) {
         if name == BUCKET {
-            pairs.push((on.clone(), olang_ods::time::format_buckets(col, every, shape)));
+            pairs.push((
+                on.clone(),
+                olang_ods::time::format_buckets(col, every, shape),
+            ));
         } else {
             pairs.push((name.clone(), col.clone()));
         }

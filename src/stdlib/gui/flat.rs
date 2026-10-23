@@ -1701,7 +1701,6 @@ impl<'a> Items<'a> {
                 .unwrap_or(Value::Unit),
         }
     }
-
 }
 
 /// A list of integers as either tier holds it (the VM's typed, or boxed).
@@ -1839,7 +1838,10 @@ impl<'a> PrevOut<'a> {
     }
 
     fn all_len(&self, n: usize) -> bool {
-        self.recs.len() == n && self.gkeys.len() == n && self.probs.len() == n && self.lifts.len() == n
+        self.recs.len() == n
+            && self.gkeys.len() == n
+            && self.probs.len() == n
+            && self.lifts.len() == n
     }
 }
 
@@ -1901,14 +1903,8 @@ impl<'a> Fld<'a> {
 /// A node's placements: last frame's (`j` in its lists, its first
 /// placement's path made `path` when that changed), or made now.
 enum Placed<'a> {
-    Kept {
-        j: usize,
-        path: Option<&'a Value>,
-    },
-    Made {
-        recs: Vec<Value>,
-        probs: Vec<Value>,
-    },
+    Kept { j: usize, path: Option<&'a Value> },
+    Made { recs: Vec<Value>, probs: Vec<Value> },
 }
 
 /// What `emit` worked out: each node's placements, what comes before
@@ -2400,7 +2396,8 @@ fn keyed_keep<'a>(
         let size = ends[i] - i;
         // moved on the page: what it holds moved with it, and none of it
         // is kept
-        let shifted = j0.is_some_and(|j| geo[i * 4] != old[j * 4] || geo[i * 4 + 1] != old[j * 4 + 1]);
+        let shifted =
+            j0.is_some_and(|j| geo[i * 4] != old[j * 4] || geo[i * 4 + 1] != old[j * 4 + 1]);
         let whole = !shifted
             && j0.is_some_and(|j| {
                 size > 1
@@ -2479,7 +2476,8 @@ fn keyed_keep<'a>(
 fn boxes_for(held: &FlatState, given: Option<Vec<f64>>) -> Res<Arc<Vec<f64>>> {
     match given {
         Some(g) => Ok(Arc::new(g)),
-        None => geo_of(held).ok_or_else(|| "gui.flat_emit: no boxes given or kept for this answer".to_string()),
+        None => geo_of(held)
+            .ok_or_else(|| "gui.flat_emit: no boxes given or kept for this answer".to_string()),
     }
 }
 
@@ -2540,10 +2538,16 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
             };
             let reusable = prev.as_ref().is_some_and(|p| p.all_len(n));
             let cand: Vec<Option<(usize, Option<&Value>)>> = match (&keep, reusable) {
-                (Some(k), true) => (0..n).map(|i| (k.get(i) == Some(&1)).then_some((i, None))).collect(),
+                (Some(k), true) => (0..n)
+                    .map(|i| (k.get(i) == Some(&1)).then_some((i, None)))
+                    .collect(),
                 _ => Vec::new(),
             };
-            let renames = if reusable { prev.as_ref().map(|p| p.gkeys) } else { None };
+            let renames = if reusable {
+                prev.as_ref().map(|p| p.gkeys)
+            } else {
+                None
+            };
             let e = emit(&spec, &inp, &geo, &cand, prev.as_ref(), renames)?;
             Ok(e.to_ast(&inp, prev.as_ref()))
         }
@@ -2607,10 +2611,16 @@ fn vm_flat_emit(args: &[OvmValue]) -> Option<Res<OvmValue>> {
         };
         let reusable = prev.as_ref().is_some_and(|p| p.all_len(n));
         let cand: Vec<Option<(usize, Option<&Value>)>> = match (&keep, reusable) {
-            (Some(k), true) => (0..n).map(|i| (k.at(i) == Some(1)).then_some((i, None))).collect(),
+            (Some(k), true) => (0..n)
+                .map(|i| (k.at(i) == Some(1)).then_some((i, None)))
+                .collect(),
             _ => Vec::new(),
         };
-        let renames = if reusable { prev.as_ref().map(|p| p.gkeys) } else { None };
+        let renames = if reusable {
+            prev.as_ref().map(|p| p.gkeys)
+        } else {
+            None
+        };
         let e = emit(&spec, &inp, &geo, &cand, prev.as_ref(), renames).ok()?;
         Some(Ok(OvmValue::from_ast(e.to_ast(&inp, prev.as_ref()))))
     }
@@ -2707,8 +2717,13 @@ fn vm_flat_join(args: &[OvmValue]) -> Option<Res<OvmValue>> {
             ValueData::AstList(l) => Value::List(l.clone()),
             _ => Value::Unit,
         };
-        let joined =
-            gui_flat_join(vec![ast(&args[0]), ast(&args[1]), ast(&args[2]), ast(&args[3])]).ok()?;
+        let joined = gui_flat_join(vec![
+            ast(&args[0]),
+            ast(&args[1]),
+            ast(&args[2]),
+            ast(&args[3]),
+        ])
+        .ok()?;
         return Some(Ok(OvmValue::from_ast(joined)));
     }
     Some(Ok(vm_map_of(vec![
@@ -2994,7 +3009,8 @@ impl Out for Value {
         tuple(xs)
     }
     fn map(fields: Vec<(String, Self)>) -> Self {
-        let mut m = crate::ast::ValueMap::with_capacity_and_hasher(fields.len(), Default::default());
+        let mut m =
+            crate::ast::ValueMap::with_capacity_and_hasher(fields.len(), Default::default());
         for (k, v) in fields {
             m.insert(k, v);
         }
@@ -3063,7 +3079,8 @@ impl Out for OvmValue {
 }
 
 fn vm_map_of(fields: Vec<(String, OvmValue)>) -> OvmValue {
-    let mut m = crate::ovm::value::OvmMap::with_capacity_and_hasher(fields.len(), Default::default());
+    let mut m =
+        crate::ovm::value::OvmMap::with_capacity_and_hasher(fields.len(), Default::default());
     for (k, v) in fields {
         m.insert(k, v);
     }
@@ -3103,7 +3120,12 @@ impl<'a, T> Entries<'a, T> {
         self.list.len()
     }
     fn into_map<O: Out>(self, f: impl Fn(T) -> O) -> O {
-        O::map(self.list.into_iter().map(|(k, v)| (k.to_string(), f(v))).collect())
+        O::map(
+            self.list
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), f(v)))
+                .collect(),
+        )
     }
 }
 
@@ -3171,7 +3193,10 @@ fn diff<O: Out>(prev: R, nodes: &[R]) -> Res<O> {
 
 pub fn gui_flat_diff(args: Vec<Value>) -> Res<Value> {
     if args.len() != 2 {
-        return Err(format!("gui.flat_diff: expected 2 arguments, got {}", args.len()));
+        return Err(format!(
+            "gui.flat_diff: expected 2 arguments, got {}",
+            args.len()
+        ));
     }
     let nodes = R::A(&args[1])
         .items()
@@ -3283,7 +3308,12 @@ fn frame_index<'a, O: Out>(nodes: &[R<'a>], wkey: R<'a>) -> Res<O> {
         ("index".to_string(), index.into_map(O::of)),
         (
             "present".to_string(),
-            O::map(present.into_iter().map(|k| (k.into_owned(), O::b(true))).collect()),
+            O::map(
+                present
+                    .into_iter()
+                    .map(|k| (k.into_owned(), O::b(true)))
+                    .collect(),
+            ),
         ),
         ("nkeys".to_string(), O::i(nkeys)),
         ("fregions".to_string(), fregions.into_map(O::third)),
@@ -3299,7 +3329,10 @@ fn frame_index<'a, O: Out>(nodes: &[R<'a>], wkey: R<'a>) -> Res<O> {
 
 pub fn gui_flat_index(args: Vec<Value>) -> Res<Value> {
     if args.len() != 2 {
-        return Err(format!("gui.flat_index: expected 2 arguments, got {}", args.len()));
+        return Err(format!(
+            "gui.flat_index: expected 2 arguments, got {}",
+            args.len()
+        ));
     }
     let nodes = R::A(&args[0])
         .items()

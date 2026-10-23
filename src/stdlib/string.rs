@@ -800,7 +800,9 @@ fn str_money(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         None | Some(Value::Unit) => 0,
         Some(Value::Integer(d)) if (0..=20).contains(d) => *d as usize,
         Some(other) => {
-            return Err(format!("str.money: digits must be between 0 and 20, got {}", other).into());
+            return Err(
+                format!("str.money: digits must be between 0 and 20, got {}", other).into(),
+            );
         }
     };
     let x = args.first().ok_or("str.money: expected a number")?;

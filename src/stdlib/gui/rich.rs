@@ -631,7 +631,11 @@ fn chars_of(s: &str, bytes: usize) -> usize {
 /// A scroll offset (device pixels) on a whole pixel, within `max`.
 pub fn snap_scroll(y: f32, max: f32) -> f32 {
     let r = y.round();
-    if r > max { max.floor().max(0.0) } else { r.max(0.0) }
+    if r > max {
+        max.floor().max(0.0)
+    } else {
+        r.max(0.0)
+    }
 }
 
 impl RichEditor {
@@ -1572,7 +1576,10 @@ impl RichEditor {
         let ty = if down { y + step } else { y - step };
         let at = self.point_to_byte(x, ty, ts);
         self.set_focus_to(at.0, at.1, extend);
-        self.scroll_y = snap_scroll((self.scroll_y + if down { step } else { -step }).max(0.0), f32::MAX);
+        self.scroll_y = snap_scroll(
+            (self.scroll_y + if down { step } else { -step }).max(0.0),
+            f32::MAX,
+        );
         self.h_pos = Some(x);
     }
 
@@ -1863,7 +1870,14 @@ impl RichEditor {
     }
 
     /// The word (`unit` 2) or line (3) around byte `at`, at point (x, y).
-    fn unit_at(&mut self, unit: u8, at: usize, x: f32, y: f32, ts: &mut TextSystem) -> (usize, usize) {
+    fn unit_at(
+        &mut self,
+        unit: u8,
+        at: usize,
+        x: f32,
+        y: f32,
+        ts: &mut TextSystem,
+    ) -> (usize, usize) {
         let (i, _) = self.locate(at);
         if unit >= 3 {
             return (self.paras[i].start, self.paras[i].end());
@@ -1871,7 +1885,10 @@ impl RichEditor {
         self.ensure(i, ts);
         let r = Selection::word_from_point(self.layout_of(i), x, y - self.ys[i]).text_range();
         let base = self.paras[i].start;
-        (base + r.start.min(self.paras[i].len), base + r.end.min(self.paras[i].len))
+        (
+            base + r.start.min(self.paras[i].len),
+            base + r.end.min(self.paras[i].len),
+        )
     }
 
     pub fn drag(&mut self, x: f32, y: f32, ts: &mut TextSystem) {
@@ -1980,7 +1997,10 @@ impl RichEditor {
         self.ensure(i, ts);
         let r = Selection::word_from_point(self.layout_of(i), x, y - self.ys[i]).text_range();
         let base = self.paras[i].start;
-        let (a, b) = (base + r.start.min(self.paras[i].len), base + r.end.min(self.paras[i].len));
+        let (a, b) = (
+            base + r.start.min(self.paras[i].len),
+            base + r.end.min(self.paras[i].len),
+        );
         (chars_of(&self.buffer, a), chars_of(&self.buffer, b))
     }
 

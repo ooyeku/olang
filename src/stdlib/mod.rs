@@ -29,8 +29,8 @@ pub mod gui;
 #[cfg(feature = "native")]
 pub mod http;
 pub mod json;
-pub mod math;
 pub mod lexers;
+pub mod math;
 pub mod md;
 pub mod meta;
 #[cfg(feature = "native")]

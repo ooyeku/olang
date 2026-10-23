@@ -57,16 +57,28 @@ impl PanelCoord {
     }
     /// The x scale's ends (data) in this panel.
     pub fn x_range(&self) -> (f64, f64) {
-        if self.flip { (self.vs.lo, self.vs.hi) } else { (self.hs.lo, self.hs.hi) }
+        if self.flip {
+            (self.vs.lo, self.vs.hi)
+        } else {
+            (self.hs.lo, self.hs.hi)
+        }
     }
     pub fn y_range(&self) -> (f64, f64) {
-        if self.flip { (self.hs.lo, self.hs.hi) } else { (self.vs.lo, self.vs.hi) }
+        if self.flip {
+            (self.hs.lo, self.hs.hi)
+        } else {
+            (self.vs.lo, self.vs.hi)
+        }
     }
 }
 
 /// A point's radius in pixels for a ggplot size.
 pub fn radius(size: f64) -> f64 {
-    if size.is_finite() { (0.6 + size * 1.05).max(0.5) } else { 2.2 }
+    if size.is_finite() {
+        (0.6 + size * 1.05).max(0.5)
+    } else {
+        2.2
+    }
 }
 
 // ── legends ──────────────────────────────────────────────────────────
@@ -95,8 +107,8 @@ enum Glyph {
 fn glyph_of(geom: &str) -> Glyph {
     match geom {
         "point" | "jitter" | "qq" | "pointrange" | "summary" => Glyph::Point,
-        "line" | "path" | "step" | "freqpoly" | "ecdf" | "hline" | "vline" | "abline" | "qq_line" | "segment" | "errorbar"
-        | "linerange" | "rug" => Glyph::Line,
+        "line" | "path" | "step" | "freqpoly" | "ecdf" | "hline" | "vline" | "abline"
+        | "qq_line" | "segment" | "errorbar" | "linerange" | "rug" => Glyph::Line,
         "smooth" => Glyph::Band,
         "text" | "label" => Glyph::Text,
         _ => Glyph::Rect,
@@ -160,7 +172,13 @@ fn guides(b: &Built) -> Vec<Guide> {
         let title = b
             .labels
             .get(aes.name())
-            .or_else(|| if *aes == Aes::Color { b.labels.get("colour") } else { None })
+            .or_else(|| {
+                if *aes == Aes::Color {
+                    b.labels.get("colour")
+                } else {
+                    None
+                }
+            })
             .cloned()
             .or_else(|| sc.name.clone())
             .or_else(|| users.iter().find_map(|l| l.titles.get(aes).cloned()))
@@ -195,8 +213,17 @@ fn guides(b: &Built) -> Vec<Guide> {
                     })
                     .collect();
                 // merge with a guide of the same title and labels
-                if let Some(Guide::Keys { keys: ks, aes: a2, layers: ls, .. }) = out.iter_mut().find(|g| match g {
-                    Guide::Keys { title: t, labels: l, .. } => *t == title && l == labels,
+                if let Some(Guide::Keys {
+                    keys: ks,
+                    aes: a2,
+                    layers: ls,
+                    ..
+                }) = out.iter_mut().find(|g| match g {
+                    Guide::Keys {
+                        title: t,
+                        labels: l,
+                        ..
+                    } => *t == title && l == labels,
                     _ => false,
                 }) {
                     for (k, n) in ks.iter_mut().zip(keys) {
@@ -226,7 +253,13 @@ fn guides(b: &Built) -> Vec<Guide> {
                     layers,
                 });
             }
-            Some(NpMap::Continuous { lo, hi, mid, breaks, labels }) => {
+            Some(NpMap::Continuous {
+                lo,
+                hi,
+                mid,
+                breaks,
+                labels,
+            }) => {
                 if matches!(aes, Aes::Color | Aes::Fill) {
                     if let Some(r) = &sc.ramp {
                         out.push(Guide::Bar {
@@ -279,16 +312,28 @@ fn guide_size(g: &Guide, t: &Theme, horizontal: bool, max_w: f64) -> (f64, f64) 
         Guide::Keys { labels, keys, .. } => {
             let row = key_box(keys).max(ls * 1.55);
             if horizontal {
-                let items: f64 = labels.iter().map(|l| key_box(keys) + 6.0 + width(l, ls, false) + 14.0).sum();
+                let items: f64 = labels
+                    .iter()
+                    .map(|l| key_box(keys) + 6.0 + width(l, ls, false) + 14.0)
+                    .sum();
                 let lines = (items / max_w.max(60.0)).ceil().max(1.0);
                 (items.min(max_w).max(title_w), title_h + lines * row)
             } else {
-                let lw = labels.iter().map(|l| width(l, ls, false)).fold(0.0, f64::max);
-                ((key_box(keys) + 6.0 + lw).max(title_w), title_h + row * labels.len() as f64)
+                let lw = labels
+                    .iter()
+                    .map(|l| width(l, ls, false))
+                    .fold(0.0, f64::max);
+                (
+                    (key_box(keys) + 6.0 + lw).max(title_w),
+                    title_h + row * labels.len() as f64,
+                )
             }
         }
         Guide::Bar { breaks, .. } => {
-            let lw = breaks.iter().map(|(_, l)| width(l, ls, false)).fold(0.0, f64::max);
+            let lw = breaks
+                .iter()
+                .map(|(_, l)| width(l, ls, false))
+                .fold(0.0, f64::max);
             if horizontal {
                 (160f64.max(title_w), title_h + 12.0 + ls * 1.6)
             } else {
@@ -307,7 +352,15 @@ fn key_box(keys: &[KeyVis]) -> f64 {
         .min(30.0)
 }
 
-fn draw_key(items: &mut Vec<Item>, x: f64, y: f64, bx: f64, k: &KeyVis, layers: &[(Glyph, KeyVis, f64)], t: &Theme) {
+fn draw_key(
+    items: &mut Vec<Item>,
+    x: f64,
+    y: f64,
+    bx: f64,
+    k: &KeyVis,
+    layers: &[(Glyph, KeyVis, f64)],
+    t: &Theme,
+) {
     let cx = x + bx / 2.0;
     let cy = y + bx / 2.0;
     for (glyph, d, lw) in layers {
@@ -337,7 +390,12 @@ fn draw_key(items: &mut Vec<Item>, x: f64, y: f64, bx: f64, k: &KeyVis, layers: 
                         y: y + 2.0,
                         w: bx - 2.0,
                         h: bx - 4.0,
-                        fill: Some(Paint::Rgba(k.fill.or(k.color).unwrap_or(t.app.role(Role::Ink2)).with_alpha(0.18))),
+                        fill: Some(Paint::Rgba(
+                            k.fill
+                                .or(k.color)
+                                .unwrap_or(t.app.role(Role::Ink2))
+                                .with_alpha(0.18),
+                        )),
                         stroke: None,
                         sw: 0.0,
                         r: 2.0,
@@ -362,7 +420,11 @@ fn draw_key(items: &mut Vec<Item>, x: f64, y: f64, bx: f64, k: &KeyVis, layers: 
                     w: bx - 3.0,
                     h: bx - 3.0,
                     fill: Some(Paint::Rgba(fill.with_alpha(a))),
-                    stroke: if k.color.is_some() { Some(Paint::Rgba(color)) } else { None },
+                    stroke: if k.color.is_some() {
+                        Some(Paint::Rgba(color))
+                    } else {
+                        None
+                    },
                     sw: 1.0,
                     r: 3.0,
                     tip: None,
@@ -381,7 +443,15 @@ fn draw_key(items: &mut Vec<Item>, x: f64, y: f64, bx: f64, k: &KeyVis, layers: 
     }
 }
 
-fn draw_guide(items: &mut Vec<Item>, g: &Guide, x: f64, y: f64, t: &Theme, horizontal: bool, max_w: f64) {
+fn draw_guide(
+    items: &mut Vec<Item>,
+    g: &Guide,
+    x: f64,
+    y: f64,
+    t: &Theme,
+    horizontal: bool,
+    max_w: f64,
+) {
     let ts = t.legend_title();
     let ls = t.legend_text();
     let mut yy = y;
@@ -398,7 +468,12 @@ fn draw_guide(items: &mut Vec<Item>, g: &Guide, x: f64, y: f64, t: &Theme, horiz
         yy += ts * 1.6;
     }
     match g {
-        Guide::Keys { labels, keys, layers, .. } => {
+        Guide::Keys {
+            labels,
+            keys,
+            layers,
+            ..
+        } => {
             let bx = key_box(keys);
             let row = bx.max(ls * 1.55);
             let mut xx = x;
@@ -425,7 +500,14 @@ fn draw_guide(items: &mut Vec<Item>, g: &Guide, x: f64, y: f64, t: &Theme, horiz
                 }
             }
         }
-        Guide::Bar { ramp, mid, lo, hi, breaks, .. } => {
+        Guide::Bar {
+            ramp,
+            mid,
+            lo,
+            hi,
+            breaks,
+            ..
+        } => {
             let unit = |v: f64| -> f64 {
                 match mid {
                     Some(m) => {
@@ -455,8 +537,24 @@ fn draw_guide(items: &mut Vec<Item>, g: &Guide, x: f64, y: f64, t: &Theme, horiz
                 }
                 for (v, l) in breaks {
                     let px = x + (v - lo) / (hi - lo).max(1e-12) * bw;
-                    items.push(Item::Line { x1: px, y1: yy + bh - 3.0, x2: px, y2: yy + bh, stroke: Paint::Role(Role::Surface), sw: 1.0, dash: None });
-                    items.push(Item::Text { x: px, y: yy + bh + ls * 0.9, text: l.clone(), size: ls, paint: Paint::Role(Role::Ink2), anchor: Anchor::Middle, weight: 400 });
+                    items.push(Item::Line {
+                        x1: px,
+                        y1: yy + bh - 3.0,
+                        x2: px,
+                        y2: yy + bh,
+                        stroke: Paint::Role(Role::Surface),
+                        sw: 1.0,
+                        dash: None,
+                    });
+                    items.push(Item::Text {
+                        x: px,
+                        y: yy + bh + ls * 0.9,
+                        text: l.clone(),
+                        size: ls,
+                        paint: Paint::Role(Role::Ink2),
+                        anchor: Anchor::Middle,
+                        weight: 400,
+                    });
                 }
             } else {
                 let (bw, bh) = (12.0, 120.0);
@@ -477,8 +575,24 @@ fn draw_guide(items: &mut Vec<Item>, g: &Guide, x: f64, y: f64, t: &Theme, horiz
                 }
                 for (v, l) in breaks {
                     let py = yy + (hi - v) / (hi - lo).max(1e-12) * bh;
-                    items.push(Item::Line { x1: x + bw - 3.0, y1: py, x2: x + bw, y2: py, stroke: Paint::Role(Role::Surface), sw: 1.0, dash: None });
-                    items.push(Item::Text { x: x + bw + 6.0, y: py, text: l.clone(), size: ls, paint: Paint::Role(Role::Ink2), anchor: Anchor::Start, weight: 400 });
+                    items.push(Item::Line {
+                        x1: x + bw - 3.0,
+                        y1: py,
+                        x2: x + bw,
+                        y2: py,
+                        stroke: Paint::Role(Role::Surface),
+                        sw: 1.0,
+                        dash: None,
+                    });
+                    items.push(Item::Text {
+                        x: x + bw + 6.0,
+                        y: py,
+                        text: l.clone(),
+                        size: ls,
+                        paint: Paint::Role(Role::Ink2),
+                        anchor: Anchor::Start,
+                        weight: 400,
+                    });
                 }
             }
         }
@@ -517,7 +631,11 @@ fn axis_info(s: &super::scale::PosScale, t: &Trained, title: &str) -> AxisInfo {
         trans: s.trans.name(),
         lo: t.lo,
         hi: t.hi,
-        levels: if s.kind == PosKind::Discrete { s.levels.clone() } else { vec![] },
+        levels: if s.kind == PosKind::Discrete {
+            s.levels.clone()
+        } else {
+            vec![]
+        },
         title: title.to_string(),
     }
 }
@@ -537,15 +655,45 @@ pub fn draw(b: &Built) -> super::Result<Scene> {
     let title = b.labels.get("title").cloned().unwrap_or_default();
     let subtitle = b.labels.get("subtitle").cloned().unwrap_or_default();
     let caption = b.labels.get("caption").cloned().unwrap_or_default();
-    let tl = if title.is_empty() { vec![] } else { wrap(&title, t.title(), true, w_total - 2.0 * m) };
-    let sl = if subtitle.is_empty() { vec![] } else { wrap(&subtitle, t.subtitle(), false, w_total - 2.0 * m) };
-    let cl = if caption.is_empty() { vec![] } else { wrap(&caption, t.caption(), false, w_total - 2.0 * m) };
-    let title_h = tl.len() as f64 * t.title() * 1.3 + sl.len() as f64 * t.subtitle() * 1.45 + if tl.is_empty() && sl.is_empty() { 0.0 } else { 10.0 };
-    let caption_h = if cl.is_empty() { 0.0 } else { cl.len() as f64 * t.caption() * 1.45 + 6.0 };
+    let tl = if title.is_empty() {
+        vec![]
+    } else {
+        wrap(&title, t.title(), true, w_total - 2.0 * m)
+    };
+    let sl = if subtitle.is_empty() {
+        vec![]
+    } else {
+        wrap(&subtitle, t.subtitle(), false, w_total - 2.0 * m)
+    };
+    let cl = if caption.is_empty() {
+        vec![]
+    } else {
+        wrap(&caption, t.caption(), false, w_total - 2.0 * m)
+    };
+    let title_h = tl.len() as f64 * t.title() * 1.3
+        + sl.len() as f64 * t.subtitle() * 1.45
+        + if tl.is_empty() && sl.is_empty() {
+            0.0
+        } else {
+            10.0
+        };
+    let caption_h = if cl.is_empty() {
+        0.0
+    } else {
+        cl.len() as f64 * t.caption() * 1.45 + 6.0
+    };
 
     // ── the horizontal and vertical axes' scales ──
-    let (hscale, vscale) = if b.flip { (&b.sy, &b.sx) } else { (&b.sx, &b.sy) };
-    let (htrained, vtrained) = if b.flip { (&b.ty, &b.tx) } else { (&b.tx, &b.ty) };
+    let (hscale, vscale) = if b.flip {
+        (&b.sy, &b.sx)
+    } else {
+        (&b.sx, &b.sy)
+    };
+    let (htrained, vtrained) = if b.flip {
+        (&b.ty, &b.tx)
+    } else {
+        (&b.tx, &b.ty)
+    };
     let (htitle, vtitle) = if b.flip {
         (b.y_title.clone(), b.x_title.clone())
     } else {
@@ -558,7 +706,10 @@ pub fn draw(b: &Built) -> super::Result<Scene> {
     let horizontal = pos == "bottom" || pos == "top";
     let mut legend_w = 0.0;
     let mut legend_h = 0.0;
-    let gsizes: Vec<(f64, f64)> = gs.iter().map(|g| guide_size(g, t, horizontal, w_total - 2.0 * m)).collect();
+    let gsizes: Vec<(f64, f64)> = gs
+        .iter()
+        .map(|g| guide_size(g, t, horizontal, w_total - 2.0 * m))
+        .collect();
     if !gs.is_empty() && pos != "none" {
         if horizontal {
             legend_h = gsizes.iter().map(|s| s.1 + 10.0).sum::<f64>() + 6.0;
@@ -571,7 +722,11 @@ pub fn draw(b: &Built) -> super::Result<Scene> {
     let ts = t.tick();
     let any_h_breaks = !void && htrained.iter().any(|tr| !tr.breaks.is_empty());
     let any_v_breaks = !void && vtrained.iter().any(|tr| !tr.breaks.is_empty());
-    let xtick_h = if any_h_breaks { ts * 1.5 + if t.ticks { 4.0 } else { 3.0 } } else { 0.0 };
+    let xtick_h = if any_h_breaks {
+        ts * 1.5 + if t.ticks { 4.0 } else { 3.0 }
+    } else {
+        0.0
+    };
     let ytick_w = if any_v_breaks {
         vtrained
             .iter()
@@ -582,11 +737,28 @@ pub fn draw(b: &Built) -> super::Result<Scene> {
     } else {
         0.0
     };
-    let xtitle_h = if htitle.is_empty() || void { 0.0 } else { t.axis_title() * 1.7 };
-    let ytitle_h = if vtitle.is_empty() || void { 0.0 } else { t.axis_title() * 1.65 };
-    let strip_h = if fct.kind == "wrap" || !fct.col_labels.is_empty() { t.strip() * 1.85 } else { 0.0 };
+    let xtitle_h = if htitle.is_empty() || void {
+        0.0
+    } else {
+        t.axis_title() * 1.7
+    };
+    let ytitle_h = if vtitle.is_empty() || void {
+        0.0
+    } else {
+        t.axis_title() * 1.65
+    };
+    let strip_h = if fct.kind == "wrap" || !fct.col_labels.is_empty() {
+        t.strip() * 1.85
+    } else {
+        0.0
+    };
     let rowstrip_w = if fct.kind == "grid" && !fct.row_labels.is_empty() {
-        fct.row_labels.iter().map(|l| width(l, t.strip(), true)).fold(0.0, f64::max).min(140.0) + 14.0
+        fct.row_labels
+            .iter()
+            .map(|l| width(l, t.strip(), true))
+            .fold(0.0, f64::max)
+            .min(140.0)
+            + 14.0
     } else {
         0.0
     };
@@ -599,7 +771,8 @@ pub fn draw(b: &Built) -> super::Result<Scene> {
     let left0 = m + ytick_w + if pos == "left" { legend_w } else { 0.0 };
     let right0 = w_total - m - rowstrip_w - if pos == "right" { legend_w } else { 0.0 };
     let top0 = m + title_h + ytitle_h + if pos == "top" { legend_h } else { 0.0 };
-    let bottom0 = h_total - m - caption_h - xtitle_h - xtick_h - if pos == "bottom" { legend_h } else { 0.0 };
+    let bottom0 =
+        h_total - m - caption_h - xtitle_h - xtick_h - if pos == "bottom" { legend_h } else { 0.0 };
     let (nr, nc) = (fct.nrow as f64, fct.ncol as f64);
     let mut pw = ((right0 - left0 - (nc - 1.0) * hgap) / nc).max(10.0);
     let mut ph = ((bottom0 - top0 - nr * strip_h - (nr - 1.0) * vgap) / nr).max(10.0);
@@ -661,26 +834,59 @@ pub fn draw(b: &Built) -> super::Result<Scene> {
     for (p, pc) in coords.iter().enumerate() {
         // background, grid
         if t.panel_fill {
-            items.push(Item::Rect { x: pc.x, y: pc.y, w: pc.w, h: pc.h, fill: Some(Paint::Role(Role::Panel)), stroke: None, sw: 0.0, r: 0.0, tip: None });
+            items.push(Item::Rect {
+                x: pc.x,
+                y: pc.y,
+                w: pc.w,
+                h: pc.h,
+                fill: Some(Paint::Role(Role::Panel)),
+                stroke: None,
+                sw: 0.0,
+                r: 0.0,
+                tip: None,
+            });
         }
         if !void {
             if t.grid_x() && !hdisc {
                 for v in &pc.hs.breaks {
                     let x = (pc.hx(*v)).round() + 0.5;
-                    items.push(Item::Line { x1: x, y1: pc.y, x2: x, y2: pc.y + pc.h, stroke: Paint::Role(Role::Grid), sw: 1.0, dash: None });
+                    items.push(Item::Line {
+                        x1: x,
+                        y1: pc.y,
+                        x2: x,
+                        y2: pc.y + pc.h,
+                        stroke: Paint::Role(Role::Grid),
+                        sw: 1.0,
+                        dash: None,
+                    });
                 }
             }
             if t.grid_y() && !vdisc {
                 for v in &pc.vs.breaks {
                     let y = (pc.vy(*v)).round() + 0.5;
-                    items.push(Item::Line { x1: pc.x, y1: y, x2: pc.x + pc.w, y2: y, stroke: Paint::Role(Role::Grid), sw: 1.0, dash: None });
+                    items.push(Item::Line {
+                        x1: pc.x,
+                        y1: y,
+                        x2: pc.x + pc.w,
+                        y2: y,
+                        stroke: Paint::Role(Role::Grid),
+                        sw: 1.0,
+                        dash: None,
+                    });
                 }
             }
         }
         // the layers, clipped to the panel
-        items.push(Item::Clip { x: pc.x - 1.0, y: pc.y - 1.0, w: pc.w + 2.0, h: pc.h + 2.0 });
+        items.push(Item::Clip {
+            x: pc.x - 1.0,
+            y: pc.y - 1.0,
+            w: pc.w + 2.0,
+            h: pc.h + 2.0,
+        });
         for (li, l) in b.layers.iter().enumerate() {
-            let rows: Vec<usize> = (0..l.frame.n).filter(|&i| l.frame.panel[i] as usize == p).collect();
+            let rows: Vec<usize> = (0..l.frame.n)
+                .filter(|&i| l.frame.panel[i] as usize == p)
+                .collect();
             if rows.is_empty() {
                 continue;
             }
@@ -689,28 +895,69 @@ pub fn draw(b: &Built) -> super::Result<Scene> {
         items.push(Item::Unclip);
         // frame lines
         if t.panel_border {
-            items.push(Item::Rect { x: pc.x, y: pc.y, w: pc.w, h: pc.h, fill: None, stroke: Some(Paint::Role(Role::Axis)), sw: 1.0, r: 0.0, tip: None });
+            items.push(Item::Rect {
+                x: pc.x,
+                y: pc.y,
+                w: pc.w,
+                h: pc.h,
+                fill: None,
+                stroke: Some(Paint::Role(Role::Axis)),
+                sw: 1.0,
+                r: 0.0,
+                tip: None,
+            });
         }
         if t.axis_lines {
             let yb = pc.y + pc.h;
-            items.push(Item::Line { x1: pc.x, y1: yb, x2: pc.x + pc.w, y2: yb, stroke: Paint::Role(Role::Axis), sw: 1.0, dash: None });
-            items.push(Item::Line { x1: pc.x, y1: pc.y, x2: pc.x, y2: yb, stroke: Paint::Role(Role::Axis), sw: 1.0, dash: None });
+            items.push(Item::Line {
+                x1: pc.x,
+                y1: yb,
+                x2: pc.x + pc.w,
+                y2: yb,
+                stroke: Paint::Role(Role::Axis),
+                sw: 1.0,
+                dash: None,
+            });
+            items.push(Item::Line {
+                x1: pc.x,
+                y1: pc.y,
+                x2: pc.x,
+                y2: yb,
+                stroke: Paint::Role(Role::Axis),
+                sw: 1.0,
+                dash: None,
+            });
         }
         // the horizontal axis's labels
         if !void && shows_h(p) && !pc.hs.breaks.is_empty() {
             let xs: Vec<f64> = pc.hs.breaks.iter().map(|v| pc.hx(*v)).collect();
             let every = thin_labels(&xs, &pc.hs.labels, ts, true);
-            let slot = if hdisc && !xs.is_empty() { pc.w / xs.len() as f64 * every as f64 - 4.0 } else { 200.0 };
+            let slot = if hdisc && !xs.is_empty() {
+                pc.w / xs.len() as f64 * every as f64 - 4.0
+            } else {
+                200.0
+            };
             for (i, x) in xs.iter().enumerate() {
                 if t.ticks {
-                    items.push(Item::Line { x1: *x, y1: pc.y + pc.h, x2: *x, y2: pc.y + pc.h + 4.0, stroke: Paint::Role(Role::Axis), sw: 1.0, dash: None });
+                    items.push(Item::Line {
+                        x1: *x,
+                        y1: pc.y + pc.h,
+                        x2: *x,
+                        y2: pc.y + pc.h + 4.0,
+                        stroke: Paint::Role(Role::Axis),
+                        sw: 1.0,
+                        dash: None,
+                    });
                 }
                 if i % every != 0 {
                     continue;
                 }
                 // side by side, a label past its panel's half of the gap would meet its neighbour's
                 let half = width(&pc.hs.labels[i], ts, false) / 2.0;
-                if fct.ncol > 1 && !hdisc && (x - half < pc.x - hgap / 2.0 || x + half > pc.x + pc.w + hgap / 2.0) {
+                if fct.ncol > 1
+                    && !hdisc
+                    && (x - half < pc.x - hgap / 2.0 || x + half > pc.x + pc.w + hgap / 2.0)
+                {
                     continue;
                 }
                 items.push(Item::Text {
@@ -736,7 +983,15 @@ pub fn draw(b: &Built) -> super::Result<Scene> {
             };
             for (i, y) in ys.iter().enumerate() {
                 if t.ticks {
-                    items.push(Item::Line { x1: pc.x - 4.0, y1: *y, x2: pc.x, y2: *y, stroke: Paint::Role(Role::Axis), sw: 1.0, dash: None });
+                    items.push(Item::Line {
+                        x1: pc.x - 4.0,
+                        y1: *y,
+                        x2: pc.x,
+                        y2: *y,
+                        stroke: Paint::Role(Role::Axis),
+                        sw: 1.0,
+                        dash: None,
+                    });
                 }
                 if i % every != 0 {
                     continue;
@@ -753,18 +1008,40 @@ pub fn draw(b: &Built) -> super::Result<Scene> {
             }
         }
         // strips
-        let label = if fct.kind == "wrap" { fct.labels[p].clone() } else { String::new() };
+        let label = if fct.kind == "wrap" {
+            fct.labels[p].clone()
+        } else {
+            String::new()
+        };
         if fct.kind == "wrap" {
             strip(&mut items, t, pc.x, pc.y - strip_h, pc.w, strip_h, &label);
         } else if fct.kind == "grid" {
             let (r, c) = fct.pos[p];
             if r == 0 && !fct.col_labels.is_empty() {
-                strip(&mut items, t, pc.x, pc.y - strip_h, pc.w, strip_h, &fct.col_labels[c]);
+                strip(
+                    &mut items,
+                    t,
+                    pc.x,
+                    pc.y - strip_h,
+                    pc.w,
+                    strip_h,
+                    &fct.col_labels[c],
+                );
             }
             if c + 1 == fct.ncol && !fct.row_labels.is_empty() {
                 let lx = pc.x + pc.w + 8.0;
                 if t.strip_fill {
-                    items.push(Item::Rect { x: pc.x + pc.w + 4.0, y: pc.y, w: rowstrip_w - 4.0, h: pc.h, fill: Some(Paint::Role(Role::Strip)), stroke: None, sw: 0.0, r: 0.0, tip: None });
+                    items.push(Item::Rect {
+                        x: pc.x + pc.w + 4.0,
+                        y: pc.y,
+                        w: rowstrip_w - 4.0,
+                        h: pc.h,
+                        fill: Some(Paint::Role(Role::Strip)),
+                        stroke: None,
+                        sw: 0.0,
+                        r: 0.0,
+                        tip: None,
+                    });
                 }
                 items.push(Item::Text {
                     x: lx,
@@ -781,11 +1058,14 @@ pub fn draw(b: &Built) -> super::Result<Scene> {
             "wrap" => label,
             "grid" => {
                 let (r, c) = fct.pos[p];
-                [fct.row_labels.get(r).cloned(), fct.col_labels.get(c).cloned()]
-                    .into_iter()
-                    .flatten()
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                [
+                    fct.row_labels.get(r).cloned(),
+                    fct.col_labels.get(c).cloned(),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(", ")
             }
             _ => String::new(),
         };
@@ -805,9 +1085,15 @@ pub fn draw(b: &Built) -> super::Result<Scene> {
 
     // ── axis titles ──
     let plot_left = coords.iter().map(|c| c.x).fold(f64::INFINITY, f64::min);
-    let plot_right = coords.iter().map(|c| c.x + c.w).fold(f64::NEG_INFINITY, f64::max);
+    let plot_right = coords
+        .iter()
+        .map(|c| c.x + c.w)
+        .fold(f64::NEG_INFINITY, f64::max);
     let plot_top = coords.iter().map(|c| c.y).fold(f64::INFINITY, f64::min) - strip_h;
-    let plot_bottom = coords.iter().map(|c| c.y + c.h).fold(f64::NEG_INFINITY, f64::max);
+    let plot_bottom = coords
+        .iter()
+        .map(|c| c.y + c.h)
+        .fold(f64::NEG_INFINITY, f64::max);
     if xtitle_h > 0.0 {
         items.push(Item::Text {
             x: (plot_left + plot_right) / 2.0,
@@ -835,29 +1121,69 @@ pub fn draw(b: &Built) -> super::Result<Scene> {
     // ── title, subtitle, caption ──
     let mut ty = m;
     for l in &tl {
-        items.push(Item::Text { x: m, y: ty + t.title() * 0.62, text: l.clone(), size: t.title(), paint: Paint::Role(Role::Ink), anchor: Anchor::Start, weight: 600 });
+        items.push(Item::Text {
+            x: m,
+            y: ty + t.title() * 0.62,
+            text: l.clone(),
+            size: t.title(),
+            paint: Paint::Role(Role::Ink),
+            anchor: Anchor::Start,
+            weight: 600,
+        });
         ty += t.title() * 1.3;
     }
     for l in &sl {
-        items.push(Item::Text { x: m, y: ty + t.subtitle() * 0.7, text: l.clone(), size: t.subtitle(), paint: Paint::Role(Role::Ink2), anchor: Anchor::Start, weight: 400 });
+        items.push(Item::Text {
+            x: m,
+            y: ty + t.subtitle() * 0.7,
+            text: l.clone(),
+            size: t.subtitle(),
+            paint: Paint::Role(Role::Ink2),
+            anchor: Anchor::Start,
+            weight: 400,
+        });
         ty += t.subtitle() * 1.45;
     }
     let mut cy = h_total - m - caption_h + 6.0;
     for l in &cl {
-        items.push(Item::Text { x: m, y: cy + t.caption() * 0.7, text: l.clone(), size: t.caption(), paint: Paint::Role(Role::Ink2), anchor: Anchor::Start, weight: 400 });
+        items.push(Item::Text {
+            x: m,
+            y: cy + t.caption() * 0.7,
+            text: l.clone(),
+            size: t.caption(),
+            paint: Paint::Role(Role::Ink2),
+            anchor: Anchor::Start,
+            weight: 400,
+        });
         cy += t.caption() * 1.45;
     }
 
     // ── legends ──
     if pos != "none" && !gs.is_empty() {
         if horizontal {
-            let mut y = if pos == "top" { m + title_h } else { h_total - m - caption_h - legend_h + 6.0 };
+            let mut y = if pos == "top" {
+                m + title_h
+            } else {
+                h_total - m - caption_h - legend_h + 6.0
+            };
             for (g, s) in gs.iter().zip(&gsizes) {
-                draw_guide(&mut items, g, plot_left.min(m + ytick_w), y, t, true, w_total - 2.0 * m);
+                draw_guide(
+                    &mut items,
+                    g,
+                    plot_left.min(m + ytick_w),
+                    y,
+                    t,
+                    true,
+                    w_total - 2.0 * m,
+                );
                 y += s.1 + 10.0;
             }
         } else {
-            let x = if pos == "left" { m } else { w_total - m - legend_w + 18.0 };
+            let x = if pos == "left" {
+                m
+            } else {
+                w_total - m - legend_w + 18.0
+            };
             let total: f64 = gsizes.iter().map(|s| s.1 + 14.0).sum();
             let mut y = (plot_top + (plot_bottom - plot_top - total) / 2.0).max(plot_top);
             for (g, s) in gs.iter().zip(&gsizes) {
@@ -894,7 +1220,17 @@ pub fn draw(b: &Built) -> super::Result<Scene> {
 
 fn strip(items: &mut Vec<Item>, t: &Theme, x: f64, y: f64, w: f64, h: f64, label: &str) {
     if t.strip_fill {
-        items.push(Item::Rect { x, y: y + 1.0, w, h: h - 3.0, fill: Some(Paint::Role(Role::Strip)), stroke: None, sw: 0.0, r: 0.0, tip: None });
+        items.push(Item::Rect {
+            x,
+            y: y + 1.0,
+            w,
+            h: h - 3.0,
+            fill: Some(Paint::Role(Role::Strip)),
+            stroke: None,
+            sw: 0.0,
+            r: 0.0,
+            tip: None,
+        });
     }
     items.push(Item::Text {
         x: x + if t.strip_fill { 6.0 } else { 0.0 },
@@ -933,7 +1269,13 @@ fn alt_text(b: &Built, title: &str) -> String {
         s.push_str(&format!(", {} by {}", b.y_title, b.x_title));
     }
     for (a, word) in [(Aes::Color, "coloured"), (Aes::Fill, "filled")] {
-        if let Some(t) = b.layers.iter().find_map(|l| if l.mapped.contains(&a) { l.titles.get(&a) } else { None }) {
+        if let Some(t) = b.layers.iter().find_map(|l| {
+            if l.mapped.contains(&a) {
+                l.titles.get(&a)
+            } else {
+                None
+            }
+        }) {
             s.push_str(&format!(", {} by {}", word, t));
             break;
         }

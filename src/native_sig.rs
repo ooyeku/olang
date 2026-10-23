@@ -347,7 +347,10 @@ fn parse_spec(full: &'static str, spec: &'static str) -> Sig {
         };
         let name = match head.split_once(':') {
             Some((n, kinds)) => {
-                assert!(i == 0, "native_sig: {full}: only the first parameter is a receiver");
+                assert!(
+                    i == 0,
+                    "native_sig: {full}: only the first parameter is a receiver"
+                );
                 for k in kinds.trim().chars() {
                     recv |= match k {
                         'S' => RECV_SERIES,
@@ -464,7 +467,11 @@ fn layout<'n>(
                 return Err(format!(
                     "{}: no parameter {}named '{}' — it takes {}",
                     full,
-                    if sig.options.is_some() { "or option " } else { "" },
+                    if sig.options.is_some() {
+                        "or option "
+                    } else {
+                        ""
+                    },
                     name,
                     sig.takes_list()
                 ));
@@ -492,7 +499,12 @@ fn layout<'n>(
 /// Where parameter `i` (at or past the positional ones) comes from: the
 /// named argument that names it (its index among the names), else its
 /// default. `layout` has ruled out a required gap.
-fn source<'n>(sig: &Sig, i: usize, n_named: usize, name_at: &dyn Fn(usize) -> &'n str) -> Result<usize, Lit> {
+fn source<'n>(
+    sig: &Sig,
+    i: usize,
+    n_named: usize,
+    name_at: &dyn Fn(usize) -> &'n str,
+) -> Result<usize, Lit> {
     let p = &sig.params[i];
     match (0..n_named).find(|&j| name_at(j) == p.name) {
         Some(j) => Ok(j),
@@ -655,7 +667,9 @@ pub fn bind(
 pub fn options_fields(v: &Value) -> Option<&Arc<ValueMap>> {
     match v {
         Value::Map(m) => Some(m),
-        Value::Struct { type_name, fields } if type_name == "Object" || type_name == "JsonObject" => {
+        Value::Struct { type_name, fields }
+            if type_name == "Object" || type_name == "JsonObject" =>
+        {
             Some(fields)
         }
         _ => None,
@@ -721,8 +735,19 @@ fn borrowed_modules(type_name: &str) -> &'static [&'static str] {
 /// name hides a column's `.` read, so the rest (`split`, `silhouette`,
 /// `kfold`: names a column has) stay `learn.f(frame, …)`.
 const FRAME_MODELS: &[&str] = &[
-    "linear", "ridge", "lasso", "elastic_net", "logistic", "tree", "forest", "boost", "knn",
-    "naive_bayes", "kmeans", "gmm", "pca",
+    "linear",
+    "ridge",
+    "lasso",
+    "elastic_net",
+    "logistic",
+    "tree",
+    "forest",
+    "boost",
+    "knn",
+    "naive_bayes",
+    "kmeans",
+    "gmm",
+    "pca",
 ];
 
 /// Whether a type borrows `method` from `module` (one it lists).
@@ -912,7 +937,10 @@ pub const TABLE: &[(&str, &str)] = &[
     ("ods.cum_max", "s:S -> S"),
     ("ods.cum_min", "s:S -> S"),
     ("ods.rank", "s:S, method = \"min\" -> S"),
-    ("ods.rolling", "s:S, window, agg, center = false, min_periods?, exact = false -> S"),
+    (
+        "ods.rolling",
+        "s:S, window, agg, center = false, min_periods?, exact = false -> S",
+    ),
     ("ods.cumsum", "s:S -> S"),
     ("ods.map", "s:S, fn -> S"),
     ("ods.dot", "a:S, b"),
@@ -969,7 +997,10 @@ pub const TABLE: &[(&str, &str)] = &[
     ("ods.to_category", "s:S, levels? -> S"),
     ("ods.levels", "s:S -> S"),
     ("ods.codes", "s:S -> S"),
-    ("ods.dummies", "x:SF, columns?, drop_first = true, prefix?, dtype = \"Float\" -> F"),
+    (
+        "ods.dummies",
+        "x:SF, columns?, drop_first = true, prefix?, dtype = \"Float\" -> F",
+    ),
     ("ods.interact", "a:S, b, sep = \":\" -> S"),
     // ── ods: column math, nulls and conditionals (D1) ──
     ("ods.abs", "s:S -> S"),
@@ -1085,16 +1116,37 @@ pub const TABLE: &[(&str, &str)] = &[
     ("ods.slice", "x:SF, start, n? -> ="),
     ("ods.row", "f:F, i"),
     ("ods.lookup", "f:F, key_col, key, value_col"),
-    ("ods.crosstab", "a:S, b, values?, agg = \"count\", normalize?, name? -> F"),
+    (
+        "ods.crosstab",
+        "a:S, b, values?, agg = \"count\", normalize?, name? -> F",
+    ),
     ("ods.runs", "s:S -> F"),
     ("ods.run_id", "s:S -> S"),
     ("ods.resample", "f:F, on, every, aggs, by? -> F"),
-    ("ods.asof_join", "left:F, right, on, by?, direction = \"backward\", tolerance?, suffix = \"_right\" -> F"),
-    ("ods.join", "left:F, right, on, right_on?, how = \"inner\", suffix = \"_right\", validate? -> F"),
-    ("ods.join_left", "left:F, right, on, right_on?, suffix = \"_right\", validate? -> F"),
-    ("ods.join_full", "left:F, right, on, right_on?, suffix = \"_right\", validate? -> F"),
-    ("ods.join_semi", "left:F, right, on, right_on?, suffix = \"_right\", validate? -> F"),
-    ("ods.join_anti", "left:F, right, on, right_on?, suffix = \"_right\", validate? -> F"),
+    (
+        "ods.asof_join",
+        "left:F, right, on, by?, direction = \"backward\", tolerance?, suffix = \"_right\" -> F",
+    ),
+    (
+        "ods.join",
+        "left:F, right, on, right_on?, how = \"inner\", suffix = \"_right\", validate? -> F",
+    ),
+    (
+        "ods.join_left",
+        "left:F, right, on, right_on?, suffix = \"_right\", validate? -> F",
+    ),
+    (
+        "ods.join_full",
+        "left:F, right, on, right_on?, suffix = \"_right\", validate? -> F",
+    ),
+    (
+        "ods.join_semi",
+        "left:F, right, on, right_on?, suffix = \"_right\", validate? -> F",
+    ),
+    (
+        "ods.join_anti",
+        "left:F, right, on, right_on?, suffix = \"_right\", validate? -> F",
+    ),
     ("ods.pivot", "f:F, index, columns, values, agg, fill? -> F"),
     ("ods.unpivot", "f:F, id_columns, value_columns? -> F"),
     // ── ods: matrices (D4) ──
@@ -1123,19 +1175,34 @@ pub const TABLE: &[(&str, &str)] = &[
     ("stats.describe", "s:S"),
     ("stats.corr", "a:S, b"),
     ("stats.cov", "a:S, b"),
-    ("stats.t_test", "a:S, b, level = 0.95, alternative = \"two-sided\""),
+    (
+        "stats.t_test",
+        "a:S, b, level = 0.95, alternative = \"two-sided\"",
+    ),
     ("stats.chi2_test", "observed:S, expected"),
     ("stats.lm", "y:S, x"),
-    ("stats.power_t", "effect, n, alpha = 0.05, alternative = \"two-sided\", kind = \"two-sample\", ratio = 1.0"),
-    ("stats.n_for_power", "effect, power = 0.8, alpha = 0.05, alternative = \"two-sided\", kind = \"two-sample\", ratio = 1.0"),
+    (
+        "stats.power_t",
+        "effect, n, alpha = 0.05, alternative = \"two-sided\", kind = \"two-sample\", ratio = 1.0",
+    ),
+    (
+        "stats.n_for_power",
+        "effect, power = 0.8, alpha = 0.05, alternative = \"two-sided\", kind = \"two-sample\", ratio = 1.0",
+    ),
     ("stats.mann_whitney", "a:S, b, alternative = \"two-sided\""),
-    ("stats.prop_z_test", "count, nobs, value = 0.0, alternative = \"two-sided\", level = 0.95"),
+    (
+        "stats.prop_z_test",
+        "count, nobs, value = 0.0, alternative = \"two-sided\", level = 0.95",
+    ),
     ("stats.spearman", "a:S, b"),
     ("stats.mad", "s:S, scale = \"normal\""),
     ("stats.iqr", "s:S"),
     ("stats.zscore", "s:S, robust = false -> S"),
     ("stats.tukey_fences", "s:S, k = 1.5"),
-    ("stats.bootstrap", "s:S, stat = \"mean\", n = 2000, seed?, rng?, level = 0.95, compare = \"diff\""),
+    (
+        "stats.bootstrap",
+        "s:S, stat = \"mean\", n = 2000, seed?, rng?, level = 0.95, compare = \"diff\"",
+    ),
     ("stats.norm.pdf", "x, mean = 0.0, std = 1.0"),
     ("stats.norm.cdf", "x, mean = 0.0, std = 1.0"),
     ("stats.norm.ppf", "q, mean = 0.0, std = 1.0"),
@@ -1155,7 +1222,10 @@ pub const TABLE: &[(&str, &str)] = &[
     ("stats.lognorm.pdf", "x, mu = 0.0, sigma = 1.0"),
     ("stats.lognorm.cdf", "x, mu = 0.0, sigma = 1.0"),
     ("stats.lognorm.ppf", "q, mu = 0.0, sigma = 1.0"),
-    ("stats.lognorm.sample", "n, mu = 0.0, sigma = 1.0, rng? -> S"),
+    (
+        "stats.lognorm.sample",
+        "n, mu = 0.0, sigma = 1.0, rng? -> S",
+    ),
     ("stats.beta.pdf", "x, a, b"),
     ("stats.beta.cdf", "x, a, b"),
     ("stats.beta.ppf", "q, a, b"),
@@ -1174,9 +1244,18 @@ pub const TABLE: &[(&str, &str)] = &[
     ("stats.binom.sample", "n, trials, p, rng? -> S"),
     // ── stats.ts ──
     ("stats.ts.acf", "s:S, lags?, ci = 0.95 -> F"),
-    ("stats.ts.pacf", "s:S, lags?, ci = 0.95, method = \"yw\" -> F"),
-    ("stats.ts.decompose", "s:S, period, model = \"additive\", time? -> F"),
-    ("stats.ts.holt_winters", "s:S, season?, trend = \"add\", seasonal = \"add\", fit = true, alpha?, beta?, gamma?, time? -> W"),
+    (
+        "stats.ts.pacf",
+        "s:S, lags?, ci = 0.95, method = \"yw\" -> F",
+    ),
+    (
+        "stats.ts.decompose",
+        "s:S, period, model = \"additive\", time? -> F",
+    ),
+    (
+        "stats.ts.holt_winters",
+        "s:S, season?, trend = \"add\", seasonal = \"add\", fit = true, alpha?, beta?, gamma?, time? -> W",
+    ),
     ("stats.ts.forecast", "model:W, h"),
     ("stats.ts.seasonal_naive", "s:S, season, h, time?"),
     // ── random: a generator (random.rng) and its methods ──
@@ -1187,7 +1266,10 @@ pub const TABLE: &[(&str, &str)] = &[
     ("random.Rng.poisson", "rng:N, n?, lam = 1.0"),
     ("random.Rng.lognormal", "rng:N, n?, mean = 0.0, sigma = 1.0"),
     ("random.Rng.binomial", "rng:N, n?, trials, p"),
-    ("random.Rng.choice", "rng:N, values, n?, weights?, replace = true"),
+    (
+        "random.Rng.choice",
+        "rng:N, values, n?, weights?, replace = true",
+    ),
     ("random.Rng.shuffle", "rng:N, values"),
     ("random.Rng.permutation", "rng:N, n -> S"),
     ("random.Rng.spawn", "rng:N, k"),
@@ -1195,8 +1277,14 @@ pub const TABLE: &[(&str, &str)] = &[
     ("str.pct", "x, digits = 1"),
     ("str.money", "x, symbol = \"$\", digits = 0"),
     // ── db: Frames ──
-    ("db.query_frame", "conn, sql, params?, **opts{timeout_ms} -> F"),
-    ("db.insert_frame", "conn, table, frame, create = true, replace = false"),
+    (
+        "db.query_frame",
+        "conn, sql, params?, **opts{timeout_ms} -> F",
+    ),
+    (
+        "db.insert_frame",
+        "conn, table, frame, create = true, replace = false",
+    ),
     // ── plot ──
     ("plot.line", concat!("x:S, y, ", plot_opts!())),
     ("plot.scatter", concat!("x:S, y, ", plot_opts!())),
@@ -1207,7 +1295,10 @@ pub const TABLE: &[(&str, &str)] = &[
     ("plot.bars", concat!("labels:S, series, ", plot_opts!())),
     ("plot.stacked", concat!("labels:S, series, ", plot_opts!())),
     ("plot.hist", concat!("s:S, bins = 10, ", plot_opts!())),
-    ("plot.heatmap", concat!("x_labels, y_labels, rows, ", plot_opts!())),
+    (
+        "plot.heatmap",
+        concat!("x_labels, y_labels, rows, ", plot_opts!()),
+    ),
     ("plot.box", concat!("series, ", plot_opts!())),
     ("plot.ramp", "scale, t"),
     ("plot.describe", "svg"),
@@ -1215,29 +1306,83 @@ pub const TABLE: &[(&str, &str)] = &[
     ("plot.gg_scene", "plot"),
     // ── learn ──
     ("learn.split", "data:F, **opts{test stratify shuffle seed}"),
-    ("learn.kfold", "data:F, k, **opts{shuffle seed stratify} -> S"),
+    (
+        "learn.kfold",
+        "data:F, k, **opts{shuffle seed stratify} -> S",
+    ),
     ("learn.folds", "data:F, k, **opts{shuffle seed stratify}"),
-    ("learn.time_splits", "data:F, n_splits, **opts{test_size gap max_train}"),
+    (
+        "learn.time_splits",
+        "data:F, n_splits, **opts{test_size gap max_train}",
+    ),
     ("learn.scaler", "data:F, cols?, **opts{method} -> M"),
     ("learn.one_hot", "data:F, cols?, **opts{drop_first} -> M"),
     ("learn.imputer", "data:F, cols?, **opts{strategy fill} -> M"),
     ("learn.transform", "model:M, data -> F"),
-    ("learn.poly", "data:F, cols, degree, **opts{interaction_only} -> F"),
-    ("learn.linear", "data:F, y, x?, **opts{weights task class_weight intercept} -> M"),
-    ("learn.ridge", "data:F, y, x?, **opts{weights task class_weight alpha intercept} -> M"),
-    ("learn.lasso", "data:F, y, x?, **opts{weights task class_weight alpha intercept max_iter tol} -> M"),
-    ("learn.elastic_net", "data:F, y, x?, **opts{weights task class_weight alpha l1_ratio intercept max_iter tol} -> M"),
-    ("learn.logistic", "data:F, y, x?, **opts{weights task class_weight penalty C max_iter tol} -> M"),
-    ("learn.tree", "data:F, y, x?, **opts{weights task class_weight criterion max_depth min_samples_split min_samples_leaf max_features min_impurity_decrease seed} -> M"),
-    ("learn.forest", "data:F, y, x?, **opts{weights task class_weight criterion max_depth min_samples_split min_samples_leaf max_features min_impurity_decrease n_trees bootstrap max_samples oob seed} -> M"),
-    ("learn.boost", "data:F, y, x?, **opts{weights task class_weight n_trees learning_rate max_depth max_leaf_nodes min_samples_leaf l2 subsample max_bins early_stopping validation_fraction validation_rows validation_tail n_iter_no_change tol seed} -> M"),
-    ("learn.knn", "data:F, y, x?, **opts{weights task class_weight k weights_by} -> M"),
-    ("learn.naive_bayes", "data:F, y, x?, **opts{weights task class_weight var_smoothing} -> M"),
-    ("learn.kmeans", "data:F, cols?, k, **opts{n_init max_iter tol seed} -> M"),
-    ("learn.gmm", "data:F, cols?, k, **opts{max_iter tol reg_covar seed} -> M"),
-    ("learn.pca", "data:F, cols?, **opts{n_components scale} -> M"),
-    ("learn.silhouette", "data:F, cols?, labels, **opts{sample seed}"),
-    ("learn.predict", "model:M, data, **opts{kind interval level trees} -> S"),
+    (
+        "learn.poly",
+        "data:F, cols, degree, **opts{interaction_only} -> F",
+    ),
+    (
+        "learn.linear",
+        "data:F, y, x?, **opts{weights task class_weight intercept} -> M",
+    ),
+    (
+        "learn.ridge",
+        "data:F, y, x?, **opts{weights task class_weight alpha intercept} -> M",
+    ),
+    (
+        "learn.lasso",
+        "data:F, y, x?, **opts{weights task class_weight alpha intercept max_iter tol} -> M",
+    ),
+    (
+        "learn.elastic_net",
+        "data:F, y, x?, **opts{weights task class_weight alpha l1_ratio intercept max_iter tol} -> M",
+    ),
+    (
+        "learn.logistic",
+        "data:F, y, x?, **opts{weights task class_weight penalty C max_iter tol} -> M",
+    ),
+    (
+        "learn.tree",
+        "data:F, y, x?, **opts{weights task class_weight criterion max_depth min_samples_split min_samples_leaf max_features min_impurity_decrease seed} -> M",
+    ),
+    (
+        "learn.forest",
+        "data:F, y, x?, **opts{weights task class_weight criterion max_depth min_samples_split min_samples_leaf max_features min_impurity_decrease n_trees bootstrap max_samples oob seed} -> M",
+    ),
+    (
+        "learn.boost",
+        "data:F, y, x?, **opts{weights task class_weight n_trees learning_rate max_depth max_leaf_nodes min_samples_leaf l2 subsample max_bins early_stopping validation_fraction validation_rows validation_tail n_iter_no_change tol seed} -> M",
+    ),
+    (
+        "learn.knn",
+        "data:F, y, x?, **opts{weights task class_weight k weights_by} -> M",
+    ),
+    (
+        "learn.naive_bayes",
+        "data:F, y, x?, **opts{weights task class_weight var_smoothing} -> M",
+    ),
+    (
+        "learn.kmeans",
+        "data:F, cols?, k, **opts{n_init max_iter tol seed} -> M",
+    ),
+    (
+        "learn.gmm",
+        "data:F, cols?, k, **opts{max_iter tol reg_covar seed} -> M",
+    ),
+    (
+        "learn.pca",
+        "data:F, cols?, **opts{n_components scale} -> M",
+    ),
+    (
+        "learn.silhouette",
+        "data:F, cols?, labels, **opts{sample seed}",
+    ),
+    (
+        "learn.predict",
+        "model:M, data, **opts{kind interval level trees} -> S",
+    ),
     ("learn.conf_int", "model:M, level = 0.95 -> F"),
     ("learn.importance", "model:M -> F"),
     ("learn.summary", "model:M, **opts{level} -> F"),
@@ -1245,11 +1390,26 @@ pub const TABLE: &[(&str, &str)] = &[
     ("learn.score", "model:M, data, metric"),
     ("learn.spec", "kind, y?, x?, options?"),
     ("learn.fit", "spec, data -> M"),
-    ("learn.cross_validate", "fit:M, data, **opts{folds metrics metric seed shuffle} -> F"),
-    ("learn.permutation_importance", "model:M, data, **opts{metric repeats seed} -> F"),
-    ("learn.partial_dependence", "model:M, data, feature, **opts{grid points sample seed} -> F"),
-    ("learn.learning_curve", "fit:M, data, **opts{sizes folds metric seed} -> F"),
-    ("learn.grid_search", "fit:M, data, grid, **opts{folds metric seed}"),
+    (
+        "learn.cross_validate",
+        "fit:M, data, **opts{folds metrics metric seed shuffle} -> F",
+    ),
+    (
+        "learn.permutation_importance",
+        "model:M, data, **opts{metric repeats seed} -> F",
+    ),
+    (
+        "learn.partial_dependence",
+        "model:M, data, feature, **opts{grid points sample seed} -> F",
+    ),
+    (
+        "learn.learning_curve",
+        "fit:M, data, **opts{sizes folds metric seed} -> F",
+    ),
+    (
+        "learn.grid_search",
+        "fit:M, data, grid, **opts{folds metric seed}",
+    ),
     ("learn.rmse", "y:S, pred"),
     ("learn.mse", "y:S, pred"),
     ("learn.mae", "y:S, pred"),
@@ -1269,7 +1429,10 @@ pub const TABLE: &[(&str, &str)] = &[
     ("learn.classification_report", "y:S, pred -> F"),
     ("learn.at_threshold", "y:S, p, **opts{threshold pos}"),
     ("learn.threshold_sweep", "y:S, p, **opts{pos} -> F"),
-    ("learn.calibration", "y:S, p, **opts{bins strategy pos} -> F"),
+    (
+        "learn.calibration",
+        "y:S, p, **opts{bins strategy pos} -> F",
+    ),
     // ── dates: a Date's methods ──
     ("dates.format_date", "d:D, fmt"),
     ("dates.add_days", "d:D, n"),
@@ -1352,25 +1515,50 @@ mod tests {
                 }
             ]
         );
-        assert!(plan("learn.split", 1, &["tst"]).unwrap_err().contains("test, stratify"));
-        assert!(plan("ods.sort_by", 2, &["by"]).unwrap_err().contains("both"));
-        assert!(plan("ods.rolling", 1, &["agg"]).unwrap_err().contains("missing argument 'window'"));
-        assert!(plan("ods.rolling", 2, &["windw"]).unwrap_err().contains("s, window, agg"));
+        assert!(
+            plan("learn.split", 1, &["tst"])
+                .unwrap_err()
+                .contains("test, stratify")
+        );
+        assert!(
+            plan("ods.sort_by", 2, &["by"])
+                .unwrap_err()
+                .contains("both")
+        );
+        assert!(
+            plan("ods.rolling", 1, &["agg"])
+                .unwrap_err()
+                .contains("missing argument 'window'")
+        );
+        assert!(
+            plan("ods.rolling", 2, &["windw"])
+                .unwrap_err()
+                .contains("s, window, agg")
+        );
         assert!(plan("len", 0, &["x"]).unwrap_err().contains("by position"));
     }
 
     #[test]
     fn column_functions_are_methods_of_columns_and_expressions() {
-        for (ty, m) in [("Series", "clip"), ("Series", "fill_null"), ("Expr", "over"),
-            ("Expr", "alias"), ("Expr", "sqrt"), ("Frame", "with"), ("Frame", "select")]
-        {
+        for (ty, m) in [
+            ("Series", "clip"),
+            ("Series", "fill_null"),
+            ("Expr", "over"),
+            ("Expr", "alias"),
+            ("Expr", "sqrt"),
+            ("Frame", "with"),
+            ("Frame", "select"),
+        ] {
             assert!(method_target("ods", ty, m).is_some(), "{ty}.{m}");
         }
         // a Frame takes no column math, and a column no Frame verb
         assert!(method_target("ods", "Frame", "sqrt").is_none());
         assert!(method_target("ods", "Series", "with").is_none());
         // ods.clip(s, lo: 0.0): hi left open
-        assert_eq!(plan("ods.clip", 1, &["lo"]).unwrap(), vec![Slot::Arg(0), Slot::Arg(1)]);
+        assert_eq!(
+            plan("ods.clip", 1, &["lo"]).unwrap(),
+            vec![Slot::Arg(0), Slot::Arg(1)]
+        );
         assert_eq!(returns("ods.col", None), Some("Series"));
     }
 }

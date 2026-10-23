@@ -362,7 +362,9 @@ pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
         .expect("caller checked membership");
     // The options map may be left off: the defaults (`plot.line(x, y)`).
     if args.len() + 1 == expected && !matches!(func, "ramp" | "describe") {
-        args.push(Value::Map(std::sync::Arc::new(crate::ast::ValueMap::default())));
+        args.push(Value::Map(std::sync::Arc::new(
+            crate::ast::ValueMap::default(),
+        )));
     }
     if args.len() != expected {
         return Err(format!(

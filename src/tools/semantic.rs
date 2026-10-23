@@ -675,8 +675,10 @@ pub fn tokens(text: &str, is_builtin: &dyn Fn(&str) -> bool, modules: &[&str]) -
                     // `meta fn`; `meta.tokens(…)` is the module
                     "meta" => nw == "fn",
                     // `use m { a as b }`
-                    "as" => prev.is_some_and(|p| p.kind == Lx::Word)
-                        && next.is_some_and(|n| n.kind == Lx::Word),
+                    "as" => {
+                        prev.is_some_and(|p| p.kind == Lx::Word)
+                            && next.is_some_and(|n| n.kind == Lx::Word)
+                    }
                     _ if RESERVED_WORDS.contains(&w) => pw != "." && nw != ":",
                     "test" => next.is_some_and(|n| n.kind == Lx::Str),
                     "type" | "trait" | "impl" | "error" => {
@@ -688,14 +690,18 @@ pub fn tokens(text: &str, is_builtin: &dyn Fn(&str) -> bool, modules: &[&str]) -
                     // `spawn_expr = spawn_kw ~ call_expr`: whatever can
                     // begin the call makes it the keyword (`spawn { 1 }`,
                     // `spawn f(x)`); an operator after it makes it a name
-                    "spawn" => pw != "." && pw != "fn" && next.is_some_and(|n| {
-                        n.line == l.line
-                            && match n.kind {
-                                Lx::Word | Lx::Number | Lx::Str => true,
-                                Lx::Punct => matches!(word(n), "{" | "(" | "[" | "#"),
-                                Lx::Comment(_) => false,
-                            }
-                    }),
+                    "spawn" => {
+                        pw != "."
+                            && pw != "fn"
+                            && next.is_some_and(|n| {
+                                n.line == l.line
+                                    && match n.kind {
+                                        Lx::Word | Lx::Number | Lx::Str => true,
+                                        Lx::Punct => matches!(word(n), "{" | "(" | "[" | "#"),
+                                        Lx::Comment(_) => false,
+                                    }
+                            })
+                    }
                     "self" => true,
                     _ => false,
                 };

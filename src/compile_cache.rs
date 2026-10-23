@@ -779,9 +779,9 @@ struct Pending {
 /// quiet moment, after half a second of changes at most, or when the
 /// process asks (`flush`).
 fn writer(rx: std::sync::mpsc::Receiver<Job>) {
-    use std::sync::mpsc::RecvTimeoutError;
     use crate::clock::Instant;
-use std::time::Duration;
+    use std::sync::mpsc::RecvTimeoutError;
+    use std::time::Duration;
     let mut pending: HashMap<PathBuf, Pending> = HashMap::new();
     let mut since: Option<Instant> = None;
     let mut evicted = false;

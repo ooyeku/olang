@@ -88,8 +88,10 @@ fn agree(source: &str) -> Result<Value, String> {
     match (&interpreted, &vm) {
         (Ok(a), Ok(b)) => assert_eq!(a, b, "the VM diverged\n{source}"),
         (Err(a), Err(b)) => assert!(
-            a.contains(b.trim_start_matches("Type error: ").trim_start_matches("Runtime error: "))
-                || b.contains(a.as_str()),
+            a.contains(
+                b.trim_start_matches("Type error: ")
+                    .trim_start_matches("Runtime error: ")
+            ) || b.contains(a.as_str()),
             "the VM's error differs: {a:?} vs {b:?}\n{source}"
         ),
         _ => panic!("the VM diverged: {interpreted:?} vs {vm:?}\n{source}"),

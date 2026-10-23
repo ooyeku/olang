@@ -187,8 +187,7 @@ pub fn run_json(paths: &[PathBuf]) -> i32 {
         };
         let mut found = crate::tools::lsp::file_diagnostics(&text, file.parent());
         // a notebook cell's last statement is the cell's value
-        let no_effect =
-            |d: &lsp_types::Diagnostic| matches!(&d.code, Some(NumberOrString::String(c)) if c == "no_effect");
+        let no_effect = |d: &lsp_types::Diagnostic| matches!(&d.code, Some(NumberOrString::String(c)) if c == "no_effect");
         if crate::notebook::is_notebook(file) && found.iter().any(no_effect) {
             let values = std::fs::read_to_string(file)
                 .map(|t| crate::notebook::cell_value_lines(&t))
@@ -1015,8 +1014,8 @@ the later binding wins silently for every importer; alias one of them \
             own.extend(names.into_iter().map(|n| (n, line)));
             continue;
         }
-        if let Statement::FunctionDecl(f) | Statement::ShareDecl(crate::ast::ShareDecl::Function(f)) =
-            stmt.unwrapped()
+        if let Statement::FunctionDecl(f)
+        | Statement::ShareDecl(crate::ast::ShareDecl::Function(f)) = stmt.unwrapped()
         {
             own.push((f.name.clone(), line));
             continue;
@@ -1043,7 +1042,13 @@ the later binding wins silently for every importer; alias one of them \
                             "`use {}` also exports '{}', which names the stdlib module `{}`: \
 the import leaves `{}` the module — reach the export as `{}.{}`, or list it under \
 another name (`{} as other_name`)",
-                            module, name, name, name, bare(&u.path), name, name
+                            module,
+                            name,
+                            name,
+                            name,
+                            bare(&u.path),
+                            name,
+                            name
                         ),
                         true,
                     );
@@ -1053,7 +1058,13 @@ another name (`{} as other_name`)",
                             "`use {}` also exports '{}', which this file binds on line {}: \
 the import leaves `{}` the file's — reach the export as `{}.{}`, or list it under \
 another name (`{} as other_name`)",
-                            module, name, at, name, bare(&u.path), name, name
+                            module,
+                            name,
+                            at,
+                            name,
+                            bare(&u.path),
+                            name,
+                            name
                         ),
                         true,
                     );
@@ -1084,7 +1095,9 @@ from line {} — call it as `{}.{}`, or alias the earlier import \
                 // the import rather than replace it.
                 if let Some((_, at)) = own.iter().find(|(o, _)| o == n) {
                     let listed = match item {
-                        crate::ast::UseItem::Aliased { name, alias } => format!("{name} as {alias}"),
+                        crate::ast::UseItem::Aliased { name, alias } => {
+                            format!("{name} as {alias}")
+                        }
                         _ => n.to_string(),
                     };
                     warn(
@@ -1092,7 +1105,11 @@ from line {} — call it as `{}.{}`, or alias the earlier import \
                             "`use {} {{ {} }}` would replace '{}', which this file binds on line {}: \
 an import never replaces a file's own name — list it under another name \
 (`{} as other_name`) or rename the binding",
-                            module, listed, n, at, item.source_name().unwrap_or(n)
+                            module,
+                            listed,
+                            n,
+                            at,
+                            item.source_name().unwrap_or(n)
                         ),
                         false,
                     );
@@ -3012,27 +3029,33 @@ fn embedded_exports(module: &str) -> Option<Vec<String>> {
     if let Some(hit) = table.lock().ok()?.get(module) {
         return hit.clone();
     }
-    let names = crate::stdlib::embedded::parsed(module).ok().flatten().map(|p| {
-        let mut names = Vec::new();
-        for stmt in &p.statements {
-            if let Statement::ShareDecl(d) = stmt.unwrapped() {
-                match d {
-                    crate::ast::ShareDecl::Function(f) => names.push(f.name.clone()),
-                    crate::ast::ShareDecl::Type(t) => names.push(t.name.clone()),
-                    crate::ast::ShareDecl::Let(l) => {
-                        let mut found = std::collections::HashSet::new();
-                        crate::resolve::pattern_names_of(&l.pattern, &mut found);
-                        names.extend(found);
+    let names = crate::stdlib::embedded::parsed(module)
+        .ok()
+        .flatten()
+        .map(|p| {
+            let mut names = Vec::new();
+            for stmt in &p.statements {
+                if let Statement::ShareDecl(d) = stmt.unwrapped() {
+                    match d {
+                        crate::ast::ShareDecl::Function(f) => names.push(f.name.clone()),
+                        crate::ast::ShareDecl::Type(t) => names.push(t.name.clone()),
+                        crate::ast::ShareDecl::Let(l) => {
+                            let mut found = std::collections::HashSet::new();
+                            crate::resolve::pattern_names_of(&l.pattern, &mut found);
+                            names.extend(found);
+                        }
+                        crate::ast::ShareDecl::Use(u) => names.extend(
+                            u.items
+                                .iter()
+                                .filter_map(|i| i.bound_name())
+                                .map(String::from),
+                        ),
+                        _ => {}
                     }
-                    crate::ast::ShareDecl::Use(u) => {
-                        names.extend(u.items.iter().filter_map(|i| i.bound_name()).map(String::from))
-                    }
-                    _ => {}
                 }
             }
-        }
-        names
-    });
+            names
+        });
     table.lock().ok()?.insert(module.to_string(), names.clone());
     names
 }
@@ -4101,8 +4124,9 @@ impl Checker {
         // `ods.group_by(f, keys)` is a GroupBy; given its aggregations,
         // the Frame they make.
         if full == "ods.group_by" {
-            let given =
-                arguments.len() + usize::from(lead.is_some()) + usize::from(method_receiver.is_some());
+            let given = arguments.len()
+                + usize::from(lead.is_some())
+                + usize::from(method_receiver.is_some());
             return Some(if given >= 3 { "Frame" } else { "GroupBy" });
         }
         crate::native_sig::returns(full, first).filter(|k| *k != "Model")
@@ -4830,7 +4854,10 @@ impl Checker {
             }
             Expr::BinaryOp { left, op, right } => {
                 // `gui.turn == ()`: asking whether this build has it.
-                if matches!(op, crate::ast::BinaryOp::Equal | crate::ast::BinaryOp::NotEqual) {
+                if matches!(
+                    op,
+                    crate::ast::BinaryOp::Equal | crate::ast::BinaryOp::NotEqual
+                ) {
                     for (a, b) in [(left, right), (right, left)] {
                         if let (Expr::FieldAccess { object, field }, Expr::Tuple(t)) =
                             (a.as_ref(), b.as_ref())
@@ -5201,13 +5228,12 @@ pub fn run_tier_as(paths: &[PathBuf], json: bool) -> i32 {
         // time is held to that too), then the table the check had is put
         // back. A module that needs an effect to load is "not checked".
         let none = crate::caps::Caps::none();
-        let was = interpreter.replace_capabilities(Some(std::sync::Arc::new(
-            crate::caps::CapTable {
+        let was =
+            interpreter.replace_capabilities(Some(std::sync::Arc::new(crate::caps::CapTable {
                 app: none,
                 deps: Vec::new(),
                 fixed: false,
-            },
-        )));
+            })));
         let loaded = interpreter.eval_program(Program {
             statements: declarations,
         });
@@ -5667,7 +5693,9 @@ mod tests {
         assert_eq!(d.len(), 2, "{d:?}");
         assert!(d[0].message.contains("a Series has no method 'nope'"));
         // `use ods` binds the module itself, so its calls are still checked
-        let d = check(&format!("use ods\n{src}s.clip(lo: 0.0).nope()\ns.round(digts: 1)\n"));
+        let d = check(&format!(
+            "use ods\n{src}s.clip(lo: 0.0).nope()\ns.round(digts: 1)\n"
+        ));
         assert_eq!(d.len(), 2, "{d:?}");
         assert!(d[1].message.contains("it takes s, digits"));
         // names the signature does not take; a pipeline's left counts
@@ -5682,14 +5710,20 @@ mod tests {
         ));
         assert!(d.is_empty(), "{d:?}");
         let d = check("let ods = #{ \"rolling\": (s, w) => s }\nods.rolling(1, w: 2)\n");
-        assert!(d.iter().all(|x| !x.message.contains("no parameter")), "{d:?}");
+        assert!(
+            d.iter().all(|x| !x.message.contains("no parameter")),
+            "{d:?}"
+        );
         // a group_by without aggregations is a GroupBy, with them a Frame
         let d = check(&format!(
             "{src}let by = f.group_by(\"a\")\nby.agg(#{{}})\nby.agx()\nby.mean(q: 1)\n\
              ods.group_by(f, \"a\", #{{}}).sort_by(\"a\")\n(f |> ods.group_by(\"a\")).size()\n"
         ));
         assert_eq!(d.len(), 2, "{d:?}");
-        assert!(d[0].message.contains("a GroupBy has no method 'agx'"), "{d:?}");
+        assert!(
+            d[0].message.contains("a GroupBy has no method 'agx'"),
+            "{d:?}"
+        );
         assert!(d[1].message.contains("no parameter named 'q'"), "{d:?}");
     }
 
@@ -5906,13 +5940,20 @@ mod tests {
             .parse("use gg\nuse web { el }\nprintln(show(find([1, 2, 3], (r) => r > 1)))\n")
             .expect("parses");
         let d = check_program_with_context(&[&web], &main);
-        assert!(d.is_empty(), "{:?}", d.iter().map(|x| &x.message).collect::<Vec<_>>());
+        assert!(
+            d.is_empty(),
+            "{:?}",
+            d.iter().map(|x| &x.message).collect::<Vec<_>>()
+        );
         // Imported by name, it is the SDK's, and checked as such.
         let main = Parser::new()
             .parse("use gg\nuse web { find }\nfind([1, 2, 3], 1)\n")
             .expect("parses");
         let d = check_program_with_context(&[&web], &main);
-        assert!(d.iter().any(|x| x.message.contains("Missing required argument: path")));
+        assert!(
+            d.iter()
+                .any(|x| x.message.contains("Missing required argument: path"))
+        );
     }
 
     // ── 0.61: blocks scope their bindings ──────────────────────────────

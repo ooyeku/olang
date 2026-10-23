@@ -14,11 +14,11 @@
 //! that it's noise, not news. `--fail-on-regress` turns red rows into
 //! exit code 1, which is what makes the tool a regression guard.
 
+use crate::clock::Instant;
 use colored::Colorize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use crate::clock::Instant;
 
 /// The format number of `--format json`'s events and of a saved baseline.
 pub const FORMAT: u32 = 1;

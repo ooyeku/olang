@@ -257,7 +257,9 @@ pub fn darken(t: &Tuning, size: f32, tone: u8) -> f32 {
         return 0.0;
     }
     // no more than a twentieth of the em: tiny text stays legible
-    (g * (size / 16.0).powf(t.grow_power)).min(t.grow_max).min(size / 20.0)
+    (g * (size / 16.0).powf(t.grow_power))
+        .min(t.grow_max)
+        .min(size / 20.0)
 }
 
 /// The coverage curve for text of lightness `tone`, as a table.
@@ -266,7 +268,9 @@ pub fn coverage_curve(t: &Tuning, tone: u8) -> [u8; 256] {
     let mut table = [0u8; 256];
     for (i, v) in table.iter_mut().enumerate() {
         let c = i as f32 / 255.0;
-        *v = ((1.0 - (1.0 - c).powf(k)) * 255.0).round().clamp(0.0, 255.0) as u8;
+        *v = ((1.0 - (1.0 - c).powf(k)) * 255.0)
+            .round()
+            .clamp(0.0, 255.0) as u8;
     }
     table
 }

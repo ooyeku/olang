@@ -208,7 +208,9 @@ impl Series {
                     }
                     let x = col.get(i);
                     best = match best {
-                        Some(b) if (want_max && x > col.get(b)) || (!want_max && x < col.get(b)) => {
+                        Some(b)
+                            if (want_max && x > col.get(b)) || (!want_max && x < col.get(b)) =>
+                        {
                             Some(i)
                         }
                         None => Some(i),
@@ -254,7 +256,9 @@ impl Series {
             return self.argsort();
         }
         if let Some(order) = self.packed_order(true) {
-            return Ok(Series::from_i64(order.into_iter().map(|i| i as i64).collect()));
+            return Ok(Series::from_i64(
+                order.into_iter().map(|i| i as i64).collect(),
+            ));
         }
         let n = self.len();
         let valid = |i: usize| self.validity().is_none_or(|v| v.get(i));
@@ -292,7 +296,9 @@ impl Series {
             }
         }
         idx.extend(nulls);
-        Ok(Series::from_i64(idx.into_iter().map(|i| i as i64).collect()))
+        Ok(Series::from_i64(
+            idx.into_iter().map(|i| i as i64).collect(),
+        ))
     }
 
     /// The sorted column; `descending` puts the largest first. Nulls go
@@ -413,7 +419,9 @@ impl Series {
                 }
             };
         }
-        Ok(best.map(|g| self.scalar_at(first[g])).unwrap_or(Scalar::Null))
+        Ok(best
+            .map(|g| self.scalar_at(first[g]))
+            .unwrap_or(Scalar::Null))
     }
 
     /// Whether any valid element of a Bool column is true (`all`: none
@@ -459,19 +467,31 @@ impl Series {
             _ => None,
         };
         Ok(match (self, v) {
-            (Series::I64 { values, .. }, Scalar::I64(x)) => {
-                pos(&|i| if right { values[i] <= *x } else { values[i] < *x })
-            }
-            (Series::I64 { values, .. }, Scalar::F64(x)) => {
-                pos(&|i| if right { (values[i] as f64) <= *x } else { (values[i] as f64) < *x })
-            }
+            (Series::I64 { values, .. }, Scalar::I64(x)) => pos(&|i| {
+                if right {
+                    values[i] <= *x
+                } else {
+                    values[i] < *x
+                }
+            }),
+            (Series::I64 { values, .. }, Scalar::F64(x)) => pos(&|i| {
+                if right {
+                    (values[i] as f64) <= *x
+                } else {
+                    (values[i] as f64) < *x
+                }
+            }),
             (Series::F64 { values, .. }, Scalar::F64(_) | Scalar::I64(_)) => {
                 let x = to_f(v).expect("numeric");
                 pos(&|i| if right { values[i] <= x } else { values[i] < x })
             }
-            (Series::Str { col, .. }, Scalar::Str(x)) => {
-                pos(&|i| if right { col.get(i) <= x.as_str() } else { col.get(i) < x.as_str() })
-            }
+            (Series::Str { col, .. }, Scalar::Str(x)) => pos(&|i| {
+                if right {
+                    col.get(i) <= x.as_str()
+                } else {
+                    col.get(i) < x.as_str()
+                }
+            }),
             _ => {
                 return Err(OdsError::TypeMismatch(format!(
                     "searchsorted: cannot search a {} series for {:?}",
@@ -752,13 +772,13 @@ impl Series {
             Unmapped::Keep => Expr::col(self.clone()),
             // Only unmapped valid positions take it; nulls stay null.
             Unmapped::Value(v) => Expr::op(
-                    Op::Where,
-                    vec![
-                        Expr::op(Op::IsNull, vec![Expr::col(self.clone())]),
-                        Expr::lit(Scalar::Null),
-                        Expr::lit(v.clone()),
-                    ],
-                ),
+                Op::Where,
+                vec![
+                    Expr::op(Op::IsNull, vec![Expr::col(self.clone())]),
+                    Expr::lit(Scalar::Null),
+                    Expr::lit(v.clone()),
+                ],
+            ),
         };
         Expr::op(Op::Coalesce, vec![Expr::col(mapped), fallback]).eval(n, false)
     }
@@ -782,7 +802,8 @@ impl Series {
             Series::I64 { .. } if stat.fract() == 0.0 => Scalar::I64(stat as i64),
             _ => Scalar::F64(stat),
         };
-        Expr::op(Op::Coalesce, vec![Expr::col(self.clone()), Expr::lit(fill)]).eval(self.len(), false)
+        Expr::op(Op::Coalesce, vec![Expr::col(self.clone()), Expr::lit(fill)])
+            .eval(self.len(), false)
     }
 
     /// Apply one math function (the expression engine's kernel).
@@ -816,4 +837,3 @@ fn set_validity(s: &mut Series, v: Option<Bitmap>) {
         | Series::Cat { validity, .. } => *validity = v,
     }
 }
-

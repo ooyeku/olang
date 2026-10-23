@@ -132,7 +132,11 @@ impl Slugs {
     fn unique(&mut self, base: String) -> String {
         loop {
             let n = self.counts.entry(base.clone()).or_insert(0);
-            let candidate = if *n == 0 { base.clone() } else { format!("{base}-{n}") };
+            let candidate = if *n == 0 {
+                base.clone()
+            } else {
+                format!("{base}-{n}")
+            };
             *n += 1;
             // a numbered slug may already be a heading's own ("a-1")
             if self.used.insert(candidate.clone()) {
@@ -181,9 +185,14 @@ fn safe_url(url: &str, image: bool) -> bool {
         None | Some("http") | Some("https") | Some("mailto") => true,
         Some("data") if image => {
             let lower = url.trim_start().to_ascii_lowercase();
-            ["data:image/png", "data:image/gif", "data:image/jpeg", "data:image/webp"]
-                .iter()
-                .any(|p| lower.starts_with(p))
+            [
+                "data:image/png",
+                "data:image/gif",
+                "data:image/jpeg",
+                "data:image/webp",
+            ]
+            .iter()
+            .any(|p| lower.starts_with(p))
         }
         _ => false,
     }
@@ -295,7 +304,10 @@ impl<H: Hooks + ?Sized> Walk<'_, H> {
                     let drawn = match self.hooks.heading(level, &slug, &inner_html)? {
                         Some(h) => h,
                         None if self.opts.anchors => {
-                            format!("<h{level} id=\"{}\">{inner_html}</h{level}>\n", escape_html(&slug))
+                            format!(
+                                "<h{level} id=\"{}\">{inner_html}</h{level}>\n",
+                                escape_html(&slug)
+                            )
                         }
                         None => format!("<h{level}>{inner_html}</h{level}>\n"),
                     };
@@ -360,7 +372,8 @@ impl<H: Hooks + ?Sized> Walk<'_, H> {
                         inner.push(e);
                     }
                     let inner = self.walk(inner)?;
-                    self.footnotes.push(Event::Start(Tag::FootnoteDefinition(label)));
+                    self.footnotes
+                        .push(Event::Start(Tag::FootnoteDefinition(label)));
                     self.footnotes.extend(inner);
                     self.footnotes.push(Event::End(TagEnd::FootnoteDefinition));
                 }
@@ -433,7 +446,11 @@ impl<H: Hooks + ?Sized> Walk<'_, H> {
                 Event::Start(Tag::HtmlBlock) | Event::End(TagEnd::HtmlBlock) => {
                     if self.html_mode() == HtmlMode::Escape {
                         let start = matches!(e, Event::Start(_));
-                        out.push(html_event(if start { "<p>".into() } else { "</p>\n".into() }));
+                        out.push(html_event(if start {
+                            "<p>".into()
+                        } else {
+                            "</p>\n".into()
+                        }));
                     } else {
                         out.push(e);
                     }
@@ -563,7 +580,10 @@ fn find_autolink(s: &str) -> Option<(usize, usize)> {
             .filter_map(|p| s[from..].find(p).map(|i| (from + i, *p)))
             .min_by_key(|(i, _)| *i)?;
         let boundary = at == 0
-            || matches!(bytes[at - 1], b' ' | b'\t' | b'\n' | b'(' | b'*' | b'_' | b'~' | b'"' | b'\'');
+            || matches!(
+                bytes[at - 1],
+                b' ' | b'\t' | b'\n' | b'(' | b'*' | b'_' | b'~' | b'"' | b'\''
+            );
         let mut end = s[at..]
             .find(|c: char| c.is_whitespace() || c == '<')
             .map(|i| at + i)
@@ -572,7 +592,10 @@ fn find_autolink(s: &str) -> Option<(usize, usize)> {
         loop {
             let t = &s[at..end];
             let Some(last) = t.chars().last() else { break };
-            if matches!(last, '?' | '!' | '.' | ',' | ':' | '*' | '_' | '~' | '"' | '\'' | ';') {
+            if matches!(
+                last,
+                '?' | '!' | '.' | ',' | ':' | '*' | '_' | '~' | '"' | '\'' | ';'
+            ) {
                 end -= last.len_utf8();
             } else if last == ')' && t.matches(')').count() > t.matches('(').count() {
                 end -= 1;
@@ -747,11 +770,17 @@ pub mod yaml {
             return Ok(Value::Map(Arc::new(crate::ast::ValueMap::default())));
         }
         if let Some(l) = lines.iter().find(|l| l.text.starts_with('\t')) {
-            return Err(format!("front matter line {}: a tab indents nothing in YAML", l.no));
+            return Err(format!(
+                "front matter line {}: a tab indents nothing in YAML",
+                l.no
+            ));
         }
         let (v, next) = block(&lines, 0, first_indent(&lines, 0))?;
         if let Some(l) = lines[next..].iter().find(|l| !is_blank(&l.text)) {
-            return Err(format!("front matter line {}: unexpected indentation", l.no));
+            return Err(format!(
+                "front matter line {}: unexpected indentation",
+                l.no
+            ));
         }
         Ok(v)
     }
@@ -839,7 +868,10 @@ pub mod yaml {
                 break;
             }
             if l.indent > indent {
-                return Err(format!("front matter line {}: unexpected indentation", l.no));
+                return Err(format!(
+                    "front matter line {}: unexpected indentation",
+                    l.no
+                ));
             }
             if is_item(&l.text) {
                 break;
@@ -1046,8 +1078,9 @@ pub mod yaml {
                 if part.trim().is_empty() {
                     continue;
                 }
-                let (k, v) = split_key(part.trim())
-                    .ok_or_else(|| format!("front matter line {no}: expected `key: value` in `{{…}}`"))?;
+                let (k, v) = split_key(part.trim()).ok_or_else(|| {
+                    format!("front matter line {no}: expected `key: value` in `{{…}}`")
+                })?;
                 map.insert(unquote_key(&k), scalar(v, no)?);
             }
             return Ok(Value::Map(Arc::new(map)));
@@ -1092,7 +1125,8 @@ pub mod yaml {
                 {
                     Value::Integer(n)
                 } else if t.chars().any(|c| c.is_ascii_digit())
-                    && t.chars().all(|c| c.is_ascii_digit() || matches!(c, '.' | 'e' | 'E' | '-' | '+'))
+                    && t.chars()
+                        .all(|c| c.is_ascii_digit() || matches!(c, '.' | 'e' | 'E' | '-' | '+'))
                     && t.contains(['.', 'e', 'E'])
                     && let Ok(f) = t.parse::<f64>()
                 {
@@ -1323,7 +1357,10 @@ mod tests {
 
     #[test]
     fn slugs_follow_github() {
-        assert_eq!(slug("Missing map keys return Unit, not a Result"), "missing-map-keys-return-unit-not-a-result");
+        assert_eq!(
+            slug("Missing map keys return Unit, not a Result"),
+            "missing-map-keys-return-unit-not-a-result"
+        );
         assert_eq!(slug("http — HTTP"), "http--http");
         assert_eq!(slug("What's new in 0.88"), "whats-new-in-088");
         assert_eq!(slug("ods.read_csv takes text"), "odsread_csv-takes-text");
@@ -1332,30 +1369,51 @@ mod tests {
 
     #[test]
     fn headings_numbered_and_titled() {
-        let r = render("# Title\n\n## `http` — HTTP\n\n## Same\n\n## Same\n", Options::default(), &mut NoHooks).unwrap();
+        let r = render(
+            "# Title\n\n## `http` — HTTP\n\n## Same\n\n## Same\n",
+            Options::default(),
+            &mut NoHooks,
+        )
+        .unwrap();
         assert_eq!(r.title, "Title");
         let slugs: Vec<_> = r.headings.iter().map(|h| h.slug.as_str()).collect();
         assert_eq!(slugs, ["title", "http--http", "same", "same-1"]);
-        assert!(r.html.contains("<h2 id=\"http--http\"><code>http</code> — HTTP</h2>"), "{}", r.html);
+        assert!(
+            r.html
+                .contains("<h2 id=\"http--http\"><code>http</code> — HTTP</h2>"),
+            "{}",
+            r.html
+        );
     }
 
     #[test]
     fn gfm_tables_tasks_strike_footnotes() {
         let h = html("| a | b |\n|---|--:|\n| 1 | 2 |\n");
-        assert!(h.contains("<table>") && h.contains("text-align: right"), "{h}");
+        assert!(
+            h.contains("<table>") && h.contains("text-align: right"),
+            "{h}"
+        );
         let h = html("- [x] done\n- [ ] todo\n");
         assert!(h.contains("checkbox"), "{h}");
         assert!(html("~~gone~~").contains("<del>gone</del>"));
         let h = html("A note.[^1]\n\n[^1]: The note.\n\nAfter.\n");
-        let foot = h.find("<section class=\"footnotes\">").expect("footnotes section");
+        let foot = h
+            .find("<section class=\"footnotes\">")
+            .expect("footnotes section");
         assert!(h.find("After.").unwrap() < foot, "{h}");
     }
 
     #[test]
     fn bare_urls_become_links() {
         let h = html("see https://olang.dev/book. and www.example.com, (https://x.io/a_(b))");
-        assert!(h.contains("<a href=\"https://olang.dev/book\">https://olang.dev/book</a>."), "{h}");
-        assert!(h.contains("<a href=\"http://www.example.com\">www.example.com</a>,"), "{h}");
+        assert!(
+            h.contains("<a href=\"https://olang.dev/book\">https://olang.dev/book</a>."),
+            "{h}"
+        );
+        assert!(
+            h.contains("<a href=\"http://www.example.com\">www.example.com</a>,"),
+            "{h}"
+        );
         assert!(h.contains("<a href=\"https://x.io/a_(b)\">"), "{h}");
         assert!(!html("`https://x.io`").contains("<a"));
         assert!(!html("[t](https://a.io) https").contains("https</a>"));
@@ -1365,12 +1423,45 @@ mod tests {
     fn raw_html_modes_and_safe() {
         let src = "<div class=x>hi</div>\n\nand <b>bold</b> [x](javascript:alert(1))\n";
         assert!(html(src).contains("<div class=x>hi</div>"));
-        let esc = render(src, Options { html: HtmlMode::Escape, ..Options::default() }, &mut NoHooks).unwrap().html;
-        assert!(esc.contains("&lt;div class=x&gt;") && esc.contains("&lt;b&gt;"), "{esc}");
-        let drop = render(src, Options { html: HtmlMode::Drop, ..Options::default() }, &mut NoHooks).unwrap().html;
+        let esc = render(
+            src,
+            Options {
+                html: HtmlMode::Escape,
+                ..Options::default()
+            },
+            &mut NoHooks,
+        )
+        .unwrap()
+        .html;
+        assert!(
+            esc.contains("&lt;div class=x&gt;") && esc.contains("&lt;b&gt;"),
+            "{esc}"
+        );
+        let drop = render(
+            src,
+            Options {
+                html: HtmlMode::Drop,
+                ..Options::default()
+            },
+            &mut NoHooks,
+        )
+        .unwrap()
+        .html;
         assert!(!drop.contains("<div") && !drop.contains("<b>"), "{drop}");
-        let safe = render(src, Options { safe: true, ..Options::default() }, &mut NoHooks).unwrap().html;
-        assert!(!safe.contains("javascript:") && !safe.contains("<div"), "{safe}");
+        let safe = render(
+            src,
+            Options {
+                safe: true,
+                ..Options::default()
+            },
+            &mut NoHooks,
+        )
+        .unwrap()
+        .html;
+        assert!(
+            !safe.contains("javascript:") && !safe.contains("<div"),
+            "{safe}"
+        );
     }
 
     struct Rewrite;
@@ -1400,16 +1491,34 @@ mod tests {
             &mut Rewrite,
         )
         .unwrap();
-        assert!(r.html.contains("<a href=\"/book/ods/\">a</a>"), "{}", r.html);
+        assert!(
+            r.html.contains("<a href=\"/book/ods/\">a</a>"),
+            "{}",
+            r.html
+        );
         assert!(r.html.contains(" b "), "{}", r.html);
         assert!(r.html.contains("<img src=\"/book/ods/\">"), "{}", r.html);
         assert!(r.html.contains("[x|x run|let a = 1 < 2]"), "{}", r.html);
-        assert!(r.html.contains("<pre><code class=\"language-y\">q\n</code></pre>"), "{}", r.html);
+        assert!(
+            r.html
+                .contains("<pre><code class=\"language-y\">q\n</code></pre>"),
+            "{}",
+            r.html
+        );
     }
 
     #[test]
     fn shift_and_no_anchors() {
-        let r = render("# T\n", Options { shift: 1, anchors: false, ..Options::default() }, &mut NoHooks).unwrap();
+        let r = render(
+            "# T\n",
+            Options {
+                shift: 1,
+                anchors: false,
+                ..Options::default()
+            },
+            &mut NoHooks,
+        )
+        .unwrap();
         assert_eq!(r.html, "<h2>T</h2>\n");
         assert_eq!(r.title, "T");
     }
@@ -1420,7 +1529,17 @@ mod tests {
         assert_eq!(fmt, "yaml");
         assert_eq!(body, "# Body\n");
         let shown = format!("{}", data);
-        for want in ["Hi: there", "2026-10-20", "false", "1.5", "b c", "Ola", "https://a.io", "one two", "plain"] {
+        for want in [
+            "Hi: there",
+            "2026-10-20",
+            "false",
+            "1.5",
+            "b c",
+            "Ola",
+            "https://a.io",
+            "one two",
+            "plain",
+        ] {
             assert!(shown.contains(want), "{want} in {shown}");
         }
         let Value::Map(m) = &data else { panic!() };
@@ -1439,13 +1558,25 @@ mod tests {
 
     #[test]
     fn inline_drops_the_one_paragraph() {
-        let o = Options { inline: true, ..Options::default() };
-        assert_eq!(render("a *b* `c`", o.clone(), &mut NoHooks).unwrap().html, "a <em>b</em> <code>c</code>");
-        assert_eq!(render("a\n\nb", o, &mut NoHooks).unwrap().html, "<p>a</p>\n<p>b</p>\n");
+        let o = Options {
+            inline: true,
+            ..Options::default()
+        };
+        assert_eq!(
+            render("a *b* `c`", o.clone(), &mut NoHooks).unwrap().html,
+            "a <em>b</em> <code>c</code>"
+        );
+        assert_eq!(
+            render("a\n\nb", o, &mut NoHooks).unwrap().html,
+            "<p>a</p>\n<p>b</p>\n"
+        );
     }
 
     #[test]
     fn plain_text() {
-        assert_eq!(text("# A *b*\n\nc `d` [e](f)\n\n- g\n- h\n"), "A b\nc d e\ng\nh");
+        assert_eq!(
+            text("# A *b*\n\nc `d` [e](f)\n\n- g\n- h\n"),
+            "A b\nc d e\ng\nh"
+        );
     }
 }

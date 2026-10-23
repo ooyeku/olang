@@ -30,9 +30,9 @@
 //! thread's evaluation, as before. The poll's fast path is unchanged: one
 //! relaxed load, false while nothing is asked.
 
+use crate::clock::Instant;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock};
-use crate::clock::Instant;
 use std::time::Duration;
 
 static ARMED: AtomicBool = AtomicBool::new(false);

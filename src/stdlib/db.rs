@@ -1628,7 +1628,12 @@ impl ColumnAcc {
             let d = self.decltype.as_deref().unwrap_or("").to_ascii_uppercase();
             if d.contains("INT") {
                 Cells::Int(self.ints)
-            } else if d.contains("CHAR") || d.contains("TEXT") || d.contains("CLOB") || d.contains("DATE") || d.contains("TIME") {
+            } else if d.contains("CHAR")
+                || d.contains("TEXT")
+                || d.contains("CLOB")
+                || d.contains("DATE")
+                || d.contains("TIME")
+            {
                 Cells::Text(self.texts)
             } else {
                 Cells::Real(self.reals)
@@ -1667,7 +1672,9 @@ fn column_series(acc: ColumnAcc) -> olang_ods::Series {
             }
         }
         Cells::Int(v) if is_datetime => Series::from_datetime_options(
-            v.into_iter().map(|s| s.map(|s| s.saturating_mul(1_000_000))).collect(),
+            v.into_iter()
+                .map(|s| s.map(|s| s.saturating_mul(1_000_000)))
+                .collect(),
         ),
         Cells::Int(v) if is_bool && v.iter().all(|x| matches!(x, None | Some(0) | Some(1))) => {
             Series::from_bool_options(v.into_iter().map(|x| x.map(|x| x == 1)).collect())
@@ -1747,7 +1754,8 @@ fn db_query_frame(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
                             let text = if p.is_null() {
                                 String::new()
                             } else {
-                                String::from_utf8_lossy(std::slice::from_raw_parts(p, n)).into_owned()
+                                String::from_utf8_lossy(std::slice::from_raw_parts(p, n))
+                                    .into_owned()
                             };
                             acc.ints.push(None);
                             acc.reals.push(None);
@@ -1814,7 +1822,9 @@ fn sql_cell(s: &olang_ods::Series, i: usize) -> SqlValue {
         Series::Str { col, .. } => SqlValue::Text(col.get(i).to_string()),
         Series::Date { values, .. } => SqlValue::Text(temporal::format_date(values[i] as i64)),
         Series::Datetime { values, .. } => SqlValue::Text(temporal::format_datetime(values[i])),
-        Series::Cat { codes, levels, .. } => SqlValue::Text(levels.get(codes[i] as usize).to_string()),
+        Series::Cat { codes, levels, .. } => {
+            SqlValue::Text(levels.get(codes[i] as usize).to_string())
+        }
     }
 }
 
@@ -1828,7 +1838,11 @@ fn db_insert_frame(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
     }
     let table = match args.get(1) {
         Some(Value::String(s)) if !s.is_empty() => s.to_string(),
-        _ => return Err(misuse_text("db.insert_frame: the table must be a non-empty String")),
+        _ => {
+            return Err(misuse_text(
+                "db.insert_frame: the table must be a non-empty String",
+            ));
+        }
     };
     let Some(frame) = args.get(2).and_then(crate::ods::frame_of) else {
         return Err(misuse_text(format!(
@@ -1876,7 +1890,11 @@ fn db_insert_frame(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
             let sql = format!(
                 "INSERT INTO {} ({}) VALUES ({})",
                 t,
-                names.iter().map(|n| quote_ident(n)).collect::<Vec<_>>().join(", "),
+                names
+                    .iter()
+                    .map(|n| quote_ident(n))
+                    .collect::<Vec<_>>()
+                    .join(", "),
                 vec!["?"; names.len()].join(", ")
             );
             let mut stmt = conn.prepare(&sql)?;

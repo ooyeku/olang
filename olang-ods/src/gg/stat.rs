@@ -5,7 +5,9 @@
 //! the geom draws (aesthetics by name, computed variables in `stat`).
 
 use super::data::{Col, LFrame};
-use super::math::{inverse, logdet_spd, mean, qnorm, qt, quantile_sorted, sd, solve, sorted_finite};
+use super::math::{
+    inverse, logdet_spd, mean, qnorm, qt, quantile_sorted, sd, solve, sorted_finite,
+};
 use super::{Aes, Params, bad, p_bool, p_num, p_nums, p_str};
 use std::collections::BTreeMap;
 
@@ -28,7 +30,10 @@ struct Out {
 impl Out {
     fn push(&mut self, aes: &[(Aes, f64)], stat: &[(&str, f64)]) {
         for (a, v) in aes {
-            self.cols.entry(*a).or_insert_with(|| vec![f64::NAN; self.n]).push(*v);
+            self.cols
+                .entry(*a)
+                .or_insert_with(|| vec![f64::NAN; self.n])
+                .push(*v);
         }
         for (k, v) in stat {
             self.stat
@@ -49,7 +54,11 @@ impl Out {
     fn frame(self) -> LFrame {
         LFrame {
             n: self.n,
-            cols: self.cols.into_iter().map(|(a, v)| (a, Col::Num(v))).collect(),
+            cols: self
+                .cols
+                .into_iter()
+                .map(|(a, v)| (a, Col::Num(v)))
+                .collect(),
             panel: vec![0; self.n],
             group: vec![0; self.n],
             stat: self.stat,
@@ -77,7 +86,11 @@ fn need<'a>(f: &'a LFrame, a: Aes, stat: &str) -> super::Result<&'a Vec<f64>> {
             "stat_{} needs a numeric {} (it is categorical here){}",
             stat,
             a.name(),
-            if stat == "bin" { ": a bar chart (gg.bar) counts categories" } else { "" }
+            if stat == "bin" {
+                ": a bar chart (gg.bar) counts categories"
+            } else {
+                ""
+            }
         )),
         None => bad(format!("stat_{} needs the {} aesthetic", stat, a.name())),
     }
@@ -122,7 +135,11 @@ pub fn bin_edges(range: (f64, f64), p: &Params) -> Vec<f64> {
         return b;
     }
     let (lo, hi) = range;
-    let (lo, hi) = if hi - lo < 1e-12 { (lo - 0.5, hi + 0.5) } else { (lo, hi) };
+    let (lo, hi) = if hi - lo < 1e-12 {
+        (lo - 0.5, hi + 0.5)
+    } else {
+        (lo, hi)
+    };
     let bins = p_num(p, "bins").unwrap_or(30.0).max(1.0);
     let width = p_num(p, "binwidth").unwrap_or_else(|| (hi - lo) / (bins - 1.0).max(1.0));
     let boundary = match (p_num(p, "boundary"), p_num(p, "center")) {
@@ -172,7 +189,10 @@ fn bin(f: &LFrame, p: &Params, ctx: &StatCtx) -> super::Result<LFrame> {
             }
             k.clamp(0, nb as isize - 1) as usize
         } else {
-            edges.partition_point(|e| e < v).saturating_sub(1).min(nb - 1)
+            edges
+                .partition_point(|e| e < v)
+                .saturating_sub(1)
+                .min(nb - 1)
         };
         counts[k] += w.map(|w| w[i]).unwrap_or(1.0);
     }
@@ -180,13 +200,24 @@ fn bin(f: &LFrame, p: &Params, ctx: &StatCtx) -> super::Result<LFrame> {
     let maxc = counts.iter().cloned().fold(0.0, f64::max);
     let mut out = Out::default();
     let dens: Vec<f64> = (0..nb)
-        .map(|k| if total > 0.0 { counts[k] / total / (edges[k + 1] - edges[k]) } else { 0.0 })
+        .map(|k| {
+            if total > 0.0 {
+                counts[k] / total / (edges[k + 1] - edges[k])
+            } else {
+                0.0
+            }
+        })
         .collect();
     let maxd = dens.iter().cloned().fold(0.0, f64::max);
     for k in 0..nb {
         let (a, b) = (edges[k], edges[k + 1]);
         out.push(
-            &[(Aes::X, (a + b) / 2.0), (Aes::Xmin, a), (Aes::Xmax, b), (Aes::Y, counts[k])],
+            &[
+                (Aes::X, (a + b) / 2.0),
+                (Aes::Xmin, a),
+                (Aes::Xmax, b),
+                (Aes::Y, counts[k]),
+            ],
             &[
                 ("count", counts[k]),
                 ("density", dens[k]),
@@ -217,7 +248,13 @@ fn count(f: &LFrame) -> super::Result<LFrame> {
     let total: f64 = m.values().map(|v| v.1).sum();
     let mut out = Out::default();
     for (_, (xv, c)) in m {
-        out.push(&[(Aes::X, xv), (Aes::Y, c)], &[("count", c), ("prop", if total > 0.0 { c / total } else { 0.0 })]);
+        out.push(
+            &[(Aes::X, xv), (Aes::Y, c)],
+            &[
+                ("count", c),
+                ("prop", if total > 0.0 { c / total } else { 0.0 }),
+            ],
+        );
     }
     Ok(out.frame())
 }
@@ -228,14 +265,19 @@ fn sum(f: &LFrame) -> super::Result<LFrame> {
     let mut m: BTreeMap<(i64, i64), (f64, f64, f64)> = BTreeMap::new();
     for (a, b) in x.iter().zip(y) {
         if a.is_finite() && b.is_finite() {
-            let e = m.entry(((a * 1e9).round() as i64, (b * 1e9).round() as i64)).or_insert((*a, *b, 0.0));
+            let e = m
+                .entry(((a * 1e9).round() as i64, (b * 1e9).round() as i64))
+                .or_insert((*a, *b, 0.0));
             e.2 += 1.0;
         }
     }
     let total: f64 = m.values().map(|v| v.2).sum();
     let mut out = Out::default();
     for (_, (a, b, n)) in m {
-        out.push(&[(Aes::X, a), (Aes::Y, b), (Aes::Size, n)], &[("n", n), ("prop", n / total)]);
+        out.push(
+            &[(Aes::X, a), (Aes::Y, b), (Aes::Size, n)],
+            &[("n", n), ("prop", n / total)],
+        );
     }
     Ok(out.frame())
 }
@@ -266,7 +308,12 @@ pub fn bandwidth(xs_sorted: &[f64], rule: &str) -> super::Result<f64> {
         "nrd" | "scott" => 1.06 * lo * n.powf(-0.2),
         other => match other.parse::<f64>() {
             Ok(v) if v > 0.0 => v,
-            _ => return bad(format!("density: bw \"{}\" (nrd0, nrd, silverman, scott or a number)", other)),
+            _ => {
+                return bad(format!(
+                    "density: bw \"{}\" (nrd0, nrd, silverman, scott or a number)",
+                    other
+                ));
+            }
         },
     })
 }
@@ -288,7 +335,12 @@ impl Kernel {
             "rectangular" | "uniform" => Kernel::Rectangular,
             "triangular" => Kernel::Triangular,
             "biweight" | "quartic" => Kernel::Biweight,
-            o => return bad(format!("density: kernel \"{}\" (gaussian, epanechnikov, rectangular, triangular, biweight)", o)),
+            o => {
+                return bad(format!(
+                    "density: kernel \"{}\" (gaussian, epanechnikov, rectangular, triangular, biweight)",
+                    o
+                ));
+            }
         })
     }
 
@@ -306,11 +358,17 @@ impl Kernel {
 
     fn eval(self, u: f64, bw: f64) -> f64 {
         match self {
-            Kernel::Gaussian => (-0.5 * (u / bw).powi(2)).exp() / (bw * (2.0 * std::f64::consts::PI).sqrt()),
+            Kernel::Gaussian => {
+                (-0.5 * (u / bw).powi(2)).exp() / (bw * (2.0 * std::f64::consts::PI).sqrt())
+            }
             Kernel::Epanechnikov => {
                 let a = bw * 5f64.sqrt();
                 let t = u / a;
-                if t.abs() < 1.0 { 0.75 * (1.0 - t * t) / a } else { 0.0 }
+                if t.abs() < 1.0 {
+                    0.75 * (1.0 - t * t) / a
+                } else {
+                    0.0
+                }
             }
             Kernel::Rectangular => {
                 let a = bw * 3f64.sqrt();
@@ -324,7 +382,11 @@ impl Kernel {
             Kernel::Biweight => {
                 let a = bw * 7f64.sqrt();
                 let t = u / a;
-                if t.abs() < 1.0 { 15.0 / 16.0 * (1.0 - t * t).powi(2) / a } else { 0.0 }
+                if t.abs() < 1.0 {
+                    15.0 / 16.0 * (1.0 - t * t).powi(2) / a
+                } else {
+                    0.0
+                }
             }
         }
     }
@@ -333,7 +395,13 @@ impl Kernel {
 /// A weighted kernel density at `grid`: direct sums for small inputs,
 /// linear binning onto a fine grid then a truncated convolution for
 /// large ones (as R's density does with its FFT).
-pub fn kde(xs: &[f64], ws: Option<&[f64]>, bw: f64, kernel_name: &str, grid: &[f64]) -> super::Result<Vec<f64>> {
+pub fn kde(
+    xs: &[f64],
+    ws: Option<&[f64]>,
+    bw: f64,
+    kernel_name: &str,
+    grid: &[f64],
+) -> super::Result<Vec<f64>> {
     let kernel = Kernel::parse(kernel_name)?;
     let wsum: f64 = ws.map(|w| w.iter().sum()).unwrap_or(xs.len() as f64);
     if xs.is_empty() || wsum <= 0.0 {
@@ -398,7 +466,9 @@ fn linspace(a: f64, b: f64, n: usize) -> Vec<f64> {
     if n < 2 {
         return vec![a];
     }
-    (0..n).map(|i| a + (b - a) * i as f64 / (n - 1) as f64).collect()
+    (0..n)
+        .map(|i| a + (b - a) * i as f64 / (n - 1) as f64)
+        .collect()
 }
 
 fn density(f: &LFrame, p: &Params, ctx: &StatCtx) -> super::Result<LFrame> {
@@ -430,8 +500,18 @@ fn density(f: &LFrame, p: &Params, ctx: &StatCtx) -> super::Result<LFrame> {
         ctx.x_range
     };
     let grid = linspace(a, b, n);
-    let wsopt = if w.is_some() { Some(ws.as_slice()) } else { None };
-    let dens = kde(&xs, wsopt, bw, p_str(p, "kernel").unwrap_or("gaussian"), &grid)?;
+    let wsopt = if w.is_some() {
+        Some(ws.as_slice())
+    } else {
+        None
+    };
+    let dens = kde(
+        &xs,
+        wsopt,
+        bw,
+        p_str(p, "kernel").unwrap_or("gaussian"),
+        &grid,
+    )?;
     let maxd = dens.iter().cloned().fold(0.0, f64::max);
     let nobs = xs.len() as f64;
     for (g, d) in grid.iter().zip(&dens) {
@@ -473,10 +553,18 @@ fn boxplot(f: &LFrame, p: &Params) -> super::Result<LFrame> {
     );
     let iqr = q3 - q1;
     let (flo, fhi) = (q1 - coef * iqr, q3 + coef * iqr);
-    let inside: Vec<f64> = ys.iter().copied().filter(|v| *v >= flo && *v <= fhi).collect();
+    let inside: Vec<f64> = ys
+        .iter()
+        .copied()
+        .filter(|v| *v >= flo && *v <= fhi)
+        .collect();
     let wlo = inside.first().copied().unwrap_or(q1);
     let whi = inside.last().copied().unwrap_or(q3);
-    let outl: Vec<f64> = ys.iter().copied().filter(|v| *v < flo || *v > fhi).collect();
+    let outl: Vec<f64> = ys
+        .iter()
+        .copied()
+        .filter(|v| *v < flo || *v > fhi)
+        .collect();
     let n = ys.len() as f64;
     let notch = 1.58 * iqr / n.sqrt();
     out.push(
@@ -519,7 +607,13 @@ fn ydensity(f: &LFrame, p: &Params) -> super::Result<LFrame> {
         (ys[0] - 3.0 * bw, ys[ys.len() - 1] + 3.0 * bw)
     };
     let grid = linspace(a, b, 512);
-    let dens = kde(&ys, None, bw, p_str(p, "kernel").unwrap_or("gaussian"), &grid)?;
+    let dens = kde(
+        &ys,
+        None,
+        bw,
+        p_str(p, "kernel").unwrap_or("gaussian"),
+        &grid,
+    )?;
     let maxd = dens.iter().cloned().fold(0.0, f64::max);
     let n = ys.len() as f64;
     let x = group_x(f);
@@ -574,7 +668,10 @@ fn summary(f: &LFrame, p: &Params) -> super::Result<LFrame> {
     let mut by: BTreeMap<i64, (f64, Vec<f64>)> = BTreeMap::new();
     for (a, b) in x.iter().zip(y) {
         if a.is_finite() && b.is_finite() {
-            by.entry((a * 1e9).round() as i64).or_insert((*a, vec![])).1.push(*b);
+            by.entry((a * 1e9).round() as i64)
+                .or_insert((*a, vec![]))
+                .1
+                .push(*b);
         }
     }
     let mut out = Out::default();
@@ -590,7 +687,11 @@ fn summary(f: &LFrame, p: &Params) -> super::Result<LFrame> {
                 (m, m - k * se, m + k * se)
             }
             "mean_cl_normal" | "mean_ci" => {
-                let t = if ys.len() > 1 { qt(0.5 + level / 2.0, n - 1.0) } else { 0.0 };
+                let t = if ys.len() > 1 {
+                    qt(0.5 + level / 2.0, n - 1.0)
+                } else {
+                    0.0
+                };
                 (m, m - t * se, m + t * se)
             }
             "mean_sdl" => {
@@ -618,7 +719,12 @@ fn summary(f: &LFrame, p: &Params) -> super::Result<LFrame> {
             }
         };
         out.push(
-            &[(Aes::X, xv), (Aes::Y, mid), (Aes::Ymin, lo), (Aes::Ymax, hi)],
+            &[
+                (Aes::X, xv),
+                (Aes::Y, mid),
+                (Aes::Ymin, lo),
+                (Aes::Ymax, hi),
+            ],
             &[("n", n), ("se", se), ("sd", s)],
         );
     }
@@ -642,7 +748,10 @@ pub fn fit_lm(xs: &[f64], ys: &[f64], deg: usize, grid: &[f64]) -> super::Result
     let k = deg + 1;
     let n = xs.len();
     if n <= k {
-        return bad(format!("smooth: method lm needs more than {} points in a group", k));
+        return bad(format!(
+            "smooth: method lm needs more than {} points in a group",
+            k
+        ));
     }
     // centre and scale x for conditioning
     let mx = mean(xs);
@@ -662,7 +771,9 @@ pub fn fit_lm(xs: &[f64], ys: &[f64], deg: usize, grid: &[f64]) -> super::Result
             }
         }
     }
-    let beta = solve(&xtx, &xty, k).ok_or_else(|| crate::OdsError::InvalidArgument("gg: smooth: the fit is singular (all x the same?)".into()))?;
+    let beta = solve(&xtx, &xty, k).ok_or_else(|| {
+        crate::OdsError::InvalidArgument("gg: smooth: the fit is singular (all x the same?)".into())
+    })?;
     let inv = inverse(&xtx, k).unwrap_or(vec![0.0; k * k]);
     let mut rss = 0.0;
     for i in 0..n {
@@ -685,13 +796,25 @@ pub fn fit_lm(xs: &[f64], ys: &[f64], deg: usize, grid: &[f64]) -> super::Result
         }
         fse.push((s2 * q.max(0.0)).sqrt());
     }
-    Ok(Fit { x: grid.to_vec(), y: fy, se: fse, df })
+    Ok(Fit {
+        x: grid.to_vec(),
+        y: fy,
+        se: fse,
+        df,
+    })
 }
 
 /// One local fit (loess): the weighted polynomial at `x0` from the `q`
 /// nearest of sorted `xs`; returns (fit, Σ l², l_self) — the operator's
 /// row for the standard error and its weight on a point at x0.
-fn loess_at(xs: &[f64], ys: &[f64], x0: f64, q: usize, span: f64, deg: usize) -> Option<(f64, f64, f64)> {
+fn loess_at(
+    xs: &[f64],
+    ys: &[f64],
+    x0: f64,
+    q: usize,
+    span: f64,
+    deg: usize,
+) -> Option<(f64, f64, f64)> {
     let n = xs.len();
     let q = q.clamp(deg + 2, n);
     // the window of q nearest: start where x0 would sit, then slide
@@ -718,7 +841,11 @@ fn loess_at(xs: &[f64], ys: &[f64], x0: f64, q: usize, span: f64, deg: usize) ->
     let mut ws = Vec::with_capacity(q);
     for i in lo..lo + q {
         let u = ((xs[i] - x0) / h).abs();
-        let w = if u < 1.0 { (1.0 - u * u * u).powi(3) } else { 0.0 };
+        let w = if u < 1.0 {
+            (1.0 - u * u * u).powi(3)
+        } else {
+            0.0
+        };
         ws.push(w);
         let d = (xs[i] - x0) / h;
         let mut pa = 1.0;
@@ -755,10 +882,19 @@ fn loess_at(xs: &[f64], ys: &[f64], x0: f64, q: usize, span: f64, deg: usize) ->
 /// Local regression (tricube weights, `span` of the points, degree 2),
 /// with standard errors from the smoother's operator and the residual
 /// variance (Cleveland's δ approximated by n − trace).
-pub fn fit_loess(xs0: &[f64], ys0: &[f64], span: f64, deg: usize, grid: &[f64]) -> super::Result<Fit> {
+pub fn fit_loess(
+    xs0: &[f64],
+    ys0: &[f64],
+    span: f64,
+    deg: usize,
+    grid: &[f64],
+) -> super::Result<Fit> {
     let n = xs0.len();
     if n < deg + 3 {
-        return bad(format!("smooth: loess needs at least {} points in a group", deg + 3));
+        return bad(format!(
+            "smooth: loess needs at least {} points in a group",
+            deg + 3
+        ));
     }
     let mut idx: Vec<usize> = (0..n).collect();
     idx.sort_by(|&a, &b| xs0[a].partial_cmp(&xs0[b]).unwrap());
@@ -790,7 +926,11 @@ pub fn fit_loess(xs0: &[f64], ys0: &[f64], span: f64, deg: usize, grid: &[f64]) 
         let interp = |v: &[f64], x: f64| -> f64 {
             let k = grid.partition_point(|g| *g < x).clamp(1, grid.len() - 1);
             let (a, b) = (grid[k - 1], grid[k]);
-            let t = if b > a { ((x - a) / (b - a)).clamp(0.0, 1.0) } else { 0.0 };
+            let t = if b > a {
+                ((x - a) / (b - a)).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
             v[k - 1] * (1.0 - t) + v[k] * t
         };
         let mut rss = 0.0;
@@ -822,7 +962,13 @@ fn bspline_row(x: f64, lo: f64, hi: f64, nseg: usize) -> Vec<f64> {
     // Cox–de Boor
     let x = x.clamp(lo, hi - 1e-9 * (hi - lo).max(1e-300));
     let mut b: Vec<f64> = (0..knots.len() - 1)
-        .map(|i| if x >= knots[i] && x < knots[i + 1] { 1.0 } else { 0.0 })
+        .map(|i| {
+            if x >= knots[i] && x < knots[i + 1] {
+                1.0
+            } else {
+                0.0
+            }
+        })
         .collect();
     for d in 1..=deg {
         for i in 0..knots.len() - 1 - d {
@@ -897,7 +1043,8 @@ pub fn fit_gam(xs: &[f64], ys: &[f64], k: usize, grid: &[f64]) -> super::Result<
             }
         }
     }
-    let scale = (0..nb).map(|i| btb[i * nb + i]).sum::<f64>() / (0..nb).map(|i| pen[i * nb + i]).sum::<f64>().max(1e-300);
+    let scale = (0..nb).map(|i| btb[i * nb + i]).sum::<f64>()
+        / (0..nb).map(|i| pen[i * nb + i]).sum::<f64>().max(1e-300);
     // REML: the penalty's null space (a line) is fixed, the rest random;
     // σ² profiled out, −2 log Lr = (n − 2) log(rss + λ βᵀPβ) + log|BᵀB + λP|
     // − (k − 2) log λ (GCV undersmooths a few points into a wiggle)
@@ -907,7 +1054,9 @@ pub fn fit_gam(xs: &[f64], ys: &[f64], k: usize, grid: &[f64]) -> super::Result<
         let lambda = scale * 10f64.powf(e as f64 * 0.5);
         let a: Vec<f64> = btb.iter().zip(&pen).map(|(b, p)| b + lambda * p).collect();
         let Some(inv) = inverse(&a, nb) else { continue };
-        let beta: Vec<f64> = (0..nb).map(|i| (0..nb).map(|j| inv[i * nb + j] * bty[j]).sum()).collect();
+        let beta: Vec<f64> = (0..nb)
+            .map(|i| (0..nb).map(|j| inv[i * nb + j] * bty[j]).sum())
+            .collect();
         // edf = tr(A⁻¹ BᵀB)
         let mut edf = 0.0;
         for i in 0..nb {
@@ -930,13 +1079,17 @@ pub fn fit_gam(xs: &[f64], ys: &[f64], k: usize, grid: &[f64]) -> super::Result<
                 pen_beta += beta[i] * pen[i * nb + j] * beta[j];
             }
         }
-        let Some(ld) = logdet_spd(&a, nb) else { continue };
-        let reml = (n as f64 - 2.0) * (rss + lambda * pen_beta).max(1e-300).ln() + ld - rank * lambda.ln();
+        let Some(ld) = logdet_spd(&a, nb) else {
+            continue;
+        };
+        let reml =
+            (n as f64 - 2.0) * (rss + lambda * pen_beta).max(1e-300).ln() + ld - rank * lambda.ln();
         if best.as_ref().is_none_or(|b| reml < b.0) {
             best = Some((reml, beta, inv, edf, rss));
         }
     }
-    let (_, beta, inv, edf, rss) = best.ok_or_else(|| crate::OdsError::InvalidArgument("gg: smooth: gam did not fit".into()))?;
+    let (_, beta, inv, edf, rss) =
+        best.ok_or_else(|| crate::OdsError::InvalidArgument("gg: smooth: gam did not fit".into()))?;
     let df = (n as f64 - edf).max(1.0);
     let s2 = rss / df;
     let mut fy = Vec::with_capacity(grid.len());
@@ -955,7 +1108,12 @@ pub fn fit_gam(xs: &[f64], ys: &[f64], k: usize, grid: &[f64]) -> super::Result<
         }
         fse.push((s2 * q.max(0.0)).sqrt());
     }
-    Ok(Fit { x: grid.to_vec(), y: fy, se: fse, df })
+    Ok(Fit {
+        x: grid.to_vec(),
+        y: fy,
+        se: fse,
+        df,
+    })
 }
 
 fn smooth(f: &LFrame, p: &Params, ctx: &StatCtx) -> super::Result<LFrame> {
@@ -980,7 +1138,12 @@ fn smooth(f: &LFrame, p: &Params, ctx: &StatCtx) -> super::Result<LFrame> {
     };
     let grid = linspace(a, b, n);
     let fit = match method {
-        "lm" => fit_lm(&xs, &ys, p_num(p, "degree").unwrap_or(1.0).clamp(1.0, 6.0) as usize, &grid)?,
+        "lm" => fit_lm(
+            &xs,
+            &ys,
+            p_num(p, "degree").unwrap_or(1.0).clamp(1.0, 6.0) as usize,
+            &grid,
+        )?,
         "loess" | "lowess" => fit_loess(
             &xs,
             &ys,
@@ -995,14 +1158,24 @@ fn smooth(f: &LFrame, p: &Params, ctx: &StatCtx) -> super::Result<LFrame> {
             };
             fit_gam(&xs, &ys, k, &grid)?
         }
-        other => return bad(format!("smooth: method \"{}\" (lm, loess, gam, auto)", other)),
+        other => {
+            return bad(format!(
+                "smooth: method \"{}\" (lm, loess, gam, auto)",
+                other
+            ));
+        }
     };
     let level = p_num(p, "level").unwrap_or(0.95);
     let t = qt(0.5 + level / 2.0, fit.df);
     for i in 0..fit.x.len() {
         let (y, se) = (fit.y[i], fit.se[i]);
         out.push(
-            &[(Aes::X, fit.x[i]), (Aes::Y, y), (Aes::Ymin, y - t * se), (Aes::Ymax, y + t * se)],
+            &[
+                (Aes::X, fit.x[i]),
+                (Aes::Y, y),
+                (Aes::Ymin, y - t * se),
+                (Aes::Ymax, y + t * se),
+            ],
             &[("se", se)],
         );
     }
@@ -1018,7 +1191,10 @@ fn ecdf(f: &LFrame, ctx: &StatCtx) -> super::Result<LFrame> {
     if xs.is_empty() {
         return Ok(out.frame());
     }
-    out.push(&[(Aes::X, ctx.x_range.0.min(xs[0])), (Aes::Y, 0.0)], &[("ecdf", 0.0)]);
+    out.push(
+        &[(Aes::X, ctx.x_range.0.min(xs[0])), (Aes::Y, 0.0)],
+        &[("ecdf", 0.0)],
+    );
     let mut i = 0;
     while i < xs.len() {
         let mut j = i;
@@ -1029,7 +1205,10 @@ fn ecdf(f: &LFrame, ctx: &StatCtx) -> super::Result<LFrame> {
         out.push(&[(Aes::X, xs[i]), (Aes::Y, e)], &[("ecdf", e)]);
         i = j + 1;
     }
-    out.push(&[(Aes::X, ctx.x_range.1.max(xs[xs.len() - 1])), (Aes::Y, 1.0)], &[("ecdf", 1.0)]);
+    out.push(
+        &[(Aes::X, ctx.x_range.1.max(xs[xs.len() - 1])), (Aes::Y, 1.0)],
+        &[("ecdf", 1.0)],
+    );
     Ok(out.frame())
 }
 
@@ -1037,11 +1216,16 @@ fn ecdf(f: &LFrame, ctx: &StatCtx) -> super::Result<LFrame> {
 /// n ≤ 10, else ½.
 fn ppoints(n: usize) -> Vec<f64> {
     let a = if n <= 10 { 0.375 } else { 0.5 };
-    (1..=n).map(|i| (i as f64 - a) / (n as f64 + 1.0 - 2.0 * a)).collect()
+    (1..=n)
+        .map(|i| (i as f64 - a) / (n as f64 + 1.0 - 2.0 * a))
+        .collect()
 }
 
 fn qq_sample(f: &LFrame) -> super::Result<Vec<f64>> {
-    let s = f.num(Aes::Sample).or_else(|| f.num(Aes::Y)).or_else(|| f.num(Aes::X));
+    let s = f
+        .num(Aes::Sample)
+        .or_else(|| f.num(Aes::Y))
+        .or_else(|| f.num(Aes::X));
     match s {
         Some(v) => Ok(sorted_finite(v)),
         None => bad("stat_qq needs the sample aesthetic"),
@@ -1050,11 +1234,17 @@ fn qq_sample(f: &LFrame) -> super::Result<Vec<f64>> {
 
 fn qq(f: &LFrame, p: &Params) -> super::Result<LFrame> {
     let ys = qq_sample(f)?;
-    let (mu, sigma) = (p_num(p, "mean").unwrap_or(0.0), p_num(p, "sd").unwrap_or(1.0));
+    let (mu, sigma) = (
+        p_num(p, "mean").unwrap_or(0.0),
+        p_num(p, "sd").unwrap_or(1.0),
+    );
     let mut out = Out::default();
     for (y, pp) in ys.iter().zip(ppoints(ys.len())) {
         let t = mu + sigma * qnorm(pp);
-        out.push(&[(Aes::X, t), (Aes::Y, *y)], &[("theoretical", t), ("sample", *y)]);
+        out.push(
+            &[(Aes::X, t), (Aes::Y, *y)],
+            &[("theoretical", t), ("sample", *y)],
+        );
     }
     Ok(out.frame())
 }
@@ -1065,15 +1255,24 @@ fn qq_line(f: &LFrame, p: &Params) -> super::Result<LFrame> {
     if ys.len() < 2 {
         return Ok(out.frame());
     }
-    let (mu, sigma) = (p_num(p, "mean").unwrap_or(0.0), p_num(p, "sd").unwrap_or(1.0));
+    let (mu, sigma) = (
+        p_num(p, "mean").unwrap_or(0.0),
+        p_num(p, "sd").unwrap_or(1.0),
+    );
     let (y1, y2) = (quantile_sorted(&ys, 0.25), quantile_sorted(&ys, 0.75));
     let (x1, x2) = (mu + sigma * qnorm(0.25), mu + sigma * qnorm(0.75));
     let slope = (y2 - y1) / (x2 - x1);
     let icpt = y1 - slope * x1;
     let pp = ppoints(ys.len());
-    let (ta, tb) = (mu + sigma * qnorm(pp[0]), mu + sigma * qnorm(pp[pp.len() - 1]));
+    let (ta, tb) = (
+        mu + sigma * qnorm(pp[0]),
+        mu + sigma * qnorm(pp[pp.len() - 1]),
+    );
     for t in [ta, tb] {
-        out.push(&[(Aes::X, t), (Aes::Y, icpt + slope * t)], &[("slope", slope), ("intercept", icpt)]);
+        out.push(
+            &[(Aes::X, t), (Aes::Y, icpt + slope * t)],
+            &[("slope", slope), ("intercept", icpt)],
+        );
     }
     Ok(out.frame())
 }
@@ -1123,7 +1322,11 @@ fn bin2d(f: &LFrame, p: &Params, ctx: &StatCtx) -> super::Result<LFrame> {
             &[("count", c), ("density", c / total), ("ncount", c)],
         );
     }
-    let maxc = out.stat.get("count").map(|v| v.iter().cloned().fold(0.0, f64::max)).unwrap_or(1.0);
+    let maxc = out
+        .stat
+        .get("count")
+        .map(|v| v.iter().cloned().fold(0.0, f64::max))
+        .unwrap_or(1.0);
     if let Some(nc) = out.stat.get_mut("ncount") {
         for v in nc.iter_mut() {
             *v /= maxc.max(1e-300);
@@ -1154,7 +1357,10 @@ fn binhex(f: &LFrame, p: &Params, ctx: &StatCtx) -> super::Result<LFrame> {
         let (u, v) = ((x[i] - xl) / dx, (y[i] - yl) / dy);
         // lattice A: even rows at whole columns; B: odd rows at half columns
         let (ia, ja) = (u.round(), (v / 2.0).round() * 2.0);
-        let (ib, jb) = ((u - 0.5).round() + 0.5, ((v - 1.0) / 2.0).round() * 2.0 + 1.0);
+        let (ib, jb) = (
+            (u - 0.5).round() + 0.5,
+            ((v - 1.0) / 2.0).round() * 2.0 + 1.0,
+        );
         let da = (u - ia).powi(2) + 0.75 * (v - ja).powi(2);
         let db = (u - ib).powi(2) + 0.75 * (v - jb).powi(2);
         // keys in half columns, so both lattices share one map
@@ -1172,7 +1378,12 @@ fn binhex(f: &LFrame, p: &Params, ctx: &StatCtx) -> super::Result<LFrame> {
         let cy = yl + j as f64 * dy;
         out.push(
             &[(Aes::X, cx), (Aes::Y, cy)],
-            &[("count", c), ("density", c / total), ("width", dx), ("height", dy)],
+            &[
+                ("count", c),
+                ("density", c / total),
+                ("width", dx),
+                ("height", dy),
+            ],
         );
     }
     Ok(out.frame())
@@ -1228,7 +1439,9 @@ mod tests {
 
     #[test]
     fn kde_integrates_to_one_both_paths() {
-        let xs: Vec<f64> = (0..2000).map(|i| ((i * 7919) % 1000) as f64 / 100.0).collect();
+        let xs: Vec<f64> = (0..2000)
+            .map(|i| ((i * 7919) % 1000) as f64 / 100.0)
+            .collect();
         let grid = linspace(-5.0, 15.0, 512);
         for xs in [&xs[..300], &xs[..]] {
             let d = kde(xs, None, 0.5, "gaussian", &grid).unwrap();
@@ -1262,8 +1475,15 @@ mod tests {
     fn lm_band_matches_textbook() {
         // y = 2 + 3x + noise; at the mean of x, se = s / sqrt(n)
         let x: Vec<f64> = (0..20).map(|i| i as f64).collect();
-        let noise = [0.3, -0.2, 0.1, -0.4, 0.5, -0.1, 0.2, -0.3, 0.0, 0.4, -0.5, 0.1, 0.3, -0.2, 0.2, -0.1, 0.0, 0.3, -0.3, 0.1];
-        let y: Vec<f64> = x.iter().zip(noise).map(|(x, e)| 2.0 + 3.0 * x + e).collect();
+        let noise = [
+            0.3, -0.2, 0.1, -0.4, 0.5, -0.1, 0.2, -0.3, 0.0, 0.4, -0.5, 0.1, 0.3, -0.2, 0.2, -0.1,
+            0.0, 0.3, -0.3, 0.1,
+        ];
+        let y: Vec<f64> = x
+            .iter()
+            .zip(noise)
+            .map(|(x, e)| 2.0 + 3.0 * x + e)
+            .collect();
         let fit = fit_lm(&x, &y, 1, &[9.5]).unwrap();
         assert!((fit.y[0] - (2.0 + 3.0 * 9.5)).abs() < 0.2);
         // s from the residuals
@@ -1277,13 +1497,26 @@ mod tests {
     #[test]
     fn loess_follows_a_curve_and_gam_too() {
         let x: Vec<f64> = (0..200).map(|i| i as f64 / 20.0).collect();
-        let y: Vec<f64> = x.iter().enumerate().map(|(i, v)| v.sin() + 0.05 * ((i * 37 % 11) as f64 - 5.0) / 5.0).collect();
+        let y: Vec<f64> = x
+            .iter()
+            .enumerate()
+            .map(|(i, v)| v.sin() + 0.05 * ((i * 37 % 11) as f64 - 5.0) / 5.0)
+            .collect();
         let grid = linspace(0.5, 9.5, 10);
         let l = fit_loess(&x, &y, 0.3, 2, &grid).unwrap();
         let g = fit_gam(&x, &y, 10, &grid).unwrap();
         for i in 0..grid.len() {
-            assert!((l.y[i] - grid[i].sin()).abs() < 0.08, "loess at {}", grid[i]);
-            assert!((g.y[i] - grid[i].sin()).abs() < 0.08, "gam at {}: {}", grid[i], g.y[i]);
+            assert!(
+                (l.y[i] - grid[i].sin()).abs() < 0.08,
+                "loess at {}",
+                grid[i]
+            );
+            assert!(
+                (g.y[i] - grid[i].sin()).abs() < 0.08,
+                "gam at {}: {}",
+                grid[i],
+                g.y[i]
+            );
             assert!(l.se[i] > 0.0 && l.se[i] < 0.1);
             assert!(g.se[i] > 0.0 && g.se[i] < 0.1);
         }
@@ -1313,13 +1546,19 @@ mod tests {
         };
         for n in [9usize, 11, 19, 40] {
             let x: Vec<f64> = (0..n).map(|i| noise(i, 20 + n) * 10.0).collect();
-            let y: Vec<f64> = (0..n).map(|i| x[i] * 0.3 + noise(i, 30 + n) * 3.0).collect();
+            let y: Vec<f64> = (0..n)
+                .map(|i| x[i] * 0.3 + noise(i, 30 + n) * 3.0)
+                .collect();
             let lo = x.iter().cloned().fold(f64::INFINITY, f64::min);
             let hi = x.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
             let grid = linspace(lo, hi, 60);
             let g = fit_gam(&x, &y, gam_k(&x), &grid).unwrap();
             let l = fit_lm(&x, &y, 1, &grid).unwrap();
-            let dev = g.y.iter().zip(&l.y).map(|(a, b)| (a - b).abs()).fold(0.0, f64::max);
+            let dev =
+                g.y.iter()
+                    .zip(&l.y)
+                    .map(|(a, b)| (a - b).abs())
+                    .fold(0.0, f64::max);
             assert!(dev < 1.0, "n = {n}: the gam strays {dev} from the line");
         }
         assert_eq!(gam_k(&[1.0, 2.0, 3.0, 1.0, 2.0]), 4);
@@ -1344,7 +1583,10 @@ mod tests {
     fn summary_cl_normal() {
         let f = frame(vec![1.0; 4], Some(vec![1.0, 2.0, 3.0, 4.0]));
         let mut p = Params::new();
-        p.insert("fun".into(), super::super::Param::Str("mean_cl_normal".into()));
+        p.insert(
+            "fun".into(),
+            super::super::Param::Str("mean_cl_normal".into()),
+        );
         let out = summary(&f, &p).unwrap();
         // R: t.test(1:4)$conf.int = 0.4457397 4.5542603
         assert!((out.num(Aes::Ymin).unwrap()[0] - 0.4457397).abs() < 1e-6);

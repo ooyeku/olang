@@ -31,9 +31,8 @@ fn run(code: &str, flags: &[&str], tag: &str) -> (String, String) {
 /// The program prints `expected` on every tier. The work happens inside
 /// `fn main_()`, so the compiled tier compiles it.
 fn agrees(tag: &str, body: &str, expected: &str) {
-    let code = format!(
-        "fn every(xs) = all(xs, (x) => x == true)\nfn main_() = {{\n{body}\n}}\nmain_()\n"
-    );
+    let code =
+        format!("fn every(xs) = all(xs, (x) => x == true)\nfn main_() = {{\n{body}\n}}\nmain_()\n");
     for flags in [&["--no-ovm"][..], &["--ovm-tier=1"][..], &[][..]] {
         let (out, err) = run(&code, flags, tag);
         assert_eq!(
@@ -50,8 +49,15 @@ fn raises(tag: &str, body: &str, needle: &str) {
     let mut first: Option<String> = None;
     for flags in [&["--no-ovm"][..], &["--ovm-tier=1"][..], &[][..]] {
         let (_, err) = run(&code, flags, tag);
-        assert!(err.contains(needle), "flags {flags:?}: {err}\n  wanted: {needle}");
-        let line = err.lines().find(|l| l.contains(needle)).unwrap_or("").to_string();
+        assert!(
+            err.contains(needle),
+            "flags {flags:?}: {err}\n  wanted: {needle}"
+        );
+        let line = err
+            .lines()
+            .find(|l| l.contains(needle))
+            .unwrap_or("")
+            .to_string();
         match &first {
             None => first = Some(line),
             Some(f) => assert_eq!(f, &line, "tiers raise differently"),
@@ -418,17 +424,57 @@ Old Town",
 
 #[test]
 fn misuse_is_named() {
-    raises("e1", r#"ods.series(["2024"]).year()"#, "ods.year: needs a Date or Datetime column");
-    raises("e2", r#"ods.series(["2024-01-01"]).to_date().hour()"#, "hour: a Date has no time of day");
-    raises("e3", r#"let d = ods.series(["2024-01-01"]).to_date()
-    d + d"#, "cannot apply addition to Series[Date] and Series[Date]");
-    raises("e4", r#"ods.series([1]).lower()"#, "ods.lower: needs a String Series, got a Int Series");
-    raises("e5", r#"ods.series(["a"]).to_category() < "zz""#, "\"zz\" is not a level of this Category");
-    raises("e6", r#"ods.dummies(ods.series(["a"]), dtype: "Date")"#, "ods.dummies: dtype is \"Float\", \"Int\" or \"Bool\"");
-    raises("e7", r#"ods.read_csv("d\n2024/01/02\n", dates: ["d"])"#, "column 'd' has \"2024/01/02\"");
-    raises("e8", r#"ods.series(["2024-01-01"]).to_date().floor("1h")"#, "floor: a Date cannot be cut finer than a day");
-    raises("e9", r#"ods.series(["2024-01-01"]).to_date() > "soon""#, "\"soon\" is not an ISO date");
-    raises("e10", r#"ods.series(["x"]).to_date("%Q")"#, "ods.to_date: the format has %Q");
+    raises(
+        "e1",
+        r#"ods.series(["2024"]).year()"#,
+        "ods.year: needs a Date or Datetime column",
+    );
+    raises(
+        "e2",
+        r#"ods.series(["2024-01-01"]).to_date().hour()"#,
+        "hour: a Date has no time of day",
+    );
+    raises(
+        "e3",
+        r#"let d = ods.series(["2024-01-01"]).to_date()
+    d + d"#,
+        "cannot apply addition to Series[Date] and Series[Date]",
+    );
+    raises(
+        "e4",
+        r#"ods.series([1]).lower()"#,
+        "ods.lower: needs a String Series, got a Int Series",
+    );
+    raises(
+        "e5",
+        r#"ods.series(["a"]).to_category() < "zz""#,
+        "\"zz\" is not a level of this Category",
+    );
+    raises(
+        "e6",
+        r#"ods.dummies(ods.series(["a"]), dtype: "Date")"#,
+        "ods.dummies: dtype is \"Float\", \"Int\" or \"Bool\"",
+    );
+    raises(
+        "e7",
+        r#"ods.read_csv("d\n2024/01/02\n", dates: ["d"])"#,
+        "column 'd' has \"2024/01/02\"",
+    );
+    raises(
+        "e8",
+        r#"ods.series(["2024-01-01"]).to_date().floor("1h")"#,
+        "floor: a Date cannot be cut finer than a day",
+    );
+    raises(
+        "e9",
+        r#"ods.series(["2024-01-01"]).to_date() > "soon""#,
+        "\"soon\" is not an ISO date",
+    );
+    raises(
+        "e10",
+        r#"ods.series(["x"]).to_date("%Q")"#,
+        "ods.to_date: the format has %Q",
+    );
 }
 
 #[test]

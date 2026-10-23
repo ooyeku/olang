@@ -40,14 +40,21 @@ fn piped_then_closed(with_notebook: bool) {
     {
         let mut stdin = child.stdin.take().unwrap();
         for i in 1..=3 {
-            writeln!(stdin, r#"{{"op":"eval","id":{i},"cell":"c{i}","code":"{i} + 40","line":4}}"#).unwrap();
+            writeln!(
+                stdin,
+                r#"{{"op":"eval","id":{i},"cell":"c{i}","code":"{i} + 40","line":4}}"#
+            )
+            .unwrap();
         }
     } // closed right after the requests
     let out = child.wait_with_output().unwrap();
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("protocol"), "the hello: {text}");
     for i in 1..=3 {
-        assert!(text.contains(&format!("\"s\":\"{}\"", i + 40)), "reply {i} in: {text}");
+        assert!(
+            text.contains(&format!("\"s\":\"{}\"", i + 40)),
+            "reply {i} in: {text}"
+        );
     }
     assert_eq!(out.status.code(), Some(0));
 }
@@ -59,7 +66,12 @@ fn requests_piped_then_closed_are_every_one_answered() {
 }
 
 fn alive(pid: &str) -> bool {
-    Command::new("kill").args(["-0", pid]).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false)
+    Command::new("kill")
+        .args(["-0", pid])
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 // A kernel started by a shell that then ends, its input kept open and a
@@ -70,8 +82,16 @@ fn ends_with_its_parent(with_notebook: bool) {
     let a = args(with_notebook.then_some(nb.as_path())).join(" ");
     let eval = r#"{"op":"eval","id":1,"cell":"c1","code":"let mut i = 0\nwhile true { i = i + 1 }","line":4}"#;
     std::fs::write(dir.path().join("req"), format!("{eval}\n")).unwrap();
-    let script = format!("(cat req; sleep 30) | '{}' {} >/dev/null 2>&1 & echo $!; sleep 0.8", olang(), a);
-    let out = Command::new("sh").args(["-c", &script]).current_dir(dir.path()).output().unwrap();
+    let script = format!(
+        "(cat req; sleep 30) | '{}' {} >/dev/null 2>&1 & echo $!; sleep 0.8",
+        olang(),
+        a
+    );
+    let out = Command::new("sh")
+        .args(["-c", &script])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
     let pid = String::from_utf8_lossy(&out.stdout).trim().to_string();
     assert!(!pid.is_empty());
     let t0 = Instant::now();
@@ -83,7 +103,11 @@ fn ends_with_its_parent(with_notebook: bool) {
         let _ = Command::new("kill").args(["-9", &pid]).status();
     }
     assert!(gone, "the kernel went on after its parent ended");
-    assert!(t0.elapsed() < Duration::from_secs(3), "ended in {:?}", t0.elapsed());
+    assert!(
+        t0.elapsed() < Duration::from_secs(3),
+        "ended in {:?}",
+        t0.elapsed()
+    );
 }
 
 #[test]

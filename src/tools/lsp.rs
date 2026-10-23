@@ -2848,7 +2848,9 @@ fn open_call(text: &str, pos: Position) -> Option<(String, u32)> {
     }
     let mut start = end;
     while start > 0
-        && (chars[start - 1].is_alphanumeric() || chars[start - 1] == '_' || chars[start - 1] == '.')
+        && (chars[start - 1].is_alphanumeric()
+            || chars[start - 1] == '_'
+            || chars[start - 1] == '.')
     {
         start -= 1;
     }
@@ -2889,9 +2891,18 @@ fn receiver_native(text: &str, line: u32, receiver: &str) -> Option<(&'static st
     };
     let line = crate::tools::check::hover_types(&program).remove("__lsp_receiver")?;
     let kind = line.rsplit(": ").next()?.trim();
-    let kind = ["Series", "Frame", "Date", "Reader", "GroupBy", "Rng", "HoltWinters", "Matrix"]
-        .into_iter()
-        .find(|k| *k == kind)?;
+    let kind = [
+        "Series",
+        "Frame",
+        "Date",
+        "Reader",
+        "GroupBy",
+        "Rng",
+        "HoltWinters",
+        "Matrix",
+    ]
+    .into_iter()
+    .find(|k| *k == kind)?;
     Some((crate::native_sig::home_of(kind)?, kind))
 }
 
@@ -2945,13 +2956,20 @@ fn method_display(full: &str) -> String {
     let shown = sig.display();
     let name = full.rsplit('.').next().unwrap_or(full);
     let params = shown.split_once('(').map(|(_, p)| p).unwrap_or("");
-    let params = params.split_once(", ").map(|(_, rest)| rest.to_string()).unwrap_or_else(|| ")".to_string());
+    let params = params
+        .split_once(", ")
+        .map(|(_, rest)| rest.to_string())
+        .unwrap_or_else(|| ")".to_string());
     format!(".{}({}", name, params)
 }
 
 /// The native builtin an open call names: `module.f(` or `value.m(` on a
 /// native value, with whether the receiver counts as its first argument.
-fn native_callee(text: &str, line: u32, callee: &str) -> Option<(&'static crate::native_sig::Sig, bool)> {
+fn native_callee(
+    text: &str,
+    line: u32,
+    callee: &str,
+) -> Option<(&'static crate::native_sig::Sig, bool)> {
     if let Some(sig) = crate::native_sig::sig(callee) {
         return Some((sig, false));
     }
@@ -2971,11 +2989,21 @@ fn named_arg_completions(text: &str, pos: Position) -> Vec<CompletionItem> {
         return Vec::new();
     };
     let line = text.lines().nth(pos.line as usize).unwrap_or("");
-    let written: String = line.chars().take(utf16_to_char_col(line, pos.character)).collect();
-    let args = written.rsplit_once(&format!("{}(", callee)).map(|(_, a)| a).unwrap_or("");
+    let written: String = line
+        .chars()
+        .take(utf16_to_char_col(line, pos.character))
+        .collect();
+    let args = written
+        .rsplit_once(&format!("{}(", callee))
+        .map(|(_, a)| a)
+        .unwrap_or("");
     // the parameters before the cursor's position were given by position
     // (unless a name came first)
-    let by_position = if args.contains(':') { 0 } else { commas as usize };
+    let by_position = if args.contains(':') {
+        0
+    } else {
+        commas as usize
+    };
     sig.names()
         .into_iter()
         .skip(usize::from(method) + by_position)

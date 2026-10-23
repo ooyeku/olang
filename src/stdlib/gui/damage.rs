@@ -99,7 +99,16 @@ pub fn full_redraw_forced() -> bool {
 /// The pixels a primitive can touch: its box grown by `pad` (an
 /// antialiased edge), cut by its clip and the window, rounded out to
 /// whole pixels. `None` when it touches nothing.
-pub fn bounds(x: f32, y: f32, w: f32, h: f32, pad: f32, clip: &Clip, ww: u32, wh: u32) -> Option<IRect> {
+pub fn bounds(
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    pad: f32,
+    clip: &Clip,
+    ww: u32,
+    wh: u32,
+) -> Option<IRect> {
     if !(x.is_finite() && y.is_finite() && w.is_finite() && h.is_finite()) {
         // the renderers draw nothing sensible for these; damage all
         return Some(IRect::new(0, 0, ww as i32, wh as i32));
@@ -226,8 +235,9 @@ impl Item {
         } else {
             let k = if c.continuous { CONTINUOUS_EXTENT } else { 1.0 };
             let m = c.radii.iter().fold(0.0f32, |a, v| a.max(*v)) * k + 1.0;
-            let clear = rx0 >= c.x0 + m && rx1 <= c.x1 - m && ry0 >= c.y0 + 1.0 && ry1 <= c.y1 - 1.0
-                || ry0 >= c.y0 + m && ry1 <= c.y1 - m && rx0 >= c.x0 + 1.0 && rx1 <= c.x1 - 1.0;
+            let clear =
+                rx0 >= c.x0 + m && rx1 <= c.x1 - m && ry0 >= c.y0 + 1.0 && ry1 <= c.y1 - 1.0
+                    || ry0 >= c.y0 + m && ry1 <= c.y1 - m && rx0 >= c.x0 + 1.0 && rx1 <= c.x1 - 1.0;
             clear.then_some([rx0, ry0, rx1, ry1])
         };
         // one colour all over `r` (its clip too): where it is is no matter
@@ -263,7 +273,10 @@ impl Item {
                     rel(h, &[x0, y0, x1, y1])
                 }
             }
-            None => mix(mix_f32s(rel(h, &[c.x0, c.y0, c.x1, c.y1]), &c.radii), c.continuous as u64),
+            None => mix(
+                mix_f32s(rel(h, &[c.x0, c.y0, c.x1, c.y1]), &c.radii),
+                c.continuous as u64,
+            ),
         }
     }
 }
@@ -663,7 +676,11 @@ mod tests {
     #[test]
     fn a_change_damages_only_its_tiles_and_order_matters() {
         let mut t = Tracker::default();
-        let a = vec![item(0, 0, 640, 640, 1), item(100, 100, 110, 110, 2), item(105, 105, 120, 120, 3)];
+        let a = vec![
+            item(0, 0, 640, 640, 1),
+            item(100, 100, 110, 110, 2),
+            item(105, 105, 120, 120, 3),
+        ];
         let (_, _, n) = t.damage(640, 640, [255; 4], a.clone(), &[]);
         t.commit(n);
         // the caret moves within a tile
@@ -685,8 +702,16 @@ mod tests {
         let view = Clip::rect(0.0, 0.0, 512.0, 512.0);
         // rows of 40 px inside the view, scrolled by `off`
         let frame = |off: i32| -> Vec<Item> {
-            let mut v = vec![Item::new(IRect::new(0, 0, 512, 512), 1, 0.0, 0.0, Clip::rect(0.0, 0.0, 512.0, 512.0))
-                .with_interior(IRect::new(0, 0, 512, 512))];
+            let mut v = vec![
+                Item::new(
+                    IRect::new(0, 0, 512, 512),
+                    1,
+                    0.0,
+                    0.0,
+                    Clip::rect(0.0, 0.0, 512.0, 512.0),
+                )
+                .with_interior(IRect::new(0, 0, 512, 512)),
+            ];
             for r in 0..40 {
                 let y = r * 40 - off;
                 let b = IRect::new(0, y - 1, 512, y + 41).intersect(&IRect::new(0, 0, 512, 512));
@@ -697,11 +722,24 @@ mod tests {
             v
         };
         let mut t = Tracker::default();
-        let s = |off: i32| vec![Scroll { id: 7, view, dx: 0.0, dy: off as f32 }];
+        let s = |off: i32| {
+            vec![Scroll {
+                id: 7,
+                view,
+                dx: 0.0,
+                dy: off as f32,
+            }]
+        };
         let (_, _, n) = t.damage(512, 512, [255; 4], frame(0), &s(0));
         t.commit(n);
         let (d, shifts, _) = t.damage(512, 512, [255; 4], frame(64), &s(64));
-        assert_eq!(shifts, vec![Shift { src: IRect::new(0, 64, 512, 512), dst: IRect::new(0, 0, 512, 448) }]);
+        assert_eq!(
+            shifts,
+            vec![Shift {
+                src: IRect::new(0, 64, 512, 512),
+                dst: IRect::new(0, 0, 512, 448)
+            }]
+        );
         // only the uncovered band is drawn
         assert_eq!(d, Damage::Rects(vec![IRect::new(0, 448, 512, 512)]));
     }
@@ -716,7 +754,10 @@ mod tests {
         let Damage::Rects(r) = rects_of(&dirty, 4, 4, 256, 256) else {
             panic!("rects")
         };
-        assert_eq!(r, vec![IRect::new(0, 0, 128, 128), IRect::new(0, 128, 64, 192)]);
+        assert_eq!(
+            r,
+            vec![IRect::new(0, 0, 128, 128), IRect::new(0, 128, 64, 192)]
+        );
         for (i, a) in r.iter().enumerate() {
             for b in &r[i + 1..] {
                 assert!(!a.intersects(b));

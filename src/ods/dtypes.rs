@@ -202,19 +202,25 @@ pub fn elementwise(func: &str, args: &[Value]) -> Option<Result<Value, String>> 
     };
     Some(match func {
         "year" | "quarter" | "month" | "day" | "weekday" | "day_of_year" | "week" | "hour"
-        | "minute" | "second" | "is_weekend" | "date" => {
-            temporal(TOp::part(func).expect("a part"))
-        }
+        | "minute" | "second" | "is_weekend" | "date" => temporal(TOp::part(func).expect("a part")),
         "floor" if args.len() == 2 => (|| {
             let every = Every::parse(want_text(func, "the unit", args.get(1))?)
                 .map_err(|m| format!("ods.floor: {}", m))?;
-            build(func, Op::Temporal(TOp::Floor(every), false), vec![opnd(func, args, 0)?])
+            build(
+                func,
+                Op::Temporal(TOp::Floor(every), false),
+                vec![opnd(func, args, 0)?],
+            )
         })(),
         "add_months" => (|| {
             want_n(func, args, 2, 2)?;
             // A constant, or an Int a row (a column or an Expr).
             if let Some(Value::Integer(n)) = args.get(1) {
-                return build(func, Op::Temporal(TOp::AddMonths(*n), false), vec![opnd(func, args, 0)?]);
+                return build(
+                    func,
+                    Op::Temporal(TOp::AddMonths(*n), false),
+                    vec![opnd(func, args, 0)?],
+                );
             }
             if !matches!(args.get(1), Some(Value::Native(_))) {
                 want_int(func, "the number of months", args.get(1))?;
@@ -243,7 +249,10 @@ pub fn elementwise(func: &str, args: &[Value]) -> Option<Result<Value, String>> 
                 let us = build(
                     func,
                     Op::Bin(BinOp::Mul),
-                    vec![n, Operand::Eng(Expr::lit(Scalar::I64(US_PER_DAY)), None, 0, vec![])],
+                    vec![
+                        n,
+                        Operand::Eng(Expr::lit(Scalar::I64(US_PER_DAY)), None, 0, vec![]),
+                    ],
                 )?;
                 let sum = build(
                     func,
@@ -279,7 +288,11 @@ pub fn eager(func: &str, args: &[Value]) -> Option<Result<Value, String>> {
         let Value::String(t) = &args[1] else {
             unreachable!("checked")
         };
-        return Some(s.fill_null(Scalar::Str(t.to_string())).map(sv).map_err(e(func)));
+        return Some(
+            s.fill_null(Scalar::Str(t.to_string()))
+                .map(sv)
+                .map_err(e(func)),
+        );
     }
     if !FUNCTIONS.iter().any(|(n, _)| *n == func) {
         return None;
@@ -303,7 +316,9 @@ fn run(func: &str, args: &[Value]) -> Result<Value, String> {
             let a = want_series(func, args, 0)?;
             let b = want_series(func, args, 1)?;
             let sep = opt_text(func, "sep", args.get(2))?.unwrap_or(":");
-            return category::interact(a, b, sep, &fmt_float).map(sv).map_err(e(func));
+            return category::interact(a, b, sep, &fmt_float)
+                .map(sv)
+                .map_err(e(func));
         }
         _ => {}
     }
@@ -424,14 +439,22 @@ fn level_list(v: &Value) -> Result<Vec<String>, String> {
 /// plots in calendar order.
 fn names(func: &str, s: &Series) -> Result<Value, String> {
     use olang_ods::temporal::{DAY_NAMES, MONTH_NAMES};
-    let t = if func == "day_name" { TOp::Weekday } else { TOp::Month };
+    let t = if func == "day_name" {
+        TOp::Weekday
+    } else {
+        TOp::Month
+    };
     let part = Expr::op(Op::Temporal(t, false), vec![Expr::col(s.clone())])
         .eval(s.len(), false)
         .map_err(e(func))?;
     let Series::I64 { values, validity } = part else {
         unreachable!("a part is Int")
     };
-    let names: &[&str] = if func == "day_name" { &DAY_NAMES } else { &MONTH_NAMES };
+    let names: &[&str] = if func == "day_name" {
+        &DAY_NAMES
+    } else {
+        &MONTH_NAMES
+    };
     Ok(sv(Series::category(
         values.iter().map(|&k| (k.max(1) - 1) as u32).collect(),
         olang_ods::StrCol::from_strings(names.iter()),
@@ -441,7 +464,8 @@ fn names(func: &str, s: &Series) -> Result<Value, String> {
 
 #[cfg(feature = "regex-module")]
 fn replace_re(s: &Series, pat: &str, to: &str) -> Result<Value, String> {
-    let re = regex::Regex::new(pat).map_err(|err| format!("ods.replace_re: invalid pattern: {}", err))?;
+    let re = regex::Regex::new(pat)
+        .map_err(|err| format!("ods.replace_re: invalid pattern: {}", err))?;
     text::transform("replace_re", s, |t, out| {
         out.push_str(&re.replace_all(t, to));
         true
@@ -452,7 +476,10 @@ fn replace_re(s: &Series, pat: &str, to: &str) -> Result<Value, String> {
 
 #[cfg(not(feature = "regex-module"))]
 fn replace_re(_s: &Series, _pat: &str, _to: &str) -> Result<Value, String> {
-    Err("ods.replace_re: this build has no regular expressions (the `regex-module` feature)".to_string())
+    Err(
+        "ods.replace_re: this build has no regular expressions (the `regex-module` feature)"
+            .to_string(),
+    )
 }
 
 /// `ods.dummies(s | f, columns?, drop_first, prefix?, dtype)`: indicator
@@ -494,7 +521,9 @@ fn dummies(args: &[Value]) -> Result<Value, String> {
             );
         }
         let cols = one(s, prefix)?;
-        return Frame::new(cols).map(OdsFrame::into_value).map_err(|x| x.to_string());
+        return Frame::new(cols)
+            .map(OdsFrame::into_value)
+            .map_err(|x| x.to_string());
     }
     let Some(f) = args.first().and_then(frame_of) else {
         return Err(format!(
@@ -565,12 +594,10 @@ pub fn dates_from_text(op: Op, kids: Vec<Arc<Expr>>) -> Result<Vec<Arc<Expr>>, S
     if !cmp {
         return Ok(kids);
     }
-    let want = kids
-        .iter()
-        .find_map(|k| match k.dtype() {
-            Ok(Some(d @ (DType::Date | DType::Datetime))) => Some(d),
-            _ => None,
-        });
+    let want = kids.iter().find_map(|k| match k.dtype() {
+        Ok(Some(d @ (DType::Date | DType::Datetime))) => Some(d),
+        _ => None,
+    });
     let Some(want) = want else { return Ok(kids) };
     kids.into_iter()
         .map(|k| match k.as_ref() {
@@ -584,7 +611,11 @@ pub fn dates_from_text(op: Op, kids: Vec<Arc<Expr>>) -> Result<Vec<Arc<Expr>>, S
                     (None, _) => Err(format!(
                         "\"{}\" is not an ISO date (YYYY-MM-DD[THH:MM[:SS]]) to {} a {} with",
                         t,
-                        if op == Op::Bin(BinOp::Sub) { "subtract from" } else { "compare" },
+                        if op == Op::Bin(BinOp::Sub) {
+                            "subtract from"
+                        } else {
+                            "compare"
+                        },
                         want
                     )),
                 }

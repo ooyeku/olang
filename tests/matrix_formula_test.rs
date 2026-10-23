@@ -38,13 +38,19 @@ fn eval_tier(source: &str, tier: Option<u32>) -> Result<Value, String> {
 /// The program's value, which both tiers must compute alike.
 fn eval(source: &str) -> Value {
     let a = eval_tier(source, None).unwrap_or_else(|e| panic!("{e}\n--- source ---\n{source}"));
-    let b = eval_tier(source, Some(1)).unwrap_or_else(|e| panic!("tier 1: {e}\n--- source ---\n{source}"));
-    assert_eq!(format!("{a:?}"), format!("{b:?}"), "the tiers disagree on\n{source}");
+    let b = eval_tier(source, Some(1))
+        .unwrap_or_else(|e| panic!("tier 1: {e}\n--- source ---\n{source}"));
+    assert_eq!(
+        format!("{a:?}"),
+        format!("{b:?}"),
+        "the tiers disagree on\n{source}"
+    );
     a
 }
 
 fn reference() -> Json {
-    let text = std::fs::read_to_string(format!("{}/reference.json", fixtures())).expect("reference.json");
+    let text =
+        std::fs::read_to_string(format!("{}/reference.json", fixtures())).expect("reference.json");
     serde_json::from_str(&text).expect("json")
 }
 
@@ -84,7 +90,13 @@ fn jnums(j: &Json) -> Vec<f64> {
 }
 
 fn all_close(got: &[f64], want: &[f64], tol: f64, what: &str) {
-    assert_eq!(got.len(), want.len(), "{what}: length {} vs {}", got.len(), want.len());
+    assert_eq!(
+        got.len(),
+        want.len(),
+        "{what}: length {} vs {}",
+        got.len(),
+        want.len()
+    );
     for (i, (g, w)) in got.iter().zip(want).enumerate() {
         assert!(
             (g - w).abs() <= tol * (1.0 + w.abs()),
@@ -130,12 +142,32 @@ let e = mat.eigh(G)
     all_close(&nums(&v[8]), &want("mean0"), 1e-12, "mean axis 0");
     all_close(&nums(&v[9]), &want("std0"), 1e-12, "std axis 0");
     all_close(&nums(&v[10]), &want("mean1"), 1e-12, "mean axis 1");
-    all_close(&nums(&v[11]), &want("cdist_sqeuclidean"), 1e-12, "cdist sqeuclidean");
-    all_close(&nums(&v[12]), &want("cdist_euclidean"), 1e-12, "cdist euclidean");
-    all_close(&nums(&v[13]), &want("cdist_cityblock"), 1e-12, "cdist cityblock");
+    all_close(
+        &nums(&v[11]),
+        &want("cdist_sqeuclidean"),
+        1e-12,
+        "cdist sqeuclidean",
+    );
+    all_close(
+        &nums(&v[12]),
+        &want("cdist_euclidean"),
+        1e-12,
+        "cdist euclidean",
+    );
+    all_close(
+        &nums(&v[13]),
+        &want("cdist_cityblock"),
+        1e-12,
+        "cdist cityblock",
+    );
     all_close(&nums(&v[14]), &want("cdist_cosine"), 1e-10, "cdist cosine");
     let id = nums(&v[15]);
-    all_close(&id, &[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], 1e-10, "G G⁻¹");
+    all_close(
+        &id,
+        &[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+        1e-10,
+        "G G⁻¹",
+    );
     all_close(&nums(&v[16]), &want("xty"), 1e-12, "y @ X");
 }
 
@@ -180,18 +212,31 @@ let q = ods.head(df, 6)
     all_close(&nums(&v[1]), &want("f1_hood"), 1e-8, "f1 hood");
     all_close(&[num(&v[2])], &want("f1_r2"), 1e-10, "f1 r2");
     // the design's columns, the intercept apart
-    assert_eq!(num(&v[3]) as usize + 1, r["f1_k"].as_u64().unwrap() as usize);
+    assert_eq!(
+        num(&v[3]) as usize + 1,
+        r["f1_k"].as_u64().unwrap() as usize
+    );
     all_close(&nums(&v[4]), &want("f1_fitted"), 1e-8, "f1 fitted");
     all_close(&nums(&v[5]), &want("f1_predict"), 1e-8, "f1 predict");
     all_close(&nums(&v[6]), &want("f2_beta"), 1e-8, "f2 coef");
     all_close(&[num(&v[7])], &want("f2_r2"), 1e-10, "f2 r2");
     let terms = format!("{:?}", v[8]);
-    for t in ["intercept", "x1", "kind_house", "kind_loft", "x1:kind_house", "x1:kind_loft"] {
+    for t in [
+        "intercept",
+        "x1",
+        "kind_house",
+        "kind_loft",
+        "x1:kind_house",
+        "x1:kind_loft",
+    ] {
         assert!(terms.contains(&format!("\"{t}\"")), "{t} in {terms}");
     }
     all_close(&nums(&v[9]), &want("f3_beta"), 1e-8, "f3 coef");
     let terms = format!("{:?}", v[10]);
-    assert!(terms.contains("hood_east") && !terms.contains("intercept"), "{terms}");
+    assert!(
+        terms.contains("hood_east") && !terms.contains("intercept"),
+        "{terms}"
+    );
     assert_eq!(format!("{:?}", v[11]), "String(\"price\")");
     assert_eq!(format!("{:?}", v[12]), "String(\"log(price+10)\")");
 }
@@ -205,11 +250,19 @@ fn olang() -> &'static str {
 }
 
 fn run(code: &str, flags: &[&str]) -> (String, String) {
-    let dir = std::env::temp_dir().join(format!("olang_matrix_formula_{}_{}", std::process::id(), code.len()));
+    let dir = std::env::temp_dir().join(format!(
+        "olang_matrix_formula_{}_{}",
+        std::process::id(),
+        code.len()
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join(format!("p{}.ol", flags.len()));
     std::fs::write(&path, code.replace("FIX", &fixtures())).unwrap();
-    let out = Command::new(olang()).args(flags).arg(&path).output().expect("run olang");
+    let out = Command::new(olang())
+        .args(flags)
+        .arg(&path)
+        .output()
+        .expect("run olang");
     (
         String::from_utf8_lossy(&out.stdout).to_string(),
         String::from_utf8_lossy(&out.stderr).to_string(),

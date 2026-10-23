@@ -40,7 +40,11 @@ fn a_tuple_pattern_matches_a_list_of_its_length_on_every_tier() {
     for flags in TIERS {
         let mut args: Vec<&str> = flags.to_vec();
         args.push("p.ol");
-        let out = Command::new(olang()).args(&args).current_dir(&dir).output().expect("olang");
+        let out = Command::new(olang())
+            .args(&args)
+            .current_dir(&dir)
+            .output()
+            .expect("olang");
         assert_eq!(
             String::from_utf8_lossy(&out.stdout).trim_end(),
             want,
@@ -48,7 +52,15 @@ fn a_tuple_pattern_matches_a_list_of_its_length_on_every_tier() {
             String::from_utf8_lossy(&out.stderr)
         );
     }
-    let check = Command::new(olang()).args(["check", "p.ol"]).current_dir(&dir).output().expect("olang");
-    assert!(check.status.success(), "{}", String::from_utf8_lossy(&check.stdout));
+    let check = Command::new(olang())
+        .args(["check", "p.ol"])
+        .current_dir(&dir)
+        .output()
+        .expect("olang");
+    assert!(
+        check.status.success(),
+        "{}",
+        String::from_utf8_lossy(&check.stdout)
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

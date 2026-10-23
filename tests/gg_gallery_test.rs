@@ -20,7 +20,9 @@ fn with_big_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> 
 fn eval(source: String) -> Result<Value, String> {
     with_big_stack(move || {
         let program = Parser::new().parse(&source).map_err(|e| e.to_string())?;
-        Interpreter::new().eval_program(program).map_err(|e| e.to_string())
+        Interpreter::new()
+            .eval_program(program)
+            .map_err(|e| e.to_string())
     })
 }
 
@@ -29,7 +31,8 @@ fn root() -> PathBuf {
 }
 
 fn gallery() -> Vec<(String, String)> {
-    let src = std::fs::read_to_string(root().join("tests/fixtures/gg/gallery.ol")).expect("gallery");
+    let src =
+        std::fs::read_to_string(root().join("tests/fixtures/gg/gallery.ol")).expect("gallery");
     let program = format!(
         "{}\nfold(gallery(), [], (acc, item) => acc + map([\"light\", \"dark\"], (app) => [item[0] + \"-\" + app, gg.svg(item[1] |> gg.theme(appearance: app))]))\n",
         src
@@ -61,8 +64,14 @@ fn every_gallery_plot_matches_its_golden_svg() {
     assert!(plots.len() >= 50, "{} plots", plots.len());
     let mut differ = Vec::new();
     for (name, svg) in &plots {
-        assert!(svg.starts_with("<svg") && svg.ends_with("</svg>"), "{name} is an svg");
-        assert!(svg.contains("<metadata class=\"olang-chart\">"), "{name} carries its description");
+        assert!(
+            svg.starts_with("<svg") && svg.ends_with("</svg>"),
+            "{name} is an svg"
+        );
+        assert!(
+            svg.contains("<metadata class=\"olang-chart\">"),
+            "{name} carries its description"
+        );
         let path = dir.join(format!("{name}.svg"));
         if bless {
             std::fs::write(&path, svg).expect("write golden");
@@ -98,10 +107,22 @@ let s = unwrap(json.parse(gg.scene(p)))
 #[test]
 fn errors_name_what_is_wrong() {
     for (src, want) in [
-        (r#"gg.plot(f, gg.aes(x: "nope", y: "y")) |> gg.point()"#, "no such column"),
-        (r#"gg.plot(f, gg.aes(x: "x", y: "y")) |> gg.layer("blob")"#, "unknown geom"),
-        (r#"gg.plot(f, gg.aes(x: "g")) |> gg.histogram()"#, "categorical"),
-        (r#"gg.plot(f, gg.aes(x: "x", y: "y")) |> gg.point(color: "notacolour")"#, "unknown colour"),
+        (
+            r#"gg.plot(f, gg.aes(x: "nope", y: "y")) |> gg.point()"#,
+            "no such column",
+        ),
+        (
+            r#"gg.plot(f, gg.aes(x: "x", y: "y")) |> gg.layer("blob")"#,
+            "unknown geom",
+        ),
+        (
+            r#"gg.plot(f, gg.aes(x: "g")) |> gg.histogram()"#,
+            "categorical",
+        ),
+        (
+            r#"gg.plot(f, gg.aes(x: "x", y: "y")) |> gg.point(color: "notacolour")"#,
+            "unknown colour",
+        ),
     ] {
         let program = format!(
             "use gg\nlet f = ods.frame([[\"x\", ods.series([1.0, 2.0])], [\"y\", ods.series([1.0, 2.0])], [\"g\", ods.series([\"a\", \"b\"])]])\ngg.svg({src})\n"

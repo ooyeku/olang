@@ -86,8 +86,14 @@ fn math_functions_are_the_scalar_functions_over_a_column() {
         let i = ods.series([-3, 4])
         typeof(ods.get(ods.abs(i), 0)) == "Int" && typeof(ods.get(ods.exp(i), 0)) == "Float"
     "#);
-    raises("ods.sqrt(ods.series([4.0, -1.0]))", "sqrt: cannot take square root of negative number");
-    raises("ods.logit(ods.series([0.5, 1.0]))", "logit: input must be strictly between 0 and 1");
+    raises(
+        "ods.sqrt(ods.series([4.0, -1.0]))",
+        "sqrt: cannot take square root of negative number",
+    );
+    raises(
+        "ods.logit(ods.series([0.5, 1.0]))",
+        "logit: input must be strictly between 0 and 1",
+    );
     // A null position never raises.
     yes("ods.null_count(ods.ln(ods.series([1.0, ()]))) == 1");
 }
@@ -198,10 +204,18 @@ fn errors_are_raised_by_the_expression_that_causes_them() {
         "let n = ods.series([1.0, 2.0])\nlet z = ods.series([1.0, 0.0])\nlet q = (n + 1.0) / z\n0",
         "Division by zero",
     );
-    raises("let i = ods.series([9223372036854775807])\nlet j = i + 1\n0", "Integer overflow");
+    raises(
+        "let i = ods.series([9223372036854775807])\nlet j = i + 1\n0",
+        "Integer overflow",
+    );
     raises("ods.series([1, 2]) % 0", "Modulo by zero");
-    yes("ods.to_list(ods.series([7, -7]) % 3) == [1, -1] && ods.to_list(ods.series([7.5]) % 2.0) == [1.5]");
-    raises("ods.exp(ods.series([1.0]) + ods.series([1.0, 2.0]))", "length mismatch");
+    yes(
+        "ods.to_list(ods.series([7, -7]) % 3) == [1, -1] && ods.to_list(ods.series([7.5]) % 2.0) == [1.5]",
+    );
+    raises(
+        "ods.exp(ods.series([1.0]) + ods.series([1.0, 2.0]))",
+        "length mismatch",
+    );
 }
 
 #[test]

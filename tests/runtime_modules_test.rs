@@ -472,7 +472,10 @@ println(said(runtime.call_budget(m.pty_path, [bin], 5000)))
 #[test]
 fn a_failed_reload_keeps_the_module_s_imports() {
     let ws = workspace("reload_imports");
-    write(&ws.join("plug/p/helper.ol"), "share fn argv(x) = [\"olang\", x]\n");
+    write(
+        &ws.join("plug/p/helper.ol"),
+        "share fn argv(x) = [\"olang\", x]\n",
+    );
     let good = "use helper { argv }\nfn inner(x) = argv(x)\nshare fn go(x) = inner(x)\n";
     write(&ws.join("plug/p/plugin.ol"), good);
     let host = r#"let m = unwrap(runtime.load_module("plug/p/plugin.ol", #{ "name": "p" }))
@@ -493,7 +496,11 @@ println(if map_get(r, "ok") => show(map_get(r, "value")) else => map_get(r, "err
             .unwrap();
         let stdout = String::from_utf8_lossy(&out.stdout).to_string();
         let lines: Vec<&str> = stdout.lines().collect();
-        assert_eq!(lines.first().copied(), Some("[\"olang\", \"a\"]"), "{flags:?}: {stdout}");
+        assert_eq!(
+            lines.first().copied(),
+            Some("[\"olang\", \"a\"]"),
+            "{flags:?}: {stdout}"
+        );
         assert_eq!(lines.get(1).copied(), Some("false"), "{flags:?}: {stdout}");
         assert_eq!(
             lines.get(2).copied(),

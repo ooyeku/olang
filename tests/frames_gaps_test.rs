@@ -13,7 +13,8 @@ fn olang() -> &'static str {
 }
 
 fn run(code: &str, flags: &[&str], tag: &str) -> (String, String) {
-    let dir = std::env::temp_dir().join(format!("olang_frames_gaps_{}_{}", std::process::id(), tag));
+    let dir =
+        std::env::temp_dir().join(format!("olang_frames_gaps_{}_{}", std::process::id(), tag));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join(format!("p{}.ol", flags.len()));
     std::fs::write(&path, code).unwrap();

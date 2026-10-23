@@ -281,10 +281,7 @@ pub fn field_hook(h: &NativeHandle, name: &str) -> Result<Value, String> {
     let type_name = h.0.type_name();
     if let Some(full) = crate::native_sig::method_target(h.0.module(), type_name, name) {
         let column = match h.0.field(name) {
-            Some(Ok(_)) => format!(
-                " — a column of that name is read as `value[\"{}\"]`",
-                name
-            ),
+            Some(Ok(_)) => format!(" — a column of that name is read as `value[\"{}\"]`", name),
             _ => String::new(),
         };
         return Err(format!(

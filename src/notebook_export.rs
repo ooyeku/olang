@@ -519,7 +519,8 @@ pub fn svg_ok(svg: &str) -> bool {
         }
     }
     let rest = &low[start..];
-    if !(rest.starts_with("<svg") && rest[4..].starts_with(|c: char| c.is_whitespace() || c == '>')) {
+    if !(rest.starts_with("<svg") && rest[4..].starts_with(|c: char| c.is_whitespace() || c == '>'))
+    {
         return false;
     }
     // and closing it
@@ -532,7 +533,10 @@ pub fn svg_ok(svg: &str) -> bool {
     }
     let opened = low
         .match_indices("<svg")
-        .filter(|(i, _)| b.get(i + 4).is_some_and(|&c| ws(c) || c == b'>' || c == b'/'))
+        .filter(|(i, _)| {
+            b.get(i + 4)
+                .is_some_and(|&c| ws(c) || c == b'>' || c == b'/')
+        })
         .count();
     if opened != low.matches("</svg").count() {
         return false;
@@ -556,12 +560,67 @@ pub fn svg_ok(svg: &str) -> bool {
     }
     // a tag that ends the SVG for an HTML parser
     const HTML_TAGS: &[&str] = &[
-        "b", "big", "blockquote", "body", "br", "center", "code", "dd", "div", "dl", "dt", "em",
-        "embed", "h1", "h2", "h3", "h4", "h5", "h6", "head", "hr", "i", "img", "image", "li",
-        "listing", "menu", "meta", "nobr", "ol", "p", "pre", "ruby", "s", "small", "span",
-        "strong", "strike", "sub", "sup", "table", "tt", "u", "ul", "var", "font", "base", "link",
-        "form", "input", "button", "textarea", "select", "video", "audio", "source", "track",
-        "picture", "frame", "frameset", "html",
+        "b",
+        "big",
+        "blockquote",
+        "body",
+        "br",
+        "center",
+        "code",
+        "dd",
+        "div",
+        "dl",
+        "dt",
+        "em",
+        "embed",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "head",
+        "hr",
+        "i",
+        "img",
+        "image",
+        "li",
+        "listing",
+        "menu",
+        "meta",
+        "nobr",
+        "ol",
+        "p",
+        "pre",
+        "ruby",
+        "s",
+        "small",
+        "span",
+        "strong",
+        "strike",
+        "sub",
+        "sup",
+        "table",
+        "tt",
+        "u",
+        "ul",
+        "var",
+        "font",
+        "base",
+        "link",
+        "form",
+        "input",
+        "button",
+        "textarea",
+        "select",
+        "video",
+        "audio",
+        "source",
+        "track",
+        "picture",
+        "frame",
+        "frameset",
+        "html",
     ];
     // `i` walks bytes, so it can stand inside a character (`°`, `é`): a
     // word is ASCII, so where none starts the word is empty — and where
@@ -578,7 +637,12 @@ pub fn svg_ok(svg: &str) -> bool {
         if HTML_TAGS.contains(&w) {
             return false;
         }
-        if w == "style" && low[j..].split('>').next().is_some_and(|t| t.contains("src")) {
+        if w == "style"
+            && low[j..]
+                .split('>')
+                .next()
+                .is_some_and(|t| t.contains("src"))
+        {
             return false;
         }
     }
@@ -594,10 +658,14 @@ pub fn svg_ok(svg: &str) -> bool {
         let eq = skip_ws(i + w.len());
         let assigns = b.get(eq) == Some(&b'=');
         if after_sep && assigns {
-            if w.len() > 2 && w.starts_with("on") && w[2..].bytes().all(|c| c.is_ascii_lowercase()) {
+            if w.len() > 2 && w.starts_with("on") && w[2..].bytes().all(|c| c.is_ascii_lowercase())
+            {
                 return false;
             }
-            if matches!(w, "src" | "srcset" | "poster" | "action" | "formaction" | "background") {
+            if matches!(
+                w,
+                "src" | "srcset" | "poster" | "action" | "formaction" | "background"
+            ) {
                 return false;
             }
         }
@@ -661,8 +729,7 @@ fn value_html(v: &J, page: Option<&J>, as_markdown: bool) -> String {
         }
         return format!(
             "<figure class=\"picture\"><img alt=\"A picture\" src=\"data:image/{};base64,{}\"></figure>",
-            fmt,
-            png
+            fmt, png
         );
     }
     if let Some(path) = v.get("img").and_then(|p| p.as_str())
@@ -1217,7 +1284,10 @@ pub fn blocks(text: &str, doc: &J) -> J {
             .1
             .iter()
             .map(|e| {
-                let reply = values.iter().find(|(x, _)| x.trim() == e.as_str()).map(|(_, r)| r);
+                let reply = values
+                    .iter()
+                    .find(|(x, _)| x.trim() == e.as_str())
+                    .map(|(_, r)| r);
                 match reply {
                     Some(r) if r.get("ok").and_then(|o| o.as_bool()) == Some(true) => {
                         let v = r.get("value").cloned().unwrap_or(J::Null);
@@ -1230,11 +1300,17 @@ pub fn blocks(text: &str, doc: &J) -> J {
             })
             .collect();
         let skipped = chunk.len() - chunk.trim_start_matches('\n').len();
-        at.push((from, json!({ "kind": "prose", "line": from + 1 + skipped, "text": body, "exprs": exprs })));
+        at.push((
+            from,
+            json!({ "kind": "prose", "line": from + 1 + skipped, "text": body, "exprs": exprs }),
+        ));
     }
     for (c, e) in nb.cells.iter().zip(entries) {
         let from = c.fence_line as usize;
-        let to = (c.close_line as usize).saturating_sub(1).min(lines.len()).max(from);
+        let to = (c.close_line as usize)
+            .saturating_sub(1)
+            .min(lines.len())
+            .max(from);
         let mut b = json!({ "kind": "code", "line": from + 1, "name": c.options.name,
             "source": lines[from.min(to)..to].join("\n"), "run": !c.no_run });
         if let Some(e) = e {
@@ -2347,9 +2423,18 @@ mod tests {
         let reply = json!({ "ok": true, "out": "", "value": { "k": "list", "s": "[10.0, 100.0]" },
             "control": { "kind": "brush", "name": "window", "value": { "k": "list", "s": "[10.0, 100.0]" }, "svg": { "text": svg } } });
         let page = output_html(&reply, None, Mode::Export, "c2", false);
-        assert!(page.contains("<div class=\"brush\"") && page.contains("data-x0=\"10\" data-x1=\"100\""), "{}", page);
+        assert!(
+            page.contains("<div class=\"brush\"")
+                && page.contains("data-x0=\"10\" data-x1=\"100\""),
+            "{}",
+            page
+        );
         // the script reads a gg description: the panel pressed in, its scale undone
-        assert!(BRUSH_SCRIPT.contains("d.type === 'gg'") && BRUSH_SCRIPT.contains("usePanel(hit)") && BRUSH_SCRIPT.contains("Math.pow(10, t)"));
+        assert!(
+            BRUSH_SCRIPT.contains("d.type === 'gg'")
+                && BRUSH_SCRIPT.contains("usePanel(hit)")
+                && BRUSH_SCRIPT.contains("Math.pow(10, t)")
+        );
     }
 
     #[test]
@@ -2432,7 +2517,10 @@ mod tests {
         );
         let low = html.to_lowercase();
         // a dropped link's text stays, as text: no attribute names it
-        assert!(!low.contains("href=\"javascript") && !low.contains("href=\"java"), "{html}");
+        assert!(
+            !low.contains("href=\"javascript") && !low.contains("href=\"java"),
+            "{html}"
+        );
         assert!(!html.contains("evil.example"), "{html}");
         assert!(!html.contains("data:") && !html.contains("file:"), "{html}");
         assert!(html.contains(">click<") || html.contains("click"), "{html}");
@@ -2462,7 +2550,10 @@ mod tests {
         ] {
             assert!(!svg_ok(bad), "{bad}");
             let html = chart_html(bad, None, None);
-            assert!(!html.contains("<script") && !html.contains("onload") && !html.contains("<a "), "{html}");
+            assert!(
+                !html.contains("<script") && !html.contains("onload") && !html.contains("<a "),
+                "{html}"
+            );
             assert!(html.contains("data:image/svg+xml;base64,"), "{html}");
         }
         // an output's chart, an exported page's
@@ -2511,7 +2602,10 @@ mod tests {
             "/etc/hosts".to_string(),
         ] {
             let h = shown(&p);
-            assert!(!h.contains(&enc(b"SECRET")) && !h.contains(&enc(b"TEXT")) && !h.contains("base64"), "{p}: {h}");
+            assert!(
+                !h.contains(&enc(b"SECRET")) && !h.contains(&enc(b"TEXT")) && !h.contains("base64"),
+                "{p}: {h}"
+            );
         }
         // with no notebook folder, no file at all
         let v = json!({ "k": "img", "img": nb.join("plot.png").to_string_lossy() });

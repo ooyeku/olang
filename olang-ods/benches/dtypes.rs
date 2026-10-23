@@ -41,9 +41,26 @@ fn pseudo(n: usize, seed: u64) -> impl Iterator<Item = u64> {
 }
 
 const NAMES: [&str; 20] = [
-    "Northgate", "Riverside", "Old Town", "Hillcrest", "Docklands", "Meadowbrook", "Ashford",
-    "Brookside", "Cedar Park", "Elmwood", "Fairview", "Glenmore", "Harbourside", "Ironbridge",
-    "Kingsway", "Lakeview", "Millbrook", "Northfield", "Oakridge", "Parkside",
+    "Northgate",
+    "Riverside",
+    "Old Town",
+    "Hillcrest",
+    "Docklands",
+    "Meadowbrook",
+    "Ashford",
+    "Brookside",
+    "Cedar Park",
+    "Elmwood",
+    "Fairview",
+    "Glenmore",
+    "Harbourside",
+    "Ironbridge",
+    "Kingsway",
+    "Lakeview",
+    "Millbrook",
+    "Northfield",
+    "Oakridge",
+    "Parkside",
 ];
 
 fn main() {
@@ -51,7 +68,10 @@ fn main() {
         .skip(1)
         .find_map(|a| a.parse().ok())
         .unwrap_or(1_000_000);
-    println!("n = {n}; threads {}; milliseconds", rayon::current_num_threads());
+    println!(
+        "n = {n}; threads {}; milliseconds",
+        rayon::current_num_threads()
+    );
     println!("{:<34} {:>9} {:>9}", "kernel", "seq", "par");
 
     // Datetimes over four years from 2020, to the second.
@@ -86,7 +106,11 @@ fn main() {
     );
     row(
         "to_datetime, \"%d/%m/%Y %H:%M\"",
-        time(|| drop(black_box(text::to_datetime(&dmy, Some("%d/%m/%Y %H:%M")).unwrap()))),
+        time(|| {
+            drop(black_box(
+                text::to_datetime(&dmy, Some("%d/%m/%Y %H:%M")).unwrap(),
+            ))
+        }),
         None,
     );
     let part = |t: TOp| {
@@ -115,8 +139,16 @@ fn main() {
             .map(|x| format!(" {} {} ", NAMES[(x % 20) as usize], (x >> 8) % 10_000))
             .collect(),
     );
-    row("lower", time(|| drop(black_box(text::lower(&words).unwrap()))), None);
-    row("upper", time(|| drop(black_box(text::upper(&words).unwrap()))), None);
+    row(
+        "lower",
+        time(|| drop(black_box(text::lower(&words).unwrap()))),
+        None,
+    );
+    row(
+        "upper",
+        time(|| drop(black_box(text::upper(&words).unwrap()))),
+        None,
+    );
     row(
         "trim",
         time(|| drop(black_box(text::trim(&words, true, true).unwrap()))),
@@ -157,7 +189,11 @@ fn main() {
     let fmt = |x: f64| x.to_string();
     row(
         "to_category",
-        time(|| drop(black_box(category::to_category(&hoods, None, &fmt).unwrap()))),
+        time(|| {
+            drop(black_box(
+                category::to_category(&hoods, None, &fmt).unwrap(),
+            ))
+        }),
         None,
     );
     let cat = category::to_category(&hoods, None, &fmt).unwrap();
@@ -205,8 +241,16 @@ fn main() {
     // planned and evaluated each round: a Category's comparison and a
     // text join are computed as the plan is made
     let plan_time = |e: std::sync::Arc<Expr>| {
-        let run = |par: bool| Plan::new(std::slice::from_ref(&e), None).unwrap().eval(par).unwrap();
-        (time(|| drop(black_box(run(false)))), time(|| drop(black_box(run(true)))))
+        let run = |par: bool| {
+            Plan::new(std::slice::from_ref(&e), None)
+                .unwrap()
+                .eval(par)
+                .unwrap()
+        };
+        (
+            time(|| drop(black_box(run(false)))),
+            time(|| drop(black_box(run(true)))),
+        )
     };
     let lit = |t: &str| Expr::lit(olang_ods::Scalar::Str(t.into()));
     for (name, op, level) in [

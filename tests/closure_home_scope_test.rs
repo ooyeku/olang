@@ -118,7 +118,11 @@ println(run_budget(hook))
 "#;
     agrees(
         "paths",
-        &[("main.ol", main), ("lib/runner.ol", RUNNER), ("lib/fmtmod.ol", FMTMOD)],
+        &[
+            ("main.ol", main),
+            ("lib/runner.ol", RUNNER),
+            ("lib/fmtmod.ol", FMTMOD),
+        ],
         r#"["main's routes"]
 ["main's routes"]
 main's routes
@@ -149,7 +153,11 @@ println(run_par(named))
 "#;
     agrees(
         "kinds",
-        &[("main.ol", main), ("lib/runner.ol", RUNNER), ("lib/fmtmod.ol", FMTMOD)],
+        &[
+            ("main.ol", main),
+            ("lib/runner.ol", RUNNER),
+            ("lib/fmtmod.ol", FMTMOD),
+        ],
         r#"["main's label"]
 ["main's helper"]
 ["fmtmod's fmt"]
@@ -179,7 +187,11 @@ println(run_spawn(() => adder()("?")))
 "#;
     agrees(
         "shapes",
-        &[("main.ol", main), ("lib/runner.ol", RUNNER), ("lib/fmtmod.ol", FMTMOD)],
+        &[
+            ("main.ol", main),
+            ("lib/runner.ol", RUNNER),
+            ("lib/fmtmod.ol", FMTMOD),
+        ],
         r#"["a local"]
 ["a parameter"]
 main's routes
@@ -268,7 +280,9 @@ serve(() => routes)
         });
         for _ in 0..3 {
             let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
-            stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
             stream
                 .write_all(b"GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
                 .unwrap();

@@ -83,7 +83,10 @@ fn a_notebook_cell_s_last_statement_is_its_output() {
     )
     .unwrap();
     let lines = olang::notebook::cell_value_lines(&std::fs::read_to_string(&nb).unwrap());
-    assert!(lines.contains(&5) && lines.contains(&13) && lines.contains(&17), "{lines:?}");
+    assert!(
+        lines.contains(&5) && lines.contains(&13) && lines.contains(&17),
+        "{lines:?}"
+    );
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_olang"))
         .args(["check", "--format", "json"])
         .arg(&nb)

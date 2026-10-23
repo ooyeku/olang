@@ -101,7 +101,11 @@ frames()
 "##;
 
 fn run(flags: &[&str]) -> String {
-    let dir = std::env::temp_dir().join(format!("gui-flat-{}-{}", std::process::id(), flags.join("")));
+    let dir = std::env::temp_dir().join(format!(
+        "gui-flat-{}-{}",
+        std::process::id(),
+        flags.join("")
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("flat.ol");
     std::fs::write(&file, PROGRAM).unwrap();
@@ -133,7 +137,11 @@ fn the_flat_calls_answer_alike_on_both_tiers() {
             .to_string()
     };
     // laid out afresh: nothing kept, no shape to compare with
-    assert!(line("one").contains("changed ()") && line("one").ends_with("kept 0"), "{}", line("one"));
+    assert!(
+        line("one").contains("changed ()") && line("one").ends_with("kept 0"),
+        "{}",
+        line("one")
+    );
     // another shape: what has its key, its box, and its index under a
     // parent of the same key keeps its placements — each card's two
     // texts (the cards themselves moved up an index, the root lost a
@@ -153,7 +161,13 @@ fn the_flat_calls_answer_alike_on_both_tiers() {
     assert!(tree.contains("diff 2 out [] removes []"), "{tree}");
     // y kept its parent and moved up an index (only its index: not sent),
     // x changed, z left
-    let moves = tree.lines().find(|l| l.starts_with("moves ")).expect("moves");
-    assert!(moves.contains(r#""moved": #{"r": 1}"#) && moves.contains(r#""idx": #{"y": true}"#), "{moves}");
+    let moves = tree
+        .lines()
+        .find(|l| l.starts_with("moves "))
+        .expect("moves");
+    assert!(
+        moves.contains(r#""moved": #{"r": 1}"#) && moves.contains(r#""idx": #{"y": true}"#),
+        "{moves}"
+    );
     assert!(moves.contains(r#""key": "z""#), "{moves}");
 }

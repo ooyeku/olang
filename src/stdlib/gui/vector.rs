@@ -162,7 +162,11 @@ pub fn fill_mesh(path: &tiny_skia::Path, scale: f32, even_odd: bool) -> Mesh {
             fan.extend_from_slice(&[o, w[0], w[1]]);
         }
     }
-    Mesh { fan, even_odd, segs: Vec::new() }
+    Mesh {
+        fan,
+        even_odd,
+        segs: Vec::new(),
+    }
 }
 
 /// A stroke at `scale`: segments drawn by their distance when its joins
@@ -194,7 +198,12 @@ pub fn stroke_mesh(path: &tiny_skia::Path, scale: f32, st: &StrokeSpec) -> Mesh 
             // width are one step: a join's round end so near a butt or
             // square end would reach past it (tiny-skia strokes the curve)
             if !closed && cap != 1 {
-                while pts.len() > 2 && len([pts[pts.len() - 1][0] - pts[pts.len() - 2][0], pts[pts.len() - 1][1] - pts[pts.len() - 2][1]]) < hw {
+                while pts.len() > 2
+                    && len([
+                        pts[pts.len() - 1][0] - pts[pts.len() - 2][0],
+                        pts[pts.len() - 1][1] - pts[pts.len() - 2][1],
+                    ]) < hw
+                {
                     let n = pts.len();
                     pts.remove(n - 2);
                 }
@@ -211,7 +220,12 @@ pub fn stroke_mesh(path: &tiny_skia::Path, scale: f32, st: &StrokeSpec) -> Mesh 
                 if cap != 0
                     && let Some(p) = pts.first()
                 {
-                    segs.push(Seg { a: *p, b: *p, hw, caps: [cap, cap] });
+                    segs.push(Seg {
+                        a: *p,
+                        b: *p,
+                        hw,
+                        caps: [cap, cap],
+                    });
                 }
                 continue;
             }
@@ -219,10 +233,19 @@ pub fn stroke_mesh(path: &tiny_skia::Path, scale: f32, st: &StrokeSpec) -> Mesh 
             for i in 0..n {
                 let start = if i == 0 && !closed { cap } else { 3 };
                 let end = if i == n - 1 && !closed { cap } else { 3 };
-                segs.push(Seg { a: pts[i], b: pts[i + 1], hw, caps: [start, end] });
+                segs.push(Seg {
+                    a: pts[i],
+                    b: pts[i + 1],
+                    hw,
+                    caps: [start, end],
+                });
             }
         }
-        return Mesh { fan: Vec::new(), even_odd: false, segs };
+        return Mesh {
+            fan: Vec::new(),
+            even_odd: false,
+            segs,
+        };
     }
     let mut plain = st.skia();
     plain.dash = None;
@@ -302,7 +325,10 @@ pub struct Shelves {
 
 impl Shelves {
     pub fn new(side: u32) -> Shelves {
-        Shelves { side: side.max(16), pages: Vec::new() }
+        Shelves {
+            side: side.max(16),
+            pages: Vec::new(),
+        }
     }
 
     /// Room for `w` × `h` (cut to a page): its page and place.
@@ -331,7 +357,10 @@ impl Shelves {
 
     /// Each page's extent used, `(w, h)`.
     pub fn extents(&self) -> Vec<(u32, u32)> {
-        self.pages.iter().map(|p| (p.1.max(1), p.2.max(1))).collect()
+        self.pages
+            .iter()
+            .map(|p| (p.1.max(1), p.2.max(1)))
+            .collect()
     }
 }
 
@@ -349,14 +378,21 @@ mod tests {
         let lines = flatten(&path, 2.0);
         assert_eq!(lines.len(), 1);
         let pts = &lines[0].0;
-        assert!(pts.len() > 8, "a bend this large takes steps: {}", pts.len());
+        assert!(
+            pts.len() > 8,
+            "a bend this large takes steps: {}",
+            pts.len()
+        );
         // every step's middle within the tolerance of the curve
         for w in pts.windows(2) {
             let m = [(w[0][0] + w[1][0]) / 2.0, (w[0][1] + w[1][1]) / 2.0];
             // the curve y(x) at scale 2: x = 200t, y = 2·(200 t (1 - t))
             let t = m[0] / 200.0;
             let y = 400.0 * t * (1.0 - t);
-            assert!((m[1] - y).abs() < 4.0 * TOLERANCE + 0.05, "{m:?} against {y}");
+            assert!(
+                (m[1] - y).abs() < 4.0 * TOLERANCE + 0.05,
+                "{m:?} against {y}"
+            );
         }
     }
 

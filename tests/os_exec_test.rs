@@ -122,14 +122,21 @@ fn a_bare_name_is_never_found_through_paths_empty_or_relative_entries_in_the_chi
     // a trailing colon and "." are the child's folder to execvp: a
     // repository's own program ran when started there with a PATH given
     let dir = planted("exec", "olang-planted-prog");
-    for path in ["/usr/bin:/bin:", ".:/usr/bin", "/usr/bin::/bin", "bin:/usr/bin"] {
+    for path in [
+        "/usr/bin:/bin:",
+        ".:/usr/bin",
+        "/usr/bin::/bin",
+        "bin:/usr/bin",
+    ] {
         let src = format!(
             r#"os.exec(["olang-planted-prog"], #{{ "cwd": "{}", "env": #{{ "PATH": "{}" }} }})"#,
             dir.display(),
             path
         );
         match eval(&src) {
-            Value::Err(ref e) => assert!(e.to_string().contains("No such file"), "{}: {:?}", path, e),
+            Value::Err(ref e) => {
+                assert!(e.to_string().contains("No such file"), "{}: {:?}", path, e)
+            }
             other => panic!("PATH {:?} ran the folder's own program: {:?}", path, other),
         }
     }
@@ -139,12 +146,18 @@ fn a_bare_name_is_never_found_through_paths_empty_or_relative_entries_in_the_chi
         r#"str.trim(unwrap(os.exec(["olang-planted-prog"], #{{ "cwd": "/", "env": #{{ "PATH": "/nowhere:{}" }} }})).stdout)"#,
         dir.display()
     );
-    assert_eq!(eval(&src), Value::String(std::sync::Arc::new("hijacked".to_string())));
+    assert_eq!(
+        eval(&src),
+        Value::String(std::sync::Arc::new("hijacked".to_string()))
+    );
     let src = format!(
         r#"str.trim(unwrap(os.exec(["sh", "-c", "echo $0"], #{{ "cwd": "{}" }})).stdout)"#,
         dir.display()
     );
-    assert_eq!(eval(&src), Value::String(std::sync::Arc::new("sh".to_string())));
+    assert_eq!(
+        eval(&src),
+        Value::String(std::sync::Arc::new("sh".to_string()))
+    );
     // proc.spawn and a pipeline look it up the same way
     let src = format!(
         r#"proc.spawn(["olang-planted-prog"], #{{ "cwd": "{}", "env": #{{ "PATH": "/usr/bin:" }} }})"#,

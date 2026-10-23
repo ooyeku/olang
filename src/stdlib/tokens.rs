@@ -13,11 +13,57 @@ use std::sync::Arc;
 /// Every module name a program may write, on any profile: highlighting
 /// does not depend on which runtime is reading.
 const MODULES: &[&str] = &[
-    "str", "col", "math", "json", "toml", "csv", "re", "dates", "time", "random", "crypto",
-    "base64", "bytes", "compress", "asset", "fs", "os", "http", "db", "testing", "ods", "stats",
-    "plot", "learn", "mat", "cell", "chan", "task", "proc", "pty", "vt", "tty", "gui", "caps",
-    "meta", "bigint", "collections", "runtime", "dom", "vec", "md", "gg", "cli", "term", "ui",
-    "viz", "dash", "colx", "mathx", "ml", "web",
+    "str",
+    "col",
+    "math",
+    "json",
+    "toml",
+    "csv",
+    "re",
+    "dates",
+    "time",
+    "random",
+    "crypto",
+    "base64",
+    "bytes",
+    "compress",
+    "asset",
+    "fs",
+    "os",
+    "http",
+    "db",
+    "testing",
+    "ods",
+    "stats",
+    "plot",
+    "learn",
+    "mat",
+    "cell",
+    "chan",
+    "task",
+    "proc",
+    "pty",
+    "vt",
+    "tty",
+    "gui",
+    "caps",
+    "meta",
+    "bigint",
+    "collections",
+    "runtime",
+    "dom",
+    "vec",
+    "md",
+    "gg",
+    "cli",
+    "term",
+    "ui",
+    "viz",
+    "dash",
+    "colx",
+    "mathx",
+    "ml",
+    "web",
 ];
 
 /// One token: its kind, its byte range in the source.
@@ -64,18 +110,30 @@ pub fn tokens(src: &str) -> Vec<Tok> {
         while i < to {
             let c = src[i..].chars().next().expect("in range");
             if let Some(&b) = marks.get(&i) {
-                out.push(Tok { kind: "interpolation", a: i, b });
+                out.push(Tok {
+                    kind: "interpolation",
+                    a: i,
+                    b,
+                });
                 i = b;
             } else if c.is_whitespace() {
                 let end = src[i..to]
                     .find(|d: char| !d.is_whitespace())
                     .map(|k| i + k)
                     .unwrap_or(to);
-                out.push(Tok { kind: "space", a: i, b: end });
+                out.push(Tok {
+                    kind: "space",
+                    a: i,
+                    b: end,
+                });
                 i = end;
             } else {
                 let w = c.len_utf8();
-                out.push(Tok { kind: "punct", a: i, b: i + w });
+                out.push(Tok {
+                    kind: "punct",
+                    a: i,
+                    b: i + w,
+                });
                 i += w;
             }
         }
@@ -103,12 +161,19 @@ pub fn tokens(src: &str) -> Vec<Tok> {
             && n.a == t.b
             && !matches!(n.kind, "space" | "punct" | "string" | "number" | "comment")
         {
-            merged.push(Tok { kind: "macro", a: t.a, b: n.b });
+            merged.push(Tok {
+                kind: "macro",
+                a: t.a,
+                b: n.b,
+            });
             k += 2;
             continue;
         }
         if &src[t.a..t.b] == "@" {
-            merged.push(Tok { kind: "operator", ..t });
+            merged.push(Tok {
+                kind: "operator",
+                ..t
+            });
         } else {
             merged.push(t);
         }
@@ -223,7 +288,9 @@ mod tests {
 
     #[test]
     fn kinds_by_meaning() {
-        let k = kinds("use web { el }\nfn add(a) = str.upper(`v ${a}`) + 1.5 // n\nlet Ok = true\n@trace(x)\nPoint { y: MAX }");
+        let k = kinds(
+            "use web { el }\nfn add(a) = str.upper(`v ${a}`) + 1.5 // n\nlet Ok = true\n@trace(x)\nPoint { y: MAX }",
+        );
         for want in [
             ("fn", "keyword"),
             ("add", "function"),
@@ -241,7 +308,10 @@ mod tests {
             ("Point", "type"),
             ("MAX", "constant"),
         ] {
-            assert!(k.contains(&(want.0.to_string(), want.1)), "{want:?} in {k:?}");
+            assert!(
+                k.contains(&(want.0.to_string(), want.1)),
+                "{want:?} in {k:?}"
+            );
         }
     }
 
@@ -267,9 +337,9 @@ mod tests {
                    let g = spawn work(1)\n";
         let k = kinds(src);
         for w in [
-            "use", "as", "share", "fn", "meta", "type", "struct", "enum", "trait", "impl",
-            "for", "error", "test", "let", "mut", "if", "else", "in", "par", "continue",
-            "break", "while", "loop", "return", "match", "spawn",
+            "use", "as", "share", "fn", "meta", "type", "struct", "enum", "trait", "impl", "for",
+            "error", "test", "let", "mut", "if", "else", "in", "par", "continue", "break", "while",
+            "loop", "return", "match", "spawn",
         ] {
             assert!(
                 k.iter().any(|(t, kind)| t == w && *kind == "keyword"),
@@ -285,7 +355,10 @@ mod tests {
             assert_eq!(k[0], (w.to_string(), "keyword"), "{w}");
             // a member and a key are not the reserved word
             let k = kinds(&format!("http.{w}()\n#{{ {w}: 1 }}"));
-            assert!(!k.iter().any(|(t, kind)| t == w && *kind == "keyword"), "{w}: {k:?}");
+            assert!(
+                !k.iter().any(|(t, kind)| t == w && *kind == "keyword"),
+                "{w}: {k:?}"
+            );
         }
         for (src, word) in [
             ("let spawn = 1\nspawn + 1", "spawn"),
@@ -296,9 +369,16 @@ mod tests {
             ("let as = 1", "as"),
         ] {
             let k = kinds(src);
-            assert!(!k.iter().any(|(t, kind)| t == word && *kind == "keyword"), "{src}: {k:?}");
+            assert!(
+                !k.iter().any(|(t, kind)| t == word && *kind == "keyword"),
+                "{src}: {k:?}"
+            );
         }
-        assert!(kinds("true false").iter().all(|(_, kind)| *kind == "constant"));
+        assert!(
+            kinds("true false")
+                .iter()
+                .all(|(_, kind)| *kind == "constant")
+        );
     }
 
     #[test]

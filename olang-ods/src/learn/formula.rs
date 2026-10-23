@@ -44,7 +44,10 @@ use std::sync::Arc;
 // ---------------------------------------------------------------------
 
 fn at(src: &str, (start, end): (usize, usize), msg: impl Into<String>) -> crate::OdsError {
-    let width = src[start.min(src.len())..end.min(src.len())].chars().count().max(1);
+    let width = src[start.min(src.len())..end.min(src.len())]
+        .chars()
+        .count()
+        .max(1);
     let pad = src[..start.min(src.len())].chars().count();
     bad(format!(
         "learn: in the formula, {}:\n    {}\n    {}{}",
@@ -93,7 +96,8 @@ fn lex(src: &str) -> Result<Vec<Token>> {
                 tok: Tok::Ident(src[start..i].to_string()),
                 span: (start, i),
             });
-        } else if c.is_ascii_digit() || (c == b'.' && i + 1 < b.len() && b[i + 1].is_ascii_digit()) {
+        } else if c.is_ascii_digit() || (c == b'.' && i + 1 < b.len() && b[i + 1].is_ascii_digit())
+        {
             while i < b.len() && (b[i].is_ascii_digit() || b[i] == b'.') {
                 i += 1;
             }
@@ -201,10 +205,17 @@ impl Arith {
                     at(
                         src,
                         *span,
-                        format!("no column '{}' (the Frame has {})", name, frame.names().join(", ")),
+                        format!(
+                            "no column '{}' (the Frame has {})",
+                            name,
+                            frame.names().join(", ")
+                        ),
                     )
                 })?;
-                if !matches!(s, Series::F64 { .. } | Series::I64 { .. } | Series::Bool { .. }) {
+                if !matches!(
+                    s,
+                    Series::F64 { .. } | Series::I64 { .. } | Series::Bool { .. }
+                ) {
                     return Err(at(
                         src,
                         *span,
@@ -214,7 +225,9 @@ impl Arith {
                 let s = match s {
                     Series::Bool { .. } => {
                         let (v, ok) = numeric(s, name)?;
-                        Series::from_f64_options(v.into_iter().zip(ok).map(|(x, o)| o.then_some(x)).collect())
+                        Series::from_f64_options(
+                            v.into_iter().zip(ok).map(|(x, o)| o.then_some(x)).collect(),
+                        )
                     }
                     _ => s.clone(),
                 };
@@ -222,7 +235,9 @@ impl Arith {
             }
             Arith::Num(v) => fuse::Expr::lit(crate::Scalar::F64(*v)),
             Arith::Neg(a) => fuse::Expr::op(Op::Neg, vec![a.compile(frame, src)?]),
-            Arith::Bin(op, a, b) => fuse::Expr::bin(*op, a.compile(frame, src)?, b.compile(frame, src)?),
+            Arith::Bin(op, a, b) => {
+                fuse::Expr::bin(*op, a.compile(frame, src)?, b.compile(frame, src)?)
+            }
             Arith::Call(m, a) => fuse::Expr::op(Op::Math(*m), vec![a.compile(frame, src)?]),
         })
     }
@@ -321,7 +336,8 @@ impl Terms {
     }
 
     fn minus(mut self, other: Terms) -> Terms {
-        self.terms.retain(|t| !other.terms.iter().any(|u| same_term(t, u)));
+        self.terms
+            .retain(|t| !other.terms.iter().any(|u| same_term(t, u)));
         match other.intercept {
             Some(true) => self.intercept = Some(false),
             Some(false) => self.intercept = Some(true),
@@ -342,7 +358,11 @@ impl Terms {
             }
         }
         let whole = Terms {
-            terms: if all.is_empty() { Vec::new() } else { vec![all] },
+            terms: if all.is_empty() {
+                Vec::new()
+            } else {
+                vec![all]
+            },
             intercept: None,
         };
         let inner = whole.colon(other);
@@ -465,7 +485,11 @@ impl<'a> Parser<'a> {
                 return Err(at(
                     self.src,
                     op.span,
-                    if star { "`*` joins terms, not 0 or 1" } else { "`/` nests terms, not 0 or 1" },
+                    if star {
+                        "`*` joins terms, not 0 or 1"
+                    } else {
+                        "`/` nests terms, not 0 or 1"
+                    },
                 ));
             }
             if star {
@@ -695,7 +719,10 @@ impl<'a> Parser<'a> {
                     return Err(at(
                         self.src,
                         t.span,
-                        format!("'{}' is not a math function (log, exp, sqrt, abs, sin, …)", n),
+                        format!(
+                            "'{}' is not a math function (log, exp, sqrt, abs, sin, …)",
+                            n
+                        ),
                     ));
                 };
                 self.next();
@@ -705,7 +732,11 @@ impl<'a> Parser<'a> {
             }
             Tok::Ident(n) => Ok(Arith::Col(n.clone(), t.span)),
             Tok::End => Err(at(self.src, t.span, "the expression stops short here")),
-            _ => Err(at(self.src, t.span, "expected a number, a column or `(` here")),
+            _ => Err(at(
+                self.src,
+                t.span,
+                "expected a number, a column or `(` here",
+            )),
         }
     }
 }
@@ -726,11 +757,19 @@ impl Formula {
         };
         if p.is("~") {
             let t = p.peek().clone();
-            return Err(at(src, t.span, "the response (the column to predict) goes before `~`"));
+            return Err(at(
+                src,
+                t.span,
+                "the response (the column to predict) goes before `~`",
+            ));
         }
         let response = p.factor()?;
         if let FactorKind::Categorical(_) = response.kind {
-            return Err(at(src, response.span, "the response is a column or an expression, not C(…)"));
+            return Err(at(
+                src,
+                response.span,
+                "the response is a column or an expression, not C(…)",
+            ));
         }
         p.expect("~", "`~` after the response")?;
         if matches!(p.peek().tok, Tok::End) {
@@ -788,7 +827,11 @@ fn response_series(r: &FactorSpec, src: &str, frame: &Frame, par: bool) -> Resul
             at(
                 src,
                 r.span,
-                format!("no column '{}' (the Frame has {})", c, frame.names().join(", ")),
+                format!(
+                    "no column '{}' (the Frame has {})",
+                    c,
+                    frame.names().join(", ")
+                ),
             )
         }),
         FactorKind::Arith(a) => {
@@ -855,8 +898,10 @@ impl Levels {
             Series::Cat { levels, .. } => Levels::Text(levels.iter().map(str::to_string).collect()),
             Series::Str { .. } => Levels::Text(super::data::levels_of(s)),
             Series::I64 { values, .. } => {
-                let set: std::collections::BTreeSet<i64> =
-                    (0..s.len()).filter(|&i| is_valid(s, i)).map(|i| values[i]).collect();
+                let set: std::collections::BTreeSet<i64> = (0..s.len())
+                    .filter(|&i| is_valid(s, i))
+                    .map(|i| values[i])
+                    .collect();
                 Levels::Int(set.into_iter().collect())
             }
             Series::Bool { values, .. } => {
@@ -866,7 +911,12 @@ impl Levels {
                         seen[values[i] as usize] = true;
                     }
                 }
-                Levels::Bool([false, true].into_iter().filter(|b| seen[*b as usize]).collect())
+                Levels::Bool(
+                    [false, true]
+                        .into_iter()
+                        .filter(|b| seen[*b as usize])
+                        .collect(),
+                )
             }
             other => {
                 return Err(at(
@@ -899,8 +949,11 @@ impl Levels {
                         s.dtype()
                     )));
                 };
-                let index: HashMap<&str, usize> =
-                    levels.iter().enumerate().map(|(i, l)| (l.as_str(), i)).collect();
+                let index: HashMap<&str, usize> = levels
+                    .iter()
+                    .enumerate()
+                    .map(|(i, l)| (l.as_str(), i))
+                    .collect();
                 for i in 0..n {
                     if valid[i]
                         && let Some(&p) = index.get(sc.get(i))
@@ -1037,7 +1090,13 @@ impl TermCode {
 
     /// The term's columns over `frame`, appended to `cols`; rows a value
     /// is missing from are marked invalid.
-    pub fn encode(&self, frame: &Frame, cols: &mut Vec<Vec<f64>>, valid: &mut [bool], par: bool) -> Result<()> {
+    pub fn encode(
+        &self,
+        frame: &Frame,
+        cols: &mut Vec<Vec<f64>>,
+        valid: &mut [bool],
+        par: bool,
+    ) -> Result<()> {
         let n = frame.n_rows();
         // The numeric part: the product of the numeric factors.
         let mut prod: Option<Vec<f64>> = None;
@@ -1139,7 +1198,11 @@ pub fn code(f: &Formula, frame: &Frame) -> Result<(Vec<TermCode>, Response)> {
                 at(
                     &f.text,
                     spec.span,
-                    format!("no column '{}' (the Frame has {})", c, frame.names().join(", ")),
+                    format!(
+                        "no column '{}' (the Frame has {})",
+                        c,
+                        frame.names().join(", ")
+                    ),
                 )
             })
         };
@@ -1200,7 +1263,10 @@ pub fn code(f: &Formula, frame: &Frame) -> Result<(Vec<TermCode>, Response)> {
         return Err(at(
             &f.text,
             f.response.span,
-            format!("the response '{}' is also on the right of `~`", f.response.label),
+            format!(
+                "the response '{}' is also on the right of `~`",
+                f.response.label
+            ),
         ));
     }
     // What the model spans so far: (numeric factors, categorical factors)
@@ -1229,8 +1295,7 @@ pub fn code(f: &Formula, frame: &Frame) -> Result<(Vec<TermCode>, Response)> {
         masks.sort_by_key(|m| (m.count_ones(), *m));
         let spanned = |mask: u32| {
             covered.iter().any(|(n, c)| {
-                *n == nums_ix
-                    && (0..k).all(|b| mask & (1 << b) == 0 || c.contains(&cats_ix[b]))
+                *n == nums_ix && (0..k).all(|b| mask & (1 << b) == 0 || c.contains(&cats_ix[b]))
             })
         };
         let needed: Vec<u32> = masks.iter().copied().filter(|&m| !spanned(m)).collect();
@@ -1295,7 +1360,10 @@ pub fn code(f: &Formula, frame: &Frame) -> Result<(Vec<TermCode>, Response)> {
             return Err(at(
                 &f.text,
                 f.factors[term[0]].span,
-                format!("the term {} adds nothing the terms before it do not", code.label),
+                format!(
+                    "the term {} adds nothing the terms before it do not",
+                    code.label
+                ),
             ));
         }
         covered.push((nums_ix, cats_ix));
@@ -1317,8 +1385,14 @@ mod tests {
 
     fn frame() -> Frame {
         Frame::new(vec![
-            ("y".into(), Series::from_f64(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0])),
-            ("x".into(), Series::from_f64(vec![1.0, 2.0, 3.0, 4.0, 5.0, 7.0])),
+            (
+                "y".into(),
+                Series::from_f64(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]),
+            ),
+            (
+                "x".into(),
+                Series::from_f64(vec![1.0, 2.0, 3.0, 4.0, 5.0, 7.0]),
+            ),
             (
                 "g".into(),
                 Series::from_str_values(["a", "b", "c", "a", "b", "c"].map(String::from).to_vec()),
@@ -1347,14 +1421,26 @@ mod tests {
         // a numeric factor in an interaction without its main effect
         assert_eq!(features("y ~ x:g"), vec!["x:g_a", "x:g_b", "x:g_c"]);
         assert_eq!(features("y ~ (x + I(x^2)):C(h)").len(), 4);
-        assert_eq!(features("y ~ log(x) + I(x * 2 - 1)"), vec!["log(x)", "I(x*2-1)"]);
+        assert_eq!(
+            features("y ~ log(x) + I(x * 2 - 1)"),
+            vec!["log(x)", "I(x*2-1)"]
+        );
         // nesting: g / x is g + g:x (x's slope within each g)
         assert_eq!(features("y ~ g / x"), features("y ~ g + g:x"));
-        assert_eq!(features("y ~ (g + C(h)) / x"), features("y ~ g + C(h) + g:C(h):x"));
+        assert_eq!(
+            features("y ~ (g + C(h)) / x"),
+            features("y ~ g + C(h) + g:C(h):x")
+        );
         // powers: every interaction up to the order
-        assert_eq!(features("y ~ (x + g + C(h))^2"), features("y ~ x + g + C(h) + x:g + x:C(h) + g:C(h)"));
+        assert_eq!(
+            features("y ~ (x + g + C(h))^2"),
+            features("y ~ x + g + C(h) + x:g + x:C(h) + g:C(h)")
+        );
         assert_eq!(features("y ~ (x + g)**2"), features("y ~ x * g"));
-        assert_eq!(features("y ~ (x + g + C(h))^3"), features("y ~ x * g * C(h)"));
+        assert_eq!(
+            features("y ~ (x + g + C(h))^3"),
+            features("y ~ x * g * C(h)")
+        );
     }
 
     #[test]
@@ -1363,13 +1449,21 @@ mod tests {
         assert!(e.contains("missing"), "{e}");
         let f = Formula::parse("y ~ x + sqf").unwrap();
         let e = code(&f, &frame()).unwrap_err().to_string();
-        assert!(e.contains("no column 'sqf'") && e.contains("            ^^^"), "{e}");
+        assert!(
+            e.contains("no column 'sqf'") && e.contains("            ^^^"),
+            "{e}"
+        );
         let e = Formula::parse("y ~ (x + g)^1.5").unwrap_err().to_string();
         assert!(e.contains("whole number"), "{e}");
         let e = Formula::parse("y ~ foo(x)").unwrap_err().to_string();
         assert!(e.contains("'foo' is not a formula function"), "{e}");
         let f = Formula::parse("y ~ y + x").unwrap();
-        assert!(code(&f, &frame()).unwrap_err().to_string().contains("also on the right"));
+        assert!(
+            code(&f, &frame())
+                .unwrap_err()
+                .to_string()
+                .contains("also on the right")
+        );
     }
 
     #[test]
@@ -1378,7 +1472,9 @@ mod tests {
         let (terms, _) = code(&f, &frame()).unwrap();
         let mut cols = Vec::new();
         let mut valid = vec![true; 6];
-        terms[0].encode(&frame(), &mut cols, &mut valid, false).unwrap();
+        terms[0]
+            .encode(&frame(), &mut cols, &mut valid, false)
+            .unwrap();
         assert_eq!(cols.len(), 5);
         // with the intercept, the columns span the six cells: full rank
         let mut x = vec![vec![1.0; 6]];

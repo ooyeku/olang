@@ -161,7 +161,13 @@ impl Aes {
     pub fn scaled(self) -> bool {
         matches!(
             self,
-            Aes::Color | Aes::Fill | Aes::Size | Aes::Shape | Aes::Alpha | Aes::Linetype | Aes::Linewidth
+            Aes::Color
+                | Aes::Fill
+                | Aes::Size
+                | Aes::Shape
+                | Aes::Alpha
+                | Aes::Linetype
+                | Aes::Linewidth
         )
     }
 }

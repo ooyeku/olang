@@ -509,7 +509,10 @@ fn prop_z_test(args: &[Value]) -> Result<Value, String> {
     let alt = alternative(func, args.get(3))?;
     let level = num_or(func, args, 4, 0.95)?;
     let r = stats::prop_ztest(&count, &nobs, value, alt, level).map_err(e)?;
-    let mut entries = vec![("z", Value::Float(r.z)), ("p_value", Value::Float(r.p_value))];
+    let mut entries = vec![
+        ("z", Value::Float(r.z)),
+        ("p_value", Value::Float(r.p_value)),
+    ];
     if count.len() == 2 {
         entries.push(("prop_a", Value::Float(r.p1)));
         entries.push(("prop_b", Value::Float(r.p2)));

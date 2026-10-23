@@ -1712,15 +1712,28 @@ fn temp_folder(name: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
 }
 
 /// Each file's edits of a rename's answer, as `(line, character)` starts.
-fn edits_by_file(m: &serde_json::Value, dir: &std::path::Path) -> std::collections::BTreeMap<String, Vec<(u64, u64)>> {
+fn edits_by_file(
+    m: &serde_json::Value,
+    dir: &std::path::Path,
+) -> std::collections::BTreeMap<String, Vec<(u64, u64)>> {
     let mut out = std::collections::BTreeMap::new();
-    for (uri, edits) in m["result"]["changes"].as_object().unwrap_or_else(|| panic!("{m}")) {
-        let rel = uri.trim_start_matches(&format!("file://{}/", dir.display())).to_string();
+    for (uri, edits) in m["result"]["changes"]
+        .as_object()
+        .unwrap_or_else(|| panic!("{m}"))
+    {
+        let rel = uri
+            .trim_start_matches(&format!("file://{}/", dir.display()))
+            .to_string();
         let mut at: Vec<(u64, u64)> = edits
             .as_array()
             .unwrap()
             .iter()
-            .map(|e| (e["range"]["start"]["line"].as_u64().unwrap(), e["range"]["start"]["character"].as_u64().unwrap()))
+            .map(|e| {
+                (
+                    e["range"]["start"]["line"].as_u64().unwrap(),
+                    e["range"]["start"]["character"].as_u64().unwrap(),
+                )
+            })
             .collect();
         at.sort();
         out.insert(rel, at);
@@ -1735,17 +1748,33 @@ fn a_shared_name_is_renamed_in_every_file_that_imports_it() {
     let dir = temp_folder(
         "rename-across",
         &[
-            ("olang.toml", "[package]\nname = \"x\"\nversion = \"0.1.0\"\n"),
-            ("lib/util.ol", "share fn twice(x) = x * 2\n\nfn quad(x) = twice(twice(x))\n"),
-            ("main.ol", "use lib.util { twice }\n\nprintln(twice(2))\nlet y = util.twice(3) // twice\nlet s = \"twice\"\n"),
-            ("other.ol", "use lib.util { twice as dbl }\n\nprintln(dbl(1))\n"),
+            (
+                "olang.toml",
+                "[package]\nname = \"x\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "lib/util.ol",
+                "share fn twice(x) = x * 2\n\nfn quad(x) = twice(twice(x))\n",
+            ),
+            (
+                "main.ol",
+                "use lib.util { twice }\n\nprintln(twice(2))\nlet y = util.twice(3) // twice\nlet s = \"twice\"\n",
+            ),
+            (
+                "other.ol",
+                "use lib.util { twice as dbl }\n\nprintln(dbl(1))\n",
+            ),
             ("alone.ol", "fn twice(x) = x + x\n\nprintln(twice(4))\n"),
         ],
     );
     let util_uri = format!("file://{}/lib/util.ol", dir.display());
     let main_uri = format!("file://{}/main.ol", dir.display());
     let mut c = client_in(&dir);
-    let _ = open_doc(&mut c, &util_uri, &std::fs::read_to_string(dir.join("lib/util.ol")).unwrap());
+    let _ = open_doc(
+        &mut c,
+        &util_uri,
+        &std::fs::read_to_string(dir.join("lib/util.ol")).unwrap(),
+    );
     c.send(&serde_json::json!({
         "jsonrpc":"2.0","id":5,"method":"textDocument/rename","params":{
             "textDocument":{"uri":util_uri},"position":{"line":0,"character":10},"newName":"double"}
@@ -1788,30 +1817,53 @@ fn a_module_saved_rechecks_the_open_files_that_import_it() {
         "save-recheck",
         &[
             ("a.ol", "share fn helper(x: Int) -> Int = x + 1\n"),
-            ("b.ol", "use a { helper }\n\nlet s: String = helper(3)\nprintln(s)\n"),
+            (
+                "b.ol",
+                "use a { helper }\n\nlet s: String = helper(3)\nprintln(s)\n",
+            ),
         ],
     );
     let a_uri = format!("file://{}/a.ol", dir.display());
     let b_uri = format!("file://{}/b.ol", dir.display());
     let mut c = client_in(&dir);
     let _ = open_doc(&mut c, &a_uri, "share fn helper(x: Int) -> Int = x + 1\n");
-    let b = open_doc(&mut c, &b_uri, &std::fs::read_to_string(dir.join("b.ol")).unwrap());
-    assert!(diagnostics_of(&b).unwrap().iter().any(|d| d["severity"] == 1), "{b}");
+    let b = open_doc(
+        &mut c,
+        &b_uri,
+        &std::fs::read_to_string(dir.join("b.ol")).unwrap(),
+    );
+    assert!(
+        diagnostics_of(&b)
+            .unwrap()
+            .iter()
+            .any(|d| d["severity"] == 1),
+        "{b}"
+    );
     // the module fixed and saved: the importer's problem goes, unedited
     let fixed = "share fn helper(x: Int) -> String = to_string(x)\n";
     std::fs::write(dir.join("a.ol"), fixed).unwrap();
-    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didChange","params":{
-        "textDocument":{"uri":a_uri,"version":2},"contentChanges":[{"text":fixed}]}}));
+    c.send(
+        &serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didChange","params":{
+        "textDocument":{"uri":a_uri,"version":2},"contentChanges":[{"text":fixed}]}}),
+    );
     c.send(&serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didSave","params":{"textDocument":{"uri":a_uri}}}));
     let b2 = c.recv_until(|m| diagnostics_of(m).is_some() && m["params"]["uri"] == b_uri);
-    assert!(!diagnostics_of(&b2).unwrap().iter().any(|d| d["severity"] == 1), "{b2}");
+    assert!(
+        !diagnostics_of(&b2)
+            .unwrap()
+            .iter()
+            .any(|d| d["severity"] == 1),
+        "{b2}"
+    );
     let _ = c.child.kill();
     let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn a_comment_completes_nothing_and_a_large_file_is_checked_in_linear_time() {
-    let mut text: String = (0..40_000).map(|i| format!("fn f{i}(x: Int) -> Int = x + {i}\n")).collect();
+    let mut text: String = (0..40_000)
+        .map(|i| format!("fn f{i}(x: Int) -> Int = x + {i}\n"))
+        .collect();
     text.push_str("let total = f1(2) // to\n");
     let dir = temp_folder("big", &[("big.ol", &text)]);
     let uri = format!("file://{}/big.ol", dir.display());
@@ -1821,7 +1873,11 @@ fn a_comment_completes_nothing_and_a_large_file_is_checked_in_linear_time() {
     let t0 = std::time::Instant::now();
     let m = open_doc(&mut c, &uri, &text);
     assert_eq!(diagnostics_of(&m).unwrap().len(), 40_000);
-    assert!(t0.elapsed() < std::time::Duration::from_secs(8), "{:?}", t0.elapsed());
+    assert!(
+        t0.elapsed() < std::time::Duration::from_secs(8),
+        "{:?}",
+        t0.elapsed()
+    );
     c.send(&serde_json::json!({
         "jsonrpc":"2.0","id":9,"method":"textDocument/completion","params":{
             "textDocument":{"uri":uri},"position":{"line":40000,"character":23}}
@@ -1865,10 +1921,19 @@ fn native_methods_and_names_complete() {
         c.recv_until(|m| m["id"] == id)
     };
     let series = labels(&complete(&mut c, 2, 2, 12));
-    assert!(series.contains(&"rolling".to_string()) && series.contains(&"fill_null".to_string()), "{series:?}");
-    assert!(!series.contains(&"sort_by".to_string()), "a Frame verb is no Series method");
+    assert!(
+        series.contains(&"rolling".to_string()) && series.contains(&"fill_null".to_string()),
+        "{series:?}"
+    );
+    assert!(
+        !series.contains(&"sort_by".to_string()),
+        "a Frame verb is no Series method"
+    );
     let frame = labels(&complete(&mut c, 3, 3, 10));
-    assert!(frame.contains(&"sort_by".to_string()) && frame.contains(&"price".to_string()), "{frame:?}");
+    assert!(
+        frame.contains(&"sort_by".to_string()) && frame.contains(&"price".to_string()),
+        "{frame:?}"
+    );
     let names = labels(&complete(&mut c, 4, 4, 23));
     assert_eq!(names[..4], ["test:", "stratify:", "shuffle:", "seed:"]);
     c.send(
@@ -1876,7 +1941,11 @@ fn native_methods_and_names_complete() {
         "textDocument":{"uri":uri},"position":{"line":5,"character":21}}}),
     );
     let r = c.recv_until(|m| m["id"] == 5);
-    assert_eq!(r["result"]["signatures"][0]["label"], ".rolling(window, agg, center = false, min_periods?, exact = false)", "{r}");
+    assert_eq!(
+        r["result"]["signatures"][0]["label"],
+        ".rolling(window, agg, center = false, min_periods?, exact = false)",
+        "{r}"
+    );
     assert_eq!(r["result"]["activeParameter"], 1);
     c.send(&serde_json::json!({"jsonrpc":"2.0","id":9,"method":"shutdown","params":null}));
     c.recv_until(|m| m["id"] == 9);

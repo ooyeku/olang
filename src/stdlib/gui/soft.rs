@@ -95,9 +95,14 @@ impl Retained {
                         self.scratch = Pixmap::new(w, h);
                     }
                     if let Some(sc) = self.scratch.as_mut() {
-                        let c = tiny_skia::Color::from_rgba8(dl.clear[0], dl.clear[1], dl.clear[2], dl.clear[3])
-                            .premultiply()
-                            .to_color_u8();
+                        let c = tiny_skia::Color::from_rgba8(
+                            dl.clear[0],
+                            dl.clear[1],
+                            dl.clear[2],
+                            dl.clear[3],
+                        )
+                        .premultiply()
+                        .to_color_u8();
                         let px = [c.red(), c.green(), c.blue(), c.alpha()];
                         let pw = w as usize;
                         let data = sc.data_mut();
@@ -203,7 +208,11 @@ fn items(dl: &DisplayList) -> Vec<Item> {
                     hs = damage::mix(hs, u32::from_le_bytes(*fill) as u64);
                     hs = damage::mix(hs, u32::from_le_bytes(*border) as u64);
                     hs = damage::mix(hs, *continuous as u64);
-                    let k = if *continuous { damage::CONTINUOUS_EXTENT } else { 1.0 };
+                    let k = if *continuous {
+                        damage::CONTINUOUS_EXTENT
+                    } else {
+                        1.0
+                    };
                     let r = radii.iter().fold(0.0f32, |a, v| a.max(*v)) * k;
                     let r = r.max(*border_width);
                     damage::bounds(*x, *y, *w, *h, 1.0, clip, ww, wh).map(|b| {
@@ -254,7 +263,10 @@ fn items(dl: &DisplayList) -> Vec<Item> {
                 } else {
                     let mut hs = damage::mix_f32s(7, &[*w, *h]);
                     hs = damage::mix_f32s(hs, radii);
-                    hs = damage::mix(hs, u32::from_le_bytes(*fallback) as u64 ^ (*continuous as u64) << 40);
+                    hs = damage::mix(
+                        hs,
+                        u32::from_le_bytes(*fallback) as u64 ^ (*continuous as u64) << 40,
+                    );
                     damage::bounds(*x, *y, *w, *h, 1.0, clip, ww, wh).map(|b| {
                         Item::new(b, hs, *x, *y, *clip)
                             .pinned(damage::crosses_window(*x, *y, *w, *h, 0.0, ww, wh))
@@ -317,7 +329,10 @@ fn items(dl: &DisplayList) -> Vec<Item> {
                         let gy = *y as i32 - img.top;
                         let mut k = rustc_hash::FxHasher::default();
                         key.hash(&mut k);
-                        let hs = damage::mix(damage::mix(3, k.finish()), u32::from_le_bytes(*color) as u64);
+                        let hs = damage::mix(
+                            damage::mix(3, k.finish()),
+                            u32::from_le_bytes(*color) as u64,
+                        );
                         damage::bounds(
                             gx as f32,
                             gy as f32,
@@ -409,7 +424,16 @@ fn draw(pm: &mut Pixmap, dl: &DisplayList, region: Option<(&[IRect], &[IRect])>)
                 } else {
                     None
                 };
-                draw_shadow(pm, [*x, *y, *w, *h], *radii, sigma.max(0.5), *color, *clip, mask, area);
+                draw_shadow(
+                    pm,
+                    [*x, *y, *w, *h],
+                    *radii,
+                    sigma.max(0.5),
+                    *color,
+                    *clip,
+                    mask,
+                    area,
+                );
             }
             Prim::Backdrop {
                 x,
@@ -427,7 +451,16 @@ fn draw(pm: &mut Pixmap, dl: &DisplayList, region: Option<(&[IRect], &[IRect])>)
                     continue;
                 }
                 let mask = clip_mask(&mut masks, *clip, dl.width, dl.height);
-                draw_rect(pm, [*x, *y, *w, *h], *fallback, [0; 4], 0.0, *radii, *continuous, mask);
+                draw_rect(
+                    pm,
+                    [*x, *y, *w, *h],
+                    *fallback,
+                    [0; 4],
+                    0.0,
+                    *radii,
+                    *continuous,
+                    mask,
+                );
             }
             Prim::Radial {
                 x,
@@ -666,7 +699,14 @@ pub fn path_item(pp: &PathPrim, ww: u32, wh: u32) -> Option<Item> {
 /// A radial gradient: `strip`'s entries (premultiplied) as tiny-skia's
 /// stops, from the box's centre to its farthest corner, within its
 /// rounded box. The GPU reads the same strip by the same distance.
-fn draw_radial(pm: &mut Pixmap, r: [f32; 4], strip: &super::canvas::Picture, radii: [f32; 4], alpha: f32, mask: Option<&Mask>) {
+fn draw_radial(
+    pm: &mut Pixmap,
+    r: [f32; 4],
+    strip: &super::canvas::Picture,
+    radii: [f32; 4],
+    alpha: f32,
+    mask: Option<&Mask>,
+) {
     let [x, y, w, h] = r;
     let n = (strip.width * strip.height) as usize;
     if n < 2 {
@@ -676,11 +716,22 @@ fn draw_radial(pm: &mut Pixmap, r: [f32; 4], strip: &super::canvas::Picture, rad
         .map(|i| {
             let px = &strip.rgba[i * 4..i * 4 + 4];
             let a = px[3] as f32 / 255.0;
-            let un = |v: u8| if a > 0.0 { (v as f32 / 255.0 / a).min(1.0) } else { 0.0 };
+            let un = |v: u8| {
+                if a > 0.0 {
+                    (v as f32 / 255.0 / a).min(1.0)
+                } else {
+                    0.0
+                }
+            };
             tiny_skia::GradientStop::new(
                 i as f32 / (n - 1) as f32,
-                tiny_skia::Color::from_rgba(un(px[0]), un(px[1]), un(px[2]), a * alpha.clamp(0.0, 1.0))
-                    .unwrap_or(tiny_skia::Color::TRANSPARENT),
+                tiny_skia::Color::from_rgba(
+                    un(px[0]),
+                    un(px[1]),
+                    un(px[2]),
+                    a * alpha.clamp(0.0, 1.0),
+                )
+                .unwrap_or(tiny_skia::Color::TRANSPARENT),
             )
         })
         .collect();
@@ -713,7 +764,11 @@ fn draw_path(pm: &mut Pixmap, pp: &PathPrim, mask: Option<&Mask>) {
     if let Some(f) = pp.fill
         && f[3] > 0
     {
-        let rule = if pp.even_odd { FillRule::EvenOdd } else { FillRule::Winding };
+        let rule = if pp.even_odd {
+            FillRule::EvenOdd
+        } else {
+            FillRule::Winding
+        };
         pm.fill_path(&pp.path, &paint_of(f), rule, tf, mask);
     }
     if let Some(st) = &pp.stroke
@@ -726,7 +781,14 @@ fn draw_path(pm: &mut Pixmap, pp: &PathPrim, mask: Option<&Mask>) {
 
 /// A box's outline: rounded ([`rrect_path`]) or with continuous corners
 /// ([`continuous_path`]).
-pub fn shape_path(x: f32, y: f32, w: f32, h: f32, radii: [f32; 4], continuous: bool) -> Option<tiny_skia::Path> {
+pub fn shape_path(
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    radii: [f32; 4],
+    continuous: bool,
+) -> Option<tiny_skia::Path> {
     if continuous && radii.iter().any(|r| *r > 0.0) {
         continuous_path(x, y, w, h, radii)
     } else {
@@ -863,7 +925,9 @@ fn draw_shadow(
     };
     for py in y0..y1 {
         if let Some(a) = area
-            && !a.iter().any(|r| py >= r.y0 && py < r.y1 && x1 > r.x0 && x0 < r.x1)
+            && !a
+                .iter()
+                .any(|r| py >= r.y0 && py < r.y1 && x1 > r.x0 && x0 < r.x1)
         {
             continue;
         }
@@ -887,7 +951,9 @@ fn draw_shadow(
         }
         for px in x0..x1 {
             if let Some(a) = area
-                && !a.iter().any(|r| py >= r.y0 && py < r.y1 && px >= r.x0 && px < r.x1)
+                && !a
+                    .iter()
+                    .any(|r| py >= r.y0 && py < r.y1 && px >= r.x0 && px < r.x1)
             {
                 continue;
             }
@@ -948,7 +1014,13 @@ fn blit_glyph(
         cy0 = cy0.max(a.y0);
         cx1 = cx1.min(a.x1);
         cy1 = cy1.min(a.y1);
-        if cx0 >= cx1 || cy0 >= cy1 || gx >= cx1 || gy >= cy1 || gx + img.width as i32 <= cx0 || gy + img.height as i32 <= cy0 {
+        if cx0 >= cx1
+            || cy0 >= cy1
+            || gx >= cx1
+            || gy >= cy1
+            || gx + img.width as i32 <= cx0
+            || gy + img.height as i32 <= cy0
+        {
             return;
         }
     }

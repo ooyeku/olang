@@ -194,7 +194,8 @@ pub fn places(sc: &scene::Scene) -> HashMap<String, Place> {
             items.retain(|r| {
                 let mut cells = Vec::new();
                 cells_of(sc, r, &mut cells);
-                let head = !cells.is_empty() && cells.iter().all(|c| sc.nodes[c].role == "columnheader");
+                let head =
+                    !cells.is_empty() && cells.iter().all(|c| sc.nodes[c].role == "columnheader");
                 if head {
                     head_rows.push(r.clone());
                 }
@@ -796,9 +797,14 @@ pub fn action(st: &mut WinState, req: &ActionRequest, out: &mut Vec<Value>) {
                     Some(e) => {
                         // a plain field's selection: as character offsets
                         let off = |(i, c): (usize, usize)| -> usize {
-                            f.paras[..i].iter().map(|p| p.chars().count() + 1).sum::<usize>() + c
+                            f.paras[..i]
+                                .iter()
+                                .map(|p| p.chars().count() + 1)
+                                .sum::<usize>()
+                                + c
                         };
-                        if let (Some(p), Ok(mut ts)) = (e.plain_mut(), super::text::system().lock()) {
+                        if let (Some(p), Ok(mut ts)) = (e.plain_mut(), super::text::system().lock())
+                        {
                             p.select_chars(off(a), off(b), &mut ts);
                         }
                     }
@@ -895,7 +901,10 @@ pub fn scroll_page(sc: &mut scene::Scene, key: &str, a: Action) -> Vec<(String, 
         return Vec::new();
     };
     let before = n.offset;
-    let (pw, ph) = ((n.rect[2] - 40.0).max(n.rect[2] * 0.5), (n.rect[3] - 40.0).max(n.rect[3] * 0.5));
+    let (pw, ph) = (
+        (n.rect[2] - 40.0).max(n.rect[2] * 0.5),
+        (n.rect[3] - 40.0).max(n.rect[3] * 0.5),
+    );
     let (dx, dy) = match a {
         Action::ScrollUp => (0.0, -ph),
         Action::ScrollDown => (0.0, ph),
@@ -973,11 +982,18 @@ fn walk(
     let place = places.get(key).copied().unwrap_or_default();
     let int = |v: Option<usize>| v.map(|v| Value::Integer(v as i64)).unwrap_or(Value::Unit);
     let pair = |v: Option<(usize, usize)>| {
-        v.map(|(a, b)| Value::Tuple(Arc::new(vec![Value::Integer(a as i64), Value::Integer(b as i64)])))
-            .unwrap_or(Value::Unit)
+        v.map(|(a, b)| {
+            Value::Tuple(Arc::new(vec![
+                Value::Integer(a as i64),
+                Value::Integer(b as i64),
+            ]))
+        })
+        .unwrap_or(Value::Unit)
     };
     let bounds = match st.scene.absolute(key) {
-        Some(b) => Value::Tuple(Arc::new(b.iter().map(|v| super::values::float(*v)).collect())),
+        Some(b) => Value::Tuple(Arc::new(
+            b.iter().map(|v| super::values::float(*v)).collect(),
+        )),
         None => Value::Unit,
     };
     let custom: Vec<Value> = actions_for(st, key, &lenders(st))
@@ -1017,8 +1033,16 @@ fn walk(
                     .filter(|p| !p.is_empty()),
             ),
         ),
-        ("level", n.level.map(|l| Value::Integer(l as i64)).unwrap_or(Value::Unit)),
-        ("expanded", n.expanded.map(Value::Boolean).unwrap_or(Value::Unit)),
+        (
+            "level",
+            n.level
+                .map(|l| Value::Integer(l as i64))
+                .unwrap_or(Value::Unit),
+        ),
+        (
+            "expanded",
+            n.expanded.map(Value::Boolean).unwrap_or(Value::Unit),
+        ),
         (
             "live",
             match live_of(n) {

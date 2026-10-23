@@ -36,7 +36,10 @@ pub fn apply(name: &str, f: &mut LFrame, p: &Params) -> super::Result<()> {
             nudge(f, p);
             Ok(())
         }
-        other => bad(format!("unknown position \"{}\" (identity, stack, fill, dodge, dodge2, jitter, nudge)", other)),
+        other => bad(format!(
+            "unknown position \"{}\" (identity, stack, fill, dodge, dodge2, jitter, nudge)",
+            other
+        )),
     }
 }
 
@@ -44,8 +47,12 @@ pub fn apply(name: &str, f: &mut LFrame, p: &Params) -> super::Result<()> {
 /// negative down, the first group on top.
 fn stack(f: &mut LFrame, fill: bool, reverse: bool) -> super::Result<()> {
     let n = f.n;
-    let Some(x) = f.num(Aes::X).cloned() else { return Ok(()) };
-    let Some(y) = f.num(Aes::Y).cloned() else { return Ok(()) };
+    let Some(x) = f.num(Aes::X).cloned() else {
+        return Ok(());
+    };
+    let Some(y) = f.num(Aes::Y).cloned() else {
+        return Ok(());
+    };
     let mut order: Vec<usize> = (0..n).collect();
     // within an x, the last group stacks first (so the first ends on top)
     order.sort_by(|&a, &b| {
@@ -62,7 +69,11 @@ fn stack(f: &mut LFrame, fill: bool, reverse: bool) -> super::Result<()> {
             continue;
         }
         let k = (f.panel[i], key(x[i]));
-        let acc = if y[i] >= 0.0 { pos.entry(k).or_insert(0.0) } else { neg.entry(k).or_insert(0.0) };
+        let acc = if y[i] >= 0.0 {
+            pos.entry(k).or_insert(0.0)
+        } else {
+            neg.entry(k).or_insert(0.0)
+        };
         ymin[i] = *acc;
         *acc += y[i];
         ymax[i] = *acc;
@@ -91,7 +102,9 @@ fn stack(f: &mut LFrame, fill: bool, reverse: bool) -> super::Result<()> {
 /// each mark its own width shared among them (ggplot's dodge).
 fn dodge(f: &mut LFrame, p: &Params) -> super::Result<()> {
     let n = f.n;
-    let Some(x) = f.num(Aes::X).cloned() else { return Ok(()) };
+    let Some(x) = f.num(Aes::X).cloned() else {
+        return Ok(());
+    };
     let res = resolution(&x);
     let width = p_num(p, "width");
     let dodge_width = p_num(p, "dodge_width");
@@ -156,7 +169,14 @@ fn jitter(f: &mut LFrame, p: &Params) -> super::Result<()> {
     };
     let jx: Vec<f64> = (0..n).map(|_| rng.sym() * wx).collect();
     let jy: Vec<f64> = (0..n).map(|_| rng.sym() * wy).collect();
-    for (a, j) in [(Aes::X, &jx), (Aes::Xmin, &jx), (Aes::Xmax, &jx), (Aes::Y, &jy), (Aes::Ymin, &jy), (Aes::Ymax, &jy)] {
+    for (a, j) in [
+        (Aes::X, &jx),
+        (Aes::Xmin, &jx),
+        (Aes::Xmax, &jx),
+        (Aes::Y, &jy),
+        (Aes::Ymin, &jy),
+        (Aes::Ymax, &jy),
+    ] {
         if let Some(v) = f.num(a).cloned() {
             f.set_num(a, v.iter().zip(j.iter()).map(|(v, d)| v + d).collect());
         }
@@ -194,7 +214,11 @@ mod tests {
 
     #[test]
     fn stack_and_fill() {
-        let mut f = bars(vec![1.0, 1.0, 2.0, 2.0], vec![2.0, 3.0, 1.0, 1.0], vec![0, 1, 0, 1]);
+        let mut f = bars(
+            vec![1.0, 1.0, 2.0, 2.0],
+            vec![2.0, 3.0, 1.0, 1.0],
+            vec![0, 1, 0, 1],
+        );
         apply("stack", &mut f, &Params::new()).unwrap();
         // group 1 first (bottom), group 0 on top
         assert_eq!(f.num(Aes::Ymin).unwrap(), &vec![3.0, 0.0, 1.0, 0.0]);
@@ -225,14 +249,20 @@ mod tests {
         p.insert("dodge_width".into(), super::super::Param::Num(0.6));
         apply("dodge", &mut f, &p).unwrap();
         let x = f.num(Aes::X).unwrap();
-        assert!((x[0] - 0.85).abs() < 1e-9 && (x[1] - 1.15).abs() < 1e-9, "{x:?}");
+        assert!(
+            (x[0] - 0.85).abs() < 1e-9 && (x[1] - 1.15).abs() < 1e-9,
+            "{x:?}"
+        );
         let (a, b) = (f.num(Aes::Xmin).unwrap(), f.num(Aes::Xmax).unwrap());
         assert!((b[0] - a[0] - 0.1).abs() < 1e-9, "each bar its half of 0.2");
         // a point range (no box): its width the dodge's
         let mut g = bars(vec![2.0, 2.0, 2.0], vec![1.0; 3], vec![0, 1, 2]);
         apply("dodge", &mut g, &p).unwrap();
         let x = g.num(Aes::X).unwrap();
-        assert!((x[0] - 1.8).abs() < 1e-9 && (x[1] - 2.0).abs() < 1e-9 && (x[2] - 2.2).abs() < 1e-9, "{x:?}");
+        assert!(
+            (x[0] - 1.8).abs() < 1e-9 && (x[1] - 2.0).abs() < 1e-9 && (x[2] - 2.2).abs() < 1e-9,
+            "{x:?}"
+        );
     }
 
     #[test]
@@ -242,6 +272,11 @@ mod tests {
         apply("jitter", &mut a, &Params::new()).unwrap();
         apply("jitter", &mut b, &Params::new()).unwrap();
         assert_eq!(a.num(Aes::X), b.num(Aes::X));
-        assert!(a.num(Aes::X).unwrap().iter().all(|v| (v - 1.0).abs() <= 0.4));
+        assert!(
+            a.num(Aes::X)
+                .unwrap()
+                .iter()
+                .all(|v| (v - 1.0).abs() <= 0.4)
+        );
     }
 }

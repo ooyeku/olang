@@ -523,7 +523,10 @@ share fn rule_no_bare_unwrap(nodes) =
     let hit = run(&["check", "."]);
     let err = String::from_utf8_lossy(&hit.stderr);
     assert_eq!(hit.status.code(), Some(1), "stderr: {err}");
-    assert!(err.contains("app.ol:2: [rule_no_bare_unwrap]"), "stderr: {err}");
+    assert!(
+        err.contains("app.ol:2: [rule_no_bare_unwrap]"),
+        "stderr: {err}"
+    );
     // the rules file itself is not linted, and a sub-directory's check
     // still finds the project's rules
     let sub = Command::new(olang_bin())
@@ -535,7 +538,11 @@ share fn rule_no_bare_unwrap(nodes) =
     // `--rules` names the file instead
     std::fs::write(dir.join("none.ol"), "share fn rule_none(nodes) = []\n").unwrap();
     let named = run(&["check", ".", "--rules", "none.ol"]);
-    assert!(named.status.success(), "{}", String::from_utf8_lossy(&named.stderr));
+    assert!(
+        named.status.success(),
+        "{}",
+        String::from_utf8_lossy(&named.stderr)
+    );
     // a listed file that is not there is a problem
     std::fs::write(
         dir.join("olang.toml"),

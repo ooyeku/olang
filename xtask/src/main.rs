@@ -68,8 +68,14 @@ fn jobs(args: &[String]) -> Vec<String> {
 /// std's panics for what `wasm32-unknown-unknown` lacks, by the source
 /// file each is raised in: present in an artifact only when reachable.
 const UNSUPPORTED: &[(&str, &str)] = &[
-    ("sys/time/unsupported.rs", "the clock (Instant::now, SystemTime::now): use crate::clock"),
-    ("sys/thread/unsupported.rs", "thread::sleep: use crate::clock::sleep"),
+    (
+        "sys/time/unsupported.rs",
+        "the clock (Instant::now, SystemTime::now): use crate::clock",
+    ),
+    (
+        "sys/thread/unsupported.rs",
+        "thread::sleep: use crate::clock::sleep",
+    ),
     ("sys/env/unsupported.rs", "std::env::vars"),
     ("sys/paths/unsupported.rs", "split_paths or temp_dir"),
     ("sys/pipe/unsupported.rs", "a pipe"),
@@ -143,7 +149,14 @@ fn wasm(jobs: &[String]) -> ExitCode {
         .join("release")
         .join("olang_playground.wasm");
     let build = |features: &[&str]| -> bool {
-        let mut args = vec!["build", "-p", "olang-playground", "--target", WASM_TARGET, "--release"];
+        let mut args = vec![
+            "build",
+            "-p",
+            "olang-playground",
+            "--target",
+            WASM_TARGET,
+            "--release",
+        ];
         args.extend_from_slice(features);
         args.extend(jobs.iter().map(String::as_str));
         cargo(&root, &args)

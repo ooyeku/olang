@@ -126,7 +126,11 @@ impl Font {
 /// `font-optical-sizing: auto` do: Inter's display forms above 14 px, SF
 /// Pro's Text and Display. A font with no `opsz` axis ignores it.
 pub fn optical_size(size: f32) -> StyleProperty<'static, Color> {
-    let opsz = if size.is_finite() { size.clamp(1.0, 1000.0) } else { 14.0 };
+    let opsz = if size.is_finite() {
+        size.clamp(1.0, 1000.0)
+    } else {
+        14.0
+    };
     StyleProperty::FontVariations(parley::FontVariations::Source(
         format!("\"opsz\" {opsz}").into(),
     ))
@@ -324,7 +328,15 @@ struct CacheKey {
 }
 
 impl CacheKey {
-    fn is(&self, text: &str, font: &Font, color: Color, max_width: Option<u32>, align: Align, scale: u32) -> bool {
+    fn is(
+        &self,
+        text: &str,
+        font: &Font,
+        color: Color,
+        max_width: Option<u32>,
+        align: Align,
+        scale: u32,
+    ) -> bool {
         &*self.text == text
             && self.color == color
             && self.max_width == max_width
@@ -336,7 +348,14 @@ impl CacheKey {
 
 /// The hash a shaped text is found by, from borrowed parts (a lookup
 /// copies nothing).
-fn cache_hash(text: &str, font: &Font, color: Color, max_width: Option<u32>, align: Align, scale: u32) -> u64 {
+fn cache_hash(
+    text: &str,
+    font: &Font,
+    color: Color,
+    max_width: Option<u32>,
+    align: Align,
+    scale: u32,
+) -> u64 {
     let mut h = rustc_hash::FxHasher::default();
     text.hash(&mut h);
     font.hash(&mut h);
@@ -347,7 +366,8 @@ fn cache_hash(text: &str, font: &Font, color: Color, max_width: Option<u32>, ali
     h.finish()
 }
 
-type ShapeCache = HashMap<u64, (CacheKey, Arc<Shaped>), std::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
+type ShapeCache =
+    HashMap<u64, (CacheKey, Arc<Shaped>), std::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
 
 pub struct TextSystem {
     pub font_cx: FontContext,
@@ -599,7 +619,10 @@ pub struct FieldLine {
 /// The visual lines of `layout` (of `text`): (first byte, end byte, top,
 /// height, each character's (byte, left, width) in byte order). A
 /// cluster's advance is shared among its characters (a ligature's).
-pub fn layout_lines(layout: &Layout<Color>, text: &str) -> Vec<(usize, usize, f32, f32, Vec<(usize, f32, f32)>)> {
+pub fn layout_lines(
+    layout: &Layout<Color>,
+    text: &str,
+) -> Vec<(usize, usize, f32, f32, Vec<(usize, f32, f32)>)> {
     let mut out = Vec::new();
     for line in layout.lines() {
         let m = line.metrics();
@@ -623,7 +646,13 @@ pub fn layout_lines(layout: &Layout<Color>, text: &str) -> Vec<(usize, usize, f3
         }
         chars.sort_by_key(|c| c.0);
         chars.dedup_by_key(|c| c.0);
-        out.push((r.start, r.end, m.block_min_coord, m.block_max_coord - m.block_min_coord, chars));
+        out.push((
+            r.start,
+            r.end,
+            m.block_min_coord,
+            m.block_max_coord - m.block_min_coord,
+            chars,
+        ));
     }
     out
 }

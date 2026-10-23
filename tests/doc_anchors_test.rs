@@ -146,7 +146,10 @@ fn book_slugs(docs: &Path) -> BTreeMap<String, BTreeSet<String>> {
                 (trimmed.len() < line.len() && line.starts_with('#')).then(|| slugify(trimmed))
             })
             .collect();
-        headings.insert(path.file_name().unwrap().to_string_lossy().to_string(), slugs);
+        headings.insert(
+            path.file_name().unwrap().to_string_lossy().to_string(),
+            slugs,
+        );
     }
     headings
 }
@@ -162,13 +165,17 @@ fn every_link_into_the_book_from_the_repository_resolves() {
     let mut files = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for e in rd.flatten() {
             let p = e.path();
             let name = e.file_name().to_string_lossy().to_string();
             if p.is_dir() {
-                if !matches!(name.as_str(), "target" | "vendor" | "node_modules" | ".git" | "docs")
-                    && !name.starts_with('.')
+                if !matches!(
+                    name.as_str(),
+                    "target" | "vendor" | "node_modules" | ".git" | "docs"
+                ) && !name.starts_with('.')
                 {
                     stack.push(p);
                 }
@@ -185,19 +192,27 @@ fn every_link_into_the_book_from_the_repository_resolves() {
         let mut i = 0;
         while let Some(open) = text[i..].find("](") {
             let start = i + open + 2;
-            let Some(close) = text[start..].find(')') else { break };
+            let Some(close) = text[start..].find(')') else {
+                break;
+            };
             let link = &text[start..start + close];
             i = start + close;
-            let Some((target, anchor)) = link.split_once('#') else { continue };
+            let Some((target, anchor)) = link.split_once('#') else {
+                continue;
+            };
             if !target.ends_with(".md") || target.contains("://") {
                 continue;
             }
-            let Ok(resolved) = base.join(target).canonicalize() else { continue };
+            let Ok(resolved) = base.join(target).canonicalize() else {
+                continue;
+            };
             if resolved.parent() != Some(docs.as_path()) {
                 continue;
             }
             let file = resolved.file_name().unwrap().to_string_lossy().to_string();
-            let Some(slugs) = headings.get(&file) else { continue };
+            let Some(slugs) = headings.get(&file) else {
+                continue;
+            };
             checked += 1;
             if !slugs.contains(anchor) {
                 let line = text[..start].matches('\n').count() + 1;
@@ -211,7 +226,10 @@ fn every_link_into_the_book_from_the_repository_resolves() {
             }
         }
     }
-    assert!(checked > 0, "no link into the book found: the extractor is broken");
+    assert!(
+        checked > 0,
+        "no link into the book found: the extractor is broken"
+    );
     assert!(
         broken.is_empty(),
         "{} link(s) into the book point at a heading that does not exist:\n{}",

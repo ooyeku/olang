@@ -61,7 +61,10 @@ fn main() {
         .skip(1)
         .find_map(|a| a.parse().ok())
         .unwrap_or(10_000_000);
-    println!("n = {n}; threads {}; milliseconds", rayon::current_num_threads());
+    println!(
+        "n = {n}; threads {}; milliseconds",
+        rayon::current_num_threads()
+    );
     println!("{:<34} {:>9} {:>9}", "kernel", "seq", "par");
     let a = floats(n, 1, 0.0);
     let b = floats(n, 2, 0.0);
@@ -87,8 +90,18 @@ fn main() {
     );
     row(
         "eager a * 2.5",
-        time(|| drop(black_box(a.arith_scalar(ArithOp::Mul, Scalar::F64(2.5), false, false).unwrap()))),
-        time(|| drop(black_box(a.arith_scalar(ArithOp::Mul, Scalar::F64(2.5), false, true).unwrap()))),
+        time(|| {
+            drop(black_box(
+                a.arith_scalar(ArithOp::Mul, Scalar::F64(2.5), false, false)
+                    .unwrap(),
+            ))
+        }),
+        time(|| {
+            drop(black_box(
+                a.arith_scalar(ArithOp::Mul, Scalar::F64(2.5), false, true)
+                    .unwrap(),
+            ))
+        }),
     );
     let muls = plan(&[Expr::bin(BinOp::Mul, col(&a), f(2.5))]);
     row(
@@ -118,7 +131,11 @@ fn main() {
         time(|| drop(black_box(exp.eval(false).unwrap()))),
         time(|| drop(black_box(exp.eval(true).unwrap()))),
     );
-    for (name, m) in [("sqrt", Math::Abs), ("sigmoid", Math::Sigmoid), ("ln", Math::Ln)] {
+    for (name, m) in [
+        ("sqrt", Math::Abs),
+        ("sigmoid", Math::Sigmoid),
+        ("ln", Math::Ln),
+    ] {
         let src = if name == "ln" {
             Expr::op(Op::Math(Math::Abs), vec![col(&a)])
         } else {
@@ -148,8 +165,11 @@ fn main() {
         let (x, y) = if nulls { (&an, &bn) } else { (&a, &b) };
         let t = x.arith(ArithOp::Mul, y, par).unwrap();
         let t = t.arith(ArithOp::Add, &c, par).unwrap();
-        let t = t.arith_scalar(ArithOp::Mul, Scalar::F64(0.5), false, par).unwrap();
-        t.arith_scalar(ArithOp::Sub, Scalar::F64(1.0), false, par).unwrap()
+        let t = t
+            .arith_scalar(ArithOp::Mul, Scalar::F64(0.5), false, par)
+            .unwrap();
+        t.arith_scalar(ArithOp::Sub, Scalar::F64(1.0), false, par)
+            .unwrap()
     };
     let chain = |x: &Series, y: &Series| {
         Expr::bin(
@@ -188,7 +208,9 @@ fn main() {
     row(
         "eager i*3 + j (Int)",
         time(|| {
-            let t = ia.arith_scalar(ArithOp::Mul, Scalar::I64(3), false, false).unwrap();
+            let t = ia
+                .arith_scalar(ArithOp::Mul, Scalar::I64(3), false, false)
+                .unwrap();
             drop(black_box(t.arith(ArithOp::Add, &ib, false).unwrap()))
         }),
         f64::NAN,
@@ -206,8 +228,19 @@ fn main() {
     // Reductions after an expression.
     row(
         "eager sum(a*b)",
-        time(|| drop(black_box(a.arith(ArithOp::Mul, &b, false).unwrap().sum(false).unwrap()))),
-        time(|| drop(black_box(a.arith(ArithOp::Mul, &b, true).unwrap().sum(true).unwrap()))),
+        time(|| {
+            drop(black_box(
+                a.arith(ArithOp::Mul, &b, false)
+                    .unwrap()
+                    .sum(false)
+                    .unwrap(),
+            ))
+        }),
+        time(|| {
+            drop(black_box(
+                a.arith(ArithOp::Mul, &b, true).unwrap().sum(true).unwrap(),
+            ))
+        }),
     );
     let p = plan(&[Expr::bin(BinOp::Mul, col(&a), col(&b))]);
     row(
@@ -217,8 +250,12 @@ fn main() {
     );
     row(
         "eager dot(a, b)",
-        time(|| { black_box(a.dot(&b, false).unwrap()); }),
-        time(|| { black_box(a.dot(&b, true).unwrap()); }),
+        time(|| {
+            black_box(a.dot(&b, false).unwrap());
+        }),
+        time(|| {
+            black_box(a.dot(&b, true).unwrap());
+        }),
     );
     let mse = plan(&[{
         let d = Expr::bin(BinOp::Sub, col(&a), col(&b));
@@ -236,14 +273,21 @@ fn main() {
         time(|| drop(black_box(mask.reduce(Reduce::Mean, true).unwrap()))),
     );
     // Log loss: -mean(y ln p + (1-y) ln(1-p)), p = sigmoid(a / 100).
-    let p_ = Expr::op(Op::Math(Math::Sigmoid), vec![Expr::bin(BinOp::Div, col(&a), f(100.0))]);
+    let p_ = Expr::op(
+        Op::Math(Math::Sigmoid),
+        vec![Expr::bin(BinOp::Div, col(&a), f(100.0))],
+    );
     let y = Expr::op(
         Op::Cast(olang_ods::DType::F64),
         vec![Expr::bin(BinOp::Gt, col(&b), f(0.0))],
     );
     let ll = Expr::bin(
         BinOp::Add,
-        Expr::bin(BinOp::Mul, y.clone(), Expr::op(Op::Math(Math::Ln), vec![p_.clone()])),
+        Expr::bin(
+            BinOp::Mul,
+            y.clone(),
+            Expr::op(Op::Math(Math::Ln), vec![p_.clone()]),
+        ),
         Expr::bin(
             BinOp::Mul,
             Expr::bin(BinOp::Sub, f(1.0), y),
@@ -258,7 +302,10 @@ fn main() {
     );
 
     // Conditionals and nulls.
-    let wh = plan(&[Expr::op(Op::Where, vec![Expr::bin(BinOp::Gt, col(&a), f(0.0)), col(&a), col(&b)])]);
+    let wh = plan(&[Expr::op(
+        Op::Where,
+        vec![Expr::bin(BinOp::Gt, col(&a), f(0.0)), col(&a), col(&b)],
+    )]);
     row(
         "where(a > 0, a, b)",
         time(|| drop(black_box(wh.eval(false).unwrap()))),
@@ -287,30 +334,71 @@ fn main() {
         time(|| drop(black_box(fz.eval(false).unwrap()))),
         time(|| drop(black_box(fz.eval(true).unwrap()))),
     );
-    let bt = plan(&[Expr::op(Op::Between(olang_ods::fuse::Closed::Both), vec![col(&a), f(-100.0), f(100.0)])]);
+    let bt = plan(&[Expr::op(
+        Op::Between(olang_ods::fuse::Closed::Both),
+        vec![col(&a), f(-100.0), f(100.0)],
+    )]);
     row(
         "between(a, -100, 100)",
         time(|| drop(black_box(bt.eval(false).unwrap()))),
         time(|| drop(black_box(bt.eval(true).unwrap()))),
     );
-    row("fill ffill", time(|| drop(black_box(an.fill_direction(true, None)))), f64::NAN);
-    row("interpolate", time(|| drop(black_box(an.interpolate(None).unwrap()))), f64::NAN);
-    row("diff", time(|| drop(black_box(a.diff(1).unwrap()))), f64::NAN);
-    let pos = plan(&[Expr::bin(BinOp::Add, Expr::op(Op::Math(Math::Abs), vec![col(&c)]), f(1.0))])
-        .eval(false)
-        .unwrap()
-        .pop()
-        .unwrap();
-    row("pct_change", time(|| drop(black_box(pos.pct_change(1).unwrap()))), f64::NAN);
-    row("cumprod", time(|| drop(black_box(a.cumprod().unwrap()))), f64::NAN);
-    row("argmax", time(|| { black_box(a.arg_extreme(true).unwrap()); }), f64::NAN);
-    row("mode (Int, 1000 values)", time(|| drop(black_box(ia.mode().unwrap()))), f64::NAN);
+    row(
+        "fill ffill",
+        time(|| drop(black_box(an.fill_direction(true, None)))),
+        f64::NAN,
+    );
+    row(
+        "interpolate",
+        time(|| drop(black_box(an.interpolate(None).unwrap()))),
+        f64::NAN,
+    );
+    row(
+        "diff",
+        time(|| drop(black_box(a.diff(1).unwrap()))),
+        f64::NAN,
+    );
+    let pos = plan(&[Expr::bin(
+        BinOp::Add,
+        Expr::op(Op::Math(Math::Abs), vec![col(&c)]),
+        f(1.0),
+    )])
+    .eval(false)
+    .unwrap()
+    .pop()
+    .unwrap();
+    row(
+        "pct_change",
+        time(|| drop(black_box(pos.pct_change(1).unwrap()))),
+        f64::NAN,
+    );
+    row(
+        "cumprod",
+        time(|| drop(black_box(a.cumprod().unwrap()))),
+        f64::NAN,
+    );
+    row(
+        "argmax",
+        time(|| {
+            black_box(a.arg_extreme(true).unwrap());
+        }),
+        f64::NAN,
+    );
+    row(
+        "mode (Int, 1000 values)",
+        time(|| drop(black_box(ia.mode().unwrap()))),
+        f64::NAN,
+    );
     let sorted = a.sort(true).unwrap();
     row(
         "searchsorted x 1000",
         time(|| {
             for k in 0..1000 {
-                black_box(sorted.searchsorted(&Scalar::F64(k as f64 - 500.0), false).unwrap());
+                black_box(
+                    sorted
+                        .searchsorted(&Scalar::F64(k as f64 - 500.0), false)
+                        .unwrap(),
+                );
             }
         }),
         f64::NAN,
@@ -337,7 +425,11 @@ fn main() {
     let to = Series::from_str_values((0..1000).map(|k| format!("v{k}")).collect());
     row(
         "recode (1000-key map, text)",
-        time(|| drop(black_box(labels.recode(&from, &to, &Unmapped::Keep).unwrap()))),
+        time(|| {
+            drop(black_box(
+                labels.recode(&from, &to, &Unmapped::Keep).unwrap(),
+            ))
+        }),
         f64::NAN,
     );
     let g = Series::from_i64(pseudo(n, 10).map(|x| (x % 1000) as i64).collect());
@@ -355,9 +447,17 @@ fn main() {
     let f = Frame::new(vec![("g".into(), g.clone()), ("a".into(), a.clone())]).unwrap();
     let (s, p) = {
         olang_ods::set_parallel_enabled(false);
-        let s = time(|| drop(black_box(f.sort_by_keys(&[(&g, false), (&a, true)]).unwrap())));
+        let s = time(|| {
+            drop(black_box(
+                f.sort_by_keys(&[(&g, false), (&a, true)]).unwrap(),
+            ))
+        });
         olang_ods::set_parallel_enabled(true);
-        let p = time(|| drop(black_box(f.sort_by_keys(&[(&g, false), (&a, true)]).unwrap())));
+        let p = time(|| {
+            drop(black_box(
+                f.sort_by_keys(&[(&g, false), (&a, true)]).unwrap(),
+            ))
+        });
         (s, p)
     };
     row("sort_by [g asc, a desc]", s, p);

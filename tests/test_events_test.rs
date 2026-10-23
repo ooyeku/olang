@@ -491,7 +491,10 @@ fn a_runaway_recursion_fails_with_its_first_and_last_frames() {
     assert_eq!(frames[0]["name"], json!("down"));
     assert!(frames[0]["line"].is_number(), "{}", frames[0]);
     let gap = frames[40]["name"].as_str().unwrap();
-    assert!(gap.starts_with("… ") && gap.ends_with(" frames more"), "{gap}");
+    assert!(
+        gap.starts_with("… ") && gap.ends_with(" frames more"),
+        "{gap}"
+    );
     assert_eq!(frames[40]["file"], J::Null);
     let _ = std::fs::remove_dir_all(&dir);
 }

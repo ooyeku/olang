@@ -1251,7 +1251,10 @@ mod tests {
         let got = walk(vec![string_val(&root)]).unwrap();
         let shown = format!("{got}");
         assert!(shown.starts_with("Ok("), "{shown}");
-        assert!(shown.contains("sub/a.ol") && shown.contains("b.ol"), "{shown}");
+        assert!(
+            shown.contains("sub/a.ol") && shown.contains("b.ol"),
+            "{shown}"
+        );
         assert!(!shown.contains("loop"), "{shown}");
         let g = glob(vec![string_val(&format!("{root}/**/*.ol"))]).unwrap();
         assert!(!format!("{g}").contains("loop"), "{g}");

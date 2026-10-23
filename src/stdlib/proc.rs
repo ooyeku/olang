@@ -164,7 +164,6 @@ pub(crate) fn command_for(
     }
 }
 
-
 /// A `cwd` option that names no directory: said as such, before the
 /// spawn would blame the program ("failed to start 'sh': No such file
 /// or directory").
@@ -1071,11 +1070,9 @@ fn proc_pipeline(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     let mut stderr_threads = Vec::with_capacity(n);
     for child in &mut children {
         let se = child.stderr.take();
-        stderr_threads.push(std::thread::spawn(move || {
-            match se {
-                Some(mut s) => drain_bounded(&mut s, STDERR_KEEP),
-                None => Vec::new(),
-            }
+        stderr_threads.push(std::thread::spawn(move || match se {
+            Some(mut s) => drain_bounded(&mut s, STDERR_KEEP),
+            None => Vec::new(),
         }));
     }
 
@@ -1138,7 +1135,10 @@ mod stderr_bound_tests {
         let second = text.lines().nth(1).unwrap();
         assert!(second.starts_with("line "), "{second}");
         let dropped: usize = text[5..].split(' ').next().unwrap().parse().unwrap();
-        assert_eq!(dropped + text.len() - text.lines().next().unwrap().len() - 1, total);
+        assert_eq!(
+            dropped + text.len() - text.lines().next().unwrap().len() - 1,
+            total
+        );
         // a quiet child: all of it, nothing said
         let small = drain_bounded(&mut std::io::Cursor::new(b"oops\n".to_vec()), 64 * 1024);
         assert_eq!(small, b"oops\n");

@@ -202,11 +202,22 @@ fn app_writes_a_web_sdk_app() {
 
 /// One HTTP/1.1 request to 127.0.0.1:`port` (`host` its Host header),
 /// answered as its status and body.
-fn http(port: u16, method: &str, path: &str, host: &str, headers: &[(&str, &str)], body: &str) -> (u16, String) {
+fn http(
+    port: u16,
+    method: &str,
+    path: &str,
+    host: &str,
+    headers: &[(&str, &str)],
+    body: &str,
+) -> (u16, String) {
     use std::io::{Read, Write};
     let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
-    s.set_read_timeout(Some(std::time::Duration::from_secs(60))).unwrap();
-    let mut req = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nContent-Length: {}\r\n", body.len());
+    s.set_read_timeout(Some(std::time::Duration::from_secs(60)))
+        .unwrap();
+    let mut req = format!(
+        "{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nContent-Length: {}\r\n",
+        body.len()
+    );
     for (k, v) in headers {
         req.push_str(&format!("{k}: {v}\r\n"));
     }
@@ -215,7 +226,11 @@ fn http(port: u16, method: &str, path: &str, host: &str, headers: &[(&str, &str)
     s.write_all(req.as_bytes()).unwrap();
     let mut got = String::new();
     let _ = s.read_to_string(&mut got);
-    let status = got.split(' ').nth(1).and_then(|c| c.parse().ok()).unwrap_or(0);
+    let status = got
+        .split(' ')
+        .nth(1)
+        .and_then(|c| c.parse().ok())
+        .unwrap_or(0);
     let body = got.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
     (status, body)
 }
@@ -225,15 +240,30 @@ fn a_published_app_answers_its_own_page_on_this_machine_only() {
     let dir = tempfile::tempdir().unwrap();
     sales(dir.path());
     let web = Path::new(env!("CARGO_MANIFEST_DIR")).join("frameworks/web-sdk");
-    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
     let o = olang(
         dir.path(),
-        &["notebook", "app", "sales.olmd", "--web", web.to_str().unwrap(), "--port", &port.to_string()],
+        &[
+            "notebook",
+            "app",
+            "sales.olmd",
+            "--web",
+            web.to_str().unwrap(),
+            "--port",
+            &port.to_string(),
+        ],
     );
     assert!(o.status.success(), "{}", err(&o));
     let app = dir.path().join("sales-app");
     let main = std::fs::read_to_string(app.join("main.ol")).unwrap();
-    assert!(main.contains("\"bind\": \"127.0.0.1\""), "bound to this machine");
+    assert!(
+        main.contains("\"bind\": \"127.0.0.1\""),
+        "bound to this machine"
+    );
     let mut child = Command::new(env!("CARGO_BIN_EXE_olang"))
         .args(["run", "main.ol", &port.to_string()])
         .current_dir(&app)
@@ -244,10 +274,16 @@ fn a_published_app_answers_its_own_page_on_this_machine_only() {
         .unwrap();
     // its kernel has run every cell once it says so
     let mut lines = std::io::BufRead::lines(std::io::BufReader::new(child.stdout.take().unwrap()));
-    assert!(lines.any(|l| l.map(|l| l.contains("every cell ran")).unwrap_or(false)), "the app started");
+    assert!(
+        lines.any(|l| l.map(|l| l.contains("every cell ran")).unwrap_or(false)),
+        "the app started"
+    );
     let me = format!("127.0.0.1:{port}");
     let own = format!("http://{me}");
-    let json = [("Content-Type", "application/json"), ("Origin", own.as_str())];
+    let json = [
+        ("Content-Type", "application/json"),
+        ("Origin", own.as_str()),
+    ];
     let (code, page) = http(port, "GET", "/", &me, &[], "");
     assert_eq!(code, 200, "{page}");
     // another site's name resolved here (DNS rebinding): refused
@@ -255,11 +291,54 @@ fn a_published_app_answers_its_own_page_on_this_machine_only() {
     assert_eq!(http(port, "GET", "/", &evil, &[], "").0, 403);
     // a change posted as plain text (no preflight), or from another origin: refused
     let set = r#"{"name":"region","value":"west"}"#;
-    assert_eq!(http(port, "POST", "/api/rpc/nb.param", &me, &[("Content-Type", "text/plain")], set).0, 403);
-    assert_eq!(http(port, "POST", "/api/rpc/nb.param", &me, &[("Content-Type", "application/json"), ("Origin", "http://evil.example")], set).0, 403);
-    assert_eq!(http(port, "POST", "/api/rpc/nb.set", &evil, &[("Content-Type", "application/json")], r#"{"cell":"c1","value":"1"}"#).0, 403);
+    assert_eq!(
+        http(
+            port,
+            "POST",
+            "/api/rpc/nb.param",
+            &me,
+            &[("Content-Type", "text/plain")],
+            set
+        )
+        .0,
+        403
+    );
+    assert_eq!(
+        http(
+            port,
+            "POST",
+            "/api/rpc/nb.param",
+            &me,
+            &[
+                ("Content-Type", "application/json"),
+                ("Origin", "http://evil.example")
+            ],
+            set
+        )
+        .0,
+        403
+    );
+    assert_eq!(
+        http(
+            port,
+            "POST",
+            "/api/rpc/nb.set",
+            &evil,
+            &[("Content-Type", "application/json")],
+            r#"{"cell":"c1","value":"1"}"#
+        )
+        .0,
+        403
+    );
     // a param's value of more than one line never reaches the front matter
-    let (c2, b2) = http(port, "POST", "/api/rpc/nb.param", &me, &json, r#"{"name":"region","value":"west\ncapabilities: {proc: true}"}"#);
+    let (c2, b2) = http(
+        port,
+        "POST",
+        "/api/rpc/nb.param",
+        &me,
+        &json,
+        r#"{"name":"region","value":"west\ncapabilities: {proc: true}"}"#,
+    );
     assert!(c2 == 200 && b2.contains("one line"), "{c2} {b2}");
     // the page's own change answered
     let (c3, b3) = http(port, "POST", "/api/rpc/nb.param", &me, &json, set);

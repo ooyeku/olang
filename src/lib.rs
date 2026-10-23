@@ -21,8 +21,8 @@ pub mod boot_trace; // Where a program's start goes (`OLANG_BOOT_TRACE=1`)
 pub mod builtin;
 pub mod caps;
 pub mod clock;
-pub mod contain; // A panic turned into an error where the process must not end
 pub mod compile_cache; // Compiled bytecode kept between runs
+pub mod contain; // A panic turned into an error where the process must not end
 pub mod controls; // Controls a host binds: `runtime.bind`, `ui.slider` and its kin
 pub mod effects;
 pub mod errtrace; // Where a caught error went: its frames, file and line each

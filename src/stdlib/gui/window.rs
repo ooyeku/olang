@@ -914,8 +914,18 @@ impl WinState {
         }
         let (ox, oy, w, h) = self.edit_origin(p)?;
         let (x, y) = (self.pointer.0 * self.scale, self.pointer.1 * self.scale);
-        let (v, lo, hi) = if ed.multiline() { (y, oy, oy + h) } else { (x, ox, ox + w) };
-        let past = if v < lo { v - lo } else if v > hi { v - hi } else { 0.0 };
+        let (v, lo, hi) = if ed.multiline() {
+            (y, oy, oy + h)
+        } else {
+            (x, ox, ox + w)
+        };
+        let past = if v < lo {
+            v - lo
+        } else if v > hi {
+            v - hi
+        } else {
+            0.0
+        };
         (past != 0.0).then(|| (p.to_string(), past))
     }
 
@@ -943,11 +953,17 @@ impl WinState {
         // a line a refresh at a pointer's width past and a page at most
         let speed = ((past.abs() / s) * 10.0).clamp(30.0, 3000.0);
         let step = (speed * dt / 1000.0 * s).copysign(past);
-        let Some((ox, oy, _, h)) = self.edit_origin(&key) else { return };
-        let Ok(mut ts) = text::system().lock() else { return };
+        let Some((ox, oy, _, h)) = self.edit_origin(&key) else {
+            return;
+        };
+        let Ok(mut ts) = text::system().lock() else {
+            return;
+        };
         let dy = self.edit_text_dy(&key, h, &mut ts);
         let (x, y) = (self.pointer.0 * s, self.pointer.1 * s);
-        let Some(ed) = self.editors.get_mut(&key) else { return };
+        let Some(ed) = self.editors.get_mut(&key) else {
+            return;
+        };
         if let Some(r) = ed.rich_mut() {
             let to = r.scroll_y + step;
             r.scroll_set(to, &mut ts);
@@ -2365,8 +2381,12 @@ impl WinState {
     /// Select characters `a..b` of the focused field (text the platform
     /// puts in over a range replaces it).
     pub fn select_text_input(&mut self, a: usize, b: usize) {
-        let Some(f) = self.scene.focus.clone() else { return };
-        let Ok(mut ts) = text::system().lock() else { return };
+        let Some(f) = self.scene.focus.clone() else {
+            return;
+        };
+        let Ok(mut ts) = text::system().lock() else {
+            return;
+        };
         match self.editors.get_mut(&f) {
             Some(super::edit::Field::Plain(e)) => e.select_chars(a, b, &mut ts),
             Some(super::edit::Field::Rich(r)) => r.select_chars(a, b),
@@ -2376,7 +2396,13 @@ impl WinState {
 
     /// Device pixels in the window to a field `key`'s text coordinates
     /// (its top-left, scroll included), as a press finds them.
-    fn to_text(&mut self, key: &str, x: f32, y: f32, ts: &mut text::TextSystem) -> Option<(f32, f32)> {
+    fn to_text(
+        &mut self,
+        key: &str,
+        x: f32,
+        y: f32,
+        ts: &mut text::TextSystem,
+    ) -> Option<(f32, f32)> {
         let (ox, oy, _, h) = self.edit_origin(key)?;
         let dy = self.edit_text_dy(key, h, ts);
         let (sx, sy) = self.editors.get(key)?.scrolled();
@@ -2385,7 +2411,13 @@ impl WinState {
 
     /// The box of a field's characters `a..b` (its first line's), device
     /// pixels in the window.
-    fn text_box(&mut self, key: &str, a: usize, b: usize, ts: &mut text::TextSystem) -> Option<[f32; 4]> {
+    fn text_box(
+        &mut self,
+        key: &str,
+        a: usize,
+        b: usize,
+        ts: &mut text::TextSystem,
+    ) -> Option<[f32; 4]> {
         let (ox, oy, _, h) = self.edit_origin(key)?;
         let dy = self.edit_text_dy(key, h, ts);
         let ed = self.editors.get_mut(key)?;
@@ -2431,12 +2463,22 @@ impl WinState {
         if self.editors.get(&k)?.secure() {
             return None;
         }
-        let size = self.scene.nodes.get(&k).map(|n| n.style.font.size).unwrap_or(13.0);
+        let size = self
+            .scene
+            .nodes
+            .get(&k)
+            .map(|n| n.style.font.size)
+            .unwrap_or(13.0);
         let mut ts = text::system().lock().ok()?;
         let (tx, ty) = self.to_text(&k, dx, dy, &mut ts)?;
         let ed = self.editors.get_mut(&k)?;
         let (a, b) = ed.word_at_point(tx, ty, &mut ts);
-        let word: String = ed.value().chars().skip(a).take(b.saturating_sub(a)).collect();
+        let word: String = ed
+            .value()
+            .chars()
+            .skip(a)
+            .take(b.saturating_sub(a))
+            .collect();
         if !word.chars().any(char::is_alphanumeric) {
             return None;
         }
@@ -2578,7 +2620,8 @@ impl WinState {
         st.bg = sh.bg;
         st.border = sh.border;
         st.color = sh.color;
-        let moving = sh.rect != rect || sh.pose.x != 0.0 || sh.pose.y != 0.0 || sh.pose.scale != 1.0;
+        let moving =
+            sh.rect != rect || sh.pose.x != 0.0 || sh.pose.y != 0.0 || sh.pose.scale != 1.0;
         let was = self.gliding;
         self.gliding = was || moving;
         self.paint_posed(
@@ -2654,7 +2697,11 @@ impl WinState {
         let radii = st.radius.map(|r| r * s);
         // the box on whole device pixels (crisp edges and hairlines at
         // every scale); its content keeps its own place
-        let (bx, by, bw_, bh) = if self.gliding { (x, y, w, h) } else { scene::snap_box(x, y, w, h) };
+        let (bx, by, bw_, bh) = if self.gliding {
+            (x, y, w, h)
+        } else {
+            scene::snap_box(x, y, w, h)
+        };
         if let Some(sh) = st.shadow {
             push_shadow(dl, sh, [bx, by, bw_, bh], radii, s, opacity, clip);
         }
@@ -3752,7 +3799,10 @@ impl WinState {
                 let (ba, bb) = r.para_char_bytes(di, a, b);
                 let boxes = r.range_boxes(di, ba, bb);
                 for prim in dl.prims[first..].iter_mut() {
-                    if let Prim::Glyph { x, y, color, key, .. } = prim {
+                    if let Prim::Glyph {
+                        x, y, color, key, ..
+                    } = prim
+                    {
                         let hit = boxes.iter().any(|bx| {
                             *x >= ox + bx.x0 as f32 - 0.5
                                 && *x < ox + bx.x1 as f32 - 0.5
@@ -4104,7 +4154,11 @@ impl WinState {
                     | Prim::Image { clip, .. } => clip,
                     Prim::Path(pp) => {
                         // its clip cut as the others' are
-                        let mut q = PathPrim { path: pp.path.clone(), stroke: pp.stroke.clone(), ..**pp };
+                        let mut q = PathPrim {
+                            path: pp.path.clone(),
+                            stroke: pp.stroke.clone(),
+                            ..**pp
+                        };
                         let c = q.clip;
                         q.clip = if hidden {
                             c.intersect(Clip::rect(c.x0, c.y1, c.x1, c.y1))
@@ -4670,7 +4724,9 @@ impl WinState {
             self.spell.remove(key);
             return;
         }
-        let Some(ed) = self.editors.get(key) else { return };
+        let Some(ed) = self.editors.get(key) else {
+            return;
+        };
         if ed.is_composing() {
             return;
         }
@@ -4685,11 +4741,20 @@ impl WinState {
         let words = sp.found.clone();
         let s = self.scale;
         // a styled field: only the paragraphs in view are looked at
-        let shown = self.editors.get_mut(key).and_then(|e| e.rich_mut()).map(|r| {
-            let y = r.scroll_y;
-            r.visible(y, y + content[3], ts)
-        });
-        let clip = clip.intersect(Clip::rect(content[0], content[1], content[0] + content[2], content[1] + content[3]));
+        let shown = self
+            .editors
+            .get_mut(key)
+            .and_then(|e| e.rich_mut())
+            .map(|r| {
+                let y = r.scroll_y;
+                r.visible(y, y + content[3], ts)
+            });
+        let clip = clip.intersect(Clip::rect(
+            content[0],
+            content[1],
+            content[0] + content[2],
+            content[1] + content[3],
+        ));
         let red: Color = [255, 59, 48, (255.0 * opacity).round() as u8];
         let d = (1.5 * s).round().max(2.0);
         for (wa, wb) in words {
@@ -4701,7 +4766,9 @@ impl WinState {
                     continue;
                 }
             }
-            let Some(b) = self.text_box(key, wa, wb, ts) else { continue };
+            let Some(b) = self.text_box(key, wa, wb, ts) else {
+                continue;
+            };
             if b[1] > clip.y1 || b[1] + b[3] < clip.y0 {
                 continue;
             }
@@ -4728,7 +4795,10 @@ impl WinState {
     /// The misspelled words a spell-checked field shows underlined
     /// (characters), as last found.
     pub fn misspelled(&self, key: &str) -> Vec<(usize, usize)> {
-        self.spell.get(key).map(|s| s.found.clone()).unwrap_or_default()
+        self.spell
+            .get(key)
+            .map(|s| s.found.clone())
+            .unwrap_or_default()
     }
 
     fn paint_editor(

@@ -1032,7 +1032,10 @@ impl Parser {
         if let Some(at) = nesting_too_deep(input) {
             let line = input[..at].matches('\n').count() + 1;
             let line_start = input[..at].rfind('\n').map(|n| n + 1).unwrap_or(0);
-            let line_end = input[at..].find('\n').map(|n| at + n).unwrap_or(input.len());
+            let line_end = input[at..]
+                .find('\n')
+                .map(|n| at + n)
+                .unwrap_or(input.len());
             let text: String = input[line_start..line_end].chars().take(120).collect();
             return Err(ParseError::InvalidSyntaxWithPosition {
                 message: format!(
@@ -1462,7 +1465,9 @@ impl Parser {
                 MAX_EXPR_DEPTH
             );
             return Err(match pairs.peek() {
-                Some(pair) => ParseError::invalid_syntax_at(message, PositionInfo::from_pair(&pair)),
+                Some(pair) => {
+                    ParseError::invalid_syntax_at(message, PositionInfo::from_pair(&pair))
+                }
                 None => ParseError::InvalidSyntax { message },
             });
         }
@@ -1626,7 +1631,9 @@ impl Parser {
         let mut spill = (Vec::new(), Vec::new());
         for pair in pairs {
             match pair.as_rule() {
-                Rule::param_list => (parameters, lets) = self.build_param_list(pair.into_inner())?,
+                Rule::param_list => {
+                    (parameters, lets) = self.build_param_list(pair.into_inner())?
+                }
                 Rule::type_annotation => {
                     return_type = Some(self.build_type_annotation(pair.into_inner())?)
                 }
@@ -2356,7 +2363,11 @@ impl Parser {
         let mut destructure = None;
         let name = if first.as_rule() == Rule::param_pattern {
             let (line, column) = self.line_col(first.as_span().start_pos());
-            let name = first.as_str().split_whitespace().collect::<Vec<_>>().join(" ");
+            let name = first
+                .as_str()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
             let inner = first
                 .into_inner()
                 .next()
@@ -3709,7 +3720,9 @@ impl Parser {
         let mut default_body = None;
         for pair in pairs {
             match pair.as_rule() {
-                Rule::param_list => (parameters, lets) = self.build_param_list(pair.into_inner())?,
+                Rule::param_list => {
+                    (parameters, lets) = self.build_param_list(pair.into_inner())?
+                }
                 Rule::expr => default_body = Some(self.build_expr(pair.into_inner())?),
                 // return-type annotation is accepted but not retained at runtime
                 _ => {}
@@ -4814,8 +4827,10 @@ impl Parser {
         // package) imports everything it shares, `use foo { * }`.
         let Some(open) = pairs.next() else {
             let stdlib = match path.as_slice() {
-                [one] => crate::stdlib::embedded::is_embedded(one)
-                    || crate::stdlib::native_members().contains_key(one),
+                [one] => {
+                    crate::stdlib::embedded::is_embedded(one)
+                        || crate::stdlib::native_members().contains_key(one)
+                }
                 [std, one] if std == "std" => crate::stdlib::native_members().contains_key(one),
                 _ => false,
             };
@@ -5943,7 +5958,7 @@ mod tests {
     #[test]
     fn test_deeply_nested_parens_parse_in_linear_time() {
         use crate::clock::Instant;
-use std::time::Duration;
+        use std::time::Duration;
 
         // Recursive-descent AST building needs a deep stack for 100 nested
         // levels; a debug test thread's default 2 MiB stack overflows on the

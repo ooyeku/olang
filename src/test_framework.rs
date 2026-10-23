@@ -1,9 +1,9 @@
 use crate::ast::{Statement, TestDecl};
+use crate::clock::Instant;
 use crate::interpreter::{Interpreter, InterpreterError};
 use crate::parser::{ParseError, Parser};
 use std::fs;
 use std::path::{Path, PathBuf};
-use crate::clock::Instant;
 use std::time::Duration;
 use thiserror::Error;
 

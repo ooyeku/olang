@@ -451,8 +451,14 @@ impl Frame {
                 right_on.len()
             )));
         }
-        let lcols: Vec<&Series> = left_on.iter().map(|k| self.column(k)).collect::<Result<_>>()?;
-        let rcols: Vec<&Series> = right_on.iter().map(|k| right.column(k)).collect::<Result<_>>()?;
+        let lcols: Vec<&Series> = left_on
+            .iter()
+            .map(|k| self.column(k))
+            .collect::<Result<_>>()?;
+        let rcols: Vec<&Series> = right_on
+            .iter()
+            .map(|k| right.column(k))
+            .collect::<Result<_>>()?;
         let (lcodes, rcodes, card) = encode_join_keys(&lcols, &rcols);
 
         // The right side's rows by key code: group `c`'s rows are
@@ -505,7 +511,10 @@ impl Frame {
             let (ids, n_groups) = group_ids(&lcols)?;
             let mut seen = vec![u32::MAX; n_groups];
             for (i, &g) in ids.iter().enumerate() {
-                if lcols.iter().any(|c| c.validity().is_some_and(|v| !v.get(i))) {
+                if lcols
+                    .iter()
+                    .any(|c| c.validity().is_some_and(|v| !v.get(i)))
+                {
                     continue;
                 }
                 if seen[g as usize] != u32::MAX {
@@ -536,8 +545,16 @@ impl Frame {
 
         // The probe; a full join probes as a left join and then appends
         // what the right side had left over.
-        let probe_how = if how == JoinHow::Full { JoinHow::Left } else { how };
-        let table = JoinTable { lcodes: &lcodes, offsets: &offsets, rrows: &rrows };
+        let probe_how = if how == JoinHow::Full {
+            JoinHow::Left
+        } else {
+            how
+        };
+        let table = JoinTable {
+            lcodes: &lcodes,
+            offsets: &offsets,
+            rrows: &rrows,
+        };
         let (left_idx, right_idx) = join_probe(&table, probe_how, lcodes.len());
 
         let right_name = |name: &String| -> String {
@@ -650,7 +667,8 @@ impl Frame {
         // A Date or Datetime compares as its integers (a Date against a
         // Datetime as its midnight); a tolerance is days for a Date,
         // seconds for a Datetime.
-        let temporal = |s: &Series| matches!(s.dtype(), crate::DType::Date | crate::DType::Datetime);
+        let temporal =
+            |s: &Series| matches!(s.dtype(), crate::DType::Date | crate::DType::Datetime);
         let as_time = |s: &Series| -> Result<Series> {
             let t = if lon.dtype() != ron.dtype() {
                 s.cast(crate::DType::Datetime, &|x| x.to_string())?
@@ -663,8 +681,13 @@ impl Frame {
         let (lon, ron, tolerance) = if temporal(lon) && temporal(ron) {
             lphys = as_time(lon)?;
             rphys = as_time(ron)?;
-            let micros = lon.dtype() == crate::DType::Datetime || ron.dtype() == crate::DType::Datetime;
-            (&lphys, &rphys, tolerance.map(|t| if micros { t * 1e6 } else { t }))
+            let micros =
+                lon.dtype() == crate::DType::Datetime || ron.dtype() == crate::DType::Datetime;
+            (
+                &lphys,
+                &rphys,
+                tolerance.map(|t| if micros { t * 1e6 } else { t }),
+            )
         } else {
             (lon, ron, tolerance)
         };
@@ -708,11 +731,19 @@ impl Frame {
         let lvalid: Vec<bool> = (0..self.n_rows())
             .map(|l| lcodes[l] != NO_KEY && valid(lon, l))
             .collect();
-        let t = AsofTable { lvalid: &lvalid, lcodes: &lcodes, groups: &groups, direction, tolerance };
+        let t = AsofTable {
+            lvalid: &lvalid,
+            lcodes: &lcodes,
+            groups: &groups,
+            direction,
+            tolerance,
+        };
         let right_idx: Vec<Option<usize>> = match (lon, ron) {
-            (Series::I64 { values: a, .. }, Series::I64 { values: b, .. }) => {
-                t.pick(|l| a[l], |r| b[r], Some(|x: i64, y: i64| (x as f64 - y as f64).abs()))
-            }
+            (Series::I64 { values: a, .. }, Series::I64 { values: b, .. }) => t.pick(
+                |l| a[l],
+                |r| b[r],
+                Some(|x: i64, y: i64| (x as f64 - y as f64).abs()),
+            ),
             (Series::Str { col: a, .. }, Series::Str { col: b, .. }) => {
                 t.pick(|l| a.get(l), |r| b.get(r), None::<fn(&str, &str) -> f64>)
             }
@@ -724,7 +755,11 @@ impl Frame {
                         _ => f64::NAN,
                     }
                 };
-                t.pick(|l| num(lon, l), |r| num(ron, r), Some(|x: f64, y: f64| (x - y).abs()))
+                t.pick(
+                    |l| num(lon, l),
+                    |r| num(ron, r),
+                    Some(|x: f64, y: f64| (x - y).abs()),
+                )
             }
         };
 
@@ -805,8 +840,16 @@ impl AsofTable<'_> {
                     (le[g], lt[g])
                 } else {
                     (
-                        if want_back { rows.partition_point(|&r| rk(r as usize) <= x) } else { 0 },
-                        if want_fwd { rows.partition_point(|&r| rk(r as usize) < x) } else { rows.len() },
+                        if want_back {
+                            rows.partition_point(|&r| rk(r as usize) <= x)
+                        } else {
+                            0
+                        },
+                        if want_fwd {
+                            rows.partition_point(|&r| rk(r as usize) < x)
+                        } else {
+                            rows.len()
+                        },
                     )
                 };
                 let back = (after > 0).then(|| rows[after - 1] as usize);
@@ -969,7 +1012,13 @@ fn encode_join_pair(l: &Series, r: &Series) -> (Vec<u32>, Vec<u32>, usize) {
             |i| valid(r, i).then(|| b.get(i)),
         ),
         (Series::F64 { values: a, .. }, Series::F64 { values: b, .. }) => {
-            let bits = |x: f64| if x.is_nan() { f64::NAN.to_bits() } else { x.to_bits() };
+            let bits = |x: f64| {
+                if x.is_nan() {
+                    f64::NAN.to_bits()
+                } else {
+                    x.to_bits()
+                }
+            };
             run(
                 nl,
                 nr,
@@ -1697,8 +1746,7 @@ impl Series {
                         slot.1 += 1;
                     }
                 }
-                let mut all: Vec<(usize, usize)> =
-                    counts.into_iter().filter(|c| c.1 > 0).collect();
+                let mut all: Vec<(usize, usize)> = counts.into_iter().filter(|c| c.1 > 0).collect();
                 out.distinct = all.len();
                 all.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
                 all.truncate(top);
@@ -2265,12 +2313,20 @@ fn accumulate_i64(
     scatter(0, values.len())
 }
 
-pub(crate) fn aggregate_column(col: &Series, group_ids: &[u32], n_groups: usize, op: AggOp) -> Result<Series> {
+pub(crate) fn aggregate_column(
+    col: &Series,
+    group_ids: &[u32],
+    n_groups: usize,
+    op: AggOp,
+) -> Result<Series> {
     match col {
         // The earliest and latest of a group's dates.
         Series::Date { .. } | Series::Datetime { .. } if matches!(op, AggOp::Min | AggOp::Max) => {
             let phys = col.physical().expect("temporal");
-            Series::from_physical(col.dtype(), aggregate_column(&phys, group_ids, n_groups, op)?)
+            Series::from_physical(
+                col.dtype(),
+                aggregate_column(&phys, group_ids, n_groups, op)?,
+            )
         }
         Series::F64 { values, validity } => {
             let (acc, cnt, mins, maxs) =
@@ -2504,7 +2560,11 @@ pub(crate) fn aggregate_by_rows(
 /// Gather with optional indices (join's right side): None -> null.
 pub(crate) fn gather_optional(col: &Series, idx: &[Option<usize>]) -> Series {
     // Values and validity written apart: no Option per row.
-    fn dense<T: Copy + Default>(values: &[T], col: &Series, idx: &[Option<usize>]) -> (Vec<T>, Option<Bitmap>) {
+    fn dense<T: Copy + Default>(
+        values: &[T],
+        col: &Series,
+        idx: &[Option<usize>],
+    ) -> (Vec<T>, Option<Bitmap>) {
         let mut out = Vec::with_capacity(idx.len());
         let mut valid = Vec::with_capacity(idx.len());
         for o in idx {
@@ -2544,11 +2604,17 @@ pub(crate) fn gather_optional(col: &Series, idx: &[Option<usize>]) -> Series {
         }
         Series::F64 { values, .. } => {
             let (v, b) = dense(values, col, idx);
-            Series::F64 { values: std::sync::Arc::new(v), validity: b }
+            Series::F64 {
+                values: std::sync::Arc::new(v),
+                validity: b,
+            }
         }
         Series::I64 { values, .. } => {
             let (v, b) = dense(values, col, idx);
-            Series::I64 { values: std::sync::Arc::new(v), validity: b }
+            Series::I64 {
+                values: std::sync::Arc::new(v),
+                validity: b,
+            }
         }
         Series::Bool { values, .. } => Series::from_bool_options(
             idx.iter()
@@ -2868,25 +2934,51 @@ mod summary_tests {
     fn an_asof_join_takes_the_row_in_force() {
         let quotes = Frame::new(vec![
             ("t".into(), Series::from_i64(vec![1, 5, 3, 9])),
-            ("sym".into(), Series::from_str_values(vec!["a".into(), "a".into(), "b".into(), "a".into()])),
+            (
+                "sym".into(),
+                Series::from_str_values(vec!["a".into(), "a".into(), "b".into(), "a".into()]),
+            ),
             ("px".into(), Series::from_f64(vec![10.0, 50.0, 30.0, 90.0])),
         ])
         .unwrap();
         let trades = Frame::new(vec![
             ("t".into(), Series::from_i64(vec![0, 4, 5, 8, 4])),
-            ("sym".into(), Series::from_str_values(vec!["a".into(), "a".into(), "a".into(), "a".into(), "b".into()])),
+            (
+                "sym".into(),
+                Series::from_str_values(vec![
+                    "a".into(),
+                    "a".into(),
+                    "a".into(),
+                    "a".into(),
+                    "b".into(),
+                ]),
+            ),
         ])
         .unwrap();
         let px = |d: AsOf, tol: Option<f64>| -> Vec<Scalar> {
-            let j = trades.asof_join(&quotes, "t", &["sym".to_string()], d, tol, "_right").unwrap();
+            let j = trades
+                .asof_join(&quotes, "t", &["sym".to_string()], d, tol, "_right")
+                .unwrap();
             let c = j.column("px").unwrap();
             (0..c.len()).map(|i| c.scalar_at(i)).collect()
         };
         use Scalar::{F64, Null};
-        assert_eq!(px(AsOf::Backward, None), vec![Null, F64(10.0), F64(50.0), F64(50.0), F64(30.0)]);
-        assert_eq!(px(AsOf::Forward, None), vec![F64(10.0), F64(50.0), F64(50.0), F64(90.0), Null]);
-        assert_eq!(px(AsOf::Nearest, None), vec![F64(10.0), F64(50.0), F64(50.0), F64(90.0), F64(30.0)]);
-        assert_eq!(px(AsOf::Backward, Some(1.0)), vec![Null, Null, F64(50.0), Null, F64(30.0)]);
+        assert_eq!(
+            px(AsOf::Backward, None),
+            vec![Null, F64(10.0), F64(50.0), F64(50.0), F64(30.0)]
+        );
+        assert_eq!(
+            px(AsOf::Forward, None),
+            vec![F64(10.0), F64(50.0), F64(50.0), F64(90.0), Null]
+        );
+        assert_eq!(
+            px(AsOf::Nearest, None),
+            vec![F64(10.0), F64(50.0), F64(50.0), F64(90.0), F64(30.0)]
+        );
+        assert_eq!(
+            px(AsOf::Backward, Some(1.0)),
+            vec![Null, Null, F64(50.0), Null, F64(30.0)]
+        );
     }
 
     #[test]

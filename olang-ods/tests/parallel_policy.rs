@@ -31,7 +31,10 @@ fn small_columns_never_fan_out_and_large_ones_do() {
         ParClass::Sort,
     ] {
         assert!(!par_worth(class, 15_000), "{class:?} at 15,000");
-        assert!(!par_worth(class, class.min_rows() - 1), "{class:?} below its threshold");
+        assert!(
+            !par_worth(class, class.min_rows() - 1),
+            "{class:?} below its threshold"
+        );
         assert_eq!(par_worth(class, class.min_rows()), parallel_enabled());
     }
     assert!(ParClass::Elementwise.min_rows() >= 250_000);
@@ -41,7 +44,10 @@ fn small_columns_never_fan_out_and_large_ones_do() {
 #[test]
 fn a_kernel_on_a_pool_worker_stays_sequential() {
     // Inside the pool (an olang par_map stage) nothing fans out again.
-    let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build()
+        .unwrap();
     assert!(!pool.install(parallel_enabled));
     assert!(!pool.install(|| par_worth(ParClass::Sort, 10_000_000)));
 }
@@ -57,8 +63,14 @@ fn parallel_arithmetic_is_the_sequential_arithmetic() {
         let par = values(&sa.arith(op, &sb, true).unwrap());
         assert_eq!(seq, par, "{op:?}");
         for swapped in [false, true] {
-            let seq = values(&sa.arith_scalar(op, Scalar::F64(1.75), swapped, false).unwrap());
-            let par = values(&sa.arith_scalar(op, Scalar::F64(1.75), swapped, true).unwrap());
+            let seq = values(
+                &sa.arith_scalar(op, Scalar::F64(1.75), swapped, false)
+                    .unwrap(),
+            );
+            let par = values(
+                &sa.arith_scalar(op, Scalar::F64(1.75), swapped, true)
+                    .unwrap(),
+            );
             assert_eq!(seq, par, "{op:?} swapped {swapped}");
         }
     }
@@ -88,31 +100,57 @@ fn a_fused_chain_is_the_eager_kernels_bit_for_bit() {
             for op2 in ops {
                 let cases: Vec<(Arc<Expr>, Series)> = vec![
                     // a op b
-                    (Expr::bin(op.into(), leaf(&a), leaf(&b)), eager(&sa, op, &sb)),
+                    (
+                        Expr::bin(op.into(), leaf(&a), leaf(&b)),
+                        eager(&sa, op, &sb),
+                    ),
                     // a op 2.5, 2.5 op a
-                    (Expr::bin(op.into(), leaf(&a), konst(2.5)), eager_s(&sa, op, 2.5, false)),
-                    (Expr::bin(op.into(), konst(2.5), leaf(&a)), eager_s(&sa, op, 2.5, true)),
+                    (
+                        Expr::bin(op.into(), leaf(&a), konst(2.5)),
+                        eager_s(&sa, op, 2.5, false),
+                    ),
+                    (
+                        Expr::bin(op.into(), konst(2.5), leaf(&a)),
+                        eager_s(&sa, op, 2.5, true),
+                    ),
                     // (a op b) op2 1.5, 1.5 op2 (a op b)
                     (
-                        Expr::bin(op2.into(), Expr::bin(op.into(), leaf(&a), leaf(&b)), konst(1.5)),
+                        Expr::bin(
+                            op2.into(),
+                            Expr::bin(op.into(), leaf(&a), leaf(&b)),
+                            konst(1.5),
+                        ),
                         eager_s(&eager(&sa, op, &sb), op2, 1.5, false),
                     ),
                     (
-                        Expr::bin(op2.into(), konst(1.5), Expr::bin(op.into(), leaf(&a), leaf(&b))),
+                        Expr::bin(
+                            op2.into(),
+                            konst(1.5),
+                            Expr::bin(op.into(), leaf(&a), leaf(&b)),
+                        ),
                         eager_s(&eager(&sa, op, &sb), op2, 1.5, true),
                     ),
                     // (a op b) op2 c, c op2 (a op b)
                     (
-                        Expr::bin(op2.into(), Expr::bin(op.into(), leaf(&a), leaf(&b)), leaf(&c)),
+                        Expr::bin(
+                            op2.into(),
+                            Expr::bin(op.into(), leaf(&a), leaf(&b)),
+                            leaf(&c),
+                        ),
                         eager(&eager(&sa, op, &sb), op2, &sc),
                     ),
                     (
-                        Expr::bin(op2.into(), leaf(&c), Expr::bin(op.into(), leaf(&a), leaf(&b))),
+                        Expr::bin(
+                            op2.into(),
+                            leaf(&c),
+                            Expr::bin(op.into(), leaf(&a), leaf(&b)),
+                        ),
                         eager(&sc, op2, &eager(&sa, op, &sb)),
                     ),
                     // (a op 3.0) op2 (b op c): both sides chains
                     (
-                        Expr::bin(op2.into(),
+                        Expr::bin(
+                            op2.into(),
                             Expr::bin(op.into(), leaf(&a), konst(3.0)),
                             Expr::bin(op.into(), leaf(&b), leaf(&c)),
                         ),
@@ -122,8 +160,16 @@ fn a_fused_chain_is_the_eager_kernels_bit_for_bit() {
                 for (expr, want) in cases {
                     let want = values(&want);
                     let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
-                    assert_eq!(bits(&values(&expr.eval(n, false).unwrap())), bits(&want), "{expr:?} n={n}");
-                    assert_eq!(bits(&values(&expr.eval(n, true).unwrap())), bits(&want), "{expr:?} n={n} par");
+                    assert_eq!(
+                        bits(&values(&expr.eval(n, false).unwrap())),
+                        bits(&want),
+                        "{expr:?} n={n}"
+                    );
+                    assert_eq!(
+                        bits(&values(&expr.eval(n, true).unwrap())),
+                        bits(&want),
+                        "{expr:?} n={n} par"
+                    );
                 }
             }
         }

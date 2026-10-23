@@ -58,8 +58,8 @@ fn a_bare_use_of_a_stdlib_module_binds_its_namespace_alone() {
     let dir = project(&[
         ("nopoint.ol", "use gg {}\nprintln(typeof(point))\n"),
         (
-        "main.ol",
-        "let folds = 3\n\
+            "main.ol",
+            "let folds = 3\n\
          use gg\n\
          use ml\n\
          println(typeof(plot))\n\
@@ -75,7 +75,11 @@ fn a_bare_use_of_a_stdlib_module_binds_its_namespace_alone() {
     let (out, rc) = tiers(&dir, "main.ol");
     assert_eq!(rc, 0, "{out}");
     let lines: Vec<&str> = out.lines().collect();
-    assert_eq!(lines[..4], ["Module", "Int", "Function", "Function"], "{out}");
+    assert_eq!(
+        lines[..4],
+        ["Module", "Int", "Function", "Function"],
+        "{out}"
+    );
     assert_eq!(lines[5], "Function", "{out}");
     let (out, rc) = run_in(&dir, &["run", "nopoint.ol"]);
     assert_ne!(rc, 0, "use gg {{}} must not import point:\n{out}");
@@ -114,7 +118,10 @@ fn a_wildcard_keeps_stdlib_modules_and_the_program_s_own_names() {
 fn a_listed_name_the_program_binds_is_refused() {
     let dir = project(&[
         ("lib/cv.ol", LIB),
-        ("main.ol", "let folds = 3\nuse lib.cv { folds }\nprintln(folds)\n"),
+        (
+            "main.ol",
+            "let folds = 3\nuse lib.cv { folds }\nprintln(folds)\n",
+        ),
         (
             "ok.ol",
             "let folds = 3\n\
@@ -136,7 +143,11 @@ fn a_listed_name_the_program_binds_is_refused() {
     // an alias, a re-run import, and a later `fn` are all fine
     let (out, rc) = tiers(&dir, "ok.ol");
     assert_eq!(rc, 0, "{out}");
-    assert_eq!(out.lines().collect::<Vec<_>>(), ["3", "10", "mine"], "{out}");
+    assert_eq!(
+        out.lines().collect::<Vec<_>>(),
+        ["3", "10", "mine"],
+        "{out}"
+    );
     let (out, rc) = run_in(&dir, &["check", "ok.ol"]);
     assert_eq!(rc, 0, "{out}");
 }
@@ -146,7 +157,10 @@ fn a_listed_stdlib_module_name_binds() {
     // Loom's `use lib.effects { task }`: listing it is the choice.
     let dir = project(&[
         ("lib/effects.ol", "share fn task(x) = \"wrapped \" + x\n"),
-        ("main.ol", "use lib.effects { task }\nprintln(task(\"t\"))\n"),
+        (
+            "main.ol",
+            "use lib.effects { task }\nprintln(task(\"t\"))\n",
+        ),
     ]);
     let (out, rc) = tiers(&dir, "main.ol");
     assert_eq!(rc, 0, "{out}");
@@ -193,7 +207,11 @@ fn an_item_named_as_its_module_stays_the_item() {
     ]);
     let (out, rc) = tiers(&dir, "main.ol");
     assert_eq!(rc, 0, "{out}");
-    assert_eq!(out.lines().collect::<Vec<_>>(), ["themed a", "themed b", "themed c"], "{out}");
+    assert_eq!(
+        out.lines().collect::<Vec<_>>(),
+        ["themed a", "themed b", "themed c"],
+        "{out}"
+    );
 }
 
 #[test]

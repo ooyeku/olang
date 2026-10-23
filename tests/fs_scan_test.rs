@@ -394,7 +394,10 @@ fn a_case_blind_search_finds_every_file_a_lower_cased_copy_would() {
         )));
         let want = format!(
             "[{}]",
-            want.iter().map(|w| format!("\"{w}\"")).collect::<Vec<_>>().join(", ")
+            want.iter()
+                .map(|w| format!("\"{w}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
         );
         assert_eq!(got, want, "{needle}");
     }

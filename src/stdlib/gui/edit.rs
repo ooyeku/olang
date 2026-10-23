@@ -458,7 +458,10 @@ impl Editor {
 
     fn byte_of_char(&self, chars: usize) -> usize {
         let t = self.ed.raw_text();
-        t.char_indices().nth(chars).map(|(b, _)| b).unwrap_or(t.len())
+        t.char_indices()
+            .nth(chars)
+            .map(|(b, _)| b)
+            .unwrap_or(t.len())
     }
 
     fn char_of_byte(&self, b: usize) -> usize {

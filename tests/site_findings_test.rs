@@ -18,7 +18,11 @@ fn olang() -> &'static str {
 }
 
 fn scratch(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("olang_site_findings_{}_{}", std::process::id(), tag));
+    let dir = std::env::temp_dir().join(format!(
+        "olang_site_findings_{}_{}",
+        std::process::id(),
+        tag
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -50,7 +54,11 @@ fn agrees(tag: &str, body: &str, expected: &str) {
         let mut args: Vec<&str> = flags.to_vec();
         args.push("p.ol");
         let (out, err, _) = run_in(&dir, &args);
-        assert_eq!(out.trim_end(), expected.trim_end(), "flags {flags:?}\nstderr: {err}\nprogram:\n{code}");
+        assert_eq!(
+            out.trim_end(),
+            expected.trim_end(),
+            "flags {flags:?}\nstderr: {err}\nprogram:\n{code}"
+        );
     }
 }
 
@@ -127,7 +135,13 @@ println(plot.describe(gg.svg(p)) |> is_ok())
     let (out, err, ok) = run_in(&dir, &["p.ol"]);
     assert!(ok && out.trim() == "true", "{out}{err}");
     let read = |n: &str| std::fs::read_to_string(dir.join(n)).unwrap();
-    let (p, p2, pd, q, t) = (read("p.svg"), read("p2.svg"), read("pd.svg"), read("q.svg"), read("t.svg"));
+    let (p, p2, pd, q, t) = (
+        read("p.svg"),
+        read("p2.svg"),
+        read("pd.svg"),
+        read("q.svg"),
+        read("t.svg"),
+    );
     assert_eq!(p, p2, "the same plot writes the same ids");
     assert!(p.contains("<metadata class=\"olang-chart\">"));
     let mut all: Vec<String> = [&p, &pd, &q].iter().flat_map(|s| ids(s)).collect();
@@ -148,7 +162,11 @@ println(plot.describe(gg.svg(p)) |> is_ok())
 #[test]
 fn olang_test_walks_what_a_checkout_keeps_and_runs_a_test_from_its_folder() {
     let dir = scratch("walk");
-    std::fs::write(dir.join("olang.toml"), "[package]\nname = \"p\"\nversion = \"0.1.0\"\n").unwrap();
+    std::fs::write(
+        dir.join("olang.toml"),
+        "[package]\nname = \"p\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
     std::fs::write(dir.join(".gitignore"), "out/\n").unwrap();
     std::fs::write(dir.join("data.txt"), "x").unwrap();
     std::fs::create_dir_all(dir.join("tests")).unwrap();
@@ -159,11 +177,18 @@ fn olang_test_walks_what_a_checkout_keeps_and_runs_a_test_from_its_folder() {
     .unwrap();
     for d in ["out", "dist", "target", "node_modules/x", ".cache"] {
         std::fs::create_dir_all(dir.join(d)).unwrap();
-        std::fs::write(dir.join(d).join("b_test.ol"), "test \"never\" { assert_eq(1, 2) }\n").unwrap();
+        std::fs::write(
+            dir.join(d).join("b_test.ol"),
+            "test \"never\" { assert_eq(1, 2) }\n",
+        )
+        .unwrap();
     }
     let (out, err, ok) = run_in(&dir, &["test"]);
     assert!(ok, "{out}{err}");
-    assert!(out.contains("1 passed, 0 failed") && out.contains("1 test file"), "{out}");
+    assert!(
+        out.contains("1 passed, 0 failed") && out.contains("1 test file"),
+        "{out}"
+    );
     // a folder named on the command line is walked whatever ignores it
     let (out, _, ok) = run_in(&dir, &["test", "out"]);
     assert!(!ok && out.contains("1 failed"), "{out}");
@@ -183,7 +208,10 @@ share fn rule_one(nodes) = { message: "one object", line: 1 }
     let (out, err, ok) = run_in(&dir, &["check", "--rules", "rules.ol", "a.ol"]);
     assert!(!ok);
     let all = format!("{out}{err}");
-    assert!(all.contains("[rule_obj] bare unwrap") && all.contains("[rule_one] one object"), "{all}");
+    assert!(
+        all.contains("[rule_obj] bare unwrap") && all.contains("[rule_one] one object"),
+        "{all}"
+    );
 }
 
 #[test]
@@ -221,35 +249,75 @@ gg.plot(f, gg.aes(x: "x", y: "y")) |> gg.line()
 "#,
     )
     .unwrap();
-    let (out, err, ok) = run_in(&dir, &["notebook", "export", "nb/x.olmd", "--json", "o.json", "--html", "o.html", "--rows", "25"]);
+    let (out, err, ok) = run_in(
+        &dir,
+        &[
+            "notebook",
+            "export",
+            "nb/x.olmd",
+            "--json",
+            "o.json",
+            "--html",
+            "o.html",
+            "--rows",
+            "25",
+        ],
+    );
     assert!(ok, "{out}{err}");
     let names: Vec<String> = std::fs::read_dir(&nb_dir)
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
         .collect();
-    assert_eq!(names, vec!["x.olmd".to_string()], "nothing written beside the notebook");
-    let doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.join("o.json")).unwrap()).unwrap();
+    assert_eq!(
+        names,
+        vec!["x.olmd".to_string()],
+        "nothing written beside the notebook"
+    );
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("o.json")).unwrap()).unwrap();
     assert_eq!(doc["params"][0]["default"], "30");
     let ctl = &doc["controls"][0];
     assert_eq!(ctl["kind"], "select");
     assert_eq!(ctl["default"], "b");
     assert_eq!(ctl["options"], serde_json::json!(["a", "b"]));
     let blocks = doc["blocks"].as_array().unwrap();
-    let prose = blocks.iter().find(|b| b["kind"] == "prose" && !b["exprs"].as_array().unwrap().is_empty()).unwrap();
+    let prose = blocks
+        .iter()
+        .find(|b| b["kind"] == "prose" && !b["exprs"].as_array().unwrap().is_empty())
+        .unwrap();
     assert_eq!(prose["exprs"][0]["text"], "30");
     assert_eq!(prose["exprs"][1]["text"], "29.00");
     let codes: Vec<&serde_json::Value> = blocks.iter().filter(|b| b["kind"] == "code").collect();
     assert_eq!(codes.len(), 3);
-    assert!(codes[0]["source"].as_str().unwrap().starts_with("let f = ods.frame"));
-    let cell = |id: &serde_json::Value| doc["cells"].as_array().unwrap().iter().find(|c| &c["id"] == id).unwrap().clone();
+    assert!(
+        codes[0]["source"]
+            .as_str()
+            .unwrap()
+            .starts_with("let f = ods.frame")
+    );
+    let cell = |id: &serde_json::Value| {
+        doc["cells"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| &c["id"] == id)
+            .unwrap()
+            .clone()
+    };
     let frame = cell(&codes[0]["id"]);
     let v = &frame["reply"]["value"];
     assert_eq!(v["table"]["cols"], serde_json::json!(["x", "y"]));
     assert_eq!(v["rows"].as_array().unwrap().len(), 25);
     let chart = cell(&codes[2]["id"]);
     let svg = &chart["reply"]["value"]["svg"];
-    let (light, dark) = (svg["light"].as_str().unwrap(), svg["dark"].as_str().unwrap());
-    assert!(light.contains("#fcfcfb") && dark.contains("#16181d"), "each appearance drawn natively");
+    let (light, dark) = (
+        svg["light"].as_str().unwrap(),
+        svg["dark"].as_str().unwrap(),
+    );
+    assert!(
+        light.contains("#fcfcfb") && dark.contains("#16181d"),
+        "each appearance drawn natively"
+    );
     assert!(chart["reply"]["value"]["chart"]["type"] == "scene");
     let html = std::fs::read_to_string(dir.join("o.html")).unwrap();
     let mut seen = std::collections::HashSet::new();
@@ -287,7 +355,10 @@ fn check_keeps_a_builtin_a_namespace_import_does_not_name() {
     let dir = scratch("check_find");
     std::fs::write(
         dir.join("shelf.toml"),
-        format!("[libraries]\nweb = \"{}/frameworks/web-sdk\"\n", env!("CARGO_MANIFEST_DIR")),
+        format!(
+            "[libraries]\nweb = \"{}/frameworks/web-sdk\"\n",
+            env!("CARGO_MANIFEST_DIR")
+        ),
     )
     .unwrap();
     std::fs::write(
@@ -302,8 +373,15 @@ fn check_keeps_a_builtin_a_namespace_import_does_not_name() {
         .env("OLANG_SHELF", dir.join("shelf.toml"))
         .output()
         .expect("run olang");
-    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert!(out.status.success() && !text.contains("Missing required argument"), "{text}");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.status.success() && !text.contains("Missing required argument"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -368,19 +446,42 @@ fn notebook_export_names_both_papers_and_draws_on_none_when_asked() {
         all.extend_from_slice(args);
         let (o, e, ok) = run_in(&dir, &all);
         assert!(ok, "{o}{e}");
-        let doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.join(out)).unwrap()).unwrap();
-        doc["cells"].as_array().unwrap().iter().map(|c| c["reply"]["value"]["svg"].clone()).collect()
+        let doc: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join(out)).unwrap()).unwrap();
+        doc["cells"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["reply"]["value"]["svg"].clone())
+            .collect()
     };
     for svg in svgs(&[], "a.json") {
         let paper = &svg["paper"];
-        let (l, d) = (paper["light"].as_str().unwrap(), paper["dark"].as_str().unwrap());
+        let (l, d) = (
+            paper["light"].as_str().unwrap(),
+            paper["dark"].as_str().unwrap(),
+        );
         assert!(l != d && !l.is_empty() && !d.is_empty(), "{paper}");
-        assert!(svg["light"].as_str().unwrap().contains(&format!("fill=\"{l}\"")));
-        assert!(svg["dark"].as_str().unwrap().contains(&format!("fill=\"{d}\"")));
+        assert!(
+            svg["light"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("fill=\"{l}\""))
+        );
+        assert!(
+            svg["dark"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("fill=\"{d}\""))
+        );
     }
     for svg in svgs(&["--paper", "transparent"], "b.json") {
         // the colours are still named, and the paper's rect is clear
-        assert!(svg["paper"]["light"].as_str().is_some_and(|p| p != "none"), "{}", svg["paper"]);
+        assert!(
+            svg["paper"]["light"].as_str().is_some_and(|p| p != "none"),
+            "{}",
+            svg["paper"]
+        );
         assert!(svg["paper"]["dark"].as_str().is_some_and(|p| p != "none"));
         assert_eq!(svg["bg"], "none");
         for key in ["light", "dark", "text"] {
@@ -390,6 +491,11 @@ fn notebook_export_names_both_papers_and_draws_on_none_when_asked() {
             assert!(rect.contains("fill=\"none\""), "{key}: {rect}");
         }
     }
-    let (_, e, ok) = run_in(&dir, &["notebook", "export", "x.olmd", "--json", "c.json", "--paper", "blue"]);
+    let (_, e, ok) = run_in(
+        &dir,
+        &[
+            "notebook", "export", "x.olmd", "--json", "c.json", "--paper", "blue",
+        ],
+    );
     assert!(!ok && e.contains("transparent"), "{e}");
 }

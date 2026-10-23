@@ -320,12 +320,20 @@ pub const STRIP: usize = 256;
 
 /// An sRGB-encoded channel (0 … 1) in linear light.
 pub fn to_linear(c: f32) -> f32 {
-    if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
 }
 
 /// A linear-light channel (0 … 1) sRGB-encoded.
 pub fn to_srgb(c: f32) -> f32 {
-    if c <= 0.003_130_8 { c * 12.92 } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 }
+    if c <= 0.003_130_8 {
+        c * 12.92
+    } else {
+        1.055 * c.powf(1.0 / 2.4) - 0.055
+    }
 }
 
 /// A gradient's colour at `t` (0 … 1) along evenly spaced `stops`, mixed
@@ -344,7 +352,11 @@ pub fn gradient_at(stops: &[Color], t: f32) -> [f32; 4] {
         let pa = to_linear(a[j] as f32 / 255.0) * aa;
         let pb = to_linear(b[j] as f32 / 255.0) * ba;
         let p = pa + (pb - pa) * f;
-        out[j] = if alpha > 0.0 { to_srgb((p / alpha).clamp(0.0, 1.0)) * 255.0 } else { 0.0 };
+        out[j] = if alpha > 0.0 {
+            to_srgb((p / alpha).clamp(0.0, 1.0)) * 255.0
+        } else {
+            0.0
+        };
     }
     out[3] = alpha * 255.0;
     out
@@ -415,13 +427,21 @@ fn stroke_spec(op: &Value, color: Color, width: f32, cap: Cap, what: &str) -> Re
         Some("butt") => Cap::Butt,
         Some("round") => Cap::Round,
         Some("square") => Cap::Square,
-        Some(o) => return Err(format!("{what}: \"cap\" is butt, round or square, got \"{o}\"")),
+        Some(o) => {
+            return Err(format!(
+                "{what}: \"cap\" is butt, round or square, got \"{o}\""
+            ));
+        }
     };
     let join = match get_str(op, "join", what)? {
         None | Some("round") => Join::Round,
         Some("miter") => Join::Miter,
         Some("bevel") => Join::Bevel,
-        Some(o) => return Err(format!("{what}: \"join\" is round, miter or bevel, got \"{o}\"")),
+        Some(o) => {
+            return Err(format!(
+                "{what}: \"join\" is round, miter or bevel, got \"{o}\""
+            ));
+        }
     };
     let dash = match get(op, "dash") {
         None | Some(Value::Unit) => None,
@@ -441,7 +461,11 @@ fn stroke_spec(op: &Value, color: Color, width: f32, cap: Cap, what: &str) -> Re
     };
     Ok(StrokeSpec {
         color,
-        width: if width.is_finite() { width.max(0.0) } else { 0.0 },
+        width: if width.is_finite() {
+            width.max(0.0)
+        } else {
+            0.0
+        },
         cap,
         join,
         dash,
@@ -467,7 +491,9 @@ fn path_of_d(d: &Value, f: &Frame, what: &str) -> Res<Option<tiny_skia::Path>> {
             _ => return Err(format!("{what}: a command of \"d\" is a list, got {c}")),
         };
         let Some(Value::String(name)) = parts.first() else {
-            return Err(format!("{what}: a command of \"d\" starts with its letter (M, L, Q, C, Z)"));
+            return Err(format!(
+                "{what}: a command of \"d\" starts with its letter (M, L, Q, C, Z)"
+            ));
         };
         let ns: Vec<f32> = parts[1..].iter().filter_map(num).collect();
         let need = |k: usize| -> Res<()> {
@@ -487,7 +513,11 @@ fn path_of_d(d: &Value, f: &Frame, what: &str) -> Res<Option<tiny_skia::Path>> {
             "L" => {
                 need(2)?;
                 let (x, y) = f.pt(ns[0], ns[1]);
-                if open { pb.line_to(x, y) } else { pb.move_to(x, y) }
+                if open {
+                    pb.line_to(x, y)
+                } else {
+                    pb.move_to(x, y)
+                }
                 open = true;
             }
             "Q" => {
@@ -512,14 +542,24 @@ fn path_of_d(d: &Value, f: &Frame, what: &str) -> Res<Option<tiny_skia::Path>> {
                 open = true;
             }
             "Z" => pb.close(),
-            o => return Err(format!("{what}: unknown command \"{o}\" in \"d\" (M, L, Q, C, Z)")),
+            o => {
+                return Err(format!(
+                    "{what}: unknown command \"{o}\" in \"d\" (M, L, Q, C, Z)"
+                ));
+            }
         }
     }
     Ok(pb.finish())
 }
 
 /// A path item: its paint, and a hash of all of it (damage's).
-fn path_item(path: tiny_skia::Path, fill: Option<Color>, even_odd: bool, stroke: Option<StrokeSpec>, clip: Area) -> Item {
+fn path_item(
+    path: tiny_skia::Path,
+    fill: Option<Color>,
+    even_odd: bool,
+    stroke: Option<StrokeSpec>,
+    clip: Area,
+) -> Item {
     let mut h = rustc_hash::FxHasher::default();
     for p in path.points() {
         p.x.to_bits().hash(&mut h);
@@ -531,7 +571,14 @@ fn path_item(path: tiny_skia::Path, fill: Option<Color>, even_odd: bool, stroke:
     fill.hash(&mut h);
     even_odd.hash(&mut h);
     if let Some(s) = &stroke {
-        (s.color, s.width.to_bits(), s.cap, s.join, s.dash_offset.to_bits()).hash(&mut h);
+        (
+            s.color,
+            s.width.to_bits(),
+            s.cap,
+            s.join,
+            s.dash_offset.to_bits(),
+        )
+            .hash(&mut h);
         if let Some(d) = &s.dash {
             for v in d.iter() {
                 v.to_bits().hash(&mut h);
@@ -713,7 +760,11 @@ pub fn draw_at(ops: &Value, w: f32, h: f32, _scale: f32, raster: bool) -> Res<Dr
                 // a circle through a transform that stretches stays round
                 let r = n("r")?.max(0.0);
                 bbox = Some((cx - r, cy - r, 2.0 * r, 2.0 * r));
-                let s = if stroked { line_c.map(|c| (c, width)) } else { None };
+                let s = if stroked {
+                    line_c.map(|c| (c, width))
+                } else {
+                    None
+                };
                 let dashed = get(op, "dash").is_some_and(|v| *v != Value::Unit);
                 if r > 0.0 && !dashed && (fill.is_some() || s.is_some()) {
                     // a box with round corners: drawn exactly by both renderers

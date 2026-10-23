@@ -143,7 +143,9 @@ mod mac {
         let code = platform::host(|| {
             std::thread::spawn(|| {
                 let prober = std::thread::spawn(|| {
-                    wait_for("the window's first frame", 20, || platform::frames_presented() > 0);
+                    wait_for("the window's first frame", 20, || {
+                        platform::frames_presented() > 0
+                    });
                     let id = the_window();
                     contain("window_event", id, || {
                         // a size asked: the window hears it resized
@@ -159,7 +161,9 @@ mod mac {
                     contain("user_event", id, || platform::redraw(id));
                     contain("about_to_wait", id, || platform::redraw(id));
                     contain("render", id, || platform::redraw(id));
-                    contain("settings_notice", id, || on_main(platform::post_settings_notice));
+                    contain("settings_notice", id, || {
+                        on_main(platform::post_settings_notice)
+                    });
                     contain("new_tab", id, || {
                         on_main(|| {
                             let d = delegate();
@@ -176,23 +180,30 @@ mod mac {
                                 unsafe { msg_send![url_cls, fileURLWithPath: &*path] };
                             let urls = objc2_foundation::NSArray::from_retained_slice(&[url]);
                             let none: *const AnyObject = std::ptr::null();
-                            let _: () = unsafe { msg_send![&*d, application: none, openURLs: &*urls] };
+                            let _: () =
+                                unsafe { msg_send![&*d, application: none, openURLs: &*urls] };
                         })
                     });
                     contain("menu_event", id, || {
                         on_main(|| {
                             let cls = AnyClass::get(c"NSApplication").unwrap();
-                            let app: Retained<AnyObject> = unsafe { msg_send![cls, sharedApplication] };
-                            let bar: Option<Retained<AnyObject>> = unsafe { msg_send![&*app, mainMenu] };
+                            let app: Retained<AnyObject> =
+                                unsafe { msg_send![cls, sharedApplication] };
+                            let bar: Option<Retained<AnyObject>> =
+                                unsafe { msg_send![&*app, mainMenu] };
                             let Some(bar) = bar else { return };
                             let n: isize = unsafe { msg_send![&*bar, numberOfItems] };
                             if n < 2 {
                                 return;
                             }
-                            let top: Retained<AnyObject> = unsafe { msg_send![&*bar, itemAtIndex: 1isize] };
-                            let sub: Option<Retained<AnyObject>> = unsafe { msg_send![&*top, submenu] };
+                            let top: Retained<AnyObject> =
+                                unsafe { msg_send![&*bar, itemAtIndex: 1isize] };
+                            let sub: Option<Retained<AnyObject>> =
+                                unsafe { msg_send![&*top, submenu] };
                             if let Some(sub) = sub {
-                                let _: () = unsafe { msg_send![&*sub, performActionForItemAtIndex: 0isize] };
+                                let _: () = unsafe {
+                                    msg_send![&*sub, performActionForItemAtIndex: 0isize]
+                                };
                             }
                         })
                     });
@@ -209,7 +220,10 @@ mod mac {
                         });
                     }
                     *RECOVERED.lock().unwrap() = Some((gpu::recoveries(), had_gpu));
-                    olang::stdlib::gui::emit(vec![olang::stdlib::gui::values::event("test_done", vec![])]);
+                    olang::stdlib::gui::emit(vec![olang::stdlib::gui::values::event(
+                        "test_done",
+                        vec![],
+                    )]);
                 });
                 olang::contain::arm("gui.apply");
                 let program = Parser::new().parse(PROGRAM).expect("parses");
@@ -243,7 +257,10 @@ mod mac {
             "user_event",
             "window_event",
         ] {
-            assert!(result.contains(&format!("\"{site}\"")), "{site} not heard: {result}");
+            assert!(
+                result.contains(&format!("\"{site}\"")),
+                "{site} not heard: {result}"
+            );
         }
         match recovered {
             Some((n, true)) => assert!(n >= 1, "the device was not made again"),

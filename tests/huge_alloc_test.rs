@@ -33,6 +33,9 @@ fn a_long_range_stops_at_its_budget() {
     "#);
     let shown = format!("{v}");
     // a fast machine may finish it; it must not run on for long either way
-    assert!(shown.contains("stopped") || shown.contains("ran "), "{shown}");
+    assert!(
+        shown.contains("stopped") || shown.contains("ran "),
+        "{shown}"
+    );
     assert!(t0.elapsed().as_secs() < 20, "took {:?}", t0.elapsed());
 }

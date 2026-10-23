@@ -1221,7 +1221,10 @@ fn an_attenuated_dependency_cannot_widen_its_grant_through_eval_or_load_module()
         &ws.join("lib/index.ol"),
         "share fn by_eval() = show(meta.eval(\"fs.read_file(\\\"/etc/hosts\\\")\"))\n",
     );
-    write(&ws.join("lib/x.ol"), "share let READ = fs.read_file(\"/etc/hosts\")\n");
+    write(
+        &ws.join("lib/x.ol"),
+        "share let READ = fs.read_file(\"/etc/hosts\")\n",
+    );
     write(
         &ws.join("app/olang.toml"),
         "[package]\nname = \"app\"\nversion = \"1.0.0\"\n\n\
@@ -1229,7 +1232,10 @@ fn an_attenuated_dependency_cannot_widen_its_grant_through_eval_or_load_module()
          [capabilities]\nfs = \"read\"\n\n\
          [capabilities.dependencies.lib]\nfs = false\n",
     );
-    write(&ws.join("app/main.ol"), "use lib { by_eval }\nprintln(by_eval())\n");
+    write(
+        &ws.join("app/main.ol"),
+        "use lib { by_eval }\nprintln(by_eval())\n",
+    );
     let out = Command::new(olang())
         .current_dir(ws.join("app"))
         .arg("main.ol")
@@ -1250,7 +1256,10 @@ fn an_attenuated_dependency_cannot_widen_its_grant_through_eval_or_load_module()
             lib.display()
         ),
     );
-    write(&ws.join("app/main.ol"), "use lib { by_load }\nprintln(by_load())\n");
+    write(
+        &ws.join("app/main.ol"),
+        "use lib { by_load }\nprintln(by_load())\n",
+    );
     let out = Command::new(olang())
         .current_dir(ws.join("app"))
         .arg("main.ol")
@@ -1309,7 +1318,8 @@ fn a_narrowed_grant_holds_for_code_compiled_under_a_wider_one() {
         let was = i.replace_capabilities(none());
         let read = eval(&mut i, "peek()");
         assert!(
-            read.as_ref().is_err_and(|e| e.contains("capability 'fs' denied")),
+            read.as_ref()
+                .is_err_and(|e| e.contains("capability 'fs' denied")),
             "tier {tier}: a narrowed grant must deny a call compiled under the wider one: {read:?}"
         );
         assert_eq!(

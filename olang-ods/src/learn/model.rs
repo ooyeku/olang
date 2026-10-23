@@ -352,7 +352,10 @@ fn prepare(frame: &Frame, c: &Common, drop_first: bool, task_hint: TaskHint) -> 
             if x_names.contains(&c.y) {
                 return Err(bad(format!("learn: the target '{}' is also an input", c.y)));
             }
-            (Design::learn(frame, &x_names, drop_first)?, frame.column(&c.y)?.clone())
+            (
+                Design::learn(frame, &x_names, drop_first)?,
+                frame.column(&c.y)?.clone(),
+            )
         }
     };
     let (x_all, mut valid) = design.encode(frame)?;

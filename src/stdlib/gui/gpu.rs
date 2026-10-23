@@ -274,7 +274,11 @@ struct Globals {
 /// An instance's flags for its clip (`params.z`): 2 when the clip's
 /// corners are continuous.
 fn clip_flags(c: &super::window::Clip) -> f32 {
-    if c.continuous && c.is_rounded() { 2.0 } else { 0.0 }
+    if c.continuous && c.is_rounded() {
+        2.0
+    } else {
+        0.0
+    }
 }
 
 fn premul(c: Color) -> [f32; 4] {
@@ -464,7 +468,11 @@ impl Atlas {
         let rgba: &[u8] = if img.color {
             &img.data
         } else {
-            mono = img.data.iter().flat_map(|a| [255, 255, 255, *a]).collect::<Vec<u8>>();
+            mono = img
+                .data
+                .iter()
+                .flat_map(|a| [255, 255, 255, *a])
+                .collect::<Vec<u8>>();
             &mono
         };
         queue.write_texture(
@@ -535,7 +543,13 @@ pub struct Gpu {
     /// Materials' blur: its pipelines and textures.
     blur: Mutex<BlurState>,
     /// The frame's conversion to Display P3, by the surface's format.
-    p3: Mutex<Vec<(wgpu::TextureFormat, wgpu::BindGroupLayout, wgpu::RenderPipeline)>>,
+    p3: Mutex<
+        Vec<(
+            wgpu::TextureFormat,
+            wgpu::BindGroupLayout,
+            wgpu::RenderPipeline,
+        )>,
+    >,
     /// The device was lost (the GPU reset, unplugged, the machine slept
     /// through a driver's reset) or ran out of memory: said once, and every
     /// window's frame refused (`"lost"`) rather than drawn on a dead device.
@@ -641,7 +655,10 @@ pub fn gpu(
 /// atlas and pictures' textures made again as they are next drawn. Made
 /// once however many windows ask; every later caller gets it. `Err` when
 /// no device can be had now (a later frame asks again).
-pub fn recover(lost: &Arc<Gpu>, compatible: Option<&wgpu::Surface<'_>>) -> Result<Arc<Gpu>, String> {
+pub fn recover(
+    lost: &Arc<Gpu>,
+    compatible: Option<&wgpu::Surface<'_>>,
+) -> Result<Arc<Gpu>, String> {
     let mut slot = GPU.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(Ok(now)) = &*slot
         && !Arc::ptr_eq(now, lost)
@@ -736,7 +753,10 @@ fn make(
                 wgpu::Error::Validation { .. } => "validation",
             };
             let text = e.to_string();
-            let first = said.lock().map(|mut s| s.len() < 64 && s.insert(format!("{kind}: {text}"))).unwrap_or(false);
+            let first = said
+                .lock()
+                .map(|mut s| s.len() < 64 && s.insert(format!("{kind}: {text}")))
+                .unwrap_or(false);
             if first {
                 eprintln!("gui: the GPU said ({kind}): {text}");
             }
@@ -833,7 +853,6 @@ fn make(
         })),
     })
 }
-
 
 /// What an instance samples: no texture (a shape), an atlas page, or a
 /// frame's picture (`PIC + its index`).
@@ -934,7 +953,13 @@ type Covered = HashMap<usize, (u32, [f32; 4])>;
 
 /// Append instances `order` of `p` to `out`, in runs of one source (a
 /// path's from `covered`).
-fn push_runs(p: &Prepared, order: impl Iterator<Item = usize>, out: &mut Vec<Inst>, runs: &mut Runs, covered: &Covered) {
+fn push_runs(
+    p: &Prepared,
+    order: impl Iterator<Item = usize>,
+    out: &mut Vec<Inst>,
+    runs: &mut Runs,
+    covered: &Covered,
+) {
     let mut start = out.len() as u32;
     let mut cur = ANY;
     for i in order {
@@ -1150,7 +1175,16 @@ impl Gpu {
                     }
                     let sigma = sigma.max(0.5);
                     let m = (3.0 * sigma).ceil();
-                    let Some(region) = damage::bounds(*x, *y, *w, *h, m, &super::window::Clip::rect(0.0, 0.0, ww as f32, wh as f32), ww, wh) else {
+                    let Some(region) = damage::bounds(
+                        *x,
+                        *y,
+                        *w,
+                        *h,
+                        m,
+                        &super::window::Clip::rect(0.0, 0.0, ww as f32, wh as f32),
+                        ww,
+                        wh,
+                    ) else {
                         continue;
                     };
                     let flags = clip_flags(clip) + if *continuous { 1.0 } else { 0.0 };
@@ -1222,13 +1256,22 @@ impl Gpu {
                         (vector::Part::Fill, pp.fill.filter(|c| c[3] > 0)),
                         (
                             vector::Part::Stroke,
-                            pp.stroke.as_ref().filter(|st| st.width > 0.0).map(|st| st.color).filter(|c| c[3] > 0),
+                            pp.stroke
+                                .as_ref()
+                                .filter(|st| st.width > 0.0)
+                                .map(|st| st.color)
+                                .filter(|c| c[3] > 0),
                         ),
                     ];
                     for (part, color) in parts {
                         let Some(color) = color else { continue };
                         let inst = Inst {
-                            rect: [r.x0 as f32, r.y0 as f32, (r.x1 - r.x0) as f32, (r.y1 - r.y0) as f32],
+                            rect: [
+                                r.x0 as f32,
+                                r.y0 as f32,
+                                (r.x1 - r.x0) as f32,
+                                (r.y1 - r.y0) as f32,
+                            ],
                             clip: [clip.x0, clip.y0, clip.x1, clip.y1],
                             fill: premul(color),
                             border: [0.0; 4],
@@ -1237,7 +1280,10 @@ impl Gpu {
                             params: [4.0, 0.0, clip_flags(clip), 0.0],
                             clip_radii: clip.radii,
                         };
-                        let base = damage::mix(damage::mix(pp.base_hash(), part as u64), u32::from_le_bytes(color) as u64);
+                        let base = damage::mix(
+                            damage::mix(pp.base_hash(), part as u64),
+                            u32::from_le_bytes(color) as u64,
+                        );
                         let item = Item::new(r, base, pp.x, pp.y, *clip)
                             .pinned(damage::crosses_window(bx, by, bw, bh, 1.0, ww, wh));
                         p.paths.push(PathJob {
@@ -1380,7 +1426,12 @@ impl Gpu {
         view
     }
 
-    fn bind(&self, ubuf: &wgpu::Buffer, view: &wgpu::TextureView, sampler: &wgpu::Sampler) -> wgpu::BindGroup {
+    fn bind(
+        &self,
+        ubuf: &wgpu::Buffer,
+        view: &wgpu::TextureView,
+        sampler: &wgpu::Sampler,
+    ) -> wgpu::BindGroup {
         self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("gui"),
             layout: &self.layout,
@@ -1602,7 +1653,12 @@ impl Gpu {
         }
         for (scissor, runs) in &passes {
             if let Some(r) = scissor {
-                pass.set_scissor_rect(r.x0 as u32, r.y0 as u32, (r.x1 - r.x0) as u32, (r.y1 - r.y0) as u32);
+                pass.set_scissor_rect(
+                    r.x0 as u32,
+                    r.y0 as u32,
+                    (r.x1 - r.x0) as u32,
+                    (r.y1 - r.y0) as u32,
+                );
             }
             for (a, b, s) in runs {
                 if (BACKDROP..COVER).contains(s) {
@@ -1613,7 +1669,12 @@ impl Gpu {
                     self.blur(enc, view, region, sigma);
                     pass = begin(enc, wgpu::LoadOp::Load);
                     if let Some(r) = scissor {
-                        pass.set_scissor_rect(r.x0 as u32, r.y0 as u32, (r.x1 - r.x0) as u32, (r.y1 - r.y0) as u32);
+                        pass.set_scissor_rect(
+                            r.x0 as u32,
+                            r.y0 as u32,
+                            (r.x1 - r.x0) as u32,
+                            (r.y1 - r.y0) as u32,
+                        );
                     }
                 }
                 if *s == u32::MAX - 1 {
@@ -1655,7 +1716,9 @@ impl Gpu {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
@@ -1810,12 +1873,20 @@ impl Target {
         let most = self.gpu.device.limits().max_texture_dimension_2d.max(1);
         let (w, h) = (p.width.min(most), p.height.min(most));
         self.ensure(w, h);
-        let (d, shifts, next) = self.tracker.damage(w, h, p.clear, std::mem::take(&mut p.items), &p.scrolls);
+        let (d, shifts, next) =
+            self.tracker
+                .damage(w, h, p.clear, std::mem::take(&mut p.items), &p.scrolls);
         (with_backdrops(d, &p.backdrops), shifts, next)
     }
 
     /// Encode the frame's moves and damage into the kept texture.
-    fn encode(&mut self, enc: &mut wgpu::CommandEncoder, p: &Prepared, d: &Damage, shifts: &[Shift]) {
+    fn encode(
+        &mut self,
+        enc: &mut wgpu::CommandEncoder,
+        p: &Prepared,
+        d: &Damage,
+        shifts: &[Shift],
+    ) {
         let Some((tw, th)) = self.tex.as_ref().map(|t| (t.2, t.3)) else {
             return;
         };
@@ -1987,7 +2058,11 @@ impl Surface {
             // colour-matched (an sRGB token shows as that colour on a P3
             // screen, not stretched to the panel's gamut), the frame
             // converted as it is presented
-            color_space: if wide { wgpu::SurfaceColorSpace::DisplayP3 } else { Default::default() },
+            color_space: if wide {
+                wgpu::SurfaceColorSpace::DisplayP3
+            } else {
+                Default::default()
+            },
         };
         surface.configure(&gpu.device, &config);
         let target = Target::new(gpu.clone(), format);
@@ -2126,7 +2201,14 @@ impl Surface {
                 let out = frame
                     .texture
                     .create_view(&wgpu::TextureViewDescriptor::default());
-                self.gpu.to_p3(&mut enc, view, &out, self.config.format, w.min(frame.texture.width()), h.min(frame.texture.height()));
+                self.gpu.to_p3(
+                    &mut enc,
+                    view,
+                    &out,
+                    self.config.format,
+                    w.min(frame.texture.width()),
+                    h.min(frame.texture.height()),
+                );
             } else if self.copy {
                 enc.copy_texture_to_texture(
                     wgpu::TexelCopyTextureInfo {
@@ -2152,7 +2234,8 @@ impl Surface {
                 let out = frame
                     .texture
                     .create_view(&wgpu::TextureViewDescriptor::default());
-                self.gpu.blit(&mut enc, view, &out, self.config.format, w, h);
+                self.gpu
+                    .blit(&mut enc, view, &out, self.config.format, w, h);
             }
         }
         let timed = gpu_timed();
@@ -2185,7 +2268,9 @@ impl Surface {
 /// it took and what it drew (measuring only: it costs the overlap).
 fn gpu_timed() -> bool {
     static T: OnceLock<bool> = OnceLock::new();
-    *T.get_or_init(|| std::env::var_os("OLANG_GUI_GPU_TIME").is_some_and(|v| !v.is_empty() && v != "0"))
+    *T.get_or_init(|| {
+        std::env::var_os("OLANG_GUI_GPU_TIME").is_some_and(|v| !v.is_empty() && v != "0")
+    })
 }
 
 impl Gpu {
@@ -2523,7 +2608,11 @@ impl Gpu {
             wgpu::PrimitiveTopology::TriangleList,
             None,
             wgpu::ColorWrites::empty(),
-            stencil(face(C::Always, O::IncrementWrap), face(C::Always, O::DecrementWrap), 0xff),
+            stencil(
+                face(C::Always, O::IncrementWrap),
+                face(C::Always, O::DecrementWrap),
+                0xff,
+            ),
         );
         let cover = |read| {
             make(
@@ -2560,7 +2649,12 @@ impl Gpu {
 
     /// The coverage of paths `used` (indices into `p.paths`), drawn into
     /// atlas pages: where each instance finds its coverage, and the pages.
-    fn cover(&self, enc: &mut wgpu::CommandEncoder, p: &Prepared, used: &[usize]) -> (Covered, Vec<wgpu::TextureView>) {
+    fn cover(
+        &self,
+        enc: &mut wgpu::CommandEncoder,
+        p: &Prepared,
+        used: &[usize],
+    ) -> (Covered, Vec<wgpu::TextureView>) {
         use wgpu::util::DeviceExt;
         let most = self.device.limits().max_texture_dimension_2d.max(16);
         let side = p.width.max(p.height).max(1024).min(most);
@@ -2584,7 +2678,11 @@ impl Gpu {
             None => Some((pw, ph)),
         };
         if let Some((w, h)) = grow(cs.msaa.as_ref().map(|m| (m.2, m.3))) {
-            let size = wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 };
+            let size = wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            };
             let make = |format, label| {
                 self.device
                     .create_texture(&wgpu::TextureDescriptor {
@@ -2601,7 +2699,11 @@ impl Gpu {
             };
             let color = make(wgpu::TextureFormat::R8Unorm, "gui cover samples");
             let stencil = make(COVER_STENCIL, "gui cover stencil");
-            let old = cs.msaa.as_ref().map(|m| (m.2 * m.3) as usize * COVER_SAMPLES as usize * 2).unwrap_or(0);
+            let old = cs
+                .msaa
+                .as_ref()
+                .map(|m| (m.2 * m.3) as usize * COVER_SAMPLES as usize * 2)
+                .unwrap_or(0);
             cs.bytes = cs.bytes + (w * h) as usize * COVER_SAMPLES as usize * 2 - old;
             cs.msaa = Some((color, stencil, w, h));
         }
@@ -2623,7 +2725,10 @@ impl Gpu {
         for (j, (page, ax, ay)) in used.iter().zip(&places) {
             let job = &p.paths[*j];
             let r = &job.rect;
-            let (w, h) = (((r.x1 - r.x0) as u32).min(side), ((r.y1 - r.y0) as u32).min(side));
+            let (w, h) = (
+                ((r.x1 - r.x0) as u32).min(side),
+                ((r.y1 - r.y0) as u32).min(side),
+            );
             let (fw, fh) = (mw as f32, mh as f32);
             covered.insert(
                 job.inst,
@@ -2645,9 +2750,11 @@ impl Gpu {
             let f0 = wk.fan.len() as u32;
             let mut cover = None;
             if !mesh.fan.is_empty() {
-                wk.fan.extend(mesh.fan.iter().map(|q| [q[0] + ox, q[1] + oy]));
+                wk.fan
+                    .extend(mesh.fan.iter().map(|q| [q[0] + ox, q[1] + oy]));
                 cover = Some((wk.rects.len() as u32, mesh.even_odd));
-                wk.rects.push([*ax as f32, *ay as f32, (*ax + w) as f32, (*ay + h) as f32]);
+                wk.rects
+                    .push([*ax as f32, *ay as f32, (*ax + w) as f32, (*ay + h) as f32]);
             }
             let s0 = wk.segs.len() as u32;
             wk.segs.extend(mesh.segs.iter().map(|sg| SegInst {
@@ -2661,11 +2768,13 @@ impl Gpu {
                 segs: (s0, wk.segs.len() as u32),
             });
         }
-        let globals = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("gui cover globals"),
-            contents: bytemuck::cast_slice(&[mw as f32, mh as f32, 0.0, 0.0]),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let globals = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("gui cover globals"),
+                contents: bytemuck::cast_slice(&[mw as f32, mh as f32, 0.0, 0.0]),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
         let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("gui cover"),
             layout: &kit.layout,
@@ -2679,25 +2788,28 @@ impl Gpu {
         };
         for (i, wk) in work.iter().enumerate() {
             let fan = (!wk.fan.is_empty()).then(|| {
-                self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("gui cover fan"),
-                    contents: bytemuck::cast_slice(&wk.fan),
-                    usage: wgpu::BufferUsages::VERTEX,
-                })
+                self.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("gui cover fan"),
+                        contents: bytemuck::cast_slice(&wk.fan),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    })
             });
             let covers = (!wk.rects.is_empty()).then(|| {
-                self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("gui cover rects"),
-                    contents: bytemuck::cast_slice(&wk.rects),
-                    usage: wgpu::BufferUsages::VERTEX,
-                })
+                self.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("gui cover rects"),
+                        contents: bytemuck::cast_slice(&wk.rects),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    })
             });
             let segs = (!wk.segs.is_empty()).then(|| {
-                self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("gui cover segments"),
-                    contents: bytemuck::cast_slice(&wk.segs),
-                    usage: wgpu::BufferUsages::VERTEX,
-                })
+                self.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("gui cover segments"),
+                        contents: bytemuck::cast_slice(&wk.segs),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    })
             });
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("gui cover"),
@@ -2734,7 +2846,11 @@ impl Gpu {
                     pass.set_pipeline(&kit.fan);
                     pass.set_vertex_buffer(0, fan.slice(..));
                     pass.draw(d.fan.0..d.fan.1, 0..1);
-                    pass.set_pipeline(if eo { &kit.cover_even_odd } else { &kit.cover_nonzero });
+                    pass.set_pipeline(if eo {
+                        &kit.cover_even_odd
+                    } else {
+                        &kit.cover_nonzero
+                    });
                     pass.set_vertex_buffer(0, covers.slice(..));
                     pass.draw(0..4, k..k + 1);
                 }
@@ -2747,7 +2863,10 @@ impl Gpu {
                 }
             }
         }
-        let pages = cs.pages[..ext.len()].iter().map(|pg| pg.1.clone()).collect();
+        let pages = cs.pages[..ext.len()]
+            .iter()
+            .map(|pg| pg.1.clone())
+            .collect();
         (covered, pages)
     }
 }
@@ -2756,7 +2875,11 @@ impl Gpu {
 fn new_page(device: &wgpu::Device, w: u32, h: u32) -> (wgpu::Texture, wgpu::TextureView, u32, u32) {
     let t = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("gui cover page"),
-        size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -2849,10 +2972,21 @@ fn with_backdrops(d: Damage, backdrops: &[(usize, IRect, f32)]) -> Damage {
     let Damage::Rects(rects) = d else {
         return d;
     };
-    if backdrops.is_empty() || !rects.iter().any(|r| backdrops.iter().any(|b| b.1.intersects(r))) {
+    if backdrops.is_empty()
+        || !rects
+            .iter()
+            .any(|r| backdrops.iter().any(|b| b.1.intersects(r)))
+    {
         return Damage::Rects(rects);
     }
-    let join = |a: IRect, b: &IRect| IRect::new(a.x0.min(b.x0), a.y0.min(b.y0), a.x1.max(b.x1), a.y1.max(b.y1));
+    let join = |a: IRect, b: &IRect| {
+        IRect::new(
+            a.x0.min(b.x0),
+            a.y0.min(b.y0),
+            a.x1.max(b.x1),
+            a.y1.max(b.y1),
+        )
+    };
     let mut u = rects.iter().skip(1).fold(rects[0], |a, r| join(a, r));
     loop {
         let before = u;
@@ -2871,7 +3005,11 @@ fn with_backdrops(d: Damage, backdrops: &[(usize, IRect, f32)]) -> Damage {
 /// The blur's pipelines and its two textures.
 #[derive(Default)]
 pub(crate) struct BlurState {
-    kit: Option<(wgpu::BindGroupLayout, wgpu::RenderPipeline, wgpu::RenderPipeline)>,
+    kit: Option<(
+        wgpu::BindGroupLayout,
+        wgpu::RenderPipeline,
+        wgpu::RenderPipeline,
+    )>,
     tex: Option<[(wgpu::Texture, wgpu::TextureView); 2]>,
     size: (u32, u32),
 }
@@ -2886,12 +3024,17 @@ impl Gpu {
             let make = || {
                 let t = self.device.create_texture(&wgpu::TextureDescriptor {
                     label: Some("gui material"),
-                    size: wgpu::Extent3d { width: nw, height: nh, depth_or_array_layers: 1 },
+                    size: wgpu::Extent3d {
+                        width: nw,
+                        height: nh,
+                        depth_or_array_layers: 1,
+                    },
                     mip_level_count: 1,
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
                     format: wgpu::TextureFormat::Rgba8Unorm,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
                     view_formats: &[],
                 });
                 let v = t.create_view(&wgpu::TextureViewDescriptor::default());
@@ -2907,70 +3050,83 @@ impl Gpu {
     /// Blur what `from` (the frame being drawn) holds in `region` into the
     /// blur's first texture: blocks averaged, then a Gaussian across, then
     /// down.
-    fn blur(&self, enc: &mut wgpu::CommandEncoder, from: &wgpu::TextureView, region: IRect, sigma: f32) {
+    fn blur(
+        &self,
+        enc: &mut wgpu::CommandEncoder,
+        from: &wgpu::TextureView,
+        region: IRect,
+        sigma: f32,
+    ) {
         use wgpu::util::DeviceExt;
         let mut b = self.blur.lock().unwrap_or_else(|e| e.into_inner());
         if b.kit.is_none() {
-            let shader = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("gui material"),
-                source: wgpu::ShaderSource::Wgsl(BLUR_SHADER.into()),
-            });
-            let layout = self.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("gui material"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                ],
-            });
-            let pl = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("gui material"),
-                bind_group_layouts: &[Some(&layout)],
-                ..Default::default()
-            });
-            let make = |fs: &str| {
-                self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            let shader = self
+                .device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("gui material"),
-                    layout: Some(&pl),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: Some("vs"),
-                        compilation_options: Default::default(),
-                        buffers: &[],
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some(fs),
-                        compilation_options: Default::default(),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::Rgba8Unorm,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                    }),
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview_mask: None,
-                    cache: None,
-                })
+                    source: wgpu::ShaderSource::Wgsl(BLUR_SHADER.into()),
+                });
+            let layout = self
+                .device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("gui material"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                    ],
+                });
+            let pl = self
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("gui material"),
+                    bind_group_layouts: &[Some(&layout)],
+                    ..Default::default()
+                });
+            let make = |fs: &str| {
+                self.device
+                    .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                        label: Some("gui material"),
+                        layout: Some(&pl),
+                        vertex: wgpu::VertexState {
+                            module: &shader,
+                            entry_point: Some("vs"),
+                            compilation_options: Default::default(),
+                            buffers: &[],
+                        },
+                        fragment: Some(wgpu::FragmentState {
+                            module: &shader,
+                            entry_point: Some(fs),
+                            compilation_options: Default::default(),
+                            targets: &[Some(wgpu::ColorTargetState {
+                                format: wgpu::TextureFormat::Rgba8Unorm,
+                                blend: None,
+                                write_mask: wgpu::ColorWrites::ALL,
+                            })],
+                        }),
+                        primitive: wgpu::PrimitiveState::default(),
+                        depth_stencil: None,
+                        multisample: wgpu::MultisampleState::default(),
+                        multiview_mask: None,
+                        cache: None,
+                    })
             };
             b.kit = Some((layout, make("fs_down"), make("fs_blur")));
         }
@@ -2982,19 +3138,32 @@ impl Gpu {
         let (lw, lh) = (lw.min(b.size.0), lh.min(b.size.1));
         let sl = sigma / k as f32;
         let uniform = |origin: [f32; 2], size: [f32; 2], dir: [f32; 2]| {
-            self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("gui material"),
-                contents: bytemuck::cast_slice(&[origin[0], origin[1], size[0], size[1], k as f32, sl, dir[0], dir[1]]),
-                usage: wgpu::BufferUsages::UNIFORM,
-            })
+            self.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("gui material"),
+                    contents: bytemuck::cast_slice(&[
+                        origin[0], origin[1], size[0], size[1], k as f32, sl, dir[0], dir[1],
+                    ]),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                })
         };
-        let step = |enc: &mut wgpu::CommandEncoder, pipe: &wgpu::RenderPipeline, src: &wgpu::TextureView, dst: &wgpu::TextureView, u: &wgpu::Buffer| {
+        let step = |enc: &mut wgpu::CommandEncoder,
+                    pipe: &wgpu::RenderPipeline,
+                    src: &wgpu::TextureView,
+                    dst: &wgpu::TextureView,
+                    u: &wgpu::Buffer| {
             let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("gui material"),
                 layout,
                 entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: u.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(src) },
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: u.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(src),
+                    },
                 ],
             });
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -3003,7 +3172,10 @@ impl Gpu {
                     view: dst,
                     depth_slice: None,
                     resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
                 })],
                 ..Default::default()
             });
@@ -3013,11 +3185,32 @@ impl Gpu {
             pass.set_bind_group(0, &bind, &[]);
             pass.draw(0..3, 0..1);
         };
-        let rs = [(region.x1 - region.x0) as f32, (region.y1 - region.y0) as f32];
+        let rs = [
+            (region.x1 - region.x0) as f32,
+            (region.y1 - region.y0) as f32,
+        ];
         let small = [lw as f32, lh as f32];
-        step(enc, down, from, &tex[0].1, &uniform([region.x0 as f32, region.y0 as f32], rs, [0.0, 0.0]));
-        step(enc, blur, &tex[0].1, &tex[1].1, &uniform([0.0, 0.0], small, [1.0, 0.0]));
-        step(enc, blur, &tex[1].1, &tex[0].1, &uniform([0.0, 0.0], small, [0.0, 1.0]));
+        step(
+            enc,
+            down,
+            from,
+            &tex[0].1,
+            &uniform([region.x0 as f32, region.y0 as f32], rs, [0.0, 0.0]),
+        );
+        step(
+            enc,
+            blur,
+            &tex[0].1,
+            &tex[1].1,
+            &uniform([0.0, 0.0], small, [1.0, 0.0]),
+        );
+        step(
+            enc,
+            blur,
+            &tex[1].1,
+            &tex[0].1,
+            &uniform([0.0, 0.0], small, [0.0, 1.0]),
+        );
     }
 }
 
@@ -3027,7 +3220,9 @@ impl Gpu {
 /// can: the layer is then colour-matched to the screen).
 fn wide_gamut(caps: &wgpu::SurfaceCapabilities, format: wgpu::TextureFormat) -> bool {
     !std::env::var("OLANG_GUI_SRGB_SURFACE").is_ok_and(|v| !v.is_empty() && v != "0")
-        && caps.color_spaces(format).contains(wgpu::SurfaceColorSpaces::DISPLAY_P3)
+        && caps
+            .color_spaces(format)
+            .contains(wgpu::SurfaceColorSpaces::DISPLAY_P3)
 }
 
 /// The frame (sRGB, premultiplied) in Display P3: decoded to linear light,
@@ -3068,56 +3263,72 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 
 impl Gpu {
     /// Draw `from` onto `to` (of `format`) in Display P3's numbers.
-    fn to_p3(&self, enc: &mut wgpu::CommandEncoder, from: &wgpu::TextureView, to: &wgpu::TextureView, format: wgpu::TextureFormat, w: u32, h: u32) {
+    fn to_p3(
+        &self,
+        enc: &mut wgpu::CommandEncoder,
+        from: &wgpu::TextureView,
+        to: &wgpu::TextureView,
+        format: wgpu::TextureFormat,
+        w: u32,
+        h: u32,
+    ) {
         let mut kits = self.p3.lock().unwrap_or_else(|e| e.into_inner());
         if !kits.iter().any(|k| k.0 == format) {
-            let shader = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("gui p3"),
-                source: wgpu::ShaderSource::Wgsl(P3_SHADER.into()),
-            });
-            let layout = self.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("gui p3"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+            let shader = self
+                .device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("gui p3"),
+                    source: wgpu::ShaderSource::Wgsl(P3_SHADER.into()),
+                });
+            let layout = self
+                .device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("gui p3"),
+                    entries: &[wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    }],
+                });
+            let pl = self
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("gui p3"),
+                    bind_group_layouts: &[Some(&layout)],
+                    ..Default::default()
+                });
+            let pipe = self
+                .device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("gui p3"),
+                    layout: Some(&pl),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs"),
+                        compilation_options: Default::default(),
+                        buffers: &[],
                     },
-                    count: None,
-                }],
-            });
-            let pl = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("gui p3"),
-                bind_group_layouts: &[Some(&layout)],
-                ..Default::default()
-            });
-            let pipe = self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("gui p3"),
-                layout: Some(&pl),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
-                cache: None,
-            });
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some("fs"),
+                        compilation_options: Default::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview_mask: None,
+                    cache: None,
+                });
             kits.push((format, layout, pipe));
         }
         let Some((_, layout, pipe)) = kits.iter().find(|k| k.0 == format) else {

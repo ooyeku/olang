@@ -64,13 +64,22 @@ pub enum Cmd {
     Settings(&'static str),
     /// A standard Edit menu item chosen for window `id` (its role:
     /// `copy`, `paste`, …), or a Service's text to put in its field.
-    Edit { id: u64, role: &'static str },
+    Edit {
+        id: u64,
+        role: &'static str,
+    },
     /// Window `id`'s display refreshed at `at` (ns of the host clock).
-    Tick { id: u64, at: u64 },
+    Tick {
+        id: u64,
+        at: u64,
+    },
     /// The program's turn has run past the watch's limit (`true`), or it
     /// ended after it had (`false`): every window says so.
     NotResponding(bool),
-    ServiceText { id: u64, text: String },
+    ServiceText {
+        id: u64,
+        text: String,
+    },
     /// Text the platform put in outside a key press and a composition
     /// (dictation, the Character Viewer, a Service): into window `id`'s
     /// focused field, over `replace` (UTF-16 location and length in its
@@ -943,7 +952,11 @@ impl App {
                 // window was covered, the link paused); a link that has not
                 // ticked lately (the system rests it for a window it does
                 // not show, and for a display asleep) puts nothing off
-                while pw.in_flight.front().is_some_and(|f| now.saturating_sub(f.0) > 50_000_000) {
+                while pw
+                    .in_flight
+                    .front()
+                    .is_some_and(|f| now.saturating_sub(f.0) > 50_000_000)
+                {
                     pw.in_flight.pop_front();
                 }
                 if now.saturating_sub(pw.last_tick) > 50_000_000 {
@@ -1066,7 +1079,9 @@ impl App {
                 // the frame stays owed and is tried again in a moment.
                 Err(e) if e.starts_with("lost") => {
                     if !pw.lost_said {
-                        eprintln!("gui: window {id}: the GPU device is lost; drawing again when one can be had");
+                        eprintln!(
+                            "gui: window {id}: the GPU device is lost; drawing again when one can be had"
+                        );
                         pw.lost_said = true;
                     }
                     if let Ok(mut st) = pw.state.lock() {
@@ -1092,7 +1107,8 @@ impl App {
         #[cfg(target_os = "macos")]
         if presented {
             pw.shown_size = (dl.width, dl.height);
-            pw.in_flight.push_back((frames::now_ns(), frames::answered(id)));
+            pw.in_flight
+                .push_back((frames::now_ns(), frames::answered(id)));
             frames::resume(&pw.link);
             pw.idle_ticks = 0;
         }
@@ -2608,7 +2624,10 @@ impl App {
         // it: (menu, place among its items, role, label)
         let mut standards: Vec<(usize, usize, &'static str, Option<String>)> = Vec::new();
         let mut routes: HashMap<&'static str, Vec<String>> = HashMap::new();
-        let sep = |sub: &Submenu| sub.append(&PredefinedMenuItem::separator()).map_err(|e| format!("{what}: {e}"));
+        let sep = |sub: &Submenu| {
+            sub.append(&PredefinedMenuItem::separator())
+                .map_err(|e| format!("{what}: {e}"))
+        };
         for (at, (title, items)) in spec.0.into_iter().enumerate() {
             let sub = Submenu::new(&title, true);
             // the Mac's own items every application has (AppKit's
@@ -2623,8 +2642,10 @@ impl App {
                 None
             };
             if title == "Window" {
-                sub.append(&PredefinedMenuItem::minimize(None)).map_err(|e| format!("{what}: {e}"))?;
-                sub.append(&PredefinedMenuItem::maximize(Some("Zoom"))).map_err(|e| format!("{what}: {e}"))?;
+                sub.append(&PredefinedMenuItem::minimize(None))
+                    .map_err(|e| format!("{what}: {e}"))?;
+                sub.append(&PredefinedMenuItem::maximize(Some("Zoom")))
+                    .map_err(|e| format!("{what}: {e}"))?;
                 if !items.is_empty() {
                     sep(&sub)?;
                 }
@@ -2635,11 +2656,17 @@ impl App {
                     if !prev_sep {
                         sep(&sub)?;
                     }
-                    sub.append(&PredefinedMenuItem::services(None)).map_err(|e| format!("{what}: {e}"))?;
+                    sub.append(&PredefinedMenuItem::services(None))
+                        .map_err(|e| format!("{what}: {e}"))?;
                     sep(&sub)?;
-                    sub.append(&PredefinedMenuItem::hide(Some(format!("Hide {title}").as_str()))).map_err(|e| format!("{what}: {e}"))?;
-                    sub.append(&PredefinedMenuItem::hide_others(None)).map_err(|e| format!("{what}: {e}"))?;
-                    sub.append(&PredefinedMenuItem::show_all(None)).map_err(|e| format!("{what}: {e}"))?;
+                    sub.append(&PredefinedMenuItem::hide(Some(
+                        format!("Hide {title}").as_str(),
+                    )))
+                    .map_err(|e| format!("{what}: {e}"))?;
+                    sub.append(&PredefinedMenuItem::hide_others(None))
+                        .map_err(|e| format!("{what}: {e}"))?;
+                    sub.append(&PredefinedMenuItem::show_all(None))
+                        .map_err(|e| format!("{what}: {e}"))?;
                     sep(&sub)?;
                 }
                 let (id, label, enabled, keys, checked) = match it {
@@ -2693,19 +2720,27 @@ impl App {
             }
             if app_menu && quit_at.is_none() {
                 sep(&sub)?;
-                sub.append(&PredefinedMenuItem::services(None)).map_err(|e| format!("{what}: {e}"))?;
+                sub.append(&PredefinedMenuItem::services(None))
+                    .map_err(|e| format!("{what}: {e}"))?;
                 sep(&sub)?;
-                sub.append(&PredefinedMenuItem::hide(Some(format!("Hide {title}").as_str()))).map_err(|e| format!("{what}: {e}"))?;
-                sub.append(&PredefinedMenuItem::hide_others(None)).map_err(|e| format!("{what}: {e}"))?;
-                sub.append(&PredefinedMenuItem::show_all(None)).map_err(|e| format!("{what}: {e}"))?;
+                sub.append(&PredefinedMenuItem::hide(Some(
+                    format!("Hide {title}").as_str(),
+                )))
+                .map_err(|e| format!("{what}: {e}"))?;
+                sub.append(&PredefinedMenuItem::hide_others(None))
+                    .map_err(|e| format!("{what}: {e}"))?;
+                sub.append(&PredefinedMenuItem::show_all(None))
+                    .map_err(|e| format!("{what}: {e}"))?;
             }
             if title == "Window" {
                 sep(&sub)?;
-                sub.append(&PredefinedMenuItem::bring_all_to_front(None)).map_err(|e| format!("{what}: {e}"))?;
+                sub.append(&PredefinedMenuItem::bring_all_to_front(None))
+                    .map_err(|e| format!("{what}: {e}"))?;
             }
             if title == "View" {
                 sep(&sub)?;
-                sub.append(&PredefinedMenuItem::fullscreen(Some("Enter Full Screen"))).map_err(|e| format!("{what}: {e}"))?;
+                sub.append(&PredefinedMenuItem::fullscreen(Some("Enter Full Screen")))
+                    .map_err(|e| format!("{what}: {e}"))?;
             }
             bar.append(&sub).map_err(|e| format!("{what}: {e}"))?;
         }
@@ -2714,7 +2749,11 @@ impl App {
         // Emoji & Symbols) as it takes the bar, once
         {
             use muda::ContextMenu;
-            edit_menu::install(bar.ns_menu() as *mut objc2::runtime::AnyObject, &standards, routes);
+            edit_menu::install(
+                bar.ns_menu() as *mut objc2::runtime::AnyObject,
+                &standards,
+                routes,
+            );
         }
         bar.init_for_nsapp();
         self.menu_handler();
@@ -2729,7 +2768,8 @@ impl App {
     fn not_responding(&mut self, on: bool) {
         use winit::window::CursorIcon;
         for pw in self.windows.values_mut() {
-            pw.win.set_cursor(if on { CursorIcon::Wait } else { pw.cursor });
+            pw.win
+                .set_cursor(if on { CursorIcon::Wait } else { pw.cursor });
             if let Ok(mut st) = pw.state.lock() {
                 st.dirty = true;
             }
@@ -3381,7 +3421,13 @@ fn fill_submenu(
                 let mid = muda::MenuId::new(&id);
                 match checked {
                     Some(c) => sub
-                        .append(&CheckMenuItem::with_id(mid.clone(), &label, enabled, c, accel))
+                        .append(&CheckMenuItem::with_id(
+                            mid.clone(),
+                            &label,
+                            enabled,
+                            c,
+                            accel,
+                        ))
                         .map_err(|e| format!("{what}: {e}"))?,
                     None => sub
                         .append(&MenuItem::with_id(mid.clone(), &label, enabled, accel))
@@ -3501,7 +3547,12 @@ pub mod edit_menu {
             "cut" => ("Cut", c"cut:", "x", COMMAND),
             "copy" => ("Copy", c"copy:", "c", COMMAND),
             "paste" => ("Paste", c"paste:", "v", COMMAND),
-            "paste_plain" => ("Paste and Match Style", c"pasteAsPlainText:", "v", COMMAND | SHIFT | OPTION),
+            "paste_plain" => (
+                "Paste and Match Style",
+                c"pasteAsPlainText:",
+                "v",
+                COMMAND | SHIFT | OPTION,
+            ),
             "delete" => ("Delete", c"delete:", "", 0),
             _ => ("Select All", c"selectAll:", "a", COMMAND),
         }
@@ -3550,7 +3601,8 @@ pub mod edit_menu {
                 let it: Retained<AnyObject> = msg_send![alloc, initWithTitle: &*title, action: Sel::register(sel), keyEquivalent: &*key];
                 let _: () = msg_send![&*it, setKeyEquivalentModifierMask: mask];
                 let count: isize = msg_send![&*menu, numberOfItems];
-                let _: () = msg_send![&*menu, insertItem: &*it, atIndex: (*place as isize).min(count)];
+                let _: () =
+                    msg_send![&*menu, insertItem: &*it, atIndex: (*place as isize).min(count)];
             }
         }
     }
@@ -3562,7 +3614,11 @@ pub mod edit_menu {
         Some((id, st))
     }
 
-    unsafe extern "C-unwind" fn edit_action(this: *mut AnyObject, cmd: Sel, _sender: *mut AnyObject) {
+    unsafe extern "C-unwind" fn edit_action(
+        this: *mut AnyObject,
+        cmd: Sel,
+        _sender: *mut AnyObject,
+    ) {
         contain_callback("edit_action", || {
             if let (Some(role), Some((id, _))) = (role_of(cmd), state_of(this)) {
                 send(Cmd::Edit { id, role });
@@ -3570,7 +3626,11 @@ pub mod edit_menu {
         });
     }
 
-    unsafe extern "C-unwind" fn validate(this: *mut AnyObject, _cmd: Sel, item: *mut AnyObject) -> Bool {
+    unsafe extern "C-unwind" fn validate(
+        this: *mut AnyObject,
+        _cmd: Sel,
+        item: *mut AnyObject,
+    ) -> Bool {
         let on = contain_callback("edit_validate", || {
             if item.is_null() {
                 return true;
@@ -3608,10 +3668,9 @@ pub mod edit_menu {
             return false;
         };
         st.lock().is_ok_and(|st| {
-            st.scene
-                .focus
-                .as_deref()
-                .is_some_and(|f| st.editors.contains_key(f) && st.scene.nodes.get(f).is_some_and(|n| !n.disabled))
+            st.scene.focus.as_deref().is_some_and(|f| {
+                st.editors.contains_key(f) && st.scene.nodes.get(f).is_some_and(|n| !n.disabled)
+            })
         })
     }
 
@@ -3627,12 +3686,18 @@ pub mod edit_menu {
         contain_callback("services", || {
             let is_text = |t: *mut AnyObject| {
                 // SAFETY: AppKit's NSString pasteboard types, or nil.
-                !t.is_null() && unsafe { super::ns_text(t) }.is_some_and(|s| s == "public.utf8-plain-text" || s == "NSStringPboardType")
+                !t.is_null()
+                    && unsafe { super::ns_text(t) }
+                        .is_some_and(|s| s == "public.utf8-plain-text" || s == "NSStringPboardType")
             };
             let sends = send_type.is_null() || (is_text(send_type) && selection(this).is_some());
             let takes = return_type.is_null() || (is_text(return_type) && takes_text(this));
             let any = !send_type.is_null() || !return_type.is_null();
-            if sends && takes && any { this } else { std::ptr::null_mut() }
+            if sends && takes && any {
+                this
+            } else {
+                std::ptr::null_mut()
+            }
         })
         .unwrap_or(std::ptr::null_mut())
     }
@@ -3664,18 +3729,26 @@ pub mod edit_menu {
     }
 
     /// `readSelectionFromPasteboard:` — a Service's text into the field.
-    unsafe extern "C-unwind" fn services_read(this: *mut AnyObject, _cmd: Sel, pboard: *mut AnyObject) -> Bool {
+    unsafe extern "C-unwind" fn services_read(
+        this: *mut AnyObject,
+        _cmd: Sel,
+        pboard: *mut AnyObject,
+    ) -> Bool {
         let ok = contain_callback("services", || {
             if pboard.is_null() || !takes_text(this) {
                 return false;
             }
             let ty = NSString::from_str("public.utf8-plain-text");
             // SAFETY: AppKit's NSPasteboard, alive for the call.
-            let text: Option<Retained<NSString>> = unsafe { msg_send![&*pboard, stringForType: &*ty] };
+            let text: Option<Retained<NSString>> =
+                unsafe { msg_send![&*pboard, stringForType: &*ty] };
             let (Some(text), Some((id, _))) = (text, state_of(this)) else {
                 return false;
             };
-            send(Cmd::ServiceText { id, text: text.to_string() });
+            send(Cmd::ServiceText {
+                id,
+                text: text.to_string(),
+            });
             true
         });
         Bool::new(ok.unwrap_or(false))
@@ -3709,10 +3782,12 @@ pub mod edit_menu {
             objc2::Encoding::Struct("_NSRange", &[usize::ENCODING, usize::ENCODING]);
     }
     unsafe impl objc2::RefEncode for Range {
-        const ENCODING_REF: objc2::Encoding = objc2::Encoding::Pointer(&<Self as objc2::Encode>::ENCODING);
+        const ENCODING_REF: objc2::Encoding =
+            objc2::Encoding::Pointer(&<Self as objc2::Encode>::ENCODING);
     }
     unsafe impl objc2::Encode for Point {
-        const ENCODING: objc2::Encoding = objc2::Encoding::Struct("CGPoint", &[f64::ENCODING, f64::ENCODING]);
+        const ENCODING: objc2::Encoding =
+            objc2::Encoding::Struct("CGPoint", &[f64::ENCODING, f64::ENCODING]);
     }
     unsafe impl objc2::Encode for Rect {
         const ENCODING: objc2::Encoding = objc2::Encoding::Struct(
@@ -3768,7 +3843,9 @@ pub mod edit_menu {
     /// The focused field's text, when the view should answer for it (no
     /// composition under way: during one winit's answers, which count in
     /// the composition, stay).
-    unsafe fn field_text(this: *mut AnyObject) -> Option<(u64, crate::stdlib::gui::Shared, String, usize, usize)> {
+    unsafe fn field_text(
+        this: *mut AnyObject,
+    ) -> Option<(u64, crate::stdlib::gui::Shared, String, usize, usize)> {
         if unsafe { has_marked(this) } {
             return None;
         }
@@ -3792,7 +3869,10 @@ pub mod edit_menu {
         let _out = Out;
         // SAFETY: winit's keyDown:, with the arguments AppKit gave.
         unsafe {
-            let f = std::mem::transmute::<Imp, unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject)>(imp);
+            let f = std::mem::transmute::<
+                Imp,
+                unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject),
+            >(imp);
             f(this, cmd, event)
         }
     }
@@ -3800,16 +3880,23 @@ pub mod edit_menu {
     /// `insertText:replacementRange:` — winit takes text only to end a
     /// composition; text put in otherwise (dictation, the Character
     /// Viewer) goes to the focused field here.
-    unsafe extern "C-unwind" fn insert_text(this: *mut AnyObject, cmd: Sel, string: *mut AnyObject, range: Range) {
+    unsafe extern "C-unwind" fn insert_text(
+        this: *mut AnyObject,
+        cmd: Sel,
+        string: *mut AnyObject,
+        range: Range,
+    ) {
         let in_key = IN_KEY.with(|k| k.get()) > 0;
         if !in_key && !unsafe { has_marked(this) } {
             let took = contain_callback("insert_text", || {
                 let text = unsafe { string_of(string) }?;
                 let (id, st) = state_of(this)?;
-                if !st.lock().ok()?.wants_ime() || text.chars().next().is_some_and(char::is_control) {
+                if !st.lock().ok()?.wants_ime() || text.chars().next().is_some_and(char::is_control)
+                {
                     return None;
                 }
-                let replace = (range.location != NOT_FOUND).then_some((range.location, range.length));
+                let replace =
+                    (range.location != NOT_FOUND).then_some((range.location, range.length));
                 send(Cmd::InsertText { id, text, replace });
                 Some(())
             })
@@ -3821,7 +3908,10 @@ pub mod edit_menu {
         if let Some(imp) = old("insertText:replacementRange:") {
             // SAFETY: winit's method, with the arguments AppKit gave.
             unsafe {
-                let f = std::mem::transmute::<Imp, unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject, Range)>(imp);
+                let f = std::mem::transmute::<
+                    Imp,
+                    unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject, Range),
+                >(imp);
                 f(this, cmd, string, range)
             }
         }
@@ -3831,7 +3921,10 @@ pub mod edit_menu {
         let mine = contain_callback("selected_range", || {
             let (_, _, text, a, b) = unsafe { field_text(this) }?;
             let lo = super::chars_to_utf16(&text, a);
-            Some(Range { location: lo, length: super::chars_to_utf16(&text, b) - lo })
+            Some(Range {
+                location: lo,
+                length: super::chars_to_utf16(&text, b) - lo,
+            })
         })
         .flatten();
         if let Some(r) = mine {
@@ -3840,9 +3933,14 @@ pub mod edit_menu {
         match old("selectedRange") {
             // SAFETY: winit's method.
             Some(imp) => unsafe {
-                std::mem::transmute::<Imp, unsafe extern "C-unwind" fn(*mut AnyObject, Sel) -> Range>(imp)(this, cmd)
+                std::mem::transmute::<Imp, unsafe extern "C-unwind" fn(*mut AnyObject, Sel) -> Range>(
+                    imp,
+                )(this, cmd)
             },
-            None => Range { location: NOT_FOUND, length: 0 },
+            None => Range {
+                location: NOT_FOUND,
+                length: 0,
+            },
         }
     }
 
@@ -3859,13 +3957,19 @@ pub mod edit_menu {
                 return Some(std::ptr::null_mut());
             }
             let a = super::utf16_to_chars(&text, range.location);
-            let b = super::utf16_to_chars(&text, range.location.saturating_add(range.length).min(total));
+            let b = super::utf16_to_chars(
+                &text,
+                range.location.saturating_add(range.length).min(total),
+            );
             let sub: String = text.chars().skip(a).take(b - a).collect();
             if !actual.is_null() {
                 let lo = super::chars_to_utf16(&text, a);
                 // SAFETY: AppKit's out pointer.
                 unsafe {
-                    *actual = Range { location: lo, length: super::chars_to_utf16(&text, b) - lo };
+                    *actual = Range {
+                        location: lo,
+                        length: super::chars_to_utf16(&text, b) - lo,
+                    };
                 }
             }
             let cls = AnyClass::get(c"NSAttributedString")?;
@@ -3885,9 +3989,15 @@ pub mod edit_menu {
         match old("attributedSubstringForProposedRange:actualRange:") {
             // SAFETY: winit's method.
             Some(imp) => unsafe {
-                std::mem::transmute::<Imp, unsafe extern "C-unwind" fn(*mut AnyObject, Sel, Range, *mut Range) -> *mut AnyObject>(
-                    imp,
-                )(this, cmd, range, actual)
+                std::mem::transmute::<
+                    Imp,
+                    unsafe extern "C-unwind" fn(
+                        *mut AnyObject,
+                        Sel,
+                        Range,
+                        *mut Range,
+                    ) -> *mut AnyObject,
+                >(imp)(this, cmd, range, actual)
             },
             None => std::ptr::null_mut(),
         }
@@ -3899,7 +4009,11 @@ pub mod edit_menu {
         unsafe { msg_send![&*this, window] }
     }
 
-    unsafe extern "C-unwind" fn character_index(this: *mut AnyObject, cmd: Sel, point: Point) -> usize {
+    unsafe extern "C-unwind" fn character_index(
+        this: *mut AnyObject,
+        cmd: Sel,
+        point: Point,
+    ) -> usize {
         let mine = contain_callback("character_index", || {
             let (_, st, text, _, _) = unsafe { field_text(this) }?;
             let win = unsafe { window_of(this) }?;
@@ -3917,13 +4031,21 @@ pub mod edit_menu {
         match old("characterIndexForPoint:") {
             // SAFETY: winit's method.
             Some(imp) => unsafe {
-                std::mem::transmute::<Imp, unsafe extern "C-unwind" fn(*mut AnyObject, Sel, Point) -> usize>(imp)(this, cmd, point)
+                std::mem::transmute::<
+                    Imp,
+                    unsafe extern "C-unwind" fn(*mut AnyObject, Sel, Point) -> usize,
+                >(imp)(this, cmd, point)
             },
             None => NOT_FOUND,
         }
     }
 
-    unsafe extern "C-unwind" fn first_rect(this: *mut AnyObject, cmd: Sel, range: Range, actual: *mut Range) -> Rect {
+    unsafe extern "C-unwind" fn first_rect(
+        this: *mut AnyObject,
+        cmd: Sel,
+        range: Range,
+        actual: *mut Range,
+    ) -> Rect {
         let mine = contain_callback("first_rect", || {
             let (_, st, text, _, _) = unsafe { field_text(this) }?;
             if range.location == NOT_FOUND {
@@ -3936,14 +4058,23 @@ pub mod edit_menu {
                 let lo = super::chars_to_utf16(&text, a);
                 // SAFETY: AppKit's out pointer.
                 unsafe {
-                    *actual = Range { location: lo, length: super::chars_to_utf16(&text, b) - lo };
+                    *actual = Range {
+                        location: lo,
+                        length: super::chars_to_utf16(&text, b) - lo,
+                    };
                 }
             }
             let win = unsafe { window_of(this) }?;
             let none: *const AnyObject = std::ptr::null();
             let local = Rect {
-                origin: Point { x: r[0] as f64, y: r[1] as f64 },
-                size: Point { x: r[2] as f64, y: r[3] as f64 },
+                origin: Point {
+                    x: r[0] as f64,
+                    y: r[1] as f64,
+                },
+                size: Point {
+                    x: r[2] as f64,
+                    y: r[3] as f64,
+                },
             };
             // the view's (flipped) → the window's → the screen's
             let inw: Rect = unsafe { msg_send![&*this, convertRect: local, toView: none] };
@@ -3957,11 +4088,15 @@ pub mod edit_menu {
         match old("firstRectForCharacterRange:actualRange:") {
             // SAFETY: winit's method.
             Some(imp) => unsafe {
-                std::mem::transmute::<Imp, unsafe extern "C-unwind" fn(*mut AnyObject, Sel, Range, *mut Range) -> Rect>(imp)(
-                    this, cmd, range, actual,
-                )
+                std::mem::transmute::<
+                    Imp,
+                    unsafe extern "C-unwind" fn(*mut AnyObject, Sel, Range, *mut Range) -> Rect,
+                >(imp)(this, cmd, range, actual)
             },
-            None => Rect { origin: Point { x: 0.0, y: 0.0 }, size: Point { x: 0.0, y: 0.0 } },
+            None => Rect {
+                origin: Point { x: 0.0, y: 0.0 },
+                size: Point { x: 0.0, y: 0.0 },
+            },
         }
     }
 
@@ -3997,13 +4132,18 @@ pub mod edit_menu {
         unsafe {
             let f: Retained<AnyObject> = msg_send![font, systemFontOfSize: size as f64];
             let key = NSString::from_str("NSFont");
-            let attrs: Retained<AnyObject> = msg_send![dict, dictionaryWithObject: &*f, forKey: &*key];
+            let attrs: Retained<AnyObject> =
+                msg_send![dict, dictionaryWithObject: &*f, forKey: &*key];
             let ns = NSString::from_str(word);
             let alloc: Allocated<AnyObject> = msg_send![astr, alloc];
-            let s: Retained<AnyObject> = msg_send![alloc, initWithString: &*ns, attributes: &*attrs];
+            let s: Retained<AnyObject> =
+                msg_send![alloc, initWithString: &*ns, attributes: &*attrs];
             // the baseline's start: the box's bottom less the font's descent
             let descender: f64 = msg_send![&*f, descender];
-            let at = Point { x: r[0] as f64, y: (r[1] + r[3]) as f64 + descender };
+            let at = Point {
+                x: r[0] as f64,
+                y: (r[1] + r[3]) as f64 + descender,
+            };
             let _: () = msg_send![&*view, showDefinitionForAttributedString: &*s, atPoint: at];
         }
     }
@@ -4033,7 +4173,9 @@ pub mod edit_menu {
                     inSpellDocumentWithTag: 0isize,
                     orthography: none,
                     wordCount: words as *mut isize];
-                let Some(results) = results else { return Some(out) };
+                let Some(results) = results else {
+                    return Some(out);
+                };
                 let n: usize = msg_send![&*results, count];
                 for i in 0..n.min(10_000) {
                     let r: Retained<AnyObject> = msg_send![&*results, objectAtIndex: i];
@@ -4057,55 +4199,89 @@ pub mod edit_menu {
     /// (each calling winit's where it should), once.
     unsafe fn text_input_client(cls: *mut AnyClass) {
         let mut olds = HashMap::new();
-        let swap = |olds: &mut HashMap<&'static str, usize>, name: &'static str, sel: Sel, imp: Imp| {
-            // SAFETY: winit's class and a selector it implements; the new
-            // IMP has the method's signature.
-            unsafe {
-                let m = objc2::ffi::class_getInstanceMethod(cls, sel);
-                if m.is_null() {
-                    return;
+        let swap =
+            |olds: &mut HashMap<&'static str, usize>, name: &'static str, sel: Sel, imp: Imp| {
+                // SAFETY: winit's class and a selector it implements; the new
+                // IMP has the method's signature.
+                unsafe {
+                    let m = objc2::ffi::class_getInstanceMethod(cls, sel);
+                    if m.is_null() {
+                        return;
+                    }
+                    if let Some(o) = objc2::ffi::method_setImplementation(m, imp) {
+                        olds.insert(name, o as usize);
+                    }
                 }
-                if let Some(o) = objc2::ffi::method_setImplementation(m, imp) {
-                    olds.insert(name, o as usize);
-                }
-            }
-        };
+            };
         // SAFETY: the transmutes only erase each function's signature
         // into an IMP; the runtime calls it with that signature.
         unsafe {
-            swap(&mut olds, "keyDown:", objc2::sel!(keyDown:), std::mem::transmute::<unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject), Imp>(key_down));
+            swap(
+                &mut olds,
+                "keyDown:",
+                objc2::sel!(keyDown:),
+                std::mem::transmute::<
+                    unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject),
+                    Imp,
+                >(key_down),
+            );
             swap(
                 &mut olds,
                 "insertText:replacementRange:",
                 objc2::sel!(insertText:replacementRange:),
-                std::mem::transmute::<unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject, Range), Imp>(insert_text),
+                std::mem::transmute::<
+                    unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject, Range),
+                    Imp,
+                >(insert_text),
             );
-            swap(&mut olds, "selectedRange", objc2::sel!(selectedRange), std::mem::transmute::<unsafe extern "C-unwind" fn(*mut AnyObject, Sel) -> Range, Imp>(selected_range));
+            swap(
+                &mut olds,
+                "selectedRange",
+                objc2::sel!(selectedRange),
+                std::mem::transmute::<unsafe extern "C-unwind" fn(*mut AnyObject, Sel) -> Range, Imp>(
+                    selected_range,
+                ),
+            );
             swap(
                 &mut olds,
                 "attributedSubstringForProposedRange:actualRange:",
                 objc2::sel!(attributedSubstringForProposedRange:actualRange:),
-                std::mem::transmute::<unsafe extern "C-unwind" fn(*mut AnyObject, Sel, Range, *mut Range) -> *mut AnyObject, Imp>(
-                    attributed_substring,
-                ),
+                std::mem::transmute::<
+                    unsafe extern "C-unwind" fn(
+                        *mut AnyObject,
+                        Sel,
+                        Range,
+                        *mut Range,
+                    ) -> *mut AnyObject,
+                    Imp,
+                >(attributed_substring),
             );
             swap(
                 &mut olds,
                 "characterIndexForPoint:",
                 objc2::sel!(characterIndexForPoint:),
-                std::mem::transmute::<unsafe extern "C-unwind" fn(*mut AnyObject, Sel, Point) -> usize, Imp>(character_index),
+                std::mem::transmute::<
+                    unsafe extern "C-unwind" fn(*mut AnyObject, Sel, Point) -> usize,
+                    Imp,
+                >(character_index),
             );
             swap(
                 &mut olds,
                 "firstRectForCharacterRange:actualRange:",
                 objc2::sel!(firstRectForCharacterRange:actualRange:),
-                std::mem::transmute::<unsafe extern "C-unwind" fn(*mut AnyObject, Sel, Range, *mut Range) -> Rect, Imp>(first_rect),
+                std::mem::transmute::<
+                    unsafe extern "C-unwind" fn(*mut AnyObject, Sel, Range, *mut Range) -> Rect,
+                    Imp,
+                >(first_rect),
             );
             let ql: unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject) = quick_look;
             objc2::ffi::class_addMethod(
                 cls,
                 objc2::sel!(quickLookWithEvent:),
-                std::mem::transmute::<unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject), Imp>(ql),
+                std::mem::transmute::<
+                    unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject),
+                    Imp,
+                >(ql),
                 c"v@:@".as_ptr(),
             );
         }
@@ -4229,7 +4405,10 @@ pub mod frames {
                             std::thread::sleep(d);
                         }
                         next += period;
-                        send(Cmd::Tick { id: 0, at: now_ns() });
+                        send(Cmd::Tick {
+                            id: 0,
+                            at: now_ns(),
+                        });
                     }
                 })
                 .ok()?;
@@ -4270,7 +4449,11 @@ pub mod frames {
             if link.is_null() {
                 return;
             }
-            let Some(id) = links().lock().ok().and_then(|l| l.get(&(link as usize)).copied()) else {
+            let Some(id) = links()
+                .lock()
+                .ok()
+                .and_then(|l| l.get(&(link as usize)).copied())
+            else {
                 return;
             };
             // SAFETY: the CADisplayLink calling, alive for the call.
@@ -4304,7 +4487,11 @@ pub mod frames {
     unsafe impl objc2::Encode for FrameRateRange {
         const ENCODING: objc2::Encoding = objc2::Encoding::Struct(
             "CAFrameRateRange",
-            &[<f32 as objc2::Encode>::ENCODING, <f32 as objc2::Encode>::ENCODING, <f32 as objc2::Encode>::ENCODING],
+            &[
+                <f32 as objc2::Encode>::ENCODING,
+                <f32 as objc2::Encode>::ENCODING,
+                <f32 as objc2::Encode>::ENCODING,
+            ],
         );
     }
 
@@ -4323,7 +4510,11 @@ pub mod frames {
                     unsafe {
                         b.add_method(
                             objc2::sel!(tick:),
-                            tick as unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject),
+                            tick as unsafe extern "C-unwind" fn(
+                                *mut AnyObject,
+                                Sel,
+                                *mut AnyObject,
+                            ),
                         )
                     };
                     b.register()
@@ -4535,8 +4726,8 @@ pub mod frames {
 pub mod turn_watch {
     use super::{Cmd, send};
     use crate::stdlib::gui::window::{Clip, DisplayList, Prim};
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::time::{Duration, Instant};
 
     /// When the running turn began (µs since `epoch`, plus one), or 0.
@@ -4650,7 +4841,14 @@ pub mod turn_watch {
         let s = scale.max(0.5);
         let (cx, cy) = (w / 2.0, h / 2.0);
         let card = 64.0 * s;
-        dl.prims.push(rect(cx - card / 2.0, cy - card / 2.0, card, card, [30, 30, 32, 200], 14.0 * s));
+        dl.prims.push(rect(
+            cx - card / 2.0,
+            cy - card / 2.0,
+            card,
+            card,
+            [30, 30, 32, 200],
+            14.0 * s,
+        ));
         let step = (epoch().elapsed().as_millis() / 80) as usize;
         let dot = 6.0 * s;
         let ring = 16.0 * s;
@@ -4659,7 +4857,14 @@ pub mod turn_watch {
             let age = (step + 8 - i) % 8;
             let alpha = (255 - age * 28).max(50) as u8;
             let (x, y) = (cx + ring * a.sin(), cy - ring * a.cos());
-            dl.prims.push(rect(x - dot / 2.0, y - dot / 2.0, dot, dot, [235, 235, 240, alpha], dot / 2.0));
+            dl.prims.push(rect(
+                x - dot / 2.0,
+                y - dot / 2.0,
+                dot,
+                dot,
+                [235, 235, 240, alpha],
+                dot / 2.0,
+            ));
         }
         Some(Instant::now() + Duration::from_millis(80))
     }
@@ -4795,7 +5000,8 @@ pub mod quit_hold {
             let Some(cls) = objc2::runtime::AnyClass::get(c"NSAppleEventManager") else {
                 return "quit";
             };
-            let mgr: *mut objc2::runtime::AnyObject = objc2::msg_send![cls, sharedAppleEventManager];
+            let mgr: *mut objc2::runtime::AnyObject =
+                objc2::msg_send![cls, sharedAppleEventManager];
             if mgr.is_null() {
                 return "quit";
             }
@@ -4826,7 +5032,8 @@ pub mod quit_hold {
         _cmd: objc2::runtime::Sel,
         _app: *mut objc2::runtime::AnyObject,
     ) -> usize {
-        super::contain_callback("should_terminate", || if ask(reason()) { 2 } else { 1 }).unwrap_or(1)
+        super::contain_callback("should_terminate", || if ask(reason()) { 2 } else { 1 })
+            .unwrap_or(1)
     }
 
     /// The reply, on the main thread: the application may end.

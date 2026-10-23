@@ -75,8 +75,20 @@ fn reference(e: &Expr, i: usize) -> Result<V, ()> {
         Expr::Col(s) => val(s, i),
         Expr::Lit(s) => lit_v(s),
         Expr::Op(op, args) => {
-            let a: Vec<V> = args.iter().map(|a| reference(a, i)).collect::<Result<_, _>>()?;
-            let widen = |v: V| if is_float(e) { match v { V::N => V::N, v => V::F(fl(v)) } } else { v };
+            let a: Vec<V> = args
+                .iter()
+                .map(|a| reference(a, i))
+                .collect::<Result<_, _>>()?;
+            let widen = |v: V| {
+                if is_float(e) {
+                    match v {
+                        V::N => V::N,
+                        v => V::F(fl(v)),
+                    }
+                } else {
+                    v
+                }
+            };
             match op {
                 Op::Bin(b) => bin(*b, a[0], a[1])?,
                 Op::Neg => match a[0] {
@@ -143,10 +155,14 @@ fn reference(e: &Expr, i: usize) -> Result<V, ()> {
                             V::F(v)
                         } else {
                             let V::I(mut v) = x else { unreachable!() };
-                            if let V::I(l) = a[1] && v < l {
+                            if let V::I(l) = a[1]
+                                && v < l
+                            {
                                 v = l;
                             }
-                            if let V::I(h) = a[2] && v > h {
+                            if let V::I(h) = a[2]
+                                && v > h
+                            {
                                 v = h;
                             }
                             V::I(v)
@@ -284,9 +300,15 @@ fn bin(b: BinOp, x: V, y: V) -> Result<V, ()> {
                 Eq => o == Some(std::cmp::Ordering::Equal),
                 Ne => o != Some(std::cmp::Ordering::Equal),
                 Lt => o == Some(std::cmp::Ordering::Less),
-                Le => matches!(o, Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)),
+                Le => matches!(
+                    o,
+                    Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+                ),
                 Gt => o == Some(std::cmp::Ordering::Greater),
-                _ => matches!(o, Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)),
+                _ => matches!(
+                    o,
+                    Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
+                ),
             })
         }
         Div => {
@@ -357,7 +379,11 @@ impl Gen {
         let lit = self.rng.chance(0.25);
         match t {
             T::F if lit => {
-                let x = if self.rng.chance(0.05) { 0.0 } else { self.rng.f() / 10.0 };
+                let x = if self.rng.chance(0.05) {
+                    0.0
+                } else {
+                    self.rng.f() / 10.0
+                };
                 Expr::lit(Scalar::F64(x))
             }
             T::I if lit => {
@@ -398,25 +424,42 @@ impl Gen {
         match t {
             T::F => match r {
                 0 | 1 => {
-                    let ops = [BinOp::Add, BinOp::Sub, BinOp::Mul, BinOp::Div, BinOp::Pow, BinOp::Mod];
+                    let ops = [
+                        BinOp::Add,
+                        BinOp::Sub,
+                        BinOp::Mul,
+                        BinOp::Div,
+                        BinOp::Pow,
+                        BinOp::Mod,
+                    ];
                     let op = ops[self.rng.below(6) as usize];
                     let a = self.make(T::F, d);
                     let b = self.num(d);
-                    if self.rng.chance(0.5) { Expr::bin(op, a, b) } else { Expr::bin(op, b, a) }
+                    if self.rng.chance(0.5) {
+                        Expr::bin(op, a, b)
+                    } else {
+                        Expr::bin(op, b, a)
+                    }
                 }
                 2 => Expr::op(Op::Neg, vec![self.make(T::F, d)]),
                 3 => {
                     let m = Math::ALL[self.rng.below(Math::ALL.len() as u64) as usize].1;
                     let a = self.num(d);
                     // Keep int-preserving functions on a Float input here.
-                    let a = if matches!(m, Math::Abs | Math::Sign | Math::Floor | Math::Ceil | Math::Trunc) {
+                    let a = if matches!(
+                        m,
+                        Math::Abs | Math::Sign | Math::Floor | Math::Ceil | Math::Trunc
+                    ) {
                         self.make(T::F, d)
                     } else {
                         a
                     };
                     Expr::op(Op::Math(m), vec![a])
                 }
-                4 => Expr::op(Op::Round(self.rng.below(5) as i32 - 2), vec![self.make(T::F, d)]),
+                4 => Expr::op(
+                    Op::Round(self.rng.below(5) as i32 - 2),
+                    vec![self.make(T::F, d)],
+                ),
                 5 => {
                     let c = self.make(T::B, d);
                     let a = self.make(T::F, d);
@@ -442,7 +485,11 @@ impl Gen {
                     Expr::op(Op::Clip, vec![x, lo, hi])
                 }
                 8 => {
-                    let a = if self.rng.chance(0.5) { self.make(T::I, d) } else { self.make(T::B, d) };
+                    let a = if self.rng.chance(0.5) {
+                        self.make(T::I, d)
+                    } else {
+                        self.make(T::B, d)
+                    };
                     Expr::op(Op::Cast(DType::F64), vec![a])
                 }
                 _ => self.leaf(T::F),
@@ -476,14 +523,25 @@ impl Gen {
                     Expr::op(Op::Clip, vec![x, lo, hi])
                 }
                 8 => {
-                    let a = if self.rng.chance(0.5) { self.make(T::F, d) } else { self.make(T::B, d) };
+                    let a = if self.rng.chance(0.5) {
+                        self.make(T::F, d)
+                    } else {
+                        self.make(T::B, d)
+                    };
                     Expr::op(Op::Cast(DType::I64), vec![a])
                 }
                 _ => self.leaf(T::I),
             },
             T::B => match r {
                 0 | 1 => {
-                    let ops = [BinOp::Eq, BinOp::Ne, BinOp::Lt, BinOp::Le, BinOp::Gt, BinOp::Ge];
+                    let ops = [
+                        BinOp::Eq,
+                        BinOp::Ne,
+                        BinOp::Lt,
+                        BinOp::Le,
+                        BinOp::Gt,
+                        BinOp::Ge,
+                    ];
                     let op = ops[self.rng.below(6) as usize];
                     let a = self.num(d);
                     let b = self.num(d);
@@ -500,7 +558,11 @@ impl Gen {
                 3 => Expr::op(Op::Not, vec![self.make(T::B, d)]),
                 4 => {
                     let t = [T::F, T::I, T::B][self.rng.below(3) as usize];
-                    let op = if self.rng.chance(0.5) { Op::IsNull } else { Op::NotNull };
+                    let op = if self.rng.chance(0.5) {
+                        Op::IsNull
+                    } else {
+                        Op::NotNull
+                    };
                     Expr::op(op, vec![self.make(t, d)])
                 }
                 5 => Expr::op(Op::IsNan, vec![self.make(T::F, d)]),
@@ -532,7 +594,11 @@ impl Gen {
     }
 }
 
-fn columns(rng: &mut Rng, n: usize, nulls: f64) -> (Vec<Arc<Expr>>, Vec<Arc<Expr>>, Vec<Arc<Expr>>) {
+fn columns(
+    rng: &mut Rng,
+    n: usize,
+    nulls: f64,
+) -> (Vec<Arc<Expr>>, Vec<Arc<Expr>>, Vec<Arc<Expr>>) {
     let mut f = Vec::new();
     let mut i = Vec::new();
     let mut b = Vec::new();
@@ -555,12 +621,24 @@ fn columns(rng: &mut Rng, n: usize, nulls: f64) -> (Vec<Arc<Expr>>, Vec<Arc<Expr
         )));
         i.push(Expr::col(Series::from_i64_options(
             (0..n)
-                .map(|_| if rng.chance(p) { None } else { Some(rng.below(201) as i64 - 100) })
+                .map(|_| {
+                    if rng.chance(p) {
+                        None
+                    } else {
+                        Some(rng.below(201) as i64 - 100)
+                    }
+                })
                 .collect(),
         )));
         b.push(Expr::col(Series::from_bool_options(
             (0..n)
-                .map(|_| if rng.chance(p) { None } else { Some(rng.chance(0.5)) })
+                .map(|_| {
+                    if rng.chance(p) {
+                        None
+                    } else {
+                        Some(rng.chance(0.5))
+                    }
+                })
                 .collect(),
         )));
     }
@@ -569,9 +647,16 @@ fn columns(rng: &mut Rng, n: usize, nulls: f64) -> (Vec<Arc<Expr>>, Vec<Arc<Expr
 
 fn show(e: &Expr) -> String {
     match e {
-        Expr::Col(s) => format!("col{}{}", s.dtype(), if s.validity().is_some() { "?" } else { "" }),
+        Expr::Col(s) => format!(
+            "col{}{}",
+            s.dtype(),
+            if s.validity().is_some() { "?" } else { "" }
+        ),
         Expr::Lit(s) => format!("{s:?}"),
-        Expr::Op(op, a) => format!("{op:?}({})", a.iter().map(|x| show(x)).collect::<Vec<_>>().join(", ")),
+        Expr::Op(op, a) => format!(
+            "{op:?}({})",
+            a.iter().map(|x| show(x)).collect::<Vec<_>>().join(", ")
+        ),
     }
 }
 
@@ -613,7 +698,10 @@ fn check(e: &Arc<Expr>, n: usize) {
             for (i, w) in want.iter().enumerate() {
                 let g = val(&got, i);
                 if !same(g, *w) {
-                    panic!("row {i}: got {g:?}, want {w:?}; smallest: {}", smallest(e, n, i));
+                    panic!(
+                        "row {i}: got {g:?}, want {w:?}; smallest: {}",
+                        smallest(e, n, i)
+                    );
                 }
             }
             // A result with no null carries no bitmap.
@@ -727,7 +815,10 @@ fn reductions_fold_what_the_eager_kernels_compute() {
             assert_eq!(count, Scalar::I64(col.count() as i64));
             match col.dtype() {
                 DType::Bool => {
-                    assert_eq!(plan.reduce(Reduce::Sum, par).unwrap(), col.sum(false).unwrap());
+                    assert_eq!(
+                        plan.reduce(Reduce::Sum, par).unwrap(),
+                        col.sum(false).unwrap()
+                    );
                 }
                 _ => {
                     for (k, want) in [
@@ -747,10 +838,15 @@ fn reductions_fold_what_the_eager_kernels_compute() {
                         (Ok(Scalar::F64(x)), Ok(Scalar::F64(y))) => {
                             if !par && col.validity().is_none() && !x.is_nan() {
                                 // No nulls: the eager sum's order exactly.
-                                assert!(x.to_bits() == y.to_bits() || plan_may_null(&e), "{x} vs {y}");
+                                assert!(
+                                    x.to_bits() == y.to_bits() || plan_may_null(&e),
+                                    "{x} vs {y}"
+                                );
                             }
                             assert!(
-                                (x - y).abs() <= 1e-9 * y.abs().max(1.0) || (x.is_nan() && y.is_nan()) || x == y,
+                                (x - y).abs() <= 1e-9 * y.abs().max(1.0)
+                                    || (x.is_nan() && y.is_nan())
+                                    || x == y,
                                 "{x} vs {y}"
                             );
                         }
@@ -779,7 +875,11 @@ fn a_dense_float_sum_is_the_eager_sum_bit_for_bit() {
     let b = Series::from_f64((0..n).map(|i| (i as f64 * 0.11).cos()).collect());
     let prod = Expr::bin(BinOp::Mul, Expr::col(a.clone()), Expr::col(b.clone()));
     let plan = Plan::new(std::slice::from_ref(&prod), None).unwrap();
-    let eager = a.arith(olang_ods::ArithOp::Mul, &b, false).unwrap().sum(false).unwrap();
+    let eager = a
+        .arith(olang_ods::ArithOp::Mul, &b, false)
+        .unwrap()
+        .sum(false)
+        .unwrap();
     assert_eq!(plan.reduce(Reduce::Sum, false).unwrap(), eager);
 }
 
@@ -788,7 +888,10 @@ fn errors_name_what_the_eager_kernels_name() {
     let a = Series::from_f64(vec![1.0, 2.0]);
     let z = Series::from_f64_options(vec![None, Some(0.0)]);
     let div = Expr::bin(BinOp::Div, Expr::col(a.clone()), Expr::col(z.clone()));
-    assert_eq!(div.eval(2, false).unwrap_err().to_string(), "Division by zero");
+    assert_eq!(
+        div.eval(2, false).unwrap_err().to_string(),
+        "Division by zero"
+    );
     // Under a null the zero divisor does not compute.
     let z2 = Series::from_f64_options(vec![Some(0.0), Some(1.0)]);
     let n = Series::from_f64_options(vec![None, Some(3.0)]);
@@ -796,7 +899,10 @@ fn errors_name_what_the_eager_kernels_name() {
     assert!(ok.eval(2, false).is_ok());
     let big = Series::from_i64(vec![i64::MAX, 1]);
     let over = Expr::bin(BinOp::Add, Expr::col(big), Expr::lit(Scalar::I64(1)));
-    assert_eq!(over.eval(2, false).unwrap_err().to_string(), "Integer overflow in addition");
+    assert_eq!(
+        over.eval(2, false).unwrap_err().to_string(),
+        "Integer overflow in addition"
+    );
     let neg = Expr::op(Op::Math(Math::Sqrt), vec![Expr::lit(Scalar::F64(-1.0))]);
     assert_eq!(
         neg.eval(3, false).unwrap_err().to_string(),
@@ -808,11 +914,17 @@ fn errors_name_what_the_eager_kernels_name() {
 fn text_columns_compare_and_coalesce() {
     let s = Series::from_str_options(vec![Some("a".into()), None, Some("c".into())]);
     let t = Series::from_str_values(vec!["x".into(), "y".into(), "z".into()]);
-    let eq = Expr::bin(BinOp::Eq, Expr::col(s.clone()), Expr::lit(Scalar::Str("c".into())));
+    let eq = Expr::bin(
+        BinOp::Eq,
+        Expr::col(s.clone()),
+        Expr::lit(Scalar::Str("c".into())),
+    );
     let got = eq.eval(3, false).unwrap();
     assert_eq!(got.scalar_at(2), Scalar::Bool(true));
     assert_eq!(got.scalar_at(1), Scalar::Null);
-    let filled = Expr::op(Op::Coalesce, vec![Expr::col(s), Expr::col(t)]).eval(3, false).unwrap();
+    let filled = Expr::op(Op::Coalesce, vec![Expr::col(s), Expr::col(t)])
+        .eval(3, false)
+        .unwrap();
     assert_eq!(filled.scalar_at(1), Scalar::Str("y".into()));
 }
 
@@ -826,12 +938,24 @@ fn every_operand() -> Vec<(String, Arc<Expr>)> {
     )
     .unwrap();
     let cols = [
-        ("F", Series::from_f64_options(vec![Some(1.5), None, Some(-2.0)])),
+        (
+            "F",
+            Series::from_f64_options(vec![Some(1.5), None, Some(-2.0)]),
+        ),
         ("I", Series::from_i64_options(vec![Some(1), Some(-4), None])),
         ("B", Series::from_bool(vec![true, false, true])),
-        ("T", Series::from_str_options(vec![Some("s".into()), None, Some("2024-01-01".into())])),
-        ("D", Series::from_date_options(vec![Some(19_000), None, Some(19_500)])),
-        ("DT", Series::from_datetime_options(vec![Some(0), Some(86_400_000_000), None])),
+        (
+            "T",
+            Series::from_str_options(vec![Some("s".into()), None, Some("2024-01-01".into())]),
+        ),
+        (
+            "D",
+            Series::from_date_options(vec![Some(19_000), None, Some(19_500)]),
+        ),
+        (
+            "DT",
+            Series::from_datetime_options(vec![Some(0), Some(86_400_000_000), None]),
+        ),
         ("C", cat),
     ];
     let lits = [
@@ -859,8 +983,21 @@ fn every_operand() -> Vec<(String, Arc<Expr>)> {
 fn what_types_and_cannot_fail_evaluates() {
     let ops = every_operand();
     let bins = [
-        BinOp::Add, BinOp::Sub, BinOp::Mul, BinOp::Div, BinOp::Mod, BinOp::Pow, BinOp::Eq, BinOp::Ne,
-        BinOp::Lt, BinOp::Le, BinOp::Gt, BinOp::Ge, BinOp::And, BinOp::Or, BinOp::Xor,
+        BinOp::Add,
+        BinOp::Sub,
+        BinOp::Mul,
+        BinOp::Div,
+        BinOp::Mod,
+        BinOp::Pow,
+        BinOp::Eq,
+        BinOp::Ne,
+        BinOp::Lt,
+        BinOp::Le,
+        BinOp::Gt,
+        BinOp::Ge,
+        BinOp::And,
+        BinOp::Or,
+        BinOp::Xor,
     ];
     let mut tried = 0;
     let mut try_one = |e: Arc<Expr>, what: String| {
@@ -869,11 +1006,18 @@ fn what_types_and_cannot_fail_evaluates() {
             return;
         }
         tried += 1;
-        let got = std::panic::catch_unwind(|| e.eval(3, false).map(|_| ()).map_err(|x| x.to_string()));
+        let got =
+            std::panic::catch_unwind(|| e.eval(3, false).map(|_| ()).map_err(|x| x.to_string()));
         match got {
             Ok(Ok(())) => {}
-            Ok(Err(err)) => panic!("{} types as {:?} and is not fallible, but raises: {}", what, typed, err),
-            Err(_) => panic!("{} types as {:?} and is not fallible, but panics", what, typed),
+            Ok(Err(err)) => panic!(
+                "{} types as {:?} and is not fallible, but raises: {}",
+                what, typed, err
+            ),
+            Err(_) => panic!(
+                "{} types as {:?} and is not fallible, but panics",
+                what, typed
+            ),
         }
     };
     let unary = [
@@ -899,17 +1043,29 @@ fn what_types_and_cannot_fail_evaluates() {
         }
         for (nb, b) in &ops {
             try_one(
-                Expr::op(Op::Temporal(olang_ods::fuse::TOp::AddMonthsBy, false), vec![a.clone(), b.clone()]),
+                Expr::op(
+                    Op::Temporal(olang_ods::fuse::TOp::AddMonthsBy, false),
+                    vec![a.clone(), b.clone()],
+                ),
                 format!("add_months({}, {})", na, nb),
             );
             try_one(
-                Expr::op(Op::Temporal(olang_ods::fuse::TOp::MonthsBetween, false), vec![a.clone(), b.clone()]),
+                Expr::op(
+                    Op::Temporal(olang_ods::fuse::TOp::MonthsBetween, false),
+                    vec![a.clone(), b.clone()],
+                ),
                 format!("months_between({}, {})", na, nb),
             );
             for op in bins {
-                try_one(Expr::bin(op, a.clone(), b.clone()), format!("{:?}({}, {})", op, na, nb));
+                try_one(
+                    Expr::bin(op, a.clone(), b.clone()),
+                    format!("{:?}({}, {})", op, na, nb),
+                );
             }
-            try_one(Expr::op(Op::Coalesce, vec![a.clone(), b.clone()]), format!("coalesce({}, {})", na, nb));
+            try_one(
+                Expr::op(Op::Coalesce, vec![a.clone(), b.clone()]),
+                format!("coalesce({}, {})", na, nb),
+            );
             for (nc, c) in &ops {
                 for closed in [Closed::Both, Closed::Neither] {
                     try_one(
@@ -938,23 +1094,47 @@ fn what_types_and_cannot_fail_evaluates() {
 fn categories_compare_by_level_and_text_joins() {
     let ops = every_operand();
     let get = |n: &str| ops.iter().find(|(k, _)| k == n).unwrap().1.clone();
-    let lt = Expr::bin(BinOp::Lt, get("C"), get("level")).eval(3, false).unwrap();
+    let lt = Expr::bin(BinOp::Lt, get("C"), get("level"))
+        .eval(3, false)
+        .unwrap();
     // m < m, s < m, null
-    assert_eq!((0..3).map(|i| lt.scalar_at(i)).collect::<Vec<_>>(), vec![Scalar::Bool(false), Scalar::Bool(true), Scalar::Null]);
-    let ge = Expr::bin(BinOp::Ge, get("level"), get("C")).eval(3, false).unwrap();
+    assert_eq!(
+        (0..3).map(|i| lt.scalar_at(i)).collect::<Vec<_>>(),
+        vec![Scalar::Bool(false), Scalar::Bool(true), Scalar::Null]
+    );
+    let ge = Expr::bin(BinOp::Ge, get("level"), get("C"))
+        .eval(3, false)
+        .unwrap();
     assert_eq!(ge.scalar_at(1), Scalar::Bool(true));
-    let between = Expr::op(Op::Between(Closed::Both), vec![get("C"), Expr::lit(Scalar::Str("s".into())), get("level")]);
+    let between = Expr::op(
+        Op::Between(Closed::Both),
+        vec![get("C"), Expr::lit(Scalar::Str("s".into())), get("level")],
+    );
     assert!(!between.fallible());
-    assert_eq!(between.eval(3, false).unwrap().scalar_at(0), Scalar::Bool(true));
+    assert_eq!(
+        between.eval(3, false).unwrap().scalar_at(0),
+        Scalar::Bool(true)
+    );
     // An ordering against text that is no level has no answer, and says so.
     let bad = Expr::bin(BinOp::Lt, get("C"), get("text"));
     assert!(bad.fallible());
-    assert!(bad.eval(3, false).unwrap_err().to_string().contains("not a level"));
-    let ne = Expr::bin(BinOp::Ne, get("C"), get("text")).eval(3, false).unwrap();
+    assert!(
+        bad.eval(3, false)
+            .unwrap_err()
+            .to_string()
+            .contains("not a level")
+    );
+    let ne = Expr::bin(BinOp::Ne, get("C"), get("text"))
+        .eval(3, false)
+        .unwrap();
     assert_eq!(ne.scalar_at(0), Scalar::Bool(true));
-    let joined = Expr::bin(BinOp::Add, get("C"), Expr::lit(Scalar::Str("!".into()))).eval(3, false).unwrap();
+    let joined = Expr::bin(BinOp::Add, get("C"), Expr::lit(Scalar::Str("!".into())))
+        .eval(3, false)
+        .unwrap();
     assert_eq!(joined.scalar_at(0), Scalar::Str("m!".into()));
     assert_eq!(joined.scalar_at(2), Scalar::Null);
-    let both = Expr::bin(BinOp::Add, get("T"), get("T")).eval(3, false).unwrap();
+    let both = Expr::bin(BinOp::Add, get("T"), get("T"))
+        .eval(3, false)
+        .unwrap();
     assert_eq!(both.scalar_at(0), Scalar::Str("ss".into()));
 }

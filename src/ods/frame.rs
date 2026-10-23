@@ -225,7 +225,11 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("unpivot", 3),
 ];
 
-pub(crate) fn want_frame<'a>(func: &str, args: &'a [Value], idx: usize) -> Result<&'a Frame, String> {
+pub(crate) fn want_frame<'a>(
+    func: &str,
+    args: &'a [Value],
+    idx: usize,
+) -> Result<&'a Frame, String> {
     args.get(idx).and_then(frame_of).ok_or_else(|| {
         format!(
             "ods.{}: argument {} must be a Frame, got {}",
@@ -1084,7 +1088,9 @@ pub fn sample_indices_from(
         })?
         .map_err(|e| format!("ods.{}: {}", func, e))?;
         idx.sort_unstable();
-        return Ok(Series::from_i64(idx.into_iter().map(|i| i as i64).collect()));
+        return Ok(Series::from_i64(
+            idx.into_iter().map(|i| i as i64).collect(),
+        ));
     }
     let want = match n {
         Some(Value::Integer(k)) if *k >= 0 => (*k as usize).min(len),
@@ -2366,7 +2372,11 @@ impl CsvOpts {
             if matches!(col.dtype(), DType::Date | DType::Datetime) {
                 continue;
             }
-            let olang_ods::Series::Str { col: text, validity } = col else {
+            let olang_ods::Series::Str {
+                col: text,
+                validity,
+            } = col
+            else {
                 return Err(format!(
                     "ods.{}: dates: column '{}' reads as {}, not as dates",
                     func,
@@ -2426,7 +2436,11 @@ fn read_csv_with(text: &str, opts: &CsvOpts) -> Result<Value, String> {
             let t = record.get(c).unwrap_or("");
             // A null token reads as the empty cell, which every type
             // reads as null.
-            cell.push(if nulls.contains(&t) { String::new() } else { t.to_string() });
+            cell.push(if nulls.contains(&t) {
+                String::new()
+            } else {
+                t.to_string()
+            });
         }
     }
     let pairs: Vec<(String, Series)> = headers
@@ -2622,7 +2636,11 @@ impl ReadFloatFmt for FloatFmt {
                 "e" => FloatFmtKind::Sci,
                 _ => return None,
             };
-            digits.parse::<usize>().ok().filter(|d| *d <= 17).map(|d| (k, d))
+            digits
+                .parse::<usize>()
+                .ok()
+                .filter(|d| *d <= 17)
+                .map(|d| (k, d))
         });
         match parsed {
             Some(p) => Ok(Some(p)),

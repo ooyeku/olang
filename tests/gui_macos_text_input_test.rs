@@ -55,7 +55,11 @@ mod mac {
 
     unsafe extern "C" {
         static _dispatch_main_q: c_void;
-        fn dispatch_async_f(queue: *const c_void, context: *mut c_void, work: extern "C" fn(*mut c_void));
+        fn dispatch_async_f(
+            queue: *const c_void,
+            context: *mut c_void,
+            work: extern "C" fn(*mut c_void),
+        );
     }
 
     type Job = Box<dyn FnOnce() + Send>;
@@ -72,7 +76,8 @@ mod mac {
         });
         let ctx = Box::into_raw(Box::new(job)) as *mut c_void;
         unsafe { dispatch_async_f(&raw const _dispatch_main_q, ctx, run_job) };
-        rx.recv_timeout(Duration::from_secs(10)).expect("the main thread answers")
+        rx.recv_timeout(Duration::from_secs(10))
+            .expect("the main thread answers")
     }
 
     fn wait_for(what: &str, mut ok: impl FnMut() -> bool) {
@@ -94,7 +99,8 @@ mod mac {
     fn view() -> Retained<AnyObject> {
         let cls = AnyClass::get(c"NSApplication").unwrap();
         let app: Retained<AnyObject> = unsafe { msg_send![cls, sharedApplication] };
-        let wins: Retained<objc2_foundation::NSArray<AnyObject>> = unsafe { msg_send![&*app, windows] };
+        let wins: Retained<objc2_foundation::NSArray<AnyObject>> =
+            unsafe { msg_send![&*app, windows] };
         for w in wins.to_vec() {
             let t: Option<Retained<NSString>> = unsafe { msg_send![&*w, title] };
             if t.is_some_and(|t| t.to_string() == "olang text input") {
@@ -127,31 +133,51 @@ mod mac {
             std::thread::spawn(|| {
                 let prober = std::thread::spawn(|| {
                     let say = |s: String| CHECKS.lock().unwrap().push(s);
-                    wait_for("the window's first frame", || platform::frames_presented() > 0);
+                    wait_for("the window's first frame", || {
+                        platform::frames_presented() > 0
+                    });
                     let id = *windows().lock().unwrap().keys().next().expect("a window");
                     // dictation: text put in with no key and no composition
                     // (the caret at the end, where focusing put it)
                     on_main(|| {
                         let v = view();
-                        let _: () = unsafe { msg_send![&*v, selectAll: std::ptr::null::<AnyObject>()] };
+                        let _: () =
+                            unsafe { msg_send![&*v, selectAll: std::ptr::null::<AnyObject>()] };
                     });
                     wait_for("all selected", || {
                         let st = windows().lock().unwrap().get(&id).cloned().unwrap();
                         let st = st.lock().unwrap();
-                        st.editors.get("f").is_some_and(|e| e.selection_chars() == (0, 11))
+                        st.editors
+                            .get("f")
+                            .is_some_and(|e| e.selection_chars() == (0, 11))
                     });
-                    insert("dictated words", Range { location: NOT_FOUND, length: 0 });
+                    insert(
+                        "dictated words",
+                        Range {
+                            location: NOT_FOUND,
+                            length: 0,
+                        },
+                    );
                     wait_for("the dictated text", || field_value(id) == "dictated words");
                     say(format!("dictated: {:?}", field_value(id)));
                     // over a range: replaced
-                    insert("spoken", Range { location: 0, length: 8 });
+                    insert(
+                        "spoken",
+                        Range {
+                            location: 0,
+                            length: 8,
+                        },
+                    );
                     wait_for("the replaced text", || field_value(id) == "spoken words");
                     say(format!("replaced: {:?}", field_value(id)));
                     // what Look Up and an input method read
                     let (sel, sub, actual, rect, frame, at) = on_main(|| {
                         let v = view();
                         let sel: Range = unsafe { msg_send![&*v, selectedRange] };
-                        let mut actual = Range { location: 0, length: 0 };
+                        let mut actual = Range {
+                            location: 0,
+                            length: 0,
+                        };
                         let sub: Option<Retained<AnyObject>> = unsafe {
                             msg_send![&*v, attributedSubstringForProposedRange: Range { location: 7, length: 5 }, actualRange: &mut actual]
                         };
@@ -159,18 +185,27 @@ mod mac {
                             let st: Retained<NSString> = unsafe { msg_send![&*s, string] };
                             st.to_string()
                         });
-                        let mut a2 = Range { location: 0, length: 0 };
+                        let mut a2 = Range {
+                            location: 0,
+                            length: 0,
+                        };
                         let rect: Rect = unsafe {
                             msg_send![&*v, firstRectForCharacterRange: Range { location: 7, length: 5 }, actualRange: &mut a2]
                         };
                         let win: Retained<AnyObject> = unsafe { msg_send![&*v, window] };
                         let frame: Rect = unsafe { msg_send![&*win, frame] };
-                        let mid = Point { x: rect.origin.x + rect.size.x / 2.0, y: rect.origin.y + rect.size.y / 2.0 };
+                        let mid = Point {
+                            x: rect.origin.x + rect.size.x / 2.0,
+                            y: rect.origin.y + rect.size.y / 2.0,
+                        };
                         let at: usize = unsafe { msg_send![&*v, characterIndexForPoint: mid] };
                         (sel, sub, actual, rect, frame, at)
                     });
                     say(format!("selected: {} {}", sel.location, sel.length));
-                    say(format!("substring: {sub:?} {} {}", actual.location, actual.length));
+                    say(format!(
+                        "substring: {sub:?} {} {}",
+                        actual.location, actual.length
+                    ));
                     let inside = rect.size.x > 10.0
                         && rect.size.y > 5.0
                         && rect.origin.x >= frame.origin.x
@@ -183,18 +218,27 @@ mod mac {
                     on_main(|| {
                         let v = view();
                         let s = NSString::from_str("か");
-                        let none = Range { location: NOT_FOUND, length: 0 };
+                        let none = Range {
+                            location: NOT_FOUND,
+                            length: 0,
+                        };
                         let _: () = unsafe {
                             msg_send![&*v, setMarkedText: &*s, selectedRange: Range { location: 1, length: 0 }, replacementRange: none]
                         };
-                        let _: () = unsafe { msg_send![&*v, insertText: &*s, replacementRange: none] };
+                        let _: () =
+                            unsafe { msg_send![&*v, insertText: &*s, replacementRange: none] };
                     });
                     wait_for("the composed text", || field_value(id).contains('か'));
                     std::thread::sleep(Duration::from_millis(200));
-                    say(format!("composed: {}", field_value(id).matches('か').count()));
+                    say(format!(
+                        "composed: {}",
+                        field_value(id).matches('か').count()
+                    ));
                     let looks: bool = on_main(|| {
                         let v = view();
-                        let b: Bool = unsafe { msg_send![&*v, respondsToSelector: Sel::register(c"quickLookWithEvent:")] };
+                        let b: Bool = unsafe {
+                            msg_send![&*v, respondsToSelector: Sel::register(c"quickLookWithEvent:")]
+                        };
                         b.as_bool()
                     });
                     say(format!("force click looks up: {looks}"));
@@ -205,7 +249,10 @@ mod mac {
                         st.misspelled("s")
                     };
                     say(format!("misspelled: {spelt:?}"));
-                    olang::stdlib::gui::emit(vec![olang::stdlib::gui::values::event("test_done", vec![])]);
+                    olang::stdlib::gui::emit(vec![olang::stdlib::gui::values::event(
+                        "test_done",
+                        vec![],
+                    )]);
                 });
                 let program = Parser::new().parse(PROGRAM).expect("parses");
                 let _ = Interpreter::new().eval_program(program);

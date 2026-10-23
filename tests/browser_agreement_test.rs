@@ -216,10 +216,7 @@ fn csv_markdown_tokens_and_features_run_in_the_browser() {
     // natively, the same program with the browser profile's facts
     let native_src = WEB
         .replace("runtime.features()", "runtime.features(\"browser\")")
-        .replace(
-            "println(attempt(() => task.join(spawn work())))\n",
-            "",
-        );
+        .replace("println(attempt(() => task.join(spawn work())))\n", "");
     let native_program = ws.join("native.ol");
     std::fs::write(&native_program, &native_src).unwrap();
     let native = Command::new(env!("CARGO_BIN_EXE_olang"))

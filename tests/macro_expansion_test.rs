@@ -809,8 +809,10 @@ fn a_meta_fn_that_never_ends_is_one_error_not_a_hang() {
     // `olang check` and the language server expand a file as it is opened:
     // a loop in a meta fn spun them forever
     let started = std::time::Instant::now();
-    let err = eval("meta fn spin(x) = { let mut i = 0; while true { i = i + 1 }; x }\nlet a = @spin(1)\na\n")
-        .expect_err("a budget");
+    let err = eval(
+        "meta fn spin(x) = { let mut i = 0; while true { i = i + 1 }; x }\nlet a = @spin(1)\na\n",
+    )
+    .expect_err("a budget");
     assert!(err.contains("max_steps"), "{}", err);
     assert!(started.elapsed().as_secs() < 120);
     // a huge string asked for is an error too, not an allocation that aborts
@@ -824,13 +826,26 @@ fn a_meta_fn_cannot_print_onto_stdout_or_reach_the_runtime() {
     // stdout is the language server's protocol: a meta fn in a file opened
     // printed a framed message to the editor as the server
     for (body, name) in [
-        ("{ println(\"Content-Length: 2\\r\\n\\r\\n{}\"); x }", "println"),
+        (
+            "{ println(\"Content-Length: 2\\r\\n\\r\\n{}\"); x }",
+            "println",
+        ),
         ("{ print(\"x\"); x }", "print"),
-        ("{ let _m = runtime.load_module(\"x.ol\", #{}); x }", "runtime.load_module"),
-        ("{ let _s = testing.snapshot(\"a\", \"b\"); x }", "testing.snapshot"),
+        (
+            "{ let _m = runtime.load_module(\"x.ol\", #{}); x }",
+            "runtime.load_module",
+        ),
+        (
+            "{ let _s = testing.snapshot(\"a\", \"b\"); x }",
+            "testing.snapshot",
+        ),
     ] {
         let err = eval(&format!("meta fn m(x) = {}\nlet a = @m(1)\na\n", body)).expect_err(name);
-        assert!(err.contains(&format!("{} is not available at expansion time", name)), "{}", err);
+        assert!(
+            err.contains(&format!("{} is not available at expansion time", name)),
+            "{}",
+            err
+        );
     }
     // eprintln stays, for debugging a macro
     assert_eq!(
@@ -858,7 +873,11 @@ fn check_tier_loads_a_used_module_without_running_its_effects() {
         ),
     )
     .unwrap();
-    std::fs::write(dir.join("main.ol"), "use lib.evil { f }\nfn g(n) = f(n) * 2\nprintln(g(1))\n").unwrap();
+    std::fs::write(
+        dir.join("main.ol"),
+        "use lib.evil { f }\nfn g(n) = f(n) * 2\nprintln(g(1))\n",
+    )
+    .unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_olang"))
         .current_dir(&dir)
         .args(["check", "--tier", "main.ol"])

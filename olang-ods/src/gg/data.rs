@@ -137,7 +137,10 @@ impl Col {
                             })
                         })
                         .collect();
-                    codes.extend(c.iter().map(|&k| if k == NA { NA } else { map[k as usize] }));
+                    codes.extend(
+                        c.iter()
+                            .map(|&k| if k == NA { NA } else { map[k as usize] }),
+                    );
                 }
                 Col::Num(v) => {
                     for x in v.iter() {

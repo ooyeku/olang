@@ -167,8 +167,14 @@ impl Series {
         }
         // A Float column without nulls: the same arithmetic over the
         // slice, every row valid (the common case, and twice as fast).
-        if let Series::F64 { values, validity: None } = self
-            && matches!(op, AggOp::Sum | AggOp::Mean | AggOp::Min | AggOp::Max | AggOp::Std | AggOp::Var)
+        if let Series::F64 {
+            values,
+            validity: None,
+        } = self
+            && matches!(
+                op,
+                AggOp::Sum | AggOp::Mean | AggOp::Min | AggOp::Max | AggOp::Std | AggOp::Var
+            )
             && !opts.exact
         {
             return Ok(rolling_dense(values, w, off, op, opts.min_periods));
@@ -215,9 +221,10 @@ impl Series {
                     let ok = keep(c, whole, 1);
                     if op == AggOp::Sum {
                         out_int.push(match ok {
-                            true => Some(i64::try_from(t).map_err(|_| {
-                                OdsError::IntegerOverflow("addition")
-                            })?),
+                            true => Some(
+                                i64::try_from(t)
+                                    .map_err(|_| OdsError::IntegerOverflow("addition"))?,
+                            ),
                             false => None,
                         });
                     } else {
@@ -236,7 +243,11 @@ impl Series {
                         c += 1;
                         total += x;
                     }
-                    let least = if matches!(op, AggOp::Std | AggOp::Var) { 2 } else { 1 };
+                    let least = if matches!(op, AggOp::Std | AggOp::Var) {
+                        2
+                    } else {
+                        1
+                    };
                     if !keep(c, whole, 1) || c < least {
                         out.push(None);
                         continue;
@@ -246,7 +257,8 @@ impl Series {
                         AggOp::Mean => total / c as f64,
                         _ => {
                             let mean = total / c as f64;
-                            let ss: f64 = (l..h).filter_map(f).map(|x| (x - mean) * (x - mean)).sum();
+                            let ss: f64 =
+                                (l..h).filter_map(f).map(|x| (x - mean) * (x - mean)).sum();
                             let var = ss / (c - 1) as f64;
                             if op == AggOp::Std { var.sqrt() } else { var }
                         }
@@ -336,7 +348,10 @@ impl Series {
                         if valid(hi) {
                             c += 1;
                             if let Some(x) = int(hi) {
-                                while dq.back().is_some_and(|&j| better_i(x, int(j).expect("valid"))) {
+                                while dq
+                                    .back()
+                                    .is_some_and(|&j| better_i(x, int(j).expect("valid")))
+                                {
                                     dq.pop_back();
                                 }
                                 dq.push_back(hi);
@@ -344,7 +359,10 @@ impl Series {
                                 if x.is_nan() {
                                     nan += 1;
                                 } else {
-                                    while dq.back().is_some_and(|&j| better(x, f(j).expect("valid"))) {
+                                    while dq
+                                        .back()
+                                        .is_some_and(|&j| better(x, f(j).expect("valid")))
+                                    {
                                         dq.pop_back();
                                     }
                                     dq.push_back(hi);
@@ -367,7 +385,11 @@ impl Series {
                     }
                     let ok = keep(c, whole, 1);
                     if is_int {
-                        out_int.push(if ok { dq.front().and_then(|&j| int(j)) } else { None });
+                        out_int.push(if ok {
+                            dq.front().and_then(|&j| int(j))
+                        } else {
+                            None
+                        });
                     } else {
                         // A window of NaNs alone is NaN; NaN is skipped
                         // otherwise, as `f64::min` skips it.
@@ -429,7 +451,11 @@ fn rolling_dense(v: &[f64], w: usize, off: usize, op: AggOp, min_periods: Option
     let n = v.len();
     let mut out = vec![0.0f64; n];
     let mut ok = vec![false; n];
-    let least = if matches!(op, AggOp::Std | AggOp::Var) { 2 } else { 1 };
+    let least = if matches!(op, AggOp::Std | AggOp::Var) {
+        2
+    } else {
+        1
+    };
     let keep = |c: usize, whole: bool| {
         c >= least
             && match min_periods {
@@ -544,14 +570,28 @@ mod tests {
 
     #[test]
     fn running_and_exact_agree() {
-        let v: Vec<f64> = (0..500).map(|i| ((i * 37) % 101) as f64 * 0.37 + 1e6).collect();
+        let v: Vec<f64> = (0..500)
+            .map(|i| ((i * 37) % 101) as f64 * 0.37 + 1e6)
+            .collect();
         let s = Series::from_f64(v);
         for op in [AggOp::Sum, AggOp::Mean, AggOp::Std, AggOp::Var] {
             let a = f64s(&s.rolling_with(30, op, Rolling::default()).unwrap());
-            let b = f64s(&s.rolling_with(30, op, Rolling { exact: true, ..Default::default() }).unwrap());
+            let b = f64s(
+                &s.rolling_with(
+                    30,
+                    op,
+                    Rolling {
+                        exact: true,
+                        ..Default::default()
+                    },
+                )
+                .unwrap(),
+            );
             for (x, y) in a.iter().zip(&b) {
                 match (x, y) {
-                    (Some(x), Some(y)) => assert!((x - y).abs() <= 1e-6 * y.abs().max(1.0), "{op:?} {x} {y}"),
+                    (Some(x), Some(y)) => {
+                        assert!((x - y).abs() <= 1e-6 * y.abs().max(1.0), "{op:?} {x} {y}")
+                    }
                     (None, None) => {}
                     _ => panic!("{op:?} nulls differ"),
                 }
@@ -562,12 +602,38 @@ mod tests {
     #[test]
     fn centred_windows_follow_pandas() {
         let s = Series::from_f64(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
-        let c = Rolling { center: true, ..Default::default() };
-        assert_eq!(f64s(&s.rolling_with(4, AggOp::Sum, c).unwrap()), vec![None, None, Some(10.0), Some(14.0), Some(18.0), None]);
-        let m = Rolling { center: true, min_periods: Some(1), exact: false };
-        assert_eq!(f64s(&s.rolling_with(4, AggOp::Sum, m).unwrap()), vec![Some(3.0), Some(6.0), Some(10.0), Some(14.0), Some(18.0), Some(15.0)]);
-        assert_eq!(f64s(&s.rolling_with(3, AggOp::Max, Rolling::default()).unwrap()), vec![None, None, Some(3.0), Some(4.0), Some(5.0), Some(6.0)]);
-        assert_eq!(f64s(&s.rolling_with(3, AggOp::Median, c).unwrap()), vec![None, Some(2.0), Some(3.0), Some(4.0), Some(5.0), None]);
+        let c = Rolling {
+            center: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            f64s(&s.rolling_with(4, AggOp::Sum, c).unwrap()),
+            vec![None, None, Some(10.0), Some(14.0), Some(18.0), None]
+        );
+        let m = Rolling {
+            center: true,
+            min_periods: Some(1),
+            exact: false,
+        };
+        assert_eq!(
+            f64s(&s.rolling_with(4, AggOp::Sum, m).unwrap()),
+            vec![
+                Some(3.0),
+                Some(6.0),
+                Some(10.0),
+                Some(14.0),
+                Some(18.0),
+                Some(15.0)
+            ]
+        );
+        assert_eq!(
+            f64s(&s.rolling_with(3, AggOp::Max, Rolling::default()).unwrap()),
+            vec![None, None, Some(3.0), Some(4.0), Some(5.0), Some(6.0)]
+        );
+        assert_eq!(
+            f64s(&s.rolling_with(3, AggOp::Median, c).unwrap()),
+            vec![None, Some(2.0), Some(3.0), Some(4.0), Some(5.0), None]
+        );
     }
 
     #[test]

@@ -266,7 +266,11 @@ pub fn serve(no_ovm: bool, notebook: Option<PathBuf>) -> i32 {
 /// `blocks` (its prose, each `${expr}` with its value's text, and its
 /// cells, in order), each param with its default and each control with
 /// its kind, value, default and choices.
-pub fn run_notebook(path: &Path, overrides: &[(String, String)], opts: &RunOptions) -> Result<J, String> {
+pub fn run_notebook(
+    path: &Path,
+    overrides: &[(String, String)],
+    opts: &RunOptions,
+) -> Result<J, String> {
     let abs = std::path::absolute(path).unwrap_or(path.to_path_buf());
     if !abs.is_file() || !crate::notebook::is_notebook(&abs) {
         return Err(format!("{} is no notebook (an .olmd file)", abs.display()));
@@ -419,7 +423,11 @@ pub fn run_notebook(path: &Path, overrides: &[(String, String)], opts: &RunOptio
             n.params
                 .iter()
                 .map(|p| {
-                    let default = nb.params.iter().find(|d| d.name == p.0).map(|d| d.value.clone());
+                    let default = nb
+                        .params
+                        .iter()
+                        .find(|d| d.name == p.0)
+                        .map(|d| d.value.clone());
                     json!({ "name": p.0, "value": p.1, "default": default })
                 })
                 .collect()
@@ -1131,8 +1139,10 @@ impl Session {
             {
                 // a gg plot's: its scene (what an editor draws and brushes
                 // natively, a range in the dragged panel's data) and its SVG
-                o["chart"] = serde_json::from_str(&scene.to_json(&olang_ods::gg::SceneJsonOptions::default()))
-                    .unwrap_or(J::Null);
+                o["chart"] = serde_json::from_str(
+                    &scene.to_json(&olang_ods::gg::SceneJsonOptions::default()),
+                )
+                .unwrap_or(J::Null);
                 if let Some(sv) = svg_of(&scene.to_svg()) {
                     o["svg"] = sv;
                 }
@@ -2908,13 +2918,20 @@ impl Session {
     /// a picture and an export) and its scene (`chart`, `type: "scene"`,
     /// what an editor draws natively, thinned for the screen), held by
     /// handle so a zoom renders it again (`expand` with `chart`).
-    fn encode_gg(&mut self, v: &Value, zoom: Option<(f64, f64, Option<usize>)>, held: &mut Vec<u64>) -> J {
+    fn encode_gg(
+        &mut self,
+        v: &Value,
+        zoom: Option<(f64, f64, Option<usize>)>,
+        held: &mut Vec<u64>,
+    ) -> J {
         let h = self.hold(v, held);
         match crate::ods::gg::scene_of(v, zoom) {
             Ok(scene) => {
                 let svg = scene.to_svg();
-                let chart: J = serde_json::from_str(&scene.to_json(&olang_ods::gg::SceneJsonOptions::default()))
-                    .unwrap_or(J::Null);
+                let chart: J = serde_json::from_str(
+                    &scene.to_json(&olang_ods::gg::SceneJsonOptions::default()),
+                )
+                .unwrap_or(J::Null);
                 let mut r = json!({ "k": "str", "t": "Plot", "n": svg.chars().count(), "h": h,
                                     "s": svg.chars().take(TEXT_CHARS).collect::<String>(), "chart": chart });
                 if let Some(mut sv) = svg_of(&svg) {
@@ -2922,7 +2939,8 @@ impl Session {
                         // each appearance drawn as the plot draws in it (a
                         // theme that names one keeps it in both)
                         use olang_ods::gg::Appearance;
-                        for (key, app) in [("light", Appearance::Light), ("dark", Appearance::Dark)] {
+                        for (key, app) in [("light", Appearance::Light), ("dark", Appearance::Dark)]
+                        {
                             if let Ok(twin) = crate::ods::gg::scene_in(v, zoom, app) {
                                 sv[key] = J::String(twin.to_svg());
                             }
@@ -2943,7 +2961,9 @@ impl Session {
         let n = cols.first().map(|(_, c)| c.len()).unwrap_or(0);
         let names: Vec<&str> = cols.iter().map(|(name, _)| name.as_str()).collect();
         let types: Vec<String> = cols.iter().map(|(_, c)| c.dtype().to_string()).collect();
-        let rows: Vec<J> = (0..n.min(self.first_rows)).map(|i| ods_row(&cols, i)).collect();
+        let rows: Vec<J> = (0..n.min(self.first_rows))
+            .map(|i| ods_row(&cols, i))
+            .collect();
         let s = if frame {
             format!("Frame[{} x {}]", n, cols.len())
         } else {
@@ -3001,24 +3021,41 @@ impl Session {
             Value::Map(_) if crate::ods::gg::is_spec(&v) && msg.get("chart").is_some() => {
                 let bound = |k: &str| msg["chart"].get(k).and_then(|x| x.as_f64());
                 let zoom = match (bound("x0"), bound("x1")) {
-                    (Some(a), Some(b)) => Some((a, b, msg["chart"].get("panel").and_then(|p| p.as_u64()).map(|p| p as usize))),
+                    (Some(a), Some(b)) => Some((
+                        a,
+                        b,
+                        msg["chart"]
+                            .get("panel")
+                            .and_then(|p| p.as_u64())
+                            .map(|p| p as usize),
+                    )),
                     _ => None,
                 };
                 match crate::ods::gg::scene_of(&v, zoom) {
                     Ok(scene) => {
-                        let c: J = serde_json::from_str(&scene.to_json(&olang_ods::gg::SceneJsonOptions::default())).unwrap_or(J::Null);
+                        let c: J = serde_json::from_str(
+                            &scene.to_json(&olang_ods::gg::SceneJsonOptions::default()),
+                        )
+                        .unwrap_or(J::Null);
                         json!({ "ok": true, "chart": c })
                     }
                     Err(e) => json!({ "ok": false, "error": { "kind": "error", "message": e } }),
                 }
             }
-            Value::Map(_) if crate::ods::gg::is_spec(&v) => match crate::ods::gg::scene_of(&v, None) {
-                Ok(scene) => {
-                    let text: String = scene.to_svg().chars().skip(start).take(count.max(1) * 100).collect();
-                    json!({ "ok": true, "s": text })
+            Value::Map(_) if crate::ods::gg::is_spec(&v) => {
+                match crate::ods::gg::scene_of(&v, None) {
+                    Ok(scene) => {
+                        let text: String = scene
+                            .to_svg()
+                            .chars()
+                            .skip(start)
+                            .take(count.max(1) * 100)
+                            .collect();
+                        json!({ "ok": true, "s": text })
+                    }
+                    Err(e) => json!({ "ok": false, "error": { "kind": "error", "message": e } }),
                 }
-                Err(e) => json!({ "ok": false, "error": { "kind": "error", "message": e } }),
-            },
+            }
             Value::String(s) if msg.get("chart").is_some() => match chart_of(s) {
                 Some(mut c) => {
                     let bound = |k: &str| msg["chart"].get(k).and_then(|x| x.as_f64());
@@ -3995,7 +4032,10 @@ fn summaries(cols: &[&olang_ods::Series]) -> J {
             olang_ods::DType::Date => olang_ods::temporal::format_date(x as i64),
             _ => olang_ods::temporal::format_datetime(x as i64),
         };
-        if matches!(c.dtype(), olang_ods::DType::Date | olang_ods::DType::Datetime) {
+        if matches!(
+            c.dtype(),
+            olang_ods::DType::Date | olang_ods::DType::Datetime
+        ) {
             if let Some((lo, hi, _)) = s.range {
                 o["min"] = json!(date_text(lo));
                 o["max"] = json!(date_text(hi));
@@ -4091,7 +4131,11 @@ fn read_filters(fs: &[J], cols: &[(String, &olang_ods::Series)]) -> Result<Vec<F
                             format!("the filter on `{}`: \"{}\" is not an ISO date", name, t)
                         }),
                     b => b.as_f64().map(Some).ok_or_else(|| {
-                        format!("the filter on `{}`: a bound is a number{}", name, if dated { " or ISO text" } else { "" })
+                        format!(
+                            "the filter on `{}`: a bound is a number{}",
+                            name,
+                            if dated { " or ISO text" } else { "" }
+                        )
                     }),
                 }
             };
@@ -4357,7 +4401,9 @@ fn paper_span(s: &str, w: f64) -> Option<(usize, usize)> {
 /// export's `--paper transparent` draws, so a page's own background
 /// shows through. Any other SVG is given back as it is.
 pub fn without_paper(s: &str) -> String {
-    let Some(v) = svg_of(s) else { return s.to_string() };
+    let Some(v) = svg_of(s) else {
+        return s.to_string();
+    };
     let w = v["w"].as_f64().unwrap_or(-1.0);
     match paper_span(s, w) {
         Some((a, b)) => format!("{}none{}", &s[..a], &s[b..]),

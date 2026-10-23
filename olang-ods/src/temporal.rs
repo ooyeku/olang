@@ -102,7 +102,10 @@ pub fn iso_week(z: i64) -> u32 {
 /// range of an `i32` day.
 pub fn add_months(z: i64, n: i64) -> Option<i64> {
     let (y, m, d) = civil_from_days(z);
-    let idx = y.checked_mul(12)?.checked_add(m as i64 - 1)?.checked_add(n)?;
+    let idx = y
+        .checked_mul(12)?
+        .checked_add(m as i64 - 1)?
+        .checked_add(n)?;
     let (ny, nm) = (idx.div_euclid(12), (idx.rem_euclid(12) + 1) as u32);
     let nd = d.min(days_in_month(ny, nm));
     Some(days_from_civil(ny, nm, nd))
@@ -623,9 +626,7 @@ impl Format {
                     y = if v >= 69 { 1900 + v } else { 2000 + v };
                 }
                 Item::Month => m = num(&mut at, 2)? as u32,
-                Item::MonthName | Item::MonthAbbr => {
-                    m = name(&mut at, &MONTH_NAMES)? as u32 + 1
-                }
+                Item::MonthName | Item::MonthAbbr => m = name(&mut at, &MONTH_NAMES)? as u32 + 1,
                 Item::Day | Item::DaySpace => {
                     if b.get(at) == Some(&b' ') {
                         at += 1;
@@ -830,8 +831,14 @@ mod tests {
         assert_eq!(iso_week(days_from_civil(2021, 1, 4)), 1);
         assert_eq!(iso_week(days_from_civil(2024, 12, 30)), 1);
         assert_eq!(day_of_year(days_from_civil(2024, 12, 31)), 366);
-        assert_eq!(add_months(days_from_civil(2024, 1, 31), 1), Some(days_from_civil(2024, 2, 29)));
-        assert_eq!(months_between(days_from_civil(2024, 4, 1), days_from_civil(2024, 3, 31)), 1);
+        assert_eq!(
+            add_months(days_from_civil(2024, 1, 31), 1),
+            Some(days_from_civil(2024, 2, 29))
+        );
+        assert_eq!(
+            months_between(days_from_civil(2024, 4, 1), days_from_civil(2024, 3, 31)),
+            1
+        );
     }
 
     #[test]
@@ -848,10 +855,16 @@ mod tests {
     #[test]
     fn formats_read_and_write() {
         let f = Format::new("%d/%m/%Y %H:%M").unwrap();
-        assert_eq!(f.parse("02/01/1970 00:30"), Some(US_PER_DAY + 30 * US_PER_MIN));
+        assert_eq!(
+            f.parse("02/01/1970 00:30"),
+            Some(US_PER_DAY + 30 * US_PER_MIN)
+        );
         assert_eq!(f.format(US_PER_DAY + 30 * US_PER_MIN), "02/01/1970 00:30");
         let g = Format::new("%b %d, %Y %I:%M %p").unwrap();
-        assert_eq!(g.parse("Jan 01, 1970 12:15 PM"), Some(12 * US_PER_HOUR + 15 * US_PER_MIN));
+        assert_eq!(
+            g.parse("Jan 01, 1970 12:15 PM"),
+            Some(12 * US_PER_HOUR + 15 * US_PER_MIN)
+        );
         assert!(Format::new("%Q").is_err());
         // Every directive against Python's strftime (C locale) for
         // 2024-01-07T15:04:05.25, a Sunday.
@@ -883,9 +896,15 @@ mod tests {
         // Week 0 holds the days before the year's first Sunday / Monday.
         let jan1 = days_from_civil(2023, 1, 1) * US_PER_DAY; // a Sunday
         assert_eq!(Format::new("%U %W").unwrap().format(jan1), "01 00");
-        assert_eq!(Format::new("%b %e %Y").unwrap().parse("Jan  7 2024"), Some(days_from_civil(2024, 1, 7) * US_PER_DAY));
+        assert_eq!(
+            Format::new("%b %e %Y").unwrap().parse("Jan  7 2024"),
+            Some(days_from_civil(2024, 1, 7) * US_PER_DAY)
+        );
         assert_eq!(Format::new("%s").unwrap().parse("86400"), Some(US_PER_DAY));
         assert_eq!(Format::new("%Y-%V").unwrap().parse("2024-01"), None);
-        assert_eq!(Format::new("%Y-%j").unwrap().parse("1970-032"), Some(31 * US_PER_DAY));
+        assert_eq!(
+            Format::new("%Y-%j").unwrap().parse("1970-032"),
+            Some(31 * US_PER_DAY)
+        );
     }
 }

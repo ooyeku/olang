@@ -99,7 +99,11 @@ pub fn to_category(
                 v => index.get(level_text(v, fmt_f64).as_str()).copied(),
             })
             .collect();
-        return Ok(from_group_map(&ids, &map, StrCol::from_strings(given.iter())));
+        return Ok(from_group_map(
+            &ids,
+            &map,
+            StrCol::from_strings(given.iter()),
+        ));
     }
     if let Series::Cat { .. } = s {
         return Ok(s.clone());
@@ -159,9 +163,8 @@ fn from_group_map(ids: &[u32], map: &[Option<u32>], levels: StrCol) -> Series {
             }
         }
     }
-    let validity = any_null.then(|| {
-        Bitmap::from_bools(&codes.iter().map(|&c| c != u32::MAX).collect::<Vec<_>>())
-    });
+    let validity = any_null
+        .then(|| Bitmap::from_bools(&codes.iter().map(|&c| c != u32::MAX).collect::<Vec<_>>()));
     if any_null {
         for c in codes.iter_mut() {
             if *c == u32::MAX {
@@ -283,7 +286,12 @@ pub fn dummies(
 /// Each row's pair `a:b` as a Category whose levels are the pairs that
 /// occur, `a`'s order first and `b`'s within it. A null on either side
 /// is null.
-pub fn interact(a: &Series, b: &Series, sep: &str, fmt_f64: &dyn Fn(f64) -> String) -> Result<Series> {
+pub fn interact(
+    a: &Series,
+    b: &Series,
+    sep: &str,
+    fmt_f64: &dyn Fn(f64) -> String,
+) -> Result<Series> {
     if a.len() != b.len() {
         return Err(OdsError::LengthMismatch {
             left: a.len(),
@@ -307,9 +315,8 @@ pub fn interact(a: &Series, b: &Series, sep: &str, fmt_f64: &dyn Fn(f64) -> Stri
     else {
         unreachable!("to_category gives a Category")
     };
-    let valid = |i: usize| {
-        ca.validity().is_none_or(|v| v.get(i)) && cb.validity().is_none_or(|v| v.get(i))
-    };
+    let valid =
+        |i: usize| ca.validity().is_none_or(|v| v.get(i)) && cb.validity().is_none_or(|v| v.get(i));
     let nb = lb.len().max(1) as u64;
     let n = a.len();
     let mut seen: Vec<u64> = (0..n)
@@ -318,7 +325,11 @@ pub fn interact(a: &Series, b: &Series, sep: &str, fmt_f64: &dyn Fn(f64) -> Stri
         .collect();
     seen.sort_unstable();
     seen.dedup();
-    let index: FxMap<u64, u32> = seen.iter().enumerate().map(|(i, &p)| (p, i as u32)).collect();
+    let index: FxMap<u64, u32> = seen
+        .iter()
+        .enumerate()
+        .map(|(i, &p)| (p, i as u32))
+        .collect();
     let levels = StrCol::from_strings(seen.iter().map(|&p| {
         format!(
             "{}{}{}",
@@ -338,8 +349,7 @@ pub fn interact(a: &Series, b: &Series, sep: &str, fmt_f64: &dyn Fn(f64) -> Stri
             }
         })
         .collect();
-    let validity =
-        any_null.then(|| Bitmap::from_bools(&(0..n).map(valid).collect::<Vec<_>>()));
+    let validity = any_null.then(|| Bitmap::from_bools(&(0..n).map(valid).collect::<Vec<_>>()));
     Ok(Series::category(codes, levels, validity))
 }
 
@@ -375,5 +385,9 @@ pub fn stack(parts: &[&Series]) -> Result<Series> {
         }
     }
     let validity = (!valid.iter().all(|&v| v)).then(|| Bitmap::from_bools(&valid));
-    Ok(Series::category(codes, StrCol::from_strings(levels), validity))
+    Ok(Series::category(
+        codes,
+        StrCol::from_strings(levels),
+        validity,
+    ))
 }

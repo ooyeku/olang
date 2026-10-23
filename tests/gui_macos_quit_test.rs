@@ -54,7 +54,10 @@ gui.close(w)
         .expect("olang run");
     let t0 = Instant::now();
     while !ready.exists() {
-        assert!(t0.elapsed() < Duration::from_secs(20), "the program never opened its window");
+        assert!(
+            t0.elapsed() < Duration::from_secs(20),
+            "the program never opened its window"
+        );
         if let Ok(Some(st)) = child.try_wait() {
             panic!("the program ended before the quit: {st:?}");
         }
@@ -83,9 +86,15 @@ gui.close(w)
     };
     let took = asked.elapsed();
     let said = std::fs::read_to_string(&mark).unwrap_or_default();
-    assert_eq!(said, "quit:quit done", "the program's quit did not finish before the exit");
+    assert_eq!(
+        said, "quit:quit done",
+        "the program's quit did not finish before the exit"
+    );
     assert_eq!(status.code(), Some(0), "{status:?}");
     // the reply ended it, not the fallback (3 s after the program)
-    assert!(took < Duration::from_millis(3000), "ended {took:?} after the quit");
+    assert!(
+        took < Duration::from_millis(3000),
+        "ended {took:?} after the quit"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

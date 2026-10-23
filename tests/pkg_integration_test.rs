@@ -725,7 +725,10 @@ fn opening_a_project_fetches_nothing() {
     };
     let fetched = || cache.join("git-db").exists() || cache.join("git").exists();
 
-    let check = olang().args(["check", "--tier", "main.ol"]).output().unwrap();
+    let check = olang()
+        .args(["check", "--tier", "main.ol"])
+        .output()
+        .unwrap();
     let said = format!(
         "{}{}",
         String::from_utf8_lossy(&check.stdout),
@@ -736,7 +739,10 @@ fn opening_a_project_fetches_nothing() {
         said.contains("gitlib") && said.contains("not installed"),
         "the missing dependency is said: {said}"
     );
-    assert!(!app.join("olang.lock").exists(), "check --tier wrote a lock");
+    assert!(
+        !app.join("olang.lock").exists(),
+        "check --tier wrote a lock"
+    );
 
     {
         use std::io::{BufRead, Write};
@@ -751,7 +757,11 @@ fn opening_a_project_fetches_nothing() {
         let mut out = std::io::BufReader::new(child.stdout.take().unwrap());
         let mut line = String::new();
         out.read_line(&mut line).unwrap(); // the handshake
-        writeln!(stdin, "{{\"id\":1,\"op\":\"eval\",\"code\":\"use gitlib\"}}").unwrap();
+        writeln!(
+            stdin,
+            "{{\"id\":1,\"op\":\"eval\",\"code\":\"use gitlib\"}}"
+        )
+        .unwrap();
         stdin.flush().unwrap();
         line.clear();
         out.read_line(&mut line).unwrap();
@@ -762,7 +772,10 @@ fn opening_a_project_fetches_nothing() {
             line.contains("could not be resolved") && line.contains("not installed"),
             "the session says the dependency is missing: {line}"
         );
-        assert!(!app.join("olang.lock").exists(), "repl --serve wrote a lock");
+        assert!(
+            !app.join("olang.lock").exists(),
+            "repl --serve wrote a lock"
+        );
     }
 
     // a run installs it; from then on both find it with no network
@@ -771,7 +784,10 @@ fn opening_a_project_fetches_nothing() {
     assert!(fetched());
     // the mirror's own remote gone: nothing can be fetched
     fs::remove_dir_all(&repo).unwrap();
-    let check = olang().args(["check", "--tier", "main.ol"]).output().unwrap();
+    let check = olang()
+        .args(["check", "--tier", "main.ol"])
+        .output()
+        .unwrap();
     let said = String::from_utf8_lossy(&check.stdout).to_string();
     assert!(
         !said.contains("not checked") && said.contains("every function compiles"),

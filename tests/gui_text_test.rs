@@ -25,19 +25,32 @@ fn run(src: &str) -> Value {
 
 #[test]
 fn the_optical_size_follows_the_text_size() {
-    let small = Font { size: 13.0, ..Font::default() };
-    let large = Font { size: 28.0, ..Font::default() };
+    let small = Font {
+        size: 13.0,
+        ..Font::default()
+    };
+    let large = Font {
+        size: 28.0,
+        ..Font::default()
+    };
     assert!(format!("{:?}", small.styles()).contains(r#"opsz\" 13"#));
     assert!(format!("{:?}", large.styles()).contains(r#"opsz\" 28"#));
     // a span's own size sets its own optical size
-    let span = rich::SpanStyle { size: Some(20.0), ..Default::default() };
+    let span = rich::SpanStyle {
+        size: Some(20.0),
+        ..Default::default()
+    };
     assert!(format!("{:?}", span.props(1.0)).contains(r#"opsz\" 20"#));
     // the system's face (SF Pro, variable in weight and optical size) is
     // set at another instance at another size
     if cfg!(target_os = "macos") {
         let mut ts = text::system().lock().unwrap();
         let at = |ts: &mut text::TextSystem, size: f32| {
-            let f = Font { family: "system-ui".into(), size, ..Font::default() };
+            let f = Font {
+                family: "system-ui".into(),
+                size,
+                ..Font::default()
+            };
             let sh = ts.shape("Hamburg", &f, [0, 0, 0, 255], None, Align::Start, 1.0);
             sh.runs[0].coords.to_vec()
         };
@@ -55,17 +68,37 @@ fn every_script_falls_back_to_a_face_that_has_it() {
     }
     let mut ts = text::system().lock().unwrap();
     // Latin, Chinese, Arabic, Thai, Devanagari, Hebrew, a symbol, emoji
-    for t in ["a", "中文", "عربي", "ไทย", "हिन्दी", "עברית", "⌘", "😀"] {
+    for t in ["a", "中文", "عربي", "ไทย", "हिन्दी", "עברית", "⌘", "😀"]
+    {
         let sh = ts.shape(t, &Font::default(), [0, 0, 0, 255], None, Align::Start, 2.0);
-        let glyphs: Vec<u16> = sh.runs.iter().flat_map(|r| r.glyphs.iter().map(|g| g.0)).collect();
+        let glyphs: Vec<u16> = sh
+            .runs
+            .iter()
+            .flat_map(|r| r.glyphs.iter().map(|g| g.0))
+            .collect();
         assert!(!glyphs.is_empty(), "{t}: no glyphs");
-        assert!(glyphs.iter().all(|g| *g != 0), "{t}: a missing glyph ({glyphs:?})");
+        assert!(
+            glyphs.iter().all(|g| *g != 0),
+            "{t}: a missing glyph ({glyphs:?})"
+        );
     }
     // one text of many scripts: a run a face, each cluster in a face that has it
-    let sh = ts.shape("a中ع😀ก", &Font::default(), [0, 0, 0, 255], None, Align::Start, 2.0);
+    let sh = ts.shape(
+        "a中ع😀ก",
+        &Font::default(),
+        [0, 0, 0, 255],
+        None,
+        Align::Start,
+        2.0,
+    );
     let faces: std::collections::HashSet<_> = sh.runs.iter().map(|r| r.face).collect();
     assert!(faces.len() >= 4, "{} faces", faces.len());
-    assert!(sh.runs.iter().flat_map(|r| r.glyphs.iter()).all(|g| g.0 != 0));
+    assert!(
+        sh.runs
+            .iter()
+            .flat_map(|r| r.glyphs.iter())
+            .all(|g| g.0 != 0)
+    );
 }
 
 #[test]
@@ -73,21 +106,53 @@ fn the_shaping_cache_keeps_what_is_still_used_through_a_turn_over() {
     let mut ts = text::system().lock().unwrap();
     let f = Font::default();
     let black = [0, 0, 0, 255];
-    let a = ts.shape("kept across generations", &f, black, None, Align::Start, 1.0);
+    let a = ts.shape(
+        "kept across generations",
+        &f,
+        black,
+        None,
+        Align::Start,
+        1.0,
+    );
     // more texts than a generation holds, the kept one used meanwhile
     for i in 0..20_000 {
         ts.shape(&format!("filler {i}"), &f, black, None, Align::Start, 1.0);
         if i % 4000 == 0 {
-            ts.shape("kept across generations", &f, black, None, Align::Start, 1.0);
+            ts.shape(
+                "kept across generations",
+                &f,
+                black,
+                None,
+                Align::Start,
+                1.0,
+            );
         }
     }
     let (shaped, found) = (ts.shaped, ts.found);
-    let again = ts.shape("kept across generations", &f, black, None, Align::Start, 1.0);
-    assert_eq!((ts.shaped, ts.found), (shaped, found + 1), "found, not shaped again");
+    let again = ts.shape(
+        "kept across generations",
+        &f,
+        black,
+        None,
+        Align::Start,
+        1.0,
+    );
+    assert_eq!(
+        (ts.shaped, ts.found),
+        (shaped, found + 1),
+        "found, not shaped again"
+    );
     assert!(std::sync::Arc::ptr_eq(&a, &again));
     assert!(ts.cached() <= 2 * 8192);
     // a width or a colour is another shape
-    ts.shape("kept across generations", &f, black, Some(40.0), Align::Start, 1.0);
+    ts.shape(
+        "kept across generations",
+        &f,
+        black,
+        Some(40.0),
+        Align::Start,
+        1.0,
+    );
     assert_eq!(ts.shaped, shaped + 1);
 }
 
@@ -100,7 +165,10 @@ fn text_darkens_as_macos_draws_it() {
     let t = raster::Tuning::default();
     // light text on dark is thickened more than dark text on light, small
     // text a little, never past a twentieth of the em
-    let (d, l) = (raster::darken(&t, 26.0, 0), raster::darken(&t, 26.0, raster::TONES));
+    let (d, l) = (
+        raster::darken(&t, 26.0, 0),
+        raster::darken(&t, 26.0, raster::TONES),
+    );
     assert!(l >= d && l > 0.0, "{d} {l}");
     assert!(raster::darken(&t, 8.0, raster::TONES) <= 8.0 / 20.0);
     // the coverage curve keeps empty and full pixels
@@ -114,7 +182,17 @@ fn text_darkens_as_macos_draws_it() {
     }
     // a glyph drawn for white text has more ink than for black
     let mut ts = text::system().lock().unwrap();
-    let sh = ts.shape("e", &Font { size: 13.0, ..Font::default() }, [0, 0, 0, 255], None, Align::Start, 2.0);
+    let sh = ts.shape(
+        "e",
+        &Font {
+            size: 13.0,
+            ..Font::default()
+        },
+        [0, 0, 0, 255],
+        None,
+        Align::Start,
+        2.0,
+    );
     drop(ts);
     let r = &sh.runs[0];
     let (id, x, _) = r.glyphs[0];
@@ -166,10 +244,28 @@ fn a_styled_field_scrolls_by_whole_pixels_and_slow_wheels_add_up() {
     let mut st = st.lock().unwrap();
     let st: &mut WinState = &mut st;
     let mut out = vec![];
-    st.input(Input::Pointer { action: window::PointerAction::Move, x: 100.0, y: 100.0, button: "left".into(), clicks: 0 }, &mut NoClip, &mut out);
+    st.input(
+        Input::Pointer {
+            action: window::PointerAction::Move,
+            x: 100.0,
+            y: 100.0,
+            button: "left".into(),
+            clicks: 0,
+        },
+        &mut NoClip,
+        &mut out,
+    );
     let mut offs = vec![];
     for _ in 0..8 {
-        st.input(Input::Wheel { dx: 0.0, dy: -0.3, mods: None }, &mut NoClip, &mut out);
+        st.input(
+            Input::Wheel {
+                dx: 0.0,
+                dy: -0.3,
+                mods: None,
+            },
+            &mut NoClip,
+            &mut out,
+        );
         let _ = st.display_list();
         offs.push(st.editors["wheeled"].rich().unwrap().scroll_y);
     }
@@ -256,7 +352,11 @@ fn a_fields_lines_place_each_character_for_assistive_output() {
     for w in lines.windows(2) {
         assert!(w[1].1[1] >= w[0].1[1] + w[0].1[3] - 2.0, "{lines:?}");
     }
-    assert!(lines[0].1[0] >= 20.0 && lines[0].1[1] >= 38.0, "{:?}", lines[0].1);
+    assert!(
+        lines[0].1[0] >= 20.0 && lines[0].1[1] >= 38.0,
+        "{:?}",
+        lines[0].1
+    );
     // characters left to right along a line, as wide as their advances
     let first = &lines[0].0;
     assert!(first.xs.windows(2).all(|p| p[1] > p[0]));
@@ -317,7 +417,10 @@ fn a_spell_checked_field_underlines_its_misspelled_words_but_not_the_one_being_t
     // second, still being typed: only the first is underlined
     let _ = red(&mut st);
     assert_eq!(st.misspelled("spelt"), vec![(0, 3), (12, 15)]);
-    assert!(st.misspelled("unspelt").is_empty(), "a field not asked is not checked");
+    assert!(
+        st.misspelled("unspelt").is_empty(),
+        "a field not asked is not checked"
+    );
     let first_only = red(&mut st);
     let ed = st.editors.get_mut("spelt").unwrap();
     let mut ts = text::system().lock().unwrap();
@@ -345,7 +448,10 @@ fn spelling_rechecks_only_the_paragraph_typed_in_once_typing_pauses() {
     let due = sp.update("teh ones\nand teh two", 10.0);
     assert_eq!(due, Some(10.0 + SPELL_PAUSE_MS));
     assert_eq!(sp.found, vec![(13, 16)]);
-    assert_eq!(sp.update("teh ones\nand teh two", 10.0 + SPELL_PAUSE_MS), None);
+    assert_eq!(
+        sp.update("teh ones\nand teh two", 10.0 + SPELL_PAUSE_MS),
+        None
+    );
     assert_eq!(sp.found, vec![(0, 3), (13, 16)]);
     edit::set_spell_checker(None);
 }

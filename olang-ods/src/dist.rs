@@ -175,31 +175,43 @@ impl Dist {
             "t" => Dist::T(students_t(p(0))?),
             "chi2" => Dist::Chi2(chi_squared(p(0))?),
             "f" => Dist::F(fisher(p(0), p(1))?),
-            "lognorm" => Dist::LogNorm(LogNormal::new(p(0), p(1)).map_err(|_| {
-                bad(format!("lognorm: invalid sigma {} (must be > 0)", p(1)))
-            })?),
+            "lognorm" => Dist::LogNorm(
+                LogNormal::new(p(0), p(1))
+                    .map_err(|_| bad(format!("lognorm: invalid sigma {} (must be > 0)", p(1))))?,
+            ),
             "beta" => Dist::Beta(BetaD::new(p(0), p(1)).map_err(|_| {
-                bad(format!("beta: invalid shapes ({}, {}) (must be > 0)", p(0), p(1)))
+                bad(format!(
+                    "beta: invalid shapes ({}, {}) (must be > 0)",
+                    p(0),
+                    p(1)
+                ))
             })?),
             "gamma" => {
                 if !(p(1) > 0.0 && p(1).is_finite()) {
                     return Err(bad(format!("gamma: invalid scale {} (must be > 0)", p(1))));
                 }
-                Dist::Gamma(GammaD::new(p(0), 1.0 / p(1)).map_err(|_| {
-                    bad(format!("gamma: invalid shape {} (must be > 0)", p(0)))
-                })?)
+                Dist::Gamma(
+                    GammaD::new(p(0), 1.0 / p(1))
+                        .map_err(|_| bad(format!("gamma: invalid shape {} (must be > 0)", p(0))))?,
+                )
             }
-            "poisson" => Dist::Poisson(Poisson::new(p(0)).map_err(|_| {
-                bad(format!("poisson: invalid mean {} (must be > 0)", p(0)))
-            })?),
+            "poisson" => Dist::Poisson(
+                Poisson::new(p(0))
+                    .map_err(|_| bad(format!("poisson: invalid mean {} (must be > 0)", p(0))))?,
+            ),
             "binom" => {
                 let n = p(0);
                 if !(n >= 0.0 && n.fract() == 0.0 && n.is_finite()) {
-                    return Err(bad(format!("binom: trials must be a whole number ≥ 0, got {}", n)));
+                    return Err(bad(format!(
+                        "binom: trials must be a whole number ≥ 0, got {}",
+                        n
+                    )));
                 }
-                Dist::Binom(Binomial::new(p(1), n as u64).map_err(|_| {
-                    bad(format!("binom: invalid p {} (must lie in [0, 1])", p(1)))
-                })?)
+                Dist::Binom(
+                    Binomial::new(p(1), n as u64).map_err(|_| {
+                        bad(format!("binom: invalid p {} (must lie in [0, 1])", p(1)))
+                    })?,
+                )
             }
             other => return Err(bad(format!("unknown distribution {}", other))),
         })
@@ -272,7 +284,11 @@ impl Dist {
     pub fn apply(&self, f: DistFn, xs: &[f64], par: bool) -> Vec<f64> {
         #[cfg(feature = "parallel")]
         if par {
-            return xs.par_iter().with_min_len(4096).map(|&x| self.eval(f, x)).collect();
+            return xs
+                .par_iter()
+                .with_min_len(4096)
+                .map(|&x| self.eval(f, x))
+                .collect();
         }
         let _ = par;
         xs.iter().map(|&x| self.eval(f, x)).collect()
@@ -308,7 +324,11 @@ where
                 return -1.0; // SciPy: ppf(0) is one below the support
             }
             if x == 1.0 {
-                return if max == u64::MAX { f64::INFINITY } else { max as f64 };
+                return if max == u64::MAX {
+                    f64::INFINITY
+                } else {
+                    max as f64
+                };
             }
             // Bracket by doubling, then bisect on the integers.
             let mut hi: u64 = 1;
@@ -348,7 +368,9 @@ pub fn nct_cdf(t: f64, df: f64, delta: f64) -> f64 {
         return f64::NAN;
     }
     if delta == 0.0 {
-        return StudentsT::new(0.0, 1.0, df).map(|d| d.cdf(t)).unwrap_or(f64::NAN);
+        return StudentsT::new(0.0, 1.0, df)
+            .map(|d| d.cdf(t))
+            .unwrap_or(f64::NAN);
     }
     if t.is_infinite() {
         return if t > 0.0 { 1.0 } else { 0.0 };
@@ -430,7 +452,10 @@ pub fn power_t(
     ratio: f64,
 ) -> Result<f64> {
     if !(alpha > 0.0 && alpha < 1.0) {
-        return Err(bad(format!("power_t: alpha must lie in (0, 1), got {}", alpha)));
+        return Err(bad(format!(
+            "power_t: alpha must lie in (0, 1), got {}",
+            alpha
+        )));
     }
     let (df, nobs) = if two_sample {
         let n2 = n * ratio;
@@ -471,14 +496,23 @@ pub fn n_for_power(
     ratio: f64,
 ) -> Result<f64> {
     if !(power > 0.0 && power < 1.0) {
-        return Err(bad(format!("n_for_power: power must lie in (0, 1), got {}", power)));
+        return Err(bad(format!(
+            "n_for_power: power must lie in (0, 1), got {}",
+            power
+        )));
     }
     if effect == 0.0 || !effect.is_finite() {
-        return Err(bad("n_for_power: the effect must be a nonzero number".to_string()));
+        return Err(bad(
+            "n_for_power: the effect must be a nonzero number".to_string()
+        ));
     }
     let f = |n: f64| power_t(effect, n, alpha, alternative, two_sample, ratio).map(|p| p - power);
     // The smallest n with a degree of freedom.
-    let mut lo = if two_sample { 1.0 + 1.0 / (1.0 + ratio) + 1e-9 } else { 1.0 + 1e-9 };
+    let mut lo = if two_sample {
+        1.0 + 1.0 / (1.0 + ratio) + 1e-9
+    } else {
+        1.0 + 1e-9
+    };
     lo = lo.max(1.000001);
     if f(lo)? >= 0.0 {
         return Ok(lo);

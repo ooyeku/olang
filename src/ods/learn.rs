@@ -24,13 +24,13 @@ use crate::native::{NativeHandle, NativeObject};
 use olang_ods::learn::boost::{BoostParams, HistParams};
 use olang_ods::learn::cluster::{GmmParams, KMeansParams};
 use olang_ods::learn::data::{Labels, NO_CLASS, binary_target, numeric};
+use olang_ods::learn::formula::{self, Formula};
 use olang_ods::learn::metrics::{self, Average};
 use olang_ods::learn::model::{self as lm, default_boost};
 use olang_ods::learn::tree::Criterion;
 use olang_ods::learn::{
     Algo, ClassWeight, Common, MaxFeatures, Model, Output, Pcg, PredictKind, TaskHint, TreeOpts,
 };
-use olang_ods::learn::formula::{self, Formula};
 use olang_ods::learn::{preprocess, rng::splitmix64};
 use olang_ods::{Frame, Scalar, Series};
 use std::any::Any;
@@ -467,7 +467,11 @@ impl<'a> Opts<'a> {
 /// An anonymous or JSON object as the map it spells; anything else as is.
 fn object_as_map(v: Value) -> Value {
     let fields = match &v {
-        Value::Struct { type_name, fields } if type_name == "Object" || type_name == "JsonObject" => fields.clone(),
+        Value::Struct { type_name, fields }
+            if type_name == "Object" || type_name == "JsonObject" =>
+        {
+            fields.clone()
+        }
         _ => return v,
     };
     Value::Map(fields)
@@ -974,20 +978,22 @@ fn class_weight(o: &Opts) -> R<ClassWeight> {
     match o.get("class_weight") {
         None => Ok(ClassWeight::None),
         Some(Value::String(s)) if s.as_str() == "balanced" => Ok(ClassWeight::Balanced),
-        Some(v) if crate::native_sig::options_fields(v).is_some() => crate::native_sig::options_fields(v)
-            .unwrap()
-            .iter()
-            .map(|(k, v)| match v {
-                Value::Float(x) => Ok((k.clone(), *x)),
-                Value::Integer(x) => Ok((k.clone(), *x as f64)),
-                other => Err(format!(
-                    "learn.{}: class weights must be numbers, got {}",
-                    o.func,
-                    other.type_name()
-                )),
-            })
-            .collect::<R<Vec<_>>>()
-            .map(ClassWeight::Given),
+        Some(v) if crate::native_sig::options_fields(v).is_some() => {
+            crate::native_sig::options_fields(v)
+                .unwrap()
+                .iter()
+                .map(|(k, v)| match v {
+                    Value::Float(x) => Ok((k.clone(), *x)),
+                    Value::Integer(x) => Ok((k.clone(), *x as f64)),
+                    other => Err(format!(
+                        "learn.{}: class weights must be numbers, got {}",
+                        o.func,
+                        other.type_name()
+                    )),
+                })
+                .collect::<R<Vec<_>>>()
+                .map(ClassWeight::Given)
+        }
         Some(other) => Err(format!(
             "learn.{}: class_weight must be \"balanced\" or a map from class to weight, got {}",
             o.func,
@@ -1041,7 +1047,10 @@ fn supervised(func: &str, args: &[Value]) -> R<Value> {
         }
     };
     let common = Common {
-        y: formula.as_ref().map(|f| f.response_name()).unwrap_or_else(|| y.clone()),
+        y: formula
+            .as_ref()
+            .map(|f| f.response_name())
+            .unwrap_or_else(|| y.clone()),
         x,
         weights: o.opt_str("weights")?,
         task,
@@ -1484,7 +1493,11 @@ fn model_value(model: Model, spec: Value) -> Value {
 fn predict(args: &[Value]) -> R<Value> {
     let m = want_model("predict", args, 0)?;
     let f = want_frame("predict", args, 1)?;
-    let o = Opts::new("predict", args.get(2), &["kind", "level", "trees", "interval"])?;
+    let o = Opts::new(
+        "predict",
+        args.get(2),
+        &["kind", "level", "trees", "interval"],
+    )?;
     // a boosted model's stage: its first `trees` trees
     let staged = match o.opt_usize("trees")? {
         Some(k) => Some(m.with_trees(k).map_err(e)?),

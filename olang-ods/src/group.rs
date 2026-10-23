@@ -196,13 +196,22 @@ fn bool_as_int(col: &Series) -> Series {
 fn any_all(col: &Series, ids: &[u32], n: usize, all: bool) -> Result<Series> {
     let truth: Box<dyn Fn(usize) -> Option<bool>> = match col {
         Series::Bool { values, validity } => Box::new(move |i| {
-            validity.as_ref().is_none_or(|v| v.get(i)).then(|| values[i])
+            validity
+                .as_ref()
+                .is_none_or(|v| v.get(i))
+                .then(|| values[i])
         }),
         Series::I64 { values, validity } => Box::new(move |i| {
-            validity.as_ref().is_none_or(|v| v.get(i)).then(|| values[i] != 0)
+            validity
+                .as_ref()
+                .is_none_or(|v| v.get(i))
+                .then(|| values[i] != 0)
         }),
         Series::F64 { values, validity } => Box::new(move |i| {
-            validity.as_ref().is_none_or(|v| v.get(i)).then(|| values[i] != 0.0)
+            validity
+                .as_ref()
+                .is_none_or(|v| v.get(i))
+                .then(|| values[i] != 0.0)
         }),
         _ => {
             return Err(OdsError::TypeMismatch(format!(
@@ -249,7 +258,13 @@ fn arg_extreme(col: &Series, ids: &[u32], n: usize, want_max: bool) -> Result<Se
                 }
                 let x = values[i];
                 let b = &mut best[g as usize];
-                if b.is_none_or(|j| if want_max { x > values[j] } else { x < values[j] }) {
+                if b.is_none_or(|j| {
+                    if want_max {
+                        x > values[j]
+                    } else {
+                        x < values[j]
+                    }
+                }) {
                     *b = Some(i);
                 }
             }
@@ -399,7 +414,11 @@ pub fn crosstab(
             Normalize::None => {
                 let c = cell.gather(&idx);
                 // A cell with no rows counts zero.
-                if counting { c.fill_null(Scalar::I64(0))? } else { c }
+                if counting {
+                    c.fill_null(Scalar::I64(0))?
+                } else {
+                    c
+                }
             }
             _ => Series::from_f64(
                 (0..nr)
@@ -557,7 +576,11 @@ impl KeyIndex {
                 Key::I(*x as i64)
             }
             (Scalar::I64(x), _) => Key::I(*x),
-            (Scalar::F64(x), _) => Key::F(if x.is_nan() { f64::NAN.to_bits() } else { x.to_bits() }),
+            (Scalar::F64(x), _) => Key::F(if x.is_nan() {
+                f64::NAN.to_bits()
+            } else {
+                x.to_bits()
+            }),
             (Scalar::Bool(b), _) => Key::B(*b),
             (Scalar::Str(s), DType::Date) => match crate::temporal::parse_iso(s.trim()) {
                 Some((us, _)) => Key::D(crate::temporal::day_of_us(us) as i32),
@@ -594,15 +617,23 @@ mod tests {
         let x = Series::from_f64(vec![1.0, 5.0, 3.0, 2.0]);
         let g = Grouping::new(&[&k]).unwrap();
         assert_eq!(g.n_groups(), 2);
-        assert_eq!(ints(&g.aggregate(&x, AggOp::ArgMax).unwrap()), vec![Some(2), Some(1)]);
+        assert_eq!(
+            ints(&g.aggregate(&x, AggOp::ArgMax).unwrap()),
+            vec![Some(2), Some(1)]
+        );
         let q = g.aggregate(&x, AggOp::quantile(0.5)).unwrap();
         assert_eq!(q.scalar_at(0), Scalar::F64(2.0));
         let m = g.aggregate(&x, AggOp::Sum).unwrap();
         let b = g.broadcast(&m).unwrap();
         assert_eq!(b.scalar_at(3), Scalar::F64(7.0));
         let mask = Series::from_bool(vec![true, false, false, false]);
-        assert_eq!(ints(&g.aggregate(&mask, AggOp::Sum).unwrap()), vec![Some(1), Some(0)]);
-        let parts = g.split(&Frame::new(vec![("x".into(), x)]).unwrap()).unwrap();
+        assert_eq!(
+            ints(&g.aggregate(&mask, AggOp::Sum).unwrap()),
+            vec![Some(1), Some(0)]
+        );
+        let parts = g
+            .split(&Frame::new(vec![("x".into(), x)]).unwrap())
+            .unwrap();
         assert_eq!(parts[1].n_rows(), 2);
     }
 
@@ -610,16 +641,36 @@ mod tests {
     fn runs_and_run_ids() {
         let m = Series::from_bool(vec![true, true, false, true, false, false, true]);
         let r = runs(&m).unwrap();
-        assert_eq!(ints(r.column("start").unwrap()), vec![Some(0), Some(3), Some(6)]);
-        assert_eq!(ints(r.column("end").unwrap()), vec![Some(1), Some(3), Some(6)]);
-        assert_eq!(ints(&run_id(&[&m]).unwrap()), vec![Some(0), Some(0), Some(1), Some(2), Some(3), Some(3), Some(4)]);
+        assert_eq!(
+            ints(r.column("start").unwrap()),
+            vec![Some(0), Some(3), Some(6)]
+        );
+        assert_eq!(
+            ints(r.column("end").unwrap()),
+            vec![Some(1), Some(3), Some(6)]
+        );
+        assert_eq!(
+            ints(&run_id(&[&m]).unwrap()),
+            vec![
+                Some(0),
+                Some(0),
+                Some(1),
+                Some(2),
+                Some(3),
+                Some(3),
+                Some(4)
+            ]
+        );
     }
 
     #[test]
     fn crosstab_counts_with_zeros() {
         let a = Series::from_i64(vec![1, 0, 1, 1]);
         let b = Series::from_str_values(vec!["y".into(), "x".into(), "x".into(), "y".into()]);
-        let t = crosstab(&a, &b, None, AggOp::Count, Normalize::None, "a", &|x| x.to_string()).unwrap();
+        let t = crosstab(&a, &b, None, AggOp::Count, Normalize::None, "a", &|x| {
+            x.to_string()
+        })
+        .unwrap();
         assert_eq!(t.names(), &["a", "x", "y"]);
         assert_eq!(ints(t.column("y").unwrap()), vec![Some(0), Some(2)]);
     }

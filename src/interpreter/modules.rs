@@ -1695,7 +1695,10 @@ already binds — an import never replaces a program's own name. Alias the impor
             // A re-run `use` refreshes the namespace it bound — never an
             // item this `use` just bound under the same name
             // (`use lib.theme { theme }`).
-            let listed = use_decl.items.iter().any(|i| i.bound_name() == Some(leaf.as_str()));
+            let listed = use_decl
+                .items
+                .iter()
+                .any(|i| i.bound_name() == Some(leaf.as_str()));
             let refresh = !listed
                 && existing.as_ref().is_some_and(|v| {
                     is_module_value(v)

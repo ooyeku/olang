@@ -1169,9 +1169,7 @@ impl BuiltinFunctions {
         // no existing module name can be shadowed.
         // `by.apply(fn)`: one call of the function per group, on this
         // tier; the groups and the combining are the module's.
-        if name == "ods.apply"
-            && arguments.len() == 2
-            && crate::ods::apply_callable(&arguments[1])
+        if name == "ods.apply" && arguments.len() == 2 && crate::ods::apply_callable(&arguments[1])
         {
             let (groups, state) = crate::ods::apply_groups(&arguments)
                 .map_err(|message| InterpreterError::RuntimeError { message })?;
@@ -4561,7 +4559,12 @@ fn md_render(
         Value::String(std::sync::Arc::new(v.to_string()))
     }
     impl Interp<'_> {
-        fn call(&mut self, hook: &str, f: Value, args: Vec<Value>) -> Result<Option<String>, String> {
+        fn call(
+            &mut self,
+            hook: &str,
+            f: Value,
+            args: Vec<Value>,
+        ) -> Result<Option<String>, String> {
             let answer = match self.interpreter.call_function_optimized(&f, args) {
                 Ok(v) => v,
                 Err(e) => {
@@ -4623,7 +4626,10 @@ fn md_render(
     };
     match md::render(&src, opts, &mut h) {
         Ok(r) => Ok(md::rendered_value(r)),
-        Err(message) => Err(h.raised.take().unwrap_or_else(|| InterpreterError::runtime(message))),
+        Err(message) => Err(h
+            .raised
+            .take()
+            .unwrap_or_else(|| InterpreterError::runtime(message))),
     }
 }
 
@@ -4798,7 +4804,8 @@ pub const MAX_BUILT_LEN: i64 = 1 << 28;
 /// time) heard every million elements.
 fn range_list(start: i64, end: i64, step: i64) -> Result<Value, InterpreterError> {
     let count = if (step > 0 && start < end) || (step < 0 && start > end) {
-        ((end as i128 - start as i128).abs() + step.unsigned_abs() as i128 - 1) / step.unsigned_abs() as i128
+        ((end as i128 - start as i128).abs() + step.unsigned_abs() as i128 - 1)
+            / step.unsigned_abs() as i128
     } else {
         0
     };

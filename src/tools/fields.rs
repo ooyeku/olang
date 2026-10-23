@@ -482,7 +482,11 @@ fn chain_above(toks: &[T], dot: usize) -> Option<usize> {
     while toks[k].tok == Tok::Newline {
         k = k.checked_sub(1)?;
     }
-    matches!(toks[k].tok, Tok::Ident(_) | Tok::Close(')') | Tok::Close(']')).then_some(k)
+    matches!(
+        toks[k].tok,
+        Tok::Ident(_) | Tok::Close(')') | Tok::Close(']')
+    )
+    .then_some(k)
 }
 
 fn matching_open(toks: &[T], close: usize) -> Option<usize> {

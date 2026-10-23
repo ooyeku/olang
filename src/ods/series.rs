@@ -109,8 +109,7 @@ impl OdsSeries {
                 .pending
                 .as_ref()
                 .expect("an unmaterialized OdsSeries always carries its expression");
-            super::expr::force(&p.expr, p.len, &p.deps)
-                .expect("a deferred expression cannot raise")
+            super::expr::force(&p.expr, p.len, &p.deps).expect("a deferred expression cannot raise")
         })
     }
 
@@ -237,7 +236,9 @@ pub(super) fn date_value(days: i32) -> Value {
 /// A `dates` Date as days since 1970-01-01.
 pub(super) fn date_days(v: &Value) -> Option<i32> {
     let Value::Native(h) = v else { return None };
-    let d = h.0.as_any().downcast_ref::<crate::stdlib::dates::DateObject>()?;
+    let d =
+        h.0.as_any()
+            .downcast_ref::<crate::stdlib::dates::DateObject>()?;
     let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).expect("the epoch");
     i32::try_from(d.0.signed_duration_since(epoch).num_days()).ok()
 }
@@ -449,7 +450,11 @@ fn is_in(s: &Series, values: &Value) -> Result<Series, String> {
         let hit: Vec<bool> = levels.iter().map(|l| set.contains(l)).collect();
         for (i, &c) in codes.iter().enumerate() {
             let valid = validity.as_ref().is_none_or(|b| b.get(i));
-            out.push(if valid { Some(hit[c as usize]) } else { null_answer });
+            out.push(if valid {
+                Some(hit[c as usize])
+            } else {
+                null_answer
+            });
         }
         return Ok(Series::from_bool_options(out));
     }
@@ -565,7 +570,9 @@ pub(crate) fn series_from_list(items: &[Value]) -> Result<Series, String> {
         if saw_str || saw_float || saw_int || saw_bool {
             return Err("ods.series: cannot mix Date with other element types".to_string());
         }
-        return Ok(Series::from_date_options(items.iter().map(date_days).collect()));
+        return Ok(Series::from_date_options(
+            items.iter().map(date_days).collect(),
+        ));
     }
     if saw_str && (saw_float || saw_int || saw_bool) {
         return Err("ods.series: cannot mix String with other element types".to_string());
@@ -680,7 +687,9 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
 const RANK_METHODS: &[&str] = &["min", "max", "average", "ordinal", "dense"];
 
 /// The type names `cast` accepts, which are the names `schema` reports.
-const DTYPE_NAMES: &[&str] = &["Float", "Int", "Bool", "String", "Date", "Datetime", "Category"];
+const DTYPE_NAMES: &[&str] = &[
+    "Float", "Int", "Bool", "String", "Date", "Datetime", "Category",
+];
 
 fn parse_dtype(name: &str) -> Result<DType, String> {
     match super::dtypes::dtype_named(name) {
@@ -706,11 +715,19 @@ fn want_series<'a>(func: &str, args: &'a [Value], idx: usize) -> Result<&'a Seri
 
 /// `take`'s indices: an Int Series, or a list of Ints.
 pub(crate) fn take_indices(v: Option<&Value>) -> Result<std::borrow::Cow<'_, Series>, String> {
-    let bad = |what: String| format!("ods.take: the indices must be an Int Series or a list of Ints, got {}", what);
+    let bad = |what: String| {
+        format!(
+            "ods.take: the indices must be an Int Series or a list of Ints, got {}",
+            what
+        )
+    };
     match v {
         Some(Value::List(items)) => {
             if items.iter().any(|x| !matches!(x, Value::Integer(_))) {
-                let odd = items.iter().find(|x| !matches!(x, Value::Integer(_))).expect("one");
+                let odd = items
+                    .iter()
+                    .find(|x| !matches!(x, Value::Integer(_)))
+                    .expect("one");
                 return Err(bad(format!("a list holding a {}", odd.type_name())));
             }
             let idx: Vec<i64> = items
@@ -769,7 +786,10 @@ fn dispatch_inner(func: &str, mut args: Vec<Value>, expected: usize) -> Result<V
             args.get(2),
             args.get(3),
         )?;
-        return s.take(&idx).map(make_series_value).map_err(|e| e.to_string());
+        return s
+            .take(&idx)
+            .map(make_series_value)
+            .map_err(|e| e.to_string());
     }
     arity(func, &args, expected)?;
     let e = |err: olang_ods::OdsError| err.to_string();
@@ -918,7 +938,9 @@ fn dispatch_inner(func: &str, mut args: Vec<Value>, expected: usize) -> Result<V
         }
         "sum" => {
             let s = want_series(func, &args, 0)?;
-            s.sum(par_for(olang_ods::ParClass::Reduce, s)).map(scalar_to_value).map_err(e)
+            s.sum(par_for(olang_ods::ParClass::Reduce, s))
+                .map(scalar_to_value)
+                .map_err(e)
         }
         "mean" | "var" | "std" => {
             let s = want_series(func, &args, 0)?;
@@ -1099,7 +1121,9 @@ fn dispatch_inner(func: &str, mut args: Vec<Value>, expected: usize) -> Result<V
         "dot" => {
             let a = want_series(func, &args, 0)?;
             let b = want_series(func, &args, 1)?;
-            a.dot(b, par_for(olang_ods::ParClass::Reduce, a)).map(Value::Float).map_err(e)
+            a.dot(b, par_for(olang_ods::ParClass::Reduce, a))
+                .map(Value::Float)
+                .map_err(e)
         }
         "sort" | "argsort" => {
             let s = want_series(func, &args, 0)?;
@@ -1260,11 +1284,16 @@ pub fn binary_op(
     // null the whole column): the eager kernels refused it, and still do.
     if matches!(lhs, Value::Unit) || matches!(rhs, Value::Unit) {
         let side = if ls { series_of(lhs) } else { series_of(rhs) }.expect("a series side");
-        return Some(Err(if matches!(bop, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod) {
-            "cannot apply arithmetic with a null scalar".to_string()
-        } else {
-            format!("cannot compare Series[{}] with ()", side.dtype())
-        }));
+        return Some(Err(
+            if matches!(
+                bop,
+                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod
+            ) {
+                "cannot apply arithmetic with a null scalar".to_string()
+            } else {
+                format!("cannot compare Series[{}] with ()", side.dtype())
+            },
+        ));
     }
     // A category against text compares its codes (in level order).
     if bop_cmp(bop)
@@ -1295,11 +1324,11 @@ fn category_cmp(
 ) -> Option<Result<Value, String>> {
     use olang_ods::fuse::BinOp as O;
     let cat = |v: &Value| match v {
-        Value::Native(h) => h
-            .0
-            .as_any()
-            .downcast_ref::<OdsSeries>()
-            .is_some_and(|s| s.dtype() == DType::Category),
+        Value::Native(h) => {
+            h.0.as_any()
+                .downcast_ref::<OdsSeries>()
+                .is_some_and(|s| s.dtype() == DType::Category)
+        }
         _ => false,
     };
     let (s, t, swapped) = match (lhs, rhs) {

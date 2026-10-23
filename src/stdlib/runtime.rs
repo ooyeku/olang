@@ -336,16 +336,19 @@ fn runtime_wasm(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         [] => runtime_wasm_browser(),
         [Value::String(p)] if p.as_str() == "browser" => runtime_wasm_browser(),
         [Value::String(p)] if p.as_str() == "full" => runtime_wasm_full(),
-        [Value::String(p)] => Err(format!(
-            "runtime.wasm: the profile is \"browser\" or \"full\", got \"{p}\""
-        )
-        .into()),
+        [Value::String(p)] => {
+            Err(format!("runtime.wasm: the profile is \"browser\" or \"full\", got \"{p}\"").into())
+        }
         [other] => Err(format!(
             "runtime.wasm: the profile must be a string, got {}",
             other.type_name()
         )
         .into()),
-        _ => Err(format!("runtime.wasm expects 0 or 1 argument(s), got {}", args.len()).into()),
+        _ => Err(format!(
+            "runtime.wasm expects 0 or 1 argument(s), got {}",
+            args.len()
+        )
+        .into()),
     }
 }
 
@@ -409,20 +412,28 @@ fn runtime_answer(
 ) -> Value {
     let mut out = crate::ast::ValueMap::default();
     out.insert("bytes".to_string(), bytes);
-    out.insert("hash".to_string(), Value::String(Arc::new(hash.to_string())));
+    out.insert(
+        "hash".to_string(),
+        Value::String(Arc::new(hash.to_string())),
+    );
     out.insert(
         "gzip".to_string(),
-        gz.map(crate::stdlib::bytes::static_value).unwrap_or(Value::Unit),
+        gz.map(crate::stdlib::bytes::static_value)
+            .unwrap_or(Value::Unit),
     );
     out.insert(
         "br".to_string(),
-        br.map(crate::stdlib::bytes::static_value).unwrap_or(Value::Unit),
+        br.map(crate::stdlib::bytes::static_value)
+            .unwrap_or(Value::Unit),
     );
     out.insert(
         "version".to_string(),
         Value::String(Arc::new(crate::version::VERSION.to_string())),
     );
-    out.insert("profile".to_string(), Value::String(Arc::new(profile.to_string())));
+    out.insert(
+        "profile".to_string(),
+        Value::String(Arc::new(profile.to_string())),
+    );
     Value::Map(Arc::new(out))
 }
 

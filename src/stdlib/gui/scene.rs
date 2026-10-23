@@ -878,12 +878,14 @@ impl Scene {
             ime_area: super::values::get_rect(op, "ime_area", what)?,
             // (index, count); one that cannot be (an index past the
             // count) is left out rather than refuse the patch
-            pos: get(op, "pos").and_then(nums).and_then(|v| match v.as_slice() {
-                [i, n] if *i >= 0.0 && *n >= 1.0 && i < n => {
-                    Some((*i as u32, n.min(u32::MAX as f32) as u32))
-                }
-                _ => None,
-            }),
+            pos: get(op, "pos")
+                .and_then(nums)
+                .and_then(|v| match v.as_slice() {
+                    [i, n] if *i >= 0.0 && *n >= 1.0 && i < n => {
+                        Some((*i as u32, n.min(u32::MAX as f32) as u32))
+                    }
+                    _ => None,
+                }),
         };
         // Detach from the old parent (or the root slot) when it moved.
         if previous.is_some() && old_parent != parent {
@@ -1305,5 +1307,9 @@ pub fn snap_box(x: f32, y: f32, w: f32, h: f32) -> (f32, f32, f32, f32) {
 /// A border's width in device pixels on whole pixels: a half rounds down,
 /// and a border is never thinner than a pixel.
 pub fn snap_width(bw: f32) -> f32 {
-    if bw <= 0.0 { 0.0 } else { round_down_half(bw).max(1.0) }
+    if bw <= 0.0 {
+        0.0
+    } else {
+        round_down_half(bw).max(1.0)
+    }
 }

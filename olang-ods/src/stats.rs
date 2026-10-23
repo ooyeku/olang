@@ -573,7 +573,11 @@ pub fn mann_whitney(a: &Series, b: &Series, alternative: &str) -> Result<MannWhi
             )));
         }
     };
-    let z = if s > 0.0 { (u - mu - 0.5) / s } else { f64::NAN };
+    let z = if s > 0.0 {
+        (u - mu - 0.5) / s
+    } else {
+        f64::NAN
+    };
     let mut p = norm_sf(z);
     if alternative == "two-sided" {
         p *= 2.0;
@@ -611,7 +615,13 @@ pub struct PropZ {
 /// variance (`prop_var=False`). The interval beside it (at `level`) is
 /// Wald's, as `confint_proportions_2indep(method="wald")` and
 /// `proportion_confint(method="normal")` give.
-pub fn prop_ztest(count: &[f64], nobs: &[f64], value: f64, alternative: &str, level: f64) -> Result<PropZ> {
+pub fn prop_ztest(
+    count: &[f64],
+    nobs: &[f64],
+    value: f64,
+    alternative: &str,
+    level: f64,
+) -> Result<PropZ> {
     let bad = |m: String| OdsError::InvalidArgument(format!("prop_z_test: {}", m));
     if count.len() != nobs.len() || !(1..=2).contains(&count.len()) {
         return Err(bad(format!(
@@ -622,7 +632,10 @@ pub fn prop_ztest(count: &[f64], nobs: &[f64], value: f64, alternative: &str, le
     }
     for (c, n) in count.iter().zip(nobs) {
         if !(*n > 0.0) || !(*c >= 0.0) || c > n {
-            return Err(bad(format!("each count lies in [0, nobs] and each nobs is positive; got {} of {}", c, n)));
+            return Err(bad(format!(
+                "each count lies in [0, nobs] and each nobs is positive; got {} of {}",
+                c, n
+            )));
         }
     }
     if !(level > 0.0 && level < 1.0) {
@@ -662,7 +675,11 @@ pub fn prop_ztest(count: &[f64], nobs: &[f64], value: f64, alternative: &str, le
     };
     Ok(PropZ {
         z,
-        p_value: if pv.is_nan() { f64::NAN } else { pv.clamp(0.0, 1.0) },
+        p_value: if pv.is_nan() {
+            f64::NAN
+        } else {
+            pv.clamp(0.0, 1.0)
+        },
         p1: p[0],
         p2: if two { p[1] } else { f64::NAN },
         diff,
@@ -700,9 +717,5 @@ pub fn spearman(a: &Series, b: &Series) -> Result<Spearman> {
         let t = rho * (df / ((1.0 + rho) * (1.0 - rho))).sqrt();
         two_sided_t_p(t, df)?
     };
-    Ok(Spearman {
-        rho,
-        p_value: p,
-        n,
-    })
+    Ok(Spearman { rho, p_value: p, n })
 }

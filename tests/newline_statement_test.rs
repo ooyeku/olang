@@ -54,11 +54,20 @@ fn multiline_binary_expressions_still_parse() {
     assert_eq!(eval(src), Value::Integer(10));
     assert_eq!(eval("let x = 1 + 2\n    + 3\nx"), Value::Integer(6));
     assert_eq!(eval("let x = 1.0 + 2.0\n    - 10.0\nx"), Value::Float(-7.0));
-    assert_eq!(eval("let x = 10\n    - 2\n    + 5\n    -\n    1\nx"), Value::Integer(12));
-    assert_eq!(eval("let x = 10\n    // why\n    - 2\nx"), Value::Integer(8));
+    assert_eq!(
+        eval("let x = 10\n    - 2\n    + 5\n    -\n    1\nx"),
+        Value::Integer(12)
+    );
+    assert_eq!(
+        eval("let x = 10\n    // why\n    - 2\nx"),
+        Value::Integer(8)
+    );
     let src = "let x = 7\n-1\nx";
     assert_eq!(eval(src), Value::Integer(7));
-    assert_eq!(eval("fn f() = {\n    let a = 3\n    -a\n}\nf()"), Value::Integer(-3));
+    assert_eq!(
+        eval("fn f() = {\n    let a = 3\n    -a\n}\nf()"),
+        Value::Integer(-3)
+    );
     assert_eq!(eval("fn f() = {\n    - 3\n}\nf()"), Value::Integer(-3));
     let src = "let x = [1, 2]\n    |> len\n    == 2\nx";
     assert_eq!(eval(src), Value::Boolean(true));

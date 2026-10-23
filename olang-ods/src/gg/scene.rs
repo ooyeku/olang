@@ -275,7 +275,11 @@ pub struct Points {
 
 impl Points {
     fn r_at(&self, k: usize) -> f32 {
-        if self.r.len() == 1 { self.r[0] } else { self.r[k] }
+        if self.r.len() == 1 {
+            self.r[0]
+        } else {
+            self.r[k]
+        }
     }
     fn fill_at(&self, k: usize) -> u32 {
         if self.fill.len() == 1 {
@@ -640,7 +644,11 @@ impl Scene {
                     jstr(a.trans),
                     jnum(a.lo),
                     jnum(a.hi),
-                    a.levels.iter().map(|l| jstr(l)).collect::<Vec<_>>().join(","),
+                    a.levels
+                        .iter()
+                        .map(|l| jstr(l))
+                        .collect::<Vec<_>>()
+                        .join(","),
                     jstr(&a.title)
                 )
             };
@@ -788,7 +796,8 @@ impl Scene {
                     }
                     let mut d = String::with_capacity(pts.len() * 14);
                     for (k, (x, y)) in pts.iter().enumerate() {
-                        let _ = write!(d, "{}{} {}", if k == 0 { "M" } else { "L" }, n1(*x), n1(*y));
+                        let _ =
+                            write!(d, "{}{} {}", if k == 0 { "M" } else { "L" }, n1(*x), n1(*y));
                     }
                     if *close {
                         d.push('Z');
@@ -925,7 +934,13 @@ impl Scene {
                 }
                 match p.shape {
                     Shape::Circle | Shape::OpenCircle => {
-                        let _ = write!(s, "<circle cx=\"{}\" cy=\"{}\" r=\"{}\"/>", n1(x), n1(y), n2(r));
+                        let _ = write!(
+                            s,
+                            "<circle cx=\"{}\" cy=\"{}\" r=\"{}\"/>",
+                            n1(x),
+                            n1(y),
+                            n2(r)
+                        );
                     }
                     other => {
                         let _ = write!(s, "<path d=\"{}\"/>", glyph_d(other, x, y, r));
@@ -997,7 +1012,11 @@ impl Scene {
                 out,
                 "{{\"geom\":{},\"fields\":[{}]}}",
                 jstr(&l.geom),
-                l.fields.iter().map(|f| jstr(f)).collect::<Vec<_>>().join(",")
+                l.fields
+                    .iter()
+                    .map(|f| jstr(f))
+                    .collect::<Vec<_>>()
+                    .join(",")
             );
         }
         out.push_str("],\"panels\":");
@@ -1201,7 +1220,11 @@ impl Scene {
                     let _ = write!(
                         out,
                         ",\"pal\":[{}]",
-                        p.pal.iter().map(|c| jstr(&c.hex8())).collect::<Vec<_>>().join(",")
+                        p.pal
+                            .iter()
+                            .map(|c| jstr(&c.hex8()))
+                            .collect::<Vec<_>>()
+                            .join(",")
                     );
                     if p.fill.len() == 1 {
                         let _ = write!(out, ",\"fill\":{}", p.fill[0]);
@@ -1265,7 +1288,13 @@ impl Scene {
 
 /// A point in tenths of a pixel.
 fn tenths(p: (f64, f64)) -> (i64, i64) {
-    let t = |v: f64| if v.is_finite() { (v * 10.0).round() as i64 } else { 0 };
+    let t = |v: f64| {
+        if v.is_finite() {
+            (v * 10.0).round() as i64
+        } else {
+            0
+        }
+    };
     (t(p.0), t(p.1))
 }
 
@@ -1299,7 +1328,12 @@ fn tips_json(out: &mut String, t: &Tips) {
             out.push_str("{\"lv\":[");
             out.push_str(&levels.iter().map(|v| jstr(v)).collect::<Vec<_>>().join(","));
             out.push_str("],\"ix\":[");
-            out.push_str(&ix.iter().map(|k| k.to_string()).collect::<Vec<_>>().join(","));
+            out.push_str(
+                &ix.iter()
+                    .map(|k| k.to_string())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
             out.push_str("]}");
             continue;
         }

@@ -4624,8 +4624,7 @@ impl BytecodeVm {
                         let ValueData::AstList(mut arc) = target_val.into_data() else {
                             unreachable!()
                         };
-                        if env_on!("OLANG_DEBUG_ASTLIST")
-                            && std::sync::Arc::strong_count(&arc) > 1
+                        if env_on!("OLANG_DEBUG_ASTLIST") && std::sync::Arc::strong_count(&arc) > 1
                         {
                             let mut holders = Vec::new();
                             for r in 0..64u32 {
@@ -4769,8 +4768,7 @@ impl BytecodeVm {
                         let ValueData::AstList(mut arc) = target_val.into_data() else {
                             unreachable!()
                         };
-                        if env_on!("OLANG_DEBUG_ASTLIST")
-                            && std::sync::Arc::strong_count(&arc) > 1
+                        if env_on!("OLANG_DEBUG_ASTLIST") && std::sync::Arc::strong_count(&arc) > 1
                         {
                             let holders = self.execution_state.debug_slots_holding(&arc);
                             eprintln!(
@@ -5092,10 +5090,8 @@ impl BytecodeVm {
                         ValueData::AstMap(arc) if v.promotes_wrapper(arc.len()) => {
                             let mut m = OvmValue::force_ast_map(&arc);
                             m.insert(key_str.to_string(), v);
-                            self.execution_state.set_register(
-                                *target,
-                                OvmValue::new_map(std::sync::Arc::new(m)),
-                            )?;
+                            self.execution_state
+                                .set_register(*target, OvmValue::new_map(std::sync::Arc::new(m)))?;
                         }
                         // A wrapped interpreter map stays a wrapper: clone
                         // the interpreter map when it is shared (what the
@@ -5736,7 +5732,8 @@ impl BytecodeVm {
                     // (`fit.importance()` calls, `fit.importance` reads).
                     let fit_method = matches!(
                         receiver.data,
-                        crate::ovm::value::ValueData::Map(_) | crate::ovm::value::ValueData::AstMap(_)
+                        crate::ovm::value::ValueData::Map(_)
+                            | crate::ovm::value::ValueData::AstMap(_)
                     ) && Self::native_method_receiver(&receiver)
                         .and_then(|(h, t)| crate::native_sig::method_target(h, t, method))
                         .is_some();
@@ -5783,14 +5780,15 @@ impl BytecodeVm {
                             self.arg_pool.push(arg_values);
                         }
                         r?
-                    } else if let Some((home, type_name)) = Self::native_method_receiver(&receiver) {
+                    } else if let Some((home, type_name)) = Self::native_method_receiver(&receiver)
+                    {
                         // A native value's method (L2): `s.exp()` is
                         // `ods.exp(s)` — the interpreter's resolution.
-                        let Some(full) =
-                            crate::native_sig::method_target(home, type_name, method)
+                        let Some(full) = crate::native_sig::method_target(home, type_name, method)
                         else {
                             return Err(BytecodeError::TypeError(
-                                if matches!(receiver.data, crate::ovm::value::ValueData::Native(_)) {
+                                if matches!(receiver.data, crate::ovm::value::ValueData::Native(_))
+                                {
                                     crate::native_sig::no_method(type_name, method)
                                 } else {
                                     crate::ast::no_key_or_method("Map", method)
@@ -7965,7 +7963,9 @@ impl BytecodeVm {
         use crate::ovm::value::ValueData;
         let _counted = bridge_stats_on().then(|| BridgeCount {
             name: match &callee.data {
-                ValueData::AstFunction(f) => format!("fn {}", f.name.as_deref().unwrap_or("<lambda>")),
+                ValueData::AstFunction(f) => {
+                    format!("fn {}", f.name.as_deref().unwrap_or("<lambda>"))
+                }
                 _ => format!("fn <{}>", callee.type_name()),
             },
             t0: crate::clock::Instant::now(),
@@ -8357,7 +8357,10 @@ impl BytecodeVm {
             ValueData::List(items) => Some(items.clone()),
             ValueData::AstList(items) if !crate::parallel::should_parallelize(items.len()) => {
                 Some(Arc::new(
-                    items.iter().map(|v| OvmValue::from_ast(v.clone())).collect(),
+                    items
+                        .iter()
+                        .map(|v| OvmValue::from_ast(v.clone()))
+                        .collect(),
                 ))
             }
             _ => None,
@@ -8436,7 +8439,9 @@ impl BytecodeVm {
                     };
                     match r.to_ast() {
                         Ok(v) => results.push(v),
-                        Err(e) => return Some(Err(BytecodeError::RuntimeError(format!("{:?}", e)))),
+                        Err(e) => {
+                            return Some(Err(BytecodeError::RuntimeError(format!("{:?}", e))));
+                        }
                     }
                 }
                 Some(
@@ -8975,7 +8980,9 @@ impl BytecodeVm {
                     },
                     ValueData::Struct(st) => match name {
                         "map_keys" => OvmValue::new_list(
-                            st.iter().map(|(k, _)| OvmValue::new_string(k.clone())).collect(),
+                            st.iter()
+                                .map(|(k, _)| OvmValue::new_string(k.clone()))
+                                .collect(),
                         ),
                         "map_values" => {
                             OvmValue::new_list(st.iter().map(|(_, v)| v.clone()).collect())
@@ -10074,7 +10081,10 @@ impl BytecodeVm {
         let _counted = bridge_stats_on().then(|| BridgeCount {
             name: format!(
                 "{name}({})",
-                args.iter().map(|a| a.layout_name()).collect::<Vec<_>>().join(",")
+                args.iter()
+                    .map(|a| a.layout_name())
+                    .collect::<Vec<_>>()
+                    .join(",")
             ),
             t0: crate::clock::Instant::now(),
         });
@@ -10493,10 +10503,9 @@ impl BytecodeVm {
                 .field(field)
                 .cloned()
                 .ok_or_else(|| BytecodeError::TypeError(vm_module_miss(s, field))),
-            ValueData::Struct(s) => s
-                .field(field)
-                .cloned()
-                .ok_or_else(|| BytecodeError::TypeError(self.no_field_or_method(s.type_name(), field))),
+            ValueData::Struct(s) => s.field(field).cloned().ok_or_else(|| {
+                BytecodeError::TypeError(self.no_field_or_method(s.type_name(), field))
+            }),
             _ => Err(BytecodeError::TypeError(format!(
                 "Cannot access field '{}' on non-struct value",
                 field
@@ -11729,9 +11738,7 @@ impl BytecodeCompiler {
                                 && let Some(verdict) = self.fold_cap_allowed(cap_name)
                             {
                                 let dst_reg = self.register_allocator.allocate_register();
-                                let idx = self
-                                    .emitter
-                                    .add_constant(OvmValue::new_boolean(verdict));
+                                let idx = self.emitter.add_constant(OvmValue::new_boolean(verdict));
                                 self.emitter.instructions.push(Instruction::LoadConst {
                                     dst: dst_reg,
                                     const_idx: idx,
@@ -16088,5 +16095,9 @@ fn vm_module_miss(st: &crate::ovm::value::StructObject, field: &str) -> String {
         crate::ovm::value::ValueData::Builtin(b) => Some(b.name.as_str()),
         _ => None,
     }));
-    crate::interpreter::module_member_miss(module.as_deref(), field, st.iter().map(|(name, _)| name.as_str()))
+    crate::interpreter::module_member_miss(
+        module.as_deref(),
+        field,
+        st.iter().map(|(name, _)| name.as_str()),
+    )
 }

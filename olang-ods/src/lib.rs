@@ -25,19 +25,17 @@
 
 pub mod bitmap;
 pub mod category;
+pub mod column;
 #[cfg(feature = "stats")]
 pub mod dist;
 pub mod frame;
-pub mod group;
-pub mod time;
-pub mod window;
 pub mod fuse;
-pub mod column;
+pub mod gg;
+pub mod group;
 #[cfg(feature = "stats")]
 pub mod learn;
 #[cfg(feature = "stats")]
 pub mod matrix;
-pub mod gg;
 pub mod numfmt;
 pub mod plot;
 #[cfg(feature = "stats")]
@@ -46,13 +44,17 @@ pub mod random;
 pub mod robust;
 #[cfg(feature = "stats")]
 pub mod stats;
-#[cfg(feature = "stats")]
-pub mod ts;
 pub mod temporal;
 pub mod text;
+pub mod time;
+#[cfg(feature = "stats")]
+pub mod ts;
+pub mod window;
 
 pub use bitmap::{Bitmap, merge_validity};
-pub use frame::{AggOp, AggSpec, AsOf, ColumnSummary, Frame, JoinHow, JoinSpec, RankMethod, Validate};
+pub use frame::{
+    AggOp, AggSpec, AsOf, ColumnSummary, Frame, JoinHow, JoinSpec, RankMethod, Validate,
+};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -1296,10 +1298,12 @@ impl Series {
                 });
             }
             Series::Datetime { .. } => {
-                return Ok(match self.physical().expect("a Datetime").extremum(want_min)? {
-                    Scalar::I64(t) => Scalar::Datetime(t),
-                    other => other,
-                });
+                return Ok(
+                    match self.physical().expect("a Datetime").extremum(want_min)? {
+                        Scalar::I64(t) => Scalar::Datetime(t),
+                        other => other,
+                    },
+                );
             }
             Series::Cat {
                 codes,
@@ -1307,9 +1311,7 @@ impl Series {
                 validity,
             } => {
                 let valid = |i: usize| validity.as_ref().is_none_or(|v| v.get(i));
-                let best = (0..codes.len())
-                    .filter(|&i| valid(i))
-                    .map(|i| codes[i]);
+                let best = (0..codes.len()).filter(|&i| valid(i)).map(|i| codes[i]);
                 let best = if want_min { best.min() } else { best.max() };
                 return Ok(best
                     .map(|c| Scalar::Str(levels.get(c as usize).to_string()))
@@ -1587,7 +1589,9 @@ impl Series {
     /// positions come last in their original order.
     pub fn argsort(&self) -> Result<Series> {
         if let Some(order) = self.packed_order(false) {
-            return Ok(Series::from_i64(order.into_iter().map(|i| i as i64).collect()));
+            return Ok(Series::from_i64(
+                order.into_iter().map(|i| i as i64).collect(),
+            ));
         }
         let n = self.len();
         let (mut valid_idx, null_idx): (Vec<usize>, Vec<usize>) =
@@ -1845,7 +1849,12 @@ impl Series {
 
     fn gathered_validity(&self, indices: &[usize], any_null: bool) -> Option<Bitmap> {
         any_null.then(|| {
-            Bitmap::from_bools(&indices.iter().map(|&i| self.is_valid(i)).collect::<Vec<_>>())
+            Bitmap::from_bools(
+                &indices
+                    .iter()
+                    .map(|&i| self.is_valid(i))
+                    .collect::<Vec<_>>(),
+            )
         })
     }
 
@@ -2017,17 +2026,23 @@ impl Series {
         let valid = |i: usize| validity.as_ref().is_none_or(|v| v.get(i));
         Some(Ok(match (self, to) {
             (Series::Date { values, .. }, DType::Str) => Series::Str {
-                col: StrCol::from_strings(
-                    (0..values.len())
-                        .map(|i| if valid(i) { format_date(values[i] as i64) } else { String::new() }),
-                ),
+                col: StrCol::from_strings((0..values.len()).map(|i| {
+                    if valid(i) {
+                        format_date(values[i] as i64)
+                    } else {
+                        String::new()
+                    }
+                })),
                 validity,
             },
             (Series::Datetime { values, .. }, DType::Str) => Series::Str {
-                col: StrCol::from_strings(
-                    (0..values.len())
-                        .map(|i| if valid(i) { format_datetime(values[i]) } else { String::new() }),
-                ),
+                col: StrCol::from_strings((0..values.len()).map(|i| {
+                    if valid(i) {
+                        format_datetime(values[i])
+                    } else {
+                        String::new()
+                    }
+                })),
                 validity,
             },
             (Series::Date { values, .. }, DType::Datetime) => Series::Datetime {
@@ -2167,7 +2182,14 @@ impl Series {
                 }
             }
             // A fill that is no level becomes the last one.
-            (Series::Cat { codes, levels, validity }, Scalar::Str(f)) => {
+            (
+                Series::Cat {
+                    codes,
+                    levels,
+                    validity,
+                },
+                Scalar::Str(f),
+            ) => {
                 let found = levels.iter().position(|l| l == f.as_str());
                 let code = match found {
                     Some(c) => c as u32,

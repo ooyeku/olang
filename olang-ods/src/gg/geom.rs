@@ -37,7 +37,11 @@ impl G<'_> {
         self.l.vis.fill[i]
     }
     fn tip(&self, i: usize) -> Vec<String> {
-        self.l.fields.iter().map(|(_, s)| tip_value(self.b, self.l, s, i)).collect()
+        self.l
+            .fields
+            .iter()
+            .map(|(_, s)| tip_value(self.b, self.l, s, i))
+            .collect()
     }
     fn tips(&self, rows: &[usize]) -> Option<Tips> {
         if self.l.fields.is_empty() {
@@ -47,9 +51,16 @@ impl G<'_> {
             .l
             .fields
             .iter()
-            .map(|(_, s)| rows.iter().map(|&i| tip_value(self.b, self.l, s, i)).collect())
+            .map(|(_, s)| {
+                rows.iter()
+                    .map(|&i| tip_value(self.b, self.l, s, i))
+                    .collect()
+            })
             .collect();
-        Some(Tips { layer: self.layer, cols })
+        Some(Tips {
+            layer: self.layer,
+            cols,
+        })
     }
     /// A row's line width in pixels (a scale's, else the layer's).
     fn lw(&self, i: usize) -> f64 {
@@ -61,7 +72,17 @@ impl G<'_> {
     fn param(&self, k: &str) -> Option<f64> {
         p_num(&self.l.params, k)
     }
-    fn rect(&self, i: usize, x0: f64, x1: f64, y0: f64, y1: f64, fill: Option<Paint>, stroke: Option<Paint>, sw: f64) -> Option<Item> {
+    fn rect(
+        &self,
+        i: usize,
+        x0: f64,
+        x1: f64,
+        y0: f64,
+        y1: f64,
+        fill: Option<Paint>,
+        stroke: Option<Paint>,
+        sw: f64,
+    ) -> Option<Item> {
         // an infinite edge is the panel's: -inf its low end, inf its high
         let edge = |v: f64, (a, b): (f64, f64)| {
             if v == f64::NEG_INFINITY {
@@ -87,16 +108,37 @@ impl G<'_> {
             stroke,
             sw,
             r: 0.0,
-            tip: if self.l.fields.is_empty() { None } else { Some((self.layer, self.tip(i))) },
+            tip: if self.l.fields.is_empty() {
+                None
+            } else {
+                Some((self.layer, self.tip(i)))
+            },
         })
     }
-    fn line(&self, x0: f64, y0: f64, x1: f64, y1: f64, c: Rgba, sw: f64, dash: Option<Vec<f64>>) -> Option<Item> {
+    fn line(
+        &self,
+        x0: f64,
+        y0: f64,
+        x1: f64,
+        y1: f64,
+        c: Rgba,
+        sw: f64,
+        dash: Option<Vec<f64>>,
+    ) -> Option<Item> {
         if ![x0, x1, y0, y1].iter().all(|v| v.is_finite()) {
             return None;
         }
         let (a, b) = self.pc.map(x0, y0);
         let (cx, d) = self.pc.map(x1, y1);
-        Some(Item::Line { x1: a, y1: b, x2: cx, y2: d, stroke: Paint::Rgba(c), sw, dash })
+        Some(Item::Line {
+            x1: a,
+            y1: b,
+            x2: cx,
+            y2: d,
+            stroke: Paint::Rgba(c),
+            sw,
+            dash,
+        })
     }
 }
 
@@ -109,8 +151,22 @@ fn by_group(f: &super::data::LFrame, rows: &[usize]) -> Vec<Vec<usize>> {
     m.into_values().collect()
 }
 
-pub fn draw(b: &Built, l: &LayerOut, layer: u32, panel: u32, rows: &[usize], pc: &PanelCoord, items: &mut Vec<Item>) -> super::Result<()> {
-    let g = G { b, l, layer, panel, pc };
+pub fn draw(
+    b: &Built,
+    l: &LayerOut,
+    layer: u32,
+    panel: u32,
+    rows: &[usize],
+    pc: &PanelCoord,
+    items: &mut Vec<Item>,
+) -> super::Result<()> {
+    let g = G {
+        b,
+        l,
+        layer,
+        panel,
+        pc,
+    };
     match l.geom.as_str() {
         "point" | "jitter" | "qq" => points(&g, rows, items, None),
         "line" | "path" | "step" | "freqpoly" | "ecdf" | "qq_line" => lines(&g, rows, items),
@@ -197,7 +253,10 @@ fn hover_points(g: &G, rows: &[usize], at: &[(f64, f64)], items: &mut Vec<Item>)
         ys: at.iter().map(|p| p.1 as f32).collect(),
         r: vec![0.0],
         fill: vec![0],
-        pal: vec![Rgba { a: 0.0, ..Rgba::new(0, 0, 0) }],
+        pal: vec![Rgba {
+            a: 0.0,
+            ..Rgba::new(0, 0, 0)
+        }],
         shape: Shape::Circle,
         stroke_w: 0.0,
         panel: g.panel,
@@ -233,9 +292,11 @@ fn lines(g: &G, rows: &[usize], items: &mut Vec<Item>) {
             tip_rows.push(i);
         }
         let first = grp[0];
-        let varies = grp
-            .iter()
-            .any(|&i| g.color(i) != g.color(first) || g.l.vis.dash[i] != g.l.vis.dash[first] || g.lw(i) != g.lw(first));
+        let varies = grp.iter().any(|&i| {
+            g.color(i) != g.color(first)
+                || g.l.vis.dash[i] != g.l.vis.dash[first]
+                || g.lw(i) != g.lw(first)
+        });
         if !varies {
             items.push(Item::Path {
                 pts,
@@ -274,15 +335,36 @@ fn area(g: &G, rows: &[usize], items: &mut Vec<Item>, density: bool) {
             continue;
         }
         grp.sort_by(|&a, &b| g.num(Aes::X, a).partial_cmp(&g.num(Aes::X, b)).unwrap());
-        let hi = |i: usize| if g.has(Aes::Ymax) && g.num(Aes::Ymax, i).is_finite() { g.num(Aes::Ymax, i) } else { g.num(Aes::Y, i) };
-        let lo = |i: usize| if g.has(Aes::Ymin) && g.num(Aes::Ymin, i).is_finite() { g.num(Aes::Ymin, i) } else { 0.0 };
-        let upper: Vec<(f64, f64)> = grp.iter().map(|&i| g.pc.map(g.num(Aes::X, i), hi(i))).collect();
+        let hi = |i: usize| {
+            if g.has(Aes::Ymax) && g.num(Aes::Ymax, i).is_finite() {
+                g.num(Aes::Ymax, i)
+            } else {
+                g.num(Aes::Y, i)
+            }
+        };
+        let lo = |i: usize| {
+            if g.has(Aes::Ymin) && g.num(Aes::Ymin, i).is_finite() {
+                g.num(Aes::Ymin, i)
+            } else {
+                0.0
+            }
+        };
+        let upper: Vec<(f64, f64)> = grp
+            .iter()
+            .map(|&i| g.pc.map(g.num(Aes::X, i), hi(i)))
+            .collect();
         let mut poly = upper.clone();
         for &i in grp.iter().rev() {
             poly.push(g.pc.map(g.num(Aes::X, i), lo(i)));
         }
         let first = grp[0];
-        let dflt = if density { 0.2 } else if multi || g.l.vis.fill_mapped { 0.85 } else { 0.3 };
+        let dflt = if density {
+            0.2
+        } else if multi || g.l.vis.fill_mapped {
+            0.85
+        } else {
+            0.3
+        };
         items.push(Item::Path {
             pts: poly,
             stroke: None,
@@ -292,7 +374,10 @@ fn area(g: &G, rows: &[usize], items: &mut Vec<Item>, density: bool) {
             close: true,
             tips: None,
         });
-        let edge = if g.l.vis.color_mapped || p_str(&g.l.params, "color").is_some() || p_str(&g.l.params, "colour").is_some() {
+        let edge = if g.l.vis.color_mapped
+            || p_str(&g.l.params, "color").is_some()
+            || p_str(&g.l.params, "colour").is_some()
+        {
             g.color(first)
         } else {
             g.fill(first)
@@ -311,19 +396,30 @@ fn area(g: &G, rows: &[usize], items: &mut Vec<Item>, density: bool) {
 
 fn ribbon(g: &G, rows: &[usize], items: &mut Vec<Item>) {
     for mut grp in by_group(&g.l.frame, rows) {
-        grp.retain(|&i| g.num(Aes::X, i).is_finite() && g.num(Aes::Ymin, i).is_finite() && g.num(Aes::Ymax, i).is_finite());
+        grp.retain(|&i| {
+            g.num(Aes::X, i).is_finite()
+                && g.num(Aes::Ymin, i).is_finite()
+                && g.num(Aes::Ymax, i).is_finite()
+        });
         if grp.len() < 2 {
             continue;
         }
         grp.sort_by(|&a, &b| g.num(Aes::X, a).partial_cmp(&g.num(Aes::X, b)).unwrap());
-        let mut poly: Vec<(f64, f64)> = grp.iter().map(|&i| g.pc.map(g.num(Aes::X, i), g.num(Aes::Ymax, i))).collect();
+        let mut poly: Vec<(f64, f64)> = grp
+            .iter()
+            .map(|&i| g.pc.map(g.num(Aes::X, i), g.num(Aes::Ymax, i)))
+            .collect();
         for &i in grp.iter().rev() {
             poly.push(g.pc.map(g.num(Aes::X, i), g.num(Aes::Ymin, i)));
         }
         let first = grp[0];
         items.push(Item::Path {
             pts: poly,
-            stroke: if p_str(&g.l.params, "color").is_some() || g.l.vis.color_mapped { Some(Paint::Rgba(g.color(first))) } else { None },
+            stroke: if p_str(&g.l.params, "color").is_some() || g.l.vis.color_mapped {
+                Some(Paint::Rgba(g.color(first)))
+            } else {
+                None
+            },
             sw: 1.0,
             dash: None,
             fill: Some(Paint::Rgba(g.fill(first).with_alpha(g.alpha(first, 0.25)))),
@@ -344,13 +440,19 @@ fn smooth(g: &G, rows: &[usize], items: &mut Vec<Item>) {
         let first = grp[0];
         let c = g.color(first);
         if se && g.has(Aes::Ymin) {
-            let mut poly: Vec<(f64, f64)> = grp.iter().map(|&i| g.pc.map(g.num(Aes::X, i), g.num(Aes::Ymax, i))).collect();
+            let mut poly: Vec<(f64, f64)> = grp
+                .iter()
+                .map(|&i| g.pc.map(g.num(Aes::X, i), g.num(Aes::Ymax, i)))
+                .collect();
             for &i in grp.iter().rev() {
                 poly.push(g.pc.map(g.num(Aes::X, i), g.num(Aes::Ymin, i)));
             }
             let band = if g.l.vis.fill_mapped || p_str(&g.l.params, "fill").is_some() {
                 g.fill(first)
-            } else if g.l.vis.color_mapped || p_str(&g.l.params, "color").is_some() || p_str(&g.l.params, "colour").is_some() {
+            } else if g.l.vis.color_mapped
+                || p_str(&g.l.params, "color").is_some()
+                || p_str(&g.l.params, "colour").is_some()
+            {
                 c
             } else {
                 g.b.theme.app.role(Role::Ink2)
@@ -365,7 +467,10 @@ fn smooth(g: &G, rows: &[usize], items: &mut Vec<Item>) {
                 tips: None,
             });
         }
-        let pts: Vec<(f64, f64)> = grp.iter().map(|&i| g.pc.map(g.num(Aes::X, i), g.num(Aes::Y, i))).collect();
+        let pts: Vec<(f64, f64)> = grp
+            .iter()
+            .map(|&i| g.pc.map(g.num(Aes::X, i), g.num(Aes::Y, i)))
+            .collect();
         items.push(Item::Path {
             pts,
             stroke: Some(Paint::Rgba(c)),
@@ -380,9 +485,16 @@ fn smooth(g: &G, rows: &[usize], items: &mut Vec<Item>) {
 
 fn bars(g: &G, rows: &[usize], items: &mut Vec<Item>) {
     let hist = g.l.geom == "histogram";
-    let outline = p_str(&g.l.params, "color").is_some() || p_str(&g.l.params, "colour").is_some() || g.l.vis.color_mapped && g.l.vis.fill_mapped;
+    let outline = p_str(&g.l.params, "color").is_some()
+        || p_str(&g.l.params, "colour").is_some()
+        || g.l.vis.color_mapped && g.l.vis.fill_mapped;
     for &i in rows {
-        let (x0, x1, y0, y1) = (g.num(Aes::Xmin, i), g.num(Aes::Xmax, i), g.num(Aes::Ymin, i), g.num(Aes::Ymax, i));
+        let (x0, x1, y0, y1) = (
+            g.num(Aes::Xmin, i),
+            g.num(Aes::Xmax, i),
+            g.num(Aes::Ymin, i),
+            g.num(Aes::Ymax, i),
+        );
         let fill = Paint::Rgba(g.fill(i).with_alpha(g.alpha(i, 1.0)));
         let stroke = if outline {
             Some(Paint::Rgba(g.color(i)))
@@ -392,7 +504,16 @@ fn bars(g: &G, rows: &[usize], items: &mut Vec<Item>) {
         } else {
             None
         };
-        if let Some(it) = g.rect(i, x0, x1, y0, y1, Some(fill), stroke, if outline { 1.0 } else { 0.7 }) {
+        if let Some(it) = g.rect(
+            i,
+            x0,
+            x1,
+            y0,
+            y1,
+            Some(fill),
+            stroke,
+            if outline { 1.0 } else { 0.7 },
+        ) {
             items.push(it);
         }
     }
@@ -405,15 +526,29 @@ fn boxplot(g: &G, rows: &[usize], items: &mut Vec<Item>) {
     let show_out = p_bool(&g.l.params, "outliers").unwrap_or(true);
     for &i in rows {
         let (x0, x1, x) = (g.num(Aes::Xmin, i), g.num(Aes::Xmax, i), g.num(Aes::X, i));
-        let (lo, mid, hi) = (g.num(Aes::Lower, i), g.num(Aes::Middle, i), g.num(Aes::Upper, i));
+        let (lo, mid, hi) = (
+            g.num(Aes::Lower, i),
+            g.num(Aes::Middle, i),
+            g.num(Aes::Upper, i),
+        );
         let (wlo, whi) = (g.num(Aes::Ymin, i), g.num(Aes::Ymax, i));
         let c = g.color(i);
         let lw = g.lw(i);
         // whiskers first, under the box
-        for it in [g.line(x, hi, x, whi, c, lw, None), g.line(x, lo, x, wlo, c, lw, None)].into_iter().flatten() {
+        for it in [
+            g.line(x, hi, x, whi, c, lw, None),
+            g.line(x, lo, x, wlo, c, lw, None),
+        ]
+        .into_iter()
+        .flatten()
+        {
             items.push(it);
         }
-        let fill = if filled { Paint::Rgba(g.fill(i).with_alpha(g.alpha(i, 0.45))) } else { Paint::Role(Role::Surface) };
+        let fill = if filled {
+            Paint::Rgba(g.fill(i).with_alpha(g.alpha(i, 0.45)))
+        } else {
+            Paint::Role(Role::Surface)
+        };
         if let Some(it) = g.rect(i, x0, x1, lo, hi, Some(fill), Some(Paint::Rgba(c)), lw) {
             items.push(it);
         }
@@ -426,7 +561,10 @@ fn boxplot(g: &G, rows: &[usize], items: &mut Vec<Item>) {
         {
             let xs: Vec<f32> = o[i].iter().map(|v| g.pc.map(x, *v).0 as f32).collect();
             let ys: Vec<f32> = o[i].iter().map(|v| g.pc.map(x, *v).1 as f32).collect();
-            let tipcol = o[i].iter().map(|v| super::build::axis_value(if g.pc.flip { &g.b.sy } else { &g.b.sy }, *v)).collect();
+            let tipcol = o[i]
+                .iter()
+                .map(|v| super::build::axis_value(if g.pc.flip { &g.b.sy } else { &g.b.sy }, *v))
+                .collect();
             items.push(Item::Points(Points {
                 xs,
                 ys,
@@ -436,7 +574,13 @@ fn boxplot(g: &G, rows: &[usize], items: &mut Vec<Item>) {
                 shape: Shape::Circle,
                 stroke_w: 1.0,
                 panel: g.panel,
-                tips: Some(Tips { layer: g.layer, cols: vec![vec![super::build::axis_value(&g.b.sx, x); o[i].len()], tipcol] }),
+                tips: Some(Tips {
+                    layer: g.layer,
+                    cols: vec![
+                        vec![super::build::axis_value(&g.b.sx, x); o[i].len()],
+                        tipcol,
+                    ],
+                }),
             }));
         }
     }
@@ -453,8 +597,13 @@ fn violin(g: &G, rows: &[usize], items: &mut Vec<Item>) {
         }
         grp.sort_by(|&a, &b| g.num(Aes::Y, a).partial_cmp(&g.num(Aes::Y, b)).unwrap());
         let vw = g.l.frame.stat.get("violinwidth");
-        let half = |i: usize| (g.num(Aes::Xmax, i) - g.num(Aes::Xmin, i)) / 2.0 * vw.map(|v| v[i]).unwrap_or(0.0);
-        let mut poly: Vec<(f64, f64)> = grp.iter().map(|&i| g.pc.map(g.num(Aes::X, i) + half(i), g.num(Aes::Y, i))).collect();
+        let half = |i: usize| {
+            (g.num(Aes::Xmax, i) - g.num(Aes::Xmin, i)) / 2.0 * vw.map(|v| v[i]).unwrap_or(0.0)
+        };
+        let mut poly: Vec<(f64, f64)> = grp
+            .iter()
+            .map(|&i| g.pc.map(g.num(Aes::X, i) + half(i), g.num(Aes::Y, i)))
+            .collect();
         for &i in grp.iter().rev() {
             poly.push(g.pc.map(g.num(Aes::X, i) - half(i), g.num(Aes::Y, i)));
         }
@@ -482,12 +631,27 @@ fn violin(g: &G, rows: &[usize], items: &mut Vec<Item>) {
                 let k = ys.partition_point(|y| *y < yq).min(grp.len() - 1);
                 let h = half(grp[k]);
                 let x = g.num(Aes::X, first);
-                if let Some(it) = g.line(x - h, yq, x + h, yq, g.color(first), g.lw(first), if (q - 0.5).abs() < 1e-9 { None } else { Some(vec![3.0, 3.0]) }) {
+                if let Some(it) = g.line(
+                    x - h,
+                    yq,
+                    x + h,
+                    yq,
+                    g.color(first),
+                    g.lw(first),
+                    if (q - 0.5).abs() < 1e-9 {
+                        None
+                    } else {
+                        Some(vec![3.0, 3.0])
+                    },
+                ) {
                     items.push(it);
                 }
             }
         }
-        let med = stat.get("median").map(|m| m[first]).unwrap_or(ys[ys.len() / 2]);
+        let med = stat
+            .get("median")
+            .map(|m| m[first])
+            .unwrap_or(ys[ys.len() / 2]);
         centres.push(g.pc.map(g.num(Aes::X, first), med));
         centre_rows.push(first);
     }
@@ -505,10 +669,27 @@ fn ranges(g: &G, rows: &[usize], items: &mut Vec<Item>) {
         match geom {
             "crossbar" => {
                 let (x0, x1) = (g.num(Aes::Xmin, i), g.num(Aes::Xmax, i));
-                if let Some(it) = g.rect(i, x0, x1, lo, hi, Some(Paint::Role(Role::Surface)), Some(Paint::Rgba(c)), lw) {
+                if let Some(it) = g.rect(
+                    i,
+                    x0,
+                    x1,
+                    lo,
+                    hi,
+                    Some(Paint::Role(Role::Surface)),
+                    Some(Paint::Rgba(c)),
+                    lw,
+                ) {
                     items.push(it);
                 }
-                if let Some(it) = g.line(x0, g.num(Aes::Y, i), x1, g.num(Aes::Y, i), c, lw * 1.8, None) {
+                if let Some(it) = g.line(
+                    x0,
+                    g.num(Aes::Y, i),
+                    x1,
+                    g.num(Aes::Y, i),
+                    c,
+                    lw * 1.8,
+                    None,
+                ) {
                     items.push(it);
                 }
             }
@@ -535,7 +716,12 @@ fn ranges(g: &G, rows: &[usize], items: &mut Vec<Item>) {
     } else if geom == "errorbar" || geom == "linerange" || geom == "crossbar" {
         let at: Vec<(f64, f64)> = rows
             .iter()
-            .map(|&i| g.pc.map(g.num(Aes::X, i), (g.num(Aes::Ymin, i) + g.num(Aes::Ymax, i)) / 2.0))
+            .map(|&i| {
+                g.pc.map(
+                    g.num(Aes::X, i),
+                    (g.num(Aes::Ymin, i) + g.num(Aes::Ymax, i)) / 2.0,
+                )
+            })
             .collect();
         hover_points(g, rows, &at, items);
     }
@@ -546,7 +732,13 @@ fn text(g: &G, rows: &[usize], items: &mut Vec<Item>) {
     let fixed = p_str(&g.l.params, "label").map(|s| s.to_string());
     let hjust = g.param("hjust").unwrap_or(0.5);
     let vjust = g.param("vjust").unwrap_or(0.5);
-    let anchor = if hjust <= 0.25 { Anchor::Start } else if hjust >= 0.75 { Anchor::End } else { Anchor::Middle };
+    let anchor = if hjust <= 0.25 {
+        Anchor::Start
+    } else if hjust >= 0.75 {
+        Anchor::End
+    } else {
+        Anchor::Middle
+    };
     let overlap = p_bool(&g.l.params, "check_overlap").unwrap_or(false);
     let boxed = g.l.geom == "label";
     let weight = match p_str(&g.l.params, "fontface") {
@@ -556,9 +748,15 @@ fn text(g: &G, rows: &[usize], items: &mut Vec<Item>) {
     let mut taken: Vec<(f64, f64, f64, f64)> = Vec::new();
     // the default ink reads against what is under it: a tile's, a bar's or
     // its own box's fill takes the dark ink or the light by contrast
-    let auto_ink = !g.l.vis.color_mapped && p_str(&g.l.params, "color").is_none() && p_str(&g.l.params, "colour").is_none();
+    let auto_ink = !g.l.vis.color_mapped
+        && p_str(&g.l.params, "color").is_none()
+        && p_str(&g.l.params, "colour").is_none();
     let own_fill = boxed && (g.l.vis.fill_mapped || p_str(&g.l.params, "fill").is_some());
-    let under = if auto_ink && !boxed { fills_under(g, rows.len()) } else { Vec::new() };
+    let under = if auto_ink && !boxed {
+        fills_under(g, rows.len())
+    } else {
+        Vec::new()
+    };
     for &i in rows {
         let (x, y) = (g.num(Aes::X, i), g.num(Aes::Y, i));
         if !(x.is_finite() && y.is_finite()) {
@@ -572,7 +770,9 @@ fn text(g: &G, rows: &[usize], items: &mut Vec<Item>) {
             under
                 .iter()
                 .rev()
-                .find(|u| x >= u.0.min(u.1) && x <= u.0.max(u.1) && y >= u.2.min(u.3) && y <= u.2.max(u.3))
+                .find(|u| {
+                    x >= u.0.min(u.1) && x <= u.0.max(u.1) && y >= u.2.min(u.3) && y <= u.2.max(u.3)
+                })
                 .map(|u| ink_on(u.4, g.b.theme.app.role(Role::Surface)))
         };
         let s = match (&fixed, label_col) {
@@ -596,7 +796,11 @@ fn text(g: &G, rows: &[usize], items: &mut Vec<Item>) {
             Anchor::End => px - w,
         };
         let bbox = (left - 2.0, py - size * 0.7, left + w + 2.0, py + size * 0.7);
-        if overlap && taken.iter().any(|t| bbox.0 < t.2 && bbox.2 > t.0 && bbox.1 < t.3 && bbox.3 > t.1) {
+        if overlap
+            && taken
+                .iter()
+                .any(|t| bbox.0 < t.2 && bbox.2 > t.0 && bbox.1 < t.3 && bbox.3 > t.1)
+        {
             continue;
         }
         taken.push(bbox);
@@ -606,7 +810,13 @@ fn text(g: &G, rows: &[usize], items: &mut Vec<Item>) {
                 y: py - size * 0.8,
                 w: w + 8.0,
                 h: size * 1.6,
-                fill: Some(if g.l.vis.fill_mapped || p_str(&g.l.params, "fill").is_some() { Paint::Rgba(g.fill(i)) } else { Paint::Role(Role::Surface) }),
+                fill: Some(
+                    if g.l.vis.fill_mapped || p_str(&g.l.params, "fill").is_some() {
+                        Paint::Rgba(g.fill(i))
+                    } else {
+                        Paint::Role(Role::Surface)
+                    },
+                ),
                 stroke: Some(Paint::Role(Role::Axis)),
                 sw: 0.8,
                 r: 3.0,
@@ -632,22 +842,41 @@ fn text(g: &G, rows: &[usize], items: &mut Vec<Item>) {
 fn fills_under(g: &G, labels: usize) -> Vec<(f64, f64, f64, f64, Rgba)> {
     let mut out = Vec::new();
     for l in g.b.layers.iter().take(g.layer as usize) {
-        if !matches!(l.geom.as_str(), "tile" | "raster" | "rect" | "bar" | "col" | "histogram" | "bin2d" | "bin_2d") {
+        if !matches!(
+            l.geom.as_str(),
+            "tile" | "raster" | "rect" | "bar" | "col" | "histogram" | "bin2d" | "bin_2d"
+        ) {
             continue;
         }
         let f = &l.frame;
-        let (Some(x0), Some(x1), Some(y0), Some(y1)) = (f.num(Aes::Xmin), f.num(Aes::Xmax), f.num(Aes::Ymin), f.num(Aes::Ymax)) else {
+        let (Some(x0), Some(x1), Some(y0), Some(y1)) = (
+            f.num(Aes::Xmin),
+            f.num(Aes::Xmax),
+            f.num(Aes::Ymin),
+            f.num(Aes::Ymax),
+        ) else {
             continue;
         };
         for i in 0..f.n {
-            if f.panel[i] != g.panel || ![x0[i], x1[i], y0[i], y1[i]].iter().all(|v| v.is_finite()) {
+            if f.panel[i] != g.panel || ![x0[i], x1[i], y0[i], y1[i]].iter().all(|v| v.is_finite())
+            {
                 continue;
             }
-            let a = l.vis.alpha.get(i).copied().filter(|a| a.is_finite()).unwrap_or(1.0);
+            let a = l
+                .vis
+                .alpha
+                .get(i)
+                .copied()
+                .filter(|a| a.is_finite())
+                .unwrap_or(1.0);
             out.push((x0[i], x1[i], y0[i], y1[i], l.vis.fill[i].with_alpha(a)));
         }
     }
-    if out.len().saturating_mul(labels) > 8_000_000 { Vec::new() } else { out }
+    if out.len().saturating_mul(labels) > 8_000_000 {
+        Vec::new()
+    } else {
+        out
+    }
 }
 
 /// The ink that reads on `fill` (composited over `surface`): the darker
@@ -660,14 +889,25 @@ pub(crate) fn ink_on(fill: Rgba, surface: Rgba) -> Rgba {
         let (x, y) = (a.luminance() + 0.05, b.luminance() + 0.05);
         x.max(y) / x.min(y)
     };
-    if ratio(c, dark) >= ratio(c, light) { dark } else { light }
+    if ratio(c, dark) >= ratio(c, light) {
+        dark
+    } else {
+        light
+    }
 }
 
 fn tiles(g: &G, rows: &[usize], items: &mut Vec<Item>) {
-    let outline = p_str(&g.l.params, "color").or_else(|| p_str(&g.l.params, "colour")).is_some();
+    let outline = p_str(&g.l.params, "color")
+        .or_else(|| p_str(&g.l.params, "colour"))
+        .is_some();
     let raster = g.l.geom == "raster";
     for &i in rows {
-        let (x0, x1, y0, y1) = (g.num(Aes::Xmin, i), g.num(Aes::Xmax, i), g.num(Aes::Ymin, i), g.num(Aes::Ymax, i));
+        let (x0, x1, y0, y1) = (
+            g.num(Aes::Xmin, i),
+            g.num(Aes::Xmax, i),
+            g.num(Aes::Ymin, i),
+            g.num(Aes::Ymax, i),
+        );
         let fill = Paint::Rgba(g.fill(i).with_alpha(g.alpha(i, 1.0)));
         let stroke = if outline {
             Some(Paint::Rgba(g.color(i)))
@@ -677,7 +917,20 @@ fn tiles(g: &G, rows: &[usize], items: &mut Vec<Item>) {
         } else {
             None
         };
-        if let Some(it) = g.rect(i, x0, x1, y0, y1, Some(fill), stroke, if outline { g.param("linewidth").map(|v| v * 2.8).unwrap_or(1.0) } else { 0.5 }) {
+        if let Some(it) = g.rect(
+            i,
+            x0,
+            x1,
+            y0,
+            y1,
+            Some(fill),
+            stroke,
+            if outline {
+                g.param("linewidth").map(|v| v * 2.8).unwrap_or(1.0)
+            } else {
+                0.5
+            },
+        ) {
             items.push(it);
         }
     }
@@ -779,7 +1032,15 @@ fn rug(g: &G, rows: &[usize], items: &mut Vec<Item>) {
             } else {
                 (px, pc.y, px, pc.y + len)
             };
-            items.push(Item::Line { x1: a, y1: b, x2: cc, y2: d, stroke: Paint::Rgba(c), sw: lw, dash: None });
+            items.push(Item::Line {
+                x1: a,
+                y1: b,
+                x2: cc,
+                y2: d,
+                stroke: Paint::Rgba(c),
+                sw: lw,
+                dash: None,
+            });
         }
         if y.is_finite() && (sides.contains('l') || sides.contains('r')) {
             let (px, py) = pc.map(pc.x_range().0, y);
@@ -790,7 +1051,15 @@ fn rug(g: &G, rows: &[usize], items: &mut Vec<Item>) {
             } else {
                 (pc.x + pc.w, py, pc.x + pc.w - len, py)
             };
-            items.push(Item::Line { x1: a, y1: b, x2: cc, y2: d, stroke: Paint::Rgba(c), sw: lw, dash: None });
+            items.push(Item::Line {
+                x1: a,
+                y1: b,
+                x2: cc,
+                y2: d,
+                stroke: Paint::Rgba(c),
+                sw: lw,
+                dash: None,
+            });
         }
     }
 }
@@ -798,7 +1067,15 @@ fn rug(g: &G, rows: &[usize], items: &mut Vec<Item>) {
 fn segments(g: &G, rows: &[usize], items: &mut Vec<Item>) {
     for &i in rows {
         let c = g.color(i).with_alpha(g.alpha(i, 1.0));
-        if let Some(it) = g.line(g.num(Aes::X, i), g.num(Aes::Y, i), g.num(Aes::Xend, i), g.num(Aes::Yend, i), c, g.lw(i), g.l.vis.dash[i].clone()) {
+        if let Some(it) = g.line(
+            g.num(Aes::X, i),
+            g.num(Aes::Y, i),
+            g.num(Aes::Xend, i),
+            g.num(Aes::Yend, i),
+            c,
+            g.lw(i),
+            g.l.vis.dash[i].clone(),
+        ) {
             items.push(it);
         }
     }

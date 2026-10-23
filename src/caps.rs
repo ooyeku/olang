@@ -547,7 +547,8 @@ fn gate_resolve(abs: PathBuf, depth: u32) -> PathBuf {
                                 .and_then(|_| std::fs::read_link(&at).ok());
                             match target {
                                 Some(t) if depth < 40 => {
-                                    let base = at.parent().map(|b| b.to_path_buf()).unwrap_or_default();
+                                    let base =
+                                        at.parent().map(|b| b.to_path_buf()).unwrap_or_default();
                                     at = gate_resolve(base.join(t), depth + 1);
                                 }
                                 _ => {}
@@ -597,7 +598,11 @@ pub fn find_on_own_path(program: &str) -> Option<std::path::PathBuf> {
 /// The programs a process-starting call names: its argv's first item
 /// (each stage's, for a pipeline — `heads`, None for one that is not a
 /// string), else a command line's first word.
-fn programs_of(full_name: &str, first: Option<&str>, heads: &[Option<&str>]) -> Vec<Option<String>> {
+fn programs_of(
+    full_name: &str,
+    first: Option<&str>,
+    heads: &[Option<&str>],
+) -> Vec<Option<String>> {
     if !heads.is_empty() {
         return heads.iter().map(|h| h.map(|s| s.to_string())).collect();
     }

@@ -141,7 +141,12 @@ pub fn call_gui_function(name: &str, args: Vec<Value>) -> DynRes {
             // any other raises (a program's `attempt` takes it)
             if matches!(
                 name,
-                "open" | "apply" | "clipboard_read" | "clipboard_write" | "clipboard_image" | "image_info"
+                "open"
+                    | "apply"
+                    | "clipboard_read"
+                    | "clipboard_write"
+                    | "clipboard_image"
+                    | "image_info"
             ) {
                 Ok(err(said))
             } else {
@@ -190,7 +195,11 @@ fn gui_function(name: &str, args: Vec<Value>) -> DynRes {
             arity("gui.turn", &args, 1, 1)?;
             match &args[0] {
                 Value::Boolean(on) => platform::turn_watch::turn(*on),
-                _ => return Err("gui.turn: the argument is true (a turn begins) or false (it ends)".into()),
+                _ => {
+                    return Err(
+                        "gui.turn: the argument is true (a turn begins) or false (it ends)".into(),
+                    );
+                }
             }
             Ok(Value::Unit)
         }
@@ -832,7 +841,10 @@ fn render_stats() -> Value {
     let int = |v: u64| Value::Integer(v as i64);
     let mut f = vec![
         ("frames_drawn", int(damage::FRAMES_DRAWN.load(Relaxed))),
-        ("frames_unchanged", int(damage::FRAMES_UNCHANGED.load(Relaxed))),
+        (
+            "frames_unchanged",
+            int(damage::FRAMES_UNCHANGED.load(Relaxed)),
+        ),
         ("pixels_drawn", int(damage::PIXELS_DRAWN.load(Relaxed))),
         ("pixels_shown", int(damage::PIXELS_SHOWN.load(Relaxed))),
     ];
@@ -990,8 +1002,12 @@ fn input_of(v: &Value) -> Res<Input> {
         // a size no display has is taken as the largest one may (a
         // window a million pixels high would be laid out and drawn whole)
         "resize" => Input::Resize {
-            width: get_num(v, "width", what)?.ok_or("gui.input: resize needs \"width\"")?.clamp(1.0, MAX_WINDOW_SIDE),
-            height: get_num(v, "height", what)?.ok_or("gui.input: resize needs \"height\"")?.clamp(1.0, MAX_WINDOW_SIDE),
+            width: get_num(v, "width", what)?
+                .ok_or("gui.input: resize needs \"width\"")?
+                .clamp(1.0, MAX_WINDOW_SIDE),
+            height: get_num(v, "height", what)?
+                .ok_or("gui.input: resize needs \"height\"")?
+                .clamp(1.0, MAX_WINDOW_SIDE),
             scale: get_num(v, "scale", what)?.unwrap_or(1.0).clamp(0.5, 4.0),
         },
         "window_focus" => Input::Focused(get_bool(v, "on", what)?.unwrap_or(true)),

@@ -153,7 +153,9 @@ pub fn render(e: &LExpr) -> String {
         LExpr::Series(s) => format!("<Series[{}; {}]>", s.dtype(), s.len()),
         LExpr::Lit(s) => render_scalar(s),
         LExpr::Op(Op::Bin(BinOp::Pow), a) => format!("pow({}, {})", render(&a[0]), render(&a[1])),
-        LExpr::Op(Op::Bin(b), a) => format!("({} {} {})", render(&a[0]), op_symbol(*b), render(&a[1])),
+        LExpr::Op(Op::Bin(b), a) => {
+            format!("({} {} {})", render(&a[0]), op_symbol(*b), render(&a[1]))
+        }
         LExpr::Op(op, a) => {
             let args: Vec<String> = a.iter().map(|x| render(x)).collect();
             let name = match op {
@@ -245,13 +247,20 @@ pub fn operand(v: &Value) -> Option<Operand> {
     {
         return Some(match s.pending() {
             Some((e, len, depth)) => Operand::Eng(e.clone(), Some(len), depth, vec![v.clone()]),
-            None => Operand::Eng(Expr::col(s.series().clone()), Some(s.series().len()), 0, vec![]),
+            None => Operand::Eng(
+                Expr::col(s.series().clone()),
+                Some(s.series().len()),
+                0,
+                vec![],
+            ),
         });
     }
     let s = match v {
-        Value::Float(_) | Value::Integer(_) | Value::Boolean(_) | Value::String(_) | Value::Unit => {
-            value_to_scalar(v)?
-        }
+        Value::Float(_)
+        | Value::Integer(_)
+        | Value::Boolean(_)
+        | Value::String(_)
+        | Value::Unit => value_to_scalar(v)?,
         // A Date value.
         Value::Native(_) => value_to_scalar(v)?,
         _ => return None,
@@ -283,7 +292,9 @@ pub fn eval_roots(roots: &[Arc<Expr>], len: Option<usize>) -> Result<Vec<Series>
 }
 
 pub fn eval_one(e: &Arc<Expr>, len: Option<usize>) -> Result<Series, String> {
-    Ok(eval_roots(std::slice::from_ref(e), len)?.pop().expect("one root"))
+    Ok(eval_roots(std::slice::from_ref(e), len)?
+        .pop()
+        .expect("one root"))
 }
 
 /// Fold a pending Series into a sum, mean, min, max or count without
@@ -308,7 +319,9 @@ fn reduce_expr(e: &Arc<Expr>, kind: Reduce) -> Result<Value, String> {
 /// `ods.dot`: the sum of the products in one fused pass, nulls skipped
 /// (a pending operand is never materialized).
 pub fn dot_fused(a: &Value, b: &Value) -> Option<Result<Value, String>> {
-    let (Some(Operand::Eng(x, Some(la), _, _)), Some(Operand::Eng(y, Some(lb), _, _))) = (operand(a), operand(b)) else {
+    let (Some(Operand::Eng(x, Some(la), _, _)), Some(Operand::Eng(y, Some(lb), _, _))) =
+        (operand(a), operand(b))
+    else {
         return None;
     };
     if la != lb {
@@ -401,7 +414,10 @@ pub fn finish(
         let s = force(&expr, len, &deps).map_err(|e| prefix(func, e))?;
         return Ok(OdsSeries::into_value(s));
     }
-    let dtype = expr.dtype().map_err(|e| e.to_string())?.unwrap_or(DType::F64);
+    let dtype = expr
+        .dtype()
+        .map_err(|e| e.to_string())?
+        .unwrap_or(DType::F64);
     Ok(OdsSeries::pending_value(expr, len, depth, dtype, deps))
 }
 
@@ -603,7 +619,10 @@ pub(crate) fn eval_many(f: &Frame, es: &[Arc<LExpr>]) -> Result<Vec<Series>, Str
         frame: f,
         memo: HashMap::new(),
     };
-    let roots = es.iter().map(|e| r.resolve(e)).collect::<Result<Vec<_>, _>>()?;
+    let roots = es
+        .iter()
+        .map(|e| r.resolve(e))
+        .collect::<Result<Vec<_>, _>>()?;
     eval_roots(&roots, Some(f.n_rows()))
 }
 
@@ -673,8 +692,7 @@ pub(crate) fn named(func: &str, v: &Value) -> Result<Vec<(String, Value)>, Strin
             None => Err(format!(
                 "ods.{}: {} has no column name; give it one with ods.alias(expr, \"name\") \
                  or an object {{ name: expr }}",
-                func,
-                item
+                func, item
             )),
         })
         .collect()
@@ -715,12 +733,16 @@ fn reads_column(e: &Expr) -> bool {
 /// it was, in one fused plan; then each replaces its column or is added.
 fn with(args: &[Value]) -> Result<Value, String> {
     let f = frame_arg("with", args)?;
-    let spec = args.get(1).ok_or("ods.with expects a Frame and an object of columns")?;
+    let spec = args
+        .get(1)
+        .ok_or("ods.with expects a Frame and an object of columns")?;
     let items = named("with", spec)?;
     let cols = evaluate("with", f, &items)?;
     let mut out = f.clone();
     for ((name, _), col) in items.iter().zip(cols) {
-        out = out.with_column(name, col).map_err(|e| format!("ods.with: {}", e))?;
+        out = out
+            .with_column(name, col)
+            .map_err(|e| format!("ods.with: {}", e))?;
     }
     Ok(OdsFrame::into_value(out))
 }
@@ -757,9 +779,10 @@ fn select(f: &Frame, spec: &Value) -> Result<Value, String> {
     };
     for v in list {
         match &v {
-            Value::String(name) => {
-                items.push((name.to_string(), OdsExpr::into_value(LExpr::Col(name.to_string()))))
-            }
+            Value::String(name) => items.push((
+                name.to_string(),
+                OdsExpr::into_value(LExpr::Col(name.to_string())),
+            )),
             v => items.extend(named("select", v)?),
         }
     }
@@ -821,8 +844,13 @@ fn sort_by(args: &[Value]) -> Result<Value, String> {
         .iter()
         .enumerate()
         .map(|(i, k)| match k {
-            Value::String(name) => Ok((name.to_string(), OdsExpr::into_value(LExpr::Col(name.to_string())))),
-            v if expr_of(v).is_some() || series_of(v).is_some() => Ok((format!("key {}", i + 1), v.clone())),
+            Value::String(name) => Ok((
+                name.to_string(),
+                OdsExpr::into_value(LExpr::Col(name.to_string())),
+            )),
+            v if expr_of(v).is_some() || series_of(v).is_some() => {
+                Ok((format!("key {}", i + 1), v.clone()))
+            }
             other => Err(format!(
                 "ods.sort_by: a key is a column name or an Expr, got {}",
                 other.type_name()
@@ -928,7 +956,10 @@ pub fn call_node(func: &str, args: &[Value]) -> Value {
             },
         }
     }
-    OdsExpr::into_value(LExpr::Call(func.to_string(), args.iter().map(arg).collect()))
+    OdsExpr::into_value(LExpr::Call(
+        func.to_string(),
+        args.iter().map(arg).collect(),
+    ))
 }
 
 /// The binary operator hook for an Expr on either side.

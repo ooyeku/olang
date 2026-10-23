@@ -204,7 +204,12 @@ fn fetch_git_offline(
     }
     let rev = git(
         Some(bare_dir),
-        &["rev-parse", "--verify", "--quiet", &format!("{}^{{commit}}", git_ref.spec())],
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{}^{{commit}}", git_ref.spec()),
+        ],
     )
     .map_err(|_| not_installed())?;
     if rev.is_empty() {

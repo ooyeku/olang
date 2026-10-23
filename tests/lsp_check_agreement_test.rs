@@ -559,24 +559,38 @@ fn allow_comments_silence_the_same_findings_in_both() {
     assert_eq!(hinted(&ds), vec!["loud".to_string()], "{ds:#?}");
     assert!(
         ds.iter().any(|d| d["severity"] == 1
-            && d["message"].as_str().unwrap().starts_with("Undefined variable: nowhere")),
+            && d["message"]
+                .as_str()
+                .unwrap()
+                .starts_with("Undefined variable: nowhere")),
         "an error is never silenced: {ds:#?}"
     );
     // the JSON is what the server publishes, line for line
     let (_, doc) = check_json(&main);
-    let lines = |v: &[serde_json::Value], key: fn(&serde_json::Value) -> u64| -> Vec<(u64, String)> {
-        v.iter().map(|d| (key(d), d["code"].as_str().unwrap().to_string())).collect()
-    };
+    let lines =
+        |v: &[serde_json::Value], key: fn(&serde_json::Value) -> u64| -> Vec<(u64, String)> {
+            v.iter()
+                .map(|d| (key(d), d["code"].as_str().unwrap().to_string()))
+                .collect()
+        };
     assert_eq!(
-        lines(doc["files"][0]["diagnostics"].as_array().unwrap(), |d| d["line"].as_u64().unwrap()),
+        lines(doc["files"][0]["diagnostics"].as_array().unwrap(), |d| {
+            d["line"].as_u64().unwrap()
+        }),
         lines(&ds, |d| d["range"]["start"]["line"].as_u64().unwrap() + 1),
     );
     // a notebook: its cell's allows in the server as in the checker
     let nb = dir.join("cells.olmd");
     let served = c.diagnostics(&nb);
     let (_, doc) = check_json(&nb);
-    let checked = lines(doc["files"][0]["diagnostics"].as_array().unwrap(), |d| d["line"].as_u64().unwrap());
-    assert_eq!(lines(&served, |d| d["range"]["start"]["line"].as_u64().unwrap() + 1), checked);
+    let checked = lines(doc["files"][0]["diagnostics"].as_array().unwrap(), |d| {
+        d["line"].as_u64().unwrap()
+    });
+    assert_eq!(
+        lines(&served, |d| d["range"]["start"]["line"].as_u64().unwrap()
+            + 1),
+        checked
+    );
     assert_eq!(checked, vec![(8, "no_effect".to_string())], "{doc}");
     let _ = std::fs::remove_dir_all(&dir);
 }

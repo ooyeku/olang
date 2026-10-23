@@ -1711,7 +1711,11 @@ fn a_canvas_is_drawn_as_primitives_with_clips_transforms_and_hit_regions() {
     match &d.items[4] {
         Item::Path(p) => {
             let b = p.path.bounds();
-            assert_eq!((b.left(), b.top(), b.right(), b.bottom()), (0.0, 90.0, 8.0, 98.0), "the arrowhead as geometry, unscaled");
+            assert_eq!(
+                (b.left(), b.top(), b.right(), b.bottom()),
+                (0.0, 90.0, 8.0, 98.0),
+                "the arrowhead as geometry, unscaled"
+            );
             assert_eq!(p.fill, Some([22, 163, 74, 255]));
         }
         other => panic!("a path is geometry, never a raster: {other:?}"),
@@ -1783,7 +1787,10 @@ fn a_canvas_is_drawn_as_primitives_with_clips_transforms_and_hit_regions() {
         at(102.0, 70.0)
     );
     let mid = at(140.0, 70.0)[0];
-    assert!((180..=196).contains(&mid), "its middle is half the light: {mid}");
+    assert!(
+        (180..=196).contains(&mid),
+        "its middle is half the light: {mid}"
+    );
     assert!(
         at(178.0, 70.0)[0] > 225,
         "and ends light: {:?}",
@@ -1877,10 +1884,7 @@ fn a_node_that_hears_the_wheel_across_takes_only_that_and_down_scrolls_around_it
         [len(wheels), map_get(wheels[0], "key"), map_get(wheels[0], "dx"), map_get(wheels[0], "dy"), map_get(wheels[1], "dx"), len(scrolled), map_get(scrolled[0], "y"),
          gui.platform().wheel_x]
     "##);
-    assert_eq!(
-        text(&v),
-        r#"[2, "line", -12.0, 0.0, -10.0, 1, 5.0, true]"#
-    );
+    assert_eq!(text(&v), r#"[2, "line", -12.0, 0.0, -10.0, 1, 5.0, true]"#);
 }
 
 #[test]
@@ -2409,7 +2413,10 @@ fn a_code_field_s_caret_is_followed_out_from_under_its_sticky_rows() {
         other => panic!("{other:?}"),
     };
     // the field's top pad and one pinned row (13 × 1.2)
-    assert!(y >= 4.0 + 15.6 - 0.5, "the caret is under the sticky row: {v:?}");
+    assert!(
+        y >= 4.0 + 15.6 - 0.5,
+        "the caret is under the sticky row: {v:?}"
+    );
 }
 
 #[test]
@@ -2594,7 +2601,8 @@ fn a_standard_edit_item_goes_to_the_focused_field_else_to_the_programs_command()
     };
     let focus = |st: &mut WinState, k: &str| {
         let op = m(vec![("op", s("focus")), ("key", s(k))]);
-        st.apply(&Value::List(Arc::new(vec![op])), &mut vec![]).expect("focus");
+        st.apply(&Value::List(Arc::new(vec![op])), &mut vec![])
+            .expect("focus");
     };
     let select_all = |st: &mut WinState| {
         let mods = Mods {
@@ -2603,7 +2611,12 @@ fn a_standard_edit_item_goes_to_the_focused_field_else_to_the_programs_command()
             ..Mods::default()
         };
         st.input(
-            Input::Key { key: "a".into(), text: None, mods, repeat: false },
+            Input::Key {
+                key: "a".into(),
+                text: None,
+                mods,
+                repeat: false,
+            },
             &mut Clip,
             &mut vec![],
         );
@@ -2642,7 +2655,8 @@ fn a_standard_edit_item_goes_to_the_focused_field_else_to_the_programs_command()
     assert!(edit_enabled(&st, "undo", &ctx(&["global"])));
     // a field that hands ⌘C to the program: the program's
     let mut st = WinState::new(2, true, "edit menu", 300.0, 120.0, 1.0);
-    st.apply(&scene(r#", "pass_keys": ["mod+c"]"#), &mut vec![]).expect("applies");
+    st.apply(&scene(r#", "pass_keys": ["mod+c"]"#), &mut vec![])
+        .expect("applies");
     focus(&mut st, "f");
     select_all(&mut st);
     assert!(!edit_enabled(&st, "copy", &none));

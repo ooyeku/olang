@@ -119,7 +119,9 @@ impl Spec {
             let start = i;
             let mut p = 0usize;
             while i < chars.len() && chars[i].is_ascii_digit() {
-                p = p.saturating_mul(10).saturating_add(chars[i].to_digit(10).unwrap() as usize);
+                p = p
+                    .saturating_mul(10)
+                    .saturating_add(chars[i].to_digit(10).unwrap() as usize);
                 i += 1;
             }
             if i == start {
@@ -167,10 +169,7 @@ impl Spec {
             ));
         }
         if kind == 'n' && sep.is_some() {
-            return Err(format!(
-                "format spec \"{}\": 'n' takes no separator",
-                spec
-            ));
+            return Err(format!("format spec \"{}\": 'n' takes no separator", spec));
         }
         Ok(Spec {
             fill: fill.unwrap_or(' '),
@@ -303,7 +302,9 @@ impl Spec {
         if let Some(c) = &self.currency {
             prefix.push_str(c);
         }
-        if self.alternate && let Some(r) = self.radix() {
+        if self.alternate
+            && let Some(r) = self.radix()
+        {
             prefix.push_str(match r {
                 16 => "0x",
                 8 => "0o",
@@ -382,8 +383,18 @@ fn sci(x: f64, p: usize, alternate: bool) -> String {
     let s = format!("{:.*e}", p, x);
     let (mant, exp) = s.split_once('e').unwrap_or((&s, "0"));
     let e: i32 = exp.parse().unwrap_or(0);
-    let point = if alternate && !mant.contains('.') { "." } else { "" };
-    format!("{}{}e{}{:02}", mant, point, if e < 0 { '-' } else { '+' }, e.abs())
+    let point = if alternate && !mant.contains('.') {
+        "."
+    } else {
+        ""
+    };
+    format!(
+        "{}{}e{}{:02}",
+        mant,
+        point,
+        if e < 0 { '-' } else { '+' },
+        e.abs()
+    )
 }
 
 /// General: `p` significant digits (6 by default), fixed unless the

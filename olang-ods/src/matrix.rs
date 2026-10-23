@@ -238,7 +238,13 @@ impl Matrix {
         }
         if self.t {
             // Sᵀb: one pass over the stored columns.
-            return Ok(cross(&self.cols, &[Arc::new(b.to_vec())], self.n, false, par));
+            return Ok(cross(
+                &self.cols,
+                &[Arc::new(b.to_vec())],
+                self.n,
+                false,
+                par,
+            ));
         }
         let m = self.matmul_dense(b, 1, par)?;
         Ok(m.cols[0].as_ref().clone())
@@ -247,7 +253,13 @@ impl Matrix {
     /// `self @ b` for a shared vector: `Xᵀy` reads `y` where it is.
     pub fn matvec_shared(&self, b: &Arc<Vec<f64>>, par: bool) -> Result<Vec<f64>> {
         if self.t && b.len() == self.n {
-            return Ok(cross(&self.cols, std::slice::from_ref(b), self.n, false, par));
+            return Ok(cross(
+                &self.cols,
+                std::slice::from_ref(b),
+                self.n,
+                false,
+                par,
+            ));
         }
         self.matvec(b, par)
     }
@@ -267,7 +279,11 @@ impl Matrix {
             (true, false) => {
                 let same = same_cols(&self.cols, &other.cols);
                 let g = cross(&self.cols, &other.cols, self.n, same, par);
-                Ok(Matrix::from_row_major(self.cols.len(), other.cols.len(), &g))
+                Ok(Matrix::from_row_major(
+                    self.cols.len(),
+                    other.cols.len(),
+                    &g,
+                ))
             }
             // Sᵀ Tᵀ = (T S)ᵀ.
             (true, true) => Ok(other.t().matmul(&self.t(), par)?.t()),
@@ -291,44 +307,52 @@ impl Matrix {
         let mut outs: Vec<Vec<f64>> = (0..m).map(|_| vec![0.0; n]).collect();
         // One piece of rows: every output column for those rows, a chunk
         // at a time.
-        fill_pieces(&mut outs, par && n * k * m.max(1) >= PAR_WORK, |start, parts| {
-            let len = parts.first().map(|p| p.len()).unwrap_or(0);
-            let mut s = 0;
-            while s < len {
-                let e = (s + CHUNK).min(len);
-                let (lo, hi) = (start + s, start + e);
-                for (o, outc) in parts.iter_mut().enumerate() {
-                    let buf = &mut outc[s..e];
-                    // Four columns a pass: the buffer is read and written
-                    // a quarter as often.
-                    let mut j = 0;
-                    while j + 4 <= k {
-                        let (w0, w1, w2, w3) =
-                            (b[j * m + o], b[(j + 1) * m + o], b[(j + 2) * m + o], b[(j + 3) * m + o]);
-                        let (c0, c1, c2, c3) = (
-                            &cols[j][lo..hi],
-                            &cols[j + 1][lo..hi],
-                            &cols[j + 2][lo..hi],
-                            &cols[j + 3][lo..hi],
-                        );
-                        let len = buf.len();
-                        let (c0, c1, c2, c3) = (&c0[..len], &c1[..len], &c2[..len], &c3[..len]);
-                        for r in 0..len {
-                            buf[r] += (w0 * c0[r] + w1 * c1[r]) + (w2 * c2[r] + w3 * c3[r]);
+        fill_pieces(
+            &mut outs,
+            par && n * k * m.max(1) >= PAR_WORK,
+            |start, parts| {
+                let len = parts.first().map(|p| p.len()).unwrap_or(0);
+                let mut s = 0;
+                while s < len {
+                    let e = (s + CHUNK).min(len);
+                    let (lo, hi) = (start + s, start + e);
+                    for (o, outc) in parts.iter_mut().enumerate() {
+                        let buf = &mut outc[s..e];
+                        // Four columns a pass: the buffer is read and written
+                        // a quarter as often.
+                        let mut j = 0;
+                        while j + 4 <= k {
+                            let (w0, w1, w2, w3) = (
+                                b[j * m + o],
+                                b[(j + 1) * m + o],
+                                b[(j + 2) * m + o],
+                                b[(j + 3) * m + o],
+                            );
+                            let (c0, c1, c2, c3) = (
+                                &cols[j][lo..hi],
+                                &cols[j + 1][lo..hi],
+                                &cols[j + 2][lo..hi],
+                                &cols[j + 3][lo..hi],
+                            );
+                            let len = buf.len();
+                            let (c0, c1, c2, c3) = (&c0[..len], &c1[..len], &c2[..len], &c3[..len]);
+                            for r in 0..len {
+                                buf[r] += (w0 * c0[r] + w1 * c1[r]) + (w2 * c2[r] + w3 * c3[r]);
+                            }
+                            j += 4;
                         }
-                        j += 4;
-                    }
-                    while j < k {
-                        let w = b[j * m + o];
-                        for (x, v) in buf.iter_mut().zip(&cols[j][lo..hi]) {
-                            *x += w * v;
+                        while j < k {
+                            let w = b[j * m + o];
+                            for (x, v) in buf.iter_mut().zip(&cols[j][lo..hi]) {
+                                *x += w * v;
+                            }
+                            j += 1;
                         }
-                        j += 1;
                     }
+                    s = e;
                 }
-                s = e;
-            }
-        });
+            },
+        );
         Ok(Matrix {
             n,
             cols: outs.into_iter().map(Arc::new).collect(),
@@ -352,13 +376,13 @@ impl Matrix {
     pub fn mean(&self, axis: usize, par: bool) -> Result<Vec<f64>> {
         let along_stored = self.stored_axis(axis)?;
         Ok(if along_stored {
-            self.cols
-                .iter()
-                .map(|c| sum(c) / self.n as f64)
-                .collect()
+            self.cols.iter().map(|c| sum(c) / self.n as f64).collect()
         } else {
             let k = self.cols.len() as f64;
-            row_sums(&self.cols, self.n, par).into_iter().map(|s| s / k).collect()
+            row_sums(&self.cols, self.n, par)
+                .into_iter()
+                .map(|s| s / k)
+                .collect()
         })
     }
 
@@ -416,8 +440,9 @@ fn same_cols(a: &[Arc<Vec<f64>>], b: &[Arc<Vec<f64>>]) -> bool {
 fn fill_pieces(outs: &mut [Vec<f64>], par: bool, f: impl Fn(usize, &mut [&mut [f64]]) + Sync) {
     let n = outs.first().map(|o| o.len()).unwrap_or(0);
     let n_pieces = n.div_ceil(PIECE).max(1);
-    let mut pieces: Vec<(usize, Vec<&mut [f64]>)> =
-        (0..n_pieces).map(|p| (p * PIECE, Vec::with_capacity(outs.len()))).collect();
+    let mut pieces: Vec<(usize, Vec<&mut [f64]>)> = (0..n_pieces)
+        .map(|p| (p * PIECE, Vec::with_capacity(outs.len())))
+        .collect();
     for o in outs.iter_mut() {
         for (p, chunk) in o.chunks_mut(PIECE).enumerate() {
             pieces[p].1.push(chunk);
@@ -527,7 +552,10 @@ pub fn cross(a: &[Arc<Vec<f64>>], b: &[Arc<Vec<f64>>], n: usize, sym: bool, par:
 fn square(a: &Matrix, what: &str) -> Result<usize> {
     let (r, c) = a.shape();
     if r != c {
-        return Err(bad(format!("{}: needs a square matrix, got {}×{}", what, r, c)));
+        return Err(bad(format!(
+            "{}: needs a square matrix, got {}×{}",
+            what, r, c
+        )));
     }
     Ok(r)
 }
@@ -919,8 +947,14 @@ pub enum Metric {
 }
 
 impl Metric {
-    pub const NAMES: &'static [&'static str] =
-        &["sqeuclidean", "euclidean", "cityblock", "manhattan", "chebyshev", "cosine"];
+    pub const NAMES: &'static [&'static str] = &[
+        "sqeuclidean",
+        "euclidean",
+        "cityblock",
+        "manhattan",
+        "chebyshev",
+        "cosine",
+    ];
 
     pub fn parse(name: &str) -> Option<Metric> {
         Some(match name {
@@ -951,10 +985,17 @@ fn distance(x: &[f64], c: &[f64], metric: Metric, nx: f64, nc: f64) -> f64 {
             for (a, b) in rx.iter().zip(rc) {
                 s += (a - b) * (a - b);
             }
-            if metric == Metric::Euclidean { s.sqrt() } else { s }
+            if metric == Metric::Euclidean {
+                s.sqrt()
+            } else {
+                s
+            }
         }
         Metric::Cityblock => x.iter().zip(c).map(|(a, b)| (a - b).abs()).sum(),
-        Metric::Chebyshev => x.iter().zip(c).fold(0.0f64, |m, (a, b)| m.max((a - b).abs())),
+        Metric::Chebyshev => x
+            .iter()
+            .zip(c)
+            .fold(0.0f64, |m, (a, b)| m.max((a - b).abs())),
         Metric::Cosine => {
             let d = dot(x, c);
             if nx == 0.0 || nc == 0.0 {
@@ -1057,7 +1098,10 @@ pub fn float_column(s: &Series, name: &str) -> Result<(Arc<Vec<f64>>, Option<Vec
 
 /// A numeric column's values as Floats (shared when they are Floats)
 /// and its validity, as stored.
-pub fn float_values<'a>(s: &'a Series, name: &str) -> Result<(Arc<Vec<f64>>, Option<&'a crate::Bitmap>)> {
+pub fn float_values<'a>(
+    s: &'a Series,
+    name: &str,
+) -> Result<(Arc<Vec<f64>>, Option<&'a crate::Bitmap>)> {
     Ok(match s {
         Series::F64 { values, validity } => (values.clone(), validity.as_ref()),
         Series::I64 { values, validity } => (
@@ -1133,7 +1177,11 @@ fn pair_stat(
     let sab = dot(&ca, &cb);
     if corr {
         let d = (dot(&ca, &ca) * dot(&cb, &cb)).sqrt();
-        if d == 0.0 { f64::NAN } else { (sab / d).clamp(-1.0, 1.0) }
+        if d == 0.0 {
+            f64::NAN
+        } else {
+            (sab / d).clamp(-1.0, 1.0)
+        }
     } else {
         sab / (n - 1) as f64
     }
@@ -1193,7 +1241,14 @@ pub fn corr_cov(
     }
     let pairs: Vec<(usize, usize)> = (0..k).flat_map(|i| (i..k).map(move |j| (i, j))).collect();
     let at = |&(i, j): &(usize, usize)| {
-        pair_stat(&cols[i].0, &cols[j].0, cols[i].1.as_ref(), cols[j].1.as_ref(), method, corr)
+        pair_stat(
+            &cols[i].0,
+            &cols[j].0,
+            cols[i].1.as_ref(),
+            cols[j].1.as_ref(),
+            method,
+            corr,
+        )
     };
     #[cfg(feature = "parallel")]
     let vals: Vec<f64> = if par && n * pairs.len() >= PAR_WORK / 4 {
@@ -1204,7 +1259,11 @@ pub fn corr_cov(
     #[cfg(not(feature = "parallel"))]
     let vals: Vec<f64> = pairs.iter().map(at).collect();
     for (&(i, j), v) in pairs.iter().zip(vals) {
-        let v = if corr && i == j && !v.is_nan() { 1.0 } else { v };
+        let v = if corr && i == j && !v.is_nan() {
+            1.0
+        } else {
+            v
+        };
         out[i * k + j] = v;
         out[j * k + i] = v;
     }
@@ -1232,7 +1291,10 @@ mod tests {
         assert_eq!(a.t().materialize().t(), a);
         let g = a.gram(false);
         assert_eq!(g.to_row_major(), vec![35.0, 44.0, 44.0, 56.0]);
-        assert_eq!(a.matvec(&[1.0, -1.0], false).unwrap(), vec![-1.0, -1.0, -1.0]);
+        assert_eq!(
+            a.matvec(&[1.0, -1.0], false).unwrap(),
+            vec![-1.0, -1.0, -1.0]
+        );
         assert!(a.matmul(&a, false).is_err());
     }
 

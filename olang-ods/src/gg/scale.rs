@@ -101,7 +101,11 @@ pub fn nice_breaks(lo: f64, hi: f64, n: usize) -> Vec<f64> {
 /// The step of a list of breaks (for the labels' decimals).
 fn step_of(b: &[f64]) -> f64 {
     if b.len() < 2 {
-        return b.first().map(|v| v.abs()).filter(|v| *v > 0.0).unwrap_or(1.0);
+        return b
+            .first()
+            .map(|v| v.abs())
+            .filter(|v| *v > 0.0)
+            .unwrap_or(1.0);
     }
     let mut s = f64::INFINITY;
     for w in b.windows(2) {
@@ -362,7 +366,10 @@ fn time_labels(breaks: &[f64], unit: TimeUnit, datetime: bool) -> Vec<String> {
         TimeUnit::Day(_) => "%b %e",
         TimeUnit::Sec(s) if s < 60.0 => "%H:%M:%S",
         TimeUnit::Sec(_) => {
-            let days: Vec<i64> = breaks.iter().map(|t| (t / 86400.0).floor() as i64).collect();
+            let days: Vec<i64> = breaks
+                .iter()
+                .map(|t| (t / 86400.0).floor() as i64)
+                .collect();
             if days.first() != days.last() {
                 "%b %e %H:%M"
             } else {
@@ -419,7 +426,9 @@ fn fixed(v: f64, d: usize, commas: bool) -> String {
         return "0".to_string();
     }
     let s = format!("{:.*}", d, v);
-    let s = if s == "-0" || s.starts_with("-0.") && s.trim_start_matches("-0.").chars().all(|c| c == '0') {
+    let s = if s == "-0"
+        || s.starts_with("-0.") && s.trim_start_matches("-0.").chars().all(|c| c == '0')
+    {
         s.trim_start_matches('-').to_string()
     } else {
         s
@@ -461,7 +470,13 @@ impl NumFmt {
 }
 
 /// Labels for numbers (already back-transformed) at breaks of `step`.
-pub fn format_numbers(vals: &[f64], fmt: &NumFmt, step: f64, prefix: &str, suffix: &str) -> Vec<String> {
+pub fn format_numbers(
+    vals: &[f64],
+    fmt: &NumFmt,
+    step: f64,
+    prefix: &str,
+    suffix: &str,
+) -> Vec<String> {
     let max = vals.iter().fold(0f64, |a, v| a.max(v.abs()));
     vals.iter()
         .map(|&v| {
@@ -475,11 +490,21 @@ pub fn format_numbers(vals: &[f64], fmt: &NumFmt, step: f64, prefix: &str, suffi
                         fixed(v, decimals_for(step), max >= 1e4)
                     }
                 }
-                NumFmt::Percent => format!("{}%", fixed(v * 100.0, decimals_for(step * 100.0), true)),
+                NumFmt::Percent => {
+                    format!("{}%", fixed(v * 100.0, decimals_for(step * 100.0), true))
+                }
                 NumFmt::Dollar => {
-                    let d = if step < 1.0 { decimals_for(step).max(2) } else { 0 };
+                    let d = if step < 1.0 {
+                        decimals_for(step).max(2)
+                    } else {
+                        0
+                    };
                     let t = fixed(v.abs(), d, true);
-                    if v < 0.0 { format!("-${}", t) } else { format!("${}", t) }
+                    if v < 0.0 {
+                        format!("-${}", t)
+                    } else {
+                        format!("${}", t)
+                    }
                 }
                 NumFmt::Short => {
                     // each value in its own unit, its zeros trimmed (200k, 1.5M)
@@ -496,8 +521,16 @@ pub fn format_numbers(vals: &[f64], fmt: &NumFmt, step: f64, prefix: &str, suffi
                         (1.0, "")
                     };
                     let t = fixed(v / u, decimals_for(step / u).max(2), false);
-                    let t = if t.contains('.') { t.trim_end_matches('0').trim_end_matches('.').to_string() } else { t };
-                    if v == 0.0 { "0".to_string() } else { format!("{}{}", t, sfx) }
+                    let t = if t.contains('.') {
+                        t.trim_end_matches('0').trim_end_matches('.').to_string()
+                    } else {
+                        t
+                    };
+                    if v == 0.0 {
+                        "0".to_string()
+                    } else {
+                        format!("{}{}", t, sfx)
+                    }
                 }
                 NumFmt::Scientific => {
                     if v == 0.0 {
@@ -505,7 +538,11 @@ pub fn format_numbers(vals: &[f64], fmt: &NumFmt, step: f64, prefix: &str, suffi
                     } else {
                         let e = v.abs().log10().floor() as i32;
                         let m = v / 10f64.powi(e);
-                        format!("{}e{}", fixed(m, if (m - m.round()).abs() < 1e-9 { 0 } else { 1 }, false), e)
+                        format!(
+                            "{}e{}",
+                            fixed(m, if (m - m.round()).abs() < 1e-9 { 0 } else { 1 }, false),
+                            e
+                        )
                     }
                 }
             };
@@ -633,7 +670,12 @@ impl PosScale {
                 self.limits = Some((f(v[0]), f(v[1])));
             }
             Some(Param::Strs(v)) => self.dlimits = Some(v.clone()),
-            Some(_) => return bad(format!("scale_{}: limits is [lo, hi] (either may be ()), or a list of levels", self.axis)),
+            Some(_) => {
+                return bad(format!(
+                    "scale_{}: limits is [lo, hi] (either may be ()), or a list of levels",
+                    self.axis
+                ));
+            }
             None => {}
         }
         match p.get("breaks") {
@@ -642,7 +684,12 @@ impl PosScale {
             Some(Param::Strs(v)) => self.breaks = Breaks::AtLevels(v.clone()),
             Some(Param::Bool(false)) => self.breaks = Breaks::None,
             Some(Param::Str(s)) if s == "none" => self.breaks = Breaks::None,
-            Some(_) => return bad(format!("scale_{}: breaks is a list of values or a count", self.axis)),
+            Some(_) => {
+                return bad(format!(
+                    "scale_{}: breaks is a list of values or a count",
+                    self.axis
+                ));
+            }
             None => {}
         }
         if let Some(every) = p_str(p, "date_breaks") {
@@ -653,15 +700,22 @@ impl PosScale {
                 self.labels = match NumFmt::parse(f) {
                     Some(n) => Labels::Num(n),
                     None if f.contains('%') => Labels::Date(f.clone()),
-                    None => return bad(format!(
-                        "scale_{}: labels \"{}\" (percent, comma, dollar, short, scientific, plain, a date format like \"%b %Y\", or a list)",
-                        self.axis, f
-                    )),
+                    None => {
+                        return bad(format!(
+                            "scale_{}: labels \"{}\" (percent, comma, dollar, short, scientific, plain, a date format like \"%b %Y\", or a list)",
+                            self.axis, f
+                        ));
+                    }
                 }
             }
             Some(Param::Strs(v)) => self.labels = Labels::List(v.clone()),
             Some(Param::Pairs(v)) => self.labels = Labels::Pairs(v.clone()),
-            Some(_) => return bad(format!("scale_{}: labels is a format name or a list", self.axis)),
+            Some(_) => {
+                return bad(format!(
+                    "scale_{}: labels is a format name or a list",
+                    self.axis
+                ));
+            }
             None => {}
         }
         if let Some(f) = p_str(p, "date_labels") {
@@ -683,14 +737,30 @@ impl PosScale {
 
     /// Train an axis over a range (transformed space) of data `dlo..dhi`:
     /// limits, expansion, breaks and labels for a panel `len` pixels long.
-    pub fn train(&self, dlo: f64, dhi: f64, len: f64, zero_floor: bool, zoom: Option<(f64, f64)>) -> Trained {
+    pub fn train(
+        &self,
+        dlo: f64,
+        dhi: f64,
+        len: f64,
+        zero_floor: bool,
+        zoom: Option<(f64, f64)>,
+    ) -> Trained {
         self.train_on(dlo, dhi, len, self.axis == 'x', false, zero_floor, zoom)
     }
 
     /// Train drawn `horizontal`ly or not (the breaks' spacing), over
     /// whole-numbered data or not (no breaks between whole numbers).
     #[allow(clippy::too_many_arguments)]
-    pub fn train_on(&self, dlo: f64, dhi: f64, len: f64, horizontal: bool, whole: bool, zero_floor: bool, zoom: Option<(f64, f64)>) -> Trained {
+    pub fn train_on(
+        &self,
+        dlo: f64,
+        dhi: f64,
+        len: f64,
+        horizontal: bool,
+        whole: bool,
+        zero_floor: bool,
+        zoom: Option<(f64, f64)>,
+    ) -> Trained {
         let (mut lo, mut hi) = (dlo, dhi);
         if let Some((a, b)) = self.limits {
             if let Some(a) = a {
@@ -717,28 +787,47 @@ impl PosScale {
         } else {
             // expansion: 5% continuous, 0.6 of a level discrete; none on a
             // bar's floor
-            let (mult, add) = self.expand.unwrap_or(if discrete { (0.0, 0.6) } else { (0.05, 0.0) });
+            let (mult, add) =
+                self.expand
+                    .unwrap_or(if discrete { (0.0, 0.6) } else { (0.05, 0.0) });
             if hi - lo < 1e-12 {
                 let d = if lo.abs() > 0.0 { lo.abs() * 0.1 } else { 0.5 };
                 lo -= d;
                 hi += d;
             }
             let span = hi - lo;
-            let lo_floor = zero_floor && lo == 0.0 && self.expand.is_none() && self.limits.is_none();
+            let lo_floor =
+                zero_floor && lo == 0.0 && self.expand.is_none() && self.limits.is_none();
             if !lo_floor {
                 lo -= span * mult + add;
             }
             hi += span * mult + add;
         }
-        let target = if horizontal { (len / 90.0).round().clamp(2.0, 10.0) } else { (len / 42.0).round().clamp(3.0, 10.0) } as usize;
+        let target = if horizontal {
+            (len / 90.0).round().clamp(2.0, 10.0)
+        } else {
+            (len / 42.0).round().clamp(3.0, 10.0)
+        } as usize;
         let (mut breaks, mut labels) = self.breaks_and_labels(lo, hi, target);
         // whole-numbered data (counts, years, bedrooms) never breaks between whole numbers
-        if whole && self.kind == PosKind::Continuous && self.trans == Trans::Identity && self.breaks == Breaks::Auto && breaks.len() > 1 && breaks.iter().any(|b| b.fract() != 0.0) {
+        if whole
+            && self.kind == PosKind::Continuous
+            && self.trans == Trans::Identity
+            && self.breaks == Breaks::Auto
+            && breaks.len() > 1
+            && breaks.iter().any(|b| b.fract() != 0.0)
+        {
             let a = lo.ceil() as i64;
             let b = hi.floor() as i64;
             let span = (b - a).max(1);
-            let step = [1i64, 2, 5, 10, 20, 25, 50].into_iter().find(|s| span / s <= target as i64).unwrap_or(1);
-            breaks = (a..=b).filter(|v| v % step == 0).map(|v| v as f64).collect();
+            let step = [1i64, 2, 5, 10, 20, 25, 50]
+                .into_iter()
+                .find(|s| span / s <= target as i64)
+                .unwrap_or(1);
+            breaks = (a..=b)
+                .filter(|v| v % step == 0)
+                .map(|v| v as f64)
+                .collect();
             labels = self.number_labels(&breaks);
         }
         Trained {
@@ -776,10 +865,15 @@ impl PosScale {
                 Breaks::N(k) => time_breaks(lo, hi, *k, self.every),
                 _ => time_breaks(lo, hi, n, self.every),
             };
-            let bs: Vec<f64> = bs.into_iter().filter(|v| *v >= lo - 1e-6 && *v <= hi + 1e-6).collect();
+            let bs: Vec<f64> = bs
+                .into_iter()
+                .filter(|v| *v >= lo - 1e-6 && *v <= hi + 1e-6)
+                .collect();
             let ls = match &self.labels {
                 Labels::Date(f) => bs.iter().map(|t| strftime(*t, f)).collect(),
-                Labels::List(l) => (0..bs.len()).map(|i| l.get(i).cloned().unwrap_or_default()).collect(),
+                Labels::List(l) => (0..bs.len())
+                    .map(|i| l.get(i).cloned().unwrap_or_default())
+                    .collect(),
                 _ => time_labels(&bs, unit, datetime),
             };
             return (bs, ls);
@@ -799,7 +893,8 @@ impl PosScale {
                         .map(|v| v.sqrt())
                         .collect(),
                     Trans::Reverse => {
-                        let mut b: Vec<f64> = nice_breaks(-hi, -lo, n).into_iter().map(|v| -v).collect();
+                        let mut b: Vec<f64> =
+                            nice_breaks(-hi, -lo, n).into_iter().map(|v| -v).collect();
                         b.reverse();
                         b
                     }
@@ -826,17 +921,26 @@ impl PosScale {
 
     pub fn number_labels(&self, vals: &[f64]) -> Vec<String> {
         match &self.labels {
-            Labels::List(l) => (0..vals.len()).map(|i| l.get(i).cloned().unwrap_or_default()).collect(),
+            Labels::List(l) => (0..vals.len())
+                .map(|i| l.get(i).cloned().unwrap_or_default())
+                .collect(),
             Labels::Num(f) => format_numbers(vals, f, step_of(vals), &self.prefix, &self.suffix),
             _ => {
                 let f = if self.trans == Trans::Log10 {
                     let max = vals.iter().fold(0f64, |a, v| a.max(v.abs()));
-                    if max >= 1e6 { NumFmt::Short } else { NumFmt::Comma }
+                    if max >= 1e6 {
+                        NumFmt::Short
+                    } else {
+                        NumFmt::Comma
+                    }
                 } else {
                     NumFmt::Auto
                 };
                 let step = if self.trans == Trans::Log10 {
-                    vals.iter().copied().filter(|v| *v > 0.0).fold(f64::INFINITY, f64::min)
+                    vals.iter()
+                        .copied()
+                        .filter(|v| *v > 0.0)
+                        .fold(f64::INFINITY, f64::min)
                 } else {
                     step_of(vals)
                 };
@@ -883,7 +987,9 @@ pub fn color(s: &str) -> Option<Rgba> {
         return Rgba::hex(s);
     }
     let lower = s.to_ascii_lowercase().replace([' ', '_'], "");
-    if let Some(rest) = lower.strip_prefix("gray").or_else(|| lower.strip_prefix("grey"))
+    if let Some(rest) = lower
+        .strip_prefix("gray")
+        .or_else(|| lower.strip_prefix("grey"))
         && let Ok(k) = rest.parse::<u8>()
     {
         let v = (k.min(100) as f64 * 2.55).round() as u8;
@@ -945,7 +1051,15 @@ pub fn color(s: &str) -> Option<Rgba> {
 }
 
 pub fn color_or_err(s: &str) -> super::Result<Rgba> {
-    color(s).map_or_else(|| bad(format!("unknown colour \"{}\" (a name like \"steelblue\" or \"#3a6fd8\")", s)), Ok)
+    color(s).map_or_else(
+        || {
+            bad(format!(
+                "unknown colour \"{}\" (a name like \"steelblue\" or \"#3a6fd8\")",
+                s
+            ))
+        },
+        Ok,
+    )
 }
 
 /// The viridis family, sampled at eleven stops each (interpolated).
@@ -993,7 +1107,11 @@ impl Ramp {
         if s.len() == 1 {
             return s[0];
         }
-        let t = if t.is_finite() { t.clamp(0.0, 1.0) } else { 0.0 } * (s.len() - 1) as f64;
+        let t = if t.is_finite() {
+            t.clamp(0.0, 1.0)
+        } else {
+            0.0
+        } * (s.len() - 1) as f64;
         let i = (t.floor() as usize).min(s.len() - 2);
         s[i].mix(s[i + 1], t - i as f64)
     }
@@ -1020,9 +1138,18 @@ impl Ramp {
 #[derive(Clone, Debug)]
 pub enum NpMap {
     /// Levels to visual values.
-    Discrete { levels: Vec<String>, labels: Vec<String> },
+    Discrete {
+        levels: Vec<String>,
+        labels: Vec<String>,
+    },
     /// A continuous range (transformed space) to [0, 1].
-    Continuous { lo: f64, hi: f64, mid: Option<f64>, breaks: Vec<f64>, labels: Vec<String> },
+    Continuous {
+        lo: f64,
+        hi: f64,
+        mid: Option<f64>,
+        breaks: Vec<f64>,
+        labels: Vec<String>,
+    },
     /// Values are the visual values themselves.
     Identity,
 }
@@ -1065,7 +1192,9 @@ impl NpScale {
         if let Some(n) = p_str(&s.params, "name") {
             self.name = Some(n.to_string());
         }
-        if p_str(&s.params, "guide") == Some("none") || s.params.get("guide") == Some(&Param::Bool(false)) {
+        if p_str(&s.params, "guide") == Some("none")
+            || s.params.get("guide") == Some(&Param::Bool(false))
+        {
             self.guide = false;
         }
         if let Some(t) = p_str(&s.params, "trans") {
@@ -1085,8 +1214,10 @@ impl NpScale {
     /// Whether a mapping with these values is discrete under this scale.
     pub fn wants_discrete(&self, data_discrete: bool) -> bool {
         match self.kind.as_str() {
-            "manual" | "viridis_d" | "palette" | "grey" | "gray" | "discrete" | "shape" | "linetype" => true,
-            "viridis_c" | "gradient" | "gradient2" | "gradientn" | "continuous" | "diverging" | "area" | "radius" | "linewidth" => false,
+            "manual" | "viridis_d" | "palette" | "grey" | "gray" | "discrete" | "shape"
+            | "linetype" => true,
+            "viridis_c" | "gradient" | "gradient2" | "gradientn" | "continuous" | "diverging"
+            | "area" | "radius" | "linewidth" => false,
             _ => data_discrete,
         }
     }
@@ -1099,7 +1230,12 @@ impl NpScale {
                 .collect(),
             Some(Param::Pairs(p)) => levels
                 .iter()
-                .map(|lv| p.iter().find(|(k, _)| k == lv).map(|(_, v)| v.clone()).unwrap_or_else(|| lv.clone()))
+                .map(|lv| {
+                    p.iter()
+                        .find(|(k, _)| k == lv)
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or_else(|| lv.clone())
+                })
                 .collect(),
             _ => levels.clone(),
         };
@@ -1129,7 +1265,13 @@ impl NpScale {
                         p_num(&self.params, "direction").unwrap_or(1.0) < 0.0,
                     )?;
                     (0..n)
-                        .map(|i| ramp.at(if n == 1 { 0.0 } else { i as f64 / (n - 1) as f64 }))
+                        .map(|i| {
+                            ramp.at(if n == 1 {
+                                0.0
+                            } else {
+                                i as f64 / (n - 1) as f64
+                            })
+                        })
                         .collect()
                 }
                 "grey" | "gray" => {
@@ -1137,7 +1279,11 @@ impl NpScale {
                     let b = p_num(&self.params, "end").unwrap_or(0.75);
                     (0..n)
                         .map(|i| {
-                            let t = if n == 1 { a } else { a + (b - a) * i as f64 / (n - 1) as f64 };
+                            let t = if n == 1 {
+                                a
+                            } else {
+                                a + (b - a) * i as f64 / (n - 1) as f64
+                            };
                             let v = (t * 255.0).round() as u8;
                             Rgba::new(v, v, v)
                         })
@@ -1150,7 +1296,13 @@ impl NpScale {
                     } else {
                         let ramp = Ramp::viridis(name, 0.0, 0.92, false)?;
                         (0..n)
-                            .map(|i| ramp.at(if n == 1 { 0.0 } else { i as f64 / (n - 1) as f64 }))
+                            .map(|i| {
+                                ramp.at(if n == 1 {
+                                    0.0
+                                } else {
+                                    i as f64 / (n - 1) as f64
+                                })
+                            })
                             .collect()
                     }
                 }
@@ -1194,11 +1346,17 @@ impl NpScale {
                     Ramp(vec![c("low", cold)?, c("mid", neutral)?, c("high", warm)?])
                 }
                 "gradientn" => {
-                    let cs = p_strs(p, "colors").or_else(|| p_strs(p, "colours")).unwrap_or_default();
+                    let cs = p_strs(p, "colors")
+                        .or_else(|| p_strs(p, "colours"))
+                        .unwrap_or_default();
                     if cs.len() < 2 {
                         return bad("scale_*_gradientn: colors needs two or more colours");
                     }
-                    Ramp(cs.iter().map(|s| color_or_err(s)).collect::<super::Result<Vec<_>>>()?)
+                    Ramp(
+                        cs.iter()
+                            .map(|s| color_or_err(s))
+                            .collect::<super::Result<Vec<_>>>()?,
+                    )
                 }
                 _ => Ramp::viridis(
                     p_str(p, "option").unwrap_or("viridis"),
@@ -1258,9 +1416,11 @@ impl NpScale {
             (Some(NpMap::Discrete { .. }), Some(c)) if c != super::data::NA => {
                 self.palette[c as usize % self.palette.len().max(1)]
             }
-            (Some(NpMap::Continuous { .. }), _) if v.is_finite() => {
-                self.ramp.as_ref().map(|r| r.at(self.unit(v))).unwrap_or(Rgba::new(128, 128, 128))
-            }
+            (Some(NpMap::Continuous { .. }), _) if v.is_finite() => self
+                .ramp
+                .as_ref()
+                .map(|r| r.at(self.unit(v)))
+                .unwrap_or(Rgba::new(128, 128, 128)),
             _ => Rgba::new(150, 150, 150),
         }
     }
@@ -1272,7 +1432,11 @@ impl NpScale {
         let (a, b) = (r[0], *r.get(1).unwrap_or(&r[0]));
         let t = match (&self.map, code) {
             (Some(NpMap::Discrete { levels, .. }), Some(c)) if c != super::data::NA => {
-                if levels.len() <= 1 { 0.5 } else { c as f64 / (levels.len() - 1) as f64 }
+                if levels.len() <= 1 {
+                    0.5
+                } else {
+                    c as f64 / (levels.len() - 1) as f64
+                }
             }
             (Some(NpMap::Continuous { .. }), _) => self.unit(v),
             _ => return f64::NAN,
@@ -1289,7 +1453,11 @@ impl NpScale {
         let (a, b) = (r[0], *r.get(1).unwrap_or(&r[0]));
         let t = match (&self.map, code) {
             (Some(NpMap::Discrete { levels, .. }), Some(c)) if c != super::data::NA => {
-                if levels.len() <= 1 { 1.0 } else { c as f64 / (levels.len() - 1) as f64 }
+                if levels.len() <= 1 {
+                    1.0
+                } else {
+                    c as f64 / (levels.len() - 1) as f64
+                }
             }
             (Some(NpMap::Continuous { .. }), _) => self.unit(v),
             _ => return 1.0,
@@ -1304,7 +1472,11 @@ impl NpScale {
         let (a, b) = (r[0], *r.get(1).unwrap_or(&r[0]));
         let t = match (&self.map, code) {
             (Some(NpMap::Discrete { levels, .. }), Some(c)) if c != super::data::NA => {
-                if levels.len() <= 1 { 0.5 } else { c as f64 / (levels.len() - 1) as f64 }
+                if levels.len() <= 1 {
+                    0.5
+                } else {
+                    c as f64 / (levels.len() - 1) as f64
+                }
             }
             (Some(NpMap::Continuous { .. }), _) if v.is_finite() => self.unit(v),
             _ => return f64::NAN,
@@ -1318,7 +1490,8 @@ impl NpScale {
                 if let Some(values) = p_strs(&self.params, "values")
                     && !values.is_empty()
                 {
-                    return Shape::parse(&values[c as usize % values.len()]).unwrap_or(Shape::Circle);
+                    return Shape::parse(&values[c as usize % values.len()])
+                        .unwrap_or(Shape::Circle);
                 }
                 Shape::ORDER[c as usize % Shape::ORDER.len()]
             }
@@ -1341,7 +1514,9 @@ impl NpScale {
     }
 }
 
-pub const LINETYPES: [&str; 6] = ["solid", "dashed", "dotted", "dotdash", "longdash", "twodash"];
+pub const LINETYPES: [&str; 6] = [
+    "solid", "dashed", "dotted", "dotdash", "longdash", "twodash",
+];
 
 /// A linetype's dash pattern (pixels), None for solid.
 pub fn dash(name: &str) -> Option<Vec<f64>> {
@@ -1388,7 +1563,10 @@ pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
                     y.push(d);
                     j.next();
                 }
-                let (xv, yv) = (x.parse::<u128>().unwrap_or(0), y.parse::<u128>().unwrap_or(0));
+                let (xv, yv) = (
+                    x.parse::<u128>().unwrap_or(0),
+                    y.parse::<u128>().unwrap_or(0),
+                );
                 if xv != yv {
                     return xv.cmp(&yv);
                 }
@@ -1410,7 +1588,10 @@ mod tests {
 
     #[test]
     fn nice_breaks_are_nice() {
-        assert_eq!(nice_breaks(0.0, 10.0, 5), vec![0.0, 2.0, 4.0, 6.0, 8.0, 10.0]);
+        assert_eq!(
+            nice_breaks(0.0, 10.0, 5),
+            vec![0.0, 2.0, 4.0, 6.0, 8.0, 10.0]
+        );
         assert_eq!(nice_breaks(0.13, 0.91, 4), vec![0.2, 0.4, 0.6, 0.8]);
         let b = nice_breaks(-3.2, 47.0, 5);
         assert_eq!(b, vec![0.0, 10.0, 20.0, 30.0, 40.0]);
@@ -1420,18 +1601,36 @@ mod tests {
     fn log_breaks_are_decades() {
         let b = log_breaks(0.0, 5.0, 5);
         assert_eq!(b, vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0]);
-        let b: Vec<f64> = log_breaks(0.0, 1.0, 5).iter().map(|v| 10f64.powf(*v).round()).collect();
+        let b: Vec<f64> = log_breaks(0.0, 1.0, 5)
+            .iter()
+            .map(|v| 10f64.powf(*v).round())
+            .collect();
         assert_eq!(b, vec![1.0, 2.0, 5.0, 10.0]);
     }
 
     #[test]
     fn labels_by_format() {
         let v = [0.0, 0.25, 0.5];
-        assert_eq!(format_numbers(&v, &NumFmt::Percent, 0.25, "", ""), vec!["0%", "25%", "50%"]);
-        assert_eq!(format_numbers(&[1500.0, 250000.0], &NumFmt::Dollar, 1000.0, "", ""), vec!["$1,500", "$250,000"]);
-        assert_eq!(format_numbers(&[0.0, 50000.0, 100000.0], &NumFmt::Auto, 50000.0, "", ""), vec!["0", "50,000", "100,000"]);
-        assert_eq!(format_numbers(&[0.0, 2.5e6, 5e6], &NumFmt::Short, 2.5e6, "", ""), vec!["0", "2.5M", "5M"]);
-        assert_eq!(format_numbers(&[0.5, 1.0, 1.5], &NumFmt::Auto, 0.5, "", ""), vec!["0.5", "1.0", "1.5"]);
+        assert_eq!(
+            format_numbers(&v, &NumFmt::Percent, 0.25, "", ""),
+            vec!["0%", "25%", "50%"]
+        );
+        assert_eq!(
+            format_numbers(&[1500.0, 250000.0], &NumFmt::Dollar, 1000.0, "", ""),
+            vec!["$1,500", "$250,000"]
+        );
+        assert_eq!(
+            format_numbers(&[0.0, 50000.0, 100000.0], &NumFmt::Auto, 50000.0, "", ""),
+            vec!["0", "50,000", "100,000"]
+        );
+        assert_eq!(
+            format_numbers(&[0.0, 2.5e6, 5e6], &NumFmt::Short, 2.5e6, "", ""),
+            vec!["0", "2.5M", "5M"]
+        );
+        assert_eq!(
+            format_numbers(&[0.5, 1.0, 1.5], &NumFmt::Auto, 0.5, "", ""),
+            vec!["0.5", "1.0", "1.5"]
+        );
     }
 
     #[test]
@@ -1444,7 +1643,10 @@ mod tests {
         assert_eq!(strftime(b[0], "%Y-%m-%d"), "2024-04-01");
         let l = time_labels(&b, u, false);
         assert_eq!(l[0], "Apr");
-        assert_eq!(strftime(0.0, "%a %e %B %Y %H:%M"), "Thu 1 January 1970 00:00");
+        assert_eq!(
+            strftime(0.0, "%a %e %B %Y %H:%M"),
+            "Thu 1 January 1970 00:00"
+        );
     }
 
     #[test]

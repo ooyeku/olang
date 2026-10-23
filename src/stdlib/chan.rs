@@ -17,11 +17,11 @@
 
 use crate::ast::Value;
 use crate::native::{NativeHandle, NativeObject};
-#[cfg(target_arch = "wasm32")]
-use hosted as crossbeam_channel;
-use crossbeam_channel::{Receiver, Sender, TryRecvError};
 #[cfg(not(target_arch = "wasm32"))]
 use crossbeam_channel::RecvTimeoutError;
+use crossbeam_channel::{Receiver, Sender, TryRecvError};
+#[cfg(target_arch = "wasm32")]
+use hosted as crossbeam_channel;
 
 /// The browser runtime's queue: one thread, so a lock around a deque,
 /// with the part of crossbeam-channel's surface this module uses that

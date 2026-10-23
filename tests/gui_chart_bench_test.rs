@@ -43,7 +43,10 @@ fn chart(dx: f64) -> Value {
     let mut area = pts.clone();
     area.push(tup(&[N as f64 * 0.22 - dx, 600.0]));
     area.push(tup(&[-dx, 600.0]));
-    let mut ops = vec![m(vec![("op", s("push")), ("clip", tup(&[0.0, 0.0, 1100.0, 600.0]))])];
+    let mut ops = vec![m(vec![
+        ("op", s("push")),
+        ("clip", tup(&[0.0, 0.0, 1100.0, 600.0])),
+    ])];
     for k in 0..12 {
         ops.push(m(vec![
             ("op", s("line")),
@@ -90,7 +93,11 @@ fn a_chart_of_ten_thousand_points_pans() {
     let mut out = Vec::new();
     let node = |dx: f64| {
         Value::List(Arc::new(vec![
-            m(vec![("key", s("root")), ("box", tup(&[0.0, 0.0, 1200.0, 700.0])), ("style", m(vec![("bg", s("#ffffff"))]))]),
+            m(vec![
+                ("key", s("root")),
+                ("box", tup(&[0.0, 0.0, 1200.0, 700.0])),
+                ("style", m(vec![("bg", s("#ffffff"))])),
+            ]),
             m(vec![
                 ("key", s("chart")),
                 ("parent", s("root")),
@@ -105,7 +112,8 @@ fn a_chart_of_ten_thousand_points_pans() {
     let (mut list, mut draw, mut total) = (Vec::new(), Vec::new(), Vec::new());
     for step in 0..80 {
         // the program's patch is not the engine's frame: made before the clock
-        st.apply(&node(step as f64 * 3.7), &mut out).expect("applies");
+        st.apply(&node(step as f64 * 3.7), &mut out)
+            .expect("applies");
         let t0 = Instant::now();
         let dl = st.display_list();
         let t1 = Instant::now();

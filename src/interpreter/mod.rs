@@ -60,7 +60,9 @@ pub(crate) fn module_member_miss<'a>(
     field: &str,
     members: impl Iterator<Item = &'a str>,
 ) -> String {
-    let members: Vec<&str> = members.filter(|m| *m != field && !m.starts_with("__")).collect();
+    let members: Vec<&str> = members
+        .filter(|m| *m != field && !m.starts_with("__"))
+        .collect();
     let lower = field.to_lowercase();
     let max_distance = (field.chars().count() / 3).clamp(1, 3);
     let nearest = members
@@ -73,7 +75,9 @@ pub(crate) fn module_member_miss<'a>(
                 .iter()
                 .map(|m| {
                     (
-                        crate::interpreter::errors::IntuitiveErrorFormatter::levenshtein_distance(field, m),
+                        crate::interpreter::errors::IntuitiveErrorFormatter::levenshtein_distance(
+                            field, m,
+                        ),
                         *m,
                     )
                 })
@@ -1925,7 +1929,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                         Value::Map(map) => {
                             map.contains_key(field)
                                 && !crate::native_sig::method_receiver(&receiver)
-                                    .and_then(|(h, t)| crate::native_sig::method_target(h, t, field))
+                                    .and_then(|(h, t)| {
+                                        crate::native_sig::method_target(h, t, field)
+                                    })
                                     .is_some()
                         }
                         _ => false,
@@ -1946,7 +1952,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     // A native value's method (L2): `s.exp()` is
                     // `ods.exp(s)`, with no `impl` of the name for its type.
                     if !is_struct_field
-                        && let Some((home, type_name)) = crate::native_sig::method_receiver(&receiver)
+                        && let Some((home, type_name)) =
+                            crate::native_sig::method_receiver(&receiver)
                     {
                         let Some(full) = crate::native_sig::method_target(home, type_name, field)
                         else {
@@ -2000,7 +2007,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 // A builtin called with names (L1): bound to positions by
                 // its signature, then called as the positional call.
                 if let Value::Builtin(b) = &callee_value
-                    && arguments.iter().any(|a| matches!(a, Argument::Named { .. }))
+                    && arguments
+                        .iter()
+                        .any(|a| matches!(a, Argument::Named { .. }))
                 {
                     let args = self.bind_builtin_args(&b.name, Vec::new(), arguments)?;
                     return self.call_builtin_named(&b.name, args);
@@ -2073,10 +2082,13 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                         // A builtin called with names: its names bind
                         // with the piped value first (L1).
                         if let Value::Builtin(b) = &callee_value
-                            && arguments.iter().any(|a| matches!(a, Argument::Named { .. }))
+                            && arguments
+                                .iter()
+                                .any(|a| matches!(a, Argument::Named { .. }))
                         {
                             let name = b.name.clone();
-                            let args = self.bind_builtin_args(&name, vec![left_value], arguments)?;
+                            let args =
+                                self.bind_builtin_args(&name, vec![left_value], arguments)?;
                             return self.call_function(callee_value, args);
                         }
                         let resolve_target = match &callee_value {
@@ -4800,9 +4812,12 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     // module lacks raises, read or called, naming the
                     // nearest (`math.pi` → `PI`); `map_get(m, "init")`
                     // asks whether it has one.
-                    fields.get(field).cloned().ok_or_else(|| InterpreterError::TypeError {
-                        message: module_miss_of(fields, field),
-                    })
+                    fields
+                        .get(field)
+                        .cloned()
+                        .ok_or_else(|| InterpreterError::TypeError {
+                            message: module_miss_of(fields, field),
+                        })
                 } else if type_name == "JsonObject" || type_name == "Object" {
                     // An object and a parsed JSON object read as a map
                     // does: `o.key` is `map_get(o, "key")`, and an absent
@@ -5674,7 +5689,10 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         receiver: Value,
         arguments: &[Argument],
     ) -> Result<Vec<Value>, InterpreterError> {
-        if arguments.iter().all(|a| matches!(a, Argument::Positional(_))) {
+        if arguments
+            .iter()
+            .all(|a| matches!(a, Argument::Positional(_)))
+        {
             let mut args = Vec::with_capacity(arguments.len() + 1);
             args.push(receiver);
             for arg in arguments {

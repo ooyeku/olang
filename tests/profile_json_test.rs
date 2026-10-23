@@ -165,7 +165,14 @@ println("done")
     let (code, _out, err) = olang(
         &dir,
         &[
-            "profile", "main.ol", "--format", "json", "--output", "p.json", "--interval", "500",
+            "profile",
+            "main.ol",
+            "--format",
+            "json",
+            "--output",
+            "p.json",
+            "--interval",
+            "500",
         ],
     );
     assert_eq!(code, 0, "{err}");
@@ -179,14 +186,22 @@ println("done")
         .unwrap()
         .iter()
         .filter(|s| {
-            let f: Vec<u64> = s["f"].as_array().unwrap().iter().map(|x| x.as_u64().unwrap()).collect();
+            let f: Vec<u64> = s["f"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|x| x.as_u64().unwrap())
+                .collect();
             let m = f.iter().position(|&x| x == mi as u64);
             let d = f.iter().position(|&x| x == di as u64);
             matches!((m, d), (Some(m), Some(d)) if m < d)
         })
         .map(|s| s["n"].as_u64().unwrap())
         .sum();
-    assert!(under * 2 > samples, "detect under map in {under} of {samples} samples");
+    assert!(
+        under * 2 > samples,
+        "detect under map in {under} of {samples} samples"
+    );
 }
 
 #[test]

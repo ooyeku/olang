@@ -217,7 +217,11 @@ impl Math {
     }
 
     pub fn name(self) -> &'static str {
-        Self::ALL.iter().find(|(_, m)| *m == self).map(|(n, _)| *n).unwrap_or("?")
+        Self::ALL
+            .iter()
+            .find(|(_, m)| *m == self)
+            .map(|(n, _)| *n)
+            .unwrap_or("?")
     }
 
     /// Integer-valued functions keep an Int column Int.
@@ -569,9 +573,9 @@ impl Expr {
                 let me = match op {
                     Op::Bin(BinOp::Div | BinOp::Mod) => true,
                     Op::Bin(BinOp::Add | BinOp::Sub | BinOp::Mul) | Op::Neg => {
-                        args.iter().all(|a| {
-                            matches!(a.dtype(), Ok(Some(DType::I64) | None))
-                        }) || args.iter().any(|a| temporal(a.dtype().ok().flatten()))
+                        args.iter()
+                            .all(|a| matches!(a.dtype(), Ok(Some(DType::I64) | None)))
+                            || args.iter().any(|a| temporal(a.dtype().ok().flatten()))
                     }
                     Op::Temporal(TOp::AsDate | TOp::AddMonths(_) | TOp::AddMonthsBy, _) => true,
                     Op::Math(Math::Abs) | Op::Round(_) => {
@@ -672,15 +676,15 @@ pub fn op_dtype(op: Op, kids: &[Option<DType>]) -> Result<Option<DType>> {
         Err(OdsError::TypeMismatch(format!(
             "cannot apply {} to {}",
             what,
-            kids.iter().map(|k| name_of(*k)).collect::<Vec<_>>().join(" and ")
+            kids.iter()
+                .map(|k| name_of(*k))
+                .collect::<Vec<_>>()
+                .join(" and ")
         )))
     };
     match op {
         Op::Bin(b) if b.is_logic() => {
-            if kids
-                .iter()
-                .all(|k| matches!(k, Some(DType::Bool) | None))
-            {
+            if kids.iter().all(|k| matches!(k, Some(DType::Bool) | None)) {
                 Ok(Some(DType::Bool))
             } else {
                 mismatch(b.word())
@@ -689,14 +693,12 @@ pub fn op_dtype(op: Op, kids: &[Option<DType>]) -> Result<Option<DType>> {
         Op::Bin(b) if b.is_cmp() => {
             let ok = match (kids[0], kids[1]) {
                 (a, b) if numeric(a) && numeric(b) => true,
-                (Some(DType::Str), Some(DType::Str) | None)
-                | (None, Some(DType::Str)) => true,
+                (Some(DType::Str), Some(DType::Str) | None) | (None, Some(DType::Str)) => true,
                 (Some(DType::Date), Some(DType::Date) | None)
                 | (None, Some(DType::Date))
                 | (Some(DType::Datetime), Some(DType::Datetime) | None)
                 | (None, Some(DType::Datetime)) => true,
-                (Some(DType::Bool), Some(DType::Bool) | None)
-                | (None, Some(DType::Bool)) => {
+                (Some(DType::Bool), Some(DType::Bool) | None) | (None, Some(DType::Bool)) => {
                     if !matches!(b, BinOp::Eq | BinOp::Ne) {
                         return Err(OdsError::TypeMismatch(
                             "Bool series support only == and != comparisons".to_string(),
@@ -817,12 +819,8 @@ pub fn op_dtype(op: Op, kids: &[Option<DType>]) -> Result<Option<DType>> {
         }
         Op::Between(_) => {
             let ok = kids.iter().all(|k| numeric(*k))
-                || kids
-                    .iter()
-                    .all(|k| matches!(k, Some(DType::Str) | None))
-                || kids
-                    .iter()
-                    .all(|k| matches!(k, Some(DType::Date) | None))
+                || kids.iter().all(|k| matches!(k, Some(DType::Str) | None))
+                || kids.iter().all(|k| matches!(k, Some(DType::Date) | None))
                 || kids
                     .iter()
                     .all(|k| matches!(k, Some(DType::Datetime) | None));
@@ -977,7 +975,9 @@ fn temporal_dtype(op: Op, kids: &[Option<DType>]) -> Result<Option<Option<DType>
 /// (a Category against other text compares as text).
 fn category_cmp(op: Op, args: &[Arc<Expr>]) -> Result<Option<Series>> {
     let Op::Bin(b) = op else { return Ok(None) };
-    let Some(cmp) = b.cmp_op() else { return Ok(None) };
+    let Some(cmp) = b.cmp_op() else {
+        return Ok(None);
+    };
     let cat = |e: &Arc<Expr>| match e.as_ref() {
         Expr::Col(s @ Series::Cat { .. }) => Some(s.clone()),
         _ => None,
@@ -1230,9 +1230,11 @@ impl Builder {
                     Series::Date { .. } | Series::Datetime { .. } => {
                         (s.physical().expect("temporal"), s.dtype(), Some(s.clone()))
                     }
-                    Series::Cat { .. } => {
-                        (s.decoded().expect("a category"), DType::Str, Some(s.clone()))
-                    }
+                    Series::Cat { .. } => (
+                        s.decoded().expect("a category"),
+                        DType::Str,
+                        Some(s.clone()),
+                    ),
                     _ => (s.clone(), s.dtype(), None),
                 };
                 let id = self.push(
@@ -1459,9 +1461,10 @@ impl Builder {
         fn text(t: &T, i: usize) -> Option<&str> {
             match t {
                 T::Lit(x) => x.as_deref(),
-                T::Col(Series::Str { col, validity }) => {
-                    validity.as_ref().is_none_or(|v| v.get(i)).then(|| col.get(i))
-                }
+                T::Col(Series::Str { col, validity }) => validity
+                    .as_ref()
+                    .is_none_or(|v| v.get(i))
+                    .then(|| col.get(i)),
                 T::Col(_) => None,
             }
         }
@@ -1711,8 +1714,9 @@ impl Plan {
             if par && n > piece_rows(n) {
                 let piece = piece_rows(n);
                 let pieces = n.div_ceil(piece);
-                let mut per_piece: Vec<Vec<Option<OutSlice<'_>>>> =
-                    (0..pieces).map(|_| Vec::with_capacity(outs.len())).collect();
+                let mut per_piece: Vec<Vec<Option<OutSlice<'_>>>> = (0..pieces)
+                    .map(|_| Vec::with_capacity(outs.len()))
+                    .collect();
                 for o in outs.iter_mut() {
                     match o {
                         None => per_piece.iter_mut().for_each(|p| p.push(None)),
@@ -1878,7 +1882,11 @@ impl Plan {
                             }
                             &few[..step.args.len()]
                         } else {
-                            many = step.args.iter().map(|&a| self.arg(a, s, n, &regs)).collect();
+                            many = step
+                                .args
+                                .iter()
+                                .map(|&a| self.arg(a, s, n, &regs))
+                                .collect();
                             &many
                         };
                         let valid: &mut [u64] = match o.valid.as_deref_mut() {
@@ -1908,7 +1916,11 @@ impl Plan {
                         }
                         &few[..step.args.len()]
                     } else {
-                        many = step.args.iter().map(|&a| self.arg(a, s, n, &regs)).collect();
+                        many = step
+                            .args
+                            .iter()
+                            .map(|&a| self.arg(a, s, n, &regs))
+                            .collect();
                         &many
                     };
                     let mut d = Dst {
@@ -2013,7 +2025,11 @@ impl Plan {
         // Pieces of a fixed size per plan (so the partial sums, added in
         // order, are the same on any pool); a heavy plan cuts finer.
         #[cfg(feature = "parallel")]
-        let piece = if self.cost >= 8 { REDUCE_PIECE / 4 } else { REDUCE_PIECE };
+        let piece = if self.cost >= 8 {
+            REDUCE_PIECE / 4
+        } else {
+            REDUCE_PIECE
+        };
         #[cfg(feature = "parallel")]
         if par && n > piece {
             let pieces = n.div_ceil(piece);
@@ -2380,7 +2396,14 @@ fn b_of<'a>(a: &Arg<'a>) -> Src<'a, bool> {
 
 /// Run one operation over a chunk. Returns whether the result holds a
 /// null (its validity is in `dst.valid` when it does).
-fn exec(op: Op, dt: DType, args: &[Arg<'_>], dst: &mut Dst<'_>, n: usize, may_null: bool) -> Result<bool> {
+fn exec(
+    op: Op,
+    dt: DType,
+    args: &[Arg<'_>],
+    dst: &mut Dst<'_>,
+    n: usize,
+    may_null: bool,
+) -> Result<bool> {
     let nw = n.div_ceil(64);
     match op {
         Op::Bin(b) if b.is_logic() => return logic(b, args, dst, n),
@@ -2540,7 +2563,14 @@ fn exec(op: Op, dt: DType, args: &[Arg<'_>], dst: &mut Dst<'_>, n: usize, may_nu
 
 /// A calendar operation over a chunk of integers (days, or
 /// microseconds when `micros`).
-fn temporal_op(t: TOp, micros: bool, args: &[Arg<'_>], dst: &mut Dst<'_>, valid: &[u64], n: usize) -> Result<()> {
+fn temporal_op(
+    t: TOp,
+    micros: bool,
+    args: &[Arg<'_>],
+    dst: &mut Dst<'_>,
+    valid: &[u64],
+    n: usize,
+) -> Result<()> {
     use crate::temporal as tm;
     let x = i_of(&args[0]);
     if let DVals::B(out) = &mut dst.vals {
@@ -2677,7 +2707,9 @@ fn temporal_op(t: TOp, micros: bool, args: &[Arg<'_>], dst: &mut Dst<'_>, valid:
         TOp::MonthsBetween => {
             let y = i_of(&args[1]);
             if micros {
-                map2(x, y, out, |a, b| tm::months_between(tm::day_of_us(a), tm::day_of_us(b)))
+                map2(x, y, out, |a, b| {
+                    tm::months_between(tm::day_of_us(a), tm::day_of_us(b))
+                })
             } else {
                 map2(x, y, out, tm::months_between)
             }
@@ -2803,9 +2835,8 @@ fn i_arith(b: BinOp, args: &[Arg<'_>], dst: &mut Dst<'_>, valid: &[u64], n: usiz
         _ => unreachable!("Div and Pow compute in Float"),
     }
     if bad {
-        let check = |f: fn(i64, i64) -> Option<i64>| {
-            any_valid(valid, n, |i| f(x.at(i), y.at(i)).is_none())
-        };
+        let check =
+            |f: fn(i64, i64) -> Option<i64>| any_valid(valid, n, |i| f(x.at(i), y.at(i)).is_none());
         let overflowed = match b {
             BinOp::Add => check(i64::checked_add),
             BinOp::Sub => check(i64::checked_sub),
@@ -3292,7 +3323,8 @@ impl Fold {
                                 self.fbest = Some(match self.fbest {
                                     None => v,
                                     Some(b) => {
-                                        if want_min == (v.total_cmp(&b) == std::cmp::Ordering::Less) {
+                                        if want_min == (v.total_cmp(&b) == std::cmp::Ordering::Less)
+                                        {
                                             v
                                         } else {
                                             b
@@ -3418,4 +3450,3 @@ impl Fold {
         })
     }
 }
-

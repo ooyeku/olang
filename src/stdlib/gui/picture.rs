@@ -160,7 +160,10 @@ fn read_file(p: &str) -> Res<Vec<u8>> {
         .read_to_end(&mut out)
         .map_err(|e| format!("image: reading {p}: {e}"))?;
     if out.len() as u64 > MAX_FILE {
-        return Err(format!("image: {p} grew past {} MB as it was read", MAX_FILE >> 20));
+        return Err(format!(
+            "image: {p} grew past {} MB as it was read",
+            MAX_FILE >> 20
+        ));
     }
     Ok(out)
 }
@@ -1232,8 +1235,15 @@ mod tests {
         assert_eq!(read_file(small.to_str().unwrap()).unwrap().len(), 8);
         // one past the limit, sparse: refused by its size, never read
         let big = dir.join("big.png");
-        std::fs::File::create(&big).unwrap().set_len(MAX_FILE + 1).unwrap();
-        assert!(read_file(big.to_str().unwrap()).unwrap_err().contains("more than a picture is read from"));
+        std::fs::File::create(&big)
+            .unwrap()
+            .set_len(MAX_FILE + 1)
+            .unwrap();
+        assert!(
+            read_file(big.to_str().unwrap())
+                .unwrap_err()
+                .contains("more than a picture is read from")
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

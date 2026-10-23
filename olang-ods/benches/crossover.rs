@@ -114,10 +114,16 @@ fn main() {
             "add scalar",
             n,
             time(n, || {
-                black_box(a.arith_scalar(ArithOp::Add, Scalar::F64(1.5), false, false).unwrap());
+                black_box(
+                    a.arith_scalar(ArithOp::Add, Scalar::F64(1.5), false, false)
+                        .unwrap(),
+                );
             }),
             time(n, || {
-                black_box(a.arith_scalar(ArithOp::Add, Scalar::F64(1.5), false, true).unwrap());
+                black_box(
+                    a.arith_scalar(ArithOp::Add, Scalar::F64(1.5), false, true)
+                        .unwrap(),
+                );
             }),
         );
         row(
@@ -162,7 +168,10 @@ fn main() {
         );
         // compare has no parallel path: one column, for the record
         let cmp = time(n, || {
-            black_box(a.compare_scalar(CmpOp::Gt, Scalar::F64(1.5), false).unwrap());
+            black_box(
+                a.compare_scalar(CmpOp::Gt, Scalar::F64(1.5), false)
+                    .unwrap(),
+            );
         });
         row("compare", n, cmp, cmp);
 
@@ -179,10 +188,7 @@ fn main() {
             col: "value".to_string(),
         }];
         let lookup = Frame::new(vec![
-            (
-                "key".to_string(),
-                Series::from_i64((0..1000).collect()),
-            ),
+            ("key".to_string(), Series::from_i64((0..1000).collect())),
             (
                 "w".to_string(),
                 Series::from_f64((0..1000).map(|i| i as f64).collect()),

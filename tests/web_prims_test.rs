@@ -84,9 +84,15 @@ println(attempt(() => md.render("[a](b)", #{ "link": (u) => raise("no " + u) }))
     assert!(!out.contains("missing:"), "{out}");
     assert_eq!(lines[3], r#"["olang no-run", "text"]"#);
     assert_eq!(lines[4], "<h3 id=\"t\">T</h3>");
-    assert!(lines[5].contains("&lt;b&gt;x&lt;/b&gt;") && !out.contains("javascript:"), "{out}");
+    assert!(
+        lines[5].contains("&lt;b&gt;x&lt;/b&gt;") && !out.contains("javascript:"),
+        "{out}"
+    );
     assert_eq!(lines[6], "<p>x</p>");
-    assert!(lines[7].starts_with("Err(") && lines[7].contains("`link` hook"), "{out}");
+    assert!(
+        lines[7].starts_with("Err(") && lines[7].contains("`link` hook"),
+        "{out}"
+    );
     assert!(lines[8].contains("unknown option `colour`"), "{out}");
     assert!(lines[9].contains("no b"), "{out}");
 }
@@ -109,14 +115,23 @@ println(str.trim(md.render("---\ntitle: x\n---\n# H\n").html))
 "##,
     );
     let lines: Vec<&str> = out.lines().collect();
-    assert!(lines[0].contains("\"slug\": \"b-c\"") && lines[0].contains("\"level\": 2"), "{out}");
-    assert_eq!(lines[1], "odsread_csv-takes-text-odsread_csv_file-takes-a-path");
+    assert!(
+        lines[0].contains("\"slug\": \"b-c\"") && lines[0].contains("\"level\": 2"),
+        "{out}"
+    );
+    assert_eq!(
+        lines[1],
+        "odsread_csv-takes-text-odsread_csv_file-takes-a-path"
+    );
     assert_eq!(
         lines[2],
         r##"["yaml", "Hi: there", "2026-10-20", false, 3, ["a", "b"], "Ola", "# Body\n"]"##
     );
     assert_eq!(lines[3], r#"["toml", "T", 1, "rest"]"#);
-    assert!(lines[4].contains("\"format\": \"\"") && lines[4].contains("\"body\": \"plain\""), "{out}");
+    assert!(
+        lines[4].contains("\"format\": \"\"") && lines[4].contains("\"body\": \"plain\""),
+        "{out}"
+    );
     assert_eq!(lines[5], "true");
     assert_eq!(lines[6], "A b");
     assert_eq!(lines[7], "c d e");
@@ -132,7 +147,9 @@ fn tokens_cover_every_olang_file_in_the_repository() {
     for dir in ["examples", "frameworks", "src/stdlib/embedded"] {
         let mut stack = vec![root.join(dir)];
         while let Some(d) = stack.pop() {
-            let Ok(rd) = std::fs::read_dir(&d) else { continue };
+            let Ok(rd) = std::fs::read_dir(&d) else {
+                continue;
+            };
             for e in rd.flatten() {
                 let p = e.path();
                 if p.is_dir() {
@@ -145,7 +162,10 @@ fn tokens_cover_every_olang_file_in_the_repository() {
     }
     assert!(files.len() > 50, "found {} files", files.len());
     let dir = workspace("tokens");
-    let list: Vec<String> = files.iter().map(|p| format!("{:?}", p.display().to_string())).collect();
+    let list: Vec<String> = files
+        .iter()
+        .map(|p| format!("{:?}", p.display().to_string()))
+        .collect();
     let src = format!(
         "let files = [{}]\nlet mut bad = []\nlet mut n = 0\nfor f in files {{\n    let text = unwrap(fs.read_file(f))\n    let toks = meta.tokens(text)\n    n = n + len(toks)\n    if join(map(toks, (t) => t.text), \"\") != text => {{ bad = bad + [f] }}\n    if len(toks) > 0 && last(toks).end != str.length(text) => {{ bad = bad + [f + \" (end)\"] }}\n}}\nprintln(bad)\nprintln(n > 10000)\n",
         list.join(", ")

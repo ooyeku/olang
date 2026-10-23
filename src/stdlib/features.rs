@@ -110,7 +110,10 @@ pub fn features(profile: Option<&str>) -> Result<Value, String> {
     };
     let native = profile == "native";
     let mut m = crate::ast::ValueMap::default();
-    m.insert("profile".into(), Value::String(Arc::new(profile.to_string())));
+    m.insert(
+        "profile".into(),
+        Value::String(Arc::new(profile.to_string())),
+    );
     m.insert(
         "modules".into(),
         Value::List(Arc::new(
@@ -128,7 +131,10 @@ pub fn features(profile: Option<&str>) -> Result<Value, String> {
         ("db", native),
         // the released binary has windows; a browser runtime asked of
         // the native profile answers for that binary
-        ("gui", native && (cfg!(feature = "gui") || own_profile() != "native")),
+        (
+            "gui",
+            native && (cfg!(feature = "gui") || own_profile() != "native"),
+        ),
         ("dom", !native),
         ("jit", native),
     ] {

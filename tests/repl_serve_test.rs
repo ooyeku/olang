@@ -287,7 +287,16 @@ fn a_functions_parameters_are_named_then_bound_for_one_evaluation() {
     assert_eq!(
         hello["features"],
         json!([
-            "bind", "pure", "cell", "caps", "profile", "distinct", "record", "html", "scene", "dtypes",
+            "bind",
+            "pure",
+            "cell",
+            "caps",
+            "profile",
+            "distinct",
+            "record",
+            "html",
+            "scene",
+            "dtypes",
             "daterange"
         ])
     );
@@ -1071,8 +1080,19 @@ fn a_date_columns_range_is_iso_text() {
         "ods.frame({ d: ods.series([\"2024-01-05\", \"2024-03-01\", (), \"2024-02-01\"]).to_date(), t: ods.series([\"2024-01-01T00:00\", \"2024-01-01T06:00\", \"2024-01-02T00:00\", ()]).to_datetime() })",
     );
     let h = f["value"]["h"].as_u64().unwrap();
-    assert_eq!(f["value"]["table"]["sum"][0]["min"], json!("2024-01-05"), "{f}");
-    let at = |v: &J| -> Vec<J> { v["rows"].as_array().unwrap().iter().map(|r| r["i"].clone()).collect() };
+    assert_eq!(
+        f["value"]["table"]["sum"][0]["min"],
+        json!("2024-01-05"),
+        "{f}"
+    );
+    let at = |v: &J| -> Vec<J> {
+        v["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["i"].clone())
+            .collect()
+    };
     let d = r.ask(json!({ "op": "expand", "h": h, "table": true, "count": 10,
         "filters": [{ "col": 0, "range": ["2024-01-06", "2024-03-01"] }] }));
     assert_eq!(at(&d), vec![json!(1), json!(3)], "{d}");
@@ -1140,10 +1160,22 @@ fn a_gg_plot_is_drawn_as_its_scene_and_zooms_by_rendering_again() {
     assert_eq!(chart["title"], json!("sq"));
     assert_eq!(chart["zoomable"], json!(true));
     assert_eq!(chart["n"], json!(20000));
-    let pts = chart["ops"].as_array().unwrap().iter().find(|o| o["op"] == json!("points")).unwrap();
+    let pts = chart["ops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["op"] == json!("points"))
+        .unwrap();
     // thinned for the screen, its tooltip values beside each point
-    assert!(pts["x"].as_array().unwrap().len() < 20000, "{}", pts["x"].as_array().unwrap().len());
-    assert_eq!(pts["tips"][0].as_array().unwrap().len(), pts["x"].as_array().unwrap().len());
+    assert!(
+        pts["x"].as_array().unwrap().len() < 20000,
+        "{}",
+        pts["x"].as_array().unwrap().len()
+    );
+    assert_eq!(
+        pts["tips"][0].as_array().unwrap().len(),
+        pts["x"].as_array().unwrap().len()
+    );
     // a zoom renders again over the range, the y axis fitted to what shows
     let h = v["h"].as_u64().unwrap();
     let z = r.ask(json!({ "op": "expand", "h": h, "chart": { "x0": 1.0, "x1": 2.0, "panel": 0 } }));
@@ -1153,7 +1185,10 @@ fn a_gg_plot_is_drawn_as_its_scene_and_zooms_by_rendering_again() {
     assert!(p["v_axis"]["hi"].as_f64().unwrap() < 5.0);
     // an error is said, the cell's value its words
     let e = r.eval("gg.plot(f, gg.aes(x: \"nope\")) |> gg.point()");
-    assert!(e["value"]["s"].as_str().unwrap().contains("no such column"), "{e}");
+    assert!(
+        e["value"]["s"].as_str().unwrap().contains("no such column"),
+        "{e}"
+    );
 }
 
 #[test]
@@ -1638,9 +1673,18 @@ fn a_session_stays_answerable_under_what_a_program_can_throw_at_it() {
     // a flood of printing comes back bounded: its start and its end, and
     // how much was left out between them
     let flood = r.eval("for i in range(0, 300000) { print(\"line \" + to_string(i)) }\n7");
-    assert_eq!(flood["value"]["s"], json!("7"), "{}", &flood.to_string()[..300]);
+    assert_eq!(
+        flood["value"]["s"],
+        json!("7"),
+        "{}",
+        &flood.to_string()[..300]
+    );
     let out = flood["out"].as_str().unwrap();
-    assert!(out.len() < 1_200_000, "{} bytes of output in one reply", out.len());
+    assert!(
+        out.len() < 1_200_000,
+        "{} bytes of output in one reply",
+        out.len()
+    );
     assert!(out.starts_with("line 0line 1"), "{}", &out[..40]);
     assert!(out.ends_with("line 299999"), "{}", &out[out.len() - 40..]);
     assert!(out.contains("not kept"), "the cut is said");
@@ -1649,7 +1693,11 @@ fn a_session_stays_answerable_under_what_a_program_can_throw_at_it() {
     assert_eq!(deep["ok"], json!(false));
     let frames = deep["error"]["stack"].as_array().unwrap();
     assert!(frames.len() <= 64, "{} frames", frames.len());
-    assert!(deep.to_string().len() < 100_000, "{} bytes", deep.to_string().len());
+    assert!(
+        deep.to_string().len() < 100_000,
+        "{} bytes",
+        deep.to_string().len()
+    );
     // a cell holding itself is shown (its display waited on itself)
     let c = r.eval("let c = cell(0)\ncell.set(c, [c])\nc");
     assert_eq!(c["ok"], json!(true), "{c}");
@@ -1670,7 +1718,10 @@ fn a_param_that_does_not_bind_is_named_with_why_and_a_far_line_is_no_hang() {
     // a cell reading it says the param and why, not "a cell not run yet"
     let c = r.ask(json!({ "op": "eval", "cell": "c1", "code": "let t = top_n", "line": 7 }));
     let m = c["error"]["message"].as_str().unwrap();
-    assert!(m.contains("the param `top_n` is not bound") && m.contains("outside its range"), "{c}");
+    assert!(
+        m.contains("the param `top_n` is not bound") && m.contains("outside its range"),
+        "{c}"
+    );
     assert_eq!(c["error"]["kind"], json!("unbound"));
     // a line far past any file: answered at once, not padded line by line
     let t0 = Instant::now();

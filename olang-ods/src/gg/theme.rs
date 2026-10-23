@@ -5,7 +5,7 @@
 //! is a role (`Paint::Role`) so a host draws it in its own tokens and an
 //! SVG resolves it here, for the light, dark or high-contrast appearance.
 
-use super::scene::{Role, Rgba};
+use super::scene::{Rgba, Role};
 use super::{Params, p_num, p_str};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

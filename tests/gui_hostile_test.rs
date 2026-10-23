@@ -63,7 +63,9 @@ fn a_lost_gpu_device_is_made_again_and_draws_what_the_software_renderer_draws() 
         .parse(r##"[#{ "key": "root", "box": (0, 0, 120, 80), "style": #{ "bg": "#ffffff" } },
                     #{ "key": "b", "parent": "root", "box": (10, 10, 60, 30), "style": #{ "bg": "#3366cc", "radius": 6 } }]"##)
         .ok();
-    let ops = ops.and_then(|p| Interpreter::new().eval_program(p).ok()).expect("ops");
+    let ops = ops
+        .and_then(|p| Interpreter::new().eval_program(p).ok())
+        .expect("ops");
     let mut out = vec![];
     st.apply(&ops, &mut out).expect("applies");
     let dl = st.display_list();
@@ -79,9 +81,18 @@ fn a_lost_gpu_device_is_made_again_and_draws_what_the_software_renderer_draws() 
     let a = soft::rgba(&soft::render(&dl));
     let b = g2.render_rgba(&dl);
     assert_eq!(a.len(), b.len());
-    let worst = a.iter().zip(&b).map(|(x, y)| x.abs_diff(*y)).max().unwrap_or(0);
+    let worst = a
+        .iter()
+        .zip(&b)
+        .map(|(x, y)| x.abs_diff(*y))
+        .max()
+        .unwrap_or(0);
     let mid = |px: &[u8]| px[((40 * 120 + 40) * 4)..((40 * 120 + 40) * 4 + 4)].to_vec();
-    assert_eq!(mid(&a), mid(&b), "the button's middle (worst pixel {worst})");
+    assert_eq!(
+        mid(&a),
+        mid(&b),
+        "the button's middle (worst pixel {worst})"
+    );
 }
 
 #[test]
@@ -96,7 +107,11 @@ fn a_gpu_error_is_said_not_a_panic_that_aborts_the_application() {
     let most = g.device.limits().max_texture_dimension_2d;
     let _t = g.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("too wide"),
-        size: wgpu::Extent3d { width: most + 1, height: 1, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width: most + 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
