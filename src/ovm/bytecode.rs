@@ -1194,6 +1194,7 @@ pub struct ExecutionState {
     top: usize,
 }
 
+#[cfg(feature = "native")]
 thread_local! {
     /// `--verify-tiers` sampling state: the draw RNG, and whether this
     /// thread is already inside a verification re-run (nested native
@@ -2167,6 +2168,7 @@ impl BytecodeVm {
     /// tier promotion and a lambda's dependency resolution. The tier's
     /// own `compiled` map sees only the first, so the tier report reads
     /// this registry instead.
+    #[cfg(feature = "native")]
     pub(crate) fn registered_functions(&self) -> impl Iterator<Item = (&String, &FunctionId)> {
         self.function_registry.iter()
     }
@@ -2178,11 +2180,6 @@ impl BytecodeVm {
         func_id: FunctionId,
     ) -> Option<(Vec<crate::ovm::jit::Kind>, u64)> {
         self.jit.warm_view(func_id)
-    }
-
-    #[cfg(not(feature = "native"))]
-    pub(crate) fn jit_warm_view(&self, _func_id: FunctionId) -> Option<(Vec<()>, u64)> {
-        None
     }
 
     /// Warm start: specialize a just-compiled function on the kinds a
@@ -2202,9 +2199,6 @@ impl BytecodeVm {
         };
         self.jit.warm_specialize(func_id, &bytecode, kinds, &lookup);
     }
-
-    #[cfg(not(feature = "native"))]
-    pub(crate) fn warm_specialize(&mut self, _func_id: FunctionId, _kinds: &[()]) {}
 
     pub fn set_capabilities(&mut self, caps: Option<Arc<crate::caps::CapTable>>) {
         // Only a *changed* grant invalidates the bridge. The bridge's own
@@ -3299,14 +3293,12 @@ impl BytecodeVm {
         Ok(Ok(bytecode))
     }
 
-    /// execute(), but the arguments come straight from the caller's
-    /// registers into the callee's window — the CallFn/CallValue hot path,
-    /// with no argument buffer in between.
     /// The sampling rate behind `--verify-tiers` (0 = off), read once.
     /// Native code is pure with respect to caller-visible state by the
     /// JIT whitelist's construction, so re-executing a native call on
     /// the VM dispatch is unobservable — which is what makes live
     /// verification sound at all.
+    #[cfg(feature = "native")]
     fn verify_tiers_rate() -> f64 {
         static RATE: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
         *RATE.get_or_init(|| {
@@ -3322,6 +3314,7 @@ impl BytecodeVm {
     /// Should this native result be verified? Samples an xorshift per
     /// call; never inside a verification re-run (the re-run's own inner
     /// calls may go native again, and rechecking them would compound).
+    #[cfg(feature = "native")]
     fn verify_sample() -> bool {
         let rate = Self::verify_tiers_rate();
         if rate == 0.0 || IN_VERIFY.with(|f| f.get()) {
@@ -3342,6 +3335,7 @@ impl BytecodeVm {
 
     /// Mark this thread as inside a verification re-run for the guard's
     /// lifetime (suppresses nested sampling).
+    #[cfg(feature = "native")]
     fn verify_enter() -> impl Drop {
         struct G;
         impl Drop for G {
@@ -3358,6 +3352,7 @@ impl BytecodeVm {
     /// engine bug: report both results and abort — nothing after this
     /// point could be trusted. Skips silently when the re-run cannot
     /// fit (call depth exhausted).
+    #[cfg(feature = "native")]
     fn verify_native_result(
         &mut self,
         what: &str,
@@ -3389,6 +3384,7 @@ impl BytecodeVm {
     /// `verify_native_result` for a native call entered with argument
     /// values (the tree-walker calling a compiled function, a value
     /// called): the same re-run on the VM and the same report.
+    #[cfg(feature = "native")]
     fn verify_native_values(
         &mut self,
         what: &str,
@@ -3412,6 +3408,7 @@ impl BytecodeVm {
 
     /// The VM's re-run against the native result: agreement counted, a
     /// divergence reported and the process ended.
+    #[cfg(feature = "native")]
     fn verify_report(
         &mut self,
         what: &str,
@@ -10028,6 +10025,7 @@ impl BytecodeVm {
 
     /// Whether the code running is a module's loaded at run time (its
     /// calls answer to that module's grant: `caps::scope_denial`).
+    #[cfg(feature = "gui")]
     fn in_loaded_module(&self) -> bool {
         if !crate::caps::modules_active() {
             return false;
