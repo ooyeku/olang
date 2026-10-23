@@ -431,7 +431,7 @@ share fn pty_path(dir) = {
         &ws,
         &format!(
             r#"let m = unwrap(runtime.load_module("plug/p/plugin.ol", #{{ "name": "p", "fs": "read", "fs_roots": ["plug"], "proc": ["echo"] }}))
-fn said(r) = if map_get(r, "ok") => show(map_get(r, "value")) else => map_get(r, "error")
+fn said(r) = str.trim(if map_get(r, "ok") => show(map_get(r, "value")) else => map_get(r, "error"))
 let bin = "{bin}"
 println(said(runtime.call_budget(m.pipe, [], 5000)))
 println(said(runtime.call_budget(m.pipe_ok, [], 5000)))
@@ -443,7 +443,10 @@ println(said(runtime.call_budget(m.pty_path, [bin], 5000)))
             bin = bin.display()
         ),
     );
+    // said trims: show prints a program's output bare, its newline too,
+    // so each call is one line
     let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 6, "{out}");
     assert!(
         lines[0].contains("proc.pipeline runs sh, and module 'p' may only run echo"),
         "every stage is judged: {}",
