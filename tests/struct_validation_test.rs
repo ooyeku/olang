@@ -316,10 +316,16 @@ fn iterating_a_map_points_at_entries_without_leaking_the_debug_shape() {
 }
 
 #[test]
-fn indexing_a_map_points_at_map_get() {
-    let err = eval("let m = #{ \"a\": 1 }\nm[\"a\"]\n").unwrap_err();
+fn indexing_a_map_reads_and_writing_one_points_at_map_set() {
+    // `m[k]` is map_get(m, k); `m[k] = v` stays refused.
+    assert_eq!(
+        eval("let m = #{ \"a\": 1 }\nm[\"a\"]\n"),
+        Ok(Value::Integer(1))
+    );
+    assert_eq!(eval("let m = #{ \"a\": 1 }\nm[\"b\"]\n"), Ok(Value::Unit));
+    let err = eval("let mut m = #{ \"a\": 1 }\nm[\"a\"] = 2\n").unwrap_err();
     assert!(
-        err.contains("map_get(m, key)") && err.contains("not indexed with"),
+        err.contains("does not write a map") && err.contains("map_set(m, key, value)"),
         "{err}"
     );
 }
