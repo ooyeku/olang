@@ -15520,6 +15520,46 @@ fn debug_flag(cell: &std::sync::OnceLock<bool>, name: &str) -> bool {
     *cell.get_or_init(|| std::env::var_os(name).is_some())
 }
 
+/// The bytecode tier binds a native method's named arguments over its own
+/// values: no conversion to the interpreter's and back.
+impl crate::native_sig::BindValue for OvmValue {
+    fn unit() -> Self {
+        OvmValue::new_unit()
+    }
+    fn lit(l: &crate::native_sig::Lit) -> Self {
+        OvmValue::from_ast(l.value())
+    }
+    fn options(
+        full: &str,
+        base: Option<Self>,
+        entries: Vec<(&'static str, Self)>,
+    ) -> Result<Self, String> {
+        let base = match base {
+            Some(b) => Some(b.to_ast().map_err(|e| format!("{:?}", e))?),
+            None => None,
+        };
+        let mut ast = Vec::with_capacity(entries.len());
+        for (k, v) in entries {
+            ast.push((k, v.to_ast().map_err(|e| format!("{:?}", e))?));
+        }
+        crate::native_sig::options_map(full, base, ast.into_iter()).map(OvmValue::from_ast)
+    }
+}
+
+/// A module value's missing member's message (the VM's values), in the
+/// interpreter's words (`crate::interpreter::module_member_miss`).
+fn vm_module_miss(st: &crate::ovm::value::StructObject, field: &str) -> String {
+    let module = crate::interpreter::module_name_of(st.iter().filter_map(|(_, v)| match &v.data {
+        crate::ovm::value::ValueData::Builtin(b) => Some(b.name.as_str()),
+        _ => None,
+    }));
+    crate::interpreter::module_member_miss(
+        module.as_deref(),
+        field,
+        st.iter().map(|(name, _)| name.as_str()),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -16060,44 +16100,4 @@ mod tests {
             "Should fail with wrong number of arguments"
         );
     }
-}
-
-/// The bytecode tier binds a native method's named arguments over its own
-/// values: no conversion to the interpreter's and back.
-impl crate::native_sig::BindValue for OvmValue {
-    fn unit() -> Self {
-        OvmValue::new_unit()
-    }
-    fn lit(l: &crate::native_sig::Lit) -> Self {
-        OvmValue::from_ast(l.value())
-    }
-    fn options(
-        full: &str,
-        base: Option<Self>,
-        entries: Vec<(&'static str, Self)>,
-    ) -> Result<Self, String> {
-        let base = match base {
-            Some(b) => Some(b.to_ast().map_err(|e| format!("{:?}", e))?),
-            None => None,
-        };
-        let mut ast = Vec::with_capacity(entries.len());
-        for (k, v) in entries {
-            ast.push((k, v.to_ast().map_err(|e| format!("{:?}", e))?));
-        }
-        crate::native_sig::options_map(full, base, ast.into_iter()).map(OvmValue::from_ast)
-    }
-}
-
-/// A module value's missing member's message (the VM's values), in the
-/// interpreter's words (`crate::interpreter::module_member_miss`).
-fn vm_module_miss(st: &crate::ovm::value::StructObject, field: &str) -> String {
-    let module = crate::interpreter::module_name_of(st.iter().filter_map(|(_, v)| match &v.data {
-        crate::ovm::value::ValueData::Builtin(b) => Some(b.name.as_str()),
-        _ => None,
-    }));
-    crate::interpreter::module_member_miss(
-        module.as_deref(),
-        field,
-        st.iter().map(|(name, _)| name.as_str()),
-    )
 }

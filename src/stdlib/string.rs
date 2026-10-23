@@ -736,10 +736,6 @@ fn str_pad(args: Vec<Value>, start: bool) -> Result<Value, Box<dyn std::error::E
     Ok(ok_string(result))
 }
 
-/// Fill `{}` placeholders with the remaining arguments, rendered in display
-/// form (strings bare, like `show`). `{{` and `}}` escape literal braces.
-/// The placeholder and argument counts must agree.
-/// Usage: str.fmt("{} of {}", 3, "hearts") -> "3 of hearts"
 // ── number formatting by a spec ─────────────────────────────────────
 
 /// A number (or a number Series) by `spec`.

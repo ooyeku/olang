@@ -280,21 +280,21 @@ fn walk(root: &Path, w: &Walk) -> (Vec<String>, Vec<String>) {
                 Ok(e) => e,
                 Err(_) => return ignore::WalkState::Continue,
             };
-            if empty_dirs > 0 && e.depth() > 0 {
-                if let Some(rel) = e
+            if empty_dirs > 0
+                && e.depth() > 0
+                && let Some(rel) = e
                     .path()
                     .strip_prefix(root_buf.as_ref())
                     .ok()
                     .and_then(|r| r.to_str())
                     .map(|s| s.replace(std::path::MAIN_SEPARATOR, "/"))
-                {
-                    let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                    let mut d = dirs.lock().unwrap();
-                    d.1.insert(parent_of(&rel).to_string());
-                    let seen_whole = only.as_ref().map(|o| o.whole(&rel)).unwrap_or(true);
-                    if is_dir && seen_whole && at_limit.map(|m| e.depth() < m).unwrap_or(true) {
-                        d.0.push(rel);
-                    }
+            {
+                let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                let mut d = dirs.lock().unwrap();
+                d.1.insert(parent_of(&rel).to_string());
+                let seen_whole = only.as_ref().map(|o| o.whole(&rel)).unwrap_or(true);
+                if is_dir && seen_whole && at_limit.map(|m| e.depth() < m).unwrap_or(true) {
+                    d.0.push(rel);
                 }
             }
             if empty_dirs == 1 {

@@ -316,11 +316,13 @@ pub fn mesh(pp: &PathPrim, part: Part) -> Arc<Mesh> {
     made
 }
 
+/// A page of shelves: its shelves `(y, height, x)`, and the extent used.
+type ShelfPage = (Vec<(u32, u32, u32)>, u32, u32);
+
 /// Rectangles packed in shelves on pages of `side` × `side`.
 pub struct Shelves {
     pub side: u32,
-    /// Per page: shelves `(y, height, x)`, and the extent used.
-    pages: Vec<(Vec<(u32, u32, u32)>, u32, u32)>,
+    pages: Vec<ShelfPage>,
 }
 
 impl Shelves {

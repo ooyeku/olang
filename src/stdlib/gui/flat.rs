@@ -2206,7 +2206,7 @@ fn with_first_path(rs: Value, path: &Value) -> Value {
 
 impl Emitted<'_> {
     /// The answer in the interpreter's form.
-    fn to_ast(self, inp: &FlatIn, prev: Option<&PrevOut>) -> Value {
+    fn into_ast(self, inp: &FlatIn, prev: Option<&PrevOut>) -> Value {
         let n = self.placed.len();
         let mut recs = Vec::with_capacity(n);
         let mut probs = Vec::with_capacity(n);
@@ -2525,7 +2525,7 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
                 _ => Vec::new(),
             };
             let e = emit(&spec, &inp, &geo, &cand, pout.as_ref(), None)?;
-            Ok(e.to_ast(&inp, pout.as_ref()))
+            Ok(e.into_ast(&inp, pout.as_ref()))
         }
         (keep, prev) => {
             let keep = match keep {
@@ -2549,7 +2549,7 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
                 None
             };
             let e = emit(&spec, &inp, &geo, &cand, prev.as_ref(), renames)?;
-            Ok(e.to_ast(&inp, prev.as_ref()))
+            Ok(e.into_ast(&inp, prev.as_ref()))
         }
     }
 }
@@ -2596,7 +2596,7 @@ fn vm_flat_emit(args: &[OvmValue]) -> Option<Res<OvmValue>> {
             _ => Vec::new(),
         };
         let e = emit(&spec, &inp, &geo, &cand, pout.as_ref(), None).ok()?;
-        Some(Ok(OvmValue::from_ast(e.to_ast(&inp, pout.as_ref()))))
+        Some(Ok(OvmValue::from_ast(e.into_ast(&inp, pout.as_ref()))))
     } else {
         let keep: Option<Ints> = match &args[3].data {
             ValueData::Unit => None,
@@ -2622,7 +2622,7 @@ fn vm_flat_emit(args: &[OvmValue]) -> Option<Res<OvmValue>> {
             None
         };
         let e = emit(&spec, &inp, &geo, &cand, prev.as_ref(), renames).ok()?;
-        Some(Ok(OvmValue::from_ast(e.to_ast(&inp, prev.as_ref()))))
+        Some(Ok(OvmValue::from_ast(e.into_ast(&inp, prev.as_ref()))))
     }
 }
 

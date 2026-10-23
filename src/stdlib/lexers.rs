@@ -523,8 +523,6 @@ fn code(src: &str, spec: &Spec) -> Vec<Tok> {
                 "constant"
             } else if w.chars().next().is_some_and(char::is_uppercase) && !spec.keys {
                 "type"
-            } else if spec.keys {
-                "ident"
             } else {
                 "ident"
             };

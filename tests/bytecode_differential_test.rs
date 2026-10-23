@@ -1172,6 +1172,6 @@ fn a_small_wrapped_map_written_a_collection_becomes_the_vms_own() {
         "fn f(s) = { let m = map_set(s.by_id, \"id3\", #{ \"id\": -3, \"tags\": [] })\n [map_get(m, \"id3\"), map_get(s.by_id, \"id3\"), map_len(m)] }",
         "fn f(s) = { let m = map_update(s, \"recent\", (r) => r + [#{ \"id\": 9 }])\n [len(m.recent), len(s.recent), m.recent[4]] }",
     ] {
-        assert_same(src, "f", &[store.clone()]);
+        assert_same(src, "f", std::slice::from_ref(&store));
     }
 }

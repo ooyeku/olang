@@ -299,7 +299,9 @@ mod mac {
                             msg_send![&*v, validRequestorForSendType: &*t, returnType: none]
                         };
                         let pb = pasteboard();
-                        let types = objc2_foundation::NSArray::from_retained_slice(&[t.clone()]);
+                        let types = objc2_foundation::NSArray::from_retained_slice(
+                            std::slice::from_ref(&t),
+                        );
                         let w: Bool = unsafe {
                             msg_send![&*v, writeSelectionToPasteboard: &*pb, types: &*types]
                         };
@@ -307,7 +309,7 @@ mod mac {
                             unsafe { msg_send![&*pb, stringForType: &*t] };
                         let _: () = unsafe { msg_send![&*pb, releaseGlobally] };
                         (
-                            r == Retained::as_ptr(&v) as *mut AnyObject,
+                            std::ptr::eq(r, Retained::as_ptr(&v)),
                             w.as_bool(),
                             got.map(|g| g.to_string()),
                         )

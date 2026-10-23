@@ -149,12 +149,12 @@ impl Elastic {
                 let t = ((now - b.start) as f32 / 1000.0).max(0.0);
                 let mut out = [0.0; 2];
                 let mut moving = false;
-                for i in 0..2 {
-                    let (x, v) = spring(b.from[i], b.vel[i], t);
+                for (o, (&from, &vel)) in out.iter_mut().zip(b.from.iter().zip(&b.vel)) {
+                    let (x, v) = spring(from, vel, t);
                     // settled under a tenth of a pixel
                     if x.abs() > 0.1 || v.abs() > 2.0 {
                         moving = true;
-                        out[i] = x;
+                        *o = x;
                     }
                 }
                 (out, moving)

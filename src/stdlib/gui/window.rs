@@ -2396,7 +2396,7 @@ impl WinState {
 
     /// Device pixels in the window to a field `key`'s text coordinates
     /// (its top-left, scroll included), as a press finds them.
-    fn to_text(
+    fn text_coords(
         &mut self,
         key: &str,
         x: f32,
@@ -2447,7 +2447,7 @@ impl WinState {
         let f = self.scene.focus.clone()?;
         let s = self.platform_scale.max(0.01);
         let mut ts = text::system().lock().ok()?;
-        let (tx, ty) = self.to_text(&f, x * s, y * s, &mut ts)?;
+        let (tx, ty) = self.text_coords(&f, x * s, y * s, &mut ts)?;
         Some(self.editors.get_mut(&f)?.char_at_point(tx, ty, &mut ts))
     }
 
@@ -2470,7 +2470,7 @@ impl WinState {
             .map(|n| n.style.font.size)
             .unwrap_or(13.0);
         let mut ts = text::system().lock().ok()?;
-        let (tx, ty) = self.to_text(&k, dx, dy, &mut ts)?;
+        let (tx, ty) = self.text_coords(&k, dx, dy, &mut ts)?;
         let ed = self.editors.get_mut(&k)?;
         let (a, b) = ed.word_at_point(tx, ty, &mut ts);
         let word: String = ed
@@ -2530,10 +2530,7 @@ impl WinState {
             clear: self.clear,
             prims: Vec::new(),
             scrolls: Vec::new(),
-            flash: self.flash.map(|n| {
-                self.flash = Some(n.wrapping_add(1));
-                n
-            }),
+            flash: self.flash.inspect(|n| self.flash = Some(n.wrapping_add(1))),
             redraw: self.redraw,
         };
         self.caret = None;
@@ -4761,10 +4758,10 @@ impl WinState {
             if focused && caret.is_some_and(|c| c >= wa && c <= wb) {
                 continue;
             }
-            if let (Some(band), Some(r)) = (&shown, self.editors.get(key).and_then(|e| e.rich())) {
-                if !band.contains(&r.para_of_char(wa)) {
-                    continue;
-                }
+            if let (Some(band), Some(r)) = (&shown, self.editors.get(key).and_then(|e| e.rich()))
+                && !band.contains(&r.para_of_char(wa))
+            {
+                continue;
             }
             let Some(b) = self.text_box(key, wa, wb, ts) else {
                 continue;
@@ -4801,6 +4798,8 @@ impl WinState {
             .unwrap_or_default()
     }
 
+    // The paint pass's context, as the other paint_ methods take it.
+    #[allow(clippy::too_many_arguments)]
     fn paint_editor(
         &mut self,
         key: &str,

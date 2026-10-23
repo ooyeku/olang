@@ -171,7 +171,9 @@ mod mac {
             eprintln!("gui_macos_latency_test: timed out");
             std::process::exit(2);
         });
-        static RUNS: Mutex<Vec<(String, Vec<(f64, f64)>)>> = Mutex::new(Vec::new());
+        // a run's name and its samples, as run returns them
+        type Run = (String, Vec<(f64, f64)>);
+        static RUNS: Mutex<Vec<Run>> = Mutex::new(Vec::new());
         static ANIM: Mutex<Vec<u64>> = Mutex::new(Vec::new());
         let code = platform::host(|| {
             std::thread::spawn(|| {

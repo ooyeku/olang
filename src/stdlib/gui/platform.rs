@@ -482,6 +482,8 @@ pub fn post_settings_notice() {
     };
 }
 
+// One a window, held in its PWin and never moved on the hot path.
+#[allow(clippy::large_enum_variant)]
 enum Renderer {
     Gpu(gpu::Surface),
     Soft {
@@ -2749,11 +2751,14 @@ impl App {
         // Emoji & Symbols) as it takes the bar, once
         {
             use muda::ContextMenu;
-            edit_menu::install(
-                bar.ns_menu() as *mut objc2::runtime::AnyObject,
-                &standards,
-                routes,
-            );
+            // SAFETY: muda's own menu bar, on the loop's (main) thread.
+            unsafe {
+                edit_menu::install(
+                    bar.ns_menu() as *mut objc2::runtime::AnyObject,
+                    &standards,
+                    routes,
+                );
+            }
         }
         bar.init_for_nsapp();
         self.menu_handler();
@@ -3566,7 +3571,12 @@ pub mod edit_menu {
 
     /// Put the standard items into the menu bar `bar` (`at`: the menu,
     /// `place` among its items), and keep what routes them.
-    pub fn install(
+    ///
+    /// # Safety
+    ///
+    /// `bar` is null or muda's menu bar (an NSMenu), and this runs on the
+    /// main thread.
+    pub unsafe fn install(
         bar: *mut AnyObject,
         standards: &[(usize, usize, &'static str, Option<String>)],
         routes_now: HashMap<&'static str, Vec<String>>,

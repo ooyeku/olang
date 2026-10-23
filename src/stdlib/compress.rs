@@ -194,7 +194,7 @@ mod tests {
                 call_compress_function("brotli_level", vec![s(&text), Value::Integer(q)]).unwrap();
             assert!(bytes::bytes_of(&packed).unwrap().len() < text.len() / 10);
             match &call_compress_function("unbrotli", vec![packed]).unwrap() {
-                Value::Ok(inner) => assert_eq!(bytes::bytes_of(&inner).unwrap(), text.as_bytes()),
+                Value::Ok(inner) => assert_eq!(bytes::bytes_of(inner).unwrap(), text.as_bytes()),
                 other => panic!("expected Ok, got {:?}", other),
             }
         }

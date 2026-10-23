@@ -601,7 +601,7 @@ pub fn apply_finish(state: ApplyState, results: Vec<Value>) -> Result<Value, Str
 // Argument helpers
 // ---------------------------------------------------------------------
 
-fn arg<'a>(args: &'a [Value], i: usize) -> Option<&'a Value> {
+fn arg(args: &[Value], i: usize) -> Option<&Value> {
     args.get(i).filter(|v| !matches!(v, Value::Unit))
 }
 
@@ -782,7 +782,7 @@ pub fn dispatch(func: &str, args: &[Value]) -> Option<Result<Value, String>> {
                     unreachable!("matched")
                 };
                 match series_of(&args[0]) {
-                    Some(s) if s.dtype() == DType::Str => Every::parse(&every)
+                    Some(s) if s.dtype() == DType::Str => Every::parse(every)
                         .and_then(|e| olang_ods::time::floor(s, e))
                         .map(OdsSeries::into_value)
                         .map_err(|e| format!("ods.floor: {}", e)),

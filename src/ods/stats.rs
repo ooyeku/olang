@@ -549,7 +549,7 @@ fn power(func: &str, args: &[Value]) -> Result<Value, String> {
         }
     };
     let ratio = num_or(func, args, 5, 1.0)?;
-    if !(ratio > 0.0) {
+    if ratio.is_nan() || ratio <= 0.0 {
         return Err(format!(
             "stats.{}: ratio must be positive, got {}",
             func, ratio

@@ -635,7 +635,7 @@ pub fn program_allowed(allow: &[String], prog: &str) -> bool {
     else {
         return false;
     };
-    if !allow.iter().any(|a| *a == base) {
+    if !allow.contains(&base) {
         return false;
     }
     match (

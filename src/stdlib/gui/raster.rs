@@ -34,6 +34,8 @@ pub struct GlyphKey {
 }
 
 impl GlyphKey {
+    // The key's own fields, as the one rasterizer call site has them.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         face: FaceKey,
         glyph: u16,

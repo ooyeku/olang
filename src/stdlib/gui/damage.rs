@@ -99,6 +99,9 @@ pub fn full_redraw_forced() -> bool {
 /// The pixels a primitive can touch: its box grown by `pad` (an
 /// antialiased edge), cut by its clip and the window, rounded out to
 /// whole pixels. `None` when it touches nothing.
+// A primitive's box, its pad and clip, and the window: every renderer's
+// primitive calls it with these loose, so they stay arguments.
+#[allow(clippy::too_many_arguments)]
 pub fn bounds(
     x: f32,
     y: f32,

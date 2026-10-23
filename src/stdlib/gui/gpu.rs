@@ -2987,7 +2987,7 @@ fn with_backdrops(d: Damage, backdrops: &[(usize, IRect, f32)]) -> Damage {
             a.y1.max(b.y1),
         )
     };
-    let mut u = rects.iter().skip(1).fold(rects[0], |a, r| join(a, r));
+    let mut u = rects.iter().skip(1).fold(rects[0], &join);
     loop {
         let before = u;
         for b in backdrops {

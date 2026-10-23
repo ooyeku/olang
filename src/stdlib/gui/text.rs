@@ -521,13 +521,13 @@ impl TextSystem {
             self.found += 1;
             return s.clone();
         }
-        if let Some((k, s)) = self.old.remove(&h) {
-            if k.is(text, font, color, qw, align, qs) {
-                self.found += 1;
-                let s2 = s.clone();
-                self.keep(h, k, s);
-                return s2;
-            }
+        if let Some((k, s)) = self.old.remove(&h)
+            && k.is(text, font, color, qw, align, qs)
+        {
+            self.found += 1;
+            let s2 = s.clone();
+            self.keep(h, k, s);
+            return s2;
         }
         self.shaped += 1;
         let key = CacheKey {
@@ -616,13 +616,13 @@ pub struct FieldLine {
     pub widths: Vec<f32>,
 }
 
-/// The visual lines of `layout` (of `text`): (first byte, end byte, top,
-/// height, each character's (byte, left, width) in byte order). A
-/// cluster's advance is shared among its characters (a ligature's).
-pub fn layout_lines(
-    layout: &Layout<Color>,
-    text: &str,
-) -> Vec<(usize, usize, f32, f32, Vec<(usize, f32, f32)>)> {
+/// A visual line: (first byte, end byte, top, height, each character's
+/// (byte, left, width) in byte order).
+pub type VisualLine = (usize, usize, f32, f32, Vec<(usize, f32, f32)>);
+
+/// The visual lines of `layout` (of `text`). A cluster's advance is
+/// shared among its characters (a ligature's).
+pub fn layout_lines(layout: &Layout<Color>, text: &str) -> Vec<VisualLine> {
     let mut out = Vec::new();
     for line in layout.lines() {
         let m = line.metrics();

@@ -328,13 +328,13 @@ pub fn method(func: &str, args: &[Value]) -> Result<Value, String> {
                     num(func, "sigma", a(3), 1.0)?,
                 ),
             };
-            if func == "uniform" && !(p1 < p2) {
+            if func == "uniform" && (p1.is_nan() || p2.is_nan() || p1 >= p2) {
                 return Err(format!(
                     "random.Rng.uniform: low must be below high, got {} and {}",
                     p1, p2
                 ));
             }
-            if func != "uniform" && !(p2 >= 0.0) {
+            if func != "uniform" && (p2.is_nan() || p2 < 0.0) {
                 return Err(format!(
                     "random.Rng.{}: the spread must be ≥ 0, got {}",
                     func, p2
