@@ -178,8 +178,9 @@ fn a_client_bundle_keeps_each_modules_names_its_own_in_the_browser() {
 
 /// What a page or a playground calls that once trapped the instance or
 /// had no browser form: `ods.read_csv` (it read std's clock), a timed
-/// wait, `md`, `meta.tokens`, and `runtime.features`, which in the
-/// browser names its own profile as the native binary describes it.
+/// wait, `md`, `meta.tokens` and `meta.highlight` (other languages too),
+/// and `runtime.features`, which in the browser names its own profile as
+/// the native binary describes it, and answers for the other profiles.
 const WEB: &str = r##"fn work() = 1
 let f = ods.read_csv("a,b\n1,2\n3,4\n")
 println(ods.columns(f))
@@ -191,9 +192,16 @@ println(r.html)
 println(md.slug("`http` — HTTP"))
 println(join(map(meta.tokens("let x = `a ${b}` // c"), (t) => t.kind), ","))
 println(meta.highlight("x |> f"))
+println(meta.highlight("def f(x): return x  # c", "python"))
+println(meta.highlight("[a]\nb = \"c\"", "toml"))
+println(join(map(meta.tokens("$ olang run x.ol | grep a", "sh"), (t) => t.kind), ","))
+println(md.render("```rust\nlet x = 1;\n```\n", #{ "highlight": true }).html)
 let feat = runtime.features()
-println([feat.profile, feat.threads, feat.fs, feat.dom])
+println([feat.profile, feat.threads, feat.fs, feat.dom, map_get(feat.needs, "ods.open_csv")])
 println(join(feat.modules, ","))
+let full = runtime.features("full")
+println([full.profile, join(full.modules, ","), map_get(full.needs, "spawn")])
+println([runtime.features("native").fs, len(map_keys(runtime.features("native").needs))])
 println(attempt(() => task.join(spawn work())))
 "##;
 

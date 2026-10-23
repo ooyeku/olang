@@ -4,7 +4,11 @@
 //! own, and its theme takes a paper and an ink; `olang test` walks what a
 //! checkout keeps and runs a test from its own folder; a rule's
 //! finding may be an object; `notebook export --json` carries what a page
-//! needs, and writes nothing beside the notebook.
+//! needs, both papers too, and writes nothing beside the notebook (and
+//! draws on no paper when asked); a `select` of aggregates is one row;
+//! `olang check` keeps a builtin a namespace import does not name;
+//! `spawn` is a keyword token; other languages highlight; and
+//! `runtime.features` names the functions a profile cannot run.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -252,4 +256,140 @@ gg.plot(f, gg.aes(x: "x", y: "y")) |> gg.line()
     for id in ids(&html) {
         assert!(seen.insert(id.clone()), "id {id} used twice in the page");
     }
+}
+
+#[test]
+fn a_select_of_aggregates_and_literals_is_one_row() {
+    agrees(
+        "select_one_row",
+        r#"
+    let f = ods.frame({ t: [3, 1, 2], g: ["a", "b", "a"] })
+    let one = f.select({ n: ods.lit(1), lo: col("t").min(), hi: col("t").max() + 1 })
+    println([one.n_rows(), one.lo.to_list(), one.hi.to_list(), one.n.to_list()])
+    let mixed = f.select({ t: col("t"), lo: col("t").min() })
+    println([mixed.n_rows(), mixed.lo.to_list()])
+    let kept = ods.with(f, { lo: col("t").min() })
+    println([kept.n_rows(), kept.lo.to_list()])
+    let grouped = f.select({ m: col("t").max().over(["g"]) })
+    println(grouped.n_rows())
+    println(ods.frame({ t: [] }).select({ c: col("t").count() }).n_rows())
+"#,
+        r#"[1, [1], [4], [1]]
+[3, [1, 1, 1]]
+[3, [1, 1, 1]]
+3
+1"#,
+    );
+}
+
+#[test]
+fn check_keeps_a_builtin_a_namespace_import_does_not_name() {
+    let dir = scratch("check_find");
+    std::fs::write(
+        dir.join("shelf.toml"),
+        format!("[libraries]\nweb = \"{}/frameworks/web-sdk\"\n", env!("CARGO_MANIFEST_DIR")),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("p.ol"),
+        "use gg\nuse web { el }\nprintln(show(find([1, 2, 3], (r) => r > 1)))\n",
+    )
+    .unwrap();
+    let out = Command::new(olang())
+        .args(["check", "p.ol"])
+        .current_dir(&dir)
+        .env("OLANG_HOME", dir.join(".home"))
+        .env("OLANG_SHELF", dir.join("shelf.toml"))
+        .output()
+        .expect("run olang");
+    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(out.status.success() && !text.contains("Missing required argument"), "{text}");
+}
+
+#[test]
+fn spawn_is_a_keyword_and_other_languages_highlight() {
+    agrees(
+        "tokens_langs",
+        r#"
+    let kind = (src, word) => first(filter(meta.tokens(src), (t) => t.text == word)).kind
+    println([kind("let h = spawn { 1 }", "spawn"), kind("let g = spawn work(1)", "spawn"), kind("let spawn = 1\nspawn + 1", "spawn"), kind("task.spawn(f)", "spawn")])
+    println([kind("await x", "await"), kind("meta.tokens(s)", "meta"), kind("meta fn m(e) = e", "meta")])
+    for lang in ["python", "rust", "js", "shell", "toml", "json", "markdown", "py", "sh", "md"] {
+        let src = "x = \"a<b\" # c\n[t]\n{\"k\": 1} // é ✓\n`q`"
+        assert(join(map(meta.tokens(src, lang), (t) => t.text), "") == src, lang)
+    }
+    println(meta.highlight("x = 1  # n", "python"))
+    println(meta.highlight("[a]\nb = \"<c>\"", "toml"))
+    println(md.render("```json\n{\"a\": true}\n```\n\n```cobol\nX\n```\n", #{ "highlight": true }).html)
+    println(attempt(() => meta.highlight("x", "cobol")))
+"#,
+        r#"["keyword", "keyword", "ident", "function"]
+["keyword", "module", "keyword"]
+<span class="ol-ident">x</span> <span class="ol-operator">=</span> <span class="ol-number">1</span>  <span class="ol-comment"># n</span>
+<span class="ol-punct">[</span><span class="ol-type">a</span><span class="ol-punct">]</span>
+<span class="ol-property">b</span> <span class="ol-operator">=</span> <span class="ol-string">&quot;&lt;c&gt;&quot;</span>
+<pre><code class="language-json"><span class="ol-punct">{</span><span class="ol-property">&quot;a&quot;</span><span class="ol-operator">:</span> <span class="ol-constant">true</span><span class="ol-punct">}</span>
+</code></pre>
+<pre><code class="language-cobol">X
+</code></pre>
+
+Err("meta.highlight: no tokenizer for 'cobol' (it knows olang, python, rust, js, shell, toml, json, markdown)")"#,
+    );
+}
+
+#[test]
+fn runtime_features_answers_any_profile_and_names_what_needs_a_power() {
+    agrees(
+        "features_needs",
+        r#"
+    let b = runtime.features("browser")
+    let f = runtime.features("full")
+    let n = runtime.features("native")
+    println([b.profile, b.fs, map_get(b.needs, "ods.open_csv"), map_get(b.needs, "gg.save"), map_get(b.needs, "spawn")])
+    println([contains(b.modules, "re"), contains(f.modules, "re"), contains(b.modules, "ods"), contains(b.modules, "fs")])
+    println([f.needs == b.needs, len(map_keys(n.needs)), map_has_key(b.needs, "ods.read_csv")])
+"#,
+        r#"["browser", false, "fs", "fs", "threads"]
+[false, true, true, false]
+[true, 0, false]"#,
+    );
+}
+
+#[test]
+fn notebook_export_names_both_papers_and_draws_on_none_when_asked() {
+    let dir = scratch("nb_paper");
+    std::fs::write(
+        dir.join("x.olmd"),
+        "# X\n\n```olang {name: \"chart\"}\nuse gg\ngg.plot(ods.frame({ x: [1.0, 2.0], y: [3.0, 4.0] }), gg.aes(x: \"x\", y: \"y\")) |> gg.line()\n```\n\n```olang {name: \"bars\"}\nplot.bar([\"a\", \"b\"], ods.series([1.0, 2.0]))\n```\n",
+    )
+    .unwrap();
+    let svgs = |args: &[&str], out: &str| -> Vec<serde_json::Value> {
+        let mut all = vec!["notebook", "export", "x.olmd", "--json", out];
+        all.extend_from_slice(args);
+        let (o, e, ok) = run_in(&dir, &all);
+        assert!(ok, "{o}{e}");
+        let doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.join(out)).unwrap()).unwrap();
+        doc["cells"].as_array().unwrap().iter().map(|c| c["reply"]["value"]["svg"].clone()).collect()
+    };
+    for svg in svgs(&[], "a.json") {
+        let paper = &svg["paper"];
+        let (l, d) = (paper["light"].as_str().unwrap(), paper["dark"].as_str().unwrap());
+        assert!(l != d && !l.is_empty() && !d.is_empty(), "{paper}");
+        assert!(svg["light"].as_str().unwrap().contains(&format!("fill=\"{l}\"")));
+        assert!(svg["dark"].as_str().unwrap().contains(&format!("fill=\"{d}\"")));
+    }
+    for svg in svgs(&["--paper", "transparent"], "b.json") {
+        // the colours are still named, and the paper's rect is clear
+        assert!(svg["paper"]["light"].as_str().is_some_and(|p| p != "none"), "{}", svg["paper"]);
+        assert!(svg["paper"]["dark"].as_str().is_some_and(|p| p != "none"));
+        assert_eq!(svg["bg"], "none");
+        for key in ["light", "dark", "text"] {
+            let text = svg[key].as_str().unwrap();
+            let rect = &text[text.find("<rect").unwrap()..];
+            let rect = &rect[..rect.find('>').unwrap()];
+            assert!(rect.contains("fill=\"none\""), "{key}: {rect}");
+        }
+    }
+    let (_, e, ok) = run_in(&dir, &["notebook", "export", "x.olmd", "--json", "c.json", "--paper", "blue"]);
+    assert!(!ok && e.contains("transparent"), "{e}");
 }

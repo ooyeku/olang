@@ -335,10 +335,12 @@ impl<H: Hooks + ?Sized> Walk<'_, H> {
                             } else {
                                 format!(" class=\"language-{}\"", escape_html(&lang))
                             };
-                            let inner = if self.opts.highlight && matches!(lang.as_str(), "olang" | "ol") {
-                                crate::stdlib::tokens::highlight(&text)
-                            } else {
-                                escape_html(&text)
+                            let known = crate::stdlib::lexers::language(&lang);
+                            let inner = match known {
+                                Some(l) if self.opts.highlight => {
+                                    crate::stdlib::tokens::highlight_in(&text, l)
+                                }
+                                _ => escape_html(&text),
                             };
                             format!("<pre><code{class}>{inner}</code></pre>\n")
                         }

@@ -72,9 +72,9 @@ pub fn call_meta_function(
         "unresolved" => meta_unresolved(args),
         "rename" => meta_rename(args),
         "tokens" | "highlight" => {
-            let src = match args.as_slice() {
-                [Value::String(s)] => s.clone(),
-                [other] => {
+            let src = match args.first() {
+                Some(Value::String(s)) if args.len() <= 2 => s.clone(),
+                Some(other) if args.len() <= 2 => {
                     return Err(format!(
                         "meta.{name}: the source must be a string, got {}",
                         other.type_name()
@@ -82,13 +82,33 @@ pub fn call_meta_function(
                     .into());
                 }
                 _ => {
-                    return Err(format!("meta.{name} expects 1 argument, got {}", args.len()).into());
+                    return Err(
+                        format!("meta.{name} expects 1 or 2 arguments (source, lang), got {}", args.len()).into(),
+                    );
                 }
             };
-            Ok(if name == "tokens" {
-                crate::stdlib::tokens::tokens_value(&src)
-            } else {
-                Value::String(std::sync::Arc::new(crate::stdlib::tokens::highlight(&src)))
+            // the language: olang unless named
+            let lang = match args.get(1) {
+                None | Some(Value::Unit) => "olang",
+                Some(Value::String(l)) => crate::stdlib::lexers::language(l).ok_or_else(|| {
+                    format!(
+                        "meta.{name}: no tokenizer for '{l}' (it knows {})",
+                        crate::stdlib::lexers::LANGUAGES
+                    )
+                })?,
+                Some(other) => {
+                    return Err(format!(
+                        "meta.{name}: the language must be a string like \"python\", got {}",
+                        other.type_name()
+                    )
+                    .into());
+                }
+            };
+            Ok(match (name, lang) {
+                ("tokens", "olang") => crate::stdlib::tokens::tokens_value(&src),
+                ("tokens", l) => crate::stdlib::tokens::tokens_value_in(&src, l),
+                (_, "olang") => Value::String(std::sync::Arc::new(crate::stdlib::tokens::highlight(&src))),
+                (_, l) => Value::String(std::sync::Arc::new(crate::stdlib::tokens::highlight_in(&src, l))),
             })
         }
         _ => Err(format!("Unknown meta function: {}", name).into()),

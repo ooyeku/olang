@@ -577,6 +577,10 @@ enum NotebookAction {
         /// The rows a Frame's or Series' output carries
         #[arg(long, value_name = "N", default_value_t = 20)]
         rows: usize,
+        /// `transparent`: draw charts on no paper, so the page they land
+        /// on shows through (each appearance's paper stays in `svg.paper`)
+        #[arg(long, value_name = "PAPER", value_parser = ["transparent"])]
+        paper: Option<String>,
         /// Draw these outputs (an outputs document: Studio's run) instead of
         /// running the notebook
         #[arg(long, value_name = "RUN.json")]
@@ -1696,6 +1700,7 @@ fn notebook_command(action: NotebookAction) -> i32 {
             pdf,
             json,
             rows,
+            paper,
             outputs,
             params,
         } => {
@@ -1740,7 +1745,11 @@ fn notebook_command(action: NotebookAction) -> i32 {
                 None => match olang::repl_serve::run_notebook(
                     &file,
                     &overrides,
-                    &olang::repl_serve::RunOptions { rows, twins: true },
+                    &olang::repl_serve::RunOptions {
+                        rows,
+                        twins: true,
+                        transparent: paper.is_some(),
+                    },
                 ) {
                     Ok(d) => d,
                     Err(e) => {

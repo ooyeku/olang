@@ -883,7 +883,7 @@ the browser's included.
 | `shift: n` | every heading `n` levels down (to `h6` at most); `title` still reads the source's level one |
 | `html: "keep" \| "escape" \| "drop"` | raw HTML in the source: written through (the default), shown as text, or left out |
 | `safe: true` | for text from strangers: raw HTML is escaped (unless `html: "drop"`), and a link whose scheme is not `http`, `https` or `mailto` is dropped (`data:` PNG, GIF, JPEG and WebP stay for images) |
-| `highlight: true` | `olang` and `ol` blocks no `code` hook drew are highlighted by `meta.highlight` |
+| `highlight: true` | a block no `code` hook drew is highlighted by `meta.highlight` in its fence's language, when that is one it knows (`olang`, `python`, `rust`, `js`, `sh`, `toml`, `json`, `markdown` and their usual aliases); any other stays escaped text |
 | `anchors: false` | headings without ids |
 | `inline: true` | a text of one paragraph answers that paragraph's inside, no `<p>`: a title or a summary set in a line |
 
@@ -1557,8 +1557,8 @@ over these nodes, beside the type checker
 | `meta.expand(source)` | `Ok(text)` \| `Err(message)` — the program after macro expansion, as source: every `meta fn` removed and every `@` site replaced by what it generated (what `olang expand FILE` prints) |
 | `meta.encode(source, options?)` | `Ok(bytes)` \| `Err(message)` — the parsed program (macros expanded) as a program image: bytes the runtime loads without parsing, behind a header naming the olang version that wrote it, which is the only version that loads it. `#{ "hot": [names] }` names the functions the loading runtime compiles at declaration rather than at their first call. What the web SDK's `serve` hands the browser in place of the source bundle |
 | `meta.unresolved(source)` | `Ok(list)` of every name the program uses that nothing in it defines or imports and the language does not provide, in order of first use; `Err` when the source does not parse. How the web SDK's bundler warns of a module that uses a name it does not import, undefined in the browser as natively |
-| `meta.tokens(source)` | the source as tokens that cover it exactly — their `text`s joined are `source` — `[#{ "kind", "text", "start", "end", "line" }]`, `start` and `end` in characters, `line` from 1. `kind` is one of `keyword` `constant` (`true`, `Ok`, an ALL-CAPS name) `ident` `function` (a call's or a definition's name) `type` `module` `property` `string` (a template's text pieces; a string a line) `interpolation` (`${` and its `}`) `number` `comment` `operator` `punct` `macro` (`@name`) `space`. Any text lexes, finished or not: the language server's lexer |
-| `meta.highlight(source)` | the source as HTML for inside a `<code>`: each token but a space a `<span class="ol-KIND">`, its text escaped. The same in the browser runtime, so a page's build and its playground colour alike |
+| `meta.tokens(source, lang?)` | the source as tokens that cover it exactly — their `text`s joined are `source` — `[#{ "kind", "text", "start", "end", "line" }]`, `start` and `end` in characters, `line` from 1. `kind` is one of `keyword` `constant` (`true`, `Ok`, an ALL-CAPS name) `ident` `function` (a call's or a definition's name) `type` `module` `property` `string` (a template's text pieces; a string a line) `interpolation` (`${` and its `}`) `number` `comment` `operator` `punct` `macro` (`@name`) `space`. Any text lexes, finished or not: the language server's lexer. `lang` names another language, with the same kinds and the same guarantee: `"python"` (`py`), `"rust"` (`rs`), `"js"` (`javascript`, `ts`), `"shell"` (`sh`, `bash`, `console`), `"toml"`, `"json"` or `"markdown"` (`md`); a name it does not know raises |
+| `meta.highlight(source, lang?)` | the source as HTML for inside a `<code>`: each token but a space a `<span class="ol-KIND">`, its text escaped; `lang` as `meta.tokens` takes it. The same in the browser runtime, so a page's build and its playground colour alike |
 | `meta.exports(path)` | at expansion time, `Ok(map)` of the literal values the module the expanding file imports as `path` binds at its top level (`let`/`share let` of a number, string, list, map, or tuple literal), by name; `Err` for a path the file does not import, and at runtime |
 
 Nodes are discriminated-union maps. Top-level statements carry `line` and
@@ -1731,6 +1731,7 @@ let toks = meta.tokens("let n = 1 // one")
 println(map(filter(toks, (t) => t.kind != "space"), (t) => t.kind))   // ["keyword", "ident", "operator", "number", "comment"]
 println(join(map(toks, (t) => t.text), "") == "let n = 1 // one")      // true
 println(meta.highlight("x |> f"))
+println(meta.highlight("version = \"1.0\"  # pinned", "toml"))
 ```
 
 ## `runtime` — what this binary carries
@@ -1746,7 +1747,7 @@ that serves its own routes reads the same bytes.
 |---|---|
 | `runtime.wasm()` | `Ok(#{ "bytes", "hash", "gzip", "br", "version", "profile" })` — the browser runtime's bytes, the first sixteen hex digits of their SHA-256 (the name in `/olang.<hash>.wasm` and the ETag), the gzip and brotli forms, the olang version it is, and `"browser"`. Every form and the hash are made when the binary is built and are slices of its own image: the call computes nothing, copies nothing to the heap, and may be made per request; `Err(message)` naming how to build a binary that carries one |
 | `runtime.wasm("full")` | the same for the full profile, the whole standard library (`re` and RSA too), for a playground that runs any program: its gzip and brotli forms are slices of the binary; its `bytes` are the brotli form decoded, once per process, on first ask |
-| `runtime.features()` / `runtime.features(profile)` | what a runtime has: `#{ "profile", "modules", "threads", "fs", "net", "processes", "db", "gui", "dom", "jit" }` — its name, the modules a program can call there (sorted), and whether it can start threads (`spawn`, `task`, `par_map` workers), reach files, the network, processes, SQLite, windows, a page's DOM, and native code. With no argument, this runtime; the native binary also answers for `"browser"` and `"full"`, the profiles `runtime.wasm` serves, and the browser runtime for itself |
+| `runtime.features()` / `runtime.features(profile)` | what a runtime has: `#{ "profile", "modules", "threads", "fs", "net", "processes", "db", "gui", "dom", "jit", "needs" }` — its name, the modules a program can call there (sorted), and whether it can start threads (`spawn`, `task`, `par_map` workers), reach files, the network, processes, SQLite, windows, a page's DOM, and native code. `needs` maps each function of those modules that reaches a power the profile lacks to that power — `#{ "ods.open_csv": "fs", "gg.save": "fs", "spawn": "threads", … }` (`spawn` is the form) — and is empty natively. With no argument, this runtime; any runtime, the browser's included, also answers for `"native"`, `"browser"` and `"full"` |
 | `runtime.version()` | the olang version string |
 | `runtime.memory()` | `#{ "heap", "program", "values", "embedded", "tasks" }`, in bytes — where the process's memory is (below) |
 | `runtime.profile_start()` / `runtime.profile_start(interval_us)` | begin sampling this process with the profiler behind `olang profile` (every 1,000 µs by default): `Ok(())`, or `Err` when a profile is already running |
@@ -1755,7 +1756,7 @@ that serves its own routes reads the same bytes.
 | `runtime.profile_live_stop()` | end it: sampling stops, the final snapshot (`"done": true`) is written. `Ok(())`, or `Err` when none runs |
 | `runtime.build()` | what this binary is: `#{ "version", "commit", "branch", "dirty", "date", "profile", "target", "rustc", "features", "crates", "exe" }` — the git commit it was built from (empty outside a checkout) and whether tracked files had changes then (`dirty`, `()` when git could not say), when its build script last ran (UTC: the last change to the sources, the lock or the commit), `release` or `debug`, the target triple, `rustc -V`, the Cargo features, the gui engine's and the stdlib's key crates from Cargo.lock as `[#{ "name", "version", "vendored" }]` (`vendored`: a patched copy under vendor/, accesskit_macos), and the binary's path |
 | `runtime.load_module(path, grant)` | the olang file at `path` loaded into this program as a module, read afresh (its folder's cached modules forgotten), everything under its folder held to `grant` — `#{ name, fs: false \| "read" \| true, fs_roots: [folders], proc: false \| true \| [programs], net, db, env }`, a key left out denied, never the host's builtins (`gui`, `tty`, loading code, the profiler). `Ok(module)`, or `Err(message)` with the grant before it kept ([Modules loaded at run time](packages.md#modules-loaded-at-run-time)) |
-| `runtime.unload_module(path)` · `runtime.module_grant(path)` · `runtime.module_permits(path, builtin, args)` | forget a loaded module's grant (true when there was one); the grant as it holds (`()` when none); whether its code would be allowed `builtin(args…)` — `Ok(())` or `Err(why)`, the same gate |
+| `runtime.unload_module(path)` · `runtime.module_grant(path)` · `runtime.module_permits(path, builtin, args)` | unload a module: its grant becomes a tombstone, so its code still running (a closure kept, a thread it started) is refused every capability — "module <dir> was unloaded" — never given the host's, until a `load_module` of the folder grants it again (true when a loaded module was there); the grant as it holds (`()` when none); whether its code would be allowed `builtin(args…)` — `Ok(())` or `Err(why)`, the same gate |
 | `runtime.call_budget(f, args, ms)` | `f(args…)` stopped past `ms` (an interrupt on this thread only) and its failure caught: `#{ ok, value, error, frames, over, us }` |
 | `runtime.last_error()` | the error a boundary on this thread caught last (`attempt`, `call_budget`, `load_module`) with its frames, `#{ message, frames: [#{ path, line, function }] }`, innermost first (line 0: an expression body); `()` when none |
 | `runtime.shape(value)` | a value's shape as text — kind, a map's sorted keys with theirs, a list's first item's — what a host compares to keep a reloaded module's state |
@@ -1779,11 +1780,16 @@ let browser = runtime.features("browser")
 fn runs_in(feat, src) = {
     let toks = filter(meta.tokens(src), (t) => t.kind != "space")
     let modules = map(filter(toks, (t) => t.kind == "module"), (t) => t.text)
-    all(modules, (m) => contains(feat.modules, m)) && (feat.threads || !any(toks, (t) => t.text == "spawn"))
+    // `m.f` for each module token followed by `.` and a name, and `spawn`
+    let calls = map(filter(range(len(toks)), (i) => toks[i].kind == "module" && i + 2 < len(toks) && toks[i + 1].text == "."), (i) => toks[i].text + "." + toks[i + 2].text)
+    let reached = calls + map(filter(toks, (t) => t.kind == "keyword" && t.text == "spawn"), (t) => t.text)
+    all(modules, (m) => contains(feat.modules, m)) && !any(reached, (c) => map_has_key(feat.needs, c))
 }
 println(runs_in(browser, "println(str.to_upper(\"hi\"))"))   // true
 println(runs_in(browser, "re.find(\"a\", \"abc\")"))     // false
 println(runs_in(runtime.features("full"), "re.find(\"a\", \"abc\")"))   // true
+println(runs_in(browser, "ods.open_csv(\"big.csv\")"))     // false: it needs files
+println(runs_in(browser, "let h = spawn { 1 }"))           // false: it needs threads
 ```
 
 `runtime.memory()` answers from a counting layer over the system

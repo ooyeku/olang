@@ -6783,19 +6783,19 @@ route("GET", "/olang." + map_get(rt, "hash") + ".wasm", (req, p) => { status: 20
         );
         self.doc_ex(
             "meta.tokens",
-            "meta.tokens(source)",
+            "meta.tokens(source, lang?)",
             "List",
             "meta",
-            "olang source as tokens covering it exactly: [#{ \"kind\", \"text\", \"start\", \"end\", \"line\" }], offsets in characters, the texts joined are the source. Kinds: keyword constant ident function type module property string interpolation number comment operator punct macro space.",
+            "Source as tokens covering it exactly: [#{ \"kind\", \"text\", \"start\", \"end\", \"line\" }], offsets in characters, the texts joined are the source. Kinds: keyword constant ident function type module property string interpolation number comment operator punct macro space. lang is olang unless named: python, rust, js, shell, toml, json or markdown.",
             &[r##"map(meta.tokens("let x = 1"), (t) => t.kind)  // ["keyword", "space", "ident", ...]"##],
         );
         self.doc_ex(
             "meta.highlight",
-            "meta.highlight(source)",
+            "meta.highlight(source, lang?)",
             "String",
             "meta",
-            "olang source as HTML for inside a <code>: each token but a space a <span class=\"ol-KIND\">, its text escaped.",
-            &[r##"meta.highlight("let x = 1")"##],
+            "Source as HTML for inside a <code>: each token but a space a <span class=\"ol-KIND\">, its text escaped. lang is olang unless named: python, rust, js, shell, toml, json or markdown.",
+            &[r##"meta.highlight("let x = 1")"##, r##"meta.highlight("x = 1  # n", "python")"##],
         );
         self.doc_ex(
             "compress.brotli_level",
@@ -6868,7 +6868,7 @@ for row in take(map_get(p, "rows"), 5) { println(map_get(row, "function") + " " 
             "runtime.unload_module(path)",
             "Bool",
             "runtime",
-            "Forget the grant of the module loaded from `path` (its file or its folder) and the modules cached from its folder. Its values a program still holds keep working, under the grant of whoever runs them. True when there was one.",
+            "Unload the module loaded from `path` (its file or its folder): the modules cached from its folder are forgotten and its grant becomes a tombstone, so its code a program still runs (a closure it kept, a thread the module started) is refused every capability with \"module <dir> was unloaded\", never given the host's. A later load_module of the folder replaces the tombstone. True when a loaded module was there.",
             &[r##"runtime.unload_module("plugins/hello/plugin.ol")"##],
         );
         self.doc_ex(

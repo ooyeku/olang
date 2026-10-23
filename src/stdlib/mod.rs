@@ -30,6 +30,7 @@ pub mod gui;
 pub mod http;
 pub mod json;
 pub mod math;
+pub mod lexers;
 pub mod md;
 pub mod meta;
 #[cfg(feature = "native")]

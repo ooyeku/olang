@@ -329,6 +329,7 @@ pub fn run_notebook(path: &Path, overrides: &[(String, String)], opts: &RunOptio
     let mut session = Session::new(false, None);
     session.first_rows = opts.rows;
     session.twins = opts.twins;
+    session.transparent = opts.transparent;
     session.open_notebook(&abs);
     // the params as overridden (validated by the program above)
     if let Some(info) = session.notebook.as_mut() {
@@ -452,6 +453,8 @@ pub fn run_notebook(path: &Path, overrides: &[(String, String)], opts: &RunOptio
 pub struct RunOptions {
     pub rows: usize,
     pub twins: bool,
+    /// Draw a chart's twins and text on no paper (`--paper transparent`).
+    pub transparent: bool,
 }
 
 impl Default for RunOptions {
@@ -459,6 +462,7 @@ impl Default for RunOptions {
         RunOptions {
             rows: FIRST_ITEMS,
             twins: false,
+            transparent: false,
         }
     }
 }
@@ -544,6 +548,8 @@ struct Session {
     /// Whether a chart's value carries both appearances (`svg.light`,
     /// `svg.dark`): an export's, which a page draws in either.
     twins: bool,
+    /// Whether those are drawn on no paper (`--paper transparent`).
+    transparent: bool,
 }
 
 /// A kernel's record or replay (docs/tooling.md, "A recorded run").
@@ -635,6 +641,7 @@ impl Session {
             unbound_params: HashMap::new(),
             first_rows: FIRST_ITEMS,
             twins: false,
+            transparent: false,
         }
     }
 
@@ -2772,6 +2779,7 @@ impl Session {
                         use olang_ods::plot::{Theme, retheme};
                         svg["light"] = J::String(retheme(s, Theme::Light));
                         svg["dark"] = J::String(retheme(s, Theme::Dark));
+                        papers(&mut svg, self.transparent);
                     }
                     r["svg"] = svg;
                 }
@@ -2919,6 +2927,7 @@ impl Session {
                                 sv[key] = J::String(twin.to_svg());
                             }
                         }
+                        papers(&mut sv, self.transparent);
                     }
                     r["svg"] = sv;
                 }
@@ -4305,25 +4314,78 @@ fn svg_of(s: &str) -> Option<J> {
     let w = num(attr(open, "width")).or_else(|| vb.get(2).copied())?;
     let h = num(attr(open, "height")).or_else(|| vb.get(3).copied())?;
     let mut r = json!({ "w": w, "h": h, "text": s });
-    let mut rest = &t[open.len()..];
-    // a chart's description stands before its background
-    if let Some(r) = rest.strip_prefix('>')
-        && r.starts_with("<metadata")
-        && let Some(e) = r.find("</metadata>")
-    {
-        rest = &r[e + "</metadata>".len() - 1..];
-    }
-    if let Some(at) = rest.find("<rect")
-        && rest[..at].trim_start_matches('>').trim().is_empty()
-    {
-        let tag = &rest[at..at + rest[at..].find('>').unwrap_or(0)];
-        if num(attr(tag, "width")) == Some(w)
-            && let Some(fill) = attr(tag, "fill")
-        {
-            r["bg"] = J::String(fill);
-        }
+    if let Some((a, b)) = paper_span(s, w) {
+        r["bg"] = J::String(s[a..b].to_string());
     }
     Some(r)
+}
+
+/// The byte range of the paper's colour in an SVG of width `w`: the
+/// `fill` of a first `rect` as wide as it (after a chart's description).
+fn paper_span(s: &str, w: f64) -> Option<(usize, usize)> {
+    let t0 = s.len() - s.trim_start().len();
+    let t = &s[t0..];
+    let open = t.find('>')?;
+    let mut from = open;
+    // a chart's description stands before its background
+    if t[open + 1..].starts_with("<metadata")
+        && let Some(e) = t[open..].find("</metadata>")
+    {
+        from = open + e + "</metadata>".len() - 1;
+    }
+    let rest = &t[from..];
+    let at = rest.find("<rect")?;
+    if !rest[..at].trim_start_matches('>').trim().is_empty() {
+        return None;
+    }
+    let tag_start = from + at;
+    let tag = &t[tag_start..tag_start + t[tag_start..].find('>')?];
+    let find = |name: &str| -> Option<(usize, usize)> {
+        let k = tag.find(&format!(" {}=\"", name))? + name.len() + 3;
+        let e = tag[k..].find('"')?;
+        Some((k, k + e))
+    };
+    let (wa, wb) = find("width")?;
+    if tag[wa..wb].trim_end_matches("px").parse::<f64>().ok() != Some(w) {
+        return None;
+    }
+    let (fa, fb) = find("fill")?;
+    Some((t0 + tag_start + fa, t0 + tag_start + fb))
+}
+
+/// An SVG with its paper made transparent (`fill="none"`): what an
+/// export's `--paper transparent` draws, so a page's own background
+/// shows through. Any other SVG is given back as it is.
+pub fn without_paper(s: &str) -> String {
+    let Some(v) = svg_of(s) else { return s.to_string() };
+    let w = v["w"].as_f64().unwrap_or(-1.0);
+    match paper_span(s, w) {
+        Some((a, b)) => format!("{}none{}", &s[..a], &s[b..]),
+        None => s.to_string(),
+    }
+}
+
+/// The paper of each appearance of a chart's SVG (`svg.paper`), then
+/// each drawn transparent when the run asks for it.
+fn papers(sv: &mut J, transparent: bool) {
+    let mut paper = serde_json::Map::new();
+    for key in ["light", "dark"] {
+        if let Some(text) = sv.get(key).and_then(|x| x.as_str()).map(str::to_string)
+            && let Some(one) = svg_of(&text)
+        {
+            if let Some(bg) = one.get("bg") {
+                paper.insert(key.to_string(), bg.clone());
+            }
+            if transparent {
+                sv[key] = J::String(without_paper(&text));
+            }
+        }
+    }
+    if transparent && let Some(text) = sv.get("text").and_then(|x| x.as_str()).map(str::to_string) {
+        sv["text"] = J::String(without_paper(&text));
+        sv["bg"] = J::String("none".to_string());
+    }
+    sv["paper"] = J::Object(paper);
 }
 
 /// A picture's format and size, from its first bytes.
