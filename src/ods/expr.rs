@@ -690,7 +690,25 @@ fn evaluate(func: &str, f: &Frame, items: &[(String, Value)]) -> Result<Vec<Seri
     for (name, v) in items {
         roots.push(root_of(&mut r, v, &format!("ods.{}: '{}'", func, name))?);
     }
-    eval_roots(&roots, Some(f.n_rows())).map_err(|e| format!("ods.{}: {}", func, e))
+    // A `select` of reductions and literals alone reads no column: it
+    // answers one row, as a summary does. Any column among them keeps
+    // the Frame's rows and the scalars broadcast; `with` always keeps
+    // the rows.
+    let len = if func == "select" && !roots.is_empty() && roots.iter().all(|e| !reads_column(e)) {
+        1
+    } else {
+        f.n_rows()
+    };
+    eval_roots(&roots, Some(len)).map_err(|e| format!("ods.{}: {}", func, e))
+}
+
+/// Whether an engine expression reads a column (else it is a scalar).
+fn reads_column(e: &Expr) -> bool {
+    match e {
+        Expr::Col(_) => true,
+        Expr::Lit(_) => false,
+        Expr::Op(_, kids) => kids.iter().any(|k| reads_column(k)),
+    }
 }
 
 /// `ods.with(f, { name: expr, … })`: every expression sees the Frame as

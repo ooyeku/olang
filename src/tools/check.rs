@@ -2714,8 +2714,8 @@ thread_local! {
 }
 
 /// The names `program` imports item by item — or `None` when any `use`
-/// is bare or a wildcard, and what it brings in cannot be listed from the
-/// file alone.
+/// is a wildcard (a bare `use` of a file module is one), and what it
+/// brings in cannot be listed from the file alone.
 fn imported_names(program: &Program) -> Option<std::collections::HashSet<String>> {
     let mut names = std::collections::HashSet::new();
     let mut any_use = false;
@@ -2726,8 +2726,11 @@ fn imported_names(program: &Program) -> Option<std::collections::HashSet<String>
             continue;
         };
         any_use = true;
+        // No items is the namespace alone — `use m {}`, or a stdlib
+        // module's bare `use gg` (the parser gives it no items): it puts
+        // no name in scope, so `find` stays the builtin beside it.
         if u.items.is_empty() {
-            return None;
+            continue;
         }
         for item in &u.items {
             match item {
@@ -5889,6 +5892,27 @@ mod tests {
             d[0].message
                 .contains("parameter 'w' of area expects Int, got String")
         );
+    }
+
+    #[test]
+    fn a_namespace_alone_leaves_a_builtin_its_name() {
+        // `use gg` (a stdlib module: its namespace alone) beside
+        // `use web { el }`: the SDK's `find(routes, method, path)` was
+        // not imported, so `find(xs, f)` is the builtin.
+        let web = Parser::new()
+            .parse("share fn find(routes, method, path) = routes\nshare fn el(tag) = tag\n")
+            .expect("parses");
+        let main = Parser::new()
+            .parse("use gg\nuse web { el }\nprintln(show(find([1, 2, 3], (r) => r > 1)))\n")
+            .expect("parses");
+        let d = check_program_with_context(&[&web], &main);
+        assert!(d.is_empty(), "{:?}", d.iter().map(|x| &x.message).collect::<Vec<_>>());
+        // Imported by name, it is the SDK's, and checked as such.
+        let main = Parser::new()
+            .parse("use gg\nuse web { find }\nfind([1, 2, 3], 1)\n")
+            .expect("parses");
+        let d = check_program_with_context(&[&web], &main);
+        assert!(d.iter().any(|x| x.message.contains("Missing required argument: path")));
     }
 
     // ── 0.61: blocks scope their bindings ──────────────────────────────

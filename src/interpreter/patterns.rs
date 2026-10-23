@@ -68,7 +68,9 @@ impl Interpreter {
                     Ok(true)
                 }
             }
-            (Pattern::Tuple(patterns), Value::Tuple(values)) => {
+            // A tuple pattern matches a tuple, or a list of its length:
+            // `((a, b)) =>` destructures `[1, 2]` as `([a, b]) =>` does.
+            (Pattern::Tuple(patterns), Value::Tuple(values) | Value::List(values)) => {
                 if patterns.len() != values.len() {
                     return Ok(false);
                 }

@@ -6344,7 +6344,12 @@ impl BytecodeVm {
                 Instruction::PatternTestTuple { dst, value, len } => {
                     use crate::ovm::value::ValueData;
                     let matches = match &self.execution_state.register_ref(*value)?.data {
-                        ValueData::Tuple(items) => items.len() == *len,
+                        // A tuple pattern reads a list of its length too,
+                        // as `let (a, b) = [1, 2]` reads.
+                        ValueData::Tuple(items) | ValueData::List(items) => items.len() == *len,
+                        ValueData::AstList(items) => items.len() == *len,
+                        ValueData::FloatList(items) => items.len() == *len,
+                        ValueData::IntList(items) => items.len() == *len,
                         _ => false,
                     };
                     self.execution_state

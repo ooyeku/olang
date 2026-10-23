@@ -1604,7 +1604,7 @@ The verbs that resolve expressions:
 |---|---|
 | `ods.with(f, { name: expr, … })` | adds each column, or replaces the one of that name. Every expression sees the Frame as it was; the whole object is one fused pass, a column several outputs read is read once, and a shared subexpression is computed once. A map (`#{ "name": expr }`) works too, and so does a list of named expressions. |
 | `ods.filter(f, expr)` | the rows where a Bool expression holds (a null does not) |
-| `ods.select(f, [names and exprs])` | those columns, in that order: a name, an expression (named by `ods.alias(expr, name)`, or else by the first column it reads), or an object of named expressions |
+| `ods.select(f, [names and exprs])` | those columns, in that order: a name, an expression (named by `ods.alias(expr, name)`, or else by the first column it reads), or an object of named expressions. When every expression is a reduction or a literal (`col("t").min()`, `ods.lit(1)`), the answer is one row; when any reads a column, it keeps the Frame's rows and each reduction or literal repeats on every row. `with` always keeps the rows. |
 | `ods.sort_by(f, keys, descending)` | sorted by several keys: names or expressions, each ascending unless `descending` (a Bool for all, or a list of one per key) says otherwise. Ties keep their row order; nulls go last in every key. |
 
 ### Within groups: `over`

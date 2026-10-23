@@ -402,6 +402,10 @@ let [head, ...tail] = [1, 2, 3, 4]
 println(`${x + y + first + second + head} tail: ${tail}`)
 ```
 
+A tuple pattern reads a list of its length too, so `let (a, b) = [1,
+2]` and `map([[1, 2], [3, 4]], ((a, b)) => a + b)` bind as the list
+pattern `[a, b]` would; a list of another length does not match it.
+
 A function's or a lambda's parameter destructures the same way — a
 tuple, a list or an object pattern where a name goes:
 [Parameters](#parameters-annotations-defaults-named-arguments).
@@ -1472,7 +1476,7 @@ println(describe(0) + ", " + describe(2) + ", " + describe(7) + ", " + describe(
 | Range | `1..10`, `'a'..'z'` | an Int within the range; for a character range, a one-character String within it (`'a'..='z'` does not match `"zebra"`) |
 | Wildcard | `_` | anything, binds nothing |
 | Identifier | `x` | anything, binds it as `x` |
-| Tuple | `(a, b)` | a 2-tuple, binding parts |
+| Tuple | `(a, b)` | a 2-tuple, or a list of two, binding parts |
 | List | `[a, b]`, `[h, ...t]` | exact shape, or head + rest |
 | Enum variant | `Some(v)`, `Node(l, r)` | that variant, binding payloads |
 | Result | `Ok(v)`, `Err(e)` | result values |
