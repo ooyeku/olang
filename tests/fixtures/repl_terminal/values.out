@@ -39,7 +39,7 @@ Core Functions (79):
   zip
   (use :env --full for detailed descriptions)
 
-User Environment (43):
+User Environment (45):
     asset : struct = Module { ... }
     base64 : struct = Module { ... }
     bigint : struct = Module { ... }
@@ -61,7 +61,9 @@ User Environment (43):
     it : int = 6
     json : struct = Module { ... }
     learn : struct = Module { ... }
+    mat : struct = Module { ... }
     math : struct = Module { ... }
+    md : struct = Module { ... }
     meta : struct = Module { ... }
     ods : struct = Module { ... }
     os : struct = Module { ... }
@@ -87,7 +89,7 @@ User Environment (43):
 
 === Memory ===
   Values are reference-counted and reclaimed deterministically.
-  User bindings: 43
+  User bindings: 45
 Current configuration:
   prompt: olang> 
   show_types: false

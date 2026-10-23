@@ -188,7 +188,7 @@ Usage: :search <query> [filters]
 
 [2m16. FUZZY[0m [34mplot.heatmap[0m [2m(plot)[0m
    [32ma heatmap of the row-major value grid, as an SVG string[0m
-   [35mSyntax:[0m [36mplot.heatmap(x_labels, y_labels, rows, opts)[0m
+   [35mSyntax:[0m [36mplot.heatmap(x_labels, y_labels, rows, title:, x_label:, y_label:, width:, height:, theme:, paper:, ink:, responsive:, interactive:, colors:, vary:, scale:, font_size:, font:)[0m
 
 [2m17. FUZZY[0m [34mmap_has_key[0m [2m(Maps)[0m
    [32mWhether key is present — the way to tell an absent key from one stored                  with a Unit value.[0m
