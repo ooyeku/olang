@@ -196,14 +196,18 @@ fn ods_version_is_the_plain_version() {
 
 #[test]
 fn the_probe_hooks_are_not_in_the_ods_namespace() {
-    assert_eq!(
-        eval("typeof(ods.probe)", None),
-        Ok(Value::String("Unit".to_string().into()))
-    );
-    assert_eq!(
-        eval("typeof(ods.probe_tag)", None),
-        Ok(Value::String("Unit".to_string().into()))
-    );
+    // A module's missing member raises; map_get asks without raising.
+    for hook in ["probe", "probe_tag"] {
+        assert_eq!(
+            eval(&format!("typeof(map_get(ods, \"{hook}\"))"), None),
+            Ok(Value::String("Unit".to_string().into()))
+        );
+        let err = eval(&format!("ods.{hook}"), None).expect_err(hook);
+        assert!(
+            err.contains(&format!("module 'ods' has no member '{hook}'")),
+            "{err}"
+        );
+    }
 }
 
 #[test]
