@@ -1018,6 +1018,21 @@ impl App {
                 }
             }
         }
+        // drawn on the render thread: a frame still held there for the next
+        // refresh would be replaced before it is drawn, so this one is put
+        // off and listed as the render thread can take it (from the state
+        // as it is then)
+        #[cfg(target_os = "macos")]
+        if let Renderer::Threaded(h) = &pw.renderer
+            && frames::pacing()
+            && !pw.occluded
+        {
+            let size = pw.state.lock().map(|st| st.device_size()).unwrap_or((0, 0));
+            if h.would_wait(size) {
+                h.want();
+                return;
+            }
+        }
         pw.deferred = false;
         // covered, minimized or on another space: nothing to draw (nor its
         // damage to work out); the frame stays owed and is drawn as the

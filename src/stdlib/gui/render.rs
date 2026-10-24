@@ -73,6 +73,12 @@ struct SlotState {
 pub struct Slot {
     state: Mutex<SlotState>,
     handled: Condvar,
+    /// The main thread put a frame off while one waited here: it is asked
+    /// for it as the render thread can take one.
+    wanted: std::sync::atomic::AtomicBool,
+    /// Frames on their way to the screen (the render thread's count, read
+    /// by the main thread).
+    on_way: std::sync::atomic::AtomicUsize,
 }
 
 impl Slot {
@@ -125,6 +131,29 @@ impl Handle {
                     .0;
             }
         }
+    }
+
+    /// Whether a frame of this size would only wait: the last one handed
+    /// over is still held for the next refresh. The main thread then puts
+    /// its frame off ([`Handle::want`]) rather than list one that would be
+    /// replaced before it is drawn.
+    pub fn would_wait(&self, size: (u32, u32)) -> bool {
+        let on_way = self.slot.on_way.load(std::sync::atomic::Ordering::Acquire);
+        let paced = self.linked || frames::synthetic_hz().is_some();
+        let s = self.slot.lock();
+        // held for the next refresh, still being drawn, or a frame on its
+        // way already
+        let busy = s.newest.is_some() || s.handled < s.published || (paced && on_way >= limit());
+        busy && s.shown == size
+    }
+
+    /// The main thread put a frame off: it is asked for it
+    /// ([`Cmd::NextFrame`]) as soon as the render thread can take one.
+    pub fn want(&self) {
+        self.slot
+            .wanted
+            .store(true, std::sync::atomic::Ordering::Release);
+        post(Msg::Want(self.id));
     }
 
     /// What the window shows may be gone: the next frame is drawn whole.
@@ -203,6 +232,8 @@ enum Msg {
     Occluded(u64),
     /// A frame the surface could not take yet, tried again.
     Retry(u64),
+    /// The main thread put a frame off ([`Handle::want`]).
+    Want(u64),
     /// The kept frame's size and pixels (a test's).
     Read(u64, crossbeam_channel::Sender<(u32, u32, Vec<u8>)>),
     Remove(u64, crossbeam_channel::Sender<()>),
@@ -395,6 +426,7 @@ fn recover() {
             w.surface.invalidate();
             w.in_flight.clear();
             w.pending = false;
+            w.sync();
             send(Cmd::NextFrame(*id));
         }
     });
@@ -445,6 +477,7 @@ fn handle(st: &mut State, m: Msg) {
                 // no refresh shows them now: nothing is held for them
                 w.in_flight.clear();
                 w.animating = false;
+                w.sync();
             }
         }
         Msg::Retry(id) => {
@@ -457,6 +490,27 @@ fn handle(st: &mut State, m: Msg) {
                 }
                 drop(s);
                 draw(id, w);
+            }
+        }
+        Msg::Want(id) => {
+            if let Some(w) = st.wins.get_mut(&id) {
+                prune(w);
+                w.sync();
+                let free = w.slot.lock().newest.is_none() && w.in_flight.len() < limit();
+                if free {
+                    ask(id, w);
+                } else if w.slot.wanted.load(std::sync::atomic::Ordering::Acquire) {
+                    // at the next refresh; or, refreshes not coming (a link
+                    // resting, a display asleep), once what is on its way
+                    // is old enough to count as shown
+                    frames::resume(&w.link);
+                    let _ = std::thread::Builder::new()
+                        .name("gui-render-want".into())
+                        .spawn(move || {
+                            std::thread::sleep(Duration::from_millis(60));
+                            post(Msg::Want(id));
+                        });
+                }
             }
         }
         Msg::Read(id, reply) => {
@@ -480,6 +534,22 @@ fn handle(st: &mut State, m: Msg) {
 /// off for it is drawn, something moving asks for its next frame, and a
 /// link with nothing to do for a few refreshes rests.
 fn tick(st: &mut State, id: u64, at: u64) {
+    tick_win(st, id, at);
+    if let Some(w) = st.wins.get(&id) {
+        w.sync();
+    }
+}
+
+impl Win {
+    /// The count of frames on their way, for the main thread.
+    fn sync(&self) {
+        self.slot
+            .on_way
+            .store(self.in_flight.len(), std::sync::atomic::Ordering::Release);
+    }
+}
+
+fn tick_win(st: &mut State, id: u64, at: u64) {
     if id == 0 {
         let ids: Vec<u64> = st.wins.keys().copied().collect();
         for w in ids {
@@ -496,6 +566,13 @@ fn tick(st: &mut State, id: u64, at: u64) {
     {
         w.in_flight.pop_front();
         frames::shown(p, t0, at);
+    }
+    // the main thread put a frame off: it lists one now, from the state as
+    // it is (what waited here is replaced by it)
+    if ask(id, w) {
+        w.slot.lock().newest = None;
+        w.pending = false;
+        return;
     }
     if w.pending {
         w.pending = false;
@@ -534,17 +611,55 @@ pub fn tick_here(id: u64, at: u64) {
     }
 }
 
+/// Frames on their way at once: one (pacing), two under a stand-in
+/// refresh, any number with `GUI_PACING=0`.
+fn limit() -> usize {
+    if frames::pacing() {
+        1
+    } else if frames::synthetic_hz().is_some() {
+        2
+    } else {
+        usize::MAX
+    }
+}
+
+/// A frame long on its way was shown (a refresh missed); a link that has
+/// not ticked lately (resting, a display asleep) puts nothing off.
+fn prune(w: &mut Win) {
+    let now = frames::now_ns();
+    while w
+        .in_flight
+        .front()
+        .is_some_and(|f| now.saturating_sub(f.0) > 50_000_000)
+    {
+        w.in_flight.pop_front();
+    }
+    if now.saturating_sub(w.last_tick) > 50_000_000 {
+        w.in_flight.clear();
+    }
+}
+
+/// A frame the main thread put off asked for; whether one was.
+fn ask(id: u64, w: &mut Win) -> bool {
+    if w.slot
+        .wanted
+        .swap(false, std::sync::atomic::Ordering::AcqRel)
+    {
+        send(Cmd::NextFrame(id));
+        true
+    } else {
+        false
+    }
+}
+
 /// Draw and present the newest frame of window `id`, unless the pacing
 /// holds it for the next refresh.
 fn draw(id: u64, w: &mut Win) {
     let synthetic = frames::synthetic_hz().is_some();
-    let limit = if frames::pacing() {
-        1
-    } else if synthetic {
-        2
-    } else {
-        usize::MAX
-    };
+    let limit = limit();
+    if (w.link.is_some() || synthetic) && w.in_flight.len() >= limit {
+        prune(w);
+    }
     let frame = {
         let mut s = w.slot.lock();
         let Some(f) = s.newest.as_ref() else {
@@ -554,26 +669,13 @@ fn draw(id: u64, w: &mut Win) {
         // next refresh (one frame a refresh, never a queue) — never a frame
         // of another size (a live resize draws at once), and only while
         // the refreshes come.
-        if (w.link.is_some() || synthetic) && w.in_flight.len() >= limit {
-            let now = frames::now_ns();
-            // a frame long on its way was shown (a refresh missed); a link
-            // that has not ticked lately (resting, a display asleep) puts
-            // nothing off
-            while w
-                .in_flight
-                .front()
-                .is_some_and(|f| now.saturating_sub(f.0) > 50_000_000)
-            {
-                w.in_flight.pop_front();
-            }
-            if now.saturating_sub(w.last_tick) > 50_000_000 {
-                w.in_flight.clear();
-            }
-            if w.in_flight.len() >= limit && (f.dl.width, f.dl.height) == s.shown {
-                w.pending = true;
-                frames::resume(&w.link);
-                return;
-            }
+        if (w.link.is_some() || synthetic)
+            && w.in_flight.len() >= limit
+            && (f.dl.width, f.dl.height) == s.shown
+        {
+            w.pending = true;
+            frames::resume(&w.link);
+            return;
         }
         s.newest.take().expect("checked above")
     };
@@ -646,6 +748,7 @@ fn draw(id: u64, w: &mut Win) {
 
 /// The frame published last is handled: a resize waiting for it goes on.
 fn handled(w: &mut Win, size: (u32, u32), presented: bool) {
+    w.sync();
     let mut s = w.slot.lock();
     s.handled = s.published;
     if presented {
