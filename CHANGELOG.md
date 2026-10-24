@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`material: "window"`: a box shows the desktop behind the window**,
+  as a Mac sidebar does. The window gets an NSVisualEffectView
+  (`.sidebar`, blending behind the window, following its active state)
+  under its content view, the surface turns transparent (the Metal layer
+  non-opaque) only while a frame has such a box, and the engine clears
+  the box's shape to alpha 0 instead of drawing its `bg`. Damage is
+  unchanged. The software renderer, a headless window and Reduce
+  Transparency draw the `bg` opaque. `gui.platform().window_material`.
+- **Display P3 colours**: `"color(display-p3 r g b[ / a])"` wherever a
+  colour goes, and `gui.set`'s `wide` (sRGB colours, a theme's tokens,
+  and the P3 colours the GPU draws for them). On a wide screen the GPU
+  keeps a frame with wide colours in extended sRGB (Rgba16Float), and the
+  conversion to the screen is then a matrix only. A transition between
+  wide colours moves through wide colours. Software and snapshots draw
+  the sRGB fallback (the colour clipped). `gui.platform().wide_color`.
+
 ## [1.0.0-rc.3] - 2026-10-23
 
 ### Added
