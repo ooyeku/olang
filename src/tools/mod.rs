@@ -37,7 +37,10 @@ pub fn discover_sources(path: &Path) -> Vec<PathBuf> {
 /// checkout keeps: the `.gitignore`s (at every level, and above `path`)
 /// and `.git/info/exclude` respected, a repository or not; hidden folders
 /// and the build and cache folders (`SKIPPED_DIRS`) left out even with no
-/// `.gitignore`. A file path returns just itself. Public: the CLI's watch
+/// `.gitignore`. Inside a project, a folder below `path` with an
+/// `olang.toml` of its own is another project (a fixture, a vendored
+/// package) and is left out too: it is walked when named itself. A file
+/// path returns just itself. Public: the CLI's watch
 /// mode polls it from the binary crate.
 pub fn discover_ol_files(path: &Path) -> Vec<PathBuf> {
     discover(path, false)
@@ -54,11 +57,24 @@ fn skipped_dir(name: &str) -> bool {
     name.starts_with('.') || SKIPPED_DIRS.contains(&name)
 }
 
+/// Whether `path` is in a project: it, or a folder above it, has an
+/// `olang.toml`. Only then is a nested `olang.toml` another project's.
+fn in_project(path: &Path) -> bool {
+    let abs = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    abs.ancestors().any(|d| d.join("olang.toml").is_file())
+}
+
+/// A folder below the walk's start that is a project of its own.
+fn own_project(dir: &Path) -> bool {
+    dir.join("olang.toml").is_file()
+}
+
 #[cfg(feature = "native")]
 fn discover(path: &Path, notebooks: bool) -> Vec<PathBuf> {
     if path.is_file() {
         return vec![path.to_path_buf()];
     }
+    let nested = in_project(path);
     let mut b = ignore::WalkBuilder::new(path);
     b.hidden(false)
         .parents(true)
@@ -68,10 +84,11 @@ fn discover(path: &Path, notebooks: bool) -> Vec<PathBuf> {
         .ignore(false)
         .require_git(false)
         .follow_links(true)
-        .filter_entry(|e| {
+        .filter_entry(move |e| {
             e.depth() == 0
                 || !e.file_type().is_some_and(|t| t.is_dir())
-                || !skipped_dir(&e.file_name().to_string_lossy())
+                || !(skipped_dir(&e.file_name().to_string_lossy())
+                    || (nested && own_project(e.path())))
         });
     let mut found: Vec<PathBuf> = b
         .build()
@@ -91,6 +108,7 @@ fn discover(path: &Path, notebooks: bool) -> Vec<PathBuf> {
         found.push(path.to_path_buf());
         return found;
     }
+    let nested = in_project(path);
     let mut stack = vec![path.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let entries = match std::fs::read_dir(&dir) {
@@ -101,7 +119,7 @@ fn discover(path: &Path, notebooks: bool) -> Vec<PathBuf> {
             let p = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
             if p.is_dir() {
-                if !skipped_dir(&name) {
+                if !skipped_dir(&name) && !(nested && own_project(&p)) {
                     stack.push(p);
                 }
             } else if wanted(&name, notebooks) {

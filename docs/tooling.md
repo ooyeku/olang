@@ -165,9 +165,15 @@ executed at all.
 The walk keeps what a checkout keeps: every `.gitignore` (at any level,
 and those above the path) and `.git/info/exclude` are respected, a
 repository or not, and hidden folders, `target/`, `node_modules/` and
-`dist/` are left out even with no `.gitignore`. A path named on the
-command line is walked whatever ignores it. `olang check` and
-`olang fmt` walk the same way.
+`dist/` are left out even with no `.gitignore`. Inside a project, a
+folder below the walk's start with an `olang.toml` of its own is
+another project — a test fixture, a sample, a vendored package — and is
+left out too, so a fixture's deliberately failing tests never run (or
+rewrite its snapshots) under the project's bare `olang test`. A path
+named on the command line is walked whatever ignores it, and a fixture
+named runs as its own project: `olang test tests/fixtures/sample`.
+Outside any project the walk enters every project below it. `olang
+check` and `olang fmt` walk the same way.
 
 `olang test` answers for the project's own files. An imported module's
 blocks run when the module is one of them — under the package's root
@@ -268,7 +274,7 @@ are absolute paths.
 | `test` | A block starts: `file`, `name`, `line`. |
 | `passed` | It passed: `ms`. |
 | `failed` | It failed: `ms`, `message`, `kind`, `at` (the failing assertion or error: `file`, `line`, `col`; `null` for an assertion that tallies instead of raising, `testing.assert_*`), `stmt` (the block's statement it surfaced from — its place in the test file when `at` is in a library), `frames` (innermost first, each `name`, `file`, and the `line` of its `fn` when the file declares one). `kind` is `assert_eq`, `assert_ne`, `snapshot` (a text snapshot), `pixels` (a pixel snapshot: `snapshots` lists them) or `error`; for the first three, `expected` and `actual` are the values: `type`, `show` (the display form), `pretty` (the display form an entry a line, when a list, map, tuple or record is longer than 60 characters — what a line diff reads), `value` (as JSON, where the value has a form there), `string` (a string's own text), `clipped` (past 20,000 characters). |
-| `snapshot` | A pixel snapshot differs, said by the library that compares it (`testing.snapshot_failed`, which Loom's `snapshot` calls): `snapshot` holds `name`, `baseline`, `actual`, `diff` (paths), `differing`, `total`, `worst`, `sizes`. |
+| `snapshot` | A pixel snapshot differs, said by the library that compares it (`testing.snapshot_failed`, which Loom's `snapshot` calls): `snapshot` holds `name`, `baseline`, `actual`, `diff` (paths, a relative one said beside the test file), `differing`, `total`, `worst`, `sizes`. |
 | `skipped` | A block of a named file that `--only` left out. |
 | `divergence` | `--verify-tiers` found native code and the VM disagreeing: `function` (`fn name (native call)`, or an on-stack-replacement region), `native`, `vm` (the two results, rendered), and the block under way (`file`, `name`, `line`). A `finished` event with `aborted: "divergence"` and `code` 102 follows, and the process ends. |
 | `file` | A file is done: its `passed` and `failed`, and `error` — the file's parse error (`kind` `parse`) or an error outside any block (`kind` `error`, with its `line`, `col` and `frames`). |

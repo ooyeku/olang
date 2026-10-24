@@ -357,3 +357,78 @@ fn test_runner_runs_the_projects_own_blocks_and_dependencies_only_with_deps() {
     assert!(stdout.contains("3 passed, 0 failed"), "{stdout}");
     let _ = std::fs::remove_dir_all(&ws);
 }
+
+#[test]
+fn a_walk_leaves_out_a_project_below_the_root_unless_it_is_named() {
+    let ws = fixture_dir("nested_projects");
+    let write = |rel: &str, text: &str| {
+        let p = ws.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    };
+    write(
+        "app/olang.toml",
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+    );
+    write(
+        "app/tests/app_test.ol",
+        "test \"the app's block\" {\n    assert_eq(1 + 1, 2)\n}\n",
+    );
+    // A fixture project inside the app: a deliberately failing test, an
+    // unformatted file and one that does not parse.
+    let fixture = "app/tests/fixtures/sample";
+    write(
+        &format!("{fixture}/olang.toml"),
+        "[package]\nname = \"sample\"\nversion = \"0.1.0\"\n",
+    );
+    write(
+        &format!("{fixture}/tests/sample_test.ol"),
+        "test \"the fixture's failing block\" {\n    assert_eq(1, 2)\n}\n",
+    );
+    write(&format!("{fixture}/messy.ol"), "let x = 1   \n\n\n\n");
+    write(&format!("{fixture}/broken.ol"), "let = = 1\n");
+    let app = ws.join("app");
+    let run = |dir: &std::path::Path, args: &[&str]| {
+        let out = olang().args(args).current_dir(dir).output().expect("run");
+        (
+            out.status.success(),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
+    };
+
+    // From the app's root, bare: the fixture is another project's.
+    let (ok, out) = run(&app, &["test"]);
+    assert!(ok, "{out}");
+    assert!(out.contains("1 passed, 0 failed"), "{out}");
+    assert!(!out.contains("the fixture's failing block"), "{out}");
+    let (ok, out) = run(&app, &["fmt", "--check"]);
+    assert!(ok, "fmt walked into the fixture: {out}");
+    let (ok, out) = run(&app, &["check"]);
+    assert!(ok, "check walked into the fixture: {out}");
+    assert_eq!(
+        std::fs::read_to_string(
+            app.join(fixture.trim_start_matches("app/"))
+                .join("messy.ol")
+        )
+        .unwrap(),
+        "let x = 1   \n\n\n\n",
+        "the fixture was rewritten"
+    );
+
+    // Named, it is walked: from the app's root or its own.
+    let (ok, out) = run(&app, &["test", "tests/fixtures/sample"]);
+    assert!(!ok && out.contains("1 failed"), "{out}");
+    let (ok, _) = run(&app, &["fmt", "--check", "tests/fixtures/sample"]);
+    assert!(!ok, "a named fixture is formatted");
+    let (ok, _) = run(&app.join("tests/fixtures/sample"), &["check"]);
+    assert!(!ok, "a fixture checked from its own root");
+
+    // Outside any project a walk enters every project below it.
+    let (ok, out) = run(&ws, &["test", "."]);
+    assert!(!ok && out.contains("1 passed, 1 failed"), "{out}");
+    let _ = std::fs::remove_dir_all(&ws);
+}

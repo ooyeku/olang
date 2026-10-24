@@ -382,9 +382,10 @@ fn a_nested_packages_file_expands_against_its_own_root_under_olang_test() {
          share fn sample_name() = map_get(SAMPLE, \"resource\")\n\
          test \"expands against its own package\" { assert_eq(sample_name(), \"issues\") }\n",
     );
-    // From the app's root, scanning everything: the nested file's macro is
-    // the nested package's, not the app's.
-    let (out, err, rc) = olang(&ws, &["test", "."]);
+    // From the app's root, naming the nested package (a walk of the app
+    // leaves a project of its own out): the nested file's macro is the
+    // nested package's, not the app's.
+    let (out, err, rc) = olang(&ws, &["test", "vendor/shuttle"]);
     assert_eq!(rc, 0, "{out}{err}");
     assert!(out.contains("1 passed, 0 failed"), "{out}{err}");
 }
