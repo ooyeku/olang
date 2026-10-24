@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`olang test` runs each file from its project's root** (the folder
+  with the `olang.toml` above it), not from the file's own folder, so a
+  relative path in a test means the same from any folder the suite is
+  started in. A file in no project, and a notebook, still run from
+  their own folder; a test finds its own as
+  `fs.dirname(testing.snapshot_dir())`.
+
 ### Added
 
 - **The web SDK has a helper for every tag of a document**: `html`,
