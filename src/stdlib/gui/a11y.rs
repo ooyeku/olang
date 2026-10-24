@@ -359,8 +359,34 @@ fn value_of(st: &WinState, n: &Node) -> Option<String> {
     n.value.clone()
 }
 
+/// Each field's visual lines (the text engine's: their boxes and their
+/// characters' places), by key, for the runs: what lets Zoom and
+/// VoiceOver box a character and follow the caret.
+pub type Lines = HashMap<String, Vec<(super::text::FieldLine, [f32; 4])>>;
+
+fn lines_of(st: &mut WinState) -> Lines {
+    let keys: Vec<String> = st
+        .editors
+        .keys()
+        .filter(|k| st.scene.nodes.get(*k).is_some_and(|n| !n.decorative))
+        .cloned()
+        .collect();
+    let mut out = HashMap::new();
+    for k in keys {
+        if let Some(l) = st.field_lines(&k) {
+            out.insert(k, l);
+        }
+    }
+    out
+}
+
 /// The tree for the platform.
-pub fn tree(st: &WinState) -> TreeUpdate {
+pub fn tree(st: &mut WinState) -> TreeUpdate {
+    let lines = lines_of(st);
+    tree_with(st, &lines)
+}
+
+fn tree_with(st: &WinState, lines: &Lines) -> TreeUpdate {
     let s = st.scale as f64;
     let mut nodes = Vec::new();
     let mut window = accesskit::Node::new(Role::Window);
@@ -412,7 +438,7 @@ pub fn tree(st: &WinState) -> TreeUpdate {
             .collect();
         // a styled field's text as runs: lines, words, characters, and
         // the selection a screen reader reads and moves
-        if let Some(f) = field_text(st, key) {
+        if let Some(f) = field_text(st, key, lines.get(key)) {
             let (runs, sel) = text_runs(st, key, &f);
             for (id, run) in runs {
                 kids.push(id);
@@ -558,57 +584,157 @@ fn run_id(key: &str, i: usize, c: usize) -> NodeId {
     node_id(&format!("{key}\u{0}run:{i}:{c}"))
 }
 
+/// AccessKit's longest run (its lengths and word starts are bytes).
+const RUN_MAX: usize = 255;
+
 /// A field's text as a screen reader reads it: its paragraphs, where each
-/// sits (a styled field's own; a plain field's runs take its box, so Zoom
-/// follows its caret to the field), the selection as (paragraph,
-/// character) ends, and how far it is scrolled down.
+/// sits (a styled field's own), each paragraph's visual lines laid out
+/// (their boxes and their characters' places, so Zoom follows the caret
+/// itself and VoiceOver boxes a character; a styled field's in view
+/// only), the selection as (paragraph, character) ends, and how far it
+/// is scrolled down.
 pub struct FieldText {
     paras: Vec<String>,
     tops: Vec<Option<(f32, f32)>>,
+    lines: Vec<Vec<(super::text::FieldLine, [f32; 4])>>,
     sel: ((usize, usize), (usize, usize)),
     scroll_y: f32,
 }
 
-fn field_text(st: &WinState, key: &str) -> Option<FieldText> {
+fn field_text(
+    st: &WinState,
+    key: &str,
+    lines: Option<&Vec<(super::text::FieldLine, [f32; 4])>>,
+) -> Option<FieldText> {
     let ed = st.editors.get(key)?;
     if ed.secure() {
         return None;
     }
-    if let Some(r) = ed.rich() {
+    let mut f = if let Some(r) = ed.rich() {
         let n = r.para_count();
-        return Some(FieldText {
+        FieldText {
             paras: (0..n).map(|i| r.para_text(i).to_string()).collect(),
             tops: (0..n).map(|i| r.para_top(i)).collect(),
+            lines: vec![Vec::new(); n],
             sel: r.selection_in_paras(),
             scroll_y: r.scroll_y,
-        });
-    }
-    // a plain field (an input, a search): its lines, the selection's
-    // character offsets placed in them
-    let value = ed.value();
-    let paras: Vec<String> = value.split('\n').map(str::to_string).collect();
-    let (a, f) = ed.selection_chars();
-    let place = |mut c: usize| -> (usize, usize) {
-        for (i, p) in paras.iter().enumerate() {
-            let n = p.chars().count();
-            if c <= n || i + 1 == paras.len() {
-                return (i, c.min(n));
-            }
-            c -= n + 1;
         }
-        (0, 0)
+    } else {
+        // a plain field (an input, a search): its lines, the selection's
+        // character offsets placed in them
+        let value = ed.value();
+        let paras: Vec<String> = value.split('\n').map(str::to_string).collect();
+        let (a, f) = ed.selection_chars();
+        let place = |mut c: usize| -> (usize, usize) {
+            for (i, p) in paras.iter().enumerate() {
+                let n = p.chars().count();
+                if c <= n || i + 1 == paras.len() {
+                    return (i, c.min(n));
+                }
+                c -= n + 1;
+            }
+            (0, 0)
+        };
+        FieldText {
+            tops: vec![None; paras.len()],
+            lines: vec![Vec::new(); paras.len()],
+            sel: (place(a), place(f)),
+            paras,
+            scroll_y: 0.0,
+        }
     };
-    Some(FieldText {
-        tops: vec![None; paras.len()],
-        sel: (place(a), place(f)),
-        paras,
-        scroll_y: 0.0,
-    })
+    for l in lines.into_iter().flatten() {
+        if let Some(at) = f.lines.get_mut(l.0.para) {
+            at.push(l.clone());
+        }
+    }
+    for p in f.lines.iter_mut() {
+        p.sort_by_key(|l| l.0.start);
+        p.dedup_by_key(|l| l.0.start);
+    }
+    Some(f)
 }
 
-/// The runs of a field: a run a paragraph (in pieces of at most 255
-/// characters, AccessKit's limit), each ending with its line break, and
-/// the selection as positions in them.
+/// One run of a paragraph: its first and end characters there, and where
+/// it is drawn — a visual line's box and its characters' left edges
+/// (from the box's left) and widths, or `None` (a paragraph not laid out
+/// now: the paragraph's box, else the field's).
+struct RunSpan {
+    c0: usize,
+    c1: usize,
+    line: Option<([f32; 4], Vec<f32>, Vec<f32>)>,
+    /// The run before it on the same line (a line longer than a run).
+    joined: bool,
+}
+
+/// The runs of paragraph `i` (`chars` its characters, its line break
+/// included): a run a visual line when it is laid out, a run the
+/// paragraph when not, each in pieces of at most `RUN_MAX` characters.
+fn spans_of(f: &FieldText, i: usize, chars: usize) -> Vec<RunSpan> {
+    let mut whole: Vec<(usize, usize, Option<([f32; 4], Vec<f32>, Vec<f32>)>)> = Vec::new();
+    let lines = &f.lines[i];
+    if lines.is_empty() || lines[0].0.start != 0 {
+        whole.push((0, chars, None));
+    } else {
+        for (k, (l, b)) in lines.iter().enumerate() {
+            let c0 = l.start.min(chars);
+            let c1 = lines
+                .get(k + 1)
+                .map_or(chars, |n| n.0.start.min(chars))
+                .max(c0);
+            // each character placed: one the layout gave no glyph (a line
+            // break, a trailing space) sits after the last, no wider
+            let n = c1 - c0;
+            let mut xs = Vec::with_capacity(n);
+            let mut ws = Vec::with_capacity(n);
+            for j in 0..n {
+                match (l.xs.get(j), l.widths.get(j)) {
+                    (Some(x), Some(w)) => {
+                        xs.push(*x);
+                        ws.push(*w);
+                    }
+                    _ => {
+                        let end = xs.last().zip(ws.last()).map_or(0.0, |(x, w)| x + w);
+                        xs.push(end);
+                        ws.push(0.0);
+                    }
+                }
+            }
+            whole.push((c0, c1, Some((*b, xs, ws))));
+        }
+    }
+    let mut out = Vec::new();
+    for (c0, c1, line) in whole {
+        let mut at = c0;
+        let mut joined = false;
+        loop {
+            let end = (at + RUN_MAX).min(c1);
+            out.push(RunSpan {
+                c0: at,
+                c1: end,
+                line: line.as_ref().map(|(b, xs, ws)| {
+                    (
+                        *b,
+                        xs[at - c0..end - c0].to_vec(),
+                        ws[at - c0..end - c0].to_vec(),
+                    )
+                }),
+                joined,
+            });
+            joined = true;
+            at = end;
+            if at >= c1 {
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// The runs of a field: a run a visual line (in pieces of at most 255
+/// characters, AccessKit's limit, joined on their line), a paragraph's
+/// last ending with its line break; each character's place along its
+/// line; and the selection as positions in them.
 fn text_runs(
     st: &WinState,
     key: &str,
@@ -621,21 +747,17 @@ fn text_runs(
     let origin = st.scene.absolute(key);
     let n = f.paras.len();
     let ((ai, ac), (fi, fc)) = f.sel;
-    let mut out = Vec::new();
+    let mut out: Vec<(NodeId, accesskit::Node)> = Vec::new();
     let (mut anchor, mut focus) = (None, None);
     for i in 0..n {
         let mut chars: Vec<char> = f.paras[i].chars().collect();
         if i + 1 < n {
             chars.push('\n');
         }
-        let pieces = if chars.is_empty() {
-            1
-        } else {
-            chars.len().div_ceil(255)
-        };
-        for k in 0..pieces {
-            let c0 = k * 255;
-            let c1 = ((k + 1) * 255).min(chars.len());
+        let spans = spans_of(f, i, chars.len());
+        let count = spans.len();
+        for (k, sp) in spans.into_iter().enumerate() {
+            let (c0, c1) = (sp.c0, sp.c1);
             let piece: String = chars[c0..c1].iter().collect();
             let id = run_id(key, i, c0);
             let mut run = accesskit::Node::new(Role::TextRun);
@@ -656,8 +778,21 @@ fn text_runs(
             }
             run.set_word_starts(starts);
             run.set_value(piece);
-            match (origin, f.tops[i]) {
-                (Some(abs), Some((top, h))) => {
+            match (&sp.line, origin, f.tops[i]) {
+                // a laid-out line: its own box, each character along it
+                // (left to right: the places are from the box's left)
+                (Some((b, xs, ws)), _, _) => {
+                    run.set_bounds(Rect {
+                        x0: b[0] as f64,
+                        y0: b[1] as f64,
+                        x1: (b[0] + b[2]) as f64,
+                        y1: (b[1] + b[3]) as f64,
+                    });
+                    run.set_character_positions(xs.clone());
+                    run.set_character_widths(ws.clone());
+                    run.set_text_direction(accesskit::TextDirection::LeftToRight);
+                }
+                (None, Some(abs), Some((top, h))) => {
                     let y = abs[1] as f64 * s + (top - f.scroll_y) as f64;
                     run.set_bounds(Rect {
                         x0: abs[0] as f64 * s,
@@ -666,7 +801,7 @@ fn text_runs(
                         y1: y + h as f64,
                     });
                 }
-                (Some(abs), None) => run.set_bounds(Rect {
+                (None, Some(abs), None) => run.set_bounds(Rect {
                     x0: abs[0] as f64 * s,
                     y0: abs[1] as f64 * s,
                     x1: (abs[0] + abs[2]) as f64 * s,
@@ -674,7 +809,14 @@ fn text_runs(
                 }),
                 _ => {}
             }
-            let last = k + 1 == pieces;
+            // a line longer than a run: its pieces one line
+            if sp.joined
+                && let Some((prev_id, prev)) = out.last_mut()
+            {
+                prev.set_next_on_line(id);
+                run.set_previous_on_line(*prev_id);
+            }
+            let last = k + 1 == count;
             let at = |c: usize| -> Option<accesskit::TextPosition> {
                 (c >= c0 && (c < c1 || (last && c <= c1))).then(|| accesskit::TextPosition {
                     node: id,
@@ -700,16 +842,37 @@ fn text_runs(
 /// A run's id as (paragraph, character), for a selection a client sets.
 fn run_place(f: &FieldText, key: &str, id: NodeId) -> Option<(usize, usize)> {
     for (i, p) in f.paras.iter().enumerate() {
-        let n = p.chars().count() + 1;
-        let mut c = 0;
-        while c < n.max(1) {
-            if run_id(key, i, c) == id {
-                return Some((i, c));
+        let n = p.chars().count() + usize::from(i + 1 < f.paras.len());
+        for sp in spans_of(f, i, n) {
+            if run_id(key, i, sp.c0) == id {
+                return Some((i, sp.c0));
             }
-            c += 255;
         }
     }
     None
+}
+
+/// The box of the selection's focus as a collapsed range, as AccessKit
+/// works it out (`Range::bounding_boxes`): its run's box, narrowed to
+/// the character's left edge (after the last, its right edge). Device
+/// pixels; `None` when its run has no characters' places.
+pub fn caret_box(
+    runs: &[(NodeId, accesskit::Node)],
+    sel: &accesskit::TextSelection,
+) -> Option<[f64; 4]> {
+    let (_, run) = runs.iter().find(|(id, _)| *id == sel.focus.node)?;
+    let b = run.bounds()?;
+    let xs = run.character_positions()?;
+    let ws = run.character_widths()?;
+    let i = sel.focus.character_index;
+    let x = if i < xs.len() {
+        xs[i]
+    } else if i > 0 {
+        xs[i - 1] + ws[i - 1]
+    } else {
+        0.0
+    };
+    Some([b.x0 + x as f64, b.y0, 0.0, b.y1 - b.y0])
 }
 
 /// Containers whose actions their active descendant shows, by that
@@ -779,8 +942,9 @@ pub fn action(st: &mut WinState, req: &ActionRequest, out: &mut Vec<Value>) {
             st.dirty = true;
         }
         Action::SetTextSelection => {
+            let lines = st.field_lines(&key);
             if let Some(ActionData::SetTextSelection(sel)) = &req.data
-                && let Some(f) = field_text(st, &key)
+                && let Some(f) = field_text(st, &key, lines.as_ref())
                 && let Some((ai, ac)) = run_place(&f, &key, sel.anchor.node)
                 && let Some((fi, fc)) = run_place(&f, &key, sel.focus.node)
             {
@@ -928,8 +1092,9 @@ pub fn scroll_page(sc: &mut scene::Scene, key: &str, a: Action) -> Vec<(String, 
 pub fn as_value(st: &mut WinState) -> Value {
     let mut out = Vec::new();
     let places = places(&st.scene);
+    let lines = lines_of(st);
     if let Some(r) = st.scene.root.clone() {
-        walk(st, &places, &r, 0, &mut out);
+        walk(st, &places, &lines, &r, 0, &mut out);
     }
     Value::List(Arc::new(out))
 }
@@ -937,6 +1102,7 @@ pub fn as_value(st: &mut WinState) -> Value {
 fn walk(
     st: &WinState,
     places: &HashMap<String, Place>,
+    lines: &Lines,
     key: &str,
     depth: i64,
     out: &mut Vec<Value>,
@@ -996,6 +1162,7 @@ fn walk(
         )),
         None => Value::Unit,
     };
+    let ft = field_text(st, key, lines.get(key));
     let custom: Vec<Value> = actions_for(st, key, &lenders(st))
         .map(|(_, actions)| actions.iter().map(|a| s(a)).collect())
         .unwrap_or_default();
@@ -1073,14 +1240,30 @@ fn walk(
         ),
         (
             "text_runs",
-            match field_text(st, key) {
-                Some(f) => Value::Integer(text_runs(st, key, &f).0.len() as i64),
+            match &ft {
+                Some(f) => Value::Integer(text_runs(st, key, f).0.len() as i64),
+                None => Value::Unit,
+            },
+        ),
+        // the caret's box as the platform works it out from the runs (a
+        // collapsed range's: what Zoom follows), logical pixels
+        (
+            "caret_box",
+            match ft.as_ref().and_then(|f| {
+                let (runs, sel) = text_runs(st, key, f);
+                caret_box(&runs, sel.as_ref()?)
+            }) {
+                Some(b) => Value::Tuple(Arc::new(
+                    b.iter()
+                        .map(|v| super::values::float(*v as f32 / st.scale))
+                        .collect(),
+                )),
                 None => Value::Unit,
             },
         ),
         (
             "text_selection",
-            match field_text(st, key) {
+            match &ft {
                 Some(f) => {
                     let ((ai, ac), (fi, fc)) = f.sel;
                     Value::Tuple(Arc::new(vec![
@@ -1095,6 +1278,6 @@ fn walk(
         ),
     ]));
     for c in &n.children {
-        walk(st, places, c, depth + 1, out);
+        walk(st, places, lines, c, depth + 1, out);
     }
 }

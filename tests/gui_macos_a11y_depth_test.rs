@@ -76,7 +76,7 @@ mod mac {
           #{ "key": "tr:1", "parent": "tr", "role": "treeitem", "box": (0, 20, 180, 20), "text": "README", "level": 1 },
           #{ "key": "main", "parent": "root", "role": "main", "box": (180, 0, 460, 420) },
           #{ "key": "h", "parent": "main", "role": "heading", "box": (10, 0, 300, 28), "text": "Settings heading", "level": 1 },
-          #{ "key": "name", "parent": "main", "role": "input", "box": (10, 30, 200, 24), "name": "Name field", "edit": #{ "value": "olang" } },
+          #{ "key": "name", "parent": "main", "role": "input", "box": (10, 30, 200, 24), "name": "Name field", "style": #{ "pad": (0, 6, 0, 6) }, "edit": #{ "value": "olang world", "select": (3, 3, 1) } },
           #{ "key": "go", "parent": "main", "role": "button", "box": (220, 30, 80, 24), "text": "Go button" },
           #{ "key": "lnk", "parent": "main", "role": "link", "box": (310, 30, 80, 24), "text": "Docs link" },
           #{ "key": "size", "parent": "main", "role": "spinbutton", "box": (10, 60, 100, 24), "name": "Size stepper", "value": "13" },
@@ -97,6 +97,9 @@ mod mac {
           #{ "key": "log:0", "parent": "log", "role": "text", "box": (0, 0, 440, 20), "text": "first line" },
           #{ "op": "focus", "key": "name" }
         ])
+        // where the caret is drawn (logical pixels in the window)
+        // (read again on each event until the window, key, has drawn it)
+        let mut caret = gui.read(w, "caret")
         let mut heard = []
         let mut tries = 0
         let mut done = false
@@ -105,6 +108,7 @@ mod mac {
           tries = tries + 1
           match chan.recv_timeout(ev, #{ "timeout_ms": 200 }) {
             Ok(e) => {
+              if caret == () => { caret = gui.read(w, "caret") } else => ()
               if e.kind == "a11y" => {
                 heard = heard + [[e.key, e.action]]
                 if e.action == "expand" && !moved => {
@@ -121,7 +125,7 @@ mod mac {
           }
         }
         gui.close(w)
-        heard
+        [["caret", caret]] + heard
     "##;
 
     unsafe extern "C" {
@@ -376,6 +380,19 @@ mod mac {
             fr.size.a.round(),
             fr.size.b.round()
         ));
+        // Zoom following the caret: the caret's own box (a collapsed range
+        // at it), from the field's top left (points, AppKit's y up)
+        let sel: Range = unsafe { msg_send![&*f, accessibilitySelectedTextRange] };
+        let cr: Rect = unsafe {
+            msg_send![&*f, accessibilityFrameForRange: Range { location: sel.location, length: 0 }]
+        };
+        out.push(format!(
+            "caret at={} dx={:.1} dy={:.1} h={:.1}",
+            sel.location,
+            cr.origin.a - fr.origin.a,
+            (fr.origin.b + fr.size.b) - (cr.origin.b + cr.size.b),
+            cr.size.b
+        ));
         // inside the window, under the heading
         let hr = frame(&h);
         out.push(format!("below_heading={}", fr.origin.b < hr.origin.b));
@@ -442,6 +459,8 @@ mod mac {
             value: *mut *const c_void,
         ) -> i32;
         fn CFRelease(cf: *const c_void);
+        fn AXValueCreate(kind: u32, value: *const c_void) -> *const c_void;
+        fn AXValueGetValue(v: *const c_void, kind: u32, out: *mut c_void) -> bool;
         fn AXObserverCreateWithInfoCallback(
             pid: i32,
             callback: extern "C" fn(
@@ -525,6 +544,76 @@ mod mac {
         }
     }
 
+    /// Through the AX client API, as Zoom asks: the focused field's
+    /// `AXBoundsForRange` at its caret (a collapsed range), from the
+    /// field's own top left (points, the client's y down). `None` when the
+    /// API answers this process with the application.
+    fn ax_client_caret() -> Option<(usize, f64, f64, f64)> {
+        #[repr(C)]
+        struct CfRange {
+            location: isize,
+            length: isize,
+        }
+        unsafe {
+            let app = AXUIElementCreateApplication(std::process::id() as i32);
+            let f = ax_attr(app, "AXFocusedUIElement");
+            CFRelease(app);
+            let f = f?;
+            let point = |name: &str| -> Option<(f64, f64)> {
+                let v = ax_attr(f, name)?;
+                let mut p = Pair { a: 0.0, b: 0.0 };
+                // kAXValueCGPointType 1, kAXValueCGSizeType 2
+                let kind = if name == "AXPosition" { 1 } else { 2 };
+                let ok = AXValueGetValue(v, kind, &mut p as *mut Pair as *mut c_void);
+                CFRelease(v);
+                ok.then_some((p.a, p.b))
+            };
+            let pos = point("AXPosition");
+            let sel = ax_attr(f, "AXSelectedTextRange");
+            let mut r = CfRange {
+                location: 0,
+                length: 0,
+            };
+            if let Some(v) = sel {
+                // kAXValueCFRangeType 4
+                AXValueGetValue(v, 4, &mut r as *mut CfRange as *mut c_void);
+                CFRelease(v);
+            }
+            let at = CfRange {
+                location: r.location,
+                length: 0,
+            };
+            let param = AXValueCreate(4, &at as *const CfRange as *const c_void);
+            let attr = NSString::from_str("AXBoundsForRange");
+            let mut v: *const c_void = std::ptr::null();
+            let e = AXUIElementCopyParameterizedAttributeValue(
+                f,
+                Retained::as_ptr(&attr) as *const c_void,
+                param,
+                &mut v,
+            );
+            CFRelease(param);
+            CFRelease(f);
+            let pos = pos?;
+            if e != 0 || v.is_null() {
+                return None;
+            }
+            let mut b = Rect {
+                origin: Pair { a: 0.0, b: 0.0 },
+                size: Pair { a: 0.0, b: 0.0 },
+            };
+            // kAXValueCGRectType 3
+            let ok = AXValueGetValue(v, 3, &mut b as *mut Rect as *mut c_void);
+            CFRelease(v);
+            ok.then_some((
+                r.location as usize,
+                b.origin.a - pos.0,
+                b.origin.b - pos.1,
+                b.size.b,
+            ))
+        }
+    }
+
     static HEARD: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
     extern "C" fn heard(
@@ -603,6 +692,7 @@ mod mac {
                     };
                     let trusted = unsafe { AXIsProcessTrusted() };
                     let client = if trusted { ax_client_headings() } else { None };
+                    let client_caret = if trusted { ax_client_caret() } else { None };
                     let observer = if trusted { listen() } else { None };
                     let disclosed = on_main(|| act("disclose"));
                     let said = if observer.is_some() {
@@ -618,7 +708,7 @@ mod mac {
                         unsafe { CFRelease(o) };
                     }
                     *SEEN.lock().unwrap() = Some(format!(
-                        "{seen}\nacted={disclosed} {paged} {stepped}\ntrusted={trusted} client={client:?}\nsaid={said:?}"
+                        "{seen}\nacted={disclosed} {paged} {stepped}\ntrusted={trusted} client={client:?}\nclient_caret={client_caret:?}\nsaid={said:?}"
                     ));
                 });
                 let program = Parser::new().parse(PROGRAM).expect("parses");
@@ -654,6 +744,31 @@ mod mac {
         has("item role=AXRow level=0 disclosed=false allowed=true");
         has(r#"focused=Some("Name field") size=(200, 24)"#);
         has("below_heading=true");
+        // the caret's box, as Zoom and VoiceOver read it, is where it is
+        // drawn: the program's caret (logical, the window's) from the
+        // field's top left (190, 30)
+        let drawn = super::caret_of(&result);
+        let line = seen
+            .lines()
+            .find(|l| l.starts_with("caret at="))
+            .unwrap_or_else(|| panic!("no caret in\n{seen}"));
+        let field = |name: &str| -> f64 {
+            line.split(' ')
+                .find_map(|w| w.strip_prefix(&format!("{name}=")))
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(f64::NAN)
+        };
+        assert_eq!(field("at"), 3.0, "{line}");
+        assert!(
+            (field("dx") - (drawn.0 - 190.0)).abs() <= 1.5,
+            "{line} drawn {drawn:?}"
+        );
+        assert!(field("dx") > 6.0, "the caret, not the field's edge: {line}");
+        assert!(
+            field("dy") <= drawn.1 - 30.0 + 1.5
+                && field("dy") + field("h") >= drawn.1 - 30.0 + drawn.3 - 1.5,
+            "{line} drawn {drawn:?}"
+        );
         has(r#"scroller role=AXScrollArea actions=["AXScrollToVisible", "AXScrollDownByPage"]"#);
         has("acted=true true true");
         assert!(result.contains(r#"["tr:0", "expand"]"#), "{result}");
@@ -665,6 +780,26 @@ mod mac {
                     .any(|l| l.starts_with("said=Some(") && l.contains(r#""Progress, 60%""#)),
                 "the live value was not said: {seen}"
             );
+            if let Some(c) = seen
+                .lines()
+                .find_map(|l| l.strip_prefix("client_caret=Some("))
+            {
+                let v: Vec<f64> = c
+                    .trim_matches(|c| c == '(' || c == ')')
+                    .split(", ")
+                    .filter_map(|x| x.parse().ok())
+                    .collect();
+                assert_eq!(v.len(), 4, "{c}");
+                assert_eq!(v[0], 3.0, "{c}");
+                assert!(
+                    (v[1] - (drawn.0 - 190.0)).abs() <= 1.5,
+                    "AXBoundsForRange {c}, drawn {drawn:?}"
+                );
+                assert!(
+                    v[2] <= drawn.1 - 30.0 + 1.5,
+                    "AXBoundsForRange {c}, drawn {drawn:?}"
+                );
+            }
             if seen.contains("client=None") {
                 println!(
                     "note: the AX client API answers this process's own elements with the application (this macOS build); the client half was skipped"
@@ -679,6 +814,20 @@ mod mac {
         }
         println!("gui_macos_a11y_depth_test: ok");
     }
+}
+
+/// The caret the program read, `["caret", (x, y, w, h)]` in its result.
+#[cfg(all(feature = "gui", target_os = "macos"))]
+fn caret_of(result: &str) -> (f64, f64, f64, f64) {
+    let pat = "[\"caret\", (";
+    let at = result.find(pat).expect("the caret in the result") + pat.len();
+    let end = at + result[at..].find(')').expect("its end");
+    let v: Vec<f64> = result[at..end]
+        .split(", ")
+        .filter_map(|x| x.parse().ok())
+        .collect();
+    assert_eq!(v.len(), 4, "{result}");
+    (v[0], v[1], v[2], v[3])
 }
 
 fn main() {
