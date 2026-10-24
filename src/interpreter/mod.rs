@@ -3852,8 +3852,17 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         }
         // A bridge interpreter's table of the program's functions stands
         // where its root would have held them: ahead of the root, so a
-        // user function still shadows a builtin of its name.
-        if let Some(function) = self.bridge_functions.as_ref().and_then(|t| t.get(name)) {
+        // user function still shadows a builtin of its name. Only a
+        // function of the running code's own file: the table holds every
+        // module's functions, private ones too, and another module's
+        // `time` must not stand in for the stdlib module, nor its private
+        // helper answer a name the running file never bound.
+        if let Some(function) = self.bridge_functions.as_ref().and_then(|t| t.get(name))
+            && self.same_home(
+                function.def_file.as_deref(),
+                self.environment.owner.as_deref(),
+            )
+        {
             return Some(Value::Function(function.clone()));
         }
         if let Some(value) = self.environment.root().get_here(name) {
@@ -3897,6 +3906,12 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             }
         }
         None
+    }
+
+    /// Whether two defining files are one home: the same file, with the
+    /// entry file and no file the same (the program's own).
+    fn same_home(&self, a: Option<&str>, b: Option<&str>) -> bool {
+        crate::ast::same_home(self.entry_file.as_deref(), a, b)
     }
 
     /// Install the program's unambiguous functions by name, for a bridge
