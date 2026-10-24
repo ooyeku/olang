@@ -18,11 +18,19 @@
 
 // markup — views as data
 share use lib.html {
-    el, void_el, when, text, raw, fragment, render, page, escape, escape_attr,
+    el, void_el, when, text, raw, fragment, render, page, document, escape, escape_attr,
     memo, memo_list, volatile, children_of,
-    div, span, p, h1, h2, h3, ul, li, a, form, label, button,
-    section, header, footer, nav, pre, code, strong, em,
-    input, img, br, hr, select, option, textarea
+    html, head_, body, title, style, script, noscript, template,
+    main, article, aside, section, header, footer, nav, address, hgroup, search,
+    h1, h2, h3, h4, h5, h6,
+    div, p, blockquote, figure, figcaption, pre, ul, ol, menu, li, dl, dt, dd,
+    a, span, strong, em, b, i, small, mark, code, kbd, samp, abbr, cite, sub, sup, del, ins, time_,
+    picture, video, audio, iframe, canvas,
+    table, caption, colgroup, thead, tbody, tfoot, tr, th, td,
+    form, fieldset, legend, label, button, select, optgroup, option, datalist, textarea,
+    output, progress, meter,
+    details, summary, dialog,
+    meta_, link, base, input, img, source, track, embed, area, col_, br, hr, wbr
 }
 
 // the route table — one source of truth

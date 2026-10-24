@@ -160,7 +160,7 @@ println(plot.describe(gg.svg(p)) |> is_ok())
 }
 
 #[test]
-fn olang_test_walks_what_a_checkout_keeps_and_runs_a_test_from_its_folder() {
+fn olang_test_walks_what_a_checkout_keeps_and_runs_a_test_from_its_project_root() {
     let dir = scratch("walk");
     std::fs::write(
         dir.join("olang.toml"),
@@ -172,7 +172,7 @@ fn olang_test_walks_what_a_checkout_keeps_and_runs_a_test_from_its_folder() {
     std::fs::create_dir_all(dir.join("tests")).unwrap();
     std::fs::write(
         dir.join("tests/a_test.ol"),
-        "test \"reads beside the test\" { assert_eq(unwrap(fs.read_file(\"../data.txt\")), \"x\") }\n",
+        "test \"reads from the project's root\" { assert_eq(unwrap(fs.read_file(\"data.txt\")), \"x\") }\n",
     )
     .unwrap();
     for d in ["out", "dist", "target", "node_modules/x", ".cache"] {
@@ -189,9 +189,27 @@ fn olang_test_walks_what_a_checkout_keeps_and_runs_a_test_from_its_folder() {
         out.contains("1 passed, 0 failed") && out.contains("1 test file"),
         "{out}"
     );
+    // the same from inside tests/: the root is the project's, not the
+    // folder the suite was started in or the file's own
+    let (out, err, ok) = run_in(&dir.join("tests"), &["test", "a_test.ol"]);
+    assert!(ok && out.contains("1 passed, 0 failed"), "{out}{err}");
     // a folder named on the command line is walked whatever ignores it
     let (out, _, ok) = run_in(&dir, &["test", "out"]);
     assert!(!ok && out.contains("1 failed"), "{out}");
+}
+
+#[test]
+fn olang_test_runs_a_file_in_no_project_from_its_own_folder() {
+    let dir = scratch("loose");
+    std::fs::create_dir_all(dir.join("t")).unwrap();
+    std::fs::write(dir.join("t/data.txt"), "y").unwrap();
+    std::fs::write(
+        dir.join("t/a_test.ol"),
+        "test \"reads beside the test\" { assert_eq(unwrap(fs.read_file(\"data.txt\")), \"y\") }\n",
+    )
+    .unwrap();
+    let (out, err, ok) = run_in(&dir, &["test", "t"]);
+    assert!(ok && out.contains("1 passed, 0 failed"), "{out}{err}");
 }
 
 #[test]

@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`material: "window"`: a box shows the desktop behind the window**,
+  as a Mac sidebar does. The window gets an NSVisualEffectView
+  (`.sidebar`, blending behind the window, following its active state)
+  under its content view, the surface turns transparent (the Metal layer
+  non-opaque) only while a frame has such a box, and the engine clears
+  the box's shape to alpha 0 instead of drawing its `bg`. Damage is
+  unchanged. The software renderer, a headless window and Reduce
+  Transparency draw the `bg` opaque. `gui.platform().window_material`.
+- **Display P3 colours**: `"color(display-p3 r g b[ / a])"` wherever a
+  colour goes, and `gui.set`'s `wide` (sRGB colours, a theme's tokens,
+  and the P3 colours the GPU draws for them). On a wide screen the GPU
+  keeps a frame with wide colours in extended sRGB (Rgba16Float), and the
+  conversion to the screen is then a matrix only. A transition between
+  wide colours moves through wide colours. Software and snapshots draw
+  the sRGB fallback (the colour clipped). `gui.platform().wide_color`.
+### Changed
+
+- **`olang test` runs each file from its project's root** (the folder
+  with the `olang.toml` above it), not from the file's own folder, so a
+  relative path in a test means the same from any folder the suite is
+  started in. A file in no project, and a notebook, still run from
+  their own folder; a test finds its own as
+  `fs.dirname(testing.snapshot_dir())`.
+
+### Added
+
+- **The web SDK has a helper for every tag of a document**: `html`,
+  `body`, `title`, `style`, `script`, the sections (`article`, `aside`,
+  `address`, `h4`–`h6`…), `figure`, `details`/`summary`, `dl`/`dt`/`dd`,
+  `optgroup`, the media and table elements, and the void ones (`link`,
+  `base`, `source`, `track`, `embed`, `area`, `wbr`). `document(root)`
+  writes the doctype, so a page and its whole head are written without
+  `raw`; the text of `script` and `style` renders unescaped and cannot
+  close its element; `page`'s `head_extra` takes nodes as well as
+  markup. `main_` and `ol_` are `main` and `ol`; `head_`, `meta_`,
+  `time_` and `col_` keep an underscore, because their names are the
+  builtin `head` and the modules `meta`, `time` and `col`.
+
 ## [1.0.0-rc.3] - 2026-10-23
 
 ### Added

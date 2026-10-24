@@ -54,7 +54,8 @@ pub struct Style {
     /// A drop shadow under the box (an analytic Gaussian of its shape).
     pub shadow: Option<Shadow>,
     /// A material behind the box: what is under it blurred, then the
-    /// box's own `bg` (translucent) over it.
+    /// box's own `bg` (translucent) over it; `window`: the desktop behind
+    /// the window, through the box.
     pub material: Option<Material>,
 }
 
@@ -76,6 +77,11 @@ pub enum Material {
     Popover,
     Sheet,
     Hud,
+    /// The desktop behind the window, seen through the box (a sidebar's
+    /// vibrancy: the window's backdrop view, macOS's `.sidebar` material
+    /// blending behind the window); where the window cannot show it, the
+    /// box's `bg`, opaque.
+    Window,
 }
 
 impl Material {
@@ -85,6 +91,7 @@ impl Material {
             "popover" => Material::Popover,
             "sheet" => Material::Sheet,
             "hud" => Material::Hud,
+            "window" => Material::Window,
             _ => return None,
         })
     }
@@ -96,6 +103,8 @@ impl Material {
             Material::Popover => 30.0,
             Material::Sheet => 30.0,
             Material::Hud => 24.0,
+            // the window server's blur, not the engine's
+            Material::Window => 0.0,
         }
     }
 }
@@ -287,7 +296,7 @@ impl Style {
             Some(_) => {
                 let t = get_str(m, "material", what)?.unwrap_or("");
                 self.material = Some(Material::parse(t).ok_or_else(|| {
-                    format!("{what}: \"material\" is sidebar, popover, sheet or hud")
+                    format!("{what}: \"material\" is sidebar, popover, sheet, hud or window")
                 })?);
             }
         }

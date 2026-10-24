@@ -342,12 +342,19 @@ pub fn run_paths(
             });
         }
 
-        // Run from the file's own directory so relative imports and file
-        // reads resolve exactly as under `olang <file>` run from there
-        // (docs/tooling.md says so; the suites of Loom and Studio read
-        // their fixtures beside their tests).
+        // Run from the project's root — the folder with the olang.toml
+        // above the file — as the project's own commands are run, so a
+        // relative path in a test (`fixtures/a.png`, `tests/fixtures/…`)
+        // means the same whichever folder `olang test` was started in.
+        // A file in no project runs from its own folder, and a notebook
+        // always does: it runs in its own folder wherever it is run
+        // (docs/tooling.md, docs/notebooks.md).
         let saved_cwd = std::env::current_dir().ok();
-        if let Some(dir) = absolute.parent() {
+        let run_dir = match package_root.as_deref() {
+            Some(root) if !crate::notebook::is_notebook(file) => Some(root.to_path_buf()),
+            _ => absolute.parent().map(|d| d.to_path_buf()),
+        };
+        if let Some(dir) = run_dir {
             let _ = std::env::set_current_dir(dir);
         }
         let run_error = interpreter.eval_program(program).err();

@@ -281,6 +281,25 @@ fn clip_flags(c: &super::window::Clip) -> f32 {
     }
 }
 
+/// How a pipeline writes: replacing what is there, over it (premultiplied),
+/// or erasing it by the shape's coverage (what is under kept by one minus
+/// the coverage, colour and alpha: a box cleared to transparent).
+const REPLACE: u8 = 0;
+const OVER: u8 = 1;
+const ERASING: u8 = 2;
+const ERASE_BLEND: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::Zero,
+        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+        operation: wgpu::BlendOperation::Add,
+    },
+    alpha: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::Zero,
+        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+        operation: wgpu::BlendOperation::Add,
+    },
+};
+
 fn premul(c: Color) -> [f32; 4] {
     let a = c[3] as f32 / 255.0;
     [
@@ -529,7 +548,7 @@ pub struct Gpu {
     shader: wgpu::ShaderModule,
     /// By target format, and whether it blends (`false`: it replaces, for
     /// clearing a damaged rectangle and copying a frame).
-    pipelines: Mutex<HashMap<(wgpu::TextureFormat, bool), Arc<wgpu::RenderPipeline>>>,
+    pipelines: Mutex<HashMap<(wgpu::TextureFormat, u8), Arc<wgpu::RenderPipeline>>>,
     sampler: wgpu::Sampler,
     /// Pictures (canvases, images) are scaled, so they sample smoothly.
     linear: wgpu::Sampler,
@@ -862,6 +881,9 @@ const PIC: u32 = 1 << 16;
 const COVER: u32 = 1 << 15;
 /// A material's blurred backdrop: `BACKDROP + its index` in the frame.
 const BACKDROP: u32 = 1 << 14;
+/// A box cleared to transparent (`material: "window"`): its run drawn
+/// erasing what is under its shape.
+const ERASE: u32 = u32::MAX - 2;
 
 /// A display list made ready to draw: its instances, what each samples,
 /// and what damage reads of each (the pixels it can touch, and a hash of
@@ -975,10 +997,17 @@ fn push_runs(
         } else {
             p.src[i]
         };
-        // a material reads what is drawn before it: it begins a run of
-        // its own whatever came before
-        let material = (BACKDROP..COVER).contains(&s);
-        if s != ANY && s != cur {
+        // a material reads what is drawn before it, and a box cleared
+        // erases: each begins a run of its own whatever came before (and
+        // what comes after an erasing run is drawn, not erased)
+        let material = (BACKDROP..COVER).contains(&s) || s == ERASE;
+        if s == ANY && cur == ERASE {
+            if out.len() as u32 > start {
+                runs.push((start, out.len() as u32, cur));
+                start = out.len() as u32;
+            }
+            cur = ANY;
+        } else if s != ANY && s != cur {
             if (cur != ANY || material) && out.len() as u32 > start {
                 runs.push((start, out.len() as u32, cur));
                 start = out.len() as u32;
@@ -994,8 +1023,14 @@ fn push_runs(
 
 impl Gpu {
     fn pipeline(&self, format: wgpu::TextureFormat, blend: bool) -> Arc<wgpu::RenderPipeline> {
+        self.pipeline_as(format, if blend { OVER } else { REPLACE })
+    }
+
+    /// The pipeline drawing into `format` by `mode` ([`REPLACE`], [`OVER`],
+    /// [`ERASING`]).
+    fn pipeline_as(&self, format: wgpu::TextureFormat, mode: u8) -> Arc<wgpu::RenderPipeline> {
         let mut p = self.pipelines.lock().unwrap_or_else(|e| e.into_inner());
-        p.entry((format, blend))
+        p.entry((format, mode))
             .or_insert_with(|| {
                 let attrs = wgpu::vertex_attr_array![
                     0 => Float32x4, 1 => Float32x4, 2 => Float32x4, 3 => Float32x4,
@@ -1022,8 +1057,13 @@ impl Gpu {
                                 compilation_options: Default::default(),
                                 targets: &[Some(wgpu::ColorTargetState {
                                     format,
-                                    blend: blend
-                                        .then_some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                                    blend: match mode {
+                                        OVER => {
+                                            Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING)
+                                        }
+                                        ERASING => Some(ERASE_BLEND),
+                                        _ => None,
+                                    },
                                     write_mask: wgpu::ColorWrites::ALL,
                                 })],
                             }),
@@ -1043,6 +1083,15 @@ impl Gpu {
 
     /// Make a display list's instances, placing its glyphs in the atlas.
     pub fn prepare(&self, dl: &DisplayList) -> Prepared {
+        self.prepare_in(dl, false)
+    }
+
+    /// [`prepare`](Self::prepare) for a frame of `wide` colours (an
+    /// Rgba16Float target, extended sRGB): the display list's wide colours
+    /// drawn as themselves. An 8-bit frame draws their sRGB fallbacks, as
+    /// the software renderer does (clamping a wide colour there would not
+    /// be its fallback where it is blended).
+    pub fn prepare_in(&self, dl: &DisplayList, wide: bool) -> Prepared {
         let mut atlas = self.atlas.lock().unwrap_or_else(|e| e.into_inner());
         let frame = atlas.begin_frame();
         let (ww, wh) = (dl.width.max(1), dl.height.max(1));
@@ -1062,6 +1111,9 @@ impl Gpu {
             frame,
             atlas: self.atlas.clone(),
         };
+        // a colour the window's wide table has drawn as the wide one
+        let wide = dl.wide.as_deref().filter(|_| wide);
+        let paint = |c: Color| super::wide::premul(c, wide);
         let push = |p: &mut Prepared, inst: Inst, src: u32, pad: f32, ident: u64| {
             let c = super::window::Clip {
                 x0: inst.clip[0],
@@ -1147,8 +1199,8 @@ impl Gpu {
                         Inst {
                             rect: [*x, *y, *w, *h],
                             clip: [clip.x0, clip.y0, clip.x1, clip.y1],
-                            fill: premul(*fill),
-                            border: premul(*border),
+                            fill: paint(*fill),
+                            border: paint(*border),
                             radii: *radii,
                             uv: [0.0; 4],
                             params: [0.0, *border_width, flags, 0.0],
@@ -1169,8 +1221,32 @@ impl Gpu {
                     sigma,
                     fallback,
                     clip,
+                    window,
                 } => {
                     if clip.is_empty() || *w <= 0.0 || *h <= 0.0 {
+                        continue;
+                    }
+                    if *window {
+                        // the box's shape erased (its coverage by its
+                        // opacity): the surface transparent there
+                        let flags = clip_flags(clip) + if *continuous { 1.0 } else { 0.0 };
+                        let a = fallback[3] as f32 / 255.0;
+                        push(
+                            &mut p,
+                            Inst {
+                                rect: [*x, *y, *w, *h],
+                                clip: [clip.x0, clip.y0, clip.x1, clip.y1],
+                                fill: [0.0, 0.0, 0.0, if fallback[3] == 0 { 1.0 } else { a }],
+                                border: [0.0; 4],
+                                radii: *radii,
+                                uv: [0.0; 4],
+                                params: [0.0, 0.0, flags, 0.0],
+                                clip_radii: clip.radii,
+                            },
+                            ERASE,
+                            1.0,
+                            0x6572_6173,
+                        );
                         continue;
                     }
                     let sigma = sigma.max(0.5);
@@ -1273,7 +1349,7 @@ impl Gpu {
                                 (r.y1 - r.y0) as f32,
                             ],
                             clip: [clip.x0, clip.y0, clip.x1, clip.y1],
-                            fill: premul(color),
+                            fill: paint(color),
                             border: [0.0; 4],
                             radii: [0.0; 4],
                             uv: [0.0; 4],
@@ -1317,7 +1393,7 @@ impl Gpu {
                         Inst {
                             rect: [*x, *y, *w, *h],
                             clip: [clip.x0, clip.y0, clip.x1, clip.y1],
-                            fill: premul(*color),
+                            fill: paint(*color),
                             border: [0.0; 4],
                             radii: *radii,
                             uv: [0.0; 4],
@@ -1354,7 +1430,7 @@ impl Gpu {
                         Inst {
                             rect: [gx, gy, s.w as f32, s.h as f32],
                             clip: [clip.x0, clip.y0, clip.x1, clip.y1],
-                            fill: premul(*color),
+                            fill: paint(*color),
                             border: [0.0; 4],
                             radii: [0.0; 4],
                             uv: s.uv,
@@ -1596,7 +1672,7 @@ impl Gpu {
         let page_view = |i: u32| &atlas.pages[(i as usize).min(atlas.pages.len() - 1)].view;
         for (_, runs) in &passes {
             for (_, _, s) in runs {
-                let s = if *s >= u32::MAX - 1 { 0 } else { *s };
+                let s = if *s >= ERASE { 0 } else { *s };
                 if binds.contains_key(&s) {
                     continue;
                 }
@@ -1619,6 +1695,10 @@ impl Gpu {
         drop(atlas);
         let blend = self.pipeline(format, true);
         let replace = self.pipeline(format, false);
+        let erase = p
+            .src
+            .contains(&ERASE)
+            .then(|| self.pipeline_as(format, ERASING));
         let load = match damage {
             Damage::Full => wgpu::LoadOp::Clear(wgpu::Color {
                 r: c[0] as f64,
@@ -1679,10 +1759,12 @@ impl Gpu {
                 }
                 if *s == u32::MAX - 1 {
                     pass.set_pipeline(&replace);
+                } else if let (ERASE, Some(erase)) = (*s, &erase) {
+                    pass.set_pipeline(erase);
                 } else {
                     pass.set_pipeline(&blend);
                 }
-                let s = if *s >= u32::MAX - 1 { 0 } else { *s };
+                let s = if *s >= ERASE { 0 } else { *s };
                 pass.set_bind_group(0, &binds[&s], &[]);
                 pass.draw(0..4, *a..*b);
             }
@@ -1785,6 +1867,65 @@ impl Gpu {
     }
 }
 
+impl Gpu {
+    /// An Rgba16Float texture's pixels read back as floats.
+    fn read_f16(&self, tex: &wgpu::Texture, w: u32, h: u32) -> Vec<f32> {
+        let row = (w * 8).div_ceil(256) * 256;
+        let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gui readback"),
+            size: (row * h) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut enc = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("gui") });
+        enc.copy_texture_to_buffer(
+            tex.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buf,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row),
+                    rows_per_image: Some(h),
+                },
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.queue.submit([enc.finish()]);
+        let slice = buf.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        let Ok(data) = slice.get_mapped_range() else {
+            return vec![0.0; (w * h * 4) as usize];
+        };
+        let mut out = Vec::with_capacity((w * h * 4) as usize);
+        for y in 0..h {
+            let start = (y * row) as usize;
+            for c in data[start..start + (w * 8) as usize].chunks(2) {
+                out.push(f16_to_f32(u16::from_le_bytes([c[0], c[1]])));
+            }
+        }
+        out
+    }
+}
+
+/// A half float's value.
+fn f16_to_f32(h: u16) -> f32 {
+    let sign = if h & 0x8000 != 0 { -1.0 } else { 1.0 };
+    let exp = ((h >> 10) & 0x1f) as i32;
+    let frac = (h & 0x3ff) as f32;
+    sign * match exp {
+        0 => frac * 2f32.powi(-24),
+        31 => f32::INFINITY,
+        e => (1.0 + frac / 1024.0) * 2f32.powi(e - 15),
+    }
+}
+
 /// A frame kept between frames, so the next draws only what changed.
 pub struct Target {
     gpu: Arc<Gpu>,
@@ -1818,16 +1959,29 @@ impl Target {
         }
     }
 
+    /// The kept frame's format: the surface's, or Rgba16Float (extended
+    /// sRGB) for a frame with wide colours.
+    pub fn format(&self) -> wgpu::TextureFormat {
+        self.format
+    }
+
+    /// The bytes a pixel of the kept frame takes.
+    fn px_bytes(&self) -> u32 {
+        self.format.block_copy_size(None).unwrap_or(4)
+    }
+
     fn release(&mut self) {
         if let Some((_, _, w, h)) = self.tex.take() {
-            self.gpu
-                .targets
-                .fetch_sub((w * h * 4) as usize, std::sync::atomic::Ordering::Relaxed);
+            self.gpu.targets.fetch_sub(
+                (w * h * self.px_bytes()) as usize,
+                std::sync::atomic::Ordering::Relaxed,
+            );
         }
         if let Some((_, w, h)) = self.scratch.take() {
-            self.gpu
-                .targets
-                .fetch_sub((w * h * 4) as usize, std::sync::atomic::Ordering::Relaxed);
+            self.gpu.targets.fetch_sub(
+                (w * h * self.px_bytes()) as usize,
+                std::sync::atomic::Ordering::Relaxed,
+            );
         }
     }
 
@@ -1860,9 +2014,10 @@ impl Target {
             view_formats: &[],
         });
         let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
-        self.gpu
-            .targets
-            .fetch_add((w * h * 4) as usize, std::sync::atomic::Ordering::Relaxed);
+        self.gpu.targets.fetch_add(
+            (w * h * self.px_bytes()) as usize,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         self.tex = Some((tex, view, w, h));
         self.tracker.invalidate();
     }
@@ -1892,9 +2047,10 @@ impl Target {
         };
         if !shifts.is_empty() && !matches!(self.scratch, Some((_, w, h)) if (w, h) == (tw, th)) {
             if let Some((_, w, h)) = self.scratch.take() {
-                self.gpu
-                    .targets
-                    .fetch_sub((w * h * 4) as usize, std::sync::atomic::Ordering::Relaxed);
+                self.gpu.targets.fetch_sub(
+                    (w * h * self.px_bytes()) as usize,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
             }
             let s = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("gui frame moves"),
@@ -1910,9 +2066,10 @@ impl Target {
                 usage: wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             });
-            self.gpu
-                .targets
-                .fetch_add((tw * th * 4) as usize, std::sync::atomic::Ordering::Relaxed);
+            self.gpu.targets.fetch_add(
+                (tw * th * self.px_bytes()) as usize,
+                std::sync::atomic::Ordering::Relaxed,
+            );
             self.scratch = Some((s, tw, th));
         }
         let Some((tex, view, _, _)) = &self.tex else {
@@ -1958,7 +2115,8 @@ impl Target {
     /// Draw a display list over the kept frame (offscreen: tests, and the
     /// check that damage draws what a whole frame draws). Its damage.
     pub fn render(&mut self, dl: &DisplayList) -> Damage {
-        let mut p = self.gpu.prepare(dl);
+        let wide = self.format == wgpu::TextureFormat::Rgba16Float;
+        let mut p = self.gpu.prepare_in(dl, wide);
         if dl.redraw {
             self.tracker.invalidate();
         }
@@ -1983,6 +2141,18 @@ impl Target {
             None => Vec::new(),
         }
     }
+
+    /// The kept frame's pixels as they are held, premultiplied RGBA in
+    /// floats (an Rgba16Float target: extended sRGB, past 0…1 where a
+    /// colour is wide).
+    pub fn rgba_f32(&self) -> Vec<f32> {
+        match &self.tex {
+            Some((tex, _, w, h)) if self.format == wgpu::TextureFormat::Rgba16Float => {
+                self.gpu.read_f16(tex, *w, *h)
+            }
+            _ => Vec::new(),
+        }
+    }
 }
 
 /// A window's surface on the shared GPU.
@@ -1997,6 +2167,11 @@ pub struct Surface {
     /// The last `render` presented a frame (one that changed nothing is
     /// not presented).
     presented: bool,
+    /// The surface can be transparent where the frame is (the window's
+    /// backdrop view under it): Metal's non-opaque layer.
+    see_through: bool,
+    /// The alpha mode of a surface drawn opaque.
+    opaque: wgpu::CompositeAlphaMode,
 }
 
 impl Surface {
@@ -2037,6 +2212,14 @@ impl Surface {
             .ok_or("the surface supports no format")?;
         let copy = caps.usages.contains(wgpu::TextureUsages::COPY_DST);
         let wide = wide_gamut(&caps, format);
+        let opaque = caps
+            .alpha_modes
+            .first()
+            .copied()
+            .unwrap_or(wgpu::CompositeAlphaMode::Auto);
+        let see_through = caps
+            .alpha_modes
+            .contains(&wgpu::CompositeAlphaMode::PostMultiplied);
         let config = wgpu::SurfaceConfiguration {
             usage: if copy {
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST
@@ -2048,11 +2231,7 @@ impl Surface {
             height: height.clamp(1, gpu.device.limits().max_texture_dimension_2d.max(1)),
             present_mode: wgpu::PresentMode::AutoVsync,
             desired_maximum_frame_latency: 2,
-            alpha_mode: caps
-                .alpha_modes
-                .first()
-                .copied()
-                .unwrap_or(wgpu::CompositeAlphaMode::Auto),
+            alpha_mode: opaque,
             view_formats: vec![],
             // Display P3 where the surface takes it: the layer is then
             // colour-matched (an sRGB token shows as that colour on a P3
@@ -2073,7 +2252,15 @@ impl Surface {
             target,
             copy,
             presented: false,
+            see_through,
+            opaque,
         })
+    }
+
+    /// Whether a box can show the desktop through it (`material:
+    /// "window"`): the surface can be transparent.
+    pub fn can_see_through(&self) -> bool {
+        self.see_through
     }
 
     /// The largest side a surface may have on this device (a window
@@ -2151,16 +2338,24 @@ impl Surface {
         let Some((_, _, w, h)) = &self.target.tex else {
             return (0, 0, Vec::new());
         };
-        let mut px = self.target.rgba();
-        // a BGRA kept frame (the swapchain's order) read as RGBA
-        if matches!(
-            self.config.format,
-            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
-        ) {
-            for p in px.chunks_exact_mut(4) {
-                p.swap(0, 2);
+        let px = match self.target.format() {
+            // a frame kept in extended sRGB (wide colours): clamped to sRGB
+            wgpu::TextureFormat::Rgba16Float => self
+                .target
+                .rgba_f32()
+                .iter()
+                .map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8)
+                .collect(),
+            // a BGRA kept frame (the swapchain's order) read as RGBA
+            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb => {
+                let mut px = self.target.rgba();
+                for p in px.chunks_exact_mut(4) {
+                    p.swap(0, 2);
+                }
+                px
             }
-        }
+            _ => self.target.rgba(),
+        };
         (*w, *h, px)
     }
 
@@ -2170,7 +2365,33 @@ impl Surface {
             self.recover()?;
         }
         self.resize(dl.width, dl.height);
-        let mut p = self.gpu.prepare(dl);
+        // transparent where a box shows the desktop (the layer non-opaque,
+        // what it holds premultiplied), opaque otherwise
+        let alpha = if dl.see_through && self.see_through {
+            wgpu::CompositeAlphaMode::PostMultiplied
+        } else {
+            self.opaque
+        };
+        if alpha != self.config.alpha_mode {
+            self.config.alpha_mode = alpha;
+            self.surface.configure(&self.gpu.device, &self.config);
+            self.target.invalidate();
+        }
+        // a frame with wide colours on a wide surface is kept in extended
+        // sRGB (Rgba16Float), the P3 pass then a matrix only; else in the
+        // surface's own format
+        let format =
+            if self.config.color_space == wgpu::SurfaceColorSpace::DisplayP3 && dl.wide.is_some() {
+                wgpu::TextureFormat::Rgba16Float
+            } else {
+                self.config.format
+            };
+        if self.target.format != format {
+            self.target = Target::new(self.gpu.clone(), format);
+        }
+        let mut p = self
+            .gpu
+            .prepare_in(dl, format == wgpu::TextureFormat::Rgba16Float);
         if dl.redraw {
             self.target.tracker.invalidate();
         }
@@ -3246,7 +3467,9 @@ fn wide_gamut(caps: &wgpu::SurfaceCapabilities, format: wgpu::TextureFormat) -> 
 
 /// The frame (sRGB, premultiplied) in Display P3: decoded to linear light,
 /// moved by the primaries' matrix, encoded again (P3 shares sRGB's curve).
-/// An sRGB colour stays itself on any screen once the layer is matched.
+/// An sRGB colour stays itself on any screen once the layer is matched; a
+/// wide one (an Rgba16Float frame's extended sRGB, past 0…1) lands inside
+/// P3's 0…1, so it is only clamped to P3 at the end.
 const P3_SHADER: &str = r#"
 @group(0) @binding(0) var src: texture_2d<f32>;
 
@@ -3257,8 +3480,10 @@ fn vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
   return vec4<f32>(x * 2.0 - 1.0, 1.0 - y * 2.0, 0.0, 1.0);
 }
 
-fn to_linear(c: vec3<f32>) -> vec3<f32> {
-  return select(pow((c + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4)), c / 12.92, c <= vec3<f32>(0.04045));
+/// sRGB's curve, odd: extended sRGB (a wide colour's) carries the sign.
+fn to_linear(e: vec3<f32>) -> vec3<f32> {
+  let c = abs(e);
+  return sign(e) * select(pow((c + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4)), c / 12.92, c <= vec3<f32>(0.04045));
 }
 
 fn to_encoded(c: vec3<f32>) -> vec3<f32> {
@@ -3271,7 +3496,8 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
   if (c.a <= 0.0) {
     return vec4<f32>(0.0);
   }
-  let lin = to_linear(clamp(c.rgb / c.a, vec3<f32>(0.0), vec3<f32>(1.0)));
+  // extended sRGB: past 0…1 where a colour is wide (an Rgba16Float frame)
+  let lin = to_linear(c.rgb / c.a);
   let p3 = vec3<f32>(
     dot(lin, vec3<f32>(0.8224621, 0.1775380, 0.0)),
     dot(lin, vec3<f32>(0.0331941, 0.9668058, 0.0)),
