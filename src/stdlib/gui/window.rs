@@ -1357,18 +1357,28 @@ impl WinState {
                 base
             }
         };
-        out.push(self.ev(
-            "key",
-            vec![
-                ("key", s(&key)),
-                ("text", opt_str(text.as_deref())),
-                ("chord", s(&Self::chord(&key, mods))),
-                ("mod_chord", s(&mod_chord)),
-                ("mods", mods.value()),
-                ("repeat", Value::Boolean(repeat)),
-                ("target", opt_str(focus.as_deref())),
-            ],
-        ));
+        let chord = Self::chord(&key, mods);
+        // the keyboard's context menu (⇧F10, the Menu key) on a misspelled
+        // word: the word selected, its guesses said with the key
+        let spelling = match &focus {
+            Some(f) if !repeat && (chord == "shift+f10" || chord == "contextmenu") => {
+                self.spelling_at_caret(f, true, out)
+            }
+            _ => None,
+        };
+        let mut fields = vec![
+            ("key", s(&key)),
+            ("text", opt_str(text.as_deref())),
+            ("chord", s(&chord)),
+            ("mod_chord", s(&mod_chord)),
+            ("mods", mods.value()),
+            ("repeat", Value::Boolean(repeat)),
+            ("target", opt_str(focus.as_deref())),
+        ];
+        if let Some(sp) = spelling {
+            fields.push(("spelling", sp));
+        }
+        out.push(self.ev("key", fields));
     }
 
     /// Where a key moves a region's scroll from `at` (its box `size`):
@@ -1608,6 +1618,7 @@ impl WinState {
                 // a right press in a field: the focus and the caret go
                 // there (kept in a selection pressed inside), as a Mac's
                 // text views do before their context menu opens
+                let mut spelling = None;
                 if button == "right"
                     && let Some(f) = hit
                         .as_ref()
@@ -1628,6 +1639,9 @@ impl WinState {
                     self.set_focus(Some(f.clone()), out);
                     self.report_selection(&f, out);
                     self.dirty = true;
+                    // on a misspelled word: the word selected, and the
+                    // speller's guesses said with the press (its menu's)
+                    spelling = self.spelling_at_caret(&f, true, out);
                 }
                 if button == "left" {
                     self.scene.pressed = target.clone();
@@ -1751,21 +1765,22 @@ impl WinState {
                     }
                     self.dirty = true;
                 }
-                out.push(self.ev(
-                    "pointer",
-                    vec![
-                        ("action", s("down")),
-                        ("x", float(x)),
-                        ("y", float(y)),
-                        ("mods", self.mods.value()),
-                        ("sx", opt_float(self.screen_pointer.map(|p| p.0))),
-                        ("sy", opt_float(self.screen_pointer.map(|p| p.1))),
-                        ("button", s(button)),
-                        ("clicks", Value::Integer(clicks as i64)),
-                        ("target", opt_str(hit.as_deref())),
-                        ("hit", self.canvas_hit(hit.as_deref(), x, y)),
-                    ],
-                ));
+                let mut fields = vec![
+                    ("action", s("down")),
+                    ("x", float(x)),
+                    ("y", float(y)),
+                    ("mods", self.mods.value()),
+                    ("sx", opt_float(self.screen_pointer.map(|p| p.0))),
+                    ("sy", opt_float(self.screen_pointer.map(|p| p.1))),
+                    ("button", s(button)),
+                    ("clicks", Value::Integer(clicks as i64)),
+                    ("target", opt_str(hit.as_deref())),
+                    ("hit", self.canvas_hit(hit.as_deref(), x, y)),
+                ];
+                if let Some(sp) = spelling {
+                    fields.push(("spelling", sp));
+                }
+                out.push(self.ev("pointer", fields));
             }
             PointerAction::Up => {
                 let pressed = self.scene.pressed.take();
@@ -4798,6 +4813,132 @@ impl WinState {
             .unwrap_or_default()
     }
 
+    /// The misspelled word at a spell-checked field's caret (a selection
+    /// inside one word counts), as `#{ key, word, from, to, guesses }`
+    /// (`from`, `to`: characters of the value; `guesses` the speller's,
+    /// best first), checked now. `select`: the word is selected, as a
+    /// Mac's text views do before their menu shows. `None` off a
+    /// misspelling, in a password, while an input method composes.
+    pub fn spelling_at_caret(
+        &mut self,
+        key: &str,
+        select: bool,
+        out: &mut Vec<Value>,
+    ) -> Option<Value> {
+        let on = self
+            .scene
+            .nodes
+            .get(key)
+            .and_then(|n| n.edit.as_ref())
+            .is_some_and(|e| e.spellcheck && !e.secure);
+        let ed = self.editors.get(key)?;
+        if !on || ed.is_composing() {
+            return None;
+        }
+        let value = ed.value();
+        let (a, f) = ed.selection_chars();
+        let (lo, hi) = (a.min(f), a.max(f));
+        let chars: Vec<char> = value.chars().collect();
+        // the caret's paragraph, checked as the underline checks it
+        let p0 = chars[..lo.min(chars.len())]
+            .iter()
+            .rposition(|c| *c == '\n')
+            .map_or(0, |i| i + 1);
+        let p1 = chars[p0..]
+            .iter()
+            .position(|c| *c == '\n')
+            .map_or(chars.len(), |i| p0 + i);
+        if hi > p1 {
+            return None;
+        }
+        let para: String = chars[p0..p1].iter().collect();
+        let (wa, wb) = super::edit::spell_check(&para)?
+            .into_iter()
+            .find(|(wa, wb)| lo - p0 >= *wa && hi - p0 <= *wb)?;
+        let (from, to) = (p0 + wa, p0 + wb);
+        let word: String = chars[from..to].iter().collect();
+        let guesses = super::edit::spell_guesses(&word);
+        if select && (lo, hi) != (from, to) {
+            if let Ok(mut ts) = text::system().lock() {
+                match self.editors.get_mut(key) {
+                    Some(super::edit::Field::Plain(e)) => e.select_chars(from, to, &mut ts),
+                    Some(super::edit::Field::Rich(r)) => r.select_chars(from, to),
+                    None => {}
+                }
+            }
+            self.report_selection(key, out);
+            self.dirty = true;
+            self.a11y_dirty = true;
+        }
+        Some(map(vec![
+            ("key", s(key)),
+            ("word", s(&word)),
+            ("from", Value::Integer(from as i64)),
+            ("to", Value::Integer(to as i64)),
+            (
+                "guesses",
+                Value::List(Arc::new(guesses.iter().map(|g| s(g)).collect())),
+            ),
+        ]))
+    }
+
+    /// Replace characters `a..b` of field `key`'s value with `text`, as one
+    /// edit the field's undo takes back (a spelling's guess chosen): the
+    /// field reports it as typing would. `false` off a field, past its
+    /// end, or in one that is read-only.
+    pub fn replace_text(
+        &mut self,
+        key: &str,
+        a: usize,
+        b: usize,
+        text: &str,
+        out: &mut Vec<Value>,
+    ) -> bool {
+        let readonly = self
+            .scene
+            .nodes
+            .get(key)
+            .and_then(|n| n.edit.as_ref())
+            .is_none_or(|e| e.readonly);
+        let Some(ed) = self.editors.get(key) else {
+            return false;
+        };
+        let n = ed.value().chars().count();
+        if readonly || a > b || b > n {
+            return false;
+        }
+        let Ok(mut ts) = text::system().lock() else {
+            return false;
+        };
+        let outcome = match self.editors.get_mut(key) {
+            Some(super::edit::Field::Plain(e)) => {
+                e.select_chars(a, b, &mut ts);
+                Some(e.insert(text, &mut ts))
+            }
+            Some(super::edit::Field::Rich(r)) => {
+                r.select_chars(a, b);
+                Some(r.insert(text, &mut ts))
+            }
+            None => None,
+        };
+        drop(ts);
+        match outcome {
+            Some(o) => {
+                self.after_edit(key, o, out);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Forget every field's misspellings (the speller learnt or ignored a
+    /// word): they are checked again on the next frame.
+    pub fn spelling_changed(&mut self) {
+        if !self.spell.is_empty() {
+            self.dirty = true;
+        }
+    }
+
     // The paint pass's context, as the other paint_ methods take it.
     #[allow(clippy::too_many_arguments)]
     fn paint_editor(
@@ -5307,6 +5448,9 @@ pub struct Spelling {
     settled: bool,
     paras: HashMap<u64, Vec<(usize, usize)>>,
     pub found: Vec<(usize, usize)>,
+    /// The speller's generation the words were found in: a word learnt
+    /// or ignored since, the field is checked again at once.
+    generation: u64,
 }
 
 fn hash_of(s: &str) -> u64 {
@@ -5322,6 +5466,12 @@ impl Spelling {
     /// the first time. Answers when to look again while one waits.
     pub fn update(&mut self, value: &str, now: f64) -> Option<f64> {
         let hash = hash_of(value);
+        let generation = super::edit::spell_generation();
+        if generation != self.generation {
+            self.generation = generation;
+            self.paras.clear();
+            self.seen = false;
+        }
         let first = !self.seen;
         self.seen = true;
         if first || hash != self.hash {

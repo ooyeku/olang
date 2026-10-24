@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Spelling's suggestions.** A right press (⌃-click) on a misspelled
+  word in a `spellcheck: true` field selects it and says `spelling`
+  `#{ key, word, from, to, guesses }` with the press (⇧F10 and the Menu
+  key with the event of the key), NSSpellChecker's guesses best first,
+  for the program's context menu. `gui.replace_text(w, key, #{ from, to,
+  text })` puts a guess in as one edit the field's undo takes back;
+  `gui.spell(op, word)` asks the platform's speller (no window needed):
+  `"guesses"`, `"learn"`, `"unlearn"`, `"ignore"` (this process, its
+  own spell document), `"learned"`, and `"stand_in"` (a test's words and
+  guesses instead, the person's dictionary never written); a word learnt
+  or ignored, every spell-checked field is checked again.
+  `gui.spelling(w, key)` asks for the word at the caret.
+  `gui.platform()` says `spell_guesses` and `replace_text`.
+
+### Changed
+
+- **Zoom follows the caret itself.** A field's text reaches assistive
+  output as a run a visual line (from the text engine's lines), each over
+  its own line with its characters' places and widths and a direction:
+  `AXBoundsForRange` of the caret is where it is drawn (a real window's
+  test through the AX client API), so Zoom's Follow keyboard focus
+  follows the caret, not the field, and VoiceOver boxes a character. A
+  styled field's lines in view, the rest a run a paragraph as before.
+  `gui.read(w, "a11y")` says a field's `caret_box`.
+
 ## [1.0.0-rc.3] - 2026-10-23
 
 ### Added
