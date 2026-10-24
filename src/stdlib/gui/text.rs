@@ -417,6 +417,17 @@ impl Shapes {
     }
 }
 
+thread_local! {
+    /// Texts this thread shaped and found shaped (a test's: the cache's
+    /// own counts are every thread's).
+    static MINE: std::cell::Cell<(u64, u64)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+/// Texts the calling thread shaped (a miss) and found shaped.
+pub fn thread_stats() -> (u64, u64) {
+    MINE.with(|m| m.get())
+}
+
 /// Texts shaped (a miss) and found shaped since the start, and how many
 /// are kept: `gui.read(_, "render")`.
 pub fn stats() -> (u64, u64, usize) {
@@ -605,6 +616,14 @@ impl TextSystem {
             }
             c.shaped += 1;
             None
+        });
+        MINE.with(|m| {
+            let (a, b) = m.get();
+            m.set(if found.is_some() {
+                (a, b + 1)
+            } else {
+                (a + 1, b)
+            })
         });
         if let Some(s) = found {
             return s;

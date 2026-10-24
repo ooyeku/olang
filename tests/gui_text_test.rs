@@ -132,7 +132,7 @@ fn the_shaping_cache_keeps_what_is_still_used_through_a_turn_over() {
             );
         }
     }
-    let (shaped, found) = (ts.shaped, ts.found);
+    let (shaped, found) = text::thread_stats();
     let again = ts.shape(
         "kept across generations",
         &f,
@@ -142,12 +142,12 @@ fn the_shaping_cache_keeps_what_is_still_used_through_a_turn_over() {
         1.0,
     );
     assert_eq!(
-        (ts.shaped, ts.found),
+        text::thread_stats(),
         (shaped, found + 1),
         "found, not shaped again"
     );
     assert!(std::sync::Arc::ptr_eq(&a, &again));
-    assert!(ts.cached() <= 2 * 8192);
+    assert!(text::stats().2 <= 2 * 8192);
     // a width or a colour is another shape
     ts.shape(
         "kept across generations",
@@ -157,7 +157,7 @@ fn the_shaping_cache_keeps_what_is_still_used_through_a_turn_over() {
         Align::Start,
         1.0,
     );
-    assert_eq!(ts.shaped, shaped + 1);
+    assert_eq!(text::thread_stats().0, shaped + 1);
 }
 
 #[test]
