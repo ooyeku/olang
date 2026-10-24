@@ -238,9 +238,22 @@ mod mac {
     /// The wheel, the pointer and typing, each 50 times 16 ms apart: for
     /// each, input to the present of the first frame made after it (p50,
     /// p99) and the longest gap between frames presented, in ms.
-    fn phases(when: &str) -> Vec<(String, f64, f64, f64)> {
+    /// Whether the window is on the screen and not covered (a person's
+    /// own window over it, a display asleep: nothing is drawn then).
+    fn visible() -> bool {
+        on_main(|| {
+            let w = ns_window();
+            let state: usize = unsafe { msg_send![&*w, occlusionState] };
+            state & 2 != 0
+        })
+    }
+
+    /// The phases' numbers: (what, p50, p99, the longest gap, answers);
+    /// a phase the window was covered during is left out (said).
+    fn phases(when: &str) -> Vec<(String, f64, f64, f64, usize)> {
         let mut out = Vec::new();
         for kind in ["scroll", "hover", "typing"] {
+            let seen = visible();
             frames::engine_samples().lock().unwrap().clear();
             frames::present_log().lock().unwrap().clear();
             let _ = olang::stdlib::gui::holds::take();
@@ -273,7 +286,11 @@ mod mac {
                 "{}",
                 olang::stdlib::gui::holds::summary(&olang::stdlib::gui::holds::take())
             );
-            out.push((format!("{when}, {kind}"), p50, p99, gap));
+            if !(seen && visible()) {
+                println!("{when}, {kind}: the window was covered; not counted");
+                continue;
+            }
+            out.push((format!("{when}, {kind}"), p50, p99, gap, s.len()));
         }
         out
     }
@@ -351,13 +368,20 @@ mod mac {
                     std::thread::sleep(Duration::from_millis(150));
                     let heavy = phases("heavy turn");
                     // every answer on the screen within a few refreshes,
-                    // the turn running or not
-                    for (what, p50, p99, gap) in idle.iter().chain(heavy.iter()) {
-                        let _ = (p50, gap);
-                        say_numbers(format!("{what}: p99 {p99:.1} ms"));
+                    // the turn running or not: each input answered, and no
+                    // frame more than a few refreshes after the one before
+                    for (what, _, p99, gap, n) in idle.iter().chain(heavy.iter()) {
+                        say_numbers(format!(
+                            "{what}: {n} answers, p99 {p99:.1} ms, gap {gap:.1} ms"
+                        ));
                     }
-                    let worst = heavy.iter().map(|x| x.2).fold(0.0, f64::max);
-                    say(format!("answers kept their rate: {}", worst < 100.0));
+                    let kept = heavy.iter().all(|x| x.4 >= 40 && x.3 < 100.0);
+                    if heavy.is_empty() {
+                        println!(
+                            "the window was covered through the heavy turn: its rate not checked"
+                        );
+                    }
+                    say(format!("answers kept their rate: {kept}"));
                     // the heavy turn ends before the test does
                     let t = Instant::now();
                     while turn_watch::shown() && t.elapsed() < Duration::from_secs(6) {

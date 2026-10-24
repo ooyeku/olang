@@ -501,12 +501,23 @@ impl WinState {
 
     /// Apply a patch from the program.
     pub fn apply(&mut self, ops: &Value, out: &mut Vec<Value>) -> Res<()> {
+        self.apply_parsed(ops, super::scene::Scene::parse(ops), out)
+    }
+
+    /// Apply a patch already read ([`super::scene::Scene::parse`], before
+    /// the window's lock was taken): `ops` is the patch as sent.
+    pub fn apply_parsed(
+        &mut self,
+        ops: &Value,
+        parsed: super::scene::Parsed,
+        out: &mut Vec<Value>,
+    ) -> Res<()> {
         let mut applied = Applied::default();
         let before_focus = self.scene.focus.clone();
         if self.motion.runs(self.settings.reduce_motion) {
             self.motion_patch(ops);
         }
-        self.scene.apply(ops, &mut applied)?;
+        self.scene.apply_parsed(parsed, &mut applied)?;
         for k in &applied.removed {
             if !self.scene.nodes.contains_key(k) {
                 self.editors.remove(k);

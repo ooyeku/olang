@@ -571,10 +571,13 @@ fn gui_apply(args: Vec<Value>) -> Res<Value> {
     let id = window_id("gui.apply", args.first())?;
     let w = window("gui.apply", id)?;
     let mut out = Vec::new();
+    // read and checked before the window's lock is taken: the lock is
+    // held only to put the operations in place
+    let parsed = scene::Scene::parse(&args[1]);
     let (result, headless) = {
         let mut st = w.lock().map_err(|_| "gui: window poisoned")?;
         let held = holds::start();
-        let r = (st.apply(&args[1], &mut out), st.headless);
+        let r = (st.apply_parsed(&args[1], parsed, &mut out), st.headless);
         holds::since("apply_held", held);
         r
     };

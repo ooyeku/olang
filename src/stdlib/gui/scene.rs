@@ -636,59 +636,137 @@ pub struct Applied {
     pub focus_set: bool,
 }
 
+/// A patch's operation read and checked on its own, without the scene:
+/// `gui.apply` reads a patch before it takes the window's lock, which it
+/// then holds only to put the operations in place.
+pub enum Op {
+    Node(Box<NodeOp>),
+    Remove(String),
+    Focus(Option<String>),
+    Scroll(String, (f32, f32)),
+    Clear,
+}
+
+/// A node operation: what its place in the tree is checked by, and the
+/// node itself — or the error reading it met, said only once its place
+/// was checked (an operation is refused for its parent first, as it
+/// always was).
+pub struct NodeOp {
+    key: String,
+    parent: Option<String>,
+    node: Res<Node>,
+    index: Res<Option<usize>>,
+}
+
+/// A patch read: its operations in order, up to the first one refused,
+/// and that refusal (the operations before it are still applied).
+pub struct Parsed {
+    ops: Vec<Op>,
+    error: Option<String>,
+}
+
 impl Scene {
     pub fn apply(&mut self, ops: &Value, out: &mut Applied) -> Res<()> {
+        self.apply_parsed(Scene::parse(ops), out)
+    }
+
+    /// Read a patch: everything about each operation that does not need
+    /// the scene.
+    pub fn parse(ops: &Value) -> Parsed {
         let items: &[Value] = match ops {
             Value::List(l) => l,
-            _ => return Err("gui.apply: the patch must be a list of operations".into()),
+            _ => {
+                return Parsed {
+                    ops: Vec::new(),
+                    error: Some("gui.apply: the patch must be a list of operations".into()),
+                };
+            }
         };
+        let mut out = Vec::with_capacity(items.len());
         for (i, op) in items.iter().enumerate() {
             let what = format!("gui.apply: operation {}", i + 1);
-            let kind = get_str(op, "op", &what)?.unwrap_or("node");
-            match kind {
-                "node" => self.upsert(op, &what, out)?,
-                "remove" => {
-                    let key = get_str(op, "key", &what)?
-                        .ok_or_else(|| format!("{what}: \"remove\" needs a \"key\""))?;
-                    self.remove(key, out);
+            match Scene::parse_op(op, &what) {
+                Ok(o) => out.push(o),
+                Err(e) => {
+                    return Parsed {
+                        ops: out,
+                        error: Some(e),
+                    };
                 }
-                "focus" => {
-                    let key = get_str(op, "key", &what)?;
-                    if let Some(k) = key
+            }
+        }
+        Parsed {
+            ops: out,
+            error: None,
+        }
+    }
+
+    fn parse_op(op: &Value, what: &str) -> Res<Op> {
+        let kind = get_str(op, "op", what)?.unwrap_or("node");
+        Ok(match kind {
+            "node" => Op::Node(Box::new(Scene::parse_node(op, what)?)),
+            "remove" => {
+                let key = get_str(op, "key", what)?
+                    .ok_or_else(|| format!("{what}: \"remove\" needs a \"key\""))?;
+                Op::Remove(key.to_string())
+            }
+            "focus" => Op::Focus(get_str(op, "key", what)?.map(str::to_string)),
+            "scroll" => {
+                let key = get_str(op, "key", what)?
+                    .ok_or_else(|| format!("{what}: \"scroll\" needs a \"key\""))?;
+                let to = get_pair(op, "to", what)?.unwrap_or((0.0, 0.0));
+                Op::Scroll(key.to_string(), to)
+            }
+            "clear" => Op::Clear,
+            other => {
+                return Err(format!(
+                    "{what}: unknown op \"{other}\" (node, remove, focus, scroll, clear)"
+                ));
+            }
+        })
+    }
+
+    /// Put a read patch in place, in order; the first operation the scene
+    /// refuses (or the one the reading refused) ends it.
+    pub fn apply_parsed(&mut self, parsed: Parsed, out: &mut Applied) -> Res<()> {
+        for (i, op) in parsed.ops.into_iter().enumerate() {
+            let what = format!("gui.apply: operation {}", i + 1);
+            match op {
+                Op::Node(n) => self.upsert(*n, &what, out)?,
+                Op::Remove(key) => self.remove(&key, out),
+                Op::Focus(key) => {
+                    if let Some(k) = &key
                         && !self.nodes.contains_key(k)
                     {
                         return Err(format!("{what}: no node \"{k}\" to focus"));
                     }
-                    self.focus = key.map(str::to_string);
+                    self.focus = key;
                     out.focus_set = true;
                 }
-                "scroll" => {
-                    let key = get_str(op, "key", &what)?
-                        .ok_or_else(|| format!("{what}: \"scroll\" needs a \"key\""))?;
-                    let to = get_pair(op, "to", &what)?.unwrap_or((0.0, 0.0));
+                Op::Scroll(key, to) => {
                     let node = self
                         .nodes
-                        .get_mut(key)
+                        .get_mut(&key)
                         .ok_or_else(|| format!("{what}: no node \"{key}\""))?;
                     node.offset = to;
-                    self.clamp_scroll(key);
+                    self.clamp_scroll(&key);
                 }
-                "clear" => {
+                Op::Clear => {
                     let keys: Vec<String> = self.nodes.keys().cloned().collect();
                     out.removed.extend(keys);
                     *self = Scene::default();
                 }
-                other => {
-                    return Err(format!(
-                        "{what}: unknown op \"{other}\" (node, remove, focus, scroll, clear)"
-                    ));
-                }
             }
         }
-        Ok(())
+        match parsed.error {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 
-    fn upsert(&mut self, op: &Value, what: &str, out: &mut Applied) -> Res<()> {
+    /// A node operation read: its key, role and parent at once (a
+    /// refusal there ends the patch), the rest kept with its refusal.
+    fn parse_node(op: &Value, what: &str) -> Res<NodeOp> {
         if let Some(f) = fields(op) {
             for k in f.keys() {
                 if !NODE_KEYS.contains(&k.as_str()) {
@@ -712,16 +790,27 @@ impl Scene {
             ));
         }
         let parent = get_str(op, "parent", what)?.map(str::to_string);
-        if let Some(p) = &parent {
-            if !self.nodes.contains_key(p) {
-                return Err(format!(
-                    "{what}: node \"{key}\" names parent \"{p}\", which does not exist (send a parent before its children)"
-                ));
-            }
-            if *p == key || self.is_ancestor(&key, p) {
-                return Err(format!("{what}: node \"{key}\" cannot be its own ancestor"));
-            }
-        }
+        let node = Scene::read_node(op, what, &key, &role, &parent);
+        let index = get_num(op, "index", what).map(|n| n.map(|n| n.max(0.0) as usize));
+        Ok(NodeOp {
+            key,
+            parent,
+            node,
+            index,
+        })
+    }
+
+    /// The node an operation describes (its children and scroll offset
+    /// are the scene's, filled in as it is put in place).
+    fn read_node(
+        op: &Value,
+        what: &str,
+        key: &str,
+        role: &str,
+        parent: &Option<String>,
+    ) -> Res<Node> {
+        let key = key.to_string();
+        let role = role.to_string();
         let rect = get_rect(op, "box", what)?.unwrap_or([0.0; 4]);
         let mut style = Style::default();
         let mut variants: [Option<Value>; 3] = [None, None, None];
@@ -797,9 +886,6 @@ impl Scene {
                 },
             }),
         };
-        if edit.is_some() {
-            out.edits.push(key.clone());
-        }
         let numeric = match get(op, "range") {
             None => None,
             Some(r) => match nums(r).as_deref() {
@@ -814,16 +900,10 @@ impl Scene {
             Some(Value::String(t)) => Some(t.to_string()),
             Some(other) => Some(format!("{}", other)),
         };
-        let previous = self.nodes.get(&key);
-        let (children, offset) = previous
-            .map(|n| (n.children.clone(), n.offset))
-            .unwrap_or_default();
-        let old_parent = previous.and_then(|n| n.parent.clone());
-        let was_root = self.root.as_deref() == Some(key.as_str());
         let node = Node {
             key: key.clone(),
             parent: parent.clone(),
-            children,
+            children: Vec::new(),
             role: role.clone(),
             rect,
             style,
@@ -840,7 +920,7 @@ impl Scene {
             numeric,
             edit,
             scrollable: get_bool(op, "scroll", what)?.unwrap_or(role == "region"),
-            offset,
+            offset: (0.0, 0.0),
             level: get_num(op, "level", what)?.map(|n| n as u32),
             // "polite" (said when the person pauses), "assertive" (said
             // at once), "off" (a status's or a log's own politeness taken
@@ -887,6 +967,37 @@ impl Scene {
                     _ => None,
                 }),
         };
+        Ok(node)
+    }
+
+    fn upsert(&mut self, op: NodeOp, what: &str, out: &mut Applied) -> Res<()> {
+        let NodeOp {
+            key,
+            parent,
+            node,
+            index,
+        } = op;
+        if let Some(p) = &parent {
+            if !self.nodes.contains_key(p) {
+                return Err(format!(
+                    "{what}: node \"{key}\" names parent \"{p}\", which does not exist (send a parent before its children)"
+                ));
+            }
+            if *p == key || self.is_ancestor(&key, p) {
+                return Err(format!("{what}: node \"{key}\" cannot be its own ancestor"));
+            }
+        }
+        let mut node = node?;
+        if node.edit.is_some() {
+            out.edits.push(key.clone());
+        }
+        let previous = self.nodes.get(&key);
+        if let Some(prev) = previous {
+            node.children = prev.children.clone();
+            node.offset = prev.offset;
+        }
+        let old_parent = previous.and_then(|n| n.parent.clone());
+        let was_root = self.root.as_deref() == Some(key.as_str());
         // Detach from the old parent (or the root slot) when it moved.
         if previous.is_some() && old_parent != parent {
             match &old_parent {
@@ -914,7 +1025,7 @@ impl Scene {
                 self.root = Some(key.clone());
             }
             Some(p) => {
-                let index = get_num(op, "index", what)?.map(|n| n.max(0.0) as usize);
+                let index = index?;
                 let parent_node = self.nodes.get_mut(p).expect("checked above");
                 let at = parent_node.children.iter().position(|c| *c == key);
                 match (at, index) {
