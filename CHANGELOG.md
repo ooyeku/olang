@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **gui: a render thread (macOS).** Every GPU window is drawn and
+  presented on a thread of its own: it owns the window's surface (made on
+  the main thread, then handed over), the kept frame and its damage, the
+  display link (scheduled on its own run loop, so refreshes reach it
+  while the main thread is busy), the pacing, and device-loss recovery.
+  The main thread lists each frame and publishes it whole (`Arc<Frame>`
+  into the window's double-buffered slot: the renderer takes the newest
+  and never waits), lists none that would only wait behind one on its
+  way, and waits at most a refresh for a frame of a new size, so a live
+  resize presents the size it drew (3–6 ms here). The main thread's own
+  cost per frame after listing went 0.2–0.9 ms (with stalls of 7 ms on a
+  drawable) to under 0.01 ms; input to present is unchanged (pacing
+  bounds it: p50 ≈ 5 ms, p99 ≈ 8.5 ms on a layout-heavy turn either way).
+  The window material's backdrop view stays the main thread's; the
+  surface's alpha mode and the kept frame's format follow each frame on
+  the render thread. The software renderer and headless windows draw on
+  their own threads as before. `GUI_RENDER_THREAD=0` draws on the main
+  thread.
+- **gui: the text system's lock split.** The main thread shapes with a
+  text system of its own, every other thread (`gui.measure`, patches,
+  headless windows) with another; they share one font collection and one
+  cache of shaped texts behind a short lock. `gui.measure` no longer
+  waits for a frame being listed (up to 2.9 ms before, at most 0.013 ms
+  now, on a layout-heavy turn).
+- **gui: `gui.apply` reads a patch before it takes the window's lock**,
+  and holds it only to put the operations in place (0.19 → 0.095 ms at
+  p50 for a 200-row patch); a patch is refused as it was, the operations
+  before a refusal still applied.
+
+### Added
+
+- **`GUI_HOLDS=1`** records how long the engine's locks are held and
+  waited for (the busy test prints them), and `GUI_LATENCY=1` also
+  times the engine's own answers: input to the present of the first
+  frame made after it.
+
 ### Added
 
 - **Spelling's suggestions.** A right press (⌃-click) on a misspelled
