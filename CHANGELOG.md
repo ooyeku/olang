@@ -24,6 +24,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   conversion to the screen is then a matrix only. A transition between
   wide colours moves through wide colours. Software and snapshots draw
   the sRGB fallback (the colour clipped). `gui.platform().wide_color`.
+### Changed
+
+- **`olang test` runs each file from its project's root** (the folder
+  with the `olang.toml` above it), not from the file's own folder, so a
+  relative path in a test means the same from any folder the suite is
+  started in. A file in no project, and a notebook, still run from
+  their own folder; a test finds its own as
+  `fs.dirname(testing.snapshot_dir())`.
+
+### Added
+
+- **The web SDK has a helper for every tag of a document**: `html`,
+  `body`, `title`, `style`, `script`, the sections (`article`, `aside`,
+  `address`, `h4`–`h6`…), `figure`, `details`/`summary`, `dl`/`dt`/`dd`,
+  `optgroup`, the media and table elements, and the void ones (`link`,
+  `base`, `source`, `track`, `embed`, `area`, `wbr`). `document(root)`
+  writes the doctype, so a page and its whole head are written without
+  `raw`; the text of `script` and `style` renders unescaped and cannot
+  close its element; `page`'s `head_extra` takes nodes as well as
+  markup. `main_` and `ol_` are `main` and `ol`; `head_`, `meta_`,
+  `time_` and `col_` keep an underscore, because their names are the
+  builtin `head` and the modules `meta`, `time` and `col`.
 
 ## [1.0.0-rc.3] - 2026-10-23
 
