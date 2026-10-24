@@ -1574,6 +1574,17 @@ impl FieldTypeCheck {
 /// Reduce a parameter list to its runtime checks, position-aligned.
 /// `type_params` are the declaration's generic parameters (erased, never
 /// checked). Entirely-unannotated lists produce all-None cheaply.
+/// Whether two defining files are one home — the file a bare name in
+/// either resolves in: the same file, with the program's entry file and
+/// no file the same (the program's own).
+pub fn same_home(entry: Option<&str>, a: Option<&str>, b: Option<&str>) -> bool {
+    let program = |f: Option<&str>| f.is_none() || f == entry;
+    if program(a) || program(b) {
+        return program(a) && program(b);
+    }
+    a == b
+}
+
 pub fn param_checks_of(
     parameters: &[Parameter],
     type_params: &[String],

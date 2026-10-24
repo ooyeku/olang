@@ -40,6 +40,7 @@ const T_STRUCT: u8 = 14;
 const T_FIELDS: u8 = 15;
 const T_ALIASES: u8 = 16;
 const T_GRANT: u8 = 17;
+const T_FOREIGN: u8 = 18;
 
 /// What one compile (a function and its lambdas) has recorded so far.
 #[derive(Default)]
@@ -160,6 +161,14 @@ impl BytecodeCompiler {
         v
     }
 
+    /// Whether the by-name tables' function of `name` is another file's
+    /// (`in_home`): one a bare name in this file cannot reach.
+    pub(super) fn q_foreign(&self, name: &str) -> bool {
+        let v = self.foreign(name);
+        self.note(T_FOREIGN, name, "", || cc::answer(&v));
+        v
+    }
+
     pub(super) fn q_known(&self, name: &str) -> Option<&Arc<crate::ast::Function>> {
         let v = self.known_function_values.get(name);
         self.note(T_KNOWN, name, "", || self.known_class(v));
@@ -255,6 +264,7 @@ impl BytecodeCompiler {
             T_FIELDS => Self::checks_class(self.struct_field_checks.get(name)),
             T_ALIASES => self.aliases_class(),
             T_GRANT => cc::answer(&format!("{:?}", self.static_grant())),
+            T_FOREIGN => cc::answer(&self.foreign(name)),
             _ => return None,
         })
     }
@@ -347,7 +357,8 @@ impl BytecodeCompiler {
     // --- the lookups behind them ----------------------------------------
 
     /// A free identifier: the closure, then the run, the module's
-    /// finished scope, then the known function (unless ambiguous).
+    /// finished scope, then the known function of this file (unless
+    /// ambiguous).
     /// A top-level binding of the file being compiled, from its live scope
     /// (`host_root`), recorded as taken (`host_bakes`) — or nothing for a
     /// name the program rebinds (`volatile_globals`), which fails the
@@ -382,10 +393,13 @@ impl BytecodeCompiler {
         if let Some(v) = self.enclosing_run.get(name) {
             return Some(v);
         }
-        (!self.ambiguous_names.contains(name))
-            .then(|| self.known_function_values.get(name))
-            .flatten()
-            .map(|f| Value::Function(f.clone()))
+        self.home_known(name).map(|f| Value::Function(f.clone()))
+    }
+
+    fn foreign(&self, name: &str) -> bool {
+        self.known_function_values
+            .get(name)
+            .is_some_and(|f| !self.in_home(f))
     }
 
     fn free_present(&self, name: &str) -> bool {
@@ -421,7 +435,7 @@ impl BytecodeCompiler {
     }
 
     /// The value a lambda's closure takes for a free name: the closure,
-    /// the run, the module's scope, a known function.
+    /// the run, the module's scope, a known function of this file.
     pub(super) fn capture_value(&self, name: &str) -> Option<Value> {
         if let Some(v) = self.enclosing_closure.get(name) {
             return Some(v.clone());
@@ -439,6 +453,7 @@ impl BytecodeCompiler {
         }
         self.known_function_values
             .get(name)
+            .filter(|f| self.in_home(f))
             .map(|f| Value::Function(f.clone()))
     }
 

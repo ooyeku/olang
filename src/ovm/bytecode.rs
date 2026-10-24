@@ -439,6 +439,9 @@ pub struct BytecodeCompiler {
     host_root: Option<std::sync::Arc<im::HashMap<String, Value>>>,
     /// Which file `host_root` is the scope of ("" the program's).
     host_root_key: String,
+    /// The program's entry file, as the VM knows it: a function defined
+    /// there and one with no file share a home (`in_home`).
+    entry_file: Option<String>,
     /// The top-level bindings compiled code took as constants from a
     /// `host_root`, by (file, name): checked whenever that scope moves,
     /// and every compiled function forgotten when one has changed (a
@@ -4392,7 +4395,21 @@ impl BytecodeVm {
         if let Some(bridge) = self.builtin_interpreter.as_mut() {
             bridge.set_entry_file(file.clone());
         }
+        self.compiler.entry_file = file.clone();
         self.entry_file = file;
+    }
+
+    /// Whether the user function `name` the tier knows is one `code`'s
+    /// file may call by that bare name: its own file's (or one the tier
+    /// has no value for, which only its own declarations register).
+    fn home_function(&self, name: &str, code: &CompiledBytecode) -> bool {
+        self.known_function_values.get(name).is_none_or(|f| {
+            crate::ast::same_home(
+                self.entry_file.as_deref(),
+                f.def_file.as_deref(),
+                code.def_file.as_deref(),
+            )
+        })
     }
 
     /// A frame's display name: "open_db (lib/sql.ol)" when the function
@@ -6087,11 +6104,17 @@ impl BytecodeVm {
                         });
                     }
 
-                    // Check if it's a builtin function first
                     // User functions first: a user definition shadows a
-                    // builtin of the same name, as it does in the interpreter
-                    let outcome = if let Some(&func_id) = self.function_registry.get(function_name)
-                    {
+                    // builtin of the same name, as it does in the
+                    // interpreter — a definition of this code's own file.
+                    // Another module's function of the name (declared
+                    // after this code compiled) leaves it the builtin.
+                    let user = self
+                        .function_registry
+                        .get(function_name)
+                        .copied()
+                        .filter(|_| self.home_function(function_name, bytecode));
+                    let outcome = if let Some(func_id) = user {
                         self.execute(func_id, &arg_values)
                     } else if function_name == "map_set"
                         && let Some(r) = Self::map_set_owned(&mut arg_values)
@@ -6121,6 +6144,8 @@ impl BytecodeVm {
                         r.map_err(BytecodeError::RuntimeError)
                     } else if self.builtin_names.contains(function_name)
                         || function_name.contains('.')
+                        || (self.known_function_values.contains_key(function_name)
+                            && !self.home_function(function_name, bytecode))
                     {
                         // Module-prefixed names ("db.execute") were validated
                         // at compile time against the module's own field set;
@@ -10923,6 +10948,7 @@ impl BytecodeCompiler {
             module_scope: None,
             host_root: None,
             host_root_key: String::new(),
+            entry_file: None,
             host_bakes: std::cell::RefCell::new(HashMap::new()),
             volatile_globals: std::collections::HashSet::new(),
             hit_volatile: std::cell::RefCell::new(None),
@@ -10982,9 +11008,34 @@ impl BytecodeCompiler {
             .or_else(|| self.enclosing_run.get(name))
     }
 
+    /// Whether `func` was written in the file being compiled — the only
+    /// file whose functions a name the scope does not bind may still
+    /// reach through the tier's by-name tables (a sibling declared after
+    /// the closure was taken). The entry file and no file are one home.
+    /// Another module's function, shared or private, is never reached
+    /// by a bare name its importer does not bind.
+    pub(super) fn in_home(&self, func: &crate::ast::Function) -> bool {
+        crate::ast::same_home(
+            self.entry_file.as_deref(),
+            func.def_file.as_deref(),
+            self.pending_def_file.as_deref(),
+        )
+    }
+
+    /// A known function by name, when it is this file's own (`in_home`)
+    /// and the name is not ambiguous.
+    pub(super) fn home_known(&self, name: &str) -> Option<&Arc<crate::ast::Function>> {
+        if self.ambiguous_names.contains(name) {
+            return None;
+        }
+        self.known_function_values
+            .get(name)
+            .filter(|f| self.in_home(f))
+    }
+
     /// What a called name is, past the registry and the builtins: the
     /// closure, the run, the module's finished scope, and a known user
-    /// function (unless the name is ambiguous).
+    /// function of this file (unless the name is ambiguous).
     fn callee_in_scope(&self, name: &str) -> Option<Value> {
         self.lexical(name)
             .or_else(|| {
@@ -10992,12 +11043,7 @@ impl BytecodeCompiler {
                     .as_ref()
                     .and_then(|m| m.get(name).cloned())
             })
-            .or_else(|| {
-                (!self.ambiguous_names.contains(name))
-                    .then(|| self.known_function_values.get(name))
-                    .flatten()
-                    .map(|f| Value::Function(f.clone()))
-            })
+            .or_else(|| self.home_known(name).map(|f| Value::Function(f.clone())))
     }
 
     /// Is a call to `name` one the eager route would report unresolved —
@@ -11863,6 +11909,7 @@ impl BytecodeCompiler {
                 // agree (the overwhelmingly common case: the closure
                 // snapshot simply contains the global), the registry's
                 // direct CallFn stays.
+                let foreign = self.q_foreign(&function_name);
                 let closure_disagrees = match self.q_lexical(&function_name) {
                     Some(Value::Function(ref f)) => self
                         .known_function_values
@@ -11883,7 +11930,12 @@ impl BytecodeCompiler {
                         false
                     }
                     Some(_) => true,
-                    None => false,
+                    // Nothing in scope binds the name: the by-name tables
+                    // answer only for a function of this file (a sibling
+                    // declared after the closure was taken). Another
+                    // module's function of the name — private, or shared
+                    // and not imported — is not this code's to call.
+                    None => foreign,
                 };
                 // A user function not compiled yet: given an id now and
                 // compiled at its first call (`lazy_callees`), where the
@@ -12066,6 +12118,14 @@ impl BytecodeCompiler {
                         });
                         Ok(dst_reg)
                     }
+                    // Only another module's function bears the name: the
+                    // call raises at run time, as it does interpreted. Not
+                    // reported unresolved — the tier would compile that
+                    // function by its name and retry.
+                    None if foreign => Err(BytecodeError::CompilationFailed(format!(
+                        "calls '{}', which nothing in its scope defines (another module's function of that name is not imported)",
+                        function_name
+                    ))),
                     None => Err(BytecodeError::UnresolvedCallee(function_name)),
                 }
             }

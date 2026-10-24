@@ -478,6 +478,13 @@ application's `head_for` — declared before or after the caller, on the
 main thread or on a task — and a name nothing binds is an error that
 names it, not a lookup in whatever frame happened to be active.
 
+Another module's functions are never a source of names either. A
+module's private function is reachable only in its own file, and a
+shared one only where a `use` brings it in: after `use lib.h { head }`,
+a `time` that `lib/h.ol` shares leaves `time` the stdlib module, and
+its private `priv` is an undefined name — in a nested call, a closure
+or a task, on every tier.
+
 Two consequences of the file-level table: a module's functions see every
 sibling in their file, private or shared, however the file is ordered;
 and a nested `fn` sees its sibling nested functions, including those
@@ -2366,6 +2373,8 @@ fn helper(x) = x + 1                   // private: not shared
 
 Shared functions may call the module's private helpers regardless of
 declaration order — the module's whole scope is visible to its exports.
+A private function is visible nowhere else, and a shared one only in a
+file that imports it (see [Where a name is looked up](#where-a-name-is-looked-up)).
 
 ### Importing with `use`
 
