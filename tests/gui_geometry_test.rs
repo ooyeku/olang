@@ -853,3 +853,192 @@ fn the_gpu_blurs_what_is_under_a_material_and_damage_keeps_it_whole() {
         );
     }
 }
+
+/// A sidebar showing the desktop through it (`material: "window"`) beside
+/// a white pane, a label on it.
+fn window_material_scene(see_through: bool, reduce: bool) -> WinState {
+    let nodes = vec![
+        boxed(
+            "side",
+            [0.0, 0.0, 80.0, 120.0],
+            vec![("bg", s("#f5f5f6cc")), ("material", s("window"))],
+        ),
+        boxed(
+            "chip",
+            [10.0, 10.0, 40.0, 20.0],
+            vec![("bg", s("#2563eb")), ("radius", f(4.0))],
+        ),
+    ];
+    let mut st = WinState::new(1, true, "window material", 200.0, 120.0, 2.0);
+    st.see_through = see_through;
+    st.settings.reduce_transparency = reduce;
+    let mut ops = vec![m(vec![
+        ("key", s("root")),
+        ("box", tup(&[0.0, 0.0, 200.0, 120.0])),
+        ("style", m(vec![("bg", s("#ffffff"))])),
+    ])];
+    ops.extend(nodes);
+    let mut out = Vec::new();
+    st.apply(&Value::List(Arc::new(ops)), &mut out)
+        .expect("the scene applies");
+    st
+}
+
+#[test]
+fn a_window_material_is_parsed_and_opaque_where_the_window_cannot_see_through() {
+    use olang::stdlib::gui::window::Prim;
+    let try_style = |style: Vec<(&str, Value)>| {
+        let mut st = WinState::new(1, true, "t", 40.0, 40.0, 1.0);
+        let ops = Value::List(Arc::new(vec![m(vec![
+            ("key", s("root")),
+            ("box", tup(&[0.0, 0.0, 40.0, 40.0])),
+            ("style", m(style)),
+        ])]));
+        let mut out = Vec::new();
+        st.apply(&ops, &mut out).map(|_| ())
+    };
+    assert!(try_style(vec![("material", s("window"))]).is_ok());
+    // headless (and software): no box cleared, the bg opaque; likewise
+    // under Reduce Transparency in a window that could see through
+    for (see, reduce) in [(false, false), (true, true)] {
+        let mut st = window_material_scene(see, reduce);
+        let dl = st.display_list();
+        assert!(!dl.see_through);
+        assert!(
+            !dl.prims
+                .iter()
+                .any(|p| matches!(p, Prim::Backdrop { window: true, .. }))
+        );
+        let (px, w) = soft_px(&mut st);
+        assert_eq!(at(&px, w, 120, 200), [245, 245, 246, 255]);
+    }
+    // a window that can: the box is cleared (its bg not drawn), and the
+    // software renderer still draws the opaque fallback
+    let mut st = window_material_scene(true, false);
+    let dl = st.display_list();
+    assert!(dl.see_through);
+    assert_eq!(
+        dl.prims
+            .iter()
+            .filter(|p| matches!(p, Prim::Backdrop { window: true, .. }))
+            .count(),
+        1
+    );
+    let (px, w) = soft_px(&mut st);
+    assert_eq!(at(&px, w, 120, 200), [245, 245, 246, 255]);
+    assert_eq!(at(&px, w, 300, 100), [255, 255, 255, 255]);
+}
+
+#[test]
+fn the_gpu_clears_a_window_material_to_transparent_and_damage_keeps_it() {
+    let _turn = GPU_TURN.lock().unwrap_or_else(|e| e.into_inner());
+    let Ok(g) = gpu::gpu(None, None) else {
+        eprintln!("skipped: no GPU here");
+        return;
+    };
+    let mut st = window_material_scene(true, false);
+    let dl = st.display_list();
+    let px = g.render_rgba(&dl);
+    let w = dl.width;
+    // the sidebar: nothing (the desktop shows), its chip drawn over it
+    // opaque, its corners' edge partly; the pane beside it opaque white
+    assert_eq!(at(&px, w, 120, 200)[3], 0);
+    assert_eq!(at(&px, w, 2, 2)[3], 0);
+    assert_eq!(at(&px, w, 60, 40), [37, 99, 235, 255]);
+    assert_eq!(at(&px, w, 300, 100), [255, 255, 255, 255]);
+    let corner = at(&px, w, 22, 22);
+    assert!(corner[3] > 0 && corner[3] < 255, "{corner:?}");
+    // the chip moved: the frame drawn over its damage is the frame drawn
+    // whole (what the chip left is cleared again, not the bg)
+    let mut target = gpu::Target::new(g.clone(), wgpu::TextureFormat::Rgba8Unorm);
+    target.render(&dl);
+    let mut moved = window_material_scene(true, false);
+    let patch = Value::List(Arc::new(vec![m(vec![
+        ("key", s("chip")),
+        ("parent", s("root")),
+        ("box", tup(&[10.0, 50.0, 40.0, 20.0])),
+    ])]));
+    let mut out = Vec::new();
+    moved.apply(&patch, &mut out).expect("the patch applies");
+    let dl2 = moved.display_list();
+    target.render(&dl2);
+    assert!(matches!(
+        target.last,
+        olang::stdlib::gui::damage::Damage::Rects(_)
+    ));
+    let damaged = target.rgba();
+    let whole = g.render_rgba(&dl2);
+    assert_eq!(at(&damaged, w, 60, 40)[3], 0);
+    let worst = damaged
+        .iter()
+        .zip(&whole)
+        .map(|(a, b)| a.abs_diff(*b))
+        .max()
+        .unwrap_or(0);
+    assert!(worst <= 2, "damaged against whole, worst {worst}");
+}
+
+#[test]
+fn a_display_p3_colour_is_clamped_in_software_and_wide_on_the_gpu() {
+    let _turn = GPU_TURN.lock().unwrap_or_else(|e| e.into_inner());
+    // P3's own green, past sRGB's
+    let mut st = window(
+        40.0,
+        20.0,
+        1.0,
+        vec![
+            boxed(
+                "green",
+                [0.0, 0.0, 20.0, 20.0],
+                vec![("bg", s("color(display-p3 0 1 0)"))],
+            ),
+            boxed("token", [20.0, 0.0, 20.0, 20.0], vec![("bg", s("#2563eb"))]),
+        ],
+    );
+    // the theme's accent stands for a P3 blue on a wide screen
+    let mut table = olang::stdlib::gui::wide::WideMap::new();
+    let blue = olang::stdlib::gui::wide::parse("color(display-p3 0.16 0.38 0.98)").unwrap();
+    table.insert([0x25, 0x63, 0xeb], blue.1);
+    st.set_wide(Some(table));
+    let (px, w) = soft_px(&mut st);
+    assert_eq!(at(&px, w, 10, 10), [0, 255, 0, 255]);
+    assert_eq!(at(&px, w, 30, 10), [0x25, 0x63, 0xeb, 255]);
+    let Ok(g) = gpu::gpu(None, None) else {
+        eprintln!("skipped the GPU half: no GPU here");
+        return;
+    };
+    let dl = st.display_list();
+    assert!(dl.wide.is_some());
+    // an 8-bit frame: the fallbacks, as in software
+    assert_eq!(at(&g.render_rgba(&dl), w, 10, 10), [0, 255, 0, 255]);
+    // a frame in extended sRGB: the colours themselves, past 0…1
+    let mut target = gpu::Target::new(g.clone(), wgpu::TextureFormat::Rgba16Float);
+    target.render(&dl);
+    let fl = target.rgba_f32();
+    let px = |x: u32, y: u32| {
+        let i = ((y * w + x) * 4) as usize;
+        [fl[i], fl[i + 1], fl[i + 2], fl[i + 3]]
+    };
+    let green = px(10, 10);
+    assert!(
+        green[0] < -0.1 && green[1] > 1.0 && green[2] < -0.05 && (green[3] - 1.0).abs() < 1e-3,
+        "{green:?}"
+    );
+    let token = px(30, 10);
+    assert!(
+        (token[2] - blue.1[2]).abs() < 0.01 && token[2] > 0xeb as f32 / 255.0 + 0.01,
+        "{token:?} against {:?}",
+        blue.1
+    );
+    // the table taken away: the token is its sRGB self again
+    st.set_wide(None);
+    let dl = st.display_list();
+    target.render(&dl);
+    let fl = target.rgba_f32();
+    let i = ((10 * w + 30) * 4) as usize;
+    assert!(
+        (fl[i + 2] - 0xeb as f32 / 255.0).abs() < 0.003,
+        "{}",
+        fl[i + 2]
+    );
+}

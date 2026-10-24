@@ -356,6 +356,14 @@ pub fn capabilities() -> Value {
         // under the box blurred on the GPU, the opaque `bg` in software
         // and under Reduce Transparency
         ("material", b(true)),
+        // `material: "window"`: the desktop behind the window seen through
+        // the box (a GPU window's; its opaque `bg` in software, headless
+        // and under Reduce Transparency)
+        ("window_material", b(mac)),
+        // colours in Display P3 (`color(display-p3 r g b)`, `gui.set`'s
+        // `wide`): drawn past sRGB on a wide screen by the GPU, their sRGB
+        // fallback elsewhere
+        ("wide_color", b(mac)),
         // the accessibility tree's places, roles and actions (a11y.rs)
         ("a11y_depth", b(true)),
         // `gui.set`'s `flash`: the repaint rainbow (damage.rs)
@@ -527,6 +535,10 @@ struct PWin {
     /// way to the screen.
     #[cfg(target_os = "macos")]
     link: Option<objc2::rc::Retained<objc2::runtime::AnyObject>>,
+    /// The window's backdrop view (`show_backdrop`), made when a box
+    /// first shows the desktop through it.
+    #[cfg(target_os = "macos")]
+    backdrop: Option<objc2::rc::Retained<objc2::runtime::AnyObject>>,
     /// Frames presented and not yet shown, oldest first: when each was
     /// presented, and the input it answers (`GUI_LATENCY`).
     in_flight: std::collections::VecDeque<(u64, Option<u64>)>,
@@ -758,6 +770,10 @@ impl App {
             st.clear = c;
         }
         st.settings = super::context::system();
+        // a box may show the desktop through it (`material: "window"`)
+        // where the surface can be transparent over the backdrop view
+        st.see_through = cfg!(target_os = "macos")
+            && matches!(&renderer, Renderer::Gpu(s) if s.can_see_through());
         let state = Arc::new(Mutex::new(st));
         windows()
             .lock()
@@ -813,6 +829,8 @@ impl App {
                 lost_said: false,
                 #[cfg(target_os = "macos")]
                 link: frames::link_for(&win_for_link, id),
+                #[cfg(target_os = "macos")]
+                backdrop: None,
                 in_flight: std::collections::VecDeque::new(),
                 deferred: false,
                 idle_ticks: 0,
@@ -1100,6 +1118,8 @@ impl App {
             Renderer::Soft { surface, kept, .. } => present_soft(surface, kept, &dl, &pw.win),
         };
         pw.lost_said = false;
+        #[cfg(target_os = "macos")]
+        show_backdrop(&pw.win, &mut pw.backdrop, dl.see_through);
         PRESENTED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if presented {
             SHOWN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -1378,6 +1398,112 @@ fn scroll_phase() -> super::scroll::Phase {
         }
     } else {
         Phase::Legacy
+    }
+}
+
+/// The window's backdrop: an NSVisualEffectView (macOS's `.sidebar`
+/// material, blending behind the window, following the window's active
+/// state) as the content view's first subview, under the Metal layer,
+/// shown while a frame shows the desktop through a box (`material:
+/// "window"`: the surface transparent there, the frame cleared through the
+/// box's shape). It is of a class of its own that no click finds (the
+/// content view, winit's, keeps every click, drag and drop), and the
+/// Metal layer is raised over it. Not in the window's frame view beside
+/// the content view: AppKit lays out its title bar and tab bar from the
+/// frame view's subviews. Under Reduce Transparency no frame asks for it
+/// (the box is drawn opaque) and it is hidden.
+#[cfg(target_os = "macos")]
+fn show_backdrop(
+    win: &Window,
+    backdrop: &mut Option<objc2::rc::Retained<objc2::runtime::AnyObject>>,
+    on: bool,
+) {
+    use objc2::msg_send;
+    use objc2::rc::{Allocated, Retained};
+    use objc2::runtime::{AnyClass, AnyObject, ClassBuilder, Sel};
+    use objc2_foundation::{NSPoint, NSRect};
+    unsafe extern "C-unwind" fn no_hit(
+        _this: *mut AnyObject,
+        _cmd: Sel,
+        _p: NSPoint,
+    ) -> *mut AnyObject {
+        std::ptr::null_mut()
+    }
+    if backdrop.is_none() {
+        if !on {
+            return;
+        }
+        let Some(nw) = ns_window(win) else {
+            return;
+        };
+        let cls = match AnyClass::get(c"OlangBackdropView") {
+            Some(c) => c,
+            None => {
+                let Some(sup) = AnyClass::get(c"NSVisualEffectView") else {
+                    return;
+                };
+                let Some(mut b) = ClassBuilder::new(c"OlangBackdropView", sup) else {
+                    return;
+                };
+                // SAFETY: `hitTest:` takes a point and answers a view or nil.
+                unsafe {
+                    b.add_method(
+                        objc2::sel!(hitTest:),
+                        no_hit
+                            as unsafe extern "C-unwind" fn(
+                                *mut AnyObject,
+                                Sel,
+                                NSPoint,
+                            )
+                                -> *mut AnyObject,
+                    )
+                };
+                b.register()
+            }
+        };
+        // SAFETY: a live NSWindow, on the main thread (the loop's); the
+        // view made is retained by its superview and by `backdrop`.
+        unsafe {
+            let content: Option<Retained<AnyObject>> = msg_send![&*nw, contentView];
+            let Some(content) = content else { return };
+            let bounds: NSRect = msg_send![&*content, bounds];
+            let alloc: Allocated<AnyObject> = msg_send![cls, alloc];
+            let v: Retained<AnyObject> = msg_send![alloc, initWithFrame: bounds];
+            // NSVisualEffectMaterialSidebar, NSVisualEffectBlendingMode
+            // BehindWindow, NSVisualEffectStateFollowsWindowActiveState
+            let _: () = msg_send![&*v, setMaterial: 7isize];
+            let _: () = msg_send![&*v, setBlendingMode: 0isize];
+            let _: () = msg_send![&*v, setState: 0isize];
+            // NSViewWidthSizable | NSViewHeightSizable
+            let _: () = msg_send![&*v, setAutoresizingMask: 18usize];
+            // NSWindowBelow every other subview
+            let none: *const AnyObject = std::ptr::null();
+            let _: () =
+                msg_send![&*content, addSubview: &*v, positioned: -1isize, relativeTo: none];
+            // the Metal layer (the content view's own sublayer) over it
+            let layer: Option<Retained<AnyObject>> = msg_send![&*content, layer];
+            if let Some(layer) = layer {
+                let subs: Option<Retained<objc2_foundation::NSArray<AnyObject>>> =
+                    msg_send![&*layer, sublayers];
+                let metal = AnyClass::get(c"CAMetalLayer");
+                for l in subs.iter().flat_map(|a| a.iter()) {
+                    let is: bool = metal.is_some_and(|m| msg_send![&*l, isKindOfClass: m]);
+                    if is {
+                        let _: () = msg_send![&*l, setZPosition: 1.0f64];
+                    }
+                }
+            }
+            *backdrop = Some(v);
+        }
+    }
+    if let Some(v) = backdrop.as_ref() {
+        // SAFETY: the view made above, on the main thread.
+        unsafe {
+            let hidden: bool = msg_send![&**v, isHidden];
+            if hidden == on {
+                let _: () = msg_send![&**v, setHidden: !on];
+            }
+        }
     }
 }
 
