@@ -48,6 +48,7 @@ pub mod soft;
 pub mod text;
 pub mod values;
 pub mod vector;
+pub mod wide;
 pub mod window;
 
 use crate::ast::Value;
@@ -1323,6 +1324,13 @@ fn gui_set(args: Vec<Value>) -> Res<Value> {
             st.flash = on.then_some(0);
             st.redraw = !on;
             st.dirty = true;
+        }
+        // wide colours: sRGB colours (a theme's tokens) and the Display P3
+        // ones the GPU draws for them (wide.rs); `()` none
+        match get(v, "wide") {
+            None => {}
+            Some(Value::Unit) => st.set_wide(None),
+            Some(t) => st.set_wide(Some(wide::parse_table(t, what)?)),
         }
         if let Some(z) = get_num(v, "zoom", what)? {
             let mut out = Vec::new();

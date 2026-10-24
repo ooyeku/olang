@@ -138,6 +138,71 @@ bare strings, fragments — and the two readers of a tree, `render` and
 the browser's patcher, flatten as they walk; code that inspects a tree
 reads `children_of(node)`, the flat list of nodes.
 
+### Every tag, and a whole document
+
+Every element of a page has a helper named as its tag: the document
+(`html`, `body`, `title`, `style`, `script`, `noscript`, `template`),
+the sections (`main`, `article`, `aside`, `section`, `header`,
+`footer`, `nav`, `address`, `hgroup`, `search`, `h1`–`h6`), grouping
+(`div`, `p`, `blockquote`, `figure`, `figcaption`, `pre`, `ul`, `ol`,
+`menu`, `li`, `dl`, `dt`, `dd`), text (`a`, `span`, `strong`, `em`,
+`b`, `i`, `small`, `mark`, `code`, `kbd`, `samp`, `abbr`, `cite`,
+`sub`, `sup`, `del`, `ins`), media (`picture`, `video`, `audio`,
+`iframe`, `canvas`), tables (`table`, `caption`, `colgroup`, `thead`,
+`tbody`, `tfoot`, `tr`, `th`, `td`), forms (`form`, `fieldset`,
+`legend`, `label`, `button`, `select`, `optgroup`, `option`,
+`datalist`, `textarea`, `output`, `progress`, `meter`) and disclosure
+(`details`, `summary`, `dialog`). Each takes `(attrs, children)`.
+
+The void elements take `(attrs)` and nothing else, and render with no
+closing tag: `link`, `base`, `input`, `img`, `source`, `track`,
+`embed`, `area`, and `br()`, `hr()`, `wbr()`, which carry none.
+
+Four tags end in an underscore, because olang already gives their
+names to something every file reaches: `head_` (the builtin `head`),
+`meta_`, `time_` and `col_` (the modules). A module's functions are
+visible to the code of every module that loads it, so a `time` here
+would shadow the `time` module there.
+
+| Value | Renders |
+|---|---|
+| a string or number | `name="value"`, escaped |
+| `true` | `name`, bare (`disabled`, `open`, `defer`) |
+| `false` or `()` | nothing |
+
+`document(root)` puts the doctype before an `html` element, so a page
+with its whole head is written without markup. The text of `script`
+and `style` is written as it is, since the browser does not unescape
+it; a closing tag inside it, `</script` in any case, is written
+`<\/script`, which means the same to JavaScript and CSS and closes
+nothing.
+
+```olang no-run
+use web { document, html, head_, body, title, meta_, link, script, main, article, h1, time_, render }
+let d = document(html(#{ "lang": "en" }, [
+    head_(#{}, [
+        meta_(#{ "charset": "utf-8" }),
+        title(#{}, ["Notes"]),
+        meta_(#{ "name": "description", "content": "What changed" }),
+        link(#{ "rel": "canonical", "href": "https://example.org/notes" }),
+        script(#{ "type": "module" }, ["if (1 < 2) start()"])
+    ]),
+    body(#{ "class": "notes" }, [main(#{}, [article(#{}, [
+        h1(#{}, ["Notes"]),
+        time_(#{ "datetime": "2026-10-24" }, ["24 October"])
+    ])])])
+]))
+let out = render(d)
+testing.assert_eq(str.starts_with(out, "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"), true) |> unwrap
+testing.assert_eq(str.contains(out, "<script type=\"module\">if (1 < 2) start()</script>"), true) |> unwrap
+testing.assert_eq(str.contains(out, "<time datetime=\"2026-10-24\">24 October</time>"), true) |> unwrap
+```
+
+`page(title, head_extra, body)` is the short form: a head with the
+charset, the viewport and the title, then `head_extra` — nodes, or
+markup as a string — and the body node. A page whose `html` or `body`
+needs attributes is a `document`.
+
 ### Keeping what did not change
 
 Three forms skip work a repaint does not need. Each names its subtree
@@ -560,7 +625,7 @@ on a task, driven over a socket — runs handlers where production runs
 them, and a handler that defers (`http.defer`) holds a ticket for a
 real connection without any `OLANG_TEST` juggling.
 
-The SDK's tests are olang tests — more than seventy of them, `olang test
+The SDK's tests are olang tests — more than eighty of them, `olang test
 frameworks/web-sdk`. The route table and envelope are exercised
 in-process by constructing request values and calling `dispatch`
 directly; the data layer runs against `:memory:`; the demo (`demo/`

@@ -532,23 +532,44 @@ pub struct Motion {
     pub active: bool,
     /// The ghosts are being drawn: the transitions in them are not run.
     pub ghosting: bool,
+    /// The window's wide colours (wide.rs): a colour moving to or from
+    /// one moves through wide colours, not through sRGB (a hover fade on
+    /// a P3 accent stays vivid all the way).
+    pub wide: Option<std::sync::Arc<super::wide::WideMap>>,
+    /// The wide colours the frame's moving colours are at (each one's
+    /// sRGB fallback, and itself in extended sRGB), for the frame's table.
+    pub wide_moving: Vec<([u8; 3], [f32; 3])>,
 }
 
 /// A colour premultiplied (a fade from none to a colour passes through no
-/// black), as four numbers.
-fn premul(c: Option<Color>, like: Option<Color>) -> [f32; 4] {
+/// black), as four numbers; a wide colour (in `wide`) as itself, its
+/// channels past 0…255.
+fn premul(c: Option<Color>, like: Option<Color>, wide: Option<&super::wide::WideMap>) -> [f32; 4] {
     match c.or(like.map(|l| [l[0], l[1], l[2], 0])) {
         Some(c) => {
             let a = c[3] as f32 / 255.0;
-            [
-                c[0] as f32 * a,
-                c[1] as f32 * a,
-                c[2] as f32 * a,
-                c[3] as f32,
-            ]
+            let rgb = wide
+                .and_then(|m| m.get(&[c[0], c[1], c[2]]))
+                .map(|e| e.map(|v| v * 255.0))
+                .unwrap_or([c[0] as f32, c[1] as f32, c[2] as f32]);
+            [rgb[0] * a, rgb[1] * a, rgb[2] * a, c[3] as f32]
         }
         None => [0.0; 4],
     }
+}
+
+/// A moving colour past sRGB (premultiplied, 0…255 scale): its fallback
+/// and itself in extended sRGB, else `None`.
+fn wide_at(v: &[f32]) -> Option<([u8; 3], [f32; 3])> {
+    if v[3] < 0.5 {
+        return None;
+    }
+    let e = [v[0] / v[3], v[1] / v[3], v[2] / v[3]];
+    if e.iter().all(|c| (0.0..=1.0).contains(c)) {
+        return None;
+    }
+    let c = unpremul(v);
+    Some(([c[0], c[1], c[2]], e))
 }
 
 fn unpremul(v: &[f32]) -> Color {
@@ -599,11 +620,13 @@ impl Motion {
     ) -> Shown {
         let frame = self.frame;
         let fresh = self.fresh.contains(key);
+        let wide = self.wide.clone();
+        let wide = wide.as_deref();
         let colors_of = |t: &Target| -> Vec<f32> {
             let mut v = Vec::with_capacity(12);
-            v.extend(premul(t.bg, Some(t.color)));
-            v.extend(premul(t.border, t.bg.or(Some(t.color))));
-            v.extend(premul(Some(t.color), None));
+            v.extend(premul(t.bg, Some(t.color), wide));
+            v.extend(premul(t.border, t.bg.or(Some(t.color)), wide));
+            v.extend(premul(Some(t.color), None, wide));
             v
         };
         let colors = colors_of(target);
@@ -670,6 +693,13 @@ impl Motion {
         let rect = rect.map_or(target.rect, |r| [r[0], r[1], r[2], r[3]]);
         let (bg, border, color) = match &cv {
             Some(cv) => {
+                if wide.is_some() {
+                    for i in 0..3 {
+                        if let Some(w) = wide_at(&cv[i * 4..i * 4 + 4]) {
+                            self.wide_moving.push(w);
+                        }
+                    }
+                }
                 let colored = |i: usize, was: Option<Color>| -> Option<Color> {
                     let c = unpremul(&cv[i * 4..i * 4 + 4]);
                     if was.is_none() && c[3] == 0 {

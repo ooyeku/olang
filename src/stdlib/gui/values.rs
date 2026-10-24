@@ -167,7 +167,7 @@ pub fn get_color(v: &Value, key: &str, what: &str) -> Res<Option<Color>> {
             .map(Some)
             .ok_or_else(|| {
                 format!(
-                    "{what}: \"{key}\" must be a colour: \"#rgb\", \"#rrggbb\", \"#rrggbbaa\", or (r, g, b[, a]) of 0–255"
+                    "{what}: \"{key}\" must be a colour: \"#rgb\", \"#rrggbb\", \"#rrggbbaa\", \"color(display-p3 r g b[ / a])\", or (r, g, b[, a]) of 0–255"
                 )
             }),
     }
@@ -187,6 +187,12 @@ pub fn parse_color(v: &Value) -> Option<Color> {
 fn parse_hex(t: &str) -> Option<Color> {
     if t == "transparent" {
         return Some([0, 0, 0, 0]);
+    }
+    // a Display P3 colour: its sRGB fallback, the GPU told of it (wide.rs)
+    if t.starts_with("color(") {
+        let (c, e) = super::wide::parse(t)?;
+        super::wide::note(c, e);
+        return Some(c);
     }
     let h = t.strip_prefix('#')?;
     let digit = |i: usize| u8::from_str_radix(&h[i..i + 1], 16).ok();

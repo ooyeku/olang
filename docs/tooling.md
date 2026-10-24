@@ -151,11 +151,16 @@ A *test file* is any `.ol` file containing a top-level `test "name" { ... }`
 block. Each test file runs in a fresh interpreter, top to bottom — helper
 functions, fixtures, and imports work exactly as they do under
 `olang <file>`, and files inside a package get the package's dependencies.
-Each runs with the working directory set to the test file's own
-folder, and set back after: a relative path in a test
-(`fs.read_file("fixtures/a.txt")`) is read beside the test file, as
-`olang <file>` run from there reads it, whatever folder `olang test`
-was started in. Files without test blocks are not executed at all.
+Each runs with the working directory set to its project's root — the
+folder with the `olang.toml` above the file — and set back after, so a
+relative path in a test means the same whatever folder `olang test` was
+started in: `fs.read_file("tests/fixtures/a.txt")` reads the project's
+`tests/fixtures/a.txt`, as the project's own commands do. A file in no
+project runs from its own folder, and so does a notebook, which runs in
+its own folder wherever it is run ([Notebooks](notebooks.md)). A test
+that wants what lies beside it, wherever it is, finds its own folder as
+`fs.dirname(testing.snapshot_dir())`. Files without test blocks are not
+executed at all.
 
 The walk keeps what a checkout keeps: every `.gitignore` (at any level,
 and those above the path) and `.git/info/exclude` are respected, a

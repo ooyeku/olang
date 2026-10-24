@@ -208,6 +208,18 @@ pub struct WinState {
     /// window's from `gui.input`'s `appearance`): reduced motion stops
     /// its pictures' animations.
     pub settings: super::context::Settings,
+    /// The window can show the desktop through a box (`material:
+    /// "window"`): a GPU window on macOS, its surface able to be
+    /// transparent. Elsewhere (software, headless) such a box is its `bg`.
+    pub see_through: bool,
+    /// The window's wide colours (`gui.set`'s `wide`: sRGB colours and the
+    /// Display P3 ones they stand for on the GPU).
+    pub wide: Option<Arc<super::wide::WideMap>>,
+    /// The table a frame draws with (the window's and every colour given
+    /// in Display P3), the mark of the colours given it was made at, and
+    /// whether it is current (the window's own unchanged since) and was
+    /// made at all.
+    wide_frame: (u64, bool, bool, Option<Arc<super::wide::WideMap>>),
     /// When the window was made: a real window's clock for animations.
     born: std::time::Instant,
     /// A headless window's clock, in ms (`gui.input`'s `clock`): its
@@ -387,6 +399,9 @@ impl WinState {
             origin: if headless { Some((0.0, 0.0)) } else { None },
             screen_pointer: None,
             settings: super::context::Settings::default(),
+            see_through: false,
+            wide: None,
+            wide_frame: (0, false, false, None),
             born: std::time::Instant::now(),
             test_clock: if headless { Some(0.0) } else { None },
             plays: HashMap::new(),
@@ -2526,6 +2541,14 @@ impl WinState {
 
     // ── the display list ────────────────────────────────────────────
 
+    /// The window's wide colours (`gui.set`'s `wide`), `None` for none:
+    /// the next frame drawn whole with them.
+    pub fn set_wide(&mut self, m: Option<super::wide::WideMap>) {
+        self.wide = m.filter(|m| !m.is_empty()).map(Arc::new);
+        self.wide_frame.1 = false;
+        self.dirty = true;
+    }
+
     /// The size a frame is drawn at, device pixels (`display_list`'s).
     pub fn device_size(&self) -> (u32, u32) {
         let s = self.scale;
@@ -2547,7 +2570,24 @@ impl WinState {
             scrolls: Vec::new(),
             flash: self.flash.inspect(|n| self.flash = Some(n.wrapping_add(1))),
             redraw: self.redraw,
+            see_through: false,
+            wide: None,
         };
+        // the wide colours: the window's and those given in Display P3
+        // (made again when either changes, and the frame drawn whole: a
+        // colour's look changed without its value)
+        let (mark, seen) = super::wide::seen();
+        if self.wide_frame.0 != mark || !self.wide_frame.1 {
+            let mut m = seen.as_deref().cloned().unwrap_or_default();
+            if let Some(own) = &self.wide {
+                m.extend(own.iter().map(|(k, v)| (*k, *v)));
+            }
+            let m = (!m.is_empty()).then(|| Arc::new(m));
+            // a window's first frame is drawn whole anyway
+            dl.redraw |= self.wide_frame.2 && m.as_deref() != self.wide_frame.3.as_deref();
+            self.wide_frame = (mark, true, true, m);
+        }
+        dl.wide = self.wide_frame.3.clone();
         self.caret = None;
         self.shown_anims.clear();
         self.next_frame = None;
@@ -2565,9 +2605,16 @@ impl WinState {
         let full = Clip::rect(0.0, 0.0, pw as f32, ph as f32);
         let mut rings = Vec::new();
         self.motion.begin();
+        self.motion.wide = dl.wide.clone();
         self.paint(&root, 0.0, 0.0, full, 1.0, &mut ts, &mut dl, &mut rings);
         self.paint_ghosts(full, &mut ts, &mut dl, &mut rings);
         self.motion.end();
+        // colours moving between wide ones: this frame's table has them
+        if !self.motion.wide_moving.is_empty() {
+            let mut m = dl.wide.as_deref().cloned().unwrap_or_default();
+            m.extend(self.motion.wide_moving.drain(..));
+            dl.wide = Some(Arc::new(m));
+        }
         // a transition moving, a scroll gliding or springing back: the
         // next frame at the next refresh
         if self.motion.moving() || self.elastic_moving() {
@@ -2723,7 +2770,28 @@ impl WinState {
         let mut st = st;
         if let Some(mat) = st.material {
             let solid = st.bg.map(|c| [c[0], c[1], c[2], 255]);
-            if self.settings.reduce_transparency {
+            if mat == scene::Material::Window {
+                // the desktop through the box where the window can show it
+                // (its shape cleared, the bg not drawn), else the bg opaque
+                if self.see_through && !self.settings.reduce_transparency {
+                    dl.prims.push(Prim::Backdrop {
+                        x: bx,
+                        y: by,
+                        w: bw_,
+                        h: bh,
+                        radii,
+                        continuous: st.continuous,
+                        sigma: 0.0,
+                        fallback: fade(solid.unwrap_or([0, 0, 0, 0])),
+                        clip,
+                        window: true,
+                    });
+                    dl.see_through = true;
+                    st.bg = None;
+                } else {
+                    st.bg = solid;
+                }
+            } else if self.settings.reduce_transparency {
                 st.bg = solid;
             } else if let Some(fallback) = solid {
                 dl.prims.push(Prim::Backdrop {
@@ -2736,6 +2804,7 @@ impl WinState {
                     sigma: mat.blur() * s / 2.0,
                     fallback: fade(fallback),
                     clip,
+                    window: false,
                 });
             }
         }
@@ -5344,6 +5413,10 @@ pub enum Prim {
         sigma: f32,
         fallback: Color,
         clip: Clip,
+        /// `material: "window"`: on the GPU the box's shape cleared to
+        /// transparent (the window's backdrop view, the desktop blurred,
+        /// shows through); in software its `fallback` all the same.
+        window: bool,
     },
     /// A canvas's vector path.
     Path(Arc<PathPrim>),
@@ -5431,6 +5504,13 @@ pub struct DisplayList {
     pub flash: Option<u32>,
     /// Draw this frame whole (the rainbow turned off: its tints gone).
     pub redraw: bool,
+    /// A box shows the desktop through it (`material: "window"`): the
+    /// surface is transparent where the frame is, the window's backdrop
+    /// view under it.
+    pub see_through: bool,
+    /// Wide colours (wide.rs): sRGB colours the GPU draws as the Display P3
+    /// ones they stand for (in a frame kept in extended sRGB).
+    pub wide: Option<Arc<super::wide::WideMap>>,
 }
 
 /// How long typing pauses before a changed paragraph is spell-checked
