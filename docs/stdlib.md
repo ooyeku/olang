@@ -2697,6 +2697,18 @@ the program ends — finishing, raising, `os.exit`, or a signal — its
 windows go with it. While a window is open, a program waiting on
 `gui.events()` is not reported as a deadlock: input can arrive.
 
+**Threads.** The program runs on a thread of its own, the platform's
+loop on the main thread, and (on macOS) every GPU window is drawn and
+presented on a render thread: the main thread lists a frame and hands
+it over whole, so neither a program's long turn nor a slow frame holds
+up input — scrolling, hover and pressed looks, fields and transitions
+keep the display's refresh while a turn runs. `gui.measure` and
+`gui.apply` never wait for a frame being listed: text is shaped by two
+systems sharing one cache, and a patch is read before the window's lock
+is taken. `GUI_RENDER_THREAD=0` draws on the main thread instead;
+`GUI_HOLDS=1` records how long the engine's locks are held and waited
+for (a measurement's).
+
 **Rendering.** The GPU renderer (wgpu: Metal, Direct3D 12, Vulkan) is
 the default; the software renderer (tiny-skia) is the reference it is
 checked against (`tests/gui_test.rs`), the fallback where no GPU adapter

@@ -24,6 +24,7 @@ change are in [Stability and compatibility](stability.md).
 - [Errors](#errors)
 - [Testing strategy](#testing-strategy)
 - [How to add things](#how-to-add-things)
+- [The gui engine's threads](#the-gui-engines-threads)
 - [Repository map](#repository-map)
 
 ## The pipeline
@@ -369,6 +370,51 @@ runnable example — the doc test will hold you to it. Check
 An `olang.toml` makes it a package, which about half the examples are and
 half do not need — `run_all.ol` discovers either, by looking for the
 `main.ol`. Register it in `examples/README.md`.
+
+## The gui engine's threads
+
+`gui` (src/stdlib/gui/, Loom's engine) runs on four kinds of thread,
+and no one of them waits for another for long:
+
+- **The main thread** (the process's first; AppKit's, winit's loop):
+  input, the engine's own answers to it (hover and pressed looks,
+  region scrolls, text fields, the caret), menus, accessibility, and
+  listing each frame — the display list, with its text already shaped.
+- **The program's thread** (olang): Loom's update, view, layout and
+  diff, then `gui.apply` and `gui.measure`.
+- **The render thread** (macOS, one a process; render.rs): every GPU
+  window's surface, its kept frame and damage, the display link and the
+  pacing, device-loss recovery. It takes frames, never patches.
+- **Helpers**: the turn watch (a turn past 2 s says so in every
+  window), fonts registered in the background, picture decoding.
+
+What they share, and for how long:
+
+- **A window's state** (`Arc<Mutex<WinState>>`) is held by `gui.apply`
+  only to put a patch in place: the patch is read and checked first
+  (`Scene::parse`), outside the lock. The main thread holds it to take
+  input and to list a frame.
+- **Text.** Two text systems, each behind its own lock: the main
+  thread's (painting, fields) and everyone else's (`gui.measure`,
+  patches, headless windows). They share one font collection (fontique's
+  shared mode) and one cache of shaped texts, behind a lock held only
+  to look up or keep one. Measuring never waits for a frame being
+  listed.
+- **A frame.** The main thread publishes `Arc<Frame>` (the display
+  list, whether something moves, the input it answers) into the
+  window's slot, a double buffer: a frame not yet taken is replaced, and
+  the renderer takes the newest and never waits. A frame of a new size
+  is waited for by the main thread for at most a refresh, so a live
+  resize presents the size it drew.
+- **The glyph atlas** (process-wide, four pages) is filled, and its
+  least recently drawn page emptied, only as a frame is prepared, so
+  never under a frame in flight; on the render thread for real windows.
+
+Every callback on every one of these threads is contained
+(`contain::catch`: a panic is a `problem` event, and the windows are
+drawn again whole). `GUI_RENDER_THREAD=0` draws on the main thread as
+before; `GUI_HOLDS=1` records how long each lock is held and waited for;
+`GUI_LATENCY=1` times input to present and to the screen.
 
 ## Repository map
 
