@@ -507,6 +507,8 @@ fn tree_with(st: &WinState, lines: &Lines) -> TreeUpdate {
         }
         if n.focusable && !n.disabled {
             node.add_action(Action::Focus);
+            // VO-⇧M: the context menu, as ⇧F10 opens it
+            node.add_action(Action::ShowContextMenu);
         }
         if scene::activates(&n.role) && !n.disabled {
             node.add_action(Action::Click);
@@ -659,10 +661,13 @@ fn field_text(
 /// it is drawn — a visual line's box and its characters' left edges
 /// (from the box's left) and widths, or `None` (a paragraph not laid out
 /// now: the paragraph's box, else the field's).
+/// A laid-out line's box and its characters' left edges and widths.
+type LineGeo = ([f32; 4], Vec<f32>, Vec<f32>);
+
 struct RunSpan {
     c0: usize,
     c1: usize,
-    line: Option<([f32; 4], Vec<f32>, Vec<f32>)>,
+    line: Option<LineGeo>,
     /// The run before it on the same line (a line longer than a run).
     joined: bool,
 }
@@ -671,7 +676,7 @@ struct RunSpan {
 /// included): a run a visual line when it is laid out, a run the
 /// paragraph when not, each in pieces of at most `RUN_MAX` characters.
 fn spans_of(f: &FieldText, i: usize, chars: usize) -> Vec<RunSpan> {
-    let mut whole: Vec<(usize, usize, Option<([f32; 4], Vec<f32>, Vec<f32>)>)> = Vec::new();
+    let mut whole: Vec<(usize, usize, Option<LineGeo>)> = Vec::new();
     let lines = &f.lines[i];
     if lines.is_empty() || lines[0].0.start != 0 {
         whole.push((0, chars, None));
@@ -941,6 +946,33 @@ pub fn action(st: &mut WinState, req: &ActionRequest, out: &mut Vec<Value>) {
             st.said_scrolled(moved, out);
             st.dirty = true;
         }
+        // VoiceOver's VO-⇧M: the node focused, then the keyboard's menu key
+        // (what ⇧F10 sends: a misspelled word's `spelling` with it)
+        Action::ShowContextMenu => {
+            if st.scene.focus.as_deref() != Some(key.as_str()) {
+                st.scene.focus = Some(key.clone());
+                let moved = st.scene.reveal(&key);
+                st.said_scrolled(moved, out);
+                st.dirty = true;
+                st.a11y_dirty = true;
+                out.push(ev("focus", vec![("key", s(&key))]));
+            }
+            let spelling = st.spelling_at_caret(&key, true, out);
+            let mut fields = vec![
+                ("key", s("contextmenu")),
+                ("text", Value::Unit),
+                ("chord", s("contextmenu")),
+                ("mod_chord", s("contextmenu")),
+                ("mods", st.mods.value()),
+                ("repeat", Value::Boolean(false)),
+                ("target", s(&key)),
+                ("source", s("a11y")),
+            ];
+            if let Some(sp) = spelling {
+                fields.push(("spelling", sp));
+            }
+            out.push(ev("key", fields));
+        }
         Action::SetTextSelection => {
             let lines = st.field_lines(&key);
             if let Some(ActionData::SetTextSelection(sel)) = &req.data
@@ -1116,6 +1148,7 @@ fn walk(
     let mut actions = Vec::new();
     if n.focusable && !n.disabled {
         actions.push(s("focus"));
+        actions.push(s("show_menu"));
     }
     if scene::activates(&n.role) && !n.disabled
         || st.anim_shown(key).is_some_and(|a| a.badge.is_some())

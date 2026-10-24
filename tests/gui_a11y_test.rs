@@ -251,7 +251,7 @@ fn the_actions_a_client_may_ask_for() {
     "##);
     assert_eq!(
         text(&v),
-        "[[[\"focus\", \"increment\", \"decrement\"], [\"click\", \"expand\"], [\"scroll_down\"], []], \
+        "[[[\"focus\", \"show_menu\", \"increment\", \"decrement\"], [\"click\", \"expand\"], [\"scroll_down\"], []], \
          [[\"a11y\", \"step\", \"increment\"], [\"a11y\", \"step\", \"decrement\"], [\"a11y\", \"item\", \"expand\"], [\"scrolled\", \"sc\", 160.0]], \
          (100.0, -160.0, 300.0, 20.0)]"
     );
@@ -386,4 +386,32 @@ fn a_new_role_is_known_to_the_engine() {
         [contains(roles, "navigation"), contains(roles, "spinbutton"), contains(roles, "grid"), map_get(gui.platform(), "a11y_depth")]
     "##);
     assert_eq!(text(&v), "[true, true, true, true]");
+}
+
+#[test]
+fn voiceovers_menu_action_is_the_menu_key_on_the_node() {
+    let _turn = events_turn();
+    // VO-⇧M on a field: focused, then the keyboard's menu key, a
+    // misspelled word's guesses with it
+    let v = run(r##"
+        gui.spell("stand_in", #{ "teh": ["the"] })
+        let ev = gui.events()
+        let mut stale = true
+        while stale { match chan.try_recv(ev) { Ok(()) => { stale = false }, Ok(e) => (), _ => { stale = false } } }
+        let w = gui.headless(#{ "size": (300, 100) })
+        gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 300, 100) },
+          #{ "key": "b", "parent": "root", "role": "button", "box": (0, 40, 80, 24), "text": "Go" },
+          #{ "key": "f", "parent": "root", "role": "input", "box": (0, 0, 300, 24), "edit": #{ "value": "teh", "spellcheck": true } },
+          #{ "op": "focus", "key": "b" }
+        ])
+        gui.input(w, #{ "kind": "a11y", "key": "f", "action": "show_menu" })
+        let mut got = []
+        let mut more = true
+        while more { match chan.try_recv(ev) { Ok(()) => { more = false }, Ok(e) => { got = got + [e] }, _ => { more = false } } }
+        gui.spell("stand_in", ())
+        let k = filter(got, (e) => map_get(e, "kind") == "key")[0]
+        [gui.read(w, "focus"), map_get(k, "chord"), map_get(k, "target"), map_get(map_get(k, "spelling"), "guesses")]
+    "##);
+    assert_eq!(text(&v), r#"["f", "contextmenu", "f", ["the"]]"#);
 }

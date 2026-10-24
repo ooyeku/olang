@@ -1178,6 +1178,7 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
                 "scroll_left" => (Action::ScrollLeft, None),
                 "scroll_right" => (Action::ScrollRight, None),
                 "scroll_into_view" => (Action::ScrollIntoView, None),
+                "show_menu" => (Action::ShowContextMenu, None),
                 "set_value" => (
                     Action::SetValue,
                     Some(ActionData::Value(
@@ -1192,7 +1193,7 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
                 ),
                 other => {
                     return Err(format!(
-                        "gui.input: unknown assistive action \"{other}\" (click, focus, set_value, increment, decrement, expand, collapse, scroll_up, scroll_down, scroll_left, scroll_right, scroll_into_view, custom)"
+                        "gui.input: unknown assistive action \"{other}\" (click, focus, set_value, increment, decrement, expand, collapse, scroll_up, scroll_down, scroll_left, scroll_right, scroll_into_view, show_menu, custom)"
                     ));
                 }
             };

@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   or ignored, every spell-checked field is checked again.
   `gui.spelling(w, key)` asks for the word at the caret.
   `gui.platform()` says `spell_guesses` and `replace_text`.
+- **VoiceOver's VO-⇧M** on a focusable node (AccessKit's
+  `ShowContextMenu`) focuses it and sends the key event the Menu key
+  sends (`chord: "contextmenu"`, `source: "a11y"`, a misspelled word's
+  `spelling` with it), so a program's context menu opens as ⇧F10 opens
+  it; `gui.input`'s `a11y` action `"show_menu"`.
 
 - **`material: "window"`: a box shows the desktop behind the window**,
   as a Mac sidebar does. The window gets an NSVisualEffectView
