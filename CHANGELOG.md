@@ -7,18 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Fixed
-
-- **An imported module's functions no longer leak into the importer's
-  names on the compiled tiers.** A name the calling file does not bind
-  fell through to the tier's by-name tables of every function the
-  program declared: in a nested call, a closure or a task, a module's
-  `share fn time` replaced the stdlib `time` module in a file that never
-  imported it, and a module's private `priv` answered `priv(1)`, where
-  the tree-walker raised. A bare name now resolves only through the
-  file's own names, its imports, and the stdlib modules and builtins,
-  on every tier; a builtin another module shadows stays the builtin.
-
 ### Added
 
 - **Spelling's suggestions.** A right press (⌃-click) on a misspelled
@@ -87,6 +75,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   markup. `main_` and `ol_` are `main` and `ol`; `head_`, `meta_`,
   `time_` and `col_` keep an underscore, because their names are the
   builtin `head` and the modules `meta`, `time` and `col`.
+
+### Fixed
+
+- **An imported module's functions no longer leak into the importer's
+  names on the compiled tiers.** A name the calling file does not bind
+  fell through to the tier's by-name tables of every function the
+  program declared: in a nested call, a closure or a task, a module's
+  `share fn time` replaced the stdlib `time` module in a file that never
+  imported it, and a module's private `priv` answered `priv(1)`, where
+  the tree-walker raised. A bare name now resolves only through the
+  file's own names, its imports, and the stdlib modules and builtins,
+  on every tier; a builtin another module shadows stays the builtin.
 
 ## [1.0.0-rc.3] - 2026-10-23
 
