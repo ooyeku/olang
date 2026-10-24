@@ -177,7 +177,7 @@ it; a closing tag inside it, `</script` in any case, is written
 `<\/script`, which means the same to JavaScript and CSS and closes
 nothing.
 
-```olang
+```olang no-run
 use web { document, html, head_, body, title, meta_, link, script, main, article, h1, time_, render }
 let d = document(html(#{ "lang": "en" }, [
     head_(#{}, [
