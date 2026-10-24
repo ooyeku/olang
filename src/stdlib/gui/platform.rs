@@ -371,6 +371,9 @@ pub fn capabilities() -> Value {
 /// ends. `None` when the loop could not start (the program goes on,
 /// windowless).
 fn run_loop(reply: crossbeam_channel::Sender<Result<(), String>>) -> Option<i32> {
+    // this thread paints: it shapes with a text system of its own, never
+    // waiting for the program's measuring
+    super::text::paint_thread();
     if cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_none() {
         let msg = "no Wayland display (Loom runs on Wayland only; X11 is not supported — try --terminal, or LOOM_FACE=terminal)".to_string();
         *LOOP.lock().unwrap_or_else(|e| e.into_inner()) = LoopState::Failed(msg.clone());

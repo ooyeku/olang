@@ -859,11 +859,10 @@ fn render_stats() -> Value {
     f.push(("raster_bytes", int(glyph_bytes as u64)));
     f.push(("raster_evictions", int(glyph_ev)));
     // texts shaped (a cache miss) and found shaped, since the start
-    if let Ok(ts) = text::system().lock() {
-        f.push(("texts_shaped", int(ts.shaped)));
-        f.push(("texts_found", int(ts.found)));
-        f.push(("texts_cached", int(ts.cached() as u64)));
-    }
+    let (shaped, found, cached) = text::stats();
+    f.push(("texts_shaped", int(shaped)));
+    f.push(("texts_found", int(found)));
+    f.push(("texts_cached", int(cached as u64)));
     let (pieces, piece_bytes, piece_ev) = canvas::pieces_stats();
     f.push(("pieces", int(pieces as u64)));
     f.push(("piece_bytes", int(piece_bytes as u64)));

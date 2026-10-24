@@ -1,11 +1,17 @@
 //! Text: shaping, line breaking, and measurement (parley), shared by
 //! `gui.measure`, the scene's text nodes, and the editors.
 //!
-//! One process-wide [`TextSystem`] holds parley's font database and
-//! layout scratch space behind a lock. A shaped text is cached by
-//! everything that changes its glyphs — the text, the font, the width
-//! it wraps at, the alignment, and the display scale — so `gui.measure`
-//! followed by drawing the same text shapes it once.
+//! Two [`TextSystem`]s hold parley's shaping contexts, each behind a lock
+//! of its own: the main thread's (painting, the engine's own fields and
+//! input) and everyone else's (the program's `gui.measure` and patches,
+//! headless windows, fonts registered in the background) — so measuring
+//! never waits for a frame being listed, nor a frame for measuring. They
+//! share one font collection (fontique's shared mode: a font registered
+//! in one is in both, and a face is the same blob in both) and one cache
+//! of shaped texts behind a short lock of its own. A shaped text is
+//! cached by everything that changes its glyphs — the text, the font, the
+//! width it wraps at, the alignment, and the display scale — so
+//! `gui.measure` followed by drawing the same text shapes it once.
 //!
 //! Positions in a [`Shaped`] are in *device* pixels (the layout is built
 //! at the display's scale, so hinting and quantization see the real
@@ -372,6 +378,11 @@ type ShapeCache =
 pub struct TextSystem {
     pub font_cx: FontContext,
     pub layout_cx: LayoutContext<Color>,
+}
+
+/// The shaped texts both systems share, behind a lock held only to look
+/// one up or keep one (never while shaping).
+struct Shapes {
     /// Shaped texts in two generations: one used since the last turn-over
     /// and the one before it. A text found in the old generation moves to
     /// the new; a turn-over drops only what neither used — a frame's texts
@@ -379,8 +390,37 @@ pub struct TextSystem {
     cache: ShapeCache,
     old: ShapeCache,
     /// Shaped (missed) and found, since the start: `gui.read(_, "render")`.
-    pub shaped: u64,
-    pub found: u64,
+    shaped: u64,
+    found: u64,
+}
+
+static SHAPES: Mutex<Option<Shapes>> = Mutex::new(None);
+
+fn with_shapes<R>(f: impl FnOnce(&mut Shapes) -> R) -> R {
+    let mut g = SHAPES.lock().unwrap_or_else(|e| e.into_inner());
+    f(g.get_or_insert_with(|| Shapes {
+        cache: ShapeCache::default(),
+        old: ShapeCache::default(),
+        shaped: 0,
+        found: 0,
+    }))
+}
+
+impl Shapes {
+    /// Put a shaped text in the new generation, turning the generations
+    /// over when it is full.
+    fn keep(&mut self, h: u64, key: CacheKey, shaped: Arc<Shaped>) {
+        if self.cache.len() >= CACHE_LIMIT {
+            self.old = std::mem::take(&mut self.cache);
+        }
+        self.cache.insert(h, (key, shaped));
+    }
+}
+
+/// Texts shaped (a miss) and found shaped since the start, and how many
+/// are kept: `gui.read(_, "render")`.
+pub fn stats() -> (u64, u64, usize) {
+    with_shapes(|s| (s.shaped, s.found, s.cache.len() + s.old.len()))
 }
 
 /// Faces the rasterizer can read, by key. Filled as layouts are made.
@@ -406,7 +446,40 @@ pub fn remember_face(font: &parley::FontData) -> FaceKey {
     key
 }
 
-static SYSTEM: OnceLock<Mutex<TextSystem>> = OnceLock::new();
+/// The main thread's system, and every other thread's.
+static PAINT: OnceLock<Mutex<TextSystem>> = OnceLock::new();
+static WORK: OnceLock<Mutex<TextSystem>> = OnceLock::new();
+
+thread_local! {
+    /// This thread paints (the platform's main thread: [`paint_thread`]).
+    static PAINTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The calling thread is the one that paints (the platform loop's): it
+/// takes the main thread's text system from now on.
+pub fn paint_thread() {
+    PAINTS.with(|p| p.set(true));
+}
+
+/// The fonts both systems share: the system's, found once, and those
+/// registered (in either, seen by both).
+fn shared_fonts() -> &'static FontContext {
+    static FONTS: OnceLock<FontContext> = OnceLock::new();
+    FONTS.get_or_init(|| FontContext {
+        collection: parley::fontique::Collection::new(parley::fontique::CollectionOptions {
+            shared: true,
+            system_fonts: true,
+        }),
+        source_cache: parley::fontique::SourceCache::new_shared(),
+    })
+}
+
+fn new_system() -> Mutex<TextSystem> {
+    Mutex::new(TextSystem {
+        font_cx: shared_fonts().clone(),
+        layout_cx: LayoutContext::new(),
+    })
+}
 
 /// Fonts being registered on a thread of their own
 /// (`gui.fonts(…, #{ "background": true })`): every use of the text
@@ -452,17 +525,13 @@ pub fn system() -> &'static Mutex<TextSystem> {
 }
 
 /// The text system without waiting: the background registration's own.
+/// The main thread's own on the thread that paints, else everyone else's.
 pub fn system_now() -> &'static Mutex<TextSystem> {
-    SYSTEM.get_or_init(|| {
-        Mutex::new(TextSystem {
-            font_cx: FontContext::new(),
-            layout_cx: LayoutContext::new(),
-            cache: ShapeCache::default(),
-            old: ShapeCache::default(),
-            shaped: 0,
-            found: 0,
-        })
-    })
+    if PAINTS.with(|p| p.get()) {
+        PAINT.get_or_init(new_system)
+    } else {
+        WORK.get_or_init(new_system)
+    }
 }
 
 /// The emoji fonts, bundled first.
@@ -495,8 +564,10 @@ impl TextSystem {
     pub fn register(&mut self, bytes: Vec<u8>) -> usize {
         let blob = parley::fontique::Blob::from(bytes);
         let added = self.font_cx.collection.register_fonts(blob, None);
-        self.cache.clear();
-        self.old.clear();
+        with_shapes(|s| {
+            s.cache.clear();
+            s.old.clear();
+        });
         added.iter().map(|(_, faces)| faces.len()).sum()
     }
 
@@ -515,21 +586,29 @@ impl TextSystem {
         let qw = max_width.map(|w| (w.max(0.0) * 64.0).round() as u32);
         let qs = (scale * 1000.0).round() as u32;
         let h = cache_hash(text, font, color, qw, align, qs);
-        if let Some((k, s)) = self.cache.get(&h)
-            && k.is(text, font, color, qw, align, qs)
-        {
-            self.found += 1;
-            return s.clone();
+        let found = with_shapes(|c| {
+            if let Some((k, s)) = c.cache.get(&h)
+                && k.is(text, font, color, qw, align, qs)
+            {
+                c.found += 1;
+                return Some(s.clone());
+            }
+            if let Some((k, s)) = c.old.remove(&h) {
+                if k.is(text, font, color, qw, align, qs) {
+                    c.found += 1;
+                    let s2 = s.clone();
+                    c.keep(h, k, s);
+                    return Some(s2);
+                }
+                // another text with the same hash: left where it was
+                c.old.insert(h, (k, s));
+            }
+            c.shaped += 1;
+            None
+        });
+        if let Some(s) = found {
+            return s;
         }
-        if let Some((k, s)) = self.old.remove(&h)
-            && k.is(text, font, color, qw, align, qs)
-        {
-            self.found += 1;
-            let s2 = s.clone();
-            self.keep(h, k, s);
-            return s2;
-        }
-        self.shaped += 1;
         let key = CacheKey {
             text: text.into(),
             font: font.clone(),
@@ -581,22 +660,8 @@ impl TextSystem {
             sh.decos = span_decos(&layout, text, spans, color, scale);
         }
         let shaped = Arc::new(sh);
-        self.keep(h, key, shaped.clone());
+        with_shapes(|c| c.keep(h, key, shaped.clone()));
         shaped
-    }
-
-    /// Put a shaped text in the new generation, turning the generations
-    /// over when it is full.
-    fn keep(&mut self, h: u64, key: CacheKey, shaped: Arc<Shaped>) {
-        if self.cache.len() >= CACHE_LIMIT {
-            self.old = std::mem::take(&mut self.cache);
-        }
-        self.cache.insert(h, (key, shaped));
-    }
-
-    /// Shaped texts kept.
-    pub fn cached(&self) -> usize {
-        self.cache.len() + self.old.len()
     }
 }
 
