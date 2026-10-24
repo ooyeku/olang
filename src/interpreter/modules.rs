@@ -858,6 +858,10 @@ already binds — an import never replaces a program's own name. Alias the impor
         let saved_env = std::mem::replace(&mut self.environment, module_env);
         let saved_imported = std::mem::take(&mut self.imported);
         let saved_module_path = self.current_module_path.clone();
+        // The importer's functions declared on first use are its own: the
+        // module's code never reaches them.
+        let saved_pending = std::mem::take(&mut self.pending_top_level);
+        let saved_early = std::mem::take(&mut self.declared_early);
 
         // Set current module path to the FULL file path (not just module name)
         // This allows nested imports to resolve relative to this file's directory
@@ -1139,6 +1143,8 @@ already binds — an import never replaces a program's own name. Alias the impor
         self.environment = saved_env;
         self.imported = saved_imported;
         self.current_module_path = saved_module_path;
+        self.pending_top_level = saved_pending;
+        self.declared_early = saved_early;
 
         // Feature 7: Clean up loading stack (ensure we only remove the module we added)
         if self.module_loading_stack.len() >= stack_size_before {

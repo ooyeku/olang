@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Name lookup is strictly lexical: a module never sees the program's
+  names.** A module's code sees its own file's names (in any order, and
+  nested functions as before), what it imports with `use`, and the stdlib
+  modules and builtins. A name it does not bind no longer falls through
+  to the program's top-level bindings, its private functions included,
+  so a library cannot depend on what the program happens to call
+  something. The program's file is one more file under the same rule.
+  This holds on every tier and every path off a module's home: a nested
+  call, a closure, a task, `par_map`, a pipe (`x |> f`), an `http.serve`
+  handler. A module reading a name only the program defines raises
+  `Undefined variable`, with a hint to pass it in or import it, and
+  `olang check` reports it in a module ("a module doesn't see the
+  program's names: pass it in or import it"). What a module needs from
+  the program is passed as a value. `gg`'s plot check raised through an
+  undefined `panic`; it raises its own message now.
 - **gui: a render thread (macOS).** Every GPU window is drawn and
   presented on a thread of its own: it owns the window's surface (made on
   the main thread, then handed over), the kept frame and its damage, the

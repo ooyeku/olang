@@ -841,6 +841,12 @@ fn unimported_names(
             }
         }
     }
+    // A module (a file that shares something) is told where such a name
+    // can come from: a module never sees the program's names.
+    let module = program
+        .statements
+        .iter()
+        .any(|s| matches!(s.unwrapped(), Statement::ShareDecl(_)));
     candidates
         .into_iter()
         .filter(|name| !excused.contains(name))
@@ -849,9 +855,16 @@ fn unimported_names(
             CheckDiagnostic {
                 line,
                 column,
-                message: format!(
-                    "Undefined variable: {name} — nothing in this file defines or imports it"
-                ),
+                message: if module {
+                    format!(
+                        "Undefined variable: {name} — nothing in this file defines or imports it; \
+a module doesn't see the program's names: pass it in or import it"
+                    )
+                } else {
+                    format!(
+                        "Undefined variable: {name} — nothing in this file defines or imports it"
+                    )
+                },
                 runtime: true,
                 warning: false,
                 scope: false,

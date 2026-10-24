@@ -468,27 +468,37 @@ println(text)
 
 ### Where a name is looked up
 
-A name a function body does not bind itself is resolved **lexically**:
-in the enclosing scopes of the function's own definition, then in the
-top-level table of the file that defines it, then in the program's
-top-level bindings. The frames that *called* the function are never a
-source of names. So a library's `serve` with a local `head_for`, calling
-an application function that names `head_for`, reaches the
-application's `head_for` — declared before or after the caller, on the
-main thread or on a task — and a name nothing binds is an error that
-names it, not a lookup in whatever frame happened to be active.
+A name a function body does not bind itself is resolved **lexically**,
+in the file the function was written in: the enclosing scopes of its
+definition, then that file's top-level names, then what the file
+imports with `use`, then the stdlib modules and the builtins. Nothing
+else is a source of names:
 
-Another module's functions are never a source of names either. A
-module's private function is reachable only in its own file, and a
-shared one only where a `use` brings it in: after `use lib.h { head }`,
-a `time` that `lib/h.ol` shares leaves `time` the stdlib module, and
-its private `priv` is an undefined name — in a nested call, a closure
-or a task, on every tier.
+- **The frames that called the function.** A name nothing in the file
+  binds is an error that names it, never a lookup in whatever frame
+  happened to be active.
+- **The program's names, from a module.** A module's code sees its own
+  file, its imports and the stdlib. The program's file is one more file
+  under the same rule, so a library cannot depend on what the program
+  happens to call something, its private functions included. A value
+  or function a module needs from the program is passed in: as an
+  argument, a callback, or a field of a configuration value.
+- **Another module's functions.** A module's private function is
+  reachable only in its own file, and a shared one only where a `use`
+  brings it in: after `use lib.h { head }`, a `time` that `lib/h.ol`
+  shares leaves `time` the stdlib module, and its private `priv` is an
+  undefined name.
 
-Two consequences of the file-level table: a module's functions see every
-sibling in their file, private or shared, however the file is ordered;
-and a nested `fn` sees its sibling nested functions, including those
-declared after it in the same body.
+The rule holds wherever the code runs: in a nested call, a closure, a
+task, `par_map` or an `http.serve` handler, on every tier. A module that
+reads a name only the program defines raises `Undefined variable`, with
+a hint to pass the name in or import it, and `olang check` reports it
+before the program runs.
+
+Two consequences of the file-level table: a file's functions see every
+top-level name in their file, private or shared, however the file is
+ordered; and a nested `fn` sees its sibling nested functions, including
+those declared after it in the same body.
 
 ```olang
 fn page_head(req) = head_for(1)          // resolves to the head_for below
@@ -500,6 +510,10 @@ fn serve(head) = {
 }
 println(serve(page_head))                // Ok("app 1")
 ```
+
+A library that calls back into the program takes the callback as a
+value. Here `serve` stands for a module's function: it calls the
+`head` it is given, and never looks up a `page_head` of its own.
 
 ### Closures capture by value
 
@@ -2374,7 +2388,9 @@ fn helper(x) = x + 1                   // private: not shared
 Shared functions may call the module's private helpers regardless of
 declaration order — the module's whole scope is visible to its exports.
 A private function is visible nowhere else, and a shared one only in a
-file that imports it (see [Where a name is looked up](#where-a-name-is-looked-up)).
+file that imports it. A module's code sees its own names, its imports
+and the stdlib, never the program's: what it needs from the program is
+passed in (see [Where a name is looked up](#where-a-name-is-looked-up)).
 
 ### Importing with `use`
 
@@ -2462,8 +2478,9 @@ goes, in this order:
    built-in module, though the native modules are in scope without any
    `use`.
 
-Loading a module executes its file once in a fresh environment and
-collects the `share`d bindings; a module's exports can call its private
+Loading a module executes its file once in a fresh environment (the
+builtins and the stdlib modules, nothing of its importer's) and collects
+the `share`d bindings; a module's exports can call its private
 helpers regardless of declaration order, because exports are closed
 over the module's *complete* scope after the whole file has run.
 

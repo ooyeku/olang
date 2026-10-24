@@ -25,7 +25,7 @@ impl Interpreter {
                 // `Concat(a, b)` must still bind even when a `b` already in
                 // scope holds a unit variant.
                 if self.unit_variant_names.contains(name)
-                    && let Some(variant @ Value::Enum(_)) = self.environment.get(name)
+                    && let Some(variant @ Value::Enum(_)) = self.peek_name(name)
                     && matches!(
                         &variant,
                         Value::Enum(e) if e.variant_data == EnumVariantData::Unit

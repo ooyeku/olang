@@ -56,12 +56,10 @@ pub struct Environment {
     /// The file whose code this scope belongs to: a call frame takes its
     /// function's defining file, a block scope inherits its parent's, and
     /// the root has none. Name resolution is lexical per file: a lookup
-    /// walks the chain but reads only the frames of its own file and the
-    /// root — the frames of whatever *called* into this file are never a
-    /// source of names. (They used to be: a bare name a function did not
-    /// bind fell through to the caller's frame, so an app's `head_for`,
-    /// resolving from inside a library's `serve`, landed on the
-    /// library's like-named local instead of the app's own global.)
+    /// walks the chain but reads only the frames of its own file, and
+    /// the root only when the root is its own file's top-level scope —
+    /// the frames of whatever *called* into this file are never a source
+    /// of names, and a module's code never reads the program's root.
     pub(crate) owner: Option<Arc<str>>,
     /// Which call frame this scope belongs to: fresh per call, shared by
     /// the frame's block scopes, 0 at a root.
@@ -209,7 +207,7 @@ impl Environment {
                 // name. The old `?` here returned None instead, which
                 // surfaced as a spurious "Undefined variable" the moment
                 // the bridge gained a tier and re-ran such bodies.
-                None => return self.get(name),
+                None => return self.get_lexical(name, false),
             }
         }
         if let Some((slot_name, value)) = env.locals.get(slot as usize)
@@ -217,7 +215,9 @@ impl Environment {
         {
             return Some(value.clone());
         }
-        self.get(name)
+        // The root is not this scope's to read unconditionally: the caller
+        // resolves a miss through the file's own tables (`lookup_name`).
+        self.get_lexical(name, false)
     }
 
     /// Assign through a resolved slot, with the same verify-and-fall-back

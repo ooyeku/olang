@@ -191,8 +191,8 @@ pub struct Interpreter {
     current_module_path: Option<String>, // For tracking current module during loading
     /// Interned frame owners, keyed by defining file (see `Environment::owner`).
     owners: HashMap<String, Arc<str>>,
-    /// The program's top-level bindings, consulted after the whole scope
-    /// chain misses. Set on a bridge interpreter (the one the bytecode
+    /// The program's top-level bindings, consulted for the program's own
+    /// code after the whole scope chain misses. Set on a bridge interpreter (the one the bytecode
     /// tier hands declined function values to) from the host's live root:
     /// a main-file function resolving a sibling declared after it then
     /// finds the sibling here — the same answer the program's own root
@@ -207,9 +207,10 @@ pub struct Interpreter {
     declared_early: crate::ast::ValueMap,
     /// Every loaded module's complete top-level table, by file. A frame
     /// whose function belongs to that file resolves a name here after
-    /// its lexical scopes and before the program's root — so a module's
-    /// functions see every sibling, private or shared, however the file
-    /// is ordered, and from any thread or the bridge.
+    /// its lexical scopes — so a module's functions see every sibling,
+    /// private or shared, however the file is ordered, and from any
+    /// thread or the bridge. Past it only the builtins and the stdlib:
+    /// a module's code never reads the program's root.
     module_scopes: HashMap<String, Arc<ImHashMap<String, Value>>>,
     /// The run of consecutive top-level `fn` declarations in progress (see
     /// `ast::FnRun` and `build_function_value`).
@@ -1857,7 +1858,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                             return Ok(v);
                         }
                     }
-                    self.pending_error_hint = self.did_you_mean(name);
+                    self.pending_error_hint = self.undefined_hint(name);
                     Err(InterpreterError::UndefinedVariable { name: name.clone() })
                 }
             },
@@ -1869,7 +1870,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 {
                     Some(v) => Ok(v),
                     None => {
-                        self.pending_error_hint = self.did_you_mean(name);
+                        self.pending_error_hint = self.undefined_hint(name);
                         Err(InterpreterError::UndefinedVariable { name: name.clone() })
                     }
                 }
@@ -2109,9 +2110,10 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                         self.call_function_slots(callee_value, final_slots)
                     }
                     Expr::Identifier(name) => {
-                        let function_value = self.environment.get(name).ok_or_else(|| {
-                            InterpreterError::UndefinedVariable { name: name.clone() }
-                        })?;
+                        let Some(function_value) = self.lookup_name(name) else {
+                            self.pending_error_hint = self.undefined_hint(name);
+                            return Err(InterpreterError::UndefinedVariable { name: name.clone() });
+                        };
                         self.call_function(function_value, vec![left_value])
                     }
                     // Any other expression is evaluated to a callable and
@@ -3625,8 +3627,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 // Create new environment with current environment as parent
                 let mut new_env = Environment::with_parent(self.environment.clone());
                 // The frame belongs to the function's file: lookups from
-                // inside it read this file's frames and the root, never
-                // the caller's.
+                // inside it read this file's frames and tables, never the
+                // caller's, nor another file's root.
                 new_env.owner = self.owner_of(func.def_file.as_deref());
                 new_env.run = func.run.clone();
                 new_env.enter_function(func.parent_scope);
@@ -3865,7 +3867,12 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         {
             return Some(Value::Function(function.clone()));
         }
-        if let Some(value) = self.environment.root().get_here(name) {
+        // The root is the top-level scope of the file whose statements
+        // are executing (the program's, or a module's while it loads):
+        // a source of names only for that file's own code. A module's
+        // code never reads the program's names.
+        let root_is_home = self.root_is_home();
+        if root_is_home && let Some(value) = self.environment.root().get_here(name) {
             return Some(value);
         }
         // A sibling declared earlier in the running function's run
@@ -3873,9 +3880,17 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         if let Some(value) = self.environment.run.get(name) {
             return Some(value);
         }
+        if !root_is_home {
+            // Code of another file than the root's: its own file's table
+            // answered above; past it only the builtins and the stdlib.
+            return self.prelude().get(name).cloned();
+        }
+        // The host program's top-level bindings, for a bridge: the
+        // program's own code only.
         if let Some(value) = self
             .fallback_globals
             .as_ref()
+            .filter(|_| self.code_is_program())
             .and_then(|g| g.get(name).cloned())
         {
             return Some(value);
@@ -3912,6 +3927,74 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     /// entry file and no file the same (the program's own).
     fn same_home(&self, a: Option<&str>, b: Option<&str>) -> bool {
         crate::ast::same_home(self.entry_file.as_deref(), a, b)
+    }
+
+    /// A name as the running code sees it, without declaring anything:
+    /// its scopes, its file's table, and the root when the root is its
+    /// file's.
+    pub(crate) fn peek_name(&self, name: &str) -> Option<Value> {
+        if let Some(value) = self.environment.get_lexical(name, false) {
+            return Some(value);
+        }
+        if let Some(owner) = self.environment.owner.as_deref()
+            && let Some(value) = self.module_scopes.get(owner).and_then(|s| s.get(name))
+        {
+            return Some(value.clone());
+        }
+        if self.root_is_home() {
+            return self.environment.root().get_here(name);
+        }
+        None
+    }
+
+    /// The file the running code was written in: a frame's own file, or,
+    /// at a top level, the file whose statements are executing.
+    fn code_home(&self) -> Option<&str> {
+        match self.environment.owner.as_deref() {
+            Some(owner) if self.environment.parent.is_some() => Some(owner),
+            _ => self.current_module_path.as_deref(),
+        }
+    }
+
+    /// Whether the root of the scope chain — the top-level scope of the
+    /// file whose statements are executing — is the running code's own
+    /// file's, and so a source of its names.
+    fn root_is_home(&self) -> bool {
+        match self.environment.owner.as_deref() {
+            Some(owner) if self.environment.parent.is_some() => {
+                let root = self.current_module_path.as_deref();
+                root == Some(owner) || self.same_home(Some(owner), root)
+            }
+            _ => true,
+        }
+    }
+
+    /// Whether the running code is the program's own (its entry file's).
+    fn code_is_program(&self) -> bool {
+        self.same_home(self.code_home(), None)
+    }
+
+    /// The hint an undefined name carries: when the running code is a
+    /// module's and the program binds the name, where to get it from;
+    /// otherwise the nearest names in scope.
+    fn undefined_hint(&mut self, name: &str) -> Option<String> {
+        if !self.root_is_home() || !self.code_is_program() {
+            let program_binds = (!self.root_is_home()
+                && self.environment.root().get_here(name).is_some())
+                || self
+                    .fallback_globals
+                    .as_ref()
+                    .is_some_and(|g| g.contains_key(name))
+                || self.pending_top_level.contains_key(name)
+                || self.declared_early.contains_key(name);
+            if program_binds {
+                return Some(format!(
+                    "'{}' is the program's: a module doesn't see the program's names — pass it in as an argument, or move it into a module and `use` it",
+                    name
+                ));
+            }
+        }
+        self.did_you_mean(name)
     }
 
     /// Install the program's unambiguous functions by name, for a bridge

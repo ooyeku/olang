@@ -34,7 +34,7 @@ fn frame_of(data) =
 
 fn check_plot(p, what) =
     if typeof(p) != "Map" || !map_has_key(p, "$gg") =>
-        panic("gg." + what + ": the first argument is a plot (gg.plot(data, gg.aes(...)) |> gg." + what + "(...)), got " + typeof(p))
+        raise("gg." + what + ": the first argument is a plot (gg.plot(data, gg.aes(...)) |> gg." + what + "(...)), got " + typeof(p))
     else => p
 
 // A layer added: its position given as a name or a gg.position_*(…) map.
