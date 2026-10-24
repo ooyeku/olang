@@ -20,7 +20,7 @@ mod mac {
     use objc2::rc::Retained;
     use objc2::runtime::{AnyClass, AnyObject};
     use objc2_foundation::{NSPoint, NSString};
-    use olang::stdlib::gui::platform::{self, turn_watch};
+    use olang::stdlib::gui::platform::{self, frames, turn_watch};
     use olang::stdlib::gui::windows;
     use olang::{Interpreter, Parser};
     use std::ffi::c_void;
@@ -29,15 +29,22 @@ mod mac {
 
     const PROGRAM: &str = r##"
         let ev = gui.events()
-        let w = unwrap(gui.open(#{ "title": "olang busy", "size": (300, 200) }))
-        let mut rows = []
-        for i in 0..200 {
-          rows = rows + [#{ "key": "r" + to_string(i), "parent": "l", "box": (0, i * 30, 300, 30), "text": "Row " + to_string(i) }]
+        let w = unwrap(gui.open(#{ "title": "olang busy", "size": (300, 240) }))
+        fn rows_of(k) = {
+          let mut rows = []
+          for i in 0..200 {
+            rows = rows + [#{ "key": "r" + to_string(i), "parent": "l", "box": (0, i * 30, 300, 30),
+                              "text": "Row " + to_string(i) + " " + to_string(k),
+                              "style": #{ "hover": #{ "bg": "#e8eefc" } } }]
+          }
+          rows
         }
         gui.apply(w, [
-          #{ "key": "root", "box": (0, 0, 300, 200), "style": #{ "bg": "#ffffff" } },
-          #{ "key": "l", "parent": "root", "role": "list", "box": (0, 0, 300, 200), "scroll": true, "content": (300, 6000) }
-        ] + rows)
+          #{ "key": "root", "box": (0, 0, 300, 240), "style": #{ "bg": "#ffffff" } },
+          #{ "key": "l", "parent": "root", "role": "list", "box": (0, 0, 300, 200), "scroll": true, "content": (300, 6000) },
+          #{ "key": "f", "parent": "root", "role": "input", "box": (8, 206, 284, 28), "edit": #{ "value": "" },
+             "style": #{ "bg": "#f4f4f5", "radius": 6 } }
+        ] + rows_of(0) + [#{ "op": "focus", "key": "f" }])
         // wait for the test to say the window is up, then a long turn
         let mut going = true
         while going {
@@ -53,7 +60,24 @@ mod mac {
         let mut done = false
         while !done {
           match chan.recv_timeout(ev, #{ "timeout_ms": 20000 }) {
-            Ok(e) => { if e == () || e.kind == "test_done" => { done = true } },
+            Ok(e) => {
+              if e == () || e.kind == "test_done" => { done = true }
+              // a layout-heavy turn: texts measured and the list patched
+              // whole, over and over, as a program laying out does
+              else if e.kind == "heavy" => {
+                gui.turn(true)
+                let t0 = time.monotonic()
+                let mut k = 0
+                while time.monotonic() - t0 < e.ms {
+                  k = k + 1
+                  for i in 0..80 {
+                    gui.measure("A measured line of text " + to_string(i * 7 + k), #{ "size": 13 }, #{ "width": 280 })
+                  }
+                  gui.apply(w, rows_of(k))
+                }
+                gui.turn(false)
+              }
+            },
             Err(_) => { done = true }
           }
         }
@@ -123,7 +147,53 @@ mod mac {
     /// The pointer moved over the list, then the wheel turned down, as
     /// AppKit's events sent to the window.
     fn wheel_down() {
+        wheel(-60)
+    }
+
+    /// The pointer moved to `y` (window points from the top) over the list.
+    fn hover_at(y: f64) {
+        on_main(move || {
+            let w = ns_window();
+            let num: isize = unsafe { msg_send![&*w, windowNumber] };
+            let ev_cls = AnyClass::get(c"NSEvent").unwrap();
+            let none: *const AnyObject = std::ptr::null();
+            // AppKit's window points count up from the bottom (240 tall)
+            let mv: Option<Retained<AnyObject>> = unsafe {
+                msg_send![ev_cls, mouseEventWithType: 5usize, location: NSPoint::new(150.0, 240.0 - y),
+                    modifierFlags: 0usize, timestamp: 0.0f64, windowNumber: num, context: none,
+                    eventNumber: 0isize, clickCount: 0isize, pressure: 0.0f32]
+            };
+            let view: Retained<AnyObject> = unsafe { msg_send![&*w, contentView] };
+            if let Some(mv) = mv {
+                let _: () = unsafe { msg_send![&*view, mouseMoved: &*mv] };
+            }
+        })
+    }
+
+    /// A key typed into the window (the focused field takes it).
+    fn type_key() {
         on_main(|| {
+            let w = ns_window();
+            let num: isize = unsafe { msg_send![&*w, windowNumber] };
+            let ev_cls = AnyClass::get(c"NSEvent").unwrap();
+            let chars = NSString::from_str("j");
+            let none: *const AnyObject = std::ptr::null();
+            for ty in [10usize, 11usize] {
+                let e: Option<Retained<AnyObject>> = unsafe {
+                    msg_send![ev_cls, keyEventWithType: ty, location: NSPoint::new(0.0, 0.0),
+                        modifierFlags: 0usize, timestamp: 0.0f64, windowNumber: num, context: none,
+                        characters: &*chars, charactersIgnoringModifiers: &*chars, isARepeat: false, keyCode: 38u16]
+                };
+                if let Some(e) = e {
+                    let _: () = unsafe { msg_send![&*w, sendEvent: &*e] };
+                }
+            }
+        })
+    }
+
+    /// The wheel turned by `dy` pixels over the list.
+    fn wheel(dy: i32) {
+        on_main(move || {
             let w = ns_window();
             let num: isize = unsafe { msg_send![&*w, windowNumber] };
             let ev_cls = AnyClass::get(c"NSEvent").unwrap();
@@ -140,7 +210,7 @@ mod mac {
                 let _: () = unsafe { msg_send![&*view, mouseMoved: &*mv] };
             }
             // SAFETY: CoreGraphics' scroll event, pixels (0), one wheel.
-            let cg = unsafe { CGEventCreateScrollWheelEvent(std::ptr::null(), 0, 1, -60) };
+            let cg = unsafe { CGEventCreateScrollWheelEvent(std::ptr::null(), 0, 1, dy) };
             if cg.is_null() {
                 return;
             }
@@ -153,12 +223,69 @@ mod mac {
         })
     }
 
+    fn say_numbers(s: String) {
+        println!("{s}");
+    }
+
+    fn pct(v: &mut [f64], q: f64) -> f64 {
+        if v.is_empty() {
+            return f64::NAN;
+        }
+        v.sort_by(|a, b| a.total_cmp(b));
+        v[((v.len() - 1) as f64 * q).round() as usize]
+    }
+
+    /// The wheel, the pointer and typing, each 50 times 16 ms apart: for
+    /// each, input to the present of the first frame made after it (p50,
+    /// p99) and the longest gap between frames presented, in ms.
+    fn phases(when: &str) -> Vec<(String, f64, f64, f64)> {
+        let mut out = Vec::new();
+        for kind in ["scroll", "hover", "typing"] {
+            frames::engine_samples().lock().unwrap().clear();
+            frames::present_log().lock().unwrap().clear();
+            let _ = olang::stdlib::gui::holds::take();
+            let start = Instant::now();
+            for i in 0..50u32 {
+                let at = start + Duration::from_millis(16) * i;
+                if let Some(d) = at.checked_duration_since(Instant::now()) {
+                    std::thread::sleep(d);
+                }
+                match kind {
+                    "scroll" => wheel(if i % 2 == 0 { -40 } else { 40 }),
+                    "hover" => hover_at(15.0 + (i % 6) as f64 * 30.0),
+                    _ => type_key(),
+                }
+            }
+            std::thread::sleep(Duration::from_millis(100));
+            let mut s = frames::engine_samples().lock().unwrap().clone();
+            let log = frames::present_log().lock().unwrap().clone();
+            let gap = log
+                .windows(2)
+                .map(|w| (w[1] - w[0]) as f64 / 1e6)
+                .fold(0.0, f64::max);
+            let (p50, p99) = (pct(&mut s, 0.5), pct(&mut s, 0.99));
+            println!(
+                "{when}, {kind}: {} answers, input to present p50 {p50:.2} p99 {p99:.2} ms; {} frames, longest gap {gap:.1} ms",
+                s.len(),
+                log.len()
+            );
+            print!(
+                "{}",
+                olang::stdlib::gui::holds::summary(&olang::stdlib::gui::holds::take())
+            );
+            out.push((format!("{when}, {kind}"), p50, p99, gap));
+        }
+        out
+    }
+
     pub fn main() {
         // SAFETY: set before any thread reads the environment.
         unsafe { std::env::set_var("GUI_NOT_RESPONDING_MS", "300") };
+        unsafe { std::env::set_var("GUI_LATENCY", "1") };
+        unsafe { std::env::set_var("GUI_HOLDS", "1") };
         olang::stdio::set_panic_hook();
         std::thread::spawn(|| {
-            std::thread::sleep(Duration::from_secs(60));
+            std::thread::sleep(Duration::from_secs(90));
             eprintln!("gui_macos_busy_test: timed out");
             std::process::exit(2);
         });
@@ -209,6 +336,34 @@ mod mac {
                         std::thread::sleep(Duration::from_millis(10));
                     }
                     say(format!("shown after: {}", turn_watch::shown()));
+                    // the engine's answers with no turn running, then
+                    // while a layout-heavy turn runs
+                    on_main(|| {
+                        let w = ns_window();
+                        let _: () = unsafe { msg_send![&*w, orderFrontRegardless] };
+                    });
+                    std::thread::sleep(Duration::from_millis(200));
+                    let idle = phases("idle");
+                    olang::stdlib::gui::emit(vec![olang::stdlib::gui::values::event(
+                        "heavy",
+                        vec![("ms", olang::Value::Float(4000.0))],
+                    )]);
+                    std::thread::sleep(Duration::from_millis(150));
+                    let heavy = phases("heavy turn");
+                    // every answer on the screen within a few refreshes,
+                    // the turn running or not
+                    for (what, p50, p99, gap) in idle.iter().chain(heavy.iter()) {
+                        let _ = (p50, gap);
+                        say_numbers(format!("{what}: p99 {p99:.1} ms"));
+                    }
+                    let worst = heavy.iter().map(|x| x.2).fold(0.0, f64::max);
+                    say(format!("answers kept their rate: {}", worst < 100.0));
+                    // the heavy turn ends before the test does
+                    let t = Instant::now();
+                    while turn_watch::shown() && t.elapsed() < Duration::from_secs(6) {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    std::thread::sleep(Duration::from_millis(300));
                     olang::stdlib::gui::emit(vec![olang::stdlib::gui::values::event(
                         "test_done",
                         vec![],
@@ -232,7 +387,8 @@ mod mac {
                 "scrolled while busy: true",
                 "shown while busy: true",
                 "frames while busy: true",
-                "shown after: false"
+                "shown after: false",
+                "answers kept their rate: true"
             ]
         );
         println!("gui_macos_busy_test: ok");

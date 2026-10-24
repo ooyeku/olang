@@ -37,6 +37,7 @@ pub mod damage;
 pub mod edit;
 pub mod flat;
 pub mod gpu;
+pub mod holds;
 pub mod motion;
 pub mod picture;
 pub mod platform;
@@ -572,7 +573,10 @@ fn gui_apply(args: Vec<Value>) -> Res<Value> {
     let mut out = Vec::new();
     let (result, headless) = {
         let mut st = w.lock().map_err(|_| "gui: window poisoned")?;
-        (st.apply(&args[1], &mut out), st.headless)
+        let held = holds::start();
+        let r = (st.apply(&args[1], &mut out), st.headless);
+        holds::since("apply_held", held);
+        r
     };
     emit(out);
     if !headless {
@@ -606,7 +610,9 @@ fn gui_measure(args: Vec<Value>) -> Res<Value> {
         ),
     };
     let max_w = if style.wrap { width } else { None };
+    let waited = holds::start();
     let mut ts = text::system().lock().map_err(|_| "gui: text poisoned")?;
+    holds::since("measure_wait", waited);
     let shaped = ts.shape(
         &t,
         &style.font,

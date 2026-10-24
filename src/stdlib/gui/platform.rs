@@ -871,9 +871,11 @@ impl App {
         };
         let mut out = Vec::new();
         let dirty = {
+            let waited = super::holds::start();
             let Ok(mut st) = pw.state.lock() else {
                 return;
             };
+            super::holds::since("main_wait", waited);
             // a window a script drives takes no person's input (its size,
             // focus and the system's settings still come)
             if st.scripted
@@ -987,9 +989,11 @@ impl App {
         let started = std::time::Instant::now();
         let mut moved = Vec::new();
         let (dl, a11y_tree, wants_ime, ime_area) = {
+            let waited = super::holds::start();
             let Ok(mut st) = pw.state.lock() else {
                 return;
             };
+            super::holds::since("main_wait", waited);
             // a glide moves on (its steps said once the frame is out)
             st.tick(&mut moved);
             // a drag-select past a field's edge: its step this frame
@@ -998,6 +1002,8 @@ impl App {
             if !said.is_empty() {
                 emit(said);
             }
+            #[cfg(target_os = "macos")]
+            let covers = frames::latest_input(id);
             #[allow(unused_mut)]
             let mut dl = st.display_list();
             // the program's turn running long: the veil and the spinner,
@@ -1054,8 +1060,12 @@ impl App {
             st.a11y_dirty = false;
             let wants = st.wants_ime();
             let area = if wants { st.ime_area() } else { None };
+            #[cfg(target_os = "macos")]
+            let dl = (dl, covers);
             (dl, tree, wants, area)
         };
+        #[cfg(target_os = "macos")]
+        let (dl, covers) = dl;
         let listed = started.elapsed();
         emit(std::mem::take(&mut moved));
         let presented = match &mut pw.renderer {
@@ -1103,7 +1113,11 @@ impl App {
         PRESENTED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if presented {
             SHOWN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            #[cfg(target_os = "macos")]
+            frames::engine_presented(id, covers);
         }
+        super::holds::record("main_list", listed);
+        super::holds::record("main_draw", started.elapsed() - listed);
         // on its way to the screen: shown at a coming refresh (a frame
         // that changed nothing was not presented: nothing is on its way)
         #[cfg(target_os = "macos")]
@@ -4666,8 +4680,74 @@ pub mod frames {
 
     /// Window `id` took input now.
     pub fn input(id: u64) {
+        let now = now_ns();
         if let Ok(mut w) = waiting().lock() {
-            w.entry(id).or_insert_with(now_ns);
+            w.entry(id).or_insert(now);
+        }
+        if let Ok(mut l) = last_input().lock() {
+            l.insert(id, now);
+        }
+    }
+
+    // ── the engine's own answers (a scroll, a hover, a field's typing) ──
+
+    /// When each window last took input.
+    fn last_input() -> &'static Mutex<HashMap<u64, u64>> {
+        static L: OnceLock<Mutex<HashMap<u64, u64>>> = OnceLock::new();
+        L.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    /// The last input each window's presented frames answered.
+    fn answered_input() -> &'static Mutex<HashMap<u64, u64>> {
+        static A: OnceLock<Mutex<HashMap<u64, u64>>> = OnceLock::new();
+        A.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    /// Input to the present of the first frame made after it, ms, a
+    /// sample an input answered (whoever answered: the engine alone, or
+    /// the program).
+    pub fn engine_samples() -> &'static Mutex<Vec<f64>> {
+        static S: OnceLock<Mutex<Vec<f64>>> = OnceLock::new();
+        S.get_or_init(|| Mutex::new(Vec::new()))
+    }
+
+    /// When frames were presented (host ns), measuring.
+    pub fn present_log() -> &'static Mutex<Vec<u64>> {
+        static P: OnceLock<Mutex<Vec<u64>>> = OnceLock::new();
+        P.get_or_init(|| Mutex::new(Vec::new()))
+    }
+
+    /// The input a frame of window `id` being made now answers.
+    pub fn latest_input(id: u64) -> Option<u64> {
+        if !measuring() {
+            return None;
+        }
+        last_input().lock().ok()?.get(&id).copied()
+    }
+
+    /// A frame of window `id` that answers input `covers` was presented.
+    pub fn engine_presented(id: u64, covers: Option<u64>) {
+        if !measuring() {
+            return;
+        }
+        let now = now_ns();
+        if let Ok(mut p) = present_log().lock()
+            && p.len() < 1 << 20
+        {
+            p.push(now);
+        }
+        let Some(t0) = covers else {
+            return;
+        };
+        let Ok(mut a) = answered_input().lock() else {
+            return;
+        };
+        if a.get(&id).is_some_and(|&t| t >= t0) {
+            return;
+        }
+        a.insert(id, t0);
+        if let Ok(mut s) = engine_samples().lock() {
+            s.push(now.saturating_sub(t0) as f64 / 1e6);
         }
     }
 

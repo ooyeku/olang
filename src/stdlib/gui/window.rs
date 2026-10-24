@@ -2547,12 +2547,15 @@ impl WinState {
         let Ok(mut ts) = text::system().lock() else {
             return dl;
         };
+        let held = super::holds::start();
         let full = Clip::rect(0.0, 0.0, pw as f32, ph as f32);
         let mut rings = Vec::new();
         self.motion.begin();
         self.paint(&root, 0.0, 0.0, full, 1.0, &mut ts, &mut dl, &mut rings);
         self.paint_ghosts(full, &mut ts, &mut dl, &mut rings);
         self.motion.end();
+        drop(ts);
+        super::holds::since("list_text_held", held);
         // a transition moving, a scroll gliding or springing back: the
         // next frame at the next refresh
         if self.motion.moving() || self.elastic_moving() {
