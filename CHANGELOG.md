@@ -24,6 +24,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   program's names: pass it in or import it"). What a module needs from
   the program is passed as a value. `gg`'s plot check raised through an
   undefined `panic`; it raises its own message now.
+- **`olang test`, `check` and `fmt` leave a project below the root
+  out.** Inside a project, a folder with an `olang.toml` of its own (a
+  test fixture, a sample, a vendored package) is another project: the
+  walk skips it unless it is named on the command line. A bare
+  `olang test` in Studio ran its fixture projects' deliberately failing
+  tests, and one rewrote a tracked fixture's `card.diff.png`. Outside
+  any project the walk still enters every project below it.
+- **`olang test --format json`: a pixel snapshot's relative paths are
+  the test file's folder's**, not the folder the run stands in (its
+  project's root since tests run from there), as
+  `testing.snapshot_dir()` is.
 - **gui: a render thread (macOS).** Every GPU window is drawn and
   presented on a thread of its own: it owns the window's surface (made on
   the main thread, then handed over), the kept frame and its damage, the

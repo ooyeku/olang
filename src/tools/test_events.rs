@@ -325,8 +325,9 @@ pub fn note_values(kind: &str, expected: &Value, actual: &Value) {
 /// `testing.snapshot_failed(info)`: a pixel snapshot that differs, from
 /// the library that compares them (Loom's `snapshot`). `info` is a map:
 /// `name`, `baseline`, `actual`, `diff` (paths), `differing`, `total`,
-/// `worst`, `sizes`.
-pub fn note_snapshot(info: &Value) {
+/// `worst`, `sizes`. A relative path is `beside`'s: the folder of the
+/// file under test, not the folder the run stands in (its project's root).
+pub fn note_snapshot(info: &Value, beside: Option<&std::path::Path>) {
     if !enabled() {
         return;
     }
@@ -338,11 +339,14 @@ pub fn note_snapshot(info: &Value) {
                 o.insert(k.clone(), plain_json(&m[k], 0));
             }
             // the paths as a reader can open them: a library's relative
-            // path is the test file's directory's, where the run stands
+            // path is the test file's directory's
+            let here = beside
+                .map(|d| d.to_path_buf())
+                .or_else(|| std::env::current_dir().ok());
             for k in ["baseline", "actual", "diff"] {
                 if let Some(J::String(p)) = o.get(k)
                     && std::path::Path::new(p).is_relative()
-                    && let Ok(here) = std::env::current_dir()
+                    && let Some(here) = &here
                 {
                     let joined = here.join(p.trim_start_matches("./"));
                     o.insert(k.to_string(), J::String(joined.display().to_string()));

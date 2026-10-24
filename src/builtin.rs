@@ -1141,7 +1141,10 @@ impl BuiltinFunctions {
                 )));
             }
             if let Some(info) = arguments.first() {
-                crate::tools::test_events::note_snapshot(info);
+                // a relative path is the test file's folder's, whatever
+                // folder the run stands in
+                let beside = snapshot_dir(interpreter).parent().map(|d| d.to_path_buf());
+                crate::tools::test_events::note_snapshot(info, beside.as_deref());
             }
             return Ok(Value::Unit);
         }
