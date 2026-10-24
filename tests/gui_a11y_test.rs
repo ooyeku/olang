@@ -73,7 +73,7 @@ const TABLE: &str = r##"[
 
 #[test]
 fn a_virtualized_tables_rows_and_columns() {
-    let st = scene(TABLE);
+    let mut st = scene(TABLE);
     let places = a11y::places(&st.scene);
     let p = |k: &str| places.get(k).copied().unwrap_or_default();
     // the table: all its rows, not the three on screen; its columns
@@ -95,7 +95,7 @@ fn a_virtualized_tables_rows_and_columns() {
     assert_eq!(p("t:h:1").column, Some(1));
     assert_eq!((p("t:h").row, p("t:h").in_set), (None, None));
     // as the platform reads them
-    let tree = a11y::tree(&st);
+    let tree = a11y::tree(&mut st);
     let t = ak(&tree, "t");
     assert_eq!(
         (t.role(), t.row_count(), t.column_count()),
@@ -116,7 +116,7 @@ fn a_virtualized_tables_rows_and_columns() {
 
 #[test]
 fn lists_and_trees_count_their_places() {
-    let st = scene(
+    let mut st = scene(
         r##"[
       #{ "key": "root", "box": (0, 0, 600, 400) },
       #{ "key": "l", "parent": "root", "role": "list", "box": (0, 0, 200, 300), "name": "Files" },
@@ -161,7 +161,7 @@ fn lists_and_trees_count_their_places() {
         )
     );
     assert_eq!(in_set("tab1"), Some((1, 2)));
-    let tree = a11y::tree(&st);
+    let tree = a11y::tree(&mut st);
     // a tree item's level as AccessKit counts it (from 0), and what opens
     // or closes it
     let i = ak(&tree, "tr:1");
@@ -177,7 +177,7 @@ fn lists_and_trees_count_their_places() {
 
 #[test]
 fn landmarks_headings_and_live_regions() {
-    let st = scene(
+    let mut st = scene(
         r##"[
       #{ "key": "root", "box": (0, 0, 600, 400) },
       #{ "key": "nav", "parent": "root", "role": "navigation", "box": (0, 0, 200, 400), "name": "Sidebar" },
@@ -194,7 +194,7 @@ fn landmarks_headings_and_live_regions() {
       #{ "key": "m", "parent": "main", "role": "meter", "box": (0, 370, 100, 8), "name": "Memory", "value": "40%", "range": (0.4, 0, 1) }
     ]"##,
     );
-    let tree = a11y::tree(&st);
+    let tree = a11y::tree(&mut st);
     assert_eq!(ak(&tree, "nav").role(), Role::Navigation);
     assert_eq!(ak(&tree, "main").role(), Role::Main);
     // an unnamed region is no landmark; a named one is
@@ -251,7 +251,7 @@ fn the_actions_a_client_may_ask_for() {
     "##);
     assert_eq!(
         text(&v),
-        "[[[\"focus\", \"increment\", \"decrement\"], [\"click\", \"expand\"], [\"scroll_down\"], []], \
+        "[[[\"focus\", \"show_menu\", \"increment\", \"decrement\"], [\"click\", \"expand\"], [\"scroll_down\"], []], \
          [[\"a11y\", \"step\", \"increment\"], [\"a11y\", \"step\", \"decrement\"], [\"a11y\", \"item\", \"expand\"], [\"scrolled\", \"sc\", 160.0]], \
          (100.0, -160.0, 300.0, 20.0)]"
     );
@@ -275,27 +275,108 @@ fn a_plain_fields_text_is_runs_zoom_can_follow() {
         [map_get(node("f"), "text_runs"), map_get(node("f"), "text_selection"), map_get(node("f"), "bounds"), map_get(node("pw"), "text_runs")]
     "##);
     assert_eq!(text(&v), "[1, (0, 3, 0, 3), (10.0, 10.0, 260.0, 24.0), ()]");
-    // the platform's tree: the run lies over the field (device pixels)
+    // the platform's tree: a run a line, each over its own line inside the
+    // field (device pixels), its characters placed along it
     let mut st = WinState::new(1, true, "f", 300.0, 120.0, 2.0);
     let mut out = Vec::new();
     st.apply(
         &run(r##"[#{ "key": "root", "box": (0, 0, 300, 120) },
-                 #{ "key": "f", "parent": "root", "role": "input", "box": (10, 10, 260, 24), "edit": #{ "value": "ab\ncd" } }]"##),
+                 #{ "key": "f", "parent": "root", "role": "textarea", "box": (10, 10, 260, 100), "edit": #{ "value": "ab\ncd" } }]"##),
         &mut out,
     )
     .unwrap();
-    let tree = a11y::tree(&st);
+    let tree = a11y::tree(&mut st);
     let f = ak(&tree, "f");
     assert_eq!(f.children().len(), 2, "a run a line");
-    let run0 = tree
-        .nodes
+    let runs: Vec<&accesskit::Node> = f
+        .children()
         .iter()
-        .find(|(i, _)| *i == f.children()[0])
-        .unwrap();
-    assert_eq!(run0.1.role(), Role::TextRun);
-    let b = run0.1.bounds().unwrap();
-    assert_eq!((b.x0, b.y0, b.x1, b.y1), (20.0, 20.0, 540.0, 68.0));
+        .map(|c| &tree.nodes.iter().find(|(i, _)| i == c).unwrap().1)
+        .collect();
+    assert_eq!(runs[0].role(), Role::TextRun);
+    let (b0, b1) = (runs[0].bounds().unwrap(), runs[1].bounds().unwrap());
+    // inside the field's box (20, 20)–(540, 220) (a line's leading may
+    // reach a pixel above), the second line below
+    assert!(b0.x0 >= 20.0 && b0.y0 >= 18.0 && b0.x1 <= 540.0, "{b0:?}");
+    assert!(b1.y0 >= b0.y1 - 1.0 && b1.y1 <= 220.0, "{b0:?} {b1:?}");
+    // "ab" and its line break placed; "cd" placed; left to right
+    let xs = runs[0].character_positions().unwrap();
+    let ws = runs[0].character_widths().unwrap();
+    assert_eq!((xs.len(), ws.len()), (3, 3));
+    assert!(xs[0] < xs[1] && ws[0] > 0.0 && ws[1] > 0.0, "{xs:?} {ws:?}");
+    assert_eq!(xs[2], xs[1] + ws[1], "the break after the last");
+    assert_eq!(runs[1].character_positions().unwrap().len(), 2);
+    assert_eq!(
+        runs[0].text_direction(),
+        Some(accesskit::TextDirection::LeftToRight)
+    );
     assert!(f.text_selection().is_some());
+}
+
+#[test]
+fn a_fields_caret_box_is_where_the_caret_is_drawn() {
+    let _turn = events_turn();
+    // a line, a wrapped paragraph and a styled field: the caret's box as
+    // the platform works it out from the runs is the drawn caret's
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (360, 240) })
+        gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 360, 240) },
+          #{ "key": "f", "parent": "root", "role": "input", "box": (10, 10, 260, 24), "style": #{ "pad": (0, 8, 0, 8) }, "edit": #{ "value": "hello world" } },
+          #{ "key": "t", "parent": "root", "role": "textarea", "box": (10, 50, 120, 100), "edit": #{ "value": "the quick brown fox jumps over the lazy dog\nend" } },
+          #{ "key": "r", "parent": "root", "role": "textarea", "box": (150, 50, 200, 100),
+             "edit": #{ "value": "one\ntwo three", "rich": true, "styles": [], "spans": [] } },
+          #{ "op": "focus", "key": "f" }
+        ])
+        let node = (k) => filter(gui.read(w, "a11y"), (n) => map_get(n, "key") == k)[0]
+        let pair = (k) => {
+          let c = gui.read(w, "caret")
+          let b = map_get(node(k), "caret_box")
+          [c, b]
+        }
+        gui.input(w, #{ "kind": "key", "key": "right" })
+        gui.input(w, #{ "kind": "key", "key": "right" })
+        gui.input(w, #{ "kind": "key", "key": "right" })
+        let a = pair("f")
+        gui.apply(w, [#{ "op": "focus", "key": "t" }])
+        gui.input(w, #{ "kind": "key", "key": "down" })
+        gui.input(w, #{ "kind": "key", "key": "right" })
+        let b = pair("t")
+        gui.apply(w, [#{ "op": "focus", "key": "r" }])
+        gui.input(w, #{ "kind": "key", "key": "down" })
+        gui.input(w, #{ "kind": "key", "key": "right" })
+        gui.input(w, #{ "kind": "key", "key": "right" })
+        let c = pair("r")
+        [a, b, c]
+    "##);
+    let Value::List(all) = &v else { panic!("{v}") };
+    let num = |v: &Value| match v {
+        Value::Float(f) => *f,
+        Value::Integer(i) => *i as f64,
+        _ => panic!("{v}"),
+    };
+    let quad = |v: &Value| -> Vec<f64> {
+        match v {
+            Value::Tuple(t) => t.iter().map(num).collect(),
+            _ => panic!("no box: {v}"),
+        }
+    };
+    for (i, p) in all.iter().enumerate() {
+        let Value::List(p) = p else { panic!("{p}") };
+        let (drawn, said) = (quad(&p[0]), quad(&p[1]));
+        // the same place: the caret's left edge and its line (logical
+        // pixels; the drawn caret is a stroke 1–2 wide)
+        assert!(
+            (drawn[0] - said[0]).abs() <= 1.5,
+            "field {i}: drawn {drawn:?}, said {said:?}"
+        );
+        assert!(
+            said[1] <= drawn[1] + 1.5 && said[1] + said[3] >= drawn[1] + drawn[3] - 1.5,
+            "field {i}: drawn {drawn:?}, said {said:?}"
+        );
+        // not the field's box: a caret moved in from its left
+        assert!(said[0] > 12.0, "field {i}: {said:?}");
+    }
 }
 
 #[test]
@@ -305,4 +386,32 @@ fn a_new_role_is_known_to_the_engine() {
         [contains(roles, "navigation"), contains(roles, "spinbutton"), contains(roles, "grid"), map_get(gui.platform(), "a11y_depth")]
     "##);
     assert_eq!(text(&v), "[true, true, true, true]");
+}
+
+#[test]
+fn voiceovers_menu_action_is_the_menu_key_on_the_node() {
+    let _turn = events_turn();
+    // VO-⇧M on a field: focused, then the keyboard's menu key, a
+    // misspelled word's guesses with it
+    let v = run(r##"
+        gui.spell("stand_in", #{ "teh": ["the"] })
+        let ev = gui.events()
+        let mut stale = true
+        while stale { match chan.try_recv(ev) { Ok(()) => { stale = false }, Ok(e) => (), _ => { stale = false } } }
+        let w = gui.headless(#{ "size": (300, 100) })
+        gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 300, 100) },
+          #{ "key": "b", "parent": "root", "role": "button", "box": (0, 40, 80, 24), "text": "Go" },
+          #{ "key": "f", "parent": "root", "role": "input", "box": (0, 0, 300, 24), "edit": #{ "value": "teh", "spellcheck": true } },
+          #{ "op": "focus", "key": "b" }
+        ])
+        gui.input(w, #{ "kind": "a11y", "key": "f", "action": "show_menu" })
+        let mut got = []
+        let mut more = true
+        while more { match chan.try_recv(ev) { Ok(()) => { more = false }, Ok(e) => { got = got + [e] }, _ => { more = false } } }
+        gui.spell("stand_in", ())
+        let k = filter(got, (e) => map_get(e, "kind") == "key")[0]
+        [gui.read(w, "focus"), map_get(k, "chord"), map_get(k, "target"), map_get(map_get(k, "spelling"), "guesses")]
+    "##);
+    assert_eq!(text(&v), r#"["f", "contextmenu", "f", ["the"]]"#);
 }

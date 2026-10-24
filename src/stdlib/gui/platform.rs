@@ -334,6 +334,10 @@ pub fn capabilities() -> Value {
         // a field's `spellcheck`: misspelled words underlined by the
         // platform's checker (macOS's NSSpellChecker)
         ("spellcheck", b(mac)),
+        // a misspelled word's guesses, learning and ignoring (`gui.spell`,
+        // `gui.spelling`, an event's `spelling`), and `gui.replace_text`
+        ("spell_guesses", b(mac)),
+        ("replace_text", b(true)),
         // the text input client: dictation, Look Up, an input method's
         // context read from the focused field
         ("text_input", b(mac)),
@@ -1153,8 +1157,8 @@ impl App {
         if a11y_tree {
             let state = pw.state.clone();
             pw.a11y.update_if_active(|| match state.lock() {
-                Ok(st) => a11y::tree(&st),
-                Err(e) => a11y::tree(&e.into_inner()),
+                Ok(mut st) => a11y::tree(&mut st),
+                Err(e) => a11y::tree(&mut e.into_inner()),
             });
         }
         if wants_ime != pw.ime_on {
@@ -2102,9 +2106,9 @@ impl App {
                 match ev.window_event {
                     accesskit_winit::WindowEvent::InitialTreeRequested => {
                         if let Some(pw) = self.windows.get_mut(&id)
-                            && let Ok(st) = pw.state.lock()
+                            && let Ok(mut st) = pw.state.lock()
                         {
-                            let tree = a11y::tree(&st);
+                            let tree = a11y::tree(&mut st);
                             drop(st);
                             pw.a11y.update_if_active(|| tree);
                         }
@@ -4284,6 +4288,99 @@ pub mod edit_menu {
         }
     }
 
+    /// This process's spell document (AppKit's tag): what Ignore Spelling
+    /// ignores a word in, until the process ends.
+    fn spell_tag() -> isize {
+        static TAG: std::sync::OnceLock<isize> = std::sync::OnceLock::new();
+        *TAG.get_or_init(|| {
+            contain_callback("spell_tag", || {
+                let cls = AnyClass::get(c"NSSpellChecker")?;
+                // SAFETY: a class method answering an NSInteger.
+                let t: isize = unsafe { msg_send![cls, uniqueSpellDocumentTag] };
+                Some(t)
+            })
+            .flatten()
+            .unwrap_or(0)
+        })
+    }
+
+    /// AppKit's guesses for a misspelled word, best first, in the
+    /// person's languages (the language found from the word).
+    pub fn spell_guesses(word: &str) -> Vec<String> {
+        contain_callback("spell_guesses", || {
+            let cls = AnyClass::get(c"NSSpellChecker")?;
+            let ns = NSString::from_str(word);
+            let total = super::chars_to_utf16(word, word.chars().count());
+            let mut out = Vec::new();
+            // SAFETY: AppKit's shared checker; the string lives for the
+            // call; the answer is an NSArray of NSStrings or nil.
+            unsafe {
+                let checker: Retained<AnyObject> = msg_send![cls, sharedSpellChecker];
+                let none: *const AnyObject = std::ptr::null();
+                let found: Option<Retained<AnyObject>> = msg_send![&*checker,
+                    guessesForWordRange: Range { location: 0, length: total },
+                    inString: &*ns,
+                    language: none,
+                    inSpellDocumentWithTag: spell_tag()];
+                let Some(found) = found else {
+                    return Some(out);
+                };
+                let n: usize = msg_send![&*found, count];
+                for i in 0..n.min(64) {
+                    let g: Retained<NSString> = msg_send![&*found, objectAtIndex: i];
+                    out.push(g.to_string());
+                }
+            }
+            Some(out)
+        })
+        .flatten()
+        .unwrap_or_default()
+    }
+
+    /// Teach AppKit's checker a word: `learn` (`learnWord:`, the person's
+    /// dictionary, every program's), `unlearn`, `ignore` (this process's
+    /// document), `learned` (`hasLearnedWord:`).
+    pub fn spell_teach(op: &str, word: &str) -> bool {
+        contain_callback("spell_teach", || {
+            let cls = AnyClass::get(c"NSSpellChecker")?;
+            let ns = NSString::from_str(word);
+            // SAFETY: AppKit's shared checker and its documented messages;
+            // the string lives for the call.
+            unsafe {
+                let checker: Retained<AnyObject> = msg_send![cls, sharedSpellChecker];
+                match op {
+                    "learn" => {
+                        let _: () = msg_send![&*checker, learnWord: &*ns];
+                        Some(true)
+                    }
+                    "unlearn" => {
+                        let _: () = msg_send![&*checker, unlearnWord: &*ns];
+                        Some(true)
+                    }
+                    "ignore" => {
+                        let _: () = msg_send![&*checker, ignoreWord: &*ns, inSpellDocumentWithTag: spell_tag()];
+                        Some(true)
+                    }
+                    "learned" => {
+                        let b: Bool = msg_send![&*checker, hasLearnedWord: &*ns];
+                        Some(b.as_bool())
+                    }
+                    _ => Some(false),
+                }
+            }
+        })
+        .flatten()
+        .unwrap_or(false)
+    }
+
+    /// The process's speller: AppKit's, which needs no window.
+    pub fn install_speller() {
+        crate::stdlib::gui::edit::set_speller(Some(crate::stdlib::gui::edit::Speller {
+            guesses: spell_guesses,
+            teach: spell_teach,
+        }));
+    }
+
     /// The misspelled words of `text` (characters), by AppKit's shared
     /// spell checker in the person's languages.
     fn spell_check(text: &str) -> Vec<(usize, usize)> {
@@ -4306,7 +4403,7 @@ pub mod edit_menu {
                     range: Range { location: 0, length: total },
                     types: 2u64,
                     options: none,
-                    inSpellDocumentWithTag: 0isize,
+                    inSpellDocumentWithTag: spell_tag(),
                     orthography: none,
                     wordCount: words as *mut isize];
                 let Some(results) = results else {

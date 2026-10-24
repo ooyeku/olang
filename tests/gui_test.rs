@@ -319,7 +319,7 @@ fn a_stale_value_from_the_program_does_not_undo_typing() {
 #[test]
 fn the_accessibility_tree_names_every_control() {
     let mut st = reference_scene(1.0);
-    let tree = olang::stdlib::gui::a11y::tree(&st);
+    let tree = olang::stdlib::gui::a11y::tree(&mut st);
     // The window, plus every node, plus the field's text as runs (a line
     // each: what a screen reader reads it by and Zoom follows its caret in)
     let runs = tree
@@ -511,7 +511,7 @@ fn a_drag_is_followed_across_windows_and_a_node_has_actions_of_its_own() {
         .find(|n| n.role == "button")
         .expect("a button");
     n.actions = vec!["Move right".into()];
-    let tree = olang::stdlib::gui::a11y::tree(&st);
+    let tree = olang::stdlib::gui::a11y::tree(&mut st);
     assert!(
         tree.nodes.iter().any(|(_, n)| n
             .custom_actions()
@@ -563,7 +563,7 @@ fn a_lists_actions_are_its_active_rows_too() {
     let r = st.scene.nodes.get_mut(row).unwrap();
     r.actions.clear();
     (r.decorative, r.disabled) = (false, false);
-    let tree = olang::stdlib::gui::a11y::tree(&st);
+    let tree = olang::stdlib::gui::a11y::tree(&mut st);
     let custom = |k: &str| {
         let id = olang::stdlib::gui::a11y::node_id(k);
         tree.nodes
