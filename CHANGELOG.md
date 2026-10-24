@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Spelling's suggestions.** A right press (⌃-click) on a misspelled
+  word in a `spellcheck: true` field selects it and says `spelling`
+  `#{ key, word, from, to, guesses }` with the press (⇧F10 and the Menu
+  key with the event of the key), NSSpellChecker's guesses best first,
+  for the program's context menu. `gui.replace_text(w, key, #{ from, to,
+  text })` puts a guess in as one edit the field's undo takes back;
+  `gui.spell(op, word)` asks the platform's speller (no window needed):
+  `"guesses"`, `"learn"`, `"unlearn"`, `"ignore"` (this process, its
+  own spell document), `"learned"`, and `"stand_in"` (a test's words and
+  guesses instead, the person's dictionary never written); a word learnt
+  or ignored, every spell-checked field is checked again.
+  `gui.spelling(w, key)` asks for the word at the caret.
+  `gui.platform()` says `spell_guesses` and `replace_text`.
+- **VoiceOver's VO-⇧M** on a focusable node (AccessKit's
+  `ShowContextMenu`) focuses it and sends the key event the Menu key
+  sends (`chord: "contextmenu"`, `source: "a11y"`, a misspelled word's
+  `spelling` with it), so a program's context menu opens as ⇧F10 opens
+  it; `gui.input`'s `a11y` action `"show_menu"`.
+
 - **`material: "window"`: a box shows the desktop behind the window**,
   as a Mac sidebar does. The window gets an NSVisualEffectView
   (`.sidebar`, blending behind the window, following its active state)
@@ -24,7 +43,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   conversion to the screen is then a matrix only. A transition between
   wide colours moves through wide colours. Software and snapshots draw
   the sRGB fallback (the colour clipped). `gui.platform().wide_color`.
+
 ### Changed
+
+- **Zoom follows the caret itself.** A field's text reaches assistive
+  output as a run a visual line (from the text engine's lines), each over
+  its own line with its characters' places and widths and a direction:
+  `AXBoundsForRange` of the caret is where it is drawn (a real window's
+  test through the AX client API), so Zoom's Follow keyboard focus
+  follows the caret, not the field, and VoiceOver boxes a character. A
+  styled field's lines in view, the rest a run a paragraph as before.
+  `gui.read(w, "a11y")` says a field's `caret_box`.
 
 - **`olang test` runs each file from its project's root** (the folder
   with the `olang.toml` above it), not from the file's own folder, so a

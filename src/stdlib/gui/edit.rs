@@ -30,11 +30,126 @@ pub const SPELL_MAX_CHARS: usize = 100_000;
 
 /// The misspelled words of `text`, or `None` with no checker.
 pub fn spell_check(text: &str) -> Option<Vec<(usize, usize)>> {
-    let f = (*SPELL.lock().unwrap_or_else(|e| e.into_inner()))?;
     if text.len() > SPELL_MAX_CHARS * 4 || text.chars().count() > SPELL_MAX_CHARS {
         return Some(Vec::new());
     }
+    if let Some(words) = &*STAND_IN.lock().unwrap_or_else(|e| e.into_inner()) {
+        return Some(stand_in_check(words, text));
+    }
+    let f = (*SPELL.lock().unwrap_or_else(|e| e.into_inner()))?;
     Some(f(text))
+}
+
+/// What the platform's speller does besides checking: a misspelled
+/// word's guesses (`"guesses"`, the answer), and `"learn"`, `"unlearn"`,
+/// `"ignore"` (in this process's document) and `"learned"` a word.
+pub struct Speller {
+    pub guesses: fn(&str) -> Vec<String>,
+    pub teach: fn(&str, &str) -> bool,
+}
+
+static SPELLER: std::sync::Mutex<Option<Speller>> = std::sync::Mutex::new(None);
+
+/// Set the process's speller (the platform's; on macOS NSSpellChecker,
+/// which needs no window).
+pub fn set_speller(s: Option<Speller>) {
+    *SPELLER.lock().unwrap_or_else(|e| e.into_inner()) = s;
+}
+
+/// A stand-in speller for a test: the words it calls misspelled, each
+/// with its guesses. While set, it checks and guesses instead of the
+/// platform's, and learning or ignoring a word drops it (the platform's
+/// dictionary is never written).
+static STAND_IN: std::sync::Mutex<Option<std::collections::HashMap<String, Vec<String>>>> =
+    std::sync::Mutex::new(None);
+
+/// What learning or ignoring a word changed: a field checked before is
+/// checked again (`Spelling` keeps the generation it found its words in).
+static SPELL_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn spell_generation() -> u64 {
+    SPELL_GEN.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn spell_changed() {
+    SPELL_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn set_stand_in(words: Option<std::collections::HashMap<String, Vec<String>>>) {
+    *STAND_IN.lock().unwrap_or_else(|e| e.into_inner()) = words;
+    spell_changed();
+}
+
+/// The stand-in's misspellings of `text`: its words found whole (letters
+/// and digits around them are not).
+fn stand_in_check(
+    words: &std::collections::HashMap<String, Vec<String>>,
+    text: &str,
+) -> Vec<(usize, usize)> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if !chars[i].is_alphanumeric() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '\'') {
+            i += 1;
+        }
+        let w: String = chars[start..i].iter().collect();
+        if words.contains_key(&w) {
+            out.push((start, i));
+        }
+    }
+    out
+}
+
+/// A misspelled word's guesses, best first (none without a speller).
+pub fn spell_guesses(word: &str) -> Vec<String> {
+    if let Some(words) = &*STAND_IN.lock().unwrap_or_else(|e| e.into_inner()) {
+        return words.get(word).cloned().unwrap_or_default();
+    }
+    let f = SPELLER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .map(|s| s.guesses);
+    f.map(|f| f(word)).unwrap_or_default()
+}
+
+/// Teach the speller: `"learn"` (the person's dictionary: every program
+/// spells it right from now on), `"unlearn"`, `"ignore"` (this process's
+/// fields, until it ends), `"learned"` (asks). The fields are checked
+/// again. `false` without a speller or for an op it does not know.
+pub fn spell_teach(op: &str, word: &str) -> bool {
+    if let Some(words) = STAND_IN.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+        let r = match op {
+            "learn" | "ignore" => {
+                words.remove(word);
+                true
+            }
+            "unlearn" => true,
+            "learned" => false,
+            _ => return false,
+        };
+        if op != "learned" {
+            spell_changed();
+        }
+        return r;
+    }
+    let f = SPELLER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .map(|s| s.teach);
+    let Some(f) = f else { return false };
+    let r = f(op, word);
+    if op != "learned" {
+        spell_changed();
+    }
+    r
 }
 
 pub struct Editor {

@@ -83,6 +83,9 @@ const FUNCTIONS: &[(&str, usize)] = &[
     ("dialog", 2),
     ("menu", 1),
     ("context_menu", 3),
+    ("spell", 2),
+    ("spelling", 2),
+    ("replace_text", 3),
     ("compare", 3),
     ("context", 0),
     ("platform", 0),
@@ -102,6 +105,9 @@ const FUNCTIONS: &[(&str, usize)] = &[
 ];
 
 pub fn create_gui_module() -> Value {
+    // the platform's speller (guesses, learning), a window or not
+    #[cfg(target_os = "macos")]
+    platform::edit_menu::install_speller();
     let mut module = crate::ast::ValueMap::default();
     for (name, arity) in FUNCTIONS {
         module.insert(
@@ -235,6 +241,9 @@ fn gui_function(name: &str, args: Vec<Value>) -> DynRes {
         "dialog" => gui_dialog(args),
         "menu" => gui_menu(args),
         "context_menu" => gui_context_menu(args),
+        "spell" => gui_spell(args),
+        "spelling" => gui_spelling(args),
+        "replace_text" => gui_replace_text(args),
         _ => Err(format!("Unknown gui function: {name}")),
     };
     r.map_err(|e| e.into())
@@ -1179,6 +1188,7 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
                 "scroll_left" => (Action::ScrollLeft, None),
                 "scroll_right" => (Action::ScrollRight, None),
                 "scroll_into_view" => (Action::ScrollIntoView, None),
+                "show_menu" => (Action::ShowContextMenu, None),
                 "set_value" => (
                     Action::SetValue,
                     Some(ActionData::Value(
@@ -1193,7 +1203,7 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
                 ),
                 other => {
                     return Err(format!(
-                        "gui.input: unknown assistive action \"{other}\" (click, focus, set_value, increment, decrement, expand, collapse, scroll_up, scroll_down, scroll_left, scroll_right, scroll_into_view, custom)"
+                        "gui.input: unknown assistive action \"{other}\" (click, focus, set_value, increment, decrement, expand, collapse, scroll_up, scroll_down, scroll_left, scroll_right, scroll_into_view, show_menu, custom)"
                     ));
                 }
             };
@@ -1565,6 +1575,147 @@ fn gui_context_menu(args: Vec<Value>) -> Res<Value> {
         return Ok(Value::Boolean(false));
     }
     platform::context_menu(id, items, x, y)
+}
+
+/// `gui.spell(op, word)`: the platform's speller (macOS: NSSpellChecker,
+/// no window needed). `"guesses"`: a misspelled word's guesses, best
+/// first; `"learn"` (into the person's dictionary: every program spells
+/// it right from now on, as AppKit's Learn Spelling does), `"unlearn"`,
+/// `"ignore"` (this process's fields, until it ends): `true` when the
+/// speller took it, every spell-checked field checked again; `"learned"`:
+/// whether the person's dictionary has it. `"stand_in"` with a map
+/// `#{ word: [guesses] }` (or `()` to end it): a test's speller instead of
+/// the platform's — its words misspelled, learning and ignoring dropping
+/// them, the person's dictionary never written.
+fn gui_spell(args: Vec<Value>) -> Res<Value> {
+    arity("gui.spell", &args, 2, 2)?;
+    let op = match &args[0] {
+        Value::String(s) => s.as_str().to_string(),
+        _ => return Err("gui.spell: the first argument is the op, a string".into()),
+    };
+    let answer = match (op.as_str(), &args[1]) {
+        ("stand_in", Value::Unit) => {
+            edit::set_stand_in(None);
+            Value::Unit
+        }
+        ("stand_in", Value::Map(m)) => {
+            let mut words = std::collections::HashMap::new();
+            for (k, v) in m.iter() {
+                let k = k.to_string();
+                let gs = match v {
+                    Value::List(l) => l
+                        .iter()
+                        .map(|g| match g {
+                            Value::String(g) => Ok(g.as_str().to_string()),
+                            _ => Err("gui.spell: a stand-in's guesses are strings".to_string()),
+                        })
+                        .collect::<Res<Vec<String>>>()?,
+                    Value::Unit => Vec::new(),
+                    _ => return Err("gui.spell: a stand-in word's guesses are a list".into()),
+                };
+                words.insert(k, gs);
+            }
+            edit::set_stand_in(Some(words));
+            Value::Unit
+        }
+        ("stand_in", _) => {
+            return Err("gui.spell: \"stand_in\" takes #{ word: [guesses] } or ()".into());
+        }
+        (_, Value::String(w)) => {
+            let w = w.as_str();
+            match op.as_str() {
+                "guesses" => Value::List(Arc::new(
+                    edit::spell_guesses(w).iter().map(|g| s(g)).collect(),
+                )),
+                "learn" | "unlearn" | "ignore" | "learned" => {
+                    Value::Boolean(edit::spell_teach(&op, w))
+                }
+                other => {
+                    return Err(format!(
+                        "gui.spell: unknown op \"{other}\" (guesses, learn, unlearn, ignore, learned, stand_in)"
+                    ));
+                }
+            }
+        }
+        _ => return Err("gui.spell: the second argument is the word, a string".into()),
+    };
+    if op != "guesses" && op != "learned" {
+        // every spell-checked field checked again, its window drawn
+        let all: Vec<(u64, Shared)> = windows()
+            .lock()
+            .map_err(|_| "gui: registry poisoned".to_string())?
+            .iter()
+            .map(|(k, v)| (*k, v.clone()))
+            .collect();
+        for (id, w) in all {
+            let headless = match w.lock() {
+                Ok(mut st) => {
+                    st.spelling_changed();
+                    st.headless
+                }
+                Err(_) => continue,
+            };
+            if !headless {
+                platform::redraw(id);
+            }
+        }
+    }
+    Ok(answer)
+}
+
+/// `gui.spelling(window, key)`: the misspelled word at a spell-checked
+/// field's caret, `#{ key, word, from, to, guesses }` (`from`, `to`:
+/// characters of its value), else `()`. A right press (⌃-click) on a
+/// misspelled word, ⇧F10 and the Menu key say the same with the event
+/// (`spelling`), the word selected.
+fn gui_spelling(args: Vec<Value>) -> Res<Value> {
+    arity("gui.spelling", &args, 2, 2)?;
+    let id = window_id("gui.spelling", args.first())?;
+    let w = window("gui.spelling", id)?;
+    let key = match &args[1] {
+        Value::String(k) => k.as_str().to_string(),
+        _ => return Err("gui.spelling: the field's key is a string".into()),
+    };
+    let mut out = Vec::new();
+    let v = w
+        .lock()
+        .map_err(|_| "gui: window poisoned")?
+        .spelling_at_caret(&key, false, &mut out);
+    Ok(v.unwrap_or(Value::Unit))
+}
+
+/// `gui.replace_text(window, key, #{ from, to, text })`: characters
+/// `from..to` of field `key`'s value replaced by `text` as one edit (the
+/// field's undo takes it back), reported as typing is (`changed`).
+/// `true` when replaced; `false` off a field, past its end, read-only.
+fn gui_replace_text(args: Vec<Value>) -> Res<Value> {
+    arity("gui.replace_text", &args, 3, 3)?;
+    let what = "gui.replace_text";
+    let id = window_id(what, args.first())?;
+    let w = window(what, id)?;
+    let key = match &args[1] {
+        Value::String(k) => k.as_str().to_string(),
+        _ => return Err("gui.replace_text: the field's key is a string".into()),
+    };
+    let from = get_num(&args[2], "from", what)?.ok_or("gui.replace_text: needs \"from\"")?;
+    let to = get_num(&args[2], "to", what)?.ok_or("gui.replace_text: needs \"to\"")?;
+    let text = get_str(&args[2], "text", what)?.unwrap_or("").to_string();
+    if from < 0.0 || to < 0.0 {
+        return Ok(Value::Boolean(false));
+    }
+    let mut out = Vec::new();
+    let (done, headless) = {
+        let mut st = w.lock().map_err(|_| "gui: window poisoned")?;
+        (
+            st.replace_text(&key, from as usize, to as usize, &text, &mut out),
+            st.headless,
+        )
+    };
+    emit(out);
+    if !headless {
+        platform::redraw(id);
+    }
+    Ok(Value::Boolean(done))
 }
 
 /// `gui.compare(a, b, opts)`: two PNGs (Bytes) compared pixel by pixel,

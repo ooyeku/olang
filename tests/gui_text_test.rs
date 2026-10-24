@@ -23,6 +23,10 @@ fn run(src: &str) -> Value {
     Interpreter::new().eval_program(program).expect("runs")
 }
 
+fn shown(v: &Value) -> String {
+    format!("{v}")
+}
+
 #[test]
 fn the_optical_size_follows_the_text_size() {
     let small = Font {
@@ -454,4 +458,100 @@ fn spelling_rechecks_only_the_paragraph_typed_in_once_typing_pauses() {
     );
     assert_eq!(sp.found, vec![(0, 3), (13, 16)]);
     edit::set_spell_checker(None);
+}
+
+#[test]
+fn a_right_press_on_a_misspelled_word_says_its_guesses_and_a_guess_replaces_it_undoably() {
+    let _turn = events_turn();
+    let v = run(r##"
+        gui.spell("stand_in", #{ "teh": ["the", "ten"], "wrod": [] })
+        let ev = gui.events()
+        let drain = () => {
+          let mut got = []
+          let mut more = true
+          while more { match chan.try_recv(ev) { Ok(()) => { more = false }, Ok(e) => { got = got + [e] }, Err(e) => { more = false } } }
+          got
+        }
+        let w = gui.headless(#{ "size": (300, 100) })
+        gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 300, 100) },
+          #{ "key": "f", "parent": "root", "role": "input", "box": (0, 0, 300, 24),
+             "edit": #{ "value": "a teh cat wrod", "spellcheck": true } },
+          #{ "key": "plain", "parent": "root", "role": "input", "box": (0, 40, 300, 24),
+             "edit": #{ "value": "teh" } }
+        ])
+        let _ = drain()
+        // a right press in "teh": its guesses with the press, the word selected
+        gui.input(w, #{ "kind": "pointer", "action": "down", "x": 22, "y": 12, "button": "right" })
+        gui.input(w, #{ "kind": "pointer", "action": "up", "x": 22, "y": 12, "button": "right" })
+        let downs = filter(drain(), (e) => e.kind == "pointer" && e.action == "down")
+        let sp = downs[0].spelling
+        let sel = gui.read(w, "selection", "f")
+        let asked = gui.spelling(w, "f")
+        // the first guess chosen: one edit, said as typing is, undone by ⌘Z
+        let done = gui.replace_text(w, "f", #{ "from": sp.from, "to": sp.to, "text": sp.guesses[0] })
+        let changed = filter(drain(), (e) => e.kind == "changed")
+        let after = gui.read(w, "value", "f")
+        gui.input(w, #{ "kind": "key", "key": "z", "mod": true })
+        let undone = gui.read(w, "value", "f")
+        // the keyboard's menu key on "wrod": no guesses; ignored, it is spelt
+        gui.input(w, #{ "kind": "key", "key": "z", "mod": true, "shift": true })
+        gui.apply(w, [#{ "key": "f", "parent": "root", "role": "input", "box": (0, 0, 300, 24),
+                         "edit": #{ "value": "a the cat wrod", "spellcheck": true, "select": (12, 12, 1) } }])
+        gui.input(w, #{ "kind": "key", "key": "f10", "shift": true })
+        let keyed = filter(drain(), (e) => e.kind == "key")[0].spelling
+        let ignored = gui.spell("ignore", "wrod")
+        let gone = gui.spelling(w, "f")
+        // a field not spell-checked: nothing said
+        gui.apply(w, [#{ "op": "focus", "key": "plain" }])
+        let none = gui.spelling(w, "plain")
+        gui.spell("stand_in", ())
+        [sp.word, sp.from, sp.to, sp.guesses, sel, asked.word, done, len(changed), after, undone,
+         keyed.word, keyed.guesses, ignored, gone, none]
+    "##);
+    assert_eq!(
+        shown(&v),
+        "[\"teh\", 2, 5, [\"the\", \"ten\"], (2, 5), \"teh\", true, 1, \"a the cat wrod\", \"a teh cat wrod\", \
+         \"wrod\", [], true, (), ()]"
+    );
+}
+
+#[test]
+fn replacing_text_out_of_range_or_in_a_read_only_field_is_refused() {
+    let _turn = events_turn();
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (300, 100) })
+        gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 300, 100) },
+          #{ "key": "f", "parent": "root", "role": "input", "box": (0, 0, 300, 24), "edit": #{ "value": "abc" } },
+          #{ "key": "ro", "parent": "root", "role": "textarea", "box": (0, 40, 300, 40), "edit": #{ "value": "abc", "readonly": true } }
+        ])
+        [gui.replace_text(w, "f", #{ "from": 2, "to": 9, "text": "x" }), gui.replace_text(w, "ro", #{ "from": 0, "to": 1, "text": "x" }),
+         gui.replace_text(w, "nope", #{ "from": 0, "to": 1, "text": "x" }), gui.replace_text(w, "f", #{ "from": 1, "to": 2, "text": "ZZ" }),
+         gui.read(w, "value", "f")]
+    "##);
+    assert_eq!(shown(&v), "[false, false, false, true, \"aZZc\"]");
+}
+
+/// The platform's own speller (macOS: NSSpellChecker), no window open:
+/// a misspelling's guesses; a word ignored, then learnt and unlearnt (a
+/// nonsense word of this run's own, so the person's dictionary is left
+/// as it was).
+#[cfg(target_os = "macos")]
+#[test]
+fn the_platforms_speller_guesses_and_learns() {
+    let _turn = events_turn();
+    let word = format!("zqxolang{}vb", std::process::id());
+    let v = run(&r##"
+        let g = gui.spell("guesses", "helo")
+        let w = "WORD"
+        let before = gui.spell("learned", w)
+        let learnt = gui.spell("learn", w)
+        let now = gui.spell("learned", w)
+        let unlearnt = gui.spell("unlearn", w)
+        let after = gui.spell("learned", w)
+        [contains(g, "hello"), before, learnt, now, unlearnt, after, gui.spell("ignore", w)]
+    "##
+    .replace("WORD", &word));
+    assert_eq!(shown(&v), "[true, false, true, true, true, false, true]");
 }
