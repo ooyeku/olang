@@ -125,7 +125,10 @@ println(secret())
         undefined("secret"),
         undefined("secret"),
         undefined("secret"),
-        format!("Runtime error: Unwrap failed on error: \"{}\"", undefined("secret")),
+        format!(
+            "Runtime error: Unwrap failed on error: \"{}\"",
+            undefined("secret")
+        ),
         undefined("bump"),
         undefined("secret"),
         "main's secret".to_string(),
@@ -232,10 +235,6 @@ println(tools())
 println(imported())
 println(sum_hot(600))
 "#;
-    let dir = agrees(
-        "own",
-        main,
-        "later/private/7\nOK 2 4.0\nimported\n600",
-    );
+    let dir = agrees("own", main, "later/private/7\nOK 2 4.0\nimported\n600");
     let _ = std::fs::remove_dir_all(&dir);
 }
