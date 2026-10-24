@@ -76,6 +76,9 @@ pub enum Cmd {
     /// The program's turn has run past the watch's limit (`true`), or it
     /// ended after it had (`false`): every window says so.
     NotResponding(bool),
+    /// Window `id` has something moving: its next frame, now (the render
+    /// thread asks at a refresh).
+    NextFrame(u64),
     ServiceText {
         id: u64,
         text: String,
@@ -489,6 +492,10 @@ pub fn post_settings_notice() {
 #[allow(clippy::large_enum_variant)]
 enum Renderer {
     Gpu(gpu::Surface),
+    /// Drawn and presented on the render thread (render.rs): the surface
+    /// is there, the main thread publishes frames.
+    #[cfg(target_os = "macos")]
+    Threaded(super::render::Handle),
     Soft {
         surface: softbuffer::Surface<Arc<Window>, Arc<Window>>,
         _context: softbuffer::Context<Arc<Window>>,
@@ -503,6 +510,8 @@ impl Renderer {
     fn invalidate(&mut self) {
         match self {
             Renderer::Gpu(s) => s.invalidate(),
+            #[cfg(target_os = "macos")]
+            Renderer::Threaded(h) => h.invalidate(),
             Renderer::Soft { kept, .. } => kept.invalidate(),
         }
     }
@@ -570,6 +579,11 @@ fn close_window(pw: PWin) -> Closing {
     } = pw;
     #[cfg(target_os = "macos")]
     frames::unlink(link);
+    // drawn on the render thread: its surface and link let go there first
+    #[cfg(target_os = "macos")]
+    if let Renderer::Threaded(h) = &renderer {
+        h.remove();
+    }
     let window = Closing::watch(&win);
     let teardown = move || {
         drop(renderer);
@@ -801,6 +815,10 @@ impl App {
         win.request_redraw();
         #[cfg(target_os = "macos")]
         let win_for_link = win.clone();
+        // a GPU window is drawn on the render thread: its surface and its
+        // display link (scheduled there) are handed over
+        #[cfg(target_os = "macos")]
+        let (renderer, link) = hand_over(renderer, &win_for_link, id);
         self.windows.insert(
             id,
             PWin {
@@ -815,7 +833,7 @@ impl App {
                 ime_area: None,
                 lost_said: false,
                 #[cfg(target_os = "macos")]
-                link: frames::link_for(&win_for_link, id),
+                link,
                 in_flight: std::collections::VecDeque::new(),
                 deferred: false,
                 idle_ticks: 0,
@@ -944,7 +962,12 @@ impl App {
         // holds a frame only behind two, as the layer's own drawables
         // would — what a measurement compares against.)
         #[cfg(target_os = "macos")]
-        {
+        let threaded = matches!(pw.renderer, Renderer::Threaded(_));
+        #[cfg(not(target_os = "macos"))]
+        let threaded = false;
+        // (a window drawn on the render thread is paced there)
+        #[cfg(target_os = "macos")]
+        if !threaded {
             let synthetic = frames::synthetic_hz().is_some();
             let limit = if frames::pacing() {
                 1
@@ -1024,8 +1047,10 @@ impl App {
                 Some(t) if !unseen => {
                     let ms = (t - st.clock_ms()).clamp(1.0, 60_000.0);
                     #[cfg(target_os = "macos")]
-                    let linked =
-                        ms <= 8.0 && (pw.link.is_some() || frames::synthetic_hz().is_some());
+                    let linked = ms <= 8.0
+                        && (pw.link.is_some()
+                            || matches!(&pw.renderer, Renderer::Threaded(h) if h.linked)
+                            || frames::synthetic_hz().is_some());
                     #[cfg(not(target_os = "macos"))]
                     let linked = false;
                     if linked {
@@ -1071,7 +1096,20 @@ impl App {
         let (dl, covers) = dl;
         let listed = started.elapsed();
         emit(std::mem::take(&mut moved));
+        let (dw, dh, prims) = (dl.width, dl.height, dl.prims.len());
         let presented = match &mut pw.renderer {
+            // handed over whole: the render thread draws and presents it as
+            // the pacing lets it (a frame of a new size waited for)
+            #[cfg(target_os = "macos")]
+            Renderer::Threaded(h) => {
+                h.publish(super::render::Frame {
+                    dl,
+                    animating: std::mem::take(&mut pw.animating),
+                    covers,
+                    started,
+                });
+                false
+            }
             Renderer::Gpu(s) => match s.render(&dl) {
                 Ok(()) => s.presented(),
                 // Not drawn: the window is covered or the compositor is
@@ -1112,11 +1150,12 @@ impl App {
             },
             Renderer::Soft { surface, kept, .. } => present_soft(surface, kept, &dl, &pw.win),
         };
-        pw.lost_said = false;
-        PRESENTED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if !threaded {
+            pw.lost_said = false;
+            count_frame(presented);
+        }
+        #[cfg(target_os = "macos")]
         if presented {
-            SHOWN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            #[cfg(target_os = "macos")]
             frames::engine_presented(id, covers);
         }
         super::holds::record("main_list", listed);
@@ -1125,7 +1164,7 @@ impl App {
         // that changed nothing was not presented: nothing is on its way)
         #[cfg(target_os = "macos")]
         if presented {
-            pw.shown_size = (dl.width, dl.height);
+            pw.shown_size = (dw, dh);
             pw.in_flight
                 .push_back((frames::now_ns(), frames::answered(id)));
             frames::resume(&pw.link);
@@ -1135,15 +1174,15 @@ impl App {
         if pw.animating {
             frames::resume(&pw.link);
         }
-        crate::boot_trace::frame_presented();
+        if !threaded {
+            crate::boot_trace::frame_presented();
+        }
         // the frame: its display list made, and drawn and presented
         if trace {
             eprintln!(
-                "gui: window {id} frame {}x{}, {} prims, listed in {:.2} ms, drawn in {:.2} ms",
-                dl.width,
-                dl.height,
-                dl.prims.len(),
+                "gui: window {id} frame {dw}x{dh}, {prims} prims, listed in {:.2} ms, {} in {:.2} ms",
                 listed.as_secs_f64() * 1000.0,
+                if threaded { "handed over" } else { "drawn" },
                 (started.elapsed() - listed).as_secs_f64() * 1000.0
             );
         }
@@ -1168,6 +1207,27 @@ impl App {
             );
             pw.ime_area = ime_area;
         }
+    }
+}
+
+/// A GPU window's surface and display link handed to the render thread
+/// (`GUI_RENDER_THREAD=0`, or no thread to be had: kept here, the link on
+/// the main run loop, as before).
+#[cfg(target_os = "macos")]
+fn hand_over(
+    renderer: Renderer,
+    win: &Window,
+    id: u64,
+) -> (
+    Renderer,
+    Option<objc2::rc::Retained<objc2::runtime::AnyObject>>,
+) {
+    match renderer {
+        Renderer::Gpu(s) if super::render::enabled() && super::render::available() => {
+            let link = frames::make_link(win, id);
+            (Renderer::Threaded(super::render::adopt(id, s, link)), None)
+        }
+        r => (r, frames::link_for(win, id)),
     }
 }
 
@@ -1662,6 +1722,15 @@ pub fn frames_presented() -> u64 {
 /// How many frames were presented (a frame that changed nothing is not).
 static SHOWN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// A frame drawn (by the main thread or the render thread), and whether
+/// it was presented.
+pub(super) fn count_frame(presented: bool) {
+    PRESENTED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    if presented {
+        SHOWN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// How many frames the platform's windows presented: a window whose
 /// pixels were lost (its device made again) presents its next frame
 /// whole, though nothing in it changed.
@@ -1804,6 +1873,8 @@ impl App {
                 // a refresh: too many to say
                 Cmd::Tick { .. } => String::new(),
                 Cmd::NotResponding(on) => format!("not responding {on}"),
+                // a refresh's frame: too many to say
+                Cmd::NextFrame(_) => String::new(),
                 Cmd::ServiceText { id, .. } => format!("service text {id}"),
                 Cmd::InsertText { id, .. } => format!("insert text {id}"),
             };
@@ -1962,6 +2033,14 @@ impl App {
             Cmd::Edit { id, role } => self.edit_item(id, role),
             Cmd::Tick { .. } => self.on_tick(cmd),
             Cmd::NotResponding(on) => self.not_responding(on),
+            Cmd::NextFrame(id) => {
+                if let Some(pw) = self.windows.get(&id) {
+                    if let Ok(mut st) = pw.state.lock() {
+                        st.dirty = true;
+                    }
+                    self.render(id);
+                }
+            }
             Cmd::ServiceText { id, text } => self.input(id, Input::ImeCommit(text)),
             Cmd::InsertText { id, text, replace } => {
                 if let Some((loc, len)) = replace
@@ -2101,6 +2180,10 @@ impl App {
                     pw.wake = None;
                     // no refresh shows them now: nothing is held for them
                     pw.in_flight.clear();
+                    #[cfg(target_os = "macos")]
+                    if let Renderer::Threaded(h) = &pw.renderer {
+                        h.occluded();
+                    }
                 }
             }
             WindowEvent::ModifiersChanged(m) => {
@@ -2309,7 +2392,7 @@ pub fn open(opts: OpenOpts) -> Result<u64, String> {
     Ok(id)
 }
 
-fn send(cmd: Cmd) {
+pub(super) fn send(cmd: Cmd) {
     if let LoopState::Running(p) = &*LOOP.lock().unwrap_or_else(|e| e.into_inner()) {
         let _ = p.send_event(cmd);
     }
@@ -2811,6 +2894,11 @@ impl App {
         if id == 0 {
             let ids: Vec<u64> = self.windows.keys().copied().collect();
             for w in ids {
+                #[cfg(target_os = "macos")]
+                if let Some(Renderer::Threaded(h)) = self.windows.get(&w).map(|pw| &pw.renderer) {
+                    h.tick(at);
+                    continue;
+                }
                 self.on_tick(Cmd::Tick { id: w, at });
             }
             return;
@@ -4488,6 +4576,11 @@ pub mod frames {
             if trace_ticks() {
                 eprintln!("gui: window {id} tick at {at:.4}");
             }
+            // a link on the render thread's run loop ticks there
+            if super::super::render::here() {
+                super::super::render::tick_here(id, (at * 1e9) as u64);
+                return;
+            }
             send(Cmd::Tick {
                 id,
                 at: (at * 1e9) as u64,
@@ -4560,6 +4653,28 @@ pub mod frames {
     /// a frame is on its way. `None` before macOS 14 (frames go out at
     /// once, as they always did).
     pub fn link_for(win: &winit::window::Window, id: u64) -> Option<Retained<AnyObject>> {
+        let link = make_link(win, id)?;
+        schedule_here(&link);
+        Some(link)
+    }
+
+    /// The link put on the calling thread's run loop (the main thread's,
+    /// or the render thread's), in the common modes.
+    pub fn schedule_here(link: &Retained<AnyObject>) {
+        // SAFETY: a live CADisplayLink, scheduled once, on this thread.
+        unsafe {
+            let rl: Retained<AnyObject> = msg_send![objc2::class!(NSRunLoop), currentRunLoop];
+            // the common modes' own constant: CFRunLoop knows it by its
+            // address, and a string equal to it names a mode of its own
+            // that the loop never runs (the link then never ticked)
+            let mode = kCFRunLoopCommonModes as *const AnyObject;
+            let _: () = msg_send![&**link, addToRunLoop: &*rl, forMode: &*mode];
+        }
+    }
+
+    /// A display link for `win`'s view, paused, on no run loop yet (made
+    /// on the main thread, which the view needs).
+    pub fn make_link(win: &winit::window::Window, id: u64) -> Option<Retained<AnyObject>> {
         use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
         let RawWindowHandle::AppKit(h) = win.window_handle().ok()?.as_raw() else {
             return None;
@@ -4598,12 +4713,6 @@ pub mod frames {
             };
             let _: () = msg_send![&*link, setPreferredFrameRateRange: range];
             let _: () = msg_send![&*link, setPaused: true];
-            let rl: Retained<AnyObject> = msg_send![objc2::class!(NSRunLoop), mainRunLoop];
-            // the common modes' own constant: CFRunLoop knows it by its
-            // address, and a string equal to it names a mode of its own
-            // that the loop never runs (the link then never ticked)
-            let mode = kCFRunLoopCommonModes as *const AnyObject;
-            let _: () = msg_send![&*link, addToRunLoop: &*rl, forMode: &*mode];
             if trace_ticks() {
                 eprintln!(
                     "gui: window {id} display link {:p} at {most} Hz",
@@ -4627,7 +4736,8 @@ pub mod frames {
     /// The link ticks (a frame is on its way, or one is put off).
     pub fn resume(link: &Option<Retained<AnyObject>>) {
         if let Some(l) = link {
-            // SAFETY: a live CADisplayLink, on the main thread.
+            // SAFETY: a live CADisplayLink, on the thread whose run loop it
+            // is on.
             unsafe {
                 let paused: bool = msg_send![&**l, isPaused];
                 if trace_ticks() {

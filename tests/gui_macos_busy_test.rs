@@ -11,6 +11,18 @@
 //! program is not responding (the spinner turns, frames keep coming);
 //! once the turn ends it no longer does.
 //!
+//! Then the engine's own answers are timed (`GUI_LATENCY`: input to the
+//! present of the first frame made after it), first with no turn running
+//! and then while a layout-heavy turn runs (texts measured with
+//! `gui.measure` and the 200-row list patched whole, over and over, as a
+//! program laying out does): the wheel, the pointer moving over rows with
+//! a hover look, and typing into a field, each 50 times 16 ms apart.
+//! Every input is answered and frames keep their rate (no gap of 100 ms)
+//! while the turn runs. The numbers, and how long the engine's locks were
+//! held and waited for (`GUI_HOLDS`), are printed for comparing builds
+//! (`GUI_RENDER_THREAD=0` draws on the main thread). A phase the window
+//! was covered during (a person's own window over it) is left out.
+//!
 //! The harness is off: AppKit needs the process's first thread, which
 //! `gui::platform::host` takes for winit's loop.
 

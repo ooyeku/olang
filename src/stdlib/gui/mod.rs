@@ -42,6 +42,8 @@ pub mod motion;
 pub mod picture;
 pub mod platform;
 pub mod raster;
+#[cfg(target_os = "macos")]
+pub mod render;
 pub mod rich;
 pub mod scene;
 pub mod scroll;

@@ -2145,6 +2145,25 @@ impl Surface {
         &self.target.last
     }
 
+    /// The kept frame's size and pixels, straight RGBA (a test's: what
+    /// the window shows, before the swapchain's colour conversion).
+    pub fn kept_rgba(&self) -> (u32, u32, Vec<u8>) {
+        let Some((_, _, w, h)) = &self.target.tex else {
+            return (0, 0, Vec::new());
+        };
+        let mut px = self.target.rgba();
+        // a BGRA kept frame (the swapchain's order) read as RGBA
+        if matches!(
+            self.config.format,
+            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+        ) {
+            for p in px.chunks_exact_mut(4) {
+                p.swap(0, 2);
+            }
+        }
+        (*w, *h, px)
+    }
+
     pub fn render(&mut self, dl: &DisplayList) -> Result<(), String> {
         self.presented = false;
         if self.gpu.is_lost() {

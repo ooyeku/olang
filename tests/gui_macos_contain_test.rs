@@ -4,7 +4,8 @@
 //! An olang program opens a real window. The test makes each kind of
 //! call the platform makes into olang panic once, on purpose
 //! (`olang::contain::arm`): winit's handlers (a window's event, a
-//! request from the program, the loop about to wait), a frame's drawing,
+//! request from the program, the loop about to wait), a frame's listing
+//! and its drawing on the render thread,
 //! the methods AppKit calls on the application's delegate (documents to
 //! open, the tab bar's +), a notice's block, a menu item's action, and a
 //! `gui` builtin on the program's thread. Each must be contained: the
@@ -161,6 +162,10 @@ mod mac {
                     contain("user_event", id, || platform::redraw(id));
                     contain("about_to_wait", id, || platform::redraw(id));
                     contain("render", id, || platform::redraw(id));
+                    // the render thread's drawing (a GPU window's)
+                    if olang::stdlib::gui::render::kept(id).is_some() {
+                        contain("render_thread", id, || platform::redraw(id));
+                    }
                     contain("settings_notice", id, || {
                         on_main(platform::post_settings_notice)
                     });
@@ -260,6 +265,13 @@ mod mac {
             assert!(
                 result.contains(&format!("\"{site}\"")),
                 "{site} not heard: {result}"
+            );
+        }
+        // a GPU window draws on the render thread: its drawing contained too
+        if matches!(recovered, Some((_, true))) {
+            assert!(
+                result.contains("\"render_thread\""),
+                "render_thread not heard: {result}"
             );
         }
         match recovered {
