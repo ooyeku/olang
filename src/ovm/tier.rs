@@ -683,6 +683,13 @@ impl BytecodeTier {
         }
     }
 
+    /// The file the gate attributes the caller to (the interpreter's
+    /// `gate_file`), where the VM's own frames end: a function of the
+    /// language's own modules entered from there answers to it.
+    pub fn set_caps_base(&mut self, base: Option<Arc<str>>) {
+        self.vm.set_caps_base(base);
+    }
+
     pub fn try_call_at_depth(
         &mut self,
         func: &Function,

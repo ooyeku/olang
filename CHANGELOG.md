@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+
+- **The stdlib's olang-written modules are transparent to the gate.**
+  `gg`, `cli` and the other modules carried in the binary are olang
+  code. The gate judged their effects by their own folder-less file, so
+  those effects fell to the process's grant. A module loaded with
+  `fs_roots` wrote anywhere through `gg.save`, and a dependency held to
+  `fs = false, env = false` wrote files and read the environment through
+  `gg.save` and `cli.parse`. That code now answers to its nearest caller
+  that is not the language's own, as a native builtin does. This holds
+  on every tier, on worker threads (a worker starts under the grant of
+  the code that started it), and in the bytecode tier's compile-time
+  pre-grant, which no longer covers stdlib code.
+
 ### Changed
 
 - **`Any`, the type of any value.** A struct field, parameter or return

@@ -981,8 +981,10 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         }
         let globals = self.host_bindings();
         let root_file = self.current_module_path.clone();
+        let caps_base: Option<Arc<str>> = self.gate_file().map(Arc::from);
         let mut tier = self.bytecode_tier.take()?;
         tier.set_host_globals(globals, root_file.as_deref());
+        tier.set_caps_base(caps_base);
         let out = tier.try_hof_range(name, f, start, end, inclusive, init);
         self.bytecode_tier = Some(tier);
         match out? {
@@ -1014,8 +1016,10 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         }
         let globals = self.host_bindings();
         let root_file = self.current_module_path.clone();
+        let caps_base: Option<Arc<str>> = self.gate_file().map(Arc::from);
         let mut tier = self.bytecode_tier.take()?;
         tier.set_host_globals(globals, root_file.as_deref());
+        tier.set_caps_base(caps_base);
         let out = tier.try_hof(name, f, items, init);
         self.bytecode_tier = Some(tier);
         match out? {
@@ -2814,10 +2818,12 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     pub fn tier_compile_ahead(&mut self, file: Option<&str>) -> Vec<(String, String)> {
         let globals = self.host_bindings();
         let root_file = self.current_module_path.clone();
+        let caps_base: Option<Arc<str>> = self.gate_file().map(Arc::from);
         self.bytecode_tier
             .as_mut()
             .map(|t| {
                 t.set_host_globals(globals, root_file.as_deref());
+                t.set_caps_base(caps_base);
                 t.compile_ahead(file)
             })
             .unwrap_or_default()
@@ -3525,6 +3531,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             {
                 let globals = self.host_bindings();
                 let root_file = self.current_module_path.clone();
+                let caps_base: Option<Arc<str>> = self.gate_file().map(Arc::from);
                 let mut tier = self.bytecode_tier.take();
                 // The interpreter's frames (this one included) count
                 // against the same budget the VM spends from.
@@ -3533,6 +3540,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     .as_mut()
                     .map(|t| {
                         t.set_host_globals(globals, root_file.as_deref());
+                        t.set_caps_base(caps_base);
                         t.try_call_at_depth(func, &mut arguments, depth)
                     })
                     .unwrap_or(crate::ovm::tier::TierOutcome::Fallback);
@@ -4261,7 +4269,13 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             test_scope: None,
             // Coverage is single-threaded: worker clones don't record.
             coverage: None,
-            coverage_file_stack: Vec::new(),
+            // The gate's attribution carries onto the worker as its base:
+            // a closure of the language's own modules (transparent to the
+            // gate) running there answers to the code that started it.
+            coverage_file_stack: self
+                .gate_file()
+                .map(|f| vec![Some(f.to_string())])
+                .unwrap_or_default(),
             // so is the record of a test's calls
             arg_record: None,
             current_test: None,
@@ -5435,11 +5449,13 @@ the function it shadows is the usual cause; `olang check` names the parameter",
 
         let globals = self.host_bindings();
         let root_file = self.current_module_path.clone();
+        let caps_base: Option<Arc<str>> = self.gate_file().map(Arc::from);
         let mut tier = self.bytecode_tier.take();
         let outcome = tier
             .as_mut()
             .map(|t| {
                 t.set_host_globals(globals, root_file.as_deref());
+                t.set_caps_base(caps_base);
                 t.try_call_function_value(&func, &mut args)
             })
             .unwrap_or(crate::ovm::tier::TierOutcome::Fallback);
@@ -6336,11 +6352,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         // main file and was given the app's grant — or none at all, so
         // unrestricted. The evaluated source's functions are that file's
         // too, so a call into one stays attributed there.
-        let attributed = self
-            .coverage_file_stack
-            .last()
-            .and_then(|f| f.clone())
-            .or_else(|| self.current_module_path.clone());
+        let attributed = self.gate_file().map(|s| s.to_string());
         if let Some(path) = attributed.as_ref() {
             child.set_current_file(std::path::Path::new(path));
             child.coverage_file_stack.push(Some(path.clone()));
@@ -6563,14 +6575,33 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         self.current_caps().map(|(caps, _)| caps)
     }
 
+    /// The file the gate attributes the running code to: the innermost
+    /// frame's defining file, or at top level the current module. The
+    /// language's own modules (`gg`, `cli`, …: `caps::is_transparent_file`)
+    /// are passed over, so an effect they make answers to the code that
+    /// called them, as a native builtin's does.
+    pub(crate) fn gate_file(&self) -> Option<&str> {
+        for f in self.coverage_file_stack.iter().rev() {
+            match f.as_deref() {
+                Some(p) if crate::caps::is_transparent_file(p) => continue,
+                Some(p) => return Some(p),
+                None => break,
+            }
+        }
+        match self.current_module_path.as_deref() {
+            Some(p) if crate::caps::is_transparent_file(p) => self
+                .module_loading_stack
+                .iter()
+                .rev()
+                .map(|s| s.as_str())
+                .find(|s| !crate::caps::is_transparent_file(s)),
+            other => other,
+        }
+    }
+
     /// The real path of the file whose code is running (memoized).
     fn current_canon_file(&mut self) -> Option<std::path::PathBuf> {
-        let def_file = self
-            .coverage_file_stack
-            .last()
-            .and_then(|f| f.as_deref())
-            .or(self.current_module_path.as_deref())
-            .map(|s| s.to_string());
+        let def_file = self.gate_file().map(|s| s.to_string());
         def_file.as_ref().map(|f| {
             self.caps_path_cache
                 .entry(f.clone())

@@ -479,6 +479,18 @@ pub fn remove_module(dir: &std::path::Path) -> bool {
     ms.len() != before
 }
 
+/// Whether code defined in `file` belongs to the language itself — a
+/// stdlib module written in olang and carried in the binary (`gg`, `cli`,
+/// …: `__embedded__/<name>`), or a native one (`__stdlib__/<name>`). Such
+/// code is transparent to the gate, as a native builtin is: `gg.save`
+/// writes with the grant of the code that called it, never with the
+/// process's. Attributed by its own (folder-less) name it fell to the
+/// app's grant, and a module loaded under `fs_roots`, or a dependency
+/// held to `fs = false`, wrote anywhere through it.
+pub fn is_transparent_file(file: &str) -> bool {
+    file.starts_with("__embedded__/") || file.starts_with("__stdlib__/")
+}
+
 /// The builtins only the host may call: the window and the terminal,
 /// loading code, and the process's own profiler.
 pub fn host_only(full_name: &str) -> bool {

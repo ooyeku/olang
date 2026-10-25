@@ -114,6 +114,9 @@ pub struct BytecodeVm {
     /// `coverage_file_stack`. This is what attributes a gated builtin to
     /// the package whose code called it.
     caps_file_stack: Vec<Option<Arc<str>>>,
+    /// Where the attribution stands below this tier's own frames: the
+    /// entering interpreter's `gate_file` (`set_caps_base`).
+    caps_base: Option<Arc<str>>,
     /// Current nesting depth of execute(); bounds Rust stack growth from
     /// recursive CallNamed so runaway recursion errors instead of aborting
     call_depth: u32,
@@ -1760,6 +1763,7 @@ impl BytecodeVm {
             caps_trace: None,
             hof_promotions: 0,
             caps_file_stack: Vec::new(),
+            caps_base: None,
             call_depth: 0,
             arg_pool: Vec::new(),
             hof_cache: HashMap::new(),
@@ -7697,6 +7701,24 @@ impl BytecodeVm {
         }
     }
 
+    pub fn set_caps_base(&mut self, base: Option<Arc<str>>) {
+        self.caps_base = base;
+    }
+
+    /// The file the gate attributes the running code to: the innermost
+    /// frame's, the language's own modules passed over
+    /// (`caps::is_transparent_file`), else the entering interpreter's.
+    fn gate_file(&self) -> Option<Arc<str>> {
+        for f in self.caps_file_stack.iter().rev() {
+            match f {
+                Some(p) if crate::caps::is_transparent_file(p) => continue,
+                Some(p) => return Some(p.clone()),
+                None => return None,
+            }
+        }
+        self.caps_base.clone()
+    }
+
     /// Record the owning program's globals for the bridge (see the field),
     /// and the file whose top-level scope they are (`None` the program's).
     /// Answers whether compiled code took a constant from that scope that
@@ -8010,12 +8032,7 @@ impl BytecodeVm {
         // boundary.
         let caps = self.caps.clone();
         let trace = self.caps_trace.clone();
-        let attributed_to = self
-            .caps_file_stack
-            .last()
-            .cloned()
-            .flatten()
-            .map(|f| f.to_string());
+        let attributed_to = self.gate_file().map(|f| f.to_string());
         let depth = self.call_depth as usize;
         let interpreter = self.builtin_interpreter.as_mut().expect("just ensured");
         interpreter.seed_bridge_caps(caps, trace, attributed_to);
@@ -10055,9 +10072,10 @@ impl BytecodeVm {
         if !crate::caps::modules_active() {
             return false;
         }
-        let Some(Some(file)) = self.caps_file_stack.last() else {
+        let Some(file) = self.gate_file() else {
             return false;
         };
+        let file = &file;
         thread_local! {
             static SEEN: std::cell::RefCell<Option<(Arc<str>, bool)>> = const { std::cell::RefCell::new(None) };
         }
@@ -10129,12 +10147,7 @@ impl BytecodeVm {
         // would be a hole in the manifest.
         let caps = self.caps.clone();
         let trace = self.caps_trace.clone();
-        let attributed_to = self
-            .caps_file_stack
-            .last()
-            .cloned()
-            .flatten()
-            .map(|f| f.to_string());
+        let attributed_to = self.gate_file().map(|f| f.to_string());
         let depth = self.call_depth as usize;
         let interpreter = self.builtin_interpreter.as_mut().expect("just ensured");
         interpreter.seed_bridge_caps(caps, trace, attributed_to);
@@ -10971,6 +10984,13 @@ impl BytecodeCompiler {
     /// table is installed. None = no manifest, no folding.
     fn static_grant(&self) -> Option<crate::caps::Caps> {
         let table = self.static_caps.as_ref()?;
+        // The language's own modules are gated by their caller's grant,
+        // known only at run time (`caps::is_transparent_file`).
+        if let Some(f) = self.current_def_file.as_deref()
+            && crate::caps::is_transparent_file(&f.to_string_lossy())
+        {
+            return None;
+        }
         // A module loaded at run time is gated at run time: its grant is
         // not the table's, and may be replaced while its code runs.
         if let Some(f) = self.current_def_file.as_deref()
