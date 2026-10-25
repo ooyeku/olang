@@ -166,6 +166,14 @@ Details worth knowing:
   // Type error: parameter 'x' of tag expects Int | String, got true
   ```
 
+- **`Any` takes every value.** A field, parameter or return annotated
+  `Any` accepts whatever arrives and is never checked, by the runtime or
+  by `olang check`; it composes like any other type (`[Any]`,
+  `Map<String, Any>`, `Result<Any, String>`), so a struct can declare a
+  free-form field beside its checked ones:
+  `type RunResult = struct { ok: Bool, value: Any }`. An unannotated
+  parameter means the same; `Any` says it where an annotation is
+  required, as in a struct field.
 - **Generic type parameters are erased.** In `fn first<T>(xs: List<T>)
   -> T`, the `T` has no runtime identity and is never checked — but the
   `List` base still is, and trait *bounds* on generics are enforced.

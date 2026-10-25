@@ -2136,6 +2136,8 @@ impl SType {
                     )
                 }
             }
+            // `Any` is any value: nothing to prove.
+            TypeAnnotation::Custom(name) if name == "Any" => SType::Unknown,
             TypeAnnotation::Custom(name) if !type_params.iter().any(|p| p == name) => {
                 // A `type Name = <annotation>` alias reduces to what it
                 // names (the aliases of the program under check are

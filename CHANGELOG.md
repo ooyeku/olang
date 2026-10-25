@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **`Any`, the type of any value.** A struct field, parameter or return
+  annotated `Any` takes whatever arrives, unchecked on every tier and by
+  `olang check` (`type RunResult = struct { ok: Bool, value: Any }`,
+  `Result<Any, String>`, `[Any]`, `Map<String, Any>`). It raised "names
+  unknown type 'Any'".
+
 - **Name lookup is strictly lexical: a module never sees the program's
   names.** A module's code sees its own file's names (in any order, and
   nested functions as before), what it imports with `use`, and the stdlib

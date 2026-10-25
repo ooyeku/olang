@@ -1331,6 +1331,10 @@ impl FieldTypeCheck {
             {
                 Some(Self::Map)
             }
+            // `Any` is any value: a field, parameter or return that takes
+            // whatever arrives (a tool's free-form result) says so, and
+            // nothing is checked.
+            TypeAnnotation::Custom(name) if name == "Any" => None,
             TypeAnnotation::Custom(name) if !type_params.iter().any(|p| p == name) => {
                 Some(Self::Named(name.clone()))
             }
