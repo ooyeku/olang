@@ -210,7 +210,9 @@ mod mac {
             let s = Sel::register(sel);
             let ok: Bool = unsafe { msg_send![&*v, respondsToSelector: s] };
             assert!(ok.as_bool(), "the view answers {sel:?}");
-            let _: () = unsafe { msg_send![&*v, performSelector: s, withObject: none] };
+            // it answers an object (whatever the action returned, here
+            // nothing): taken raw, never retained
+            let _: *mut AnyObject = unsafe { msg_send![&*v, performSelector: s, withObject: none] };
         })
     }
 

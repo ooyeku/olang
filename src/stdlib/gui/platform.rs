@@ -4519,6 +4519,8 @@ pub mod edit_menu {
                 let checker: Retained<AnyObject> = msg_send![cls, sharedSpellChecker];
                 let none: *const AnyObject = std::ptr::null();
                 let words: *mut u8 = std::ptr::null_mut();
+                // orthography is an out-pointer (`NSOrthography **`), not an object
+                let no_orthography: *mut *mut AnyObject = std::ptr::null_mut();
                 // spelling (NSTextCheckingTypeSpelling), the language
                 // found from the text (a word-by-word check of a short
                 // text guesses none)
@@ -4528,7 +4530,7 @@ pub mod edit_menu {
                     types: 2u64,
                     options: none,
                     inSpellDocumentWithTag: spell_tag(),
-                    orthography: none,
+                    orthography: no_orthography,
                     wordCount: words as *mut isize];
                 let Some(results) = results else {
                     return Some(out);

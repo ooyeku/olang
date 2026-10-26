@@ -28,6 +28,7 @@
 
 #[cfg(all(feature = "gui", target_os = "macos"))]
 mod mac {
+    use objc2::encode::{Encoding, RefEncode};
     use objc2::msg_send;
     use objc2::rc::Retained;
     use objc2::runtime::{AnyClass, AnyObject};
@@ -96,6 +97,18 @@ mod mac {
         gui.close(w)
         "ended"
     "##;
+
+    /// CoreGraphics' event, opaque: a pointer to it is what AppKit's
+    /// `eventWithCGEvent:` takes (`^{__CGEvent=}`).
+    #[repr(C)]
+    struct CGEvent {
+        _opaque: [u8; 0],
+    }
+
+    // SAFETY: the encoding AppKit declares for a CGEventRef.
+    unsafe impl RefEncode for CGEvent {
+        const ENCODING_REF: Encoding = Encoding::Pointer(&Encoding::Struct("__CGEvent", &[]));
+    }
 
     unsafe extern "C" {
         static _dispatch_main_q: c_void;
@@ -227,7 +240,7 @@ mod mac {
                 return;
             }
             let ev: Option<Retained<AnyObject>> =
-                unsafe { msg_send![ev_cls, eventWithCGEvent: cg] };
+                unsafe { msg_send![ev_cls, eventWithCGEvent: cg as *const CGEvent] };
             unsafe { CFRelease(cg) };
             if let Some(ev) = ev {
                 let _: () = unsafe { msg_send![&*view, scrollWheel: &*ev] };

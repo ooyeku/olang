@@ -207,6 +207,27 @@ mod mac {
     }
 
     /// The window's root element (the view's one child).
+    /// Whether the window is on the screen and not covered: AppKit builds
+    /// no accessibility tree for a window nothing can see (a person's own
+    /// window over it, a display asleep or locked).
+    fn shown() -> bool {
+        let Some(cls) = AnyClass::get(c"NSApplication") else {
+            return false;
+        };
+        let app: Option<Retained<AnyObject>> = unsafe { msg_send![cls, sharedApplication] };
+        let Some(app) = app else { return false };
+        let windows: Option<Retained<NSArray<AnyObject>>> = unsafe { msg_send![&*app, windows] };
+        windows
+            .map(|ws| ws.to_vec())
+            .unwrap_or_default()
+            .iter()
+            .any(|w| {
+                let t: Option<Retained<NSString>> = unsafe { msg_send![&**w, title] };
+                let state: usize = unsafe { msg_send![&**w, occlusionState] };
+                t.map(|t| t.to_string()).as_deref() == Some(TITLE) && state & 2 != 0
+            })
+    }
+
     fn root() -> Option<Retained<AnyObject>> {
         let v = content_view()?;
         children(&v).into_iter().next()
@@ -668,9 +689,12 @@ mod mac {
         HEARD.lock().unwrap().clone()
     }
 
+    /// What the prober says when the window never reached the screen.
+    const NOT_SHOWN: &str = "not shown";
+
     pub fn main() {
         std::thread::spawn(|| {
-            std::thread::sleep(Duration::from_secs(60));
+            std::thread::sleep(Duration::from_secs(90));
             eprintln!("gui_macos_a11y_depth_test: timed out");
             std::process::exit(2);
         });
@@ -680,14 +704,18 @@ mod mac {
             std::thread::spawn(|| {
                 let prober = std::thread::spawn(|| {
                     let start = Instant::now();
+                    let mut ever_shown = false;
                     let seen = loop {
                         if let Some(s) = on_main(look) {
                             break s;
                         }
-                        assert!(
-                            start.elapsed() < Duration::from_secs(20),
-                            "the window's tree never showed"
-                        );
+                        ever_shown = ever_shown || on_main(shown);
+                        if start.elapsed() >= Duration::from_secs(40) {
+                            // never on the screen: nothing to read, not a failure
+                            assert!(!ever_shown, "the window's tree never showed");
+                            *SEEN.lock().unwrap() = Some(NOT_SHOWN.to_string());
+                            return;
+                        }
                         std::thread::sleep(Duration::from_millis(100));
                     };
                     let trusted = unsafe { AXIsProcessTrusted() };
@@ -722,6 +750,13 @@ mod mac {
             })
         });
         let seen = SEEN.lock().unwrap().take().unwrap_or_default();
+        if seen == NOT_SHOWN {
+            println!(
+                "gui_macos_a11y_depth_test: skipped, the window was never on the screen \
+                 (covered, or the display asleep or locked); it needs a real display"
+            );
+            return;
+        }
         let result = RESULT.lock().unwrap().take().unwrap_or_default();
         println!("seen:\n{seen}");
         println!("program: {result}");
