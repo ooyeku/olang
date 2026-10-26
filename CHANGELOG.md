@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0-rc.4] - 2026-10-26
+
+Release candidate 4: what main gained since rc.3, the stdlib's grant
+fix first. The agents work (`mcp`, `ai`, the sandbox, Draft) ships
+after 1.0.
+
 ### Security
 
 - **The stdlib's olang-written modules are transparent to the gate.**
@@ -171,6 +177,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   the tree-walker raised. A bare name now resolves only through the
   file's own names, its imports, and the stdlib modules and builtins,
   on every tier; a builtin another module shadows stays the builtin.
+
+- **Deep nesting without brackets is a parse error, not a crash.**
+  `if a => if a => …` or a lambda returning a lambda, nested past the
+  limit, overflowed a debug build's stack inside the grammar before the
+  tree's builder could refuse it. A pre-scan now refuses it first,
+  whether the nest sits on one line or a level a line.
+
+- **A window no longer shows an older frame after a burst of patches.**
+  The render thread let go of a frame for a newer one but left it owed,
+  so the main thread put every frame after it off and the window kept
+  the older one until something else drew it.
+
+- **No false deadlock under load.** A thread ending did not count as
+  progress, so a task that had finished, while the code joining it had
+  not yet seen it, could make the stall detector abort a healthy
+  program.
+
+- **AppKit message sends typed as AppKit declares them.** The spell
+  checker passed an object where `checkString:…` takes an out-pointer;
+  debug builds aborted on it (and on two test helpers).
 
 ## [1.0.0-rc.3] - 2026-10-23
 
