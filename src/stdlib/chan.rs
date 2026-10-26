@@ -125,10 +125,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 //
 // Blocking waits are polls under the hood (a short timeout per tick).
 // On each tick the waiter samples (generation, parked, live), where
-// the generation counter bumps on every park and unpark. If two
-// consecutive samples agree, no thread parked or unparked for a whole
-// tick — and if parked == live at both, every thread that could ever
-// send, receive, or finish sat blocked in an unbounded wait the entire
+// the generation counter bumps on every park and unpark, and when a
+// thread joins or leaves the census. If two consecutive samples agree,
+// no thread parked, unparked, started or ended for a whole tick — and
+// if parked == live at both, every thread that could ever send,
+// receive, or finish sat blocked in an unbounded wait the entire
 // time. Nothing internal can wake anyone (a wake requires a running
 // thread), and no external wake exists (an http worker would count
 // live but never parks) — a proven deadlock. The waiter prints every
@@ -175,13 +176,19 @@ pub struct LiveGuard(());
 /// Register the current thread in the live census.
 pub fn live_guard() -> LiveGuard {
     LIVE.fetch_add(1, Ordering::SeqCst);
+    PARK_GEN.fetch_add(1, Ordering::SeqCst);
     IN_CENSUS.with(|c| c.set(true));
     LiveGuard(())
 }
 
 impl Drop for LiveGuard {
+    /// A thread ending is progress too: the task a join waits on has
+    /// finished, though the joiner has not yet seen it. Without the bump
+    /// a tick between the two saw the census shrink to the parked set
+    /// under an unchanged generation and called it a deadlock.
     fn drop(&mut self) {
         LIVE.fetch_sub(1, Ordering::SeqCst);
+        PARK_GEN.fetch_add(1, Ordering::SeqCst);
         IN_CENSUS.with(|c| c.set(false));
     }
 }
