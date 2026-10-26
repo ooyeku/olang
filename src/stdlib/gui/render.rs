@@ -568,9 +568,17 @@ fn tick_win(st: &mut State, id: u64, at: u64) {
         frames::shown(p, t0, at);
     }
     // the main thread put a frame off: it lists one now, from the state as
-    // it is (what waited here is replaced by it)
+    // it is (what waited here is replaced by it). The frame let go counts
+    // as handled: left owed, the main thread found the render thread busy
+    // with it and put every frame after it off too, so the window kept
+    // showing an older one until something else drew it.
     if ask(id, w) {
-        w.slot.lock().newest = None;
+        let mut s = w.slot.lock();
+        if s.newest.take().is_some() {
+            s.handled = s.published;
+            drop(s);
+            w.slot.handled.notify_all();
+        }
         w.pending = false;
         return;
     }

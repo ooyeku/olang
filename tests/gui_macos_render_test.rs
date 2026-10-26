@@ -235,10 +235,19 @@ mod mac {
                         "storm: {presented} frames presented, the kept frame read {reads} times, {torn} torn, colours seen {seen:?}"
                     );
                     say(format!("no torn frames: {}", reads > 20 && torn == 0));
-                    settle(Duration::from_millis(300));
-                    let (gw, gh, gpu_px) = render::kept(id).expect("the kept frame");
-                    let (sw, sh, soft_px) = soft_now(id);
-                    let a = agree(&soft_px, &gpu_px);
+                    // the storm settles once the program's last patch is
+                    // drawn: under load its 600 patches outlast the reads
+                    // above, so compare until the two agree, for up to 5 s
+                    let settled = Instant::now();
+                    let (gw, gh, sw, sh, a) = loop {
+                        settle(Duration::from_millis(300));
+                        let (gw, gh, gpu_px) = render::kept(id).expect("the kept frame");
+                        let (sw, sh, soft_px) = soft_now(id);
+                        let a = agree(&soft_px, &gpu_px);
+                        if a.is_ok() || settled.elapsed() > Duration::from_secs(5) {
+                            break (gw, gh, sw, sh, a);
+                        }
+                    };
                     println!("after the storm: GPU {gw}x{gh}, software {sw}x{sh}: {a:?}");
                     say(format!("GPU and software agree: {}", a.is_ok()));
                     // a resize: a frame of the new size presented within a
