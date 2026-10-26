@@ -137,6 +137,13 @@ fn expressions_nested_without_brackets_past_the_limit_are_a_parse_error() {
             " else => 0".repeat(n)
         ),
         format!("let f = {}1\n", "(x) => ".repeat(n)),
+        // the same, a level a line: a line that ends in `=>` goes on
+        format!(
+            "let a = true\nlet x = {}1{}\n",
+            "if a =>\n".repeat(n),
+            "\nelse => 0".repeat(n)
+        ),
+        format!("let f = {}1\n", "(x) =>\n".repeat(n)),
     ] {
         let err = parse_err(src).expect("too deep");
         assert!(err.contains("nested more than"), "{}", err);
@@ -148,6 +155,10 @@ fn expressions_nested_without_brackets_past_the_limit_are_a_parse_error() {
         " else => 0".repeat(500)
     );
     assert_eq!(run(&src).expect("runs"), Value::Integer(1));
+    // a long match, its arms a line each, is no nesting
+    let arms: String = (0..10_000).map(|k| format!("    {k} => {k}\n")).collect();
+    let src = format!("let n = 9999\nmatch n {{\n{arms}    _ => -1\n}}\n");
+    assert_eq!(run(&src).expect("runs"), Value::Integer(9999));
     let src = format!("{}1{}\n", "(".repeat(1000), ")".repeat(1000));
     assert_eq!(run(&src).expect("runs"), Value::Integer(1));
 }

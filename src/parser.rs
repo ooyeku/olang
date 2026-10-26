@@ -322,11 +322,19 @@ pub const MAX_NESTING: usize = 1000;
 /// every bracket [`MAX_NESTING`] allows and the expressions between.
 pub const MAX_EXPR_DEPTH: usize = 4 * MAX_NESTING;
 
-/// Where `input`'s brackets first nest deeper than [`MAX_NESTING`] (a
-/// byte offset), or `None`: `(`, `[`, `{` counted in code and inside a
-/// template's `${…}`; strings, raw strings, a template's text and `//`
-/// comments skipped.
-fn nesting_too_deep(input: &str) -> Option<usize> {
+/// Where `input` first nests too deep for the grammar to recurse safely
+/// (a byte offset), and whether it was arrows: brackets deeper than
+/// [`MAX_NESTING`], or more than twice [`MAX_EXPR_DEPTH`] `=>` in one
+/// run at one bracket depth (an `if` and its `else` are two). The tree's
+/// builder bounds an expression's depth, but only after the grammar has
+/// recursed through all of it: 100,000
+/// `if a =>` on a line overflowed a debug build's 256 MiB in the grammar
+/// itself. A run of arrows ends at `,` or `;`, at a bracket that closes,
+/// and at a line break unless the line ended in `=>` (an `if` or a lambda
+/// whose body is on the next line). `(`, `[`, `{` and `=>` are counted in
+/// code and inside a template's `${…}`; strings, raw strings, a
+/// template's text and `//` comments are skipped.
+fn nesting_too_deep(input: &str) -> Option<(usize, bool)> {
     #[derive(PartialEq, Clone, Copy)]
     enum In {
         Code,
@@ -342,11 +350,28 @@ fn nesting_too_deep(input: &str) -> Option<usize> {
     let mut depth = 0usize;
     // the depth each open `${` began at (templates do not nest, so one)
     let mut interp: Option<usize> = None;
+    // `=>` in the current run, one count a bracket depth open
+    let mut arrows: Vec<usize> = vec![0];
+    let mut after_arrow = false;
     let mut i = 0usize;
     while i < bytes.len() {
         let b = bytes[i];
+        if state == In::Code && !matches!(b, b' ' | b'\t' | b'\r' | b'\n') {
+            after_arrow = false;
+        }
         match state {
             In::Code => match b {
+                b'=' if bytes.get(i + 1) == Some(&b'>') => {
+                    let run = arrows.last_mut().expect("one run a depth");
+                    *run += 1;
+                    if *run > 2 * MAX_EXPR_DEPTH {
+                        return Some((i, true));
+                    }
+                    after_arrow = true;
+                    i += 1;
+                }
+                b',' | b';' => *arrows.last_mut().expect("one run a depth") = 0,
+                b'\n' if !after_arrow => *arrows.last_mut().expect("one run a depth") = 0,
                 b'/' if bytes.get(i + 1) == Some(&b'/') => {
                     back = In::Code;
                     state = In::Comment;
@@ -368,6 +393,7 @@ fn nesting_too_deep(input: &str) -> Option<usize> {
                 b'`' => {
                     if interp.is_some() {
                         depth = interp.take().unwrap_or(0);
+                        arrows.truncate(depth + 1);
                     } else {
                         state = In::Template;
                     }
@@ -380,15 +406,20 @@ fn nesting_too_deep(input: &str) -> Option<usize> {
                 b'(' | b'[' | b'{' => {
                     depth += 1;
                     if depth > MAX_NESTING {
-                        return Some(i);
+                        return Some((i, false));
                     }
+                    arrows.push(0);
                 }
                 b'}' if interp == Some(depth.saturating_sub(1)) => {
                     depth = depth.saturating_sub(1);
+                    arrows.truncate(depth + 1);
                     interp = None;
                     state = In::Template;
                 }
-                b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+                b')' | b']' | b'}' => {
+                    depth = depth.saturating_sub(1);
+                    arrows.truncate(depth + 1);
+                }
                 _ => {}
             },
             In::Text => match b {
@@ -408,8 +439,9 @@ fn nesting_too_deep(input: &str) -> Option<usize> {
                     interp = Some(depth);
                     depth += 1;
                     if depth > MAX_NESTING {
-                        return Some(i);
+                        return Some((i, false));
                     }
+                    arrows.push(0);
                     state = In::Code;
                     i += 1;
                 }
@@ -1029,7 +1061,7 @@ impl Parser {
             input
         };
         self.index_lines(input);
-        if let Some(at) = nesting_too_deep(input) {
+        if let Some((at, arrows)) = nesting_too_deep(input) {
             let line = input[..at].matches('\n').count() + 1;
             let line_start = input[..at].rfind('\n').map(|n| n + 1).unwrap_or(0);
             let line_end = input[at..]
@@ -1038,10 +1070,17 @@ impl Parser {
                 .unwrap_or(input.len());
             let text: String = input[line_start..line_end].chars().take(120).collect();
             return Err(ParseError::InvalidSyntaxWithPosition {
-                message: format!(
-                    "brackets nested more than {} deep: bind the inner parts to names",
-                    MAX_NESTING
-                ),
+                message: if arrows {
+                    format!(
+                        "an expression nested more than {} deep: bind the inner parts to names",
+                        MAX_EXPR_DEPTH
+                    )
+                } else {
+                    format!(
+                        "brackets nested more than {} deep: bind the inner parts to names",
+                        MAX_NESTING
+                    )
+                },
                 line,
                 column: input[line_start..at].chars().count() + 1,
                 snippet: text.into(),
