@@ -10,7 +10,7 @@ match the implementation.
 
 ## Contents
 
-### Part I — Getting started
+### Getting started
 
 | Chapter | Contents |
 |---|---|
@@ -20,7 +20,7 @@ match the implementation.
 | [Common pitfalls](pitfalls.md) | Behaviors that surprise newcomers, each with the idiom that avoids it. |
 | [Stability and compatibility](stability.md) | What 1.0 promises: what is stable, what is experimental, the platforms it covers, and what a version number means. |
 
-### Part II — The language
+### The language
 
 | Chapter | Contents |
 |---|---|
@@ -28,14 +28,14 @@ match the implementation.
 | [Types and gradual typing](types.md) | Annotations enforced at runtime on every tier, the `olang check` static checker, element types, and adding types incrementally. |
 | [Macros](macros.md) | Extending olang in olang: `meta fn`, `@` invocation, decorators, compile-time evaluation, and the rules expansion follows. |
 
-### Part III — The standard library
+### The standard library
 
 | Chapter | Contents |
 |---|---|
 | [Standard library reference](stdlib.md) | The global builtins and every module: native modules, the embedded olang modules and packages, and the program-as-data interface (`meta`). |
 | [The data stack](ods.md) | Series, Frames, expressions, grouping, dates and categories, matrices, statistics and time series, machine learning with model formulas, and charts with `plot` and `gg`. |
 
-### Part IV — Tools
+### Tools
 
 | Chapter | Contents |
 |---|---|
@@ -45,14 +45,14 @@ match the implementation.
 | [Writing fast olang](performance.md) | The program shapes the execution tiers optimize, bulk data on the data stack, reading the tiers' decisions, and measured performance. |
 | [Editor support](editors.md) | The language server (`olang lsp`) and the VS Code and Zed extensions. |
 
-### Part V — The browser
+### The browser
 
 | Chapter | Contents |
 |---|---|
 | [olang in the browser](wasm.md) | The WebAssembly runtime, the `dom` module, events, canvas draw-lists, the `ui` view layer, routing and storage, and Web Workers. |
 | [The web SDK](web-sdk.md) | Full-stack web applications: one route table for server and browser, views as data, the store, forms, the bundle, and server push. |
 
-### Part VI — Going deeper
+### Going deeper
 
 | Chapter | Contents |
 |---|---|
