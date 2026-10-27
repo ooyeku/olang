@@ -95,9 +95,15 @@ impl Arith {
 /// A `rows × ncols` matrix whose column `j` is `f(j)`: the columns on
 /// threads when the matrix is large.
 fn by_column(rows: usize, ncols: usize, par: bool, f: impl Fn(usize) -> Vec<f64> + Sync) -> Matrix {
+    #[cfg(feature = "parallel")]
     let cols: Vec<Arc<Vec<f64>>> = if par && rows * ncols >= PAR_WORK {
         (0..ncols).into_par_iter().map(|j| Arc::new(f(j))).collect()
     } else {
+        (0..ncols).map(|j| Arc::new(f(j))).collect()
+    };
+    #[cfg(not(feature = "parallel"))]
+    let cols: Vec<Arc<Vec<f64>>> = {
+        let _ = par;
         (0..ncols).map(|j| Arc::new(f(j))).collect()
     };
     Matrix {
