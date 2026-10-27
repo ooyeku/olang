@@ -20,6 +20,8 @@ struct Repl {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     next: u64,
+    /// The `out` events heard so far: what evaluations printed as they ran.
+    outs: Vec<J>,
 }
 
 impl Repl {
@@ -45,15 +47,24 @@ impl Repl {
             stdin,
             stdout,
             next: 1,
+            outs: Vec::new(),
         };
         let hello = r.recv();
         (r, hello)
     }
 
+    /// The next message that is not an evaluation's streamed output (kept in `outs`).
     fn recv(&mut self) -> J {
-        let mut line = String::new();
-        self.stdout.read_line(&mut line).unwrap();
-        serde_json::from_str(&line).unwrap_or_else(|e| panic!("not JSON ({e}): {line:?}"))
+        loop {
+            let mut line = String::new();
+            self.stdout.read_line(&mut line).unwrap();
+            let m: J = serde_json::from_str(&line).unwrap_or_else(|e| panic!("not JSON ({e}): {line:?}"));
+            if m["event"] == json!("out") {
+                self.outs.push(m);
+                continue;
+            }
+            return m;
+        }
     }
 
     fn write(&mut self, mut m: J) -> u64 {
@@ -203,10 +214,12 @@ fn values_arrive_by_kind_with_their_type_time_and_tier() {
     let l = r.eval("let answer = 6 * 7");
     assert_eq!(l["binding"], json!("answer"));
     assert_eq!(l["value"]["s"], json!("42"));
-    // printed text comes with the evaluation, not on the protocol
+    // printed text comes with the evaluation, and as it is printed
     let p = r.eval("println(\"side\")\nanswer");
     assert_eq!(p["out"], json!("side\n"));
     assert_eq!(p["value"]["s"], json!("42"));
+    let heard: String = r.outs.iter().filter(|e| e["id"] == p["id"]).map(|e| e["text"].as_str().unwrap()).collect();
+    assert_eq!(heard, "side\n");
     // bytes that are a picture carry it
     let png = r.eval("bytes.from_list([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 4, 0, 0, 0, 3, 8, 6, 0, 0, 0])");
     assert_eq!(png["value"]["k"], json!("bytes"));
@@ -297,7 +310,8 @@ fn a_functions_parameters_are_named_then_bound_for_one_evaluation() {
             "html",
             "scene",
             "dtypes",
-            "daterange"
+            "daterange",
+            "stream"
         ])
     );
     let f = calc(dir.path());
@@ -1730,4 +1744,50 @@ fn a_param_that_does_not_bind_is_named_with_why_and_a_far_line_is_no_hang() {
     let deps = r.ask(json!({ "op": "deps", "cells": [{ "id": "a", "code": "let q = 1", "line": 99_999_999_999u64 }] }));
     assert!(deps.to_string().contains("\"q\""), "{deps}");
     assert!(t0.elapsed() < Duration::from_secs(5), "{:?}", t0.elapsed());
+}
+
+#[test]
+fn an_evaluation_streams_what_it_prints_while_it_runs() {
+    let dir = project();
+    let (mut r, hello) = Repl::start(dir.path());
+    assert!(hello["features"].as_array().unwrap().contains(&json!("stream")), "{hello}");
+    // each line is heard before the evaluation ends, in order, the last before the reply
+    let id = r.write(json!({ "op": "eval", "code": "for i in range(4) { println(`epoch ${i}`); time.sleep(250) }\n\"done\"" }));
+    let t0 = Instant::now();
+    let mut heard = Vec::new();
+    let reply = loop {
+        let mut line = String::new();
+        r.stdout.read_line(&mut line).unwrap();
+        let m: J = serde_json::from_str(&line).unwrap();
+        if m["event"] == json!("out") {
+            assert_eq!(m["id"], json!(id));
+            heard.push((t0.elapsed(), m["text"].as_str().unwrap().to_string()));
+        } else {
+            break m;
+        }
+    };
+    assert_eq!(reply["id"], json!(id));
+    assert_eq!(reply["out"], json!("epoch 0\nepoch 1\nepoch 2\nepoch 3\n"));
+    let text: String = heard.iter().map(|(_, t)| t.as_str()).collect();
+    assert_eq!(text, "epoch 0\nepoch 1\nepoch 2\nepoch 3\n");
+    assert!(heard.len() >= 3, "a line a batch at this pace: {heard:?}");
+    assert!(heard[0].0 < Duration::from_millis(600), "the first line came at once: {heard:?}");
+    // a flood is streamed in a few batches, bounded
+    let flood = r.write(json!({ "op": "eval", "code": "for i in range(0, 300000) { println(i) }" }));
+    let mut events = 0;
+    let mut bytes = 0;
+    loop {
+        let mut line = String::new();
+        r.stdout.read_line(&mut line).unwrap();
+        let m: J = serde_json::from_str(&line).unwrap();
+        if m["event"] == json!("out") {
+            events += 1;
+            bytes += m["text"].as_str().unwrap().len();
+        } else {
+            assert_eq!(m["id"], json!(flood));
+            break;
+        }
+    }
+    assert!(bytes <= 512 * 1024, "{bytes} bytes streamed");
+    assert!(events < 200, "{events} events for one flood");
 }

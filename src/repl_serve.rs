@@ -1550,7 +1550,7 @@ impl Session {
             "event": "hello", "protocol": PROTOCOL, "olang": crate::version::VERSION,
             "root": self.root.to_string_lossy(), "pid": std::process::id(),
             "ops": ["hello", "eval", "command", "commands", "complete", "deps", "drop", "expand", "fields", "release", "interrupt", "page", "ping", "record", "reload", "replay", "reread", "render", "reset", "set", "shutdown", "stats", "vars"],
-            "features": ["bind", "pure", "cell", "caps", "profile", "distinct", "record", "html", "scene", "dtypes", "daterange"],
+            "features": ["bind", "pure", "cell", "caps", "profile", "distinct", "record", "html", "scene", "dtypes", "daterange", "stream"],
         });
         if let Some(nb) = &self.notebook {
             v["notebook"] = json!({
@@ -1967,6 +1967,18 @@ impl Session {
         }
         crate::interrupt::clear();
         let _ = crate::output::take_collected();
+        // what it prints is streamed as it is printed (`stream`), and sent
+        // whole with the reply
+        let tapping = match self.out.clone() {
+            Some(out) => {
+                let id = msg.get("id").cloned().unwrap_or(J::Null);
+                crate::output::tap_begin(Box::new(move |text: &str| {
+                    out.send(&json!({ "event": "out", "id": id, "text": text, "err": false }));
+                }));
+                true
+            }
+            None => false,
+        };
         running.store(true, Ordering::SeqCst);
         // under no capability: a pure evaluation, or a refusal
         let kept_caps =
@@ -2102,6 +2114,9 @@ impl Session {
             scope.uses.extend(uses);
         }
         let stats1 = self.cmd.interpreter.bytecode_tier_stats();
+        if tapping {
+            crate::output::tap_end();
+        }
         let printed = crate::output::take_collected();
         let (bc, nat) = match (stats0, stats1) {
             (Some(a), Some(b)) => (

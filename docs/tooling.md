@@ -1005,12 +1005,18 @@ The session is bound to the project the working directory is in, as
 `olang eval` is: the project's dependencies and shelf libraries resolve.
 What a program prints while the session serves is collected and sent with
 the evaluation that printed it (`out`); stdout belongs to the protocol.
+While an `eval` runs, what it prints is also streamed as it is printed,
+`{"event":"out","id":7,"text":"…","err":false}` (the feature `stream`):
+batches at most every 50 ms, the last one before the reply, the first
+512 KB of them; the reply's `out` is still the whole, so a client that
+draws the stream replaces it with `out` when the reply comes.
 
 **Handshake.** On start the server says
 `{"event":"hello","protocol":1,"olang":"1.0.0","root":…,"pid":…,"ops":[…],"features":["bind","pure","cell","caps","profile","distinct"]}`
 (`features`: what an `eval` takes beyond the protocol's first version —
 `scene`: a gg plot value is said with its scene, below; `daterange`:
 a table view's range filter takes a Date or Datetime column, below;
+`stream`: an `eval`'s printed lines come as `out` events while it runs;
 a notebook's kernel says `notebook` too, below).
 A client that does not know the protocol's version stops there. `{"op":"hello"}`
 asks again.

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **A notebook cell's printed lines stream while it runs.** `olang repl
+  --serve` sends what an `eval` prints as `out` events as it is printed
+  (the hello's `stream` feature): batched at most every 50 ms, the first
+  512 KB, the last before the reply, whose `out` is still the whole.
+  A cell that trains for a minute shows each epoch as it ends.
+
 ## [1.0.0-rc.5] - 2026-10-27
 
 Release candidate 5: rc.4 with Linux building again. rc.4's tag never

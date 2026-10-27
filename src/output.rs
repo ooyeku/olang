@@ -36,6 +36,9 @@ fn write_stdout(bytes: &[u8], flush: bool) {
         if let Ok(mut buf) = COLLECTED.lock() {
             buf.push(bytes);
         }
+        if TAPPED.load(std::sync::atomic::Ordering::Relaxed) {
+            tap_push(bytes);
+        }
         return;
     }
     let mut out = std::io::stdout().lock();
@@ -177,6 +180,115 @@ static DISCARDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool
 #[cfg(feature = "native")]
 pub fn collect_output() {
     COLLECTING.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+// While an evaluation runs under `repl --serve`, what it prints is also
+// handed to a tap as it is printed (the protocol's `out` events), so an
+// editor shows a long cell's lines as they come. The tap hears batches:
+// at most one every `TAP_EVERY`, the rest sent by a ticker within
+// `TAP_TICK`, and nothing past `HEAD_MAX` bytes (the reply carries the
+// whole, bounded as above).
+#[cfg(feature = "native")]
+pub type Tap = Box<dyn Fn(&str) + Send>;
+
+#[cfg(feature = "native")]
+struct Tapping {
+    send: Tap,
+    pending: Vec<u8>,
+    last: std::time::Instant,
+    sent: usize,
+}
+
+#[cfg(feature = "native")]
+static TAPPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[cfg(feature = "native")]
+static TAP: std::sync::Mutex<Option<Tapping>> = std::sync::Mutex::new(None);
+#[cfg(feature = "native")]
+const TAP_EVERY: std::time::Duration = std::time::Duration::from_millis(50);
+#[cfg(feature = "native")]
+const TAP_TICK: std::time::Duration = std::time::Duration::from_millis(100);
+
+#[cfg(feature = "native")]
+impl Tapping {
+    fn flush(&mut self) {
+        if self.pending.is_empty() {
+            return;
+        }
+        // a character split across writes waits for its other half
+        let cut = match std::str::from_utf8(&self.pending) {
+            Ok(_) => self.pending.len(),
+            Err(e) if e.error_len().is_none() => e.valid_up_to(),
+            Err(_) => self.pending.len(),
+        };
+        let room = HEAD_MAX.saturating_sub(self.sent);
+        let text: Vec<u8> = self.pending.drain(..cut).collect();
+        if room > 0 && !text.is_empty() {
+            let text = &text[..text.len().min(room)];
+            self.sent += text.len();
+            (self.send)(&String::from_utf8_lossy(text));
+        }
+        self.last = std::time::Instant::now();
+    }
+}
+
+#[cfg(feature = "native")]
+fn tap_push(bytes: &[u8]) {
+    if let Ok(mut tap) = TAP.lock() {
+        if let Some(t) = tap.as_mut() {
+            t.pending.extend_from_slice(bytes);
+            if t.last.elapsed() >= TAP_EVERY {
+                t.flush();
+            }
+        }
+    }
+}
+
+/// Hand what is printed from now on to `send` too, in batches, until
+/// `tap_end`. A ticker thread sends what waits.
+#[cfg(feature = "native")]
+pub fn tap_begin(send: Tap) {
+    static TICKER: std::sync::Once = std::sync::Once::new();
+    TICKER.call_once(|| {
+        let _ = std::thread::Builder::new()
+            .name("olang-out-tap".into())
+            .spawn(|| loop {
+                std::thread::sleep(TAP_TICK);
+                if TAPPED.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Ok(mut tap) = TAP.lock() {
+                        if let Some(t) = tap.as_mut() {
+                            t.flush();
+                        }
+                    }
+                }
+            });
+    });
+    if let Ok(mut tap) = TAP.lock() {
+        *tap = Some(Tapping {
+            send,
+            pending: Vec::new(),
+            last: std::time::Instant::now(),
+            sent: 0,
+        });
+    }
+    TAPPED.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Send what waits and close the tap: nothing it hears comes after this.
+#[cfg(feature = "native")]
+pub fn tap_end() {
+    TAPPED.store(false, std::sync::atomic::Ordering::SeqCst);
+    if let Ok(mut tap) = TAP.lock() {
+        if let Some(mut t) = tap.take() {
+            t.flush();
+            // a lone half of a character at the very end
+            if !t.pending.is_empty() {
+                let rest = std::mem::take(&mut t.pending);
+                if t.sent < HEAD_MAX {
+                    (t.send)(&String::from_utf8_lossy(&rest));
+                }
+            }
+        }
+    }
 }
 
 /// What was printed since the last call (lossy UTF-8).
