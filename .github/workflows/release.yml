@@ -1,12 +1,11 @@
-# Release binaries — fires on every v* tag push (the tag the release
-# runbook in RELEASING.md ends with). Builds olang + otc for the three
+# Release binaries — fires on every v* tag push. Builds olang + otc for the three
 # supported desktop targets plus the playground wasm artifact, checksums
 # everything, and attaches it all to a GitHub Release for the tag.
 #
 # The trailing job pushes an updated Homebrew formula to the
 # ooyeku/homebrew-olang tap when a TAP_PUSH_TOKEN secret is configured
 # (and skips quietly when it is not). The VS Code Marketplace and the
-# Zed registry remain manual per-channel steps, in RELEASING.md.
+# Zed registry remain manual per-channel steps.
 
 name: Release
 
