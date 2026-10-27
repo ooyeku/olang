@@ -9,9 +9,9 @@
 
 use super::frame::{OdsFrame, frame_of};
 use super::series::{make_series_value, series_of};
-use crate::ast::{BuiltinFunction, Value, ValueMap};
+use crate::ast::{BinaryOp, BuiltinFunction, UnaryOp, Value, ValueMap};
 use crate::native::{NativeHandle, NativeObject};
-use olang_ods::matrix::{self, CorrMethod, Matrix, Metric};
+use olang_ods::matrix::{self, Arith, CorrMethod, Matrix, Metric};
 use olang_ods::{Frame, Series};
 use std::any::Any;
 use std::sync::Arc;
@@ -40,6 +40,40 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("cdist", 3),
     ("to_frame", 2),
     ("to_list", 1),
+    ("sum", 2),
+];
+
+/// The column functions a Matrix takes, as `ods.<name>(X)` and `X.<name>()`:
+/// each applied to every column, as to a Series.
+pub const COLUMN_FUNCTIONS: &[(&str, usize)] = &[
+    ("abs", 1),
+    ("exp", 1),
+    ("exp2", 1),
+    ("expm1", 1),
+    ("ln", 1),
+    ("ln1p", 1),
+    ("log2", 1),
+    ("log10", 1),
+    ("sqrt", 1),
+    ("cbrt", 1),
+    ("sin", 1),
+    ("cos", 1),
+    ("tan", 1),
+    ("asin", 1),
+    ("acos", 1),
+    ("atan", 1),
+    ("sinh", 1),
+    ("cosh", 1),
+    ("tanh", 1),
+    ("sigmoid", 1),
+    ("logit", 1),
+    ("sign", 1),
+    ("floor", 1),
+    ("ceil", 1),
+    ("trunc", 1),
+    ("pow", 2),
+    ("round", 2),
+    ("clip", 3),
 ];
 
 // ---------------------------------------------------------------------
@@ -143,7 +177,7 @@ pub fn matrix_frame(v: &Value) -> Option<Value> {
 
 pub fn namespace() -> Value {
     let mut module = ValueMap::default();
-    for (name, arity) in FUNCTIONS {
+    for (name, arity) in FUNCTIONS.iter().chain(COLUMN_FUNCTIONS) {
         module.insert(
             name.to_string(),
             Value::Builtin(BuiltinFunction {
@@ -159,7 +193,10 @@ pub fn namespace() -> Value {
 }
 
 pub fn handles(func: &str) -> bool {
-    FUNCTIONS.iter().any(|(n, _)| *n == func)
+    FUNCTIONS
+        .iter()
+        .chain(COLUMN_FUNCTIONS)
+        .any(|(n, _)| *n == func)
 }
 
 fn par() -> bool {
@@ -473,6 +510,139 @@ fn matmul_values(func: &str, lhs: &Value, rhs: &Value) -> R<Value> {
 }
 
 // ---------------------------------------------------------------------
+// + - * / and -X
+// ---------------------------------------------------------------------
+
+/// `a op b` element by element with a Matrix on either side: the other a
+/// Matrix of the same shape (or a single row or column of it, broadcast),
+/// a number, or a row of numbers — a Series or list as long as the matrix
+/// is wide, applied to every row (a bias). `None` when neither side is a
+/// Matrix or `op` is not `+ - * /`.
+pub fn elementwise(op: &BinaryOp, lhs: &Value, rhs: &Value) -> Option<R<Value>> {
+    let arith = match op {
+        BinaryOp::Add => Arith::Add,
+        BinaryOp::Subtract => Arith::Sub,
+        BinaryOp::Multiply => Arith::Mul,
+        BinaryOp::Divide => Arith::Div,
+        _ => return None,
+    };
+    let (a, b) = (matrix_of(lhs), matrix_of(rhs));
+    let out = match (a, b) {
+        (None, None) => return None,
+        (Some(a), Some(b)) => matrix::arith(a, arith, b, par()).map_err(|e| e.to_string()),
+        (Some(a), None) => beside(a, arith, rhs, false),
+        (None, Some(b)) => beside(b, arith, lhs, true),
+    };
+    Some(out.map(OdsMatrix::into_value))
+}
+
+/// A Matrix and the other side of `op`, the other written first when `first`.
+fn beside(m: &Matrix, op: Arith, other: &Value, first: bool) -> R<Matrix> {
+    let s = op.symbol();
+    match other {
+        Value::Float(x) => return Ok(matrix::arith_scalar(m, op, *x, first, par())),
+        Value::Integer(i) => return Ok(matrix::arith_scalar(m, op, *i as f64, first, par())),
+        _ => {}
+    }
+    if !is_vector(other) {
+        return Err(format!(
+            "Invalid binary operation: cannot apply '{}' to {} and {}",
+            s,
+            if first {
+                other.type_name()
+            } else {
+                "Matrix".to_string()
+            },
+            if first {
+                "Matrix".to_string()
+            } else {
+                other.type_name()
+            }
+        ));
+    }
+    let row = floats(&format!("`{}`", s), other)?;
+    let (r, c) = m.shape();
+    if row.len() != c {
+        return Err(format!(
+            "`{}`: a row of {} beside a {}×{} matrix: a Series or list is applied to every row, so it is as long as the matrix is wide ({}); a column is an n × 1 Matrix (ods.matrix([s]))",
+            s,
+            row.len(),
+            r,
+            c,
+            c
+        ));
+    }
+    let row = Matrix::from_rows(&[row]).map_err(|e| e.to_string())?;
+    let (a, b) = if first { (&row, m) } else { (m, &row) };
+    matrix::arith(a, op, b, par()).map_err(|e| e.to_string())
+}
+
+/// `-X`.
+pub fn negate(op: &UnaryOp, v: &Value) -> Option<R<Value>> {
+    let m = matrix_of(v)?;
+    match op {
+        UnaryOp::Negate => Some(Ok(OdsMatrix::into_value(matrix::arith_scalar(
+            m,
+            Arith::Mul,
+            -1.0,
+            false,
+            par(),
+        )))),
+        UnaryOp::Not => Some(Err(
+            "Invalid unary operation: cannot apply '!' to Matrix".to_string()
+        )),
+    }
+}
+
+/// A column function over a Matrix (`ods.tanh(X)`, `X.clip(lo: 0.0)`):
+/// `call` runs it on each column as a Series, the other arguments as they
+/// are; the columns make the Matrix it answers. `None` when the first
+/// argument is no Matrix or `func` is not one of `COLUMN_FUNCTIONS`.
+pub fn over_columns(
+    func: &str,
+    args: &[Value],
+    call: impl Fn(&str, Vec<Value>) -> R<Value>,
+) -> Option<R<Value>> {
+    if !COLUMN_FUNCTIONS.iter().any(|(n, _)| *n == func) {
+        return None;
+    }
+    let m = matrix_of(args.first()?)?;
+    if args[1..].iter().any(|a| matrix_of(a).is_some()) {
+        return Some(Err(format!(
+            "ods.{}: a Matrix's {} takes numbers beside it, not another Matrix",
+            func, func
+        )));
+    }
+    let (r, c) = m.shape();
+    let out = (|| -> R<Value> {
+        let cols = (0..c)
+            .map(|j| {
+                let col = make_series_value(Series::F64 {
+                    values: m.column(j),
+                    validity: None,
+                });
+                let mut a = Vec::with_capacity(args.len());
+                a.push(col);
+                a.extend(args[1..].iter().cloned());
+                let v = call(func, a)?;
+                let s = series_of(&v).ok_or_else(|| {
+                    format!(
+                        "ods.{}: a column gave {}, not a Series",
+                        func,
+                        v.type_name()
+                    )
+                })?;
+                dense_column(s, "a column", &format!("ods.{}", func))
+            })
+            .collect::<R<Vec<_>>>()?;
+        Matrix::from_columns(r, cols)
+            .map(OdsMatrix::into_value)
+            .map_err(|e| e.to_string())
+    })();
+    Some(out)
+}
+
+// ---------------------------------------------------------------------
 // ods.matrix, ods.corr, ods.cov
 // ---------------------------------------------------------------------
 
@@ -559,6 +729,19 @@ pub fn ods_dispatch(func: &str, args: &[Value]) -> R<Value> {
 pub fn dispatch(func: &str, args: Vec<Value>) -> R<Value> {
     let full = format!("mat.{}", func);
     let f = full.as_str();
+    if let Some(r) = over_columns(func, &args, super::call) {
+        return r;
+    }
+    if COLUMN_FUNCTIONS.iter().any(|(n, _)| *n == func) {
+        return Err(format!(
+            "{}: needs a Matrix, got {} (ods.{} takes a Series)",
+            f,
+            args.first()
+                .map(|v| v.type_name())
+                .unwrap_or_else(|| "nothing".to_string()),
+            func
+        ));
+    }
     let a0 = args.first();
     match func {
         "of" => match a0 {
@@ -616,7 +799,7 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> R<Value> {
                 Value::Integer(c as i64),
             ])))
         }
-        "mean" | "std" => {
+        "mean" | "std" | "sum" => {
             let m = want_matrix(f, a0, "the matrix")?;
             let axis = match args.get(1) {
                 None | Some(Value::Unit) => 0,
@@ -628,7 +811,9 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> R<Value> {
                     f, axis
                 ));
             }
-            let out = if func == "mean" {
+            let out = if func == "sum" {
+                m.sum(axis as usize, par())
+            } else if func == "mean" {
                 m.mean(axis as usize, par())
             } else {
                 let ddof = match args.get(2) {

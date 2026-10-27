@@ -3362,7 +3362,9 @@ println(ods.corr(f, ["a", "y"])["a"].to_list())
 | `mat.of(rows)` / `mat.identity(n)` | a Matrix of a list of rows / the identity |
 | `mat.t(x)` / `mat.gram(x)` / `mat.matmul(a, b)` | the transpose (free: the same storage) / `XᵀX` in one parallel pass / `a @ b` |
 | `mat.col(x, j)` / `mat.row(x, i)` / `mat.shape(x)` | column `j` as a Series (shared) / row `i` as a list / `[rows, cols]`; `len(x)` is the row count |
-| `mat.mean(x, axis = 0)` / `mat.std(x, axis = 0, ddof = 1)` | a Series: one value per column (axis 0) or per row (axis 1) |
+| `mat.sum(x, axis = 0)` / `mat.mean(x, axis = 0)` / `mat.std(x, axis = 0, ddof = 1)` | a Series: one value per column (axis 0) or per row (axis 1) |
+| `x + y`, `x - y`, `x * y`, `x / y`, `-x` | elementwise: Matrices of one shape, a number on either side, or a row (`1 × k`) or column (`n × 1`) Matrix, or a Series or list as long as `x` is wide (a row), broadcast as NumPy does |
+| `mat.tanh(x)`, `mat.exp(x)`, `mat.sigmoid(x)`, `mat.clip(x, lo?, hi?)`, `mat.pow(x, e)`, `mat.round(x, digits?)`, … | each `ods` math function, `clip`, `pow` and `round` over every column (Matrix in, Matrix out); `X.tanh()`, and `ods.tanh(X)` too |
 | `mat.solve(a, b)` / `mat.inv(a)` | `x` with `a x = b` (LU with partial pivoting; `b` a vector or a Matrix) / the inverse |
 | `mat.cholesky(a)` | the lower factor `L` of a symmetric positive-definite `a = L Lᵀ` |
 | `mat.eigh(a)` | `#{ values, vectors }` of a symmetric matrix, largest first, each vector's largest component positive |

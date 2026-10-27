@@ -1684,9 +1684,19 @@ println(ods.corr(f)["term"].to_list())          // ["sqft", "age", "price"]
 - **Products.** `X @ b` is a Series when `b` is a list or Series of
   `X`'s width, and a Matrix when `b` is a Matrix. `v @ X` is `vᵀX`. A
   shape mismatch names both shapes.
+- **Arithmetic.** `+ - * /` are elementwise between Matrices of one
+  shape, and with a number on either side; `-X` negates. As NumPy
+  broadcasts, a single row (`1 × k`) or column (`n × 1`) Matrix applies
+  to every row or column of the other, and a Series or list as long as
+  the Matrix is wide is a row: `X @ W + b` adds the bias `b` to every
+  row. Any other pair of shapes names both. The column functions take
+  a Matrix as they take a Series, column by column: `ods.tanh(X)`,
+  `X.exp()`, `X.clip(lo: 0.0)`, `X.sign()`, `X.pow(2)`, `X.round(3)`
+  and the rest of the math (Matrix in, Matrix out), so a network's layer
+  is one expression, `(X @ W + b).clip(lo: 0.0)`.
 - **Methods.** `X.t()`, `X.gram()` (`XᵀX`), `X.col(j)` (a Series,
   shared with the Matrix), `X.row(i)` (a list), `X.shape()`, `len(X)`
-  (the row count), `X.mean(axis: 0)` and `X.std(axis: 0, ddof: 1)` (a
+  (the row count), `X.sum(axis: 0)`, `X.mean(axis: 0)` and `X.std(axis: 0, ddof: 1)` (a
   Series by column; axis 1 gives one value per row), `X.to_frame(names)`
   and `mat.to_list(X)`.
 - **Small dense routines.** `mat.solve(A, b)` uses LU with partial

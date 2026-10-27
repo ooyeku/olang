@@ -162,6 +162,10 @@ impl OvmModule for OdsModule {
             }
             return None;
         }
+        // a Series written before a Matrix: the Matrix's arithmetic
+        if let Some(result) = matrix::elementwise(op, lhs, rhs) {
+            return Some(result);
+        }
         if let Some(result) = series::binary_op(op, lhs, rhs) {
             return Some(result);
         }
@@ -205,9 +209,12 @@ impl OvmModule for OdsModule {
 /// Call `ods.<func>` with `args`: what the module dispatches, and what
 /// an Expr's call nodes run against a Frame.
 pub(crate) fn call(func: &str, args: Vec<Value>) -> Result<Value, String> {
-    // Matrices: `ods.matrix`, `ods.corr`, `ods.cov`.
+    // Matrices: `ods.matrix`, `ods.corr`, `ods.cov`; a column function over one.
     if matrix::ods_handles(func) {
         return matrix::ods_dispatch(func, &args);
+    }
+    if let Some(r) = matrix::over_columns(func, &args, call) {
+        return r;
     }
     // Exprs and the Frame verbs that take them.
     if let Some(r) = expr::dispatch(func, &args) {
@@ -436,6 +443,10 @@ impl OvmModule for MatModule {
         if matches!(op, BinaryOp::MatMul) {
             return matrix::matmul(lhs, rhs);
         }
-        None
+        matrix::elementwise(op, lhs, rhs)
+    }
+
+    fn unary_op(&self, op: &UnaryOp, value: &Value) -> Option<Result<Value, String>> {
+        matrix::negate(op, value)
     }
 }

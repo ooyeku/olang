@@ -62,6 +62,99 @@ impl PartialEq for Matrix {
     }
 }
 
+/// An elementwise operation between matrices, or a matrix and a number.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Arith {
+    Add,
+    Sub,
+    Mul,
+    Div,
+}
+
+impl Arith {
+    #[inline]
+    fn apply(self, a: f64, b: f64) -> f64 {
+        match self {
+            Arith::Add => a + b,
+            Arith::Sub => a - b,
+            Arith::Mul => a * b,
+            Arith::Div => a / b,
+        }
+    }
+
+    pub fn symbol(self) -> &'static str {
+        match self {
+            Arith::Add => "+",
+            Arith::Sub => "-",
+            Arith::Mul => "*",
+            Arith::Div => "/",
+        }
+    }
+}
+
+/// A `rows × ncols` matrix whose column `j` is `f(j)`: the columns on
+/// threads when the matrix is large.
+fn by_column(rows: usize, ncols: usize, par: bool, f: impl Fn(usize) -> Vec<f64> + Sync) -> Matrix {
+    let cols: Vec<Arc<Vec<f64>>> = if par && rows * ncols >= PAR_WORK {
+        (0..ncols).into_par_iter().map(|j| Arc::new(f(j))).collect()
+    } else {
+        (0..ncols).map(|j| Arc::new(f(j))).collect()
+    };
+    Matrix {
+        n: rows,
+        cols,
+        t: false,
+    }
+}
+
+/// `a op b` element by element. The shapes are equal, or one side is a
+/// single row (`1 × k`, applied to every row) or a single column
+/// (`n × 1`, applied to every column) of the other, as NumPy broadcasts.
+pub fn arith(a: &Matrix, op: Arith, b: &Matrix, par: bool) -> Result<Matrix> {
+    let ((ar, ac), (br, bc)) = (a.shape(), b.shape());
+    let (r, c) = (ar.max(br), ac.max(bc));
+    let fits = |x: usize, n: usize| x == n || x == 1;
+    if !(fits(ar, r) && fits(br, r) && fits(ac, c) && fits(bc, c)) {
+        return Err(bad(format!(
+            "a {}×{} matrix {} a {}×{} one: the shapes must be equal, or one a single row or column of the other",
+            ar,
+            ac,
+            op.symbol(),
+            br,
+            bc
+        )));
+    }
+    let (a, b) = (a.materialize(), b.materialize());
+    Ok(by_column(r, c, par, |j| {
+        let ca = &a.cols[if ac == 1 { 0 } else { j }];
+        let cb = &b.cols[if bc == 1 { 0 } else { j }];
+        match (ar == r, br == r) {
+            (true, true) => ca
+                .iter()
+                .zip(cb.iter())
+                .map(|(x, y)| op.apply(*x, *y))
+                .collect(),
+            (true, false) => ca.iter().map(|x| op.apply(*x, cb[0])).collect(),
+            (false, true) => cb.iter().map(|y| op.apply(ca[0], *y)).collect(),
+            (false, false) => vec![op.apply(ca[0], cb[0]); r],
+        }
+    }))
+}
+
+/// `a op s`, or `s op a` when `scalar_first`, element by element.
+pub fn arith_scalar(a: &Matrix, op: Arith, s: f64, scalar_first: bool, par: bool) -> Matrix {
+    let (r, c) = a.shape();
+    let a = a.materialize();
+    by_column(r, c, par, |j| {
+        let col = &a.cols[j];
+        if scalar_first {
+            col.iter().map(|x| op.apply(s, *x)).collect()
+        } else {
+            col.iter().map(|x| op.apply(*x, s)).collect()
+        }
+    })
+}
+
 impl Matrix {
     /// A matrix of these columns, each `n` long.
     pub fn from_columns(n: usize, cols: Vec<Arc<Vec<f64>>>) -> Result<Matrix> {
@@ -383,6 +476,17 @@ impl Matrix {
                 .into_iter()
                 .map(|s| s / k)
                 .collect()
+        })
+    }
+
+    /// Sums down the columns (`axis` 0, one per column) or across the
+    /// rows (`axis` 1, one per row).
+    pub fn sum(&self, axis: usize, par: bool) -> Result<Vec<f64>> {
+        let along_stored = self.stored_axis(axis)?;
+        Ok(if along_stored {
+            self.cols.iter().map(|c| sum(c)).collect()
+        } else {
+            row_sums(&self.cols, self.n, par)
         })
     }
 
@@ -1389,5 +1493,73 @@ mod tests {
         let masked = vec![(a, Some(vec![true, true, false, true])), (c, None)];
         let r = corr_cov(&masked, CorrMethod::Spearman, true, false);
         assert_eq!(r[1], 1.0);
+    }
+
+    #[test]
+    fn elementwise_arithmetic_and_broadcasting() {
+        let a = m(&[&[1.0, 2.0], &[3.0, 4.0], &[5.0, 6.0]]);
+        let b = m(&[&[10.0, 20.0], &[30.0, 40.0], &[50.0, 60.0]]);
+        assert_eq!(
+            arith(&a, Arith::Add, &b, false).unwrap(),
+            m(&[&[11.0, 22.0], &[33.0, 44.0], &[55.0, 66.0]])
+        );
+        assert_eq!(
+            arith(&b, Arith::Div, &a, false).unwrap(),
+            m(&[&[10.0, 10.0], &[10.0, 10.0], &[10.0, 10.0]])
+        );
+        // a row (a bias) goes to every row, a column to every column, either side
+        let row = m(&[&[100.0, 200.0]]);
+        assert_eq!(
+            arith(&a, Arith::Add, &row, false).unwrap(),
+            m(&[&[101.0, 202.0], &[103.0, 204.0], &[105.0, 206.0]])
+        );
+        assert_eq!(
+            arith(&row, Arith::Sub, &a, false).unwrap(),
+            m(&[&[99.0, 198.0], &[97.0, 196.0], &[95.0, 194.0]])
+        );
+        let col = m(&[&[2.0], &[3.0], &[4.0]]);
+        assert_eq!(
+            arith(&a, Arith::Mul, &col, false).unwrap(),
+            m(&[&[2.0, 4.0], &[9.0, 12.0], &[20.0, 24.0]])
+        );
+        // a transpose reads as the matrix it is
+        assert_eq!(
+            arith(&a.t(), Arith::Sub, &a.t(), false).unwrap(),
+            m(&[&[0.0, 0.0, 0.0], &[0.0, 0.0, 0.0]])
+        );
+        assert!(
+            arith(&a, Arith::Add, &a.t(), false)
+                .unwrap_err()
+                .to_string()
+                .contains("3×2")
+        );
+        assert_eq!(
+            arith_scalar(&a, Arith::Mul, 2.0, false, false),
+            m(&[&[2.0, 4.0], &[6.0, 8.0], &[10.0, 12.0]])
+        );
+        assert_eq!(
+            arith_scalar(&a, Arith::Sub, 1.0, true, false),
+            m(&[&[0.0, -1.0], &[-2.0, -3.0], &[-4.0, -5.0]])
+        );
+        // the threads give the one-thread answer
+        let big = Matrix::from_columns(
+            4096,
+            (0..600)
+                .map(|j| Arc::new((0..4096).map(|i| (i * j) as f64).collect::<Vec<f64>>()))
+                .collect(),
+        )
+        .unwrap();
+        assert_eq!(
+            arith(&big, Arith::Mul, &big, true).unwrap(),
+            arith(&big, Arith::Mul, &big, false).unwrap()
+        );
+    }
+
+    #[test]
+    fn sums_along_each_axis() {
+        let a = m(&[&[1.0, 2.0], &[3.0, 4.0], &[5.0, 6.0]]);
+        assert_eq!(a.sum(0, false).unwrap(), vec![9.0, 12.0]);
+        assert_eq!(a.sum(1, false).unwrap(), vec![3.0, 7.0, 11.0]);
+        assert_eq!(a.t().sum(0, false).unwrap(), vec![3.0, 7.0, 11.0]);
     }
 }

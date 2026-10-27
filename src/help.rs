@@ -3635,6 +3635,33 @@ let parts = ods.split(f, 0.8)   // [train, test]"##],
             &[r##"X.std(axis: 0)"##],
         );
         self.doc_ex(
+            "mat.sum",
+            "mat.sum(x, axis?)",
+            "Series",
+            "mat",
+            "sums down each column (axis 0) or across each row (axis 1)",
+            &[r##"X.sum(axis: 0)"##],
+        );
+        // a column function over a Matrix: `+ - * /` and these are elementwise
+        for (name, syntax) in [
+            ("mat.tanh", "mat.tanh(x)"),
+            ("mat.exp", "mat.exp(x)"),
+            ("mat.sigmoid", "mat.sigmoid(x)"),
+            ("mat.sign", "mat.sign(x)"),
+            ("mat.clip", "mat.clip(x, lo?, hi?)"),
+            ("mat.pow", "mat.pow(x, exponent)"),
+            ("mat.round", "mat.round(x, digits?)"),
+        ] {
+            self.doc_ex(
+                name,
+                syntax,
+                "Matrix",
+                "mat",
+                "the column function applied to every column (every ods math function, clip, pow and round take a Matrix as they take a Series); + - * / between Matrices of a shape, with a number, or with a row (a Series as long as the Matrix is wide) are elementwise",
+                &[r##"(X @ W + b).clip(lo: 0.0)"##],
+            );
+        }
+        self.doc_ex(
             "mat.solve",
             "mat.solve(a, b)",
             "Series",

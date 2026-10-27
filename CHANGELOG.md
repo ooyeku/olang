@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   (the hello's `stream` feature): batched at most every 50 ms, the first
   512 KB, the last before the reply, whose `out` is still the whole.
   A cell that trains for a minute shows each epoch as it ends.
+- **Elementwise Matrix arithmetic.** `+ - * /` between Matrices of one
+  shape, with a number, and broadcast from a single row or column (a
+  Series or list as long as the Matrix is wide is a row: `X @ W + b`);
+  `-X`; every `ods` math function, `clip`, `pow` and `round` over a
+  Matrix (`ods.tanh(X)`, `X.clip(lo: 0.0)`); `mat.sum(x, axis)`.
 
 ## [1.0.0-rc.5] - 2026-10-27
 

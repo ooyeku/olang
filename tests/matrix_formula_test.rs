@@ -462,3 +462,57 @@ Frame
 "#,
     );
 }
+
+#[test]
+fn a_matrix_takes_elementwise_arithmetic_and_column_functions() {
+    agrees(
+        r#"
+let A = mat.of([[1.0, 2.0], [3.0, 4.0]])
+let B = mat.of([[0.5, 0.0], [0.0, 0.5]])
+fn add(a, b) = a + b
+fn layer(x, w, b) = (x @ w + b).clip(lo: 0.0)
+println(mat.to_list(A - B))
+println(mat.to_list(A * B))
+println(mat.to_list(add(A, A) / A))
+println(mat.to_list(2 * A))
+println(mat.to_list(1.0 - A))
+println(mat.to_list(-A))
+println(mat.to_list(A + ods.series([10.0, 20.0])))
+println(mat.to_list([10.0, 20.0] - A))
+println(mat.to_list(A * mat.of([[2.0], [3.0]])))
+println(mat.to_list(A.t() - A))
+println(mat.to_list(A.tanh().round(3)))
+println(mat.to_list(ods.sigmoid(-A).round(4)))
+println(mat.to_list(A.pow(2)))
+println(mat.to_list(layer(A, B, [-1.0, 0.5])))
+println(A.sum(axis: 0).to_list())
+println(A.sum(axis: 1).to_list())
+println(attempt(() => A + mat.of([[1.0, 2.0, 3.0]])))
+println(attempt(() => A + ods.series([1.0, 2.0, 3.0])))
+println(attempt(() => A % 2))
+println(attempt(() => mat.tanh(ods.series([1.0]))))
+"#,
+        r#"
+[[0.5, 2.0], [3.0, 3.5]]
+[[0.5, 0.0], [0.0, 2.0]]
+[[2.0, 2.0], [2.0, 2.0]]
+[[2.0, 4.0], [6.0, 8.0]]
+[[0.0, -1.0], [-2.0, -3.0]]
+[[-1.0, -2.0], [-3.0, -4.0]]
+[[11.0, 22.0], [13.0, 24.0]]
+[[9.0, 18.0], [7.0, 16.0]]
+[[2.0, 4.0], [9.0, 12.0]]
+[[0.0, 1.0], [-1.0, 0.0]]
+[[0.762, 0.964], [0.995, 0.999]]
+[[0.2689, 0.1192], [0.0474, 0.018]]
+[[1.0, 4.0], [9.0, 16.0]]
+[[0.0, 1.5], [0.5, 2.5]]
+[4.0, 6.0]
+[3.0, 7.0]
+Err("a 2×2 matrix + a 1×3 one: the shapes must be equal, or one a single row or column of the other")
+Err("`+`: a row of 3 beside a 2×2 matrix: a Series or list is applied to every row, so it is as long as the matrix is wide (2); a column is an n × 1 Matrix (ods.matrix([s]))")
+Err("Invalid binary operation: cannot apply '%' to Matrix and Int")
+Err("mat.tanh: needs a Matrix, got Series (ods.tanh takes a Series)")
+"#,
+    );
+}
