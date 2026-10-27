@@ -1607,6 +1607,7 @@ fn show_backdrop(
     }
 }
 
+#[cfg(target_os = "macos")]
 fn ns_window(win: &Window) -> Option<objc2::rc::Retained<objc2::runtime::AnyObject>> {
     use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
     let RawWindowHandle::AppKit(h) = win.window_handle().ok()?.as_raw() else {
@@ -1617,8 +1618,6 @@ fn ns_window(win: &Window) -> Option<objc2::rc::Retained<objc2::runtime::AnyObje
     unsafe { objc2::msg_send![&*view, window] }
 }
 
-/// An NSString's text.
-#[cfg(target_os = "macos")]
 /// A UTF-16 offset into `s` (AppKit's text input counts so) as
 /// characters, clamped to its end.
 pub fn utf16_to_chars(s: &str, u16s: usize) -> usize {
@@ -1637,6 +1636,8 @@ pub fn chars_to_utf16(s: &str, chars: usize) -> usize {
     s.chars().take(chars).map(char::len_utf16).sum()
 }
 
+/// An NSString's text.
+#[cfg(target_os = "macos")]
 unsafe fn ns_text(s: *mut objc2::runtime::AnyObject) -> Option<String> {
     if s.is_null() {
         return None;
