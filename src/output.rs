@@ -251,12 +251,14 @@ pub fn tap_begin(send: Tap) {
     TICKER.call_once(|| {
         let _ = std::thread::Builder::new()
             .name("olang-out-tap".into())
-            .spawn(|| loop {
-                std::thread::sleep(TAP_TICK);
-                if TAPPED.load(std::sync::atomic::Ordering::Relaxed) {
-                    if let Ok(mut tap) = TAP.lock() {
-                        if let Some(t) = tap.as_mut() {
-                            t.flush();
+            .spawn(|| {
+                loop {
+                    std::thread::sleep(TAP_TICK);
+                    if TAPPED.load(std::sync::atomic::Ordering::Relaxed) {
+                        if let Ok(mut tap) = TAP.lock() {
+                            if let Some(t) = tap.as_mut() {
+                                t.flush();
+                            }
                         }
                     }
                 }

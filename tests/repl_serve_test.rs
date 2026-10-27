@@ -58,7 +58,8 @@ impl Repl {
         loop {
             let mut line = String::new();
             self.stdout.read_line(&mut line).unwrap();
-            let m: J = serde_json::from_str(&line).unwrap_or_else(|e| panic!("not JSON ({e}): {line:?}"));
+            let m: J =
+                serde_json::from_str(&line).unwrap_or_else(|e| panic!("not JSON ({e}): {line:?}"));
             if m["event"] == json!("out") {
                 self.outs.push(m);
                 continue;
@@ -218,7 +219,12 @@ fn values_arrive_by_kind_with_their_type_time_and_tier() {
     let p = r.eval("println(\"side\")\nanswer");
     assert_eq!(p["out"], json!("side\n"));
     assert_eq!(p["value"]["s"], json!("42"));
-    let heard: String = r.outs.iter().filter(|e| e["id"] == p["id"]).map(|e| e["text"].as_str().unwrap()).collect();
+    let heard: String = r
+        .outs
+        .iter()
+        .filter(|e| e["id"] == p["id"])
+        .map(|e| e["text"].as_str().unwrap())
+        .collect();
     assert_eq!(heard, "side\n");
     // bytes that are a picture carry it
     let png = r.eval("bytes.from_list([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 4, 0, 0, 0, 3, 8, 6, 0, 0, 0])");
@@ -1750,7 +1756,13 @@ fn a_param_that_does_not_bind_is_named_with_why_and_a_far_line_is_no_hang() {
 fn an_evaluation_streams_what_it_prints_while_it_runs() {
     let dir = project();
     let (mut r, hello) = Repl::start(dir.path());
-    assert!(hello["features"].as_array().unwrap().contains(&json!("stream")), "{hello}");
+    assert!(
+        hello["features"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("stream")),
+        "{hello}"
+    );
     // each line is heard before the evaluation ends, in order, the last before the reply
     let id = r.write(json!({ "op": "eval", "code": "for i in range(4) { println(`epoch ${i}`); time.sleep(250) }\n\"done\"" }));
     let t0 = Instant::now();
@@ -1771,9 +1783,13 @@ fn an_evaluation_streams_what_it_prints_while_it_runs() {
     let text: String = heard.iter().map(|(_, t)| t.as_str()).collect();
     assert_eq!(text, "epoch 0\nepoch 1\nepoch 2\nepoch 3\n");
     assert!(heard.len() >= 3, "a line a batch at this pace: {heard:?}");
-    assert!(heard[0].0 < Duration::from_millis(600), "the first line came at once: {heard:?}");
+    assert!(
+        heard[0].0 < Duration::from_millis(600),
+        "the first line came at once: {heard:?}"
+    );
     // a flood is streamed in a few batches, bounded
-    let flood = r.write(json!({ "op": "eval", "code": "for i in range(0, 300000) { println(i) }" }));
+    let flood =
+        r.write(json!({ "op": "eval", "code": "for i in range(0, 300000) { println(i) }" }));
     let mut events = 0;
     let mut bytes = 0;
     loop {
