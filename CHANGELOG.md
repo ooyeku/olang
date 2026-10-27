@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0-rc.5] - 2026-10-27
+
+Release candidate 5: rc.4 with Linux building again. rc.4's tag never
+made a release, since its Linux builds failed.
+
+### Fixed
+
+- **Linux builds again.** The macOS gate meant for the AppKit window and
+  string helpers sat on `utf16_to_chars`, which the text input uses on
+  every platform, so Linux had the AppKit calls and lacked the helper.
+
+### Changed
+
+- **The book's parts are named plainly** (Getting started, The language,
+  …, Going deeper); pitfalls and stability are in Getting started.
+
 ## [1.0.0-rc.4] - 2026-10-26
 
 Release candidate 4: what main gained since rc.3, the stdlib's grant
