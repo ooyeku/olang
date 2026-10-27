@@ -90,14 +90,28 @@ after 1.0.
   p50 for a 200-row patch); a patch is refused as it was, the operations
   before a refusal still applied.
 
+- **Zoom follows the caret itself.** A field's text reaches assistive
+  output as a run a visual line (from the text engine's lines), each over
+  its own line with its characters' places and widths and a direction:
+  `AXBoundsForRange` of the caret is where it is drawn (a real window's
+  test through the AX client API), so Zoom's Follow keyboard focus
+  follows the caret, not the field, and VoiceOver boxes a character. A
+  styled field's lines in view, the rest a run a paragraph as before.
+  `gui.read(w, "a11y")` says a field's `caret_box`.
+
+- **`olang test` runs each file from its project's root** (the folder
+  with the `olang.toml` above it), not from the file's own folder, so a
+  relative path in a test means the same from any folder the suite is
+  started in. A file in no project, and a notebook, still run from
+  their own folder; a test finds its own as
+  `fs.dirname(testing.snapshot_dir())`.
+
 ### Added
 
 - **`GUI_HOLDS=1`** records how long the engine's locks are held and
   waited for (the busy test prints them), and `GUI_LATENCY=1` also
   times the engine's own answers: input to the present of the first
   frame made after it.
-
-### Added
 
 - **Spelling's suggestions.** A right press (⌃-click) on a misspelled
   word in a `spellcheck: true` field selects it and says `spelling`
@@ -133,26 +147,6 @@ after 1.0.
   conversion to the screen is then a matrix only. A transition between
   wide colours moves through wide colours. Software and snapshots draw
   the sRGB fallback (the colour clipped). `gui.platform().wide_color`.
-
-### Changed
-
-- **Zoom follows the caret itself.** A field's text reaches assistive
-  output as a run a visual line (from the text engine's lines), each over
-  its own line with its characters' places and widths and a direction:
-  `AXBoundsForRange` of the caret is where it is drawn (a real window's
-  test through the AX client API), so Zoom's Follow keyboard focus
-  follows the caret, not the field, and VoiceOver boxes a character. A
-  styled field's lines in view, the rest a run a paragraph as before.
-  `gui.read(w, "a11y")` says a field's `caret_box`.
-
-- **`olang test` runs each file from its project's root** (the folder
-  with the `olang.toml` above it), not from the file's own folder, so a
-  relative path in a test means the same from any folder the suite is
-  started in. A file in no project, and a notebook, still run from
-  their own folder; a test finds its own as
-  `fs.dirname(testing.snapshot_dir())`.
-
-### Added
 
 - **The web SDK has a helper for every tag of a document**: `html`,
   `body`, `title`, `style`, `script`, the sections (`article`, `aside`,
