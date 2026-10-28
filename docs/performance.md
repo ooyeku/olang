@@ -24,6 +24,7 @@ cross-language standings.
 - [What declines the fast path](#what-declines-the-fast-path)
 - [Reading the tier's decisions](#reading-the-tiers-decisions)
 - [Verifying a hot program](#verifying-a-hot-program)
+- [Sandboxed code runs faster](#sandboxed-code-runs-faster)
 - [Bulk data belongs in ods](#bulk-data-belongs-in-ods)
 - [The data stack against other engines](#the-data-stack-against-other-engines)
 - [Automatic parallelism in ods](#automatic-parallelism-in-ods)
@@ -192,6 +193,32 @@ percent provides continuous spot-checking for a few percent of overhead
 observable difference between `olang program.ol` and
 `olang --no-ovm program.ol` is by definition an engine bug worth
 reporting, never a behavior to code around.
+
+## Sandboxed code runs faster
+
+A program run under a fixed grant (`--deny`, or `olang.toml`'s
+`[capabilities]`) tells the compiler what it may touch, and the
+compiler uses it ([the OVM](ovm.md#compile-time-knowledge)): a
+`caps.allowed("net")` with a literal name is a constant, the branch
+for the denied case is the only one compiled, and the network call it
+no longer holds stops keeping the function off native code. A sandbox
+usually costs a check on every call; here the check is gone.
+
+[benchmarks/sandbox.ol](../benchmarks/sandbox.ol) calls a price lookup
+three million times under `olang --deny net`: it asks a service when it
+may and computes the price when it may not. The same check through a
+variable (`caps.allowed(NET)`) is decided at run time, as a sandbox
+usually decides; the plain function has no network branch at all.
+Every way sums the same; the best of five runs on an Apple-silicon Mac:
+
+| Sandboxed `price`, 3M calls | ms |
+|---|---:|
+| the check folded (`caps.allowed("net")`) | 750 |
+| the check at run time (`caps.allowed(NET)`) | 1,200 |
+| no network branch at all | 725 |
+
+The sandboxed function runs 1.6× faster than with the check left to
+run time, and within 4% of the function written without the branch.
 
 ## Bulk data belongs in ods
 
