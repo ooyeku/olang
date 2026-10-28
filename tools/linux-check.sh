@@ -9,7 +9,7 @@
 #   build    cargo build --release -j 4 (olang's lib and bin)
 #   loom     Loom's tools/verify.sh with OLANG = the Linux binary
 #   pty      Loom's terminal face in a real pseudo-terminal (tools/pty_check.py)
-#   app      open-track-desktop's tools/verify.sh, same binary
+#   app      olang-track/desktop's tools/verify.sh, same binary
 #   guitest  cargo test -j 4 --test gui_test (debug)
 #   heddle   Heddle's suite (olang test)
 #   baseline Loom's benchmark gate re-recorded for Linux
@@ -17,7 +17,7 @@
 #   shell    an interactive shell in the same container setup
 #
 # The sibling repos are found next to olang (OLANG_WORLD, default the
-# parent of this checkout): loom, open-track-desktop, heddle. They are
+# parent of this checkout): loom, olang-track/desktop, heddle. They are
 # mounted read-write at /w (the suites write .build/ logs and snapshots'
 # .actual/.diff files there). Cargo's target and registry live in the
 # named volume $OLANG_LINUX_VOLUME (default olang-linux-target), so the
@@ -70,7 +70,7 @@ for s in "$@"; do
     build)   run 'cd olang && cargo build --release -j 4' || status=1 ;;
     loom)    run 'cd loom && tools/verify.sh' || status=1 ;;
     pty)     run 'cd loom && python3 tools/pty_check.py' || status=1 ;;
-    app)     run 'cd open-track-desktop && tools/verify.sh' || status=1 ;;
+    app)     run 'cd olang-track/desktop && tools/verify.sh' || status=1 ;;
     guitest) run 'cd olang && cargo test -j 4 --test gui_test' || status=1 ;;
     heddle)  run 'cd heddle && $OLANG test' || status=1 ;;
     baseline) run 'cd loom && $OLANG tools/gate.ol --update' || status=1 ;;
