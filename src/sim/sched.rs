@@ -42,6 +42,11 @@ pub enum Wait {
     /// A mailbox of the simulated network (the world's number for it): a
     /// message was delivered to it, or it closed.
     Net(u64),
+    /// A node's stdin (the node's number): a line was written, or it
+    /// closed.
+    Stdin(usize),
+    /// A connection's transaction slot (`db.transaction`) came free.
+    Tx(i64),
 }
 
 /// What a timer does when it fires: wake a task, or deliver a message

@@ -79,6 +79,33 @@ remote stays on rc.5.
   seed), and a planted bug only a partition shows (a retry under a new
   request id counts an add twice), found and replayed by seed.
   Design: plans/SIM-S2.md.
+- **`sim`: the disk and crashes (S3).** Each node has an in-memory disk
+  on which a file keeps what was written apart from what was synced:
+  `fs.*` in a world answers from it (relative paths against the node's
+  `cwd`), a write counts only once `fs.sync` (new: fsync of a file or a
+  folder, outside a world too) returns, and `w.crash(n)` keeps the disk
+  as it really was. SQLite opened in a world runs through a VFS over the
+  node's files (journal and WAL included), registered through
+  `rusqlite::ffi`; `sim.disk(#{ fsync_lies, torn_writes, full_at, slow })`
+  makes its syncs lie, a crash tear what was pending at sector
+  boundaries, writes fail with a full disk, and syncs take longer. A
+  node is a process: `w.kill` (SIGKILL: every write kept), `w.stop`
+  (SIGTERM: its `os.on_shutdown` handlers run), `os.exit`, its own
+  `os.set_env`, stdin (`#{ stdin }`, `w.write_stdin`, `w.close_stdin`,
+  `os.read_line`), `os.pid`, `os.hostname`; `#{ files }` seeds its disk.
+  `#{ crash: #{ p, restart_after } }` crashes a node at random effects
+  and inside SQLite's own writes and syncs; `sim.maybe(point)` is a
+  buggify point; `run.faults` lists every fault injected, `run.disks`
+  what each disk did. `olang sim` resolves package dependencies as
+  `olang run` does (offline, no lock written) and runs a file whose
+  world a local module builds. The proof: a log store that acknowledges
+  before it syncs loses acknowledged puts on every seed tried, replayed
+  by `--seed`, beside one that syncs first and passes; SQLite keeps every
+  commit through crashes mid-commit on an honest disk and loses them
+  when fsync lies; olang-track's server runs as a node unchanged and
+  keeps every acknowledged issue through kills and graceful stops, and
+  loses them to power cuts (its WAL runs at `synchronous=NORMAL`).
+  Design: plans/SIM-S3.md.
 
 ### Fixed
 

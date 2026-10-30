@@ -242,9 +242,10 @@ pub enum SimHandling {
     /// Pure computation (or output): runs as it always does.
     Pure,
     /// The world answers it: virtual time, the world's random streams,
-    /// the cooperative scheduler for `spawn`, `task` and `chan`, and
-    /// (S2) `http` over the world's network, with each node's own
-    /// `os.args` and environment.
+    /// the cooperative scheduler for `spawn`, `task` and `chan`, (S2)
+    /// `http` over the world's network, with each node's own `os.args`
+    /// and environment, and (S3) `fs` and `db` on each node's own
+    /// in-memory disk, and its stdin, shutdown handlers and exit.
     Simulated,
     /// It would touch the real world, and the world does not simulate it
     /// yet: refused with an error inside a world, never run for real.
@@ -291,8 +292,13 @@ pub fn sim_handling(full_name: &str) -> SimHandling {
         // worlds do not nest (yet)
         "sim.world",
     ];
-    // what a world allows of `runtime`: pure facts about the build
-    if matches!(full_name, "runtime.features" | "runtime.version") {
+    // what a world allows of `runtime`: pure facts about the build, and
+    // the browser runtime the binary carries (its own bytes, the same in
+    // every run)
+    if matches!(
+        full_name,
+        "runtime.features" | "runtime.version" | "runtime.wasm"
+    ) {
         return SimHandling::Pure;
     }
     let pure_helper = full_name.strip_prefix("fs.").is_some_and(fs_pure)
@@ -313,11 +319,23 @@ pub fn sim_handling(full_name: &str) -> SimHandling {
 }
 
 /// The builtins a world answers itself (S1: the clock, randomness, the
-/// scheduler; S2: `http` between nodes, a node's argv and environment).
-/// Everything else effectful is refused by `sim_handling`.
+/// scheduler; S2: `http` between nodes, a node's argv and environment;
+/// S3: `fs` and `db` on the node's disk, its environment written, its
+/// working directory, stdin, shutdown handlers and exit). Everything
+/// else effectful is refused by `sim_handling`.
 fn sim_simulated(full_name: &str) -> bool {
     if full_name.starts_with("random.") || full_name.starts_with("chan.") {
         return true;
+    }
+    // S3: every `db` call runs over the node's disk through the world's
+    // VFS (sim/vfs.rs, sim/dbs.rs); a connection from outside is refused.
+    if full_name.starts_with("db.") {
+        return true;
+    }
+    // S3: the files a node reads and writes are on its own disk
+    // (sim/files.rs). The tree walkers, watchers and the Trash are not.
+    if let Some(f) = full_name.strip_prefix("fs.") {
+        return sim_fs(f);
     }
     matches!(
         full_name,
@@ -359,6 +377,56 @@ fn sim_simulated(full_name: &str) -> bool {
             | "os.args"
             | "os.get_env"
             | "os.has_env"
+            // S3: its process (sim/life.rs)
+            | "os.env"
+            | "os.list_env"
+            | "os.set_env"
+            | "os.remove_env"
+            | "os.cwd"
+            | "os.read_line"
+            | "os.on_shutdown"
+            | "os.exit"
+            | "os.pid"
+            | "os.hostname"
+            | "os.temp_dir"
+            | "os.is_tty"
+            | "os.stdin_is_tty"
+            | "os.color_enabled"
+            | "os.flush"
+            | "os.path_separator"
+            | "os.on_interrupt"
+            | "os.interrupted"
+            | "os.reset_interrupt"
+    )
+}
+
+/// The `fs` calls a node's disk answers (S3).
+fn sim_fs(name: &str) -> bool {
+    matches!(
+        name,
+        "read_file"
+            | "write_file"
+            | "read_bytes"
+            | "write_bytes"
+            | "append_file"
+            | "exists"
+            | "is_file"
+            | "is_dir"
+            | "list_dir"
+            | "walk"
+            | "glob"
+            | "create_dir"
+            | "create_dir_all"
+            | "remove_dir"
+            | "remove_dir_all"
+            | "remove_file"
+            | "copy_file"
+            | "move_file"
+            | "file_size"
+            | "file_info"
+            | "abs_path"
+            | "real_path"
+            | "sync"
     )
 }
 
@@ -553,14 +621,14 @@ mod tests {
         }
         assert!(checked > 50, "the stdlib surface was read ({checked})");
         for name in [
-            "fs.read_file",
-            "fs.write_file",
-            "db.open",
+            "fs.scan",
+            "fs.watch",
+            "fs.trash",
             "proc.run",
             "os.exec",
-            "os.exit",
-            "os.on_shutdown",
-            "os.read_line",
+            "os.username",
+            "os.chdir",
+            "os.stdin",
             "crypto.hash_password",
             "crypto.encrypt_aes",
             "tty.size",
@@ -589,16 +657,53 @@ mod tests {
             "http.respond",
             "os.args",
             "os.get_env",
+            // S3: the disk, SQLite on it, and a node's process
+            "fs.read_file",
+            "fs.write_file",
+            "fs.append_file",
+            "fs.sync",
+            "fs.move_file",
+            "db.open",
+            "db.query",
+            "db.transaction",
+            "os.set_env",
+            "os.read_line",
+            "os.on_shutdown",
+            "os.exit",
         ] {
             assert_eq!(sim_handling(name), SimHandling::Simulated, "{name}");
+        }
+        // Every member of `db` is answered by a world: none runs on the
+        // real disk.
+        for name in surface.iter().filter(|n| n.starts_with("db.")) {
+            assert_eq!(sim_handling(name), SimHandling::Simulated, "{name}");
+        }
+        // Every member of `fs` a world does not answer is pure or refused,
+        // never run.
+        for name in surface.iter().filter(|n| n.starts_with("fs.")) {
+            let f = &name[3..];
+            let expected = if sim_fs(f) {
+                SimHandling::Simulated
+            } else if fs_pure(f) {
+                SimHandling::Pure
+            } else {
+                SimHandling::Refused
+            };
+            assert_eq!(sim_handling(name), expected, "{name}");
         }
         // Every member of `http` is now answered by a world or pure: none
         // is refused, and none reaches a socket (sim/http.rs).
         for name in surface.iter().filter(|n| n.starts_with("http.")) {
             assert_ne!(sim_handling(name), SimHandling::Refused, "{name}");
         }
-        // the rest of `os` stays refused: the real environment, processes
-        for name in ["os.set_env", "os.list_env", "os.hostname", "os.exec"] {
+        // the rest of `os` stays refused: the machine, real processes
+        for name in [
+            "os.username",
+            "os.home_dir",
+            "os.exec",
+            "os.stdin_lines",
+            "os.arch",
+        ] {
             assert_eq!(sim_handling(name), SimHandling::Refused, "{name}");
         }
         for name in [

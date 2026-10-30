@@ -304,12 +304,12 @@ fn unsimulated_effects_are_refused_and_never_reach_the_real_world() {
     let v = eval(&format!(
         r#"
 fn attempt(f) = sim.world(#{{ "seed": 1 }}).run_fn(f).error
-[attempt(() => fs.write_file("{path}", "x")),
- attempt(() => fs.read_file("{path}")),
- attempt(() => db.open(":memory:")),
+[attempt(() => fs.watch("{path}")),
+ attempt(() => fs.scan("{path}")),
+ attempt(() => os.username()),
  attempt(() => proc.spawn(["true"])),
- attempt(() => os.set_env("HOME", "/tmp")),
- attempt(() => {{ let t = spawn fs.write_file("{path}", "y"); unwrap(task.join(t)) }}),
+ attempt(() => os.exec("true", [])),
+ attempt(() => {{ let t = spawn fs.trash("{path}"); unwrap(task.join(t)) }}),
  attempt(() => sim.world(#{{}}))]
 "#
     ));
@@ -318,21 +318,40 @@ fn attempt(f) = sim.world(#{{ "seed": 1 }}).run_fn(f).error
         let e = s(e);
         assert!(e.contains("refused inside a world"), "attempt {i}: {e}");
     }
-    assert!(s(&errors[0]).contains("fs.write_file"));
+    assert!(s(&errors[0]).contains("fs.watch"));
     assert!(s(&errors[6]).contains("worlds do not nest"));
     // A node's environment is its own (empty unless given): the real one
-    // is never read.
+    // is never read, and setting it sets the node's.
     let home = eval(
-        r#"sim.world(#{ "seed": 1 }).run_fn(() => [os.get_env("HOME"), os.has_env("PATH")]).value"#,
+        r#"sim.world(#{ "seed": 1 }).run_fn(() => {
+    let before = [os.get_env("HOME"), os.has_env("PATH")]
+    os.set_env("HOME", "/nowhere")
+    before + [os.get_env("HOME")]
+}).value"#,
     );
     assert_eq!(
         home.to_string(),
-        r#"[Err("Environment variable 'HOME' not found"), false]"#
+        r#"[Err("Environment variable 'HOME' not found"), false, Ok("/nowhere")]"#
     );
+    assert_ne!(std::env::var("HOME").ok().as_deref(), Some("/nowhere"));
+    // Files and databases a world writes are on its own disk: the same
+    // paths outside are never touched.
+    let inside = eval(&format!(
+        r#"sim.world(#{{ "seed": 1 }}).run_fn(() => {{
+    // the same folders as outside, made on the world's disk
+    unwrap(fs.create_dir_all(fs.dirname("{path}")))
+    unwrap(fs.write_file("{path}", "x"))
+    let conn = unwrap(db.open("{path}.db"))
+    unwrap(db.execute(conn, "CREATE TABLE t (v)", []))
+    [unwrap(fs.read_file("{path}")), fs.exists("{path}.db")]
+}}).value"#
+    ));
+    assert_eq!(inside.to_string(), r#"["x", true]"#);
     assert!(
         !marker.exists(),
-        "a refused write reached the real filesystem"
+        "a world's write reached the real filesystem"
     );
+    assert!(!std::path::Path::new(&format!("{path}.db")).exists());
 }
 
 #[test]
@@ -767,4 +786,392 @@ fn olang_sim_runs_a_world_of_nodes() {
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("done:"), "{out}");
     assert!(out.contains("timed out and were retried"), "{out}");
+}
+
+// ─── S3: the disk and crashes ────────────────────────────────────────
+
+fn faults_of(r: &olang::sim::Report, kind: &str) -> usize {
+    r.faults.iter().filter(|f| f.kind == kind).count()
+}
+
+#[test]
+fn a_node_reads_and_writes_its_own_disk() {
+    let v = eval(
+        r#"
+sim.world(#{ "seed": 1 }).run_fn(() => {
+    unwrap(fs.create_dir_all("/srv/data"))
+    unwrap(fs.write_file("/srv/data/a.txt", "one"))
+    unwrap(fs.append_file("/srv/data/a.txt", " two"))
+    unwrap(fs.write_bytes("/srv/data/b.bin", bytes.from_string("bin")))
+    unwrap(fs.sync("/srv/data/a.txt"))
+    unwrap(fs.move_file("/srv/data/b.bin", "/srv/data/c.bin"))
+    unwrap(fs.sync("/srv/data"))
+    [unwrap(fs.read_file("/srv/data/a.txt")),
+     unwrap(fs.list_dir("/srv/data")),
+     unwrap(fs.walk("/srv")),
+     unwrap(fs.glob("/srv/**/*.txt")),
+     unwrap(fs.file_size("/srv/data/c.bin")),
+     fs.exists("/srv/data/b.bin"),
+     is_err(fs.read_file("/nope")),
+     is_err(fs.remove_dir("/srv")),
+     unwrap(fs.abs_path("x/../y"))]
+}).value
+"#,
+    );
+    assert_eq!(
+        v.to_string(),
+        r#"["one two", ["a.txt", "c.bin"], ["/srv/data/a.txt", "/srv/data/c.bin"], ["/srv/data/a.txt"], 3, false, true, true, "/y"]"#
+    );
+}
+
+#[test]
+fn a_crash_keeps_what_was_synced_and_loses_the_rest() {
+    let run = eval_here(
+        r#"
+let w = sim.world(#{ "seed": 2 })
+w.client("n", () => {
+    let boot = match fs.read_file("/boot") { Ok(t) => unwrap(str.parse_int(t)) + 1, Err(e) => 1 }
+    unwrap(fs.write_file("/boot", to_string(boot)))
+    unwrap(fs.sync("/boot"))
+    if boot == 1 => {
+        unwrap(fs.write_file("/kept", "synced"))
+        unwrap(fs.sync("/kept"))
+        unwrap(fs.write_file("/kept", "overwritten, never synced"))
+        unwrap(fs.write_file("/lost", "never synced"))
+        time.sleep(sim.minutes(1))
+        "the crash never came"
+    } else => [unwrap(fs.read_file("/kept")), fs.exists("/lost"), boot]
+})
+w.at(sim.seconds(10), () => w.crash("n", #{ "restart_after": sim.seconds(1) }))
+w.run(sim.minutes(5))
+"#,
+    );
+    assert_eq!(s(&field(&run, "outcome")), "done", "{run}");
+    assert_eq!(
+        field(&field(&run, "value"), "n").to_string(),
+        r#"["synced", false, 2]"#
+    );
+    let faults = list(&field(&run, "faults"));
+    assert_eq!(faults.len(), 1);
+    assert!(
+        s(&field(&faults[0], "detail")).contains("unsynced write(s) lost"),
+        "{}",
+        faults[0]
+    );
+}
+
+#[test]
+fn a_full_disk_and_a_slow_one_are_faults_on_virtual_time() {
+    let run = eval_here(
+        r#"
+let w = sim.world(#{ "seed": 2 })
+w.client("full", () => {
+    let mut n = 0
+    while is_ok(fs.append_file("/log", "0123456789")) { n = n + 1 }
+    [n, fs.append_file("/log", "x")]
+}, #{ "disk": sim.disk(#{ "full_at": 100 }) })
+w.client("slow", () => {
+    unwrap(fs.write_file("/f", "x"))
+    let t0 = time.monotonic_ms()
+    unwrap(fs.sync("/f"))
+    let one = time.monotonic_ms() - t0
+    w.slow_disk("slow", 100)
+    let t1 = time.monotonic_ms()
+    unwrap(fs.sync("/f"))
+    [one, time.monotonic_ms() - t1]
+})
+w.run(sim.minutes(1))
+"#,
+    );
+    assert_eq!(s(&field(&run, "outcome")), "done", "{run}");
+    let value = field(&run, "value");
+    assert_eq!(
+        field(&value, "full").to_string(),
+        r#"[10, Err("Failed to append to file '/log': No space left on device (os error 28)")]"#
+    );
+    let slow = list(&field(&value, "slow"));
+    let (one, hundred) = (int(&slow[0]), int(&slow[1]));
+    assert!((1..=3).contains(&one), "a sync takes 1–3 ms: {one}");
+    assert!(
+        (100..=300).contains(&hundred),
+        "a hundred times slower: {hundred}"
+    );
+    let kinds: Vec<String> = list(&field(&run, "faults"))
+        .iter()
+        .map(|f| s(&field(f, "kind")))
+        .collect();
+    assert!(
+        kinds.contains(&"disk_full".to_string()) && kinds.contains(&"slow_disk".to_string()),
+        "{kinds:?}"
+    );
+}
+
+#[test]
+fn the_log_store_that_syncs_before_it_acks_survives_every_crash() {
+    let mut crashes = 0;
+    let mut lost = 0;
+    for seed in 1..=4 {
+        let r = builder_report("log_safe.ol", seed);
+        assert_eq!(r.outcome, "done", "seed {seed}: {:?}", r.error);
+        crashes += faults_of(&r, "crash");
+        lost += r
+            .disks
+            .iter()
+            .find(|(n, _)| n == "store")
+            .map(|(_, d)| d.lost)
+            .unwrap_or(0);
+    }
+    assert!(crashes >= 8, "the power went {crashes} times");
+    assert!(
+        lost > 0,
+        "a crash lost unsynced writes (puts never acknowledged)"
+    );
+}
+
+#[test]
+fn olang_sim_finds_the_log_store_that_acks_before_it_syncs_and_replays_it() {
+    let file = fixture("log_bug.ol");
+    let file = file.to_str().unwrap();
+    let (code, _, err) = sim(&[file, "--seeds", "8"]);
+    assert_eq!(code, 1, "no seed found the bug:\n{err}");
+    assert!(err.contains("lost an acknowledged write"), "{err}");
+    let seed: u64 = err
+        .lines()
+        .find_map(|l| l.split("--seed ").nth(1))
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or_else(|| panic!("no reproduce line in:\n{err}"));
+    let (code1, out1, err1) = sim(&[file, "--seed", &seed.to_string(), "--events"]);
+    let (code2, out2, err2) = sim(&[file, "--seed", &seed.to_string(), "--events"]);
+    assert_eq!(code1, 1, "{err1}");
+    assert!(
+        err1.contains("crash"),
+        "the replay shows the crash:\n{err1}"
+    );
+    assert!(err1.contains("unsynced write(s) lost"), "{err1}");
+    assert_eq!((code1, out1, err1), (code2, out2, err2));
+}
+
+#[test]
+fn sqlite_keeps_every_commit_through_crashes_mid_commit_on_an_honest_disk() {
+    let mut points = 0;
+    for seed in 1..=3 {
+        let r = builder_report("sqlite_honest.ol", seed);
+        assert_eq!(r.outcome, "done", "seed {seed}: {:?}", r.error);
+        // crashes the seed placed inside SQLite's own writes and syncs
+        points += r
+            .faults
+            .iter()
+            .filter(|f| {
+                f.kind == "crash" && (f.detail.contains("xWrite") || f.detail.contains("xSync"))
+            })
+            .count();
+    }
+    assert!(points > 0, "no crash fell inside SQLite");
+}
+
+#[test]
+fn sqlite_loses_acknowledged_commits_when_fsync_lies() {
+    let mut failed = 0;
+    for seed in 1..=4 {
+        let r = builder_report("sqlite_lies.ol", seed);
+        if r.failed() {
+            failed += 1;
+            let e = r.error.clone().unwrap_or_default();
+            assert!(e.contains("lost an acknowledged write"), "seed {seed}: {e}");
+        }
+        assert!(faults_of(&r, "fsync_lie") > 0);
+    }
+    assert!(failed > 0, "a lying fsync never lost a commit");
+}
+
+#[test]
+fn one_seed_is_one_world_with_disks_and_crashes_event_for_event() {
+    let a = builder_report("log_safe.ol", 7);
+    let b = builder_report("log_safe.ol", 7);
+    let c = builder_report("log_safe.ol", 8);
+    assert_eq!(a.outcome, "done", "{:?}", a.error);
+    assert!(a.events.iter().any(|e| e.kind == "fsync"));
+    assert_eq!(a.events, b.events, "the same seed, the same world");
+    assert_eq!(a.faults, b.faults);
+    assert_eq!(a.disks, b.disks);
+    assert_ne!(a.events, c.events, "another seed, another world");
+    let d = builder_report("sqlite_honest.ol", 2);
+    let e = builder_report("sqlite_honest.ol", 2);
+    assert_eq!(
+        d.events, e.events,
+        "SQLite's writes, syncs and crash points too"
+    );
+    assert_eq!(d.faults, e.faults);
+}
+
+#[test]
+fn a_node_process_has_its_own_env_stdin_shutdown_handlers_and_exit() {
+    let run = eval_here(
+        r#"
+let w = sim.world(#{ "seed": 4 })
+w.node("svc", "life_server.ol", #{ "stdin": "hello\n", "env": #{ "MODE": "a" } })
+fn state() = match http.get("http://svc:7700/state", #{ "timeout_ms": 500 }) {
+    Ok(r) => { let s = unwrap(json.parse(r.body)); [s.first, s.mode, s.extra, s.boots, s.bye] },
+    Err(e) => "down"
+}
+w.client("c", () => {
+    time.sleep(100)
+    let first = state()
+    // SIGTERM: the handler runs (it writes /bye and stops the server),
+    // and the node comes back a second later
+    w.stop("svc", #{ "restart_after": 1000 })
+    time.sleep(2000)
+    let after_stop = state()
+    let cleared = unwrap(http.post("http://svc:7700/clear", "")).status
+    // the power: no handler runs, so /bye stays gone
+    w.crash("svc", #{ "restart_after": 1000 })
+    time.sleep(2000)
+    let after_crash = state()
+    // a line on stdin ends the process with os.exit(0)
+    w.write_stdin("svc", "quit\n")
+    time.sleep(100)
+    [first, after_stop, cleared, after_crash, state()]
+})
+w.run(sim.minutes(1))
+"#,
+    );
+    assert_eq!(s(&field(&run, "outcome")), "done", "{run}");
+    assert_eq!(
+        field(&field(&run, "value"), "c").to_string(),
+        r#"[["hello", "a", "boot 1", 1, false], ["hello", "a", "boot 2", 2, true], 200, ["hello", "a", "boot 3", 3, false], "down"]"#
+    );
+    let k = kinds(&run);
+    for kind in ["stop", "exit", "crash", "restart", "stdin", "on_shutdown"] {
+        assert!(k.contains(&kind.to_string()), "no {kind} event: {k:?}");
+    }
+}
+
+#[test]
+fn os_exit_with_a_failing_status_fails_the_run() {
+    let run = eval_here(
+        r#"
+let w = sim.world(#{ "seed": 1 })
+w.client("c", () => { time.sleep(10); os.exit(3) })
+w.run(sim.minutes(1))
+"#,
+    );
+    assert_eq!(s(&field(&run, "outcome")), "failed");
+    assert!(
+        s(&field(&run, "error")).contains("exited with status 3"),
+        "{run}"
+    );
+}
+
+#[test]
+fn sim_maybe_is_false_outside_a_world_and_seeded_inside_one() {
+    let v = eval(
+        r#"
+fn fired(seed) = sim.world(#{ "seed": seed }).run_fn(() =>
+    len(filter(range(0, 200), (i) => sim.maybe("a") || sim.maybe("b") || sim.maybe("c")))).value
+[sim.maybe("a"), fired(1) == fired(1), map(range(1, 30), fired)]
+"#,
+    );
+    let parts = list(&v);
+    assert_eq!(parts[0].to_string(), "false");
+    assert_eq!(parts[1].to_string(), "true");
+    let counts: Vec<i64> = list(&parts[2]).iter().map(int).collect();
+    assert!(
+        counts.contains(&0),
+        "some world turns every point off: {counts:?}"
+    );
+    assert!(
+        counts.iter().any(|c| *c > 20),
+        "some world fires them: {counts:?}"
+    );
+}
+
+#[test]
+fn a_node_program_resolves_its_package_dependencies() {
+    let run = eval_here(
+        r#"
+let w = sim.world(#{ "seed": 1 })
+w.node("p", "pkgnode/main.ol", #{ "env": #{ "WHO": "sim" } })
+w.run(sim.minutes(1))
+"#,
+    );
+    assert_eq!(s(&field(&run, "outcome")), "done", "{run}");
+    let prints: Vec<String> = list(&field(&run, "events"))
+        .iter()
+        .filter(|e| s(&field(e, "kind")) == "print")
+        .map(|e| s(&field(e, "detail")))
+        .collect();
+    assert_eq!(prints, vec!["hello, sim".to_string()]);
+    assert!(
+        !fixture("pkgnode/olang.lock").exists(),
+        "a world wrote a lock"
+    );
+}
+
+#[test]
+fn a_connection_from_outside_the_world_is_refused() {
+    let v = eval(
+        r#"
+let conn = unwrap(db.open(":memory:"))
+let inside = sim.world(#{ "seed": 1 }).run_fn(() => db.query(conn, "SELECT 1 AS x", [])).error
+[inside, unwrap(db.query(conn, "SELECT 1 AS x", []))[0].x]
+"#,
+    );
+    let parts = list(&v);
+    assert!(s(&parts[0]).contains("opened outside it"), "{}", parts[0]);
+    assert_eq!(parts[1].to_string(), "1");
+}
+
+// ─── S3, the stretch: olang-track as a node ──────────────────────────
+
+/// The olang-track checkout beside this one, when this machine has it
+/// and the shelf its server reads (its packages are files on the node's
+/// disk, copied from there by the fixture).
+fn olang_track() -> Option<PathBuf> {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../olang-track");
+    let shelf = std::env::var("HOME")
+        .map(|h| PathBuf::from(h).join(".olang/shelf.toml"))
+        .ok()?;
+    (dir.join("lib/server.ol").is_file() && shelf.is_file()).then_some(dir)
+}
+
+fn track_sim(dir: &std::path::Path, crash: &str, args: &[&str]) -> (i32, String) {
+    let out = Command::new(olang())
+        .arg("sim")
+        .arg(fixture("track_world.ol"))
+        .args(args)
+        .env("OLANG_TRACK_DIR", dir)
+        .env("CRASH", crash)
+        .env("MINUTES", "2")
+        .env("EVERY", "20")
+        .output()
+        .expect("run olang sim");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stderr).to_string(),
+    )
+}
+
+#[test]
+fn olang_track_keeps_every_acknowledged_issue_through_kills_and_stops() {
+    let Some(dir) = olang_track() else {
+        eprintln!("skipped: no olang-track checkout (and shelf) beside this one");
+        return;
+    };
+    let (code, err) = track_sim(&dir, "kill", &["--seeds", "3"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(err.contains("3 passed"), "{err}");
+}
+
+#[test]
+fn olang_track_loses_acknowledged_issues_when_the_power_goes() {
+    // Its database runs WAL at synchronous=NORMAL (Shuttle's `harden`):
+    // a commit is not synced until a checkpoint, so a power cut takes the
+    // issues acknowledged since the last one. A process crash never does.
+    let Some(dir) = olang_track() else {
+        eprintln!("skipped: no olang-track checkout (and shelf) beside this one");
+        return;
+    };
+    let (code, err) = track_sim(&dir, "power", &["--seeds", "3"]);
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("lost an acknowledged write"), "{err}");
 }

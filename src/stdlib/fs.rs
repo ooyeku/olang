@@ -151,6 +151,9 @@ pub fn create_fs_module() -> Value {
     );
     // Move to the Trash (macOS): never a permanent delete.
     module.insert("trash".to_string(), create_builtin_function("trash", 1));
+    // fsync: what was written to a file (or a folder's entries) reaches
+    // the disk before this returns.
+    module.insert("sync".to_string(), create_builtin_function("sync", 1));
 
     Value::Struct {
         type_name: "Module".to_string(),
@@ -199,6 +202,7 @@ pub fn call_fs_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn s
         "copy_file" => copy_file(args),
         "move_file" => move_file(args),
         "trash" => trash(args),
+        "sync" => sync(args),
         "file_size" => file_size(args),
         "file_info" => file_info(args),
         _ => Err(format!("Unknown fs function: {}", name).into()),
@@ -657,7 +661,7 @@ fn glob(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 }
 
 /// Segment-aware glob matching: `**` spans segments, `*`/`?` stay within one.
-fn glob_match(pattern: &str, path: &str) -> bool {
+pub(crate) fn glob_match(pattern: &str, path: &str) -> bool {
     let pat_segs: Vec<&str> = pattern.split('/').collect();
     let path_segs: Vec<&str> = path.split('/').collect();
     match_segments(&pat_segs, &path_segs)
@@ -947,6 +951,23 @@ fn trash_item(path: &str) -> Result<String, String> {
 #[cfg(not(all(target_os = "macos", feature = "gui")))]
 fn trash_item(_path: &str) -> Result<String, String> {
     Err("this platform has no Trash olang can use (macOS only)".to_string())
+}
+
+/// Make what was written durable: a file's bytes (fsync), or a folder's
+/// entries (the files created, removed or renamed in it). Until then a
+/// write may sit in the operating system's cache, and a power cut loses
+/// it; a program that acknowledges a write after this has kept it.
+/// Usage: fs.sync("/path/to/file") -> Result<Unit, Error>
+fn sync(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let path = one_path_arg("sync", &args)?;
+    let synced = fs::File::open(path).and_then(|f| f.sync_all());
+    match synced {
+        Ok(()) => Ok(Value::Ok(Box::new(Value::Unit))),
+        Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "Failed to sync '{}': {}",
+            path, e
+        )))))),
+    }
 }
 
 /// Get file size in bytes

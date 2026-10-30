@@ -2749,6 +2749,22 @@ task.watch(service, inbox)   // a dead service is an Err at the next recv, not a
             &[r##"let run = w.run_fn(main, #{ "for": sim.hours(1) })  // run.outcome, run.events"##],
         );
         self.doc_ex(
+            "sim.disk",
+            "sim.disk(#{ fsync_lies, torn_writes, full_at, slow })",
+            "Map",
+            "sim",
+            "a node's disk and how it misbehaves: the share of syncs that lie, whether a crash may keep torn parts of unsynced writes, the bytes it fills at, and how much slower its syncs are; given to w.node(name, argv, #{ disk })",
+            &[r##"w.node("db", ["store.ol"], #{ "disk": sim.disk(#{ "fsync_lies": 0.01, "torn_writes": true }) })"##],
+        );
+        self.doc_ex(
+            "sim.maybe",
+            "sim.maybe(point)",
+            "Bool",
+            "sim",
+            "a buggify point: always false outside a world; inside one, the seed turns the point on or off for the run, and one that is on is true a quarter of the times it is reached (recorded as a fault)",
+            &[r##"if sim.maybe("after_append") => time.sleep(50) else => ()"##],
+        );
+        self.doc_ex(
             "sim.ms",
             "sim.ms(n)",
             "Int",
@@ -7680,6 +7696,19 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
             ],
             category: "Filesystem".to_string(),
             see_also: vec!["fs.file_info".to_string(), "fs.exists".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "fs.sync".to_string(),
+            description: "Make what was written durable before returning: a file's bytes (fsync), or a folder's entries (the files created, removed or renamed in it). Until then a write may sit in the operating system's cache, where a power cut loses it. Inside a sim world it decides what a crash keeps".to_string(),
+            syntax: "fs.sync(path)".to_string(),
+            parameters: vec!["path: String - The file or folder to sync".to_string()],
+            return_type: "Result<Unit, Error>".to_string(),
+            examples: vec![
+                "unwrap(fs.append_file(\"log\", line))\nunwrap(fs.sync(\"log\"))  // only now answer \"saved\"".to_string(),
+            ],
+            category: "Filesystem".to_string(),
+            see_also: vec!["fs.write_file".to_string(), "fs.append_file".to_string()],
         });
 
         self.add_function(FunctionDoc {

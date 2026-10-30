@@ -18,6 +18,18 @@
 //! `w.heal`, `w.link` before a run set how the network starts; called
 //! inside the running world (from a client or a hook) they change it
 //! then. `w.crash` and `w.restart` act inside the running world only.
+//!
+//! S3 adds the disk and the process around a node:
+//!
+//! ```text
+//! w.node("db", ["store.ol"], #{ "disk": sim.disk(#{ "fsync_lies": 0.01, "torn_writes": true, "full_at": 1048576, "slow": 4 }),
+//!     "files": #{ "/etc/store.conf": "mode=strict" }, "cwd": "/srv", "stdin": "go\n",
+//!     "crash": #{ "p": 0.001, "restart_after": 2000 } })
+//! w.crash(n, #{ restart_after }) · w.kill(n, #{ restart_after }) · w.stop(n, #{ restart_after })
+//! w.write_stdin(n, text) · w.close_stdin(n) · w.slow_disk(n, factor)
+//! sim.maybe("after_append")            // false outside a world
+//! run.faults  run.disks
+//! ```
 
 use super::net::{Link, NodeId};
 use super::node::Kind;
@@ -145,6 +157,8 @@ fn builtin(name: &str, arity: usize) -> Value {
 pub fn create_sim_module() -> Value {
     let mut module = ValueMap::default();
     module.insert("world".to_string(), builtin("world", 1));
+    module.insert("disk".to_string(), builtin("disk", 1));
+    module.insert("maybe".to_string(), builtin("maybe", 1));
     for unit in ["ms", "seconds", "minutes", "hours"] {
         module.insert(unit.to_string(), builtin(unit, 1));
     }
@@ -153,7 +167,7 @@ pub fn create_sim_module() -> Value {
         ("run_fn", 3),
         ("run", 2),
         ("node", 4),
-        ("client", 3),
+        ("client", 4),
         ("at", 3),
         ("every", 3),
         ("link", 4),
@@ -161,6 +175,11 @@ pub fn create_sim_module() -> Value {
         ("heal", 1),
         ("crash", 3),
         ("restart", 2),
+        ("kill", 3),
+        ("stop", 3),
+        ("write_stdin", 3),
+        ("close_stdin", 2),
+        ("slow_disk", 3),
     ] {
         world.insert(name.to_string(), builtin(&format!("World.{name}"), arity));
     }
@@ -225,6 +244,11 @@ pub fn call(
 ) -> Result<Value, InterpreterError> {
     match name {
         "world" => world(&args),
+        "disk" => disk_value(&args),
+        "maybe" => match args.as_slice() {
+            [Value::String(point)] => Ok(Value::Boolean(super::maybe(point))),
+            _ => Err(misuse("sim.maybe expects the point's name as a String")),
+        },
         "ms" => duration(&args, "ms", 1),
         "seconds" => duration(&args, "seconds", 1_000),
         "minutes" => duration(&args, "minutes", 60_000),
@@ -245,14 +269,19 @@ pub fn call(
                 "run_fn" => run_fn(w, rest, interpreter),
                 "run" => run(w, rest, interpreter),
                 "node" => node(w, rest, interpreter),
-                "client" => client(w, rest),
+                "client" => client(w, rest, interpreter),
                 "at" => hook(w, rest, false),
                 "every" => hook(w, rest, true),
                 "link" => link(w, rest),
                 "partition" => partition(w, rest),
                 "heal" => heal(w),
-                "crash" => crash(w, rest),
+                "crash" => halt(w, rest, super::node::Halt::Crash),
+                "kill" => halt(w, rest, super::node::Halt::Kill),
+                "stop" => stop(w, rest),
                 "restart" => restart(w, rest),
+                "write_stdin" => stdin(w, rest, true),
+                "close_stdin" => stdin(w, rest, false),
+                "slow_disk" => slow_disk(w, rest),
                 _ => Err(misuse(format!("Unknown sim function: sim.{name}"))),
             }
         }
@@ -373,7 +402,7 @@ fn world(args: &[Value]) -> Result<Value, InterpreterError> {
                 if !matches!(key.as_str(), "seed" | "start" | "max_steps" | "net") {
                     return Err(misuse(format!(
                         "sim.world: unknown option `{key}` (a world knows seed, start, \
-                         max_steps and net; disks arrive in S3)"
+                         max_steps and net; a disk is a node's: w.node(name, argv, #{{ disk }}))"
                     )));
                 }
             }
@@ -566,46 +595,9 @@ fn node(
         .map_err(|e| misuse(format!("{what}: {}: {e}", path.display())))?;
     let mut info = base_info(&name, Kind::Program);
     info.argv = words;
-    if let Some(opts) = args.get(2).filter(|o| !matches!(o, Value::Unit)) {
-        let Some(o) = fields_of(opts) else {
-            return Err(misuse(format!(
-                "{what}: options are #{{ env, skew, deny }}"
-            )));
-        };
-        for (key, v) in o.iter() {
-            match key.as_str() {
-                "env" => {
-                    let Some(env) = fields_of(v) else {
-                        return Err(misuse(format!("{what}: `env` is a map of Strings")));
-                    };
-                    let mut out = BTreeMap::new();
-                    for (k, v) in env.iter() {
-                        let v = match v {
-                            Value::String(t) => t.to_string(),
-                            other => other.to_string(),
-                        };
-                        out.insert(k.clone(), v);
-                    }
-                    info.env = out;
-                }
-                "skew" => match v {
-                    Value::Integer(ms) => info.skew_ms = *ms,
-                    _ => return Err(misuse(format!("{what}: `skew` is ms (an Int)"))),
-                },
-                "deny" => match v {
-                    Value::String(list) => {
-                        info.deny = Some(crate::caps::parse_deny(list).map_err(misuse)?)
-                    }
-                    _ => return Err(misuse(format!("{what}: `deny` is a list like \"fs,proc\""))),
-                },
-                other => {
-                    return Err(misuse(format!(
-                        "{what}: unknown option `{other}` (a node knows env, skew and deny; \
-                         disks arrive in S3)"
-                    )));
-                }
-            }
-        }
+    info.deps = package_deps(&path);
+    if let Some(opts) = args.get(2) {
+        node_options(&mut info, opts, what)?;
     }
     spec.nodes.push((info, Start::Program { path, source }));
     Ok(node_value(&name))
@@ -622,14 +614,216 @@ fn function_arg(v: Option<&Value>, what: &str) -> Result<Value, InterpreterError
     }
 }
 
-/// `w.client(name, f)`: a node that is an olang function.
-fn client(w: &WorldObject, args: Vec<Value>) -> Result<Value, InterpreterError> {
+/// `w.client(name, f, opts)`: a node that is an olang function (its
+/// options are a node's: env, disk, files, cwd, stdin, crash).
+fn client(
+    w: &WorldObject,
+    args: Vec<Value>,
+    interpreter: &Interpreter,
+) -> Result<Value, InterpreterError> {
     let mut spec = w.spec();
     let name = check_name(&spec, args.first().unwrap_or(&Value::Unit), "w.client")?;
     let f = function_arg(args.get(1), "w.client(name, f)")?;
-    spec.nodes
-        .push((base_info(&name, Kind::Client), Start::Function(f)));
+    let mut info = base_info(&name, Kind::Client);
+    if let Some(opts) = args.get(2) {
+        node_options(&mut info, opts, "w.client")?;
+    }
+    let _ = interpreter;
+    spec.nodes.push((info, Start::Function(f)));
     Ok(node_value(&name))
+}
+
+/// A node's options: env, skew, deny (S2); disk, files, cwd, stdin,
+/// crash (S3).
+fn node_options(info: &mut NodeInfo, opts: &Value, what: &str) -> Result<(), InterpreterError> {
+    if matches!(opts, Value::Unit) {
+        return Ok(());
+    }
+    let Some(o) = fields_of(opts) else {
+        return Err(misuse(format!(
+            "{what}: options are #{{ env, skew, deny, disk, files, cwd, stdin, crash }}"
+        )));
+    };
+    for (key, v) in o.iter() {
+        match key.as_str() {
+            "env" => {
+                let Some(env) = fields_of(v) else {
+                    return Err(misuse(format!("{what}: `env` is a map of Strings")));
+                };
+                let mut out = BTreeMap::new();
+                for (k, v) in env.iter() {
+                    let v = match v {
+                        Value::String(t) => t.to_string(),
+                        other => other.to_string(),
+                    };
+                    out.insert(k.clone(), v);
+                }
+                info.env = out;
+            }
+            "skew" => match v {
+                Value::Integer(ms) => info.skew_ms = *ms,
+                _ => return Err(misuse(format!("{what}: `skew` is ms (an Int)"))),
+            },
+            "deny" => match v {
+                Value::String(list) => {
+                    info.deny = Some(crate::caps::parse_deny(list).map_err(misuse)?)
+                }
+                _ => return Err(misuse(format!("{what}: `deny` is a list like \"fs,proc\""))),
+            },
+            "disk" => info.disk = disk_opts(v, what)?,
+            "files" => {
+                let Some(files) = fields_of(v) else {
+                    return Err(misuse(format!(
+                        "{what}: `files` is a map of path to contents (a String or Bytes)"
+                    )));
+                };
+                let mut out = Vec::new();
+                for (path, contents) in files.iter() {
+                    let bytes = match contents {
+                        Value::String(t) => t.as_bytes().to_vec(),
+                        other => crate::stdlib::bytes::bytes_of(other)
+                            .map_err(|_| {
+                                misuse(format!(
+                                    "{what}: `files`: {path}'s contents are a String or Bytes, got {}",
+                                    other.type_name()
+                                ))
+                            })?
+                            .to_vec(),
+                    };
+                    out.push((path.clone(), bytes));
+                }
+                info.files = out;
+            }
+            "cwd" => match v {
+                Value::String(dir) => info.cwd = super::disk::normalize("/", dir),
+                _ => return Err(misuse(format!("{what}: `cwd` is a path"))),
+            },
+            "stdin" => match v {
+                Value::String(t) => info.stdin = Some(t.to_string()),
+                Value::Unit => info.stdin = None,
+                _ => return Err(misuse(format!("{what}: `stdin` is a String"))),
+            },
+            "crash" => {
+                let Some(c) = fields_of(v) else {
+                    return Err(misuse(format!(
+                        "{what}: `crash` is #{{ p, restart_after }}"
+                    )));
+                };
+                let p = c.get("p").and_then(num).unwrap_or(0.0);
+                if !(0.0..=1.0).contains(&p) {
+                    return Err(misuse(format!(
+                        "{what}: `crash.p` is a probability in 0..1"
+                    )));
+                }
+                let restart_after = match int_field(c, "restart_after", what)? {
+                    Some(ms) if ms < 0 => {
+                        return Err(misuse(format!(
+                            "{what}: `restart_after` must be non-negative"
+                        )));
+                    }
+                    other => other.map(|ms| ms as u64),
+                };
+                for k in c.keys() {
+                    if !matches!(k.as_str(), "p" | "restart_after") {
+                        return Err(misuse(format!(
+                            "{what}: `crash` knows p and restart_after, not `{k}`"
+                        )));
+                    }
+                }
+                info.crash = Some(super::CrashPlan { p, restart_after });
+            }
+            other => {
+                return Err(misuse(format!(
+                    "{what}: unknown option `{other}` (a node knows env, skew, deny, disk, \
+                     files, cwd, stdin and crash)"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `#{ fsync_lies, torn_writes, full_at, slow }` as a disk's options.
+fn disk_opts(v: &Value, what: &str) -> Result<super::disk::DiskOpts, InterpreterError> {
+    let Some(o) = fields_of(v) else {
+        return Err(misuse(format!(
+            "{what}: a disk is sim.disk(#{{ fsync_lies, torn_writes, full_at, slow }}), got {}",
+            v.type_name()
+        )));
+    };
+    let mut d = super::disk::DiskOpts::default();
+    for (key, v) in o.iter() {
+        match key.as_str() {
+            "fsync_lies" => {
+                d.fsync_lies = num(v)
+                    .ok_or_else(|| misuse(format!("{what}: `fsync_lies` is a probability")))?
+            }
+            "torn_writes" => match v {
+                Value::Boolean(b) => d.torn_writes = *b,
+                _ => return Err(misuse(format!("{what}: `torn_writes` is true or false"))),
+            },
+            "full_at" => match v {
+                Value::Integer(n) if *n >= 0 => d.full_at = Some(*n as u64),
+                Value::Unit => d.full_at = None,
+                _ => return Err(misuse(format!("{what}: `full_at` is a number of bytes"))),
+            },
+            "slow" => {
+                d.slow = num(v).ok_or_else(|| misuse(format!("{what}: `slow` is a factor")))?
+            }
+            other => {
+                return Err(misuse(format!(
+                    "{what}: a disk knows fsync_lies, torn_writes, full_at and slow, not `{other}`"
+                )));
+            }
+        }
+    }
+    d.validate().map_err(|e| misuse(format!("{what}: {e}")))?;
+    Ok(d)
+}
+
+/// `sim.disk(#{ fsync_lies, torn_writes, full_at, slow })`: a disk's
+/// options, checked, as the map `w.node`'s `disk` takes.
+fn disk_value(args: &[Value]) -> Result<Value, InterpreterError> {
+    let d = match args {
+        [] | [Value::Unit] => super::disk::DiskOpts::default(),
+        [opts] => disk_opts(opts, "sim.disk")?,
+        _ => {
+            return Err(misuse(
+                "sim.disk expects one argument: #{ fsync_lies, torn_writes, full_at, slow }",
+            ));
+        }
+    };
+    let mut m = ValueMap::default();
+    m.insert("fsync_lies".into(), Value::Float(d.fsync_lies));
+    m.insert("torn_writes".into(), Value::Boolean(d.torn_writes));
+    m.insert(
+        "full_at".into(),
+        d.full_at
+            .map(|n| Value::Integer(n as i64))
+            .unwrap_or(Value::Unit),
+    );
+    m.insert("slow".into(), Value::Float(d.slow));
+    Ok(Value::Map(Arc::new(m)))
+}
+
+/// A node program's package dependencies, resolved as `olang run`
+/// resolves them (the manifest above the file, its lock replayed) but
+/// fetching nothing and writing no lock: a world reads the machine's
+/// packages, never changes them.
+pub(crate) fn package_deps(
+    path: &std::path::Path,
+) -> Option<std::collections::HashMap<String, std::path::PathBuf>> {
+    let root = crate::pkg::manifest::Manifest::find_root(path)?;
+    let opts = crate::pkg::InstallOptions {
+        offline: true,
+        ..Default::default()
+    };
+    let (map, _missing) = crate::pkg::install_lenient(&root, &opts);
+    let mut map: std::collections::HashMap<_, _> = map.into_iter().collect();
+    if let Ok(m) = crate::pkg::manifest::Manifest::load(&root) {
+        map.entry(m.package.name.clone()).or_insert(root.clone());
+    }
+    Some(map)
 }
 
 /// `w.at(t, f)` / `w.every(dt, f)`: faults as code, on virtual time.
@@ -757,34 +951,111 @@ fn heal(w: &WorldObject) -> Result<Value, InterpreterError> {
     Ok(Value::Unit)
 }
 
-/// `w.crash(n, #{ restart_after })`, inside the running world.
-fn crash(w: &WorldObject, args: Vec<Value>) -> Result<Value, InterpreterError> {
-    let what = "w.crash";
+fn restart_after(opts: Option<&Value>, what: &str) -> Result<Option<u64>, InterpreterError> {
+    match opts {
+        None | Some(Value::Unit) => Ok(None),
+        Some(o) => {
+            let Some(o) = fields_of(o) else {
+                return Err(misuse(format!("{what}: options are #{{ restart_after }}")));
+            };
+            match int_field(o, "restart_after", what)? {
+                Some(ms) if ms >= 0 => Ok(Some(ms as u64)),
+                Some(_) => Err(misuse(format!(
+                    "{what}: `restart_after` must be non-negative"
+                ))),
+                None => Ok(None),
+            }
+        }
+    }
+}
+
+/// `w.crash(n, #{ restart_after })` / `w.kill(n, ...)`, inside the
+/// running world.
+fn halt(
+    w: &WorldObject,
+    args: Vec<Value>,
+    how: super::node::Halt,
+) -> Result<Value, InterpreterError> {
+    let what = match how {
+        super::node::Halt::Crash => "w.crash",
+        _ => "w.kill",
+    };
+    let Some(ctx) = live(w, what)? else {
+        return Err(misuse(format!(
+            "{what} acts on the running world: call it from a client or a hook (w.at)"
+        )));
+    };
+    let name = node_name(args.first().unwrap_or(&Value::Unit), what)?;
+    let n = resolve(&ctx, &name, what)?;
+    let after = restart_after(args.get(1), what)?;
+    ctx.world
+        .halt(ctx.task, n, how, after, what)
+        .map_err(misuse)?;
+    // A node that stops itself stops here.
+    super::World::stopped(&ctx.world.lock(), ctx.task)?;
+    Ok(Value::Unit)
+}
+
+/// `w.stop(n, #{ restart_after })`: SIGTERM, inside the running world.
+fn stop(w: &WorldObject, args: Vec<Value>) -> Result<Value, InterpreterError> {
+    let what = "w.stop";
     let Some(ctx) = live(w, what)? else {
         return Err(misuse(
-            "w.crash acts on the running world: call it from a client or a hook (w.at)",
+            "w.stop acts on the running world: call it from a client or a hook",
         ));
     };
     let name = node_name(args.first().unwrap_or(&Value::Unit), what)?;
     let n = resolve(&ctx, &name, what)?;
-    let restart_after = match args.get(1) {
-        None | Some(Value::Unit) => None,
-        Some(o) => {
-            let Some(o) = fields_of(o) else {
-                return Err(misuse("w.crash: options are #{ restart_after }"));
-            };
-            match int_field(o, "restart_after", what)? {
-                Some(ms) if ms >= 0 => Some(ms as u64),
-                Some(_) => return Err(misuse("w.crash: `restart_after` must be non-negative")),
-                None => None,
-            }
-        }
-    };
-    ctx.world
-        .crash(ctx.task, n, restart_after)
-        .map_err(misuse)?;
-    // A node that crashes itself stops here.
+    let after = restart_after(args.get(1), what)?;
+    ctx.world.stop(ctx.task, n, after).map_err(misuse)?;
     super::World::stopped(&ctx.world.lock(), ctx.task)?;
+    Ok(Value::Unit)
+}
+
+/// `w.write_stdin(n, text)` / `w.close_stdin(n)`.
+fn stdin(w: &WorldObject, args: Vec<Value>, write: bool) -> Result<Value, InterpreterError> {
+    let what = if write {
+        "w.write_stdin"
+    } else {
+        "w.close_stdin"
+    };
+    let Some(ctx) = live(w, what)? else {
+        return Err(misuse(format!(
+            "{what} acts on the running world: call it from a client or a hook (a node's \
+             first stdin is #{{ stdin }})"
+        )));
+    };
+    let name = node_name(args.first().unwrap_or(&Value::Unit), what)?;
+    let n = resolve(&ctx, &name, what)?;
+    let text = if write {
+        match args.get(1) {
+            Some(Value::String(t)) => Some(t.to_string()),
+            _ => return Err(misuse("w.write_stdin expects a node and a String")),
+        }
+    } else {
+        None
+    };
+    ctx.world.feed_stdin(ctx.task, n, text.as_deref());
+    Ok(Value::Unit)
+}
+
+/// `w.slow_disk(n, factor)`: from now on node n's syncs take `factor`
+/// times as long.
+fn slow_disk(w: &WorldObject, args: Vec<Value>) -> Result<Value, InterpreterError> {
+    let what = "w.slow_disk";
+    let Some(ctx) = live(w, what)? else {
+        return Err(misuse(
+            "w.slow_disk acts on the running world (or give the node #{ disk: sim.disk(#{ slow }) })",
+        ));
+    };
+    let name = node_name(args.first().unwrap_or(&Value::Unit), what)?;
+    let n = resolve(&ctx, &name, what)?;
+    let factor = args
+        .get(1)
+        .and_then(num)
+        .filter(|f| f.is_finite() && *f >= 0.0)
+        .ok_or_else(|| misuse("w.slow_disk expects a node and a non-negative factor"))?;
+    ctx.world.set_slow(ctx.task, n, factor);
     Ok(Value::Unit)
 }
 
@@ -922,5 +1193,36 @@ pub fn report_value(r: &Report) -> Value {
         net.insert(k.to_string(), Value::Integer(v as i64));
     }
     m.insert("net".to_string(), Value::Map(Arc::new(net)));
+    let faults = r
+        .faults
+        .iter()
+        .map(|f| {
+            let mut e = ValueMap::default();
+            e.insert("t".to_string(), Value::Integer(f.t as i64));
+            e.insert("node".to_string(), s(&f.node));
+            e.insert("kind".to_string(), s(f.kind));
+            e.insert("detail".to_string(), s(&f.detail));
+            e.insert("step".to_string(), Value::Integer(f.step as i64));
+            Value::Map(Arc::new(e))
+        })
+        .collect::<Vec<_>>();
+    m.insert("faults".to_string(), Value::List(Arc::new(faults)));
+    let mut disks = ValueMap::default();
+    for (name, d) in &r.disks {
+        let mut e = ValueMap::default();
+        for (k, v) in [
+            ("writes", d.writes),
+            ("syncs", d.syncs),
+            ("lies", d.lies),
+            ("lost", d.lost),
+            ("torn", d.torn),
+            ("full", d.full),
+            ("crashes", d.crashes),
+        ] {
+            e.insert(k.to_string(), Value::Integer(v as i64));
+        }
+        disks.insert(name.clone(), Value::Map(Arc::new(e)));
+    }
+    m.insert("disks".to_string(), Value::Map(Arc::new(disks)));
     Value::Map(Arc::new(m))
 }
