@@ -44,6 +44,18 @@ remote stays on rc.5.
   processes, the environment) is refused with an error and never
   reaches the real one: `effects.rs` gains a fourth column, and a test
   holds every effectful builtin to it. Design: plans/SIM-S1.md.
+- **`peg` matches natively.** `peg.grammar` still reads, checks and
+  analyses a grammar in olang (and words every error), then hands the
+  rules to a Rust matcher (src/stdlib/peg) that builds the tree as
+  olang values and calls the actions bottom up; the API, trees and
+  error texts are unchanged. On the 150 KB JSON benchmark recognising
+  takes 0.7× `json.parse` (was 19×), a tree 11.5× (was 99×; the
+  budget's 3× is missed, the time is in making olang maps), values 27×
+  (was 112×); olang-track's query bar parses to a tree in 8.5 µs (was
+  77 µs; its hand-written parser takes 50). The olang engine stays for
+  testing peg (`#{ "engine": "olang" }`), and a differential suite
+  (peg_native_test.ol) holds the two to the same answers. Design:
+  plans/PEG-NATIVE.md.
 
 ### Fixed
 

@@ -33,6 +33,7 @@ pub mod lexers;
 pub mod math;
 pub mod md;
 pub mod meta;
+pub mod peg;
 #[cfg(feature = "native")]
 pub mod os;
 #[cfg(feature = "native")]
@@ -137,6 +138,8 @@ pub fn get_stdlib() -> crate::ast::ValueMap {
     #[cfg(feature = "gui")]
     stdlib.insert("gui".to_string(), gui::create_gui_module());
     stdlib.insert("dom".to_string(), dom::create_dom_module());
+    // `peg`'s native matching core: internal, `peg.ol` its only caller
+    stdlib.insert("__peg".to_string(), peg::create_module());
     // OVM extension modules (ods, ...) contribute their namespaces through
     // the registry, so both tiers and the stdlib agree on one module set.
     for module in crate::native::registered_modules() {

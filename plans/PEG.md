@@ -69,6 +69,9 @@ match Query.parse("project: OL is: overdue -draft") {
 
 ## Fast
 
+*(Since rc.6 the matching is native and the olang functions below are
+the reference engine kept for testing: plans/PEG-NATIVE.md.)*
+
 - A grammar compiles once into olang functions, one per rule, written
   as recursive descent. They are ordinary code, so the bytecode tier
   takes them when they are hot; there is no grammar interpreter on the

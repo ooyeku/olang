@@ -15,31 +15,42 @@
 //   Csv.parse("a,b\n1,\"two\"")     // Ok(tree): kind, text, span, children
 //
 // How it is built. `peg.grammar` reads the notation into rule data,
-// analyses it (what can match nothing, which characters can start each
-// rule, which rules are left-recursive, where a rule is tried twice at
-// one place), and writes each rule out as olang source: recursive
+// checks it, and analyses it (what can match nothing, which characters
+// can start each rule, which rules are left-recursive, where a rule is
+// tried twice at one place); every message, `check`, `examples` and
+// `dump` are written here. The matching is native: the rules go as data
+// to `__peg.compile` (src/stdlib/peg), which flattens them into a
+// program for a recursive-descent matcher and answers a handle; a parse
+// hands it the input and gets back the tree — built in Rust as the maps
+// below, the actions called bottom up — or the data of the error, which
+// `parse_error` makes the error value. plans/PEG-NATIVE.md has the
+// design and the measurements.
+//
+// The reference engine (`#{ "engine": "olang" }`, for testing peg
+// itself) writes each rule out as olang source instead: recursive
 // descent with the character tests, loops and choices inlined, compiled
-// once with `meta.eval`. Those functions are ordinary code, so the
-// bytecode tier takes them, and there is no grammar interpreter on the
-// hot path. Each rule has three: `b_` builds its node, `k_` only
-// recognises (says where the match ends), and `tk_` recognises while
-// noting failures. A parse runs the building ones; only a failed parse
-// runs again with the noting ones, to find the furthest failure and what
-// was expected there, so a successful parse pays nothing for good errors.
+// once with `meta.eval`. Each rule has three functions: `b_` builds its
+// node, `k_` only recognises (says where the match ends), and `tk_`
+// recognises while noting failures. A parse runs the building ones;
+// only a failed parse runs again with the noting ones, to find the
+// furthest failure and what was expected there, so a successful parse
+// pays nothing for good errors. The native matcher has the same three
+// families and the same bookkeeping, so the two answer alike, to the
+// text of an error (peg_native_test.ol checks it).
 //
-// The parse state is a struct: the input as a list of code points with
-// a -1 sentinel at the end (so no test needs a bounds check), the table
-// of every rule's functions (the call that closes a cycle in the grammar
-// goes through it), and the few cells a parse may need, made per parse
-// on the parsing thread: the seeds of left recursion being grown, the
-// one-entry cache of rules tried twice at a place, and in a noting parse
-// the furthest failure. Positions are code-point offsets, as
-// `str.substring` takes them.
+// The olang engine's parse state is a struct: the input as a list of
+// code points with a -1 sentinel at the end (so no test needs a bounds
+// check), the table of every rule's functions (the call that closes a
+// cycle in the grammar goes through it), and the few cells a parse may
+// need, made per parse on the parsing thread: the seeds of left
+// recursion being grown, the one-entry cache of rules tried twice at a
+// place, and in a noting parse the furthest failure. Positions are
+// code-point offsets, as `str.substring` takes them.
 //
-// Nodes are built compact during the parse (`[kind, start, end, kids,
-// fields]`) and turned into maps — `kind`, `text`, `span`, `children`
-// and the labels — once, at the end, where actions run too: a node
-// thrown away by backtracking never costs a map or an action call.
+// Its nodes are built compact during the parse (`[kind, start, end,
+// kids, fields]`) and turned into maps — `kind`, `text`, `span`,
+// `children` and the labels — once, at the end, where actions run too: a
+// node thrown away by backtracking never costs a map or an action call.
 
 // ── characters ─────────────────────────────────────────────────────────
 
@@ -1684,11 +1695,15 @@ fn inline_tokens(e, byname, depth) = {
 // `show()` as a parse error has. `actions` maps a rule (or label) name to
 // a function from its node to a value; `options`: `start` (the rule a
 // parse begins with; the first rule otherwise), `recover` (sync strings:
-// a failed parse skips past the next and goes on) and `memo` ("auto",
-// "all" or "none").
+// a failed parse skips past the next and goes on), `memo` ("auto",
+// "all" or "none") and, for testing peg itself, `engine`: "native" (the
+// default) or "olang", the reference engine that writes the grammar out
+// as olang functions — slower, and kept to check the native one against.
 share fn grammar(text, actions = #{}, options = #{}) = {
     let (rules, cs) = read_rules(text)?
     let byname = validate(rules, cs, actions, options.start)?
+    let engine = options.engine ?? "native"
+    if engine != "native" && engine != "olang" => raise("peg.grammar: the engine is \"native\" or \"olang\", not " + quote(to_string(engine)))
     let nul = nullables(rules)
     let fst = firsts(rules, nul)
     let graph = left_graph(rules, nul)
@@ -1697,18 +1712,36 @@ share fn grammar(text, actions = #{}, options = #{}) = {
     let memo = if mode == "none" => lr.heads
         else if mode == "all" => dedupe(lr.heads + map(filter(rules, (r) => !r.token && !contains(lr.rec, r.name) && r.name != "skip"), (r) => r.name))
         else => dedupe(lr.heads + memo_rules(rules, nul, graph, lr))
+    // Inside tokens (and skip), a reference to a token made only of
+    // characters is written in place, so a run like `Wc+` is one loop.
+    let crules = map(rules, (r) => if r.token || r.name == "skip" => map_set(r, "e", inline_tokens(r.e, byname, 0)) else => r)
+    let names = map(rules, (r) => r.name)
+    let start = options.start ?? head(filter(names, (n) => n != "skip") + ["skip"])
+    let base = #{ "rules": rules, "names": names, "byname": byname, "idx": fold(enumerate(names), #{}, (m, (i, n)) => map_set(m, n, i)),
+        "start": start, "recover": options.recover, "actions": actions,
+        "nul": nul, "fst": fst, "lr": lr, "graph": graph, "memo": memo, "text": text }
+    if engine == "olang" => Ok(grammar_value(olang_engine(base, crules, nul, fst, lr, memo, byname)))
+    else => {
+        // The native matcher (src/stdlib/peg): the rules as data, the
+        // ones that memoise in slot order, the heads of left recursion
+        // and the actions; it answers a handle the parses run on.
+        let native = __peg.compile(crules, memo, lr.heads, actions)
+        Ok(grammar_value(#{ ...base, "native": native, "source": __peg.listing(native) }))
+    }
+}
+
+// The reference engine: the grammar written out as olang source and
+// compiled once with `meta.eval`.
+fn olang_engine(base, crules, nul, fst, lr, memo, byname) = {
     let slots = fold(enumerate(memo), #{}, (m, (i, n)) => map_set(m, n, i))
     let sk = byname["skip"]
     let skipclass = if sk == () => ()
         else if (sk.e.t == "plus" || sk.e.t == "star") && sk.e.e.t == "class" => sk.e.e
         else => ()
-    // Inside tokens (and skip), a reference to a token made only of
-    // characters is written in place, so a run like `Wc+` is one loop.
-    let crules = map(rules, (r) => if r.token || r.name == "skip" => map_set(r, "e", inline_tokens(r.e, byname, 0)) else => r)
     let cbyname = fold(crules, #{}, (m, r) => map_set(m, r.name, r))
     let g = #{ "rules": crules, "byname": cbyname, "nul": nul, "fst": fst, "lr": lr, "slots": slots,
         "skip": if sk == () => () else => sk.e, "skipclass": skipclass,
-        "index": fold(enumerate(rules), #{}, (m, (i, r)) => map_set(m, r.name, i)),
+        "index": fold(enumerate(base.rules), #{}, (m, (i, r)) => map_set(m, r.name, i)),
         "ctr": cell.new(0), "extra": cell.new([]), "descs": cell.new([]), "rule": cell.new(""), "seen": cell.new([]),
         "cur": cell.new(""), "declared": cell.new(#{}), "uid": "_" + crypto.random_hex(4) }
     let end_idx = desc_idx(g, "end of input")
@@ -1717,13 +1750,7 @@ share fn grammar(text, actions = #{}, options = #{}) = {
         Ok(f) => f,
         Err(e) => raise("peg: the parser generated for this grammar does not compile (a bug in peg): " + e)
     }
-    let names = map(rules, (r) => r.name)
-    let start = options.start ?? head(filter(names, (n) => n != "skip") + ["skip"])
-    let P = #{ "rules": rules, "names": names, "byname": byname, "idx": fold(enumerate(names), #{}, (m, (i, n)) => map_set(m, n, i)),
-        "fns": fns, "descs": cell.get(g.descs), "end_idx": end_idx, "nslots": len(memo) * 2,
-        "start": start, "recover": options.recover, "actions": actions, "source": src,
-        "nul": nul, "fst": fst, "lr": lr, "graph": graph, "memo": memo, "text": text }
-    Ok(grammar_value(P))
+    #{ ...base, "native": (), "fns": fns, "descs": cell.get(g.descs), "end_idx": end_idx, "nslots": len(memo) * 2, "source": src }
 }
 
 // The grammar as a value: its methods close over the compiled parser.
@@ -1819,14 +1846,43 @@ fn run_parse(P, input, opts) = {
     let i = P.idx[start]
     if i == () => raise("peg: no rule is named `" + start + "`" + did_you_mean(start, P.names))
     let recover = opts.recover ?? P.recover
-    let cs = codes(input)
-    let n = len(cs) - 1
-    if recover != () => parse_recovering(P, input, cs, i, start, recover)
+    if P.native != () => {
+        if recover != () => native_recovering(P, input, i, recover)
+        else => match __peg.parse(P.native, input, i) {
+            Ok(v) => Ok(v),
+            Err(d) => Err(parse_error(d))
+        }
+    }
     else => {
-        let s = new_state(P, cs, false)
-        let nd = build_from(P, s, i, 0)
-        if nd != () && skip_at(P, s, nd[2]) == n => Ok(finish(input, cs, root_of(nd, start), P.actions))
-        else => Err(failure(P, cs, i, 0))
+        let cs = codes(input)
+        let n = len(cs) - 1
+        if recover != () => parse_recovering(P, input, cs, i, start, recover)
+        else => {
+            let s = new_state(P, cs, false)
+            let nd = build_from(P, s, i, 0)
+            if nd != () && skip_at(P, s, nd[2]) == n => Ok(finish(input, cs, root_of(nd, start), P.actions))
+            else => Err(failure(P, cs, i, 0))
+        }
+    }
+}
+
+// An error value from the native matcher's data: the same fields, and
+// `show()`.
+fn parse_error(d) = {
+    let shown = d.shown
+    #{ "message": d.message, "span": d.span, "expected": d.expected, "found": d.found, "after": d.after,
+       "show": () => shown }
+}
+
+fn native_recovering(P, input, i, sync) = {
+    let syncs = if typeof(sync) == "List" => sync else => [sync]
+    match __peg.recover(P.native, input, i, syncs) {
+        Ok(tree) => Ok(tree),
+        Err(got) => {
+            let errors = map(got[1], parse_error)
+            let shown = join(map(errors, (e) => e.show()), "\n")
+            Err(#{ ...errors[0], "errors": errors, "tree": got[0], "show": () => shown })
+        }
     }
 }
 
@@ -1835,10 +1891,13 @@ fn accepts(P, input, opts) = {
     let start = opts.start ?? P.start
     let i = P.idx[start]
     if i == () => raise("peg: no rule is named `" + start + "`" + did_you_mean(start, P.names))
-    let cs = codes(input)
-    let s = new_state(P, cs, false)
-    let r = P.fns.t[len(P.names) + i](s, skip_at(P, s, 0))
-    r >= 0 && skip_at(P, s, r) == len(cs) - 1
+    if P.native != () => __peg.accepts(P.native, input, i)
+    else => {
+        let cs = codes(input)
+        let s = new_state(P, cs, false)
+        let r = P.fns.t[len(P.names) + i](s, skip_at(P, s, 0))
+        r >= 0 && skip_at(P, s, r) == len(cs) - 1
+    }
 }
 
 fn starts_at(cs, q, sy) = {

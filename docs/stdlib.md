@@ -973,7 +973,7 @@ match g.parse("width = wide") {
 
 | Function | Description |
 |---|---|
-| `peg.grammar(text, actions, options)` | `Ok(grammar)` or `Err(error)`; `actions` (optional) maps a rule or label to a function from its node to a value; `options` (optional): `start` (the rule a parse begins with, else the first), `recover` (sync strings, below), `memo` (`"auto"`, `"all"` or `"none"`) |
+| `peg.grammar(text, actions, options)` | `Ok(grammar)` or `Err(error)`; `actions` (optional) maps a rule or label to a function from its node to a value; `options` (optional): `start` (the rule a parse begins with, else the first), `recover` (sync strings, below), `memo` (`"auto"`, `"all"` or `"none"`), `engine` (for testing peg itself, under How fast) |
 | `g.parse(input)` | `Ok(tree)` — or the start rule's value, with actions — or `Err(error)`; the whole input must match, `skip` allowed around it |
 | `g.parse_with(input, opts)` · `peg.parse(g, input, opts)` | the same, with `start` or `recover` for this parse only |
 | `g.accepts(input)` | whether the whole input matches, without building a tree |
@@ -982,8 +982,8 @@ match g.parse("width = wide") {
 | `peg.dump(tree)` | a tree as indented text, one node a line, for tests and for looking |
 
 `peg.check` and `peg.examples` also take a grammar's text. A grammar's
-`rules`, `start` and `source` (the olang it was compiled to) are there
-to read.
+`rules`, `start` and `source` (the program it was compiled to, one rule
+a line) are there to read.
 
 ### The notation
 
@@ -1134,20 +1134,27 @@ println(col.all(xs, (x) => g.accepts(x))) // true
 
 ### How fast
 
-A grammar is compiled once, by `peg.grammar`, into olang functions —
-recursive descent, one function a rule, with the character tests,
-loops and choices written inline and an ordered choice that looks at
-the next character before trying an alternative — so a parse runs on
-the bytecode tier with no grammar interpreter in the way. A rule that an
-ordered choice may try twice at one position keeps its last answer;
-nothing else is memoised, so memory stays flat. The functions that
-gather an error's expectations run only after a parse has failed. On an
-M-series Mac, the JSON grammar below recognises a 150 KB document in
-about 20 times the built-in `json.parse`'s time, and builds its tree
-(about 150,000 nodes, each a map with its text and span) in about 100
-times. olang-track's query bar parses to a tree in about 85 µs a
-query, 1.6 times what its hand-written parser takes to tokenize and
-read it. `benchmarks/peg.ol` measures both.
+A grammar is compiled once, by `peg.grammar`: olang reads and checks
+the notation and works out what each rule can start with, which rules
+are left-recursive and which an ordered choice may try twice at one
+place; a native matcher then runs it — recursive descent over the
+compiled rules, an ordered choice that looks at the next character
+before trying an alternative, and the tree built straight as olang
+values. A rule that an ordered choice may try twice at one position
+keeps its last answer; nothing else is memoised, so memory stays flat.
+The work that gathers an error's expectations runs only after a parse
+has failed. On an M-series Mac, the JSON grammar below recognises a
+150 KB document in less time than the built-in `json.parse` takes to
+read it, and builds its tree (52,000 nodes, each a map with its text
+and span) in about 12 times; nearly all of that is making the maps and
+freeing them. olang-track's query bar parses to a tree in about 9 µs a
+query, a sixth of what its hand-written parser takes.
+`benchmarks/peg.ol` measures both.
+
+The engine peg had before — the grammar written out as olang functions
+and compiled with `meta.eval` — is still there for testing peg itself
+(`peg.grammar(text, actions, #{ "engine": "olang" })`): it gives the
+same trees and errors, 9 to 25 times slower.
 
 ### Three grammars
 

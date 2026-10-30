@@ -862,6 +862,12 @@ impl BuiltinFunctions {
             return crate::stdlib::cell::call_cell_function(cell_function, arguments, interpreter);
         }
 
+        // `peg`'s native matcher. Takes the interpreter: a grammar's
+        // actions are olang functions, called bottom up as its tree is made.
+        if let Some(peg_function) = name.strip_prefix("__peg.") {
+            return crate::stdlib::peg::call(peg_function, arguments, interpreter);
+        }
+
         // Handle chan functions
         if let Some(chan_function) = name.strip_prefix("chan.") {
             return crate::stdlib::chan::call_chan_function(chan_function, arguments)

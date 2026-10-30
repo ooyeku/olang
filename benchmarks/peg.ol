@@ -1,25 +1,39 @@
-// The `peg` budget (plans/PEG.md, G2): a JSON grammar against the
-// built-in `json.parse`, and a query bar like olang-track's, on the
-// same machine in the same run. `olang benchmarks/peg.ol`.
+// The `peg` budget (plans/PEG.md, G2; plans/PEG-NATIVE.md): a JSON
+// grammar against the built-in `json.parse`, and olang-track's query
+// bar against its hand-written parser, on the same machine in the same
+// run. `olang benchmarks/peg.ol`.
 //
-// Four numbers for JSON over one ~150 KB document: `json.parse` (native
-// Rust), `accepts` (the grammar recognising the text, no tree), `parse`
-// (the tree of nodes with kinds, texts, spans and labels) and `parse`
-// with actions (the same values `json.parse` gives, checked equal).
-// The query bar is olang-track's grammar over four typical queries, as
-// microseconds a query; olang-track's own hand-written parser is in its
-// repository (packages/olang-track-query) — its figure on the machine
-// that wrote this file is quoted below for comparison, with how it was
-// measured.
+// JSON is one ~150 KB document (1,000 records, 52,000 tree nodes):
+// `json.parse` (native Rust); `accepts` (the grammar recognising the
+// text, no tree); `parse` (the tree, every node a map with its kind,
+// text, span, children and labels); `parse` with actions (the values
+// `json.parse` gives, checked equal). The query bar is olang-track's
+// grammar over four typical queries, in microseconds a query. Each is
+// measured on the native matcher and on the olang engine it replaced
+// (`#{ "engine": "olang" }`), and set against its budget.
 //
-//   json.parse          1.6 ms
-//   peg accepts         36 ms      (22×)
-//   peg tree            163 ms     (100×)
-//   peg values          184 ms     (115×, equal to json.parse's)
-//   query, peg tree     83 µs      olang-track's parse: 51 µs (1.6×)
-//   query, peg tree + olang-track's meaning of it: 146 µs (2.9×)
+// olang-track's hand-written parser (tokenizer and the meaning of the
+// clauses, packages/olang-track-query) is in its own repository; its
+// figure, measured on the machine that wrote this file in the same
+// harness, is HAND below.
 //
-// (Apple M-series, olang 1.0.0-rc.5, best of several runs.)
+//                    olang engine (rc.6)    native (rc.6)     budget
+//   json.parse        1.6 ms                 1.6 ms
+//   peg accepts       31 ms   (19×)          1.2 ms  (0.7×)    2×
+//   peg tree          158 ms  (99×)          18 ms   (11.5×)   3× (missed)
+//   peg values        178 ms  (112×)         44 ms   (27×)
+//   query, accepts    27 µs                  1.3 µs
+//   query, tree       77 µs   (1.5×)         8.5 µs  (0.17×)   1× HAND
+//   query, tree + olang-track's meaning of it (peg_test.ol's port):
+//                     139 µs  (2.8×)         51 µs   (1.0×)
+//   HAND (olang-track's own parse): 50 µs
+//
+// (Apple M-series, olang 1.0.0-rc.6 release build, best of several
+// runs; a tree's time counts freeing it.) The tree misses its budget:
+// the matching is about a millisecond, and the rest is making 52,000
+// nodes as olang maps — about fifteen allocations a node: a map and its
+// span with eight String keys, the text, the children — and freeing
+// them. plans/PEG-NATIVE.md has the profile.
 
 use peg
 
@@ -85,38 +99,51 @@ let QUERIES = ["project: OL is: overdue sort: -updated",
     "(state: open tag: polish) OR state: doing sort: points",
     "owner: ann spent: >1h30m points: >=3 NOT (tag: server OR is: late) kanban board"]
 
-// The best of `reps` runs of `f`, in milliseconds.
-fn best_ms(f, reps) = {
-    let mut best = 1000000
+// The best of `reps` runs of `f`, in milliseconds a call of it, where
+// a run calls it `inner` times. (`time.monotonic()` is milliseconds
+// with a fraction. A value a call answered is freed during the next, so
+// a run of more than one call counts freeing it too.)
+fn best_ms(f, inner, reps) = {
+    let mut best = 1000000.0
     for i in 0..reps {
-        let t = time.monotonic_ms()
-        f()
-        let d = time.monotonic_ms() - t
+        let t = time.monotonic()
+        for j in 0..inner { f() }
+        let d = (time.monotonic() - t) / to_float(inner)
         if d < best => { best = d }
     }
     best
 }
 
-fn times(a, b) = if b == 0 => "-" else => str.fixed(to_float(a) / to_float(b), 1) + "×"
+let HAND = 50.0
 
-let J = unwrap(peg.grammar(JSON))
-let JV = unwrap(peg.grammar(JSON, ACTIONS))
+fn times(a, b) = if b == 0.0 => "-" else => str.fixed(a / b, 1) + "×"
+fn ms(x) = if x < 10.0 => str.fixed(x, 1) else => str.fixed(x, 0)
+fn row(name, x, base, budget) =
+    println(`  ${name}${ms(x)} ms  (${times(x, base)}${if budget == "" => "" else => ", budget " + budget})`)
+
 let record = `{"id": 12345, "name": "widget \"pro\"", "tags": ["a", "b", "c"], "price": 12.5e2, "ok": true, "none": null, "nested": {"x": [1, 2, 3, {"y": -4.25}]}}`
 let doc = "[" + join(map(range(0, 1000), (i) => record), ",\n") + "]"
-if unwrap(JV.parse(doc)) != unwrap(json.parse(doc)) => raise("the grammar's values differ from json.parse's")
-
-let native = to_float(best_ms(() => { for i in 0..10 { json.parse(doc) } }, 5)) / 10.0
-let accept = best_ms(() => J.accepts(doc), 3)
-let tree = best_ms(() => J.parse(doc), 3)
-let values = best_ms(() => JV.parse(doc), 3)
+let native = best_ms(() => json.parse(doc), 10, 5)
 println(`JSON, ${len(doc)} characters`)
-println(`  json.parse   ${str.fixed(native, 1)} ms`)
-println(`  peg accepts  ${accept} ms  (${times(accept, native)})`)
-println(`  peg tree     ${tree} ms  (${times(tree, native)})`)
-println(`  peg values   ${values} ms  (${times(values, native)})`)
+println(`  json.parse            ${ms(native)} ms`)
+for engine in ["native", "olang"] {
+    let J = unwrap(peg.grammar(JSON, #{}, #{ "engine": engine }))
+    let JV = unwrap(peg.grammar(JSON, ACTIONS, #{ "engine": engine }))
+    if unwrap(JV.parse(doc)) != unwrap(json.parse(doc)) => raise("the grammar's values differ from json.parse's")
+    // (two calls a run at least, so the tree freed is in the time)
+    let n = if engine == "native" => 4 else => 2
+    let label = if engine == "native" => "" else => " (olang engine)"
+    row(`peg accepts${label}  `, best_ms(() => J.accepts(doc), n, 5), native, if engine == "native" => "2×" else => "")
+    row(`peg tree${label}     `, best_ms(() => J.parse(doc), n, 5), native, if engine == "native" => "3×" else => "")
+    row(`peg values${label}   `, best_ms(() => JV.parse(doc), n, 5), native, "")
+}
 
-let Q = unwrap(peg.grammar(QUERY))
-let per_query = (f) => to_float(best_ms(() => { for i in 0..200 { for q in QUERIES { f(q) } } }, 5)) * 1000.0 / 800.0
-println("query bar, µs a query")
-println(`  peg accepts  ${str.fixed(per_query((q) => Q.accepts(q)), 1)}`)
-println(`  peg tree     ${str.fixed(per_query((q) => Q.parse(q)), 1)}`)
+println(`query bar, µs a query (olang-track's hand-written parser: ${str.fixed(HAND, 0)} µs, measured beside it)`)
+for engine in ["native", "olang"] {
+    let Q = unwrap(peg.grammar(QUERY, #{}, #{ "engine": engine }))
+    let per_query = (f) => best_ms(() => { for q in QUERIES { f(q) } }, 200, 5) * 1000.0 / 4.0
+    let label = if engine == "native" => "" else => " (olang engine)"
+    let tree = per_query((q) => Q.parse(q))
+    println(`  peg accepts${label}  ${str.fixed(per_query((q) => Q.accepts(q)), 1)}`)
+    println(`  peg tree${label}     ${str.fixed(tree, 1)}  (${times(tree, HAND)} the hand-written parser${if engine == "native" => ", budget 1×" else => ""})`)
+}
