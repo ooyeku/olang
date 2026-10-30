@@ -56,6 +56,29 @@ remote stays on rc.5.
   testing peg (`#{ "engine": "olang" }`), and a differential suite
   (peg_native_test.ol) holds the two to the same answers. Design:
   plans/PEG-NATIVE.md.
+- **`sim`: nodes and the network (S2).** A world holds nodes: an olang
+  program (`w.node(name, argv, #{ env, skew, deny })`, each on an
+  interpreter of its own, with its own `os.args()` and environment) or
+  a function (`w.client(name, f)`). `http.serve` and `http.get/post/
+  put/delete/request` work between them over a simulated network:
+  seeded latency, loss and duplication per link (`sim.world(#{ net })`,
+  `w.link(a, b, #{ latency, loss, dup })`), partitions that heal
+  (`w.partition([a], [b])`, `w.heal()`, before a run or from inside
+  it), and nothing ever opens a socket. A server's workers are tasks of
+  its node; a request and its answer are messages with latency; timeouts
+  run on virtual time; a partition that starts while an answer is in
+  flight drops it. `w.at(t, f)` and `w.every(dt, f)` are faults as
+  code; `w.crash(n, #{ restart_after })` stops a node where it stands
+  and restarts it with fresh memory. `w.run(duration)` reports
+  `history` (every request, sent to answered), `net` (sent, lost, cut,
+  duplicated, late, timeouts) and events with each node's name.
+  `olang sim FILE` runs a file that builds worlds with every world on
+  the seed asked for, so `--seeds N` finds a failing seed and `--seed S`
+  replays it. tests/fixtures/sim has a key-value server in olang-track's
+  rpc style, four clients for a simulated hour (about 0.45 s real per
+  seed), and a planted bug only a partition shows (a retry under a new
+  request id counts an add twice), found and replayed by seed.
+  Design: plans/SIM-S2.md.
 
 ### Fixed
 

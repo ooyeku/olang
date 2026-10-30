@@ -147,6 +147,8 @@ perhaps spin-then-park handoff.
 
 ## What S2 and S3 need from this
 
+*S2 is built: [SIM-S2.md](SIM-S2.md) says how each point below came out.*
+
 - **Nodes.** A node is an `Interpreter` with its own globals and module
   cache, sharing the world. `Ctx` (world, task) gains a node id; the
   scheduler is already world-wide, so tasks of every node are drawn from

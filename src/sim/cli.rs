@@ -9,6 +9,13 @@
 //!   program's output kept quiet, and prints each failing seed with what
 //!   went wrong and the line that reproduces it. (Parallel `--jobs` and
 //!   shrinking are S4.)
+//!
+//! **Two kinds of file.** A program (S1) runs as the main program of one
+//! world. A file that builds worlds (S2: it calls `sim.world(...)`, adds
+//! nodes, and runs them with `w.run`) runs as itself, outside any world,
+//! with every world it makes taking the seed asked for; it fails when it
+//! raises (an `assert` on a run's history, say) or when one of its runs
+//! fails.
 
 use super::{Config, Event, Report};
 use std::path::Path;
@@ -62,17 +69,30 @@ pub fn fmt_virtual(ms: u64) -> String {
 
 /// One event as a line.
 pub fn fmt_event(e: &Event) -> String {
+    let task = match e.task {
+        Some(t) => format!("task {t:<3}"),
+        None => "net     ".to_string(),
+    };
     format!(
-        "  {:>14}  task {:<3} {:<8} {}",
+        "  {:>14}  {:<8} {} {:<8} {}",
         fmt_virtual(e.t),
-        e.task,
+        e.node,
+        task,
         e.kind,
         e.detail
     )
 }
 
-/// Run `path` as a world's main program with `cfg`.
-pub fn run_file(path: &Path, cfg: Config) -> Result<Report, String> {
+/// Does `source` build worlds (S2) rather than run inside one (S1)? A
+/// program that runs inside a world cannot call `sim.world`: worlds do
+/// not nest.
+pub fn builds_worlds(source: &str) -> bool {
+    source
+        .lines()
+        .any(|l| l.split("//").next().unwrap_or("").contains("sim.world("))
+}
+
+fn read(path: &Path) -> Result<(String, crate::ast::Program, std::path::PathBuf), String> {
     let source = std::fs::read_to_string(path).map_err(|e| format!("{}: {}", path.display(), e))?;
     let program = crate::parser::Parser::new()
         .parse(&source)
@@ -82,11 +102,58 @@ pub fn run_file(path: &Path, cfg: Config) -> Result<Report, String> {
     } else {
         std::env::current_dir().unwrap_or_default().join(path)
     };
+    Ok((source, program, absolute))
+}
+
+/// Run `path` as a world's main program with `cfg`.
+pub fn run_file(path: &Path, cfg: Config) -> Result<Report, String> {
+    let (_, program, absolute) = read(path)?;
     // The interpreter tier, as record and replay run: no bytecode tier
     // is enabled, so every builtin passes the world's dispatch hook.
     let mut interpreter = crate::interpreter::Interpreter::new();
     interpreter.set_current_file(&absolute);
-    super::run(cfg, move || interpreter.eval_program(program))
+    let argv = vec![path.to_string_lossy().to_string()];
+    super::run_main(cfg, super::NodeInfo::main(argv), move || {
+        interpreter.eval_program(program)
+    })
+}
+
+/// Run `path`, a file that builds worlds, with every world taking
+/// `seed`: one report standing for them all (the last failing run, or
+/// the last run; the file's own error, if it raised, as `failed`).
+pub fn run_builder(path: &Path, seed: u64) -> Result<Report, String> {
+    let (_, program, absolute) = read(path)?;
+    let mut interpreter = crate::interpreter::Interpreter::new();
+    interpreter.set_current_file(&absolute);
+    super::surface::collect_begin(seed);
+    let result = interpreter.eval_program(program);
+    let reports = super::surface::collect_end();
+    let mut report = reports
+        .iter()
+        .rev()
+        .find(|r| r.failed())
+        .or(reports.last())
+        .cloned()
+        .unwrap_or_else(|| Report::empty(seed));
+    // every run's virtual time counts toward the rate
+    report.now = reports.iter().map(|r| r.now).max().unwrap_or(report.now);
+    if let Err(e) = result
+        && !report.failed()
+    {
+        report.outcome = "failed";
+        report.error = Some(super::error_text(&e));
+    }
+    Ok(report)
+}
+
+/// `run_file` or `run_builder`, as the file asks.
+fn run_any(path: &Path, cfg: Config) -> Result<Report, String> {
+    let source = std::fs::read_to_string(path).map_err(|e| format!("{}: {}", path.display(), e))?;
+    if builds_worlds(&source) {
+        run_builder(path, cfg.seed)
+    } else {
+        run_file(path, cfg)
+    }
 }
 
 fn failure_line(r: &Report) -> String {
@@ -114,7 +181,7 @@ pub fn main(file: &Path, opts: &Options) -> i32 {
 
 fn one_seed(file: &Path, seed: u64, base: Config, all_events: bool) -> i32 {
     let started = crate::clock::Instant::now();
-    let report = match run_file(file, Config { seed, ..base }) {
+    let report = match run_any(file, Config { seed, ..base }) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("olang sim: {e}");
@@ -129,7 +196,12 @@ fn one_seed(file: &Path, seed: u64, base: Config, all_events: bool) -> i32 {
         }
     }
     for e in report.events.iter().filter(|e| e.kind == "fail") {
-        eprintln!("olang sim: task {} failed: {}", e.task, e.detail);
+        eprintln!(
+            "olang sim: {} task {} failed: {}",
+            e.node,
+            e.task.unwrap_or(0),
+            e.detail
+        );
     }
     if report.failed() {
         if !all_events {
@@ -168,7 +240,7 @@ fn many_seeds(file: &Path, from: u64, n: u64, base: Config) -> i32 {
     let mut failed: Vec<u64> = Vec::new();
     let mut virtual_ms: u128 = 0;
     for seed in from..from.saturating_add(n) {
-        let report = run_file(
+        let report = run_any(
             file,
             Config {
                 seed,
@@ -226,5 +298,12 @@ mod tests {
         assert_eq!(fmt_virtual(250), "0.250s");
         assert_eq!(fmt_virtual(123_500), "2m 03.500s");
         assert_eq!(fmt_virtual(3_723_250), "1h 02m 03.250s");
+    }
+
+    #[test]
+    fn a_file_that_calls_sim_world_builds_worlds() {
+        assert!(builds_worlds("let w = sim.world(#{ \"seed\": 1 })"));
+        assert!(!builds_worlds("// sim.world( in a comment\nprintln(1)"));
+        assert!(!builds_worlds("spawn { chan.recv(c) }"));
     }
 }

@@ -4,9 +4,12 @@
 //! drawn from streams split from one seed, under a cooperative scheduler
 //! the seed drives. Two runs with one seed are the same run, event for
 //! event; a race that some seed exposes comes back every time with that
-//! seed. Milestone S1 (this module) simulates the clock, randomness, and
-//! `spawn`, `task` and `chan`; everything else that touches the world is
-//! refused inside one (`effects::sim_handling`), never run for real.
+//! seed. Milestone S1 simulates the clock, randomness, and `spawn`,
+//! `task` and `chan`; S2 adds nodes (each an interpreter of its own) and
+//! the network between them (`http` over simulated links, with latency,
+//! loss, duplication and partitions). Everything else that touches the
+//! world is refused inside one (`effects::sim_handling`), never run for
+//! real.
 //!
 //! **How it fits the runtime** (plans/SIM-S1.md has the design note):
 //!
@@ -27,17 +30,29 @@
 //!   tier's bridge dispatch is intercepted the same way. A world still
 //!   runs on the interpreter tier (as record and replay do): `run_fn`
 //!   sets the bytecode tier aside while the world runs.
+//! - **Nodes and the network** (S2, plans/SIM-S2.md): a node is a task
+//!   tree with an interpreter of its own (`node.rs`); `http` between
+//!   nodes is messages on the world's timer queue (`wire.rs`, `http.rs`),
+//!   and what a link does to each one is `net.rs`'s draw.
 
 pub mod cli;
+pub mod http;
+pub mod net;
+mod node;
 pub mod sched;
 pub mod surface;
+mod wire;
+
+pub use node::{NodeInfo, Plan, Start, run_world};
+pub use wire::{History, NetStats};
 
 use crate::ast::{Expr, Value};
 use crate::effects::SimHandling;
 use crate::interpreter::{Interpreter, InterpreterError};
+use net::NodeId;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
-use sched::{End, Sched, TaskId, Wait, Woke};
+use sched::{End, Pick, Sched, TaskId, Wait, Woke};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -60,6 +75,8 @@ pub struct Config {
     /// Stop when virtual time passes this many ms (`for`), if given.
     pub run_for: Option<u64>,
     pub max_steps: u64,
+    /// What a link does unless `w.link` says otherwise.
+    pub net: net::Link,
 }
 
 impl Default for Config {
@@ -69,16 +86,19 @@ impl Default for Config {
             start_ms: DEFAULT_START_MS,
             run_for: None,
             max_steps: DEFAULT_MAX_STEPS,
+            net: net::Link::default(),
         }
     }
 }
 
-/// One thing that happened in a world: when (virtual ms), which task,
-/// what kind, and a short rendering of the detail.
+/// One thing that happened in a world: when (virtual ms), on which node,
+/// in which task (none for what the network does on its own: a
+/// delivery, a drop), what kind, and a short rendering of the detail.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Event {
     pub t: u64,
-    pub task: TaskId,
+    pub node: Arc<str>,
+    pub task: Option<TaskId>,
     pub kind: &'static str,
     pub detail: String,
 }
@@ -103,9 +123,33 @@ pub struct Report {
     /// A task did not unwind when the world ended (it caught the end
     /// and kept computing); its thread was left behind.
     pub stuck: bool,
+    /// The nodes, in order (the first is the world itself, or `main`).
+    pub nodes: Vec<String>,
+    /// Every request a node made over the network, as it went.
+    pub history: Vec<History>,
+    pub net: NetStats,
 }
 
 impl Report {
+    /// A report of no run at all (a file that built no world).
+    pub fn empty(seed: u64) -> Report {
+        Report {
+            seed,
+            outcome: "done",
+            value: None,
+            error: None,
+            events: Vec::new(),
+            now: 0,
+            steps: 0,
+            tasks: 0,
+            failed_tasks: 0,
+            stuck: false,
+            nodes: Vec::new(),
+            history: Vec::new(),
+            net: NetStats::default(),
+        }
+    }
+
     /// Whether this run is a failure worth a seed: the main program
     /// raised, every task deadlocked, or the run never settled.
     pub fn failed(&self) -> bool {
@@ -136,35 +180,73 @@ struct State {
     outcomes: Vec<Option<Result<Value, String>>>,
     cvs: Vec<Arc<Condvar>>,
     failed_tasks: usize,
+    /// Each task's node (task 0 is node 0's).
+    task_node: Vec<NodeId>,
+    /// Tasks of a crashed node: each unwinds at its next yield point.
+    killed: Vec<bool>,
+    nodes: Vec<node::NodeState>,
+    net: net::Net,
+    wire: wire::Wire,
+    /// A node's program (or a client, or a hook) raised: the run fails
+    /// with this once the world's coordinator sees it.
+    failure: Option<String>,
 }
 
 /// A simulated world. Shared (`Arc`) by every task thread in it.
 pub struct World {
     seed: u64,
     start_ms: i64,
+    /// Node 0 is the world itself (or the main program of `run_fn`).
+    nodes: Vec<NodeInfo>,
+    /// How each node starts (and restarts): a program, a function, a hook.
+    starts: Mutex<Vec<Start>>,
+    /// The interpreter clients and hooks are cloned from (the one that
+    /// built the world), when there is one.
+    template: Mutex<Option<Interpreter>>,
+    /// The surface's number for the `sim.world` value this world runs,
+    /// so `w.partition` inside it acts on its own world only.
+    spec: u64,
     state: Mutex<State>,
 }
 
-/// The world has ended: the task that sees this stops.
-#[derive(Debug, Clone, Copy)]
-pub struct Ended;
+/// The task cannot go on: the world has ended, or its node crashed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ended {
+    World,
+    Crash,
+}
 
 pub const ENDED_MESSAGE: &str = "sim: the world has ended, and this task stops with it";
+pub const CRASHED_MESSAGE: &str = "sim: this node crashed, and its tasks stop with it";
 
 impl From<Ended> for InterpreterError {
-    fn from(_: Ended) -> Self {
-        InterpreterError::runtime(ENDED_MESSAGE)
+    fn from(e: Ended) -> Self {
+        InterpreterError::runtime(match e {
+            Ended::World => ENDED_MESSAGE,
+            Ended::Crash => CRASHED_MESSAGE,
+        })
     }
 }
 
 impl World {
-    fn new(cfg: &Config) -> World {
+    fn new(
+        cfg: &Config,
+        nodes: Vec<NodeInfo>,
+        starts: Vec<Start>,
+        template: Option<Interpreter>,
+        spec: u64,
+    ) -> World {
         let mut sched = Sched::new(sched::split(cfg.seed, 1));
         sched.deadline = cfg.run_for;
         sched.max_steps = cfg.max_steps;
+        let node_states = (0..nodes.len()).map(|_| node::NodeState::new()).collect();
         World {
             seed: cfg.seed,
             start_ms: cfg.start_ms,
+            nodes,
+            starts: Mutex::new(starts),
+            template: Mutex::new(template),
+            spec,
             state: Mutex::new(State {
                 sched,
                 running: 0,
@@ -175,6 +257,12 @@ impl World {
                 outcomes: vec![None],
                 cvs: vec![Arc::new(Condvar::new())],
                 failed_tasks: 0,
+                task_node: vec![0],
+                killed: vec![false],
+                nodes: node_states,
+                net: net::Net::new(sched::split(cfg.seed, 2), cfg.net),
+                wire: wire::Wire::default(),
+                failure: None,
             }),
         }
     }
@@ -183,26 +271,67 @@ impl World {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Task `t`'s own random stream, split from the world's seed.
-    fn task_rng(&self, t: TaskId) -> Arc<Mutex<StdRng>> {
-        Arc::new(Mutex::new(StdRng::seed_from_u64(sched::split(
-            self.seed,
-            1_000 + t as u64,
-        ))))
+    /// Task `t`'s own random stream, split from the world's seed by
+    /// (node, task). Node 0's streams are S1's (seed, task) ones.
+    fn task_rng(&self, node: NodeId, t: TaskId) -> Arc<Mutex<StdRng>> {
+        let seed = if node == 0 {
+            sched::split(self.seed, 1_000 + t as u64)
+        } else {
+            sched::split(sched::split(self.seed, 1_000_000 + node as u64), t as u64)
+        };
+        Arc::new(Mutex::new(StdRng::seed_from_u64(seed)))
     }
 
     fn now(&self) -> u64 {
         self.lock().sched.now
     }
 
-    fn event(st: &mut State, task: TaskId, kind: &'static str, detail: String) {
-        let t = st.sched.now;
+    fn event(&self, st: &mut State, task: TaskId, kind: &'static str, detail: String) {
+        let node = st.task_node.get(task).copied().unwrap_or(0);
         st.events.push(Event {
-            t,
-            task,
+            t: st.sched.now,
+            node: self.nodes[node].name.clone(),
+            task: Some(task),
             kind,
             detail,
         });
+    }
+
+    /// Something the network did on its own, at `node`.
+    fn net_event(&self, st: &mut State, node: NodeId, kind: &'static str, detail: String) {
+        st.events.push(Event {
+            t: st.sched.now,
+            node: self.nodes[node].name.clone(),
+            task: None,
+            kind,
+            detail,
+        });
+    }
+
+    /// Choose who runs next (`Sched::next`), handling every delivery
+    /// that falls due on the way.
+    fn pick(&self, st: &mut State) -> Result<TaskId, End> {
+        let mut counted = true;
+        loop {
+            match st.sched.next(counted)? {
+                Pick::Run(t) => return Ok(t),
+                Pick::Deliver(id) => {
+                    counted = false;
+                    self.deliver(st, id);
+                }
+            }
+        }
+    }
+
+    /// Why `me` cannot go on, if it cannot.
+    fn stopped(st: &State, me: TaskId) -> Result<(), Ended> {
+        if st.ended.is_some() {
+            Err(Ended::World)
+        } else if st.killed.get(me).copied().unwrap_or(false) {
+            Err(Ended::Crash)
+        } else {
+            Ok(())
+        }
     }
 
     /// Wait until the baton is `me`'s.
@@ -216,7 +345,7 @@ impl World {
 
     /// The world stops: record why and give the baton to the main task,
     /// which unwinds and then lets every other task unwind in turn.
-    fn end(st: &mut State, end: End) {
+    fn end(&self, st: &mut State, end: End) {
         let detail = match &end {
             End::Deadlock(sites) => sites
                 .iter()
@@ -228,7 +357,8 @@ impl World {
             End::MainReturned => String::new(),
         };
         if !matches!(end, End::MainReturned) {
-            Self::event(st, st.running, end.name(), detail);
+            let running = st.running;
+            self.event(st, running, end.name(), detail);
         }
         st.ended = Some(end);
         st.running = 0;
@@ -242,10 +372,10 @@ impl World {
         mut st: MutexGuard<'a, State>,
         me: TaskId,
     ) -> (MutexGuard<'a, State>, Result<(), Ended>) {
-        if st.ended.is_some() {
-            return (st, Err(Ended));
+        if let Err(e) = Self::stopped(&st, me) {
+            return (st, Err(e));
         }
-        match st.sched.pick() {
+        match self.pick(&mut st) {
             Ok(next) if next == me => {}
             Ok(next) => {
                 st.running = next;
@@ -253,15 +383,11 @@ impl World {
                 st = self.wait_turn(st, me);
             }
             Err(end) => {
-                Self::end(&mut st, end);
+                self.end(&mut st, end);
                 st = self.wait_turn(st, me);
             }
         }
-        let r = if st.ended.is_some() {
-            Err(Ended)
-        } else {
-            Ok(())
-        };
+        let r = Self::stopped(&st, me);
         (st, r)
     }
 
@@ -280,40 +406,48 @@ impl World {
         until: Option<u64>,
     ) -> Result<Woke, Ended> {
         let mut st = self.lock();
-        if st.ended.is_some() {
-            return Err(Ended);
-        }
+        Self::stopped(&st, me)?;
         st.sched.block(me, wait, site, until);
         let (mut st, r) = self.reschedule(st, me);
         r?;
         Ok(st.sched.woke(me))
     }
 
-    fn is_ended(&self) -> bool {
-        self.lock().ended.is_some()
-    }
-
-    /// A task spawned by `parent`: its world id and random stream.
-    fn add_task(&self, parent: TaskId, global: u64) -> (TaskId, Arc<Mutex<StdRng>>) {
+    /// A task spawned by `parent` on `node`: its world id and random
+    /// stream. `global` is the interpreter's number for an olang
+    /// `spawn` (none for the world's own tasks: node programs, server
+    /// workers, hooks).
+    fn add_task(
+        &self,
+        parent: TaskId,
+        node: NodeId,
+        global: Option<u64>,
+        what: &str,
+    ) -> (TaskId, Arc<Mutex<StdRng>>) {
         let mut st = self.lock();
         let t = st.sched.add_task();
         st.cvs.push(Arc::new(Condvar::new()));
         st.outcomes.push(None);
-        st.tasks_by_global.insert(global, t);
-        Self::event(&mut st, parent, "spawn", format!("task {t}"));
+        st.task_node.push(node);
+        st.killed.push(false);
+        if let Some(global) = global {
+            st.tasks_by_global.insert(global, t);
+        }
+        let detail = if what.is_empty() {
+            format!("task {t}")
+        } else {
+            format!("task {t}: {what}")
+        };
+        self.event(&mut st, parent, "spawn", detail);
         drop(st);
-        (t, self.task_rng(t))
+        (t, self.task_rng(node, t))
     }
 
     /// A spawned task's first wait: for the seed to pick it.
     fn wait_first_turn(&self, me: TaskId) -> Result<(), Ended> {
         let st = self.lock();
         let st = self.wait_turn(st, me);
-        if st.ended.is_some() {
-            Err(Ended)
-        } else {
-            Ok(())
-        }
+        Self::stopped(&st, me)
     }
 
     /// A spawned task has ended: keep its outcome, wake its joiners, and
@@ -321,14 +455,21 @@ impl World {
     fn task_exit(&self, me: TaskId, outcome: Result<Value, String>) {
         let mut st = self.lock();
         let ended = st.ended.is_some();
+        let killed = st.killed[me];
         match &outcome {
-            Ok(v) => Self::event(&mut st, me, "end", render(v)),
+            Ok(v) => self.event(&mut st, me, "end", render(v)),
+            Err(_) if killed && !ended => {
+                self.event(&mut st, me, "stop", "its node crashed".into())
+            }
             Err(e) if !ended => {
                 st.failed_tasks += 1;
                 let e = e.strip_prefix("Runtime error: ").unwrap_or(e).to_string();
-                Self::event(&mut st, me, "fail", e);
+                self.event(&mut st, me, "fail", e);
             }
             Err(_) => {}
+        }
+        if !ended {
+            self.node_task_exit(&mut st, me, &outcome);
         }
         st.outcomes[me] = Some(outcome);
         st.sched.finish(me);
@@ -337,12 +478,12 @@ impl World {
             st.cvs[0].notify_one();
             return;
         }
-        match st.sched.pick() {
+        match self.pick(&mut st) {
             Ok(next) => {
                 st.running = next;
                 st.cvs[next].notify_one();
             }
-            Err(end) => Self::end(&mut st, end),
+            Err(end) => self.end(&mut st, end),
         }
     }
 
@@ -353,8 +494,8 @@ impl World {
         let mut st = self.lock();
         if st.ended.is_none() {
             match &result {
-                Ok(v) => Self::event(&mut st, 0, "done", render(v)),
-                Err(e) => Self::event(&mut st, 0, "failed", e.clone()),
+                Ok(v) => self.event(&mut st, 0, "done", render(v)),
+                Err(e) => self.event(&mut st, 0, "failed", e.clone()),
             }
             st.ended = Some(End::MainReturned);
         }
@@ -417,6 +558,9 @@ impl World {
             tasks: st.sched.task_count(),
             failed_tasks: st.failed_tasks,
             stuck,
+            nodes: self.nodes.iter().map(|n| n.name.to_string()).collect(),
+            history: std::mem::take(&mut st.wire.history),
+            net: st.wire.stats.clone(),
         }
     }
 
@@ -493,7 +637,7 @@ impl World {
             }
             None => 0,
         };
-        Self::event(&mut st, me, "send", format!("#{local} <- {detail}"));
+        self.event(&mut st, me, "send", format!("#{local} <- {detail}"));
         st.sched.wake(Wait::Chan(local));
         ticket
     }
@@ -506,19 +650,19 @@ impl World {
         {
             info.taken += 1;
         }
-        Self::event(&mut st, me, "recv", format!("#{local} -> {}", render(v)));
+        self.event(&mut st, me, "recv", format!("#{local} -> {}", render(v)));
         st.sched.wake(Wait::Chan(local));
     }
 
     fn closed(&self, me: TaskId, local: u64, why: &str) {
         let mut st = self.lock();
-        Self::event(&mut st, me, "close", format!("#{local}{why}"));
+        self.event(&mut st, me, "close", format!("#{local}{why}"));
         st.sched.wake(Wait::Chan(local));
     }
 
     fn note(&self, me: TaskId, kind: &'static str, detail: String) {
         let mut st = self.lock();
-        Self::event(&mut st, me, kind, detail);
+        self.event(&mut st, me, kind, detail);
     }
 
     // ─── tasks ───────────────────────────────────────────────────────
@@ -538,6 +682,7 @@ impl World {
 struct Ctx {
     world: Arc<World>,
     task: TaskId,
+    node: NodeId,
     rng: Arc<Mutex<StdRng>>,
 }
 
@@ -579,10 +724,11 @@ pub fn in_world() -> bool {
     IN_WORLD.with(|w| w.get())
 }
 
-/// The world's wall clock, as epoch ms, when this thread is in a world.
+/// The world's wall clock, as epoch ms, when this thread is in a world:
+/// as this task's node reads it (its skew included).
 pub fn virtual_epoch_ms() -> Option<i64> {
     let ctx = current()?;
-    Some(ctx.world.start_ms + ctx.world.now() as i64)
+    Some(ctx.world.wall_ms(ctx.node))
 }
 
 /// This task's random stream, when this thread is in a world.
@@ -601,18 +747,40 @@ pub fn run(
     cfg: Config,
     main: impl FnOnce() -> Result<Value, InterpreterError>,
 ) -> Result<Report, String> {
+    run_main(cfg, NodeInfo::main(Vec::new()), main)
+}
+
+/// `run`, with the main program's node described (its argv, its env).
+pub fn run_main(
+    cfg: Config,
+    info: NodeInfo,
+    main: impl FnOnce() -> Result<Value, InterpreterError>,
+) -> Result<Report, String> {
     if in_world() {
         return Err("sim: worlds do not nest: a world cannot run inside another".to_string());
     }
-    let world = Arc::new(World::new(&cfg));
-    let rng = world.task_rng(0);
+    let world = Arc::new(World::new(&cfg, vec![info], vec![Start::Main], None, 0));
+    run_in(world, main)
+}
+
+/// Run `main` as task 0 of `world`, on this thread.
+fn run_in(
+    world: Arc<World>,
+    main: impl FnOnce() -> Result<Value, InterpreterError>,
+) -> Result<Report, String> {
+    if in_world() {
+        return Err("sim: worlds do not nest: a world cannot run inside another".to_string());
+    }
+    let rng = world.task_rng(0, 0);
     {
         let mut st = world.lock();
-        World::event(&mut st, 0, "start", format!("seed {}", cfg.seed));
+        let seed = world.seed;
+        world.event(&mut st, 0, "start", format!("seed {seed}"));
     }
     let entered = enter(Ctx {
         world: world.clone(),
         task: 0,
+        node: 0,
         rng,
     });
     // A panic must not leave the world's other threads waiting for a
@@ -678,8 +846,9 @@ pub fn refusal(name: &str) -> String {
         _ => "the real world",
     };
     format!(
-        "sim: {name} is refused inside a world: {what} is not simulated yet (S1 simulates \
-         time, randomness, spawn, task and chan), and a world never reaches the real one"
+        "sim: {name} is refused inside a world: {what} is not simulated yet (a world \
+         simulates time, randomness, spawn, task, chan, and http between its nodes), and \
+         a world never reaches the real one"
     )
 }
 
@@ -687,7 +856,11 @@ pub fn refusal(name: &str) -> String {
 /// in a world: `Some(answer)` when the world answers or refuses, `None`
 /// to run the builtin as usual (pure calls, and the calls whose own
 /// implementation already reads the world's clock or random stream).
-pub fn intercept(name: &str, args: &[Value]) -> Option<Result<Value, InterpreterError>> {
+pub fn intercept(
+    name: &str,
+    args: &[Value],
+    interpreter: &mut Interpreter,
+) -> Option<Result<Value, InterpreterError>> {
     let ctx = current()?;
     match crate::effects::sim_handling(name) {
         SimHandling::Pure => {
@@ -705,15 +878,43 @@ pub fn intercept(name: &str, args: &[Value]) -> Option<Result<Value, Interpreter
             None
         }
         SimHandling::Refused => Some(Err(misuse(refusal(name)))),
-        SimHandling::Simulated => simulated(&ctx, name, args),
+        SimHandling::Simulated => simulated(&ctx, name, args, interpreter),
     }
 }
 
-fn simulated(ctx: &Ctx, name: &str, args: &[Value]) -> Option<Result<Value, InterpreterError>> {
+fn simulated(
+    ctx: &Ctx,
+    name: &str,
+    args: &[Value],
+    interpreter: &mut Interpreter,
+) -> Option<Result<Value, InterpreterError>> {
     let w = &ctx.world;
     let me = ctx.task;
+    if let Some(verb) = name.strip_prefix("http.") {
+        return http::call(ctx, verb, args, interpreter);
+    }
     Some(match name {
-        "time.now_ms" if args.is_empty() => Ok(Value::Integer(w.start_ms + w.now() as i64)),
+        "time.now_ms" if args.is_empty() => Ok(Value::Integer(w.wall_ms(ctx.node))),
+        "os.args" if args.is_empty() => Ok(Value::List(Arc::new(
+            w.nodes[ctx.node]
+                .argv
+                .iter()
+                .map(|a| Value::String(Arc::new(a.clone())))
+                .collect(),
+        ))),
+        "os.get_env" => match args {
+            [Value::String(key)] => Ok(match w.nodes[ctx.node].env.get(key.as_str()) {
+                Some(v) => ok(Value::String(Arc::new(v.clone()))),
+                None => err(&format!("Environment variable '{key}' not found")),
+            }),
+            _ => Err(misuse("os.get_env expects the variable's name as a String")),
+        },
+        "os.has_env" => match args {
+            [Value::String(key)] => Ok(Value::Boolean(
+                w.nodes[ctx.node].env.contains_key(key.as_str()),
+            )),
+            _ => Err(misuse("os.has_env expects the variable's name as a String")),
+        },
         "time.monotonic_ms" if args.is_empty() => Ok(Value::Integer(w.now() as i64)),
         "time.monotonic" if args.is_empty() => Ok(Value::Float(w.now() as f64)),
         "time.sleep" => sleep(ctx, args),
@@ -977,14 +1178,41 @@ pub fn spawn(interpreter: &Interpreter, expr: &Expr) -> Result<Value, Interprete
             "sim: spawn outside a world reached the world's spawn",
         ));
     };
-    if ctx.world.is_ended() {
-        return Err(Ended.into());
-    }
+    World::stopped(&ctx.world.lock(), ctx.task)?;
     let mut worker = interpreter.thread_safe_clone();
     let expr = expr.clone();
     let global = crate::interpreter::spawn_registry::next_id();
-    let (local, rng) = ctx.world.add_task(ctx.task, global);
-    let world = ctx.world.clone();
+    let (_, handle) = spawn_task(
+        &ctx.world,
+        ctx.task,
+        ctx.node,
+        Some(global),
+        "",
+        move || worker.eval_expr(&expr).map_err(|e| e.to_string()),
+    )?;
+    crate::interpreter::spawn_registry::register(global, handle);
+    let value = crate::stdlib::task::handle(global);
+    ctx.world.yield_point(ctx.task)?;
+    Ok(value)
+}
+
+/// A task of `world` on `node`, spawned by `parent`, running `body` on a
+/// thread of its own once the seed first picks it. `global` is the
+/// interpreter's number for an olang `spawn` (its `task.watch`ed
+/// channels close as it ends); the world's own tasks have none.
+fn spawn_task<F>(
+    world: &Arc<World>,
+    parent: TaskId,
+    node: NodeId,
+    global: Option<u64>,
+    what: &str,
+    body: F,
+) -> Result<(TaskId, std::thread::JoinHandle<Result<Value, String>>), InterpreterError>
+where
+    F: FnOnce() -> Result<Value, String> + Send + 'static,
+{
+    let (local, rng) = world.add_task(parent, node, global, what);
+    let world = world.clone();
     let handle = std::thread::Builder::new()
         .name(format!("olang-sim-{local}"))
         .stack_size(64 * 1024 * 1024)
@@ -992,29 +1220,27 @@ pub fn spawn(interpreter: &Interpreter, expr: &Expr) -> Result<Value, Interprete
             let _entered = enter(Ctx {
                 world: world.clone(),
                 task: local,
+                node,
                 rng,
             });
             let _counted = crate::memory::enter_task(&format!("olang-sim-{local}"));
             let outcome = match world.wait_first_turn(local) {
-                Ok(()) => std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    worker.eval_expr(&expr).map_err(|e| e.to_string())
-                }))
-                .unwrap_or_else(|_| Err("task thread panicked".to_string())),
-                Err(Ended) => Err(ENDED_MESSAGE.to_string()),
+                Ok(()) => std::panic::catch_unwind(std::panic::AssertUnwindSafe(body))
+                    .unwrap_or_else(|_| Err("task thread panicked".to_string())),
+                Err(e) => Err(InterpreterError::from(e).to_string()),
             };
             // `task.watch`ed channels close as the task ends, under its
             // baton, so their waiters see it in order.
-            for channel in crate::interpreter::spawn_registry::finish(global) {
-                close_watched(&world, local, &channel);
+            if let Some(global) = global {
+                for channel in crate::interpreter::spawn_registry::finish(global) {
+                    close_watched(&world, local, &channel);
+                }
             }
             world.task_exit(local, outcome.clone());
             outcome
         })
         .map_err(|e| misuse(format!("spawn: could not start thread: {e}")))?;
-    crate::interpreter::spawn_registry::register(global, handle);
-    let value = crate::stdlib::task::handle(global);
-    ctx.world.yield_point(ctx.task)?;
-    Ok(value)
+    Ok((local, handle))
 }
 
 #[cfg(test)]
@@ -1022,7 +1248,8 @@ mod tests {
     use super::*;
 
     fn sleep_ms(ms: i64) -> Result<Value, InterpreterError> {
-        intercept("time.sleep", &[Value::Integer(ms)]).expect("a world answers time.sleep")
+        let mut i = Interpreter::new();
+        intercept("time.sleep", &[Value::Integer(ms)], &mut i).expect("a world answers time.sleep")
     }
 
     #[test]
@@ -1030,7 +1257,8 @@ mod tests {
         assert!(!in_world());
         assert_eq!(virtual_epoch_ms(), None);
         assert!(task_rng().is_none());
-        assert!(intercept("time.sleep", &[Value::Integer(1)]).is_none());
+        let mut i = Interpreter::new();
+        assert!(intercept("time.sleep", &[Value::Integer(1)], &mut i).is_none());
     }
 
     #[test]
@@ -1078,7 +1306,9 @@ mod tests {
     #[test]
     fn refused_effects_never_run() {
         let report = run(Config::default(), || {
-            let answer = intercept("fs.write_file", &[]).expect("refused, not passed through");
+            let mut i = Interpreter::new();
+            let answer =
+                intercept("fs.write_file", &[], &mut i).expect("refused, not passed through");
             assert!(
                 answer
                     .unwrap_err()
@@ -1086,7 +1316,7 @@ mod tests {
                     .contains("refused inside a world")
             );
             assert!(
-                intercept("str.trim", &[]).is_none(),
+                intercept("str.trim", &[], &mut i).is_none(),
                 "pure calls run as usual"
             );
             Ok(Value::Unit)

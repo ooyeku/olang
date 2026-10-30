@@ -6,6 +6,12 @@
 //! replayed exactly by it (in process and through `olang sim`); sleeping
 //! costs no real time; timeouts and deadlocks are the world's; and every
 //! effect the world does not simulate is refused, never run for real.
+//!
+//! S2 (the tests after `// ─── S2`): nodes, each its own interpreter,
+//! talking `http` over a simulated network with latency, loss,
+//! duplication and partitions; one seed is one world, event for event;
+//! a partition-only bug is found by `olang sim --seeds` and replayed by
+//! `--seed`.
 
 use olang::Value;
 use olang::interpreter::Interpreter;
@@ -300,10 +306,9 @@ fn unsimulated_effects_are_refused_and_never_reach_the_real_world() {
 fn attempt(f) = sim.world(#{{ "seed": 1 }}).run_fn(f).error
 [attempt(() => fs.write_file("{path}", "x")),
  attempt(() => fs.read_file("{path}")),
- attempt(() => http.get("http://127.0.0.1:9/")),
  attempt(() => db.open(":memory:")),
  attempt(() => proc.spawn(["true"])),
- attempt(() => os.get_env("HOME")),
+ attempt(() => os.set_env("HOME", "/tmp")),
  attempt(() => {{ let t = spawn fs.write_file("{path}", "y"); unwrap(task.join(t)) }}),
  attempt(() => sim.world(#{{}}))]
 "#
@@ -314,8 +319,16 @@ fn attempt(f) = sim.world(#{{ "seed": 1 }}).run_fn(f).error
         assert!(e.contains("refused inside a world"), "attempt {i}: {e}");
     }
     assert!(s(&errors[0]).contains("fs.write_file"));
-    assert!(s(&errors[2]).contains("http.get"));
-    assert!(s(&errors[7]).contains("worlds do not nest"));
+    assert!(s(&errors[6]).contains("worlds do not nest"));
+    // A node's environment is its own (empty unless given): the real one
+    // is never read.
+    let home = eval(
+        r#"sim.world(#{ "seed": 1 }).run_fn(() => [os.get_env("HOME"), os.has_env("PATH")]).value"#,
+    );
+    assert_eq!(
+        home.to_string(),
+        r#"[Err("Environment variable 'HOME' not found"), false]"#
+    );
     assert!(
         !marker.exists(),
         "a refused write reached the real filesystem"
@@ -456,4 +469,302 @@ fn olang_sim_stops_at_its_deadline() {
     let (code, _, err) = sim(&[file.to_str().unwrap(), "--seed", "1", "--for", "30m"]);
     assert_eq!(code, 0, "{err}");
     assert!(err.contains("deadline at 30m 00.000s virtual"), "{err}");
+}
+
+// ─── S2: nodes and the network ───────────────────────────────────────
+
+/// Evaluate `src` as if it were a file in tests/fixtures/sim (so
+/// `w.node("kv", ...)` and `use kv_client` resolve there).
+fn eval_here(src: &str) -> Value {
+    let program = Parser::new().parse(src).expect("parse");
+    let mut i = Interpreter::new();
+    i.set_current_file(&fixture("inline.ol"));
+    i.eval_program(program).expect("eval")
+}
+
+fn int(v: &Value) -> i64 {
+    match v {
+        Value::Integer(n) => *n,
+        other => panic!("expected an Int, got {other}"),
+    }
+}
+
+fn kinds(run: &Value) -> Vec<String> {
+    list(&field(run, "events"))
+        .iter()
+        .map(|e| s(&field(e, "kind")))
+        .collect()
+}
+
+#[test]
+fn a_client_node_talks_to_a_server_node_over_the_network() {
+    let run = eval_here(
+        r#"
+let w = sim.world(#{ "seed": 5 })
+let kv = w.node("kv", ["olang", "kv_server.ol", "7500"])
+w.client("c1", () => {
+    let body = (op) => json.stringify(op) |> unwrap
+    let a = unwrap(http.post(kv.url + ":7500/rpc", body(#{ "op": "add", "key": "x", "by": 2, "id": "a" })))
+    let again = unwrap(http.post("http://kv:7500/rpc", body(#{ "op": "add", "key": "x", "by": 2, "id": "a" })))
+    let b = unwrap(http.post("http://kv:7500/rpc", body(#{ "op": "add", "key": "x", "by": 3, "id": "b" })))
+    let missing = unwrap(http.get("http://kv:7500/nothing"))
+    [a.status, unwrap(json.parse(a.body)).value, unwrap(json.parse(again.body)).value,
+     unwrap(json.parse(b.body)).value, missing.status, a.headers["content-type"], time.monotonic_ms() > 0]
+})
+w.run(sim.minutes(1))
+"#,
+    );
+    assert_eq!(s(&field(&run, "outcome")), "done", "{run}");
+    let got = field(&field(&run, "value"), "c1");
+    assert_eq!(
+        got.to_string(),
+        r#"[200, 2, 2, 5, 404, "application/json", true]"#
+    );
+    let history = list(&field(&run, "history"));
+    assert_eq!(history.len(), 4);
+    assert!(history.iter().all(|h| s(&field(h, "outcome")) == "ok"));
+    let k = kinds(&run);
+    for kind in ["listen", "http", "deliver", "handle", "respond", "reply"] {
+        assert!(k.iter().any(|x| x == kind), "no {kind} event in {k:?}");
+    }
+    assert_eq!(
+        list(&field(&run, "nodes")),
+        vec![
+            Value::String("world".to_string().into()),
+            Value::String("kv".to_string().into()),
+            Value::String("c1".to_string().into())
+        ]
+    );
+}
+
+#[test]
+fn timeouts_refusals_and_unknown_hosts_are_values_on_virtual_time() {
+    let run = eval_here(
+        r#"
+let w = sim.world(#{ "seed": 2 })
+w.node("kv", "kv_server.ol")
+w.client("c1", () => {
+    let cut = http.get("http://kv:7500/rpc", #{ "timeout_ms": 5000 })
+    let at = time.monotonic_ms()
+    let nobody = http.get("http://kv:9999/")
+    let nowhere = http.get("http://elsewhere/")
+    [cut, at, nobody, nowhere]
+})
+w.partition(["kv"], ["c1"])
+w.run(sim.minutes(1))
+"#,
+    );
+    assert_eq!(s(&field(&run, "outcome")), "done", "{run}");
+    let parts = list(&field(&field(&run, "value"), "c1"));
+    assert!(
+        parts[0].to_string().contains("timed out after 5000 ms"),
+        "{}",
+        parts[0]
+    );
+    assert_eq!(int(&parts[1]), 5000);
+    // the partition holds for the whole run: the refusal never comes back
+    assert!(parts[2].to_string().contains("timed out"), "{}", parts[2]);
+    assert!(
+        parts[3].to_string().contains("could not resolve host"),
+        "{}",
+        parts[3]
+    );
+    let net = field(&run, "net");
+    assert!(int(&field(&net, "cut")) >= 2);
+    assert_eq!(int(&field(&net, "timeouts")), 2);
+}
+
+#[test]
+fn a_refused_connection_comes_back_after_a_round_trip() {
+    let run = eval_here(
+        r#"
+let w = sim.world(#{ "seed": 2, "net": #{ "latency": 25 } })
+w.node("kv", "kv_server.ol")
+w.client("c1", () => [http.get("http://kv:9999/"), time.monotonic_ms()])
+w.run(sim.minutes(1))
+"#,
+    );
+    let parts = list(&field(&field(&run, "value"), "c1"));
+    assert!(
+        parts[0].to_string().contains("connection refused"),
+        "{}",
+        parts[0]
+    );
+    assert_eq!(int(&parts[1]), 50, "there and back at 25 ms a leg");
+}
+
+#[test]
+fn a_node_has_its_own_args_env_and_clock_skew() {
+    let run = eval_here(
+        r#"
+let w = sim.world(#{ "seed": 1, "start": 1000 })
+w.node("a", ["olang", "node_env.ol", "x", "y"], #{ "env": #{ "ROLE": "primary" }, "skew": 250 })
+w.node("b", "node_env.ol")
+w.run()
+"#,
+    );
+    assert_eq!(s(&field(&run, "outcome")), "done", "{run}");
+    let prints: Vec<(String, String)> = list(&field(&run, "events"))
+        .iter()
+        .filter(|e| s(&field(e, "kind")) == "print")
+        .map(|e| (s(&field(e, "node")), s(&field(e, "detail"))))
+        .collect();
+    assert!(
+        prints.contains(&(
+            "a".into(),
+            r#"["node_env.ol", "x", "y"] primary 1250"#.into()
+        )),
+        "{prints:?}"
+    );
+    assert!(
+        prints.contains(&("b".into(), r#"["node_env.ol"] none 1000"#.into())),
+        "{prints:?}"
+    );
+}
+
+#[test]
+fn a_crash_loses_memory_and_a_restart_starts_fresh() {
+    let run = eval_here(
+        r#"
+let w = sim.world(#{ "seed": 3 })
+w.node("kv", "kv_server.ol")
+fn call(op) = match http.post("http://kv:7500/rpc", unwrap(json.stringify(op)), #{ "timeout_ms": 1000 }) {
+    Ok(r) => unwrap(json.parse(r.body)).value
+    Err(e) => "down"
+}
+w.client("c1", () => {
+    let before = call(#{ "op": "add", "key": "k", "by": 7, "id": "1" })
+    time.sleep(sim.seconds(15))
+    let during = call(#{ "op": "get", "key": "k" })
+    time.sleep(sim.seconds(10))
+    let after = call(#{ "op": "get", "key": "k" })
+    [before, during, after]
+})
+w.at(sim.seconds(10), () => w.crash("kv", #{ "restart_after": sim.seconds(8) }))
+w.run(sim.minutes(1))
+"#,
+    );
+    assert_eq!(s(&field(&run, "outcome")), "done", "{run}");
+    assert_eq!(
+        field(&field(&run, "value"), "c1").to_string(),
+        r#"[7, "down", 0]"#
+    );
+    let k = kinds(&run);
+    assert!(k.contains(&"crash".to_string()) && k.contains(&"restart".to_string()));
+    assert_eq!(k.iter().filter(|x| *x == "listen").count(), 2);
+}
+
+#[test]
+fn a_client_that_raises_fails_the_run() {
+    let run = eval_here(
+        r#"
+let w = sim.world(#{ "seed": 3 })
+w.node("kv", "kv_server.ol")
+w.client("c1", () => { time.sleep(100); assert_eq(1, 2, "the check failed") })
+w.run(sim.hours(1))
+"#,
+    );
+    assert_eq!(s(&field(&run, "outcome")), "failed");
+    assert!(s(&field(&run, "error")).contains("client c1"), "{run}");
+    assert!(int(&field(&run, "now")) < 1000);
+}
+
+#[test]
+fn http_in_a_one_program_world_talks_to_itself() {
+    let v = eval(
+        r#"
+sim.world(#{ "seed": 1 }).run_fn(() => {
+    spawn http.serve(8080, (req) => "hello " + req.query.name)
+    let r = unwrap(http.get("http://localhost:8080/?name=sim"))
+    let refused = http.get("http://127.0.0.1:9/")
+    http.shutdown()
+    [r.body, is_err(refused)]
+}).value
+"#,
+    );
+    assert_eq!(v.to_string(), r#"["hello sim", true]"#);
+}
+
+fn builder_report(file: &str, seed: u64) -> olang::sim::Report {
+    olang::sim::cli::run_builder(&fixture(file), seed).expect("runs")
+}
+
+#[test]
+fn one_seed_is_one_world_of_nodes_event_for_event() {
+    let a = builder_report("kv_world.ol", 3);
+    let b = builder_report("kv_world.ol", 3);
+    let c = builder_report("kv_world.ol", 4);
+    assert_eq!(a.outcome, "done", "{:?}", a.error);
+    assert!(
+        a.events.len() > 1000,
+        "an hour of traffic: {}",
+        a.events.len()
+    );
+    assert_eq!(a.events, b.events, "the same seed, the same world");
+    assert_eq!(a.history, b.history);
+    assert_ne!(a.events, c.events, "another seed, another world");
+}
+
+#[test]
+fn loss_and_partitions_make_retries_and_careful_clients_survive_them() {
+    let mut timeouts = 0;
+    let mut cut = 0;
+    for seed in 1..=3 {
+        let r = builder_report("kv_world.ol", seed);
+        assert_eq!(r.outcome, "done", "seed {seed}: {:?}", r.error);
+        assert!(r.net.lost > 0, "seed {seed}: nothing lost");
+        timeouts += r.net.timeouts;
+        cut += r.net.cut;
+        assert!(r.now >= 3_600_000, "a simulated hour");
+    }
+    assert!(timeouts > 0, "no request ever timed out");
+    assert!(cut > 0, "no partition ever cut a message");
+}
+
+#[test]
+fn olang_sim_finds_the_partition_bug_and_its_seed_replays_it() {
+    let file = fixture("kv_partition_bug.ol");
+    let file = file.to_str().unwrap();
+    let (code, _, err) = sim(&[file, "--seeds", "30"]);
+    assert_eq!(code, 1, "no seed found the bug:\n{err}");
+    assert!(err.contains("adds, the client made"), "{err}");
+    let passed: u64 = err
+        .lines()
+        .find_map(|l| {
+            l.split(" passed")
+                .next()?
+                .rsplit("· ")
+                .next()?
+                .trim()
+                .parse()
+                .ok()
+        })
+        .unwrap_or(0);
+    assert!(
+        passed > 0,
+        "every seed failed: not a partition-only bug\n{err}"
+    );
+    let seed: u64 = err
+        .lines()
+        .find_map(|l| l.split("--seed ").nth(1))
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or_else(|| panic!("no reproduce line in:\n{err}"));
+    let (code1, out1, err1) = sim(&[file, "--seed", &seed.to_string(), "--events"]);
+    let (code2, out2, err2) = sim(&[file, "--seed", &seed.to_string(), "--events"]);
+    assert_eq!(code1, 1, "{err1}");
+    assert!(
+        err1.contains("partition"),
+        "the replay shows the partition:\n{err1}"
+    );
+    assert!(err1.contains("adds, the client made"), "{err1}");
+    assert_eq!((code1, out1, err1), (code2, out2, err2));
+}
+
+#[test]
+fn olang_sim_runs_a_world_of_nodes() {
+    let file = fixture("kv_world.ol");
+    let (code, out, err) = sim(&[file.to_str().unwrap(), "--seed", "2"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("done:"), "{out}");
+    assert!(out.contains("timed out and were retried"), "{out}");
 }

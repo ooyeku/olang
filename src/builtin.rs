@@ -713,7 +713,7 @@ impl BuiltinFunctions {
         // every effect it does not simulate — before any of them can
         // reach the real world. One thread-local read outside a world.
         if crate::sim::in_world()
-            && let Some(answer) = crate::sim::intercept(name, &arguments)
+            && let Some(answer) = crate::sim::intercept(name, &arguments, interpreter)
         {
             return answer;
         }

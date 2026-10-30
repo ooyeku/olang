@@ -20,7 +20,7 @@
 use rand::SeedableRng;
 use rand::prelude::*;
 use rand::rngs::StdRng;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 
 /// A task in a world: 0 is the world's main program, then each `spawn`
 /// in the order it happened.
@@ -39,6 +39,19 @@ pub enum Wait {
     Task(TaskId),
     /// Only its timer can wake it (`time.sleep`).
     Sleep,
+    /// A mailbox of the simulated network (the world's number for it): a
+    /// message was delivered to it, or it closed.
+    Net(u64),
+}
+
+/// What a timer does when it fires: wake a task, or deliver a message
+/// the network carried (the world's number for it). Deliveries due at
+/// one instant fire in the order they were sent, among the task timers
+/// in the order those were set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Fire {
+    Task(TaskId),
+    Deliver(u64),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,10 +110,12 @@ pub struct Sched {
     pub steps: u64,
     status: Vec<Status>,
     timed_out: Vec<bool>,
-    /// (due, order set, task): a BTreeSet is the timer queue, ordered by
-    /// due time and then by the order the timers were set.
-    timers: BTreeSet<(u64, u64, TaskId)>,
+    /// (due, order set, what fires): a BTreeSet is the timer queue,
+    /// ordered by due time and then by the order the timers were set.
+    timers: BTreeSet<(u64, u64, Fire)>,
     timer_seq: u64,
+    /// Deliveries whose time has come, not yet handed to the world.
+    due: VecDeque<u64>,
     rng: StdRng,
 }
 
@@ -117,6 +132,7 @@ impl Sched {
             timed_out: vec![false],
             timers: BTreeSet::new(),
             timer_seq: 0,
+            due: VecDeque::new(),
             rng: StdRng::seed_from_u64(seed),
         }
     }
@@ -145,7 +161,7 @@ impl Sched {
         let timer = until.map(|at| {
             self.timer_seq += 1;
             let key = (at.max(self.now), self.timer_seq);
-            self.timers.insert((key.0, key.1, t));
+            self.timers.insert((key.0, key.1, Fire::Task(t)));
             key
         });
         self.timed_out[t] = false;
@@ -160,11 +176,39 @@ impl Sched {
                 && *w == wait
             {
                 if let Some((at, seq)) = timer {
-                    self.timers.remove(&(*at, *seq, t));
+                    self.timers.remove(&(*at, *seq, Fire::Task(t)));
                 }
                 self.status[t] = Status::Runnable;
             }
         }
+    }
+
+    /// Make `t` runnable whatever it waits on (its timer cancelled): a
+    /// crash reaching a node's tasks, so each unwinds at its yield point.
+    pub fn kick(&mut self, t: TaskId) {
+        if let Some(Status::Blocked { timer, .. }) = self.status.get(t) {
+            if let Some((at, seq)) = *timer {
+                self.timers.remove(&(at, seq, Fire::Task(t)));
+            }
+            self.status[t] = Status::Runnable;
+        }
+    }
+
+    /// A message the network carries arrives at virtual time `at`: when
+    /// the clock reaches it, `pick_with`'s `deliver` is called with `id`.
+    pub fn deliver_at(&mut self, at: u64, id: u64) {
+        self.timer_seq += 1;
+        self.timers
+            .insert((at.max(self.now), self.timer_seq, Fire::Deliver(id)));
+    }
+
+    /// Messages in flight (deliveries not yet due).
+    pub fn in_flight(&self) -> usize {
+        self.timers
+            .iter()
+            .filter(|(_, _, f)| matches!(f, Fire::Deliver(_)))
+            .count()
+            + self.due.len()
     }
 
     /// `t` has ended; anyone joining it may go on.
@@ -174,7 +218,7 @@ impl Sched {
             ..
         } = &self.status[t]
         {
-            self.timers.remove(&(*at, *seq, t));
+            self.timers.remove(&(*at, *seq, Fire::Task(t)));
         }
         self.status[t] = Status::Done;
         self.wake(Wait::Task(t));
@@ -205,11 +249,45 @@ impl Sched {
     /// runnable, time jumps to the next timer; when nothing ever can be,
     /// the run ends.
     pub fn pick(&mut self) -> Result<TaskId, End> {
-        self.steps += 1;
-        if self.steps > self.max_steps {
-            return Err(End::StepLimit);
+        self.pick_with(&mut |_, _| {})
+    }
+
+    /// `pick`, with the network: each delivery that falls due is handed
+    /// to `deliver(self, id)`, which puts the message where it goes and
+    /// wakes whoever waits for it (and may send more: a refusal). The
+    /// world drives `next` itself, since its `deliver` needs the whole
+    /// world; this is the same loop for tests.
+    pub fn pick_with(&mut self, deliver: &mut dyn FnMut(&mut Sched, u64)) -> Result<TaskId, End> {
+        let mut counted = true;
+        loop {
+            match self.next(counted)? {
+                Pick::Run(t) => return Ok(t),
+                Pick::Deliver(id) => {
+                    counted = false;
+                    deliver(self, id);
+                }
+            }
+        }
+    }
+
+    /// One turn of the loop under `pick`: a task to run, or a delivery
+    /// that fell due and must be handled before anyone is chosen (it may
+    /// make a task runnable). `counted` is false for the calls that
+    /// continue one pick after a delivery, so a pick costs one step.
+    ///
+    /// Deliveries due at an instant are all handed out before a task is
+    /// drawn, so the tasks they wake are in the draw.
+    pub fn next(&mut self, counted: bool) -> Result<Pick, End> {
+        if counted {
+            self.steps += 1;
+            if self.steps > self.max_steps {
+                return Err(End::StepLimit);
+            }
         }
         loop {
+            if let Some(id) = self.due.pop_front() {
+                return Ok(Pick::Deliver(id));
+            }
             let runnable: Vec<TaskId> = (0..self.status.len())
                 .filter(|t| self.is_runnable(*t))
                 .collect();
@@ -219,7 +297,7 @@ impl Sched {
                 } else {
                     self.rng.random_range(0..runnable.len())
                 };
-                return Ok(runnable[i]);
+                return Ok(Pick::Run(runnable[i]));
             }
             let Some(&(at, _, _)) = self.timers.iter().next() else {
                 return Err(End::Deadlock(self.blocked_sites()));
@@ -232,16 +310,28 @@ impl Sched {
             }
             self.now = self.now.max(at);
             // Every timer due now fires, in the order it was set.
-            while let Some(&(due, seq, t)) = self.timers.iter().next() {
+            while let Some(&(due, seq, fire)) = self.timers.iter().next() {
                 if due > self.now {
                     break;
                 }
-                self.timers.remove(&(due, seq, t));
-                self.status[t] = Status::Runnable;
-                self.timed_out[t] = true;
+                self.timers.remove(&(due, seq, fire));
+                match fire {
+                    Fire::Task(t) => {
+                        self.status[t] = Status::Runnable;
+                        self.timed_out[t] = true;
+                    }
+                    Fire::Deliver(id) => self.due.push_back(id),
+                }
             }
         }
     }
+}
+
+/// What `Sched::next` hands back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pick {
+    Run(TaskId),
+    Deliver(u64),
 }
 
 /// splitmix64: one well-mixed 64-bit value from another. Seeds for the
@@ -377,6 +467,57 @@ mod tests {
         // every runnable task gets picked at some point
         let picked: BTreeSet<TaskId> = schedule(5).into_iter().collect();
         assert_eq!(picked.len(), 5);
+    }
+
+    #[test]
+    fn a_delivery_wakes_its_receiver_when_the_clock_reaches_it() {
+        let mut s = Sched::new(1);
+        s.block(0, Wait::Net(7), "recv".into(), Some(1_000));
+        s.deliver_at(40, 99);
+        let mut seen = Vec::new();
+        let picked = s.pick_with(&mut |sched, id| {
+            seen.push((sched.now, id));
+            sched.wake(Wait::Net(7));
+        });
+        assert_eq!(picked, Ok(0));
+        assert_eq!(seen, vec![(40, 99)]);
+        assert_eq!(s.now, 40);
+        assert_eq!(s.woke(0), Woke::Ready, "the delivery came first");
+        assert_eq!(s.in_flight(), 0);
+    }
+
+    #[test]
+    fn deliveries_alone_keep_a_world_from_deadlocking_and_fire_in_send_order() {
+        let mut s = Sched::new(1);
+        s.block(0, Wait::Net(1), "recv".into(), None);
+        s.deliver_at(10, 1);
+        s.deliver_at(10, 2);
+        s.deliver_at(5, 3);
+        let mut seen = Vec::new();
+        // nothing wakes task 0 until the third delivery
+        let picked = s.pick_with(&mut |sched, id| {
+            seen.push(id);
+            if seen.len() == 3 {
+                sched.wake(Wait::Net(1));
+            }
+        });
+        assert_eq!(picked, Ok(0));
+        assert_eq!(seen, vec![3, 1, 2]);
+        assert_eq!(s.now, 10);
+    }
+
+    #[test]
+    fn a_kick_makes_a_blocked_task_runnable_and_cancels_its_timer() {
+        let mut s = Sched::new(1);
+        let a = s.add_task();
+        s.block(a, Wait::Sleep, "sleep".into(), Some(500));
+        s.block(0, Wait::Task(a), "join".into(), None);
+        s.kick(a);
+        assert_eq!(s.pick(), Ok(a));
+        assert_eq!(s.woke(a), Woke::Ready);
+        s.finish(a);
+        assert_eq!(s.pick(), Ok(0));
+        assert_eq!(s.now, 0, "the kicked task's timer is gone");
     }
 
     #[test]

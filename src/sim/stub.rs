@@ -24,7 +24,7 @@ pub fn task_rng() -> Option<Arc<Mutex<StdRng>>> {
 }
 
 /// Nothing is intercepted.
-pub fn intercept(_name: &str, _args: &[Value]) -> Option<Result<Value, InterpreterError>> {
+pub fn intercept(_name: &str, _args: &[Value], _interpreter: &mut Interpreter) -> Option<Result<Value, InterpreterError>> {
     None
 }
 
