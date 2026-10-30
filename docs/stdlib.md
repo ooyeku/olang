@@ -29,6 +29,7 @@ a file system, a network, or a browser.
 - [`csv` — CSV](#csv--csv)
 - [`md` — Markdown](#md--markdown)
 - [`re` — regular expressions](#re--regular-expressions)
+- [`peg` — grammars for structured text](#peg--grammars-for-structured-text)
 - [`dates` — dates and times](#dates--dates-and-times)
 - [`time` — clocks and sleeping](#time--clocks-and-sleeping)
 - [`task` — background threads](#task--background-threads)
@@ -68,8 +69,8 @@ a file system, a network, or a browser.
 **Modules are always in scope.** `str.trim(...)`, `json.parse(...)`, and the
 rest work without any `use`. The exception is the code written in olang
 itself and embedded in the binary: the modules `colx` and `mathx` and
-the packages `cli`, `term`, `ui`, `viz`, `dash`, `ml` and `gg` are
-imported with a bare `use colx` / `use term`, which binds the namespace
+the packages `cli`, `term`, `ui`, `viz`, `dash`, `ml`, `gg` and `peg`
+are imported with a bare `use colx` / `use term`, which binds the namespace
 alone: `term.bold(...)`, `gg.plot(...)`. List names for short ones
 (`use gg { aes, labs }`, `use gg { plot as ggplot }`); an import never
 rebinds a stdlib module's name (`plot` stays the plot module) unless it
@@ -939,6 +940,319 @@ that calls `re.*` hears so. The full profile, `runtime.wasm("full")`
 println(to_string(unwrap(re.find_all("\\d+", "a1 b22 c333"))))
 println(to_string(unwrap(re.captures("(\\w+)@(\\w+)", "ada@lovelace"))))
 println(unwrap(re.replace("\\s+", "too   many spaces", " ")))
+```
+
+## `peg` — grammars for structured text
+
+`use peg` — an embedded olang package — reads text that has a shape (a
+query bar, a config line, a formula, a log record, a small notation)
+with a grammar of a few lines. A parse answers a tree whose every node
+has its position, or an error that says what was expected where and
+draws the line with a caret; with actions it answers a value instead of
+a tree. A grammar is a parsing expression grammar (PEG): ordered choice,
+no ambiguity, left recursion allowed, and a precedence table for
+operators.
+
+```olang
+use peg
+let g = unwrap(peg.grammar(`
+  setting = key:Name "=" val:Num
+  Name    = [a-z_]+
+  Num     = [0-9]+
+  skip    = [ ]+
+`))
+let t = unwrap(g.parse("width = 80"))
+println(t.key.text)                // width
+println(t.val.span.column)         // 9
+println(g.accepts("width ="))      // false
+match g.parse("width = wide") {
+    Ok(_) => println("parsed"),
+    Err(e) => println(e.message)   // expected Num after "=", found "wide" (1:9)
+}
+```
+
+| Function | Description |
+|---|---|
+| `peg.grammar(text, actions, options)` | `Ok(grammar)` or `Err(error)`; `actions` (optional) maps a rule or label to a function from its node to a value; `options` (optional): `start` (the rule a parse begins with, else the first), `recover` (sync strings, below), `memo` (`"auto"`, `"all"` or `"none"`) |
+| `g.parse(input)` | `Ok(tree)` — or the start rule's value, with actions — or `Err(error)`; the whole input must match, `skip` allowed around it |
+| `g.parse_with(input, opts)` · `peg.parse(g, input, opts)` | the same, with `start` or `recover` for this parse only |
+| `g.accepts(input)` | whether the whole input matches, without building a tree |
+| `peg.check(g)` · `g.check()` | problems in a grammar: `[#{ "kind", "rule", "message" }]`, empty when there are none |
+| `peg.examples(g, n, seed)` · `g.examples(n, seed)` | up to `n` different texts the grammar accepts, generated from its rules — the same texts for the same seed |
+| `peg.dump(tree)` | a tree as indented text, one node a line, for tests and for looking |
+
+`peg.check` and `peg.examples` also take a grammar's text. A grammar's
+`rules`, `start` and `source` (the olang it was compiled to) are there
+to read.
+
+### The notation
+
+A grammar is rules, `name = expression`, one after another (a rule
+ends where the next `name =` begins; `#` and `//` start a comment):
+
+| Form | Matches |
+|---|---|
+| `"if"` `'if'` | the text itself; `"select"i` ignores ASCII case |
+| `[a-z_]` `[^"\\]` | one character of a class: ranges, `^` for none of them, the escapes `\n \t \r \\ \] \- \xNN \u{...}`, and `\d \w \s` |
+| `.` | any one character |
+| `a b` | `a` then `b` |
+| `a / b` | `a`, or else `b`: the first alternative that matches wins |
+| `e*` `e+` `e?` | none or more, one or more, one or none — as many as match |
+| `&e` `!e` | looks ahead without consuming: `e` must (or must not) match here |
+| `(e)` | grouping |
+| `key:e` | a label: the node reads `n.key` (below) |
+| `precedence(atom) { … }` | an operator table (below) |
+
+The case of a rule's name says how it reads its input. A rule in
+**lower case** may have whatever `skip` matches between its parts: with
+`skip = [ \t]+`, `pair = Name "=" Num` reads `a=1` and `a = 1` alike. A
+rule whose name starts with a **capital** is a **token**: matched as one
+piece of text, nothing skipped inside, its node a leaf. A name that
+starts with `_` is **silent**: it makes no node of its own, and its
+children and labels belong to the rule that uses it. `Name "words" =`
+gives a rule the words an error says in its place
+(`value "a value" = …`). `skip` is never the start rule, and the parse
+skips it before and after the whole input.
+
+A grammar is usually written in a template string, which keeps it
+readable over several lines. A template takes no escapes but one: `\\`
+is a single backslash. So a grammar's backslashes are written doubled —
+the grammar's `"\n"` is `"\\n"` in the template, its `[^"\\]` is
+`[^"\\\\]` — which is also what `olang check` asks of a template's
+`\n` and `\t`.
+
+**Left recursion** is allowed, directly or through other rules:
+`sum = sum "+" term / term` reads `1+2+3` as `(1+2)+3`. **A precedence
+table** reads operators without a rule a level:
+
+```olang no-run
+expr = precedence(atom) {
+    left "||"
+    left "&&"
+    left "==" "<" ">"
+    left "+" "-"
+    left "*" "/"
+    right "^"
+    prefix "-" "!"
+    postfix "?"
+}
+```
+
+The levels run loosest first. `left` and `right` are infix operators of
+that associativity; `prefix` and `postfix` are unary. An operator is a
+literal, a class or a rule; longer literals are tried first, so `<=`
+beats `<`.
+
+### Trees
+
+Each node is a map: its `kind` (the rule's name), its `text`, its
+`span` — `line` and `column` (from 1), `start` and `end` (character
+offsets, as `str.substring` takes them) — and its `children`, the nodes
+of the rules it used, in order. Literals make no node. A **label**
+names a part: `key:Name` makes `n.key` the `Name` node, a label on a
+repetition (`items:item*`) or used twice holds a list, and a label on
+anything other than a rule (`op:("+" / "-")`) makes a node of that
+kind for what it matched. A part that matched nothing is `()`. A
+precedence table's node has the rule's kind, the operator's text as
+`op`, `fixity` (`"infix"`, `"prefix"` or `"postfix"`), and `left` and
+`right` or `operand`; an operand alone is its own node.
+
+**Actions** turn nodes into values as the tree is made, bottom up: the
+action for a rule (or a label) gets the node, with its children and
+labels already turned into theirs, and what it answers takes the node's
+place. The start rule's value is the parse's.
+
+### Errors
+
+A failed parse answers the furthest position it reached and what could
+have come there, in words, with what was there instead:
+
+```text
+expected "," or "]" after "2", found "3" (1:13)
+ 1 | {"a": [1, 2 3]}
+   |             ^
+```
+
+That is `e.show()`; `e.message` is its first line. `e.span` (`line`,
+`column`, `start`, `end`), `e.expected` (the words, a list), `e.found`
+(the text there, `()` at the end) and `e.after` (the piece matched just
+before) are data for an application, to underline the place. A token, or
+a rule with words of its own, is said as itself where it could not
+begin. A grammar with an error is refused the same way, the message
+beginning `peg.grammar:` and the caret in the grammar's text: an
+undefined rule (with the nearest name), a class that is not closed, a
+label inside a token, an action for a name the grammar does not have.
+
+With `recover` — a list of sync strings, given as an option to the
+grammar or to one parse — a parse that meets an error skips past the
+next sync string and goes on, so one pass finds every error: the `Err`
+has `errors` (each an error as above), `tree` (what did parse) and a
+`show()` of them all.
+
+```olang
+use peg
+let g = unwrap(peg.grammar(`
+  file = stmt*
+  stmt = name:Name "=" val:Num ";"
+  Name = [a-z]+
+  Num "a number" = [0-9]+
+  skip = [ \\n]+
+`, #{}, #{ "recover": [";"] }))
+match g.parse("a = 1; b = ; c = 3;") {
+    Ok(_) => println("parsed"),
+    Err(e) => {
+        println(len(e.errors))                                    // 1
+        println(e.errors[0].message)                              // expected a number after "=", found ";" (1:12)
+        println(map(e.tree.children, (s) => s.name.text))         // ["a", "c"]
+    }
+}
+```
+
+### Checks and examples
+
+`peg.check` reports a rule nothing reachable from the start uses, an
+alternative an earlier one hides (`"<" / "<="`: the second can never
+match), a repetition of something that can match nothing, and left
+recursion with no alternative to start from. `peg.examples` walks the
+rules with a seeded generator and keeps the texts the grammar accepts:
+inputs for fuzzing whatever consumes the trees.
+
+```olang
+use peg
+println(map(peg.check(`
+  cmp  = "<" / "<=" / ">"
+  lost = "x"
+`), (f) => f.kind))                       // ["unused", "shadowed"]
+let g = unwrap(peg.grammar(`
+  list = "[" (Num ("," Num)*)? "]"
+  Num  = [0-9]+
+`))
+let xs = peg.examples(g, 3, 7)
+println(len(xs))                          // 3
+println(col.all(xs, (x) => g.accepts(x))) // true
+```
+
+### How fast
+
+A grammar is compiled once, by `peg.grammar`, into olang functions —
+recursive descent, one function a rule, with the character tests,
+loops and choices written inline and an ordered choice that looks at
+the next character before trying an alternative — so a parse runs on
+the bytecode tier with no grammar interpreter in the way. A rule that an
+ordered choice may try twice at one position keeps its last answer;
+nothing else is memoised, so memory stays flat. The functions that
+gather an error's expectations run only after a parse has failed. On an
+M-series Mac, the JSON grammar below recognises a 150 KB document in
+about 20 times the built-in `json.parse`'s time, and builds its tree
+(about 150,000 nodes, each a map with its text and span) in about 100
+times. olang-track's query bar parses to a tree in about 85 µs a
+query, 1.6 times what its hand-written parser takes to tokenize and
+read it. `benchmarks/peg.ol` measures both.
+
+### Three grammars
+
+**JSON**, with actions that give the values `json.parse` gives:
+
+```olang
+use peg
+let Json = unwrap(peg.grammar(`
+  json    = value
+  value   "a value" = object / array / String / Number / True / False / Null
+  object  = "{" (member ("," member)*)? "}"
+  member  = key:String ":" val:value
+  array   = "[" (value ("," value)*)? "]"
+  String  = "\\"" ([^"\\\\\\x00-\\x1f] / Escape)* "\\""
+  Escape  = "\\\\" (["\\\\/bfnrt] / "u" Hex Hex Hex Hex)
+  Hex     = [0-9a-fA-F]
+  Number  = "-"? ("0" / [1-9] [0-9]*) ("." [0-9]+)? ([eE] [+-]? [0-9]+)?
+  True    = "true"
+  False   = "false"
+  Null    = "null"
+  skip    = [ \\t\\n\\r]+
+`, #{
+    "json": (m) => m.children[0],
+    "value": (m) => m.children[0],
+    "object": (m) => fold(m.children, #{}, (acc, kv) => map_set(acc, kv[0], kv[1])),
+    "member": (m) => (m.key, m.val),
+    "array": (m) => m.children,
+    "String": (m) => unwrap(json.parse(m.text)),
+    "Number": (m) => unwrap(str.parse_float(m.text)),
+    "True": (m) => true,
+    "False": (m) => false,
+    "Null": (m) => ()
+}))
+let v = unwrap(Json.parse(`{"tags": ["a", "b"], "size": 2.5, "ok": true}`))
+println(v.tags)                            // ["a", "b"]
+println(v.size)                            // 2.5
+match Json.parse(`{"tags": ["a" "b"]}`) {
+    Ok(_) => println("parsed"),
+    Err(e) => println(e.message)           // expected "," or "]" after "\"a\"", found "\"" (1:15)
+}
+```
+
+**An expression language**, evaluated by its actions; the table makes
+`-2 ^ 2` read `(-2) ^ 2` (the prefix minus binds tightest) and `2 ^ 3 ^
+2` read `2 ^ (3 ^ 2)`:
+
+```olang
+use peg
+fn power(a, b) = if b == 0 => 1 else => a * power(a, b - 1)
+let Calc = unwrap(peg.grammar(`
+  expr = precedence(atom) {
+    left "+" "-"
+    left "*" "/"
+    right "^"
+    prefix "-"
+  }
+  atom = Num / "(" expr ")"
+  Num  = [0-9]+
+  skip = [ ]+
+`, #{
+    "expr": (m) => if m.fixity == "prefix" => 0 - m.operand
+        else if m.op == "+" => m.left + m.right
+        else if m.op == "-" => m.left - m.right
+        else if m.op == "*" => m.left * m.right
+        else if m.op == "/" => m.left / m.right
+        else => power(m.left, m.right),
+    "atom": (m) => m.children[0],
+    "Num": (m) => unwrap(str.parse_int(m.text))
+}))
+println(unwrap(Calc.parse("1 + 2 * 3")))     // 7
+println(unwrap(Calc.parse("10 - 4 - 3")))    // 3
+println(unwrap(Calc.parse("2 ^ 3 ^ 2")))     // 512
+println(unwrap(Calc.parse("-2 ^ 2")))        // 4
+println(unwrap(Calc.parse("(1 + 2) * -3")))  // -9
+```
+
+**A query bar**, like olang-track's: field filters, words, quoted
+phrases; the tree is what the application reads, and an error is where
+to put the red underline:
+
+```olang
+use peg
+let Query = unwrap(peg.grammar(`
+  query  = term*
+  term   = filter / word
+  filter = field:Name ":" values:(value ("," value)*)
+  value  "a value" = "-"? (Quoted / Bare)
+  word   = "-"? (Quoted / Bare)
+  Name   = [a-z_]+
+  Bare   = [^ \\t",:]+
+  Quoted = "\\"" [^"]* "\\""
+  skip   = [ \\t]+
+`))
+let t = unwrap(Query.parse("project: OL is: overdue,-draft \"release notes\""))
+println(map(t.children, (part) => part.children[0].kind))   // ["filter", "filter", "word"]
+let is = t.children[1].children[0]
+println(is.field.text)                                       // is
+println(map(is.values.children, (v) => v.text))              // ["overdue", "-draft"]
+match Query.parse("project: OL is:") {
+    Ok(_) => println("parsed"),
+    Err(e) => {
+        println(e.message)       // expected a value after ":", found end of input (1:16)
+        println(e.span.start)    // 15
+    }
+}
 ```
 
 ## `dates` — dates and times

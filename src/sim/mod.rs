@@ -360,7 +360,7 @@ impl World {
         }
         // The rest unwind in id order, each holding the baton alone.
         let mut stuck = false;
-        let give_up = std::time::Instant::now() + DRAIN_WAIT;
+        let give_up = crate::clock::Instant::now() + DRAIN_WAIT;
         let cv = st.cvs[0].clone();
         'drain: for t in 1..st.sched.task_count() {
             if st.sched.is_done(t) {
@@ -369,7 +369,7 @@ impl World {
             st.running = t;
             st.cvs[t].notify_one();
             while st.running != 0 {
-                let left = give_up.saturating_duration_since(std::time::Instant::now());
+                let left = give_up.saturating_duration_since(crate::clock::Instant::now());
                 if left.is_zero() {
                     stuck = true;
                     break 'drain;
@@ -1035,7 +1035,7 @@ mod tests {
 
     #[test]
     fn the_clock_is_virtual_inside_a_world_and_real_after_it() {
-        let started = std::time::Instant::now();
+        let started = crate::clock::Instant::now();
         let cfg = Config {
             seed: 3,
             start_ms: 5_000,

@@ -56,6 +56,7 @@ const MODULES: &[&str] = &[
     "vec",
     "md",
     "gg",
+    "peg",
     "cli",
     "term",
     "ui",

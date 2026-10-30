@@ -113,7 +113,7 @@ pub fn main(file: &Path, opts: &Options) -> i32 {
 }
 
 fn one_seed(file: &Path, seed: u64, base: Config, all_events: bool) -> i32 {
-    let started = std::time::Instant::now();
+    let started = crate::clock::Instant::now();
     let report = match run_file(file, Config { seed, ..base }) {
         Ok(r) => r,
         Err(e) => {
@@ -164,7 +164,7 @@ fn many_seeds(file: &Path, from: u64, n: u64, base: Config) -> i32 {
     // The program's own output would bury the failures: keep it quiet.
     #[cfg(feature = "native")]
     crate::output::collect_output();
-    let started = std::time::Instant::now();
+    let started = crate::clock::Instant::now();
     let mut failed: Vec<u64> = Vec::new();
     let mut virtual_ms: u128 = 0;
     for seed in from..from.saturating_add(n) {
