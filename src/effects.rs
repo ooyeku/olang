@@ -242,7 +242,9 @@ pub enum SimHandling {
     /// Pure computation (or output): runs as it always does.
     Pure,
     /// The world answers it: virtual time, the world's random streams,
-    /// the cooperative scheduler for `spawn`, `task` and `chan`.
+    /// the cooperative scheduler for `spawn`, `task` and `chan`, and
+    /// (S2) `http` over the world's network, with each node's own
+    /// `os.args` and environment.
     Simulated,
     /// It would touch the real world, and the world does not simulate it
     /// yet: refused with an error inside a world, never run for real.
@@ -311,7 +313,8 @@ pub fn sim_handling(full_name: &str) -> SimHandling {
 }
 
 /// The builtins a world answers itself (S1: the clock, randomness, the
-/// scheduler). Everything else effectful is refused by `sim_handling`.
+/// scheduler; S2: `http` between nodes, a node's argv and environment).
+/// Everything else effectful is refused by `sim_handling`.
 fn sim_simulated(full_name: &str) -> bool {
     if full_name.starts_with("random.") || full_name.starts_with("chan.") {
         return true;
@@ -334,6 +337,28 @@ fn sim_simulated(full_name: &str) -> bool {
             | "task.watch"
             | "par_map"
             | "par_filter"
+            // S2: the network between a world's nodes (sim/http.rs).
+            // `response` and `response_with_headers` build values and run
+            // as they always do; the world answers the rest.
+            | "http.get"
+            | "http.post"
+            | "http.put"
+            | "http.delete"
+            | "http.request"
+            | "http.serve"
+            | "http.shutdown"
+            | "http.defer"
+            | "http.respond"
+            | "http.hold"
+            | "http.notify"
+            | "http.notify_all"
+            | "http.held"
+            | "http.response"
+            | "http.response_with_headers"
+            // a node's own argv and environment, given when it is made
+            | "os.args"
+            | "os.get_env"
+            | "os.has_env"
     )
 }
 
@@ -530,13 +555,10 @@ mod tests {
         for name in [
             "fs.read_file",
             "fs.write_file",
-            "http.get",
-            "http.serve",
             "db.open",
             "proc.run",
             "os.exec",
             "os.exit",
-            "os.get_env",
             "os.on_shutdown",
             "os.read_line",
             "crypto.hash_password",
@@ -558,8 +580,26 @@ mod tests {
             "chan.send",
             "task.join",
             "crypto.random_hex",
+            "http.get",
+            "http.post",
+            "http.request",
+            "http.serve",
+            "http.shutdown",
+            "http.defer",
+            "http.respond",
+            "os.args",
+            "os.get_env",
         ] {
             assert_eq!(sim_handling(name), SimHandling::Simulated, "{name}");
+        }
+        // Every member of `http` is now answered by a world or pure: none
+        // is refused, and none reaches a socket (sim/http.rs).
+        for name in surface.iter().filter(|n| n.starts_with("http.")) {
+            assert_ne!(sim_handling(name), SimHandling::Refused, "{name}");
+        }
+        // the rest of `os` stays refused: the real environment, processes
+        for name in ["os.set_env", "os.list_env", "os.hostname", "os.exec"] {
+            assert_eq!(sim_handling(name), SimHandling::Refused, "{name}");
         }
         for name in [
             "str.trim",

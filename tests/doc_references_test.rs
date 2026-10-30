@@ -244,6 +244,16 @@ fn a_missing_member_does_not_resolve() {
 const INTERNAL: &[(&str, &str)] = &[
     ("sim.World", SIM_S1),
     ("sim.World.run_fn", SIM_S1),
+    ("sim.World.run", SIM_S2),
+    ("sim.World.node", SIM_S2),
+    ("sim.World.client", SIM_S2),
+    ("sim.World.at", SIM_S2),
+    ("sim.World.every", SIM_S2),
+    ("sim.World.link", SIM_S2),
+    ("sim.World.partition", SIM_S2),
+    ("sim.World.heal", SIM_S2),
+    ("sim.World.crash", SIM_S2),
+    ("sim.World.restart", SIM_S2),
     ("sim.world", SIM_S1),
     ("sim.ms", SIM_S1),
     ("sim.seconds", SIM_S1),
@@ -251,6 +261,7 @@ const INTERNAL: &[(&str, &str)] = &[
     ("sim.hours", SIM_S1),
 ];
 
+const SIM_S2: &str = "sim S2 is local-only (rc6): documented in plans/SIM-S2.md until its stdlib.md section is written";
 const SIM_S1: &str = "sim S1 is local-only (rc6): documented in plans/SIM-S1.md until its stdlib.md section is written";
 
 /// The member names of the module at `path`, with each one's `typeof`.

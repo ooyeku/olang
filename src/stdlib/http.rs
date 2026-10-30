@@ -150,17 +150,17 @@ pub fn call_http_function(
 /// wrong-typed value raises (a typo'd option silently ignored would be a
 /// request that quietly lacked its auth header).
 #[derive(Default)]
-struct RequestOpts {
-    headers: Vec<(String, String)>,
-    timeout_ms: Option<u64>,
-    bearer: Option<String>,
-    basic: Option<(String, String)>,
+pub(crate) struct RequestOpts {
+    pub(crate) headers: Vec<(String, String)>,
+    pub(crate) timeout_ms: Option<u64>,
+    pub(crate) bearer: Option<String>,
+    pub(crate) basic: Option<(String, String)>,
     /// The response body as `Bytes` rather than text (an image, an
     /// archive: text decoding would replace what is not UTF-8).
-    bytes: bool,
+    pub(crate) bytes: bool,
 }
 
-fn parse_opts(v: &Value, fname: &str) -> Result<RequestOpts, Box<dyn std::error::Error>> {
+pub(crate) fn parse_opts(v: &Value, fname: &str) -> Result<RequestOpts, Box<dyn std::error::Error>> {
     let entries = match v {
         Value::Map(entries) => entries,
         other => {
@@ -614,6 +614,26 @@ pub(crate) fn multi_map(pairs: impl IntoIterator<Item = (String, String)>) -> cr
     out
 }
 
+/// The request value a handler gets, from its parts (a simulated
+/// world's server builds it without a socket).
+pub(crate) fn request_value(
+    method: &str,
+    path: &str,
+    query: &[(String, String)],
+    headers: &[(String, String)],
+    body: &[u8],
+    remote_addr: &str,
+) -> Value {
+    let req = ParsedRequest {
+        method: method.to_string(),
+        path: path.to_string(),
+        query: query.to_vec(),
+        headers: headers.to_vec(),
+        body: body.to_vec(),
+    };
+    request_to_value(&req, remote_addr)
+}
+
 /// The request value handed to the olang handler: a struct with dot access,
 /// with `query` and `headers` as maps so `map_get` reads them.
 fn request_to_value(req: &ParsedRequest, remote_addr: &str) -> Value {
@@ -712,7 +732,7 @@ fn response_raw_bytes(
 /// A header key or value is one line: strip CR and LF so a handler
 /// interpolating attacker-controlled text into a header cannot split
 /// the response or inject headers of its own.
-fn header_line_safe(s: &str) -> String {
+pub(crate) fn header_line_safe(s: &str) -> String {
     if s.contains(['\r', '\n']) {
         s.replace(['\r', '\n'], " ")
     } else {
@@ -917,7 +937,7 @@ fn render_handler_result(value: &Value, keep_alive: bool, fs: crate::caps::FsCap
     }
 }
 
-fn header_value_text(v: &Value) -> String {
+pub(crate) fn header_value_text(v: &Value) -> String {
     match v {
         Value::String(s) => s.as_ref().clone(),
         other => other.to_string(),
@@ -925,16 +945,16 @@ fn header_value_text(v: &Value) -> String {
 }
 
 #[derive(Clone)]
-struct ServeConfig {
-    workers: usize,
-    queue_capacity: usize,
+pub(crate) struct ServeConfig {
+    pub(crate) workers: usize,
+    pub(crate) queue_capacity: usize,
     max_requests_per_connection: usize,
     idle_timeout_ms: u64,
     write_timeout_ms: u64,
     /// Ceiling for one request's header block (431 past it).
     max_header_bytes: usize,
     /// Ceiling for one request's body (413 past it).
-    max_body_bytes: usize,
+    pub(crate) max_body_bytes: usize,
     /// Whole-request deadline, head plus body (408 past it) — the
     /// slow-client bound the per-read timeout alone cannot give.
     request_timeout_ms: u64,
@@ -987,7 +1007,7 @@ fn option_usize(
     }
 }
 
-fn serve_config(options: Option<&Value>) -> Result<ServeConfig, String> {
+pub(crate) fn serve_config(options: Option<&Value>) -> Result<ServeConfig, String> {
     let workers = default_worker_count();
     let defaults = ServeConfig {
         workers,
