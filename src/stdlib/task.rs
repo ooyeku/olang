@@ -109,7 +109,7 @@ pub fn create_task_module() -> Value {
     }
 }
 
-fn task_id(value: &Value) -> Result<u64, String> {
+pub(crate) fn task_id(value: &Value) -> Result<u64, String> {
     match value {
         Value::Native(h) => {
             h.0.as_any()
@@ -133,7 +133,7 @@ fn raise(message: String) -> InterpreterError {
 /// `unwrap_or`, `?`, and `try`/`catch` like any other fallible result.
 /// A finished task as a `Result`: `Ok(value)` when it returned (a value
 /// that is itself an `Err` included), `Err(message)` when it raised.
-fn settle(outcome: Result<Value, String>) -> Value {
+pub(crate) fn settle(outcome: Result<Value, String>) -> Value {
     match outcome {
         Ok(v) => Value::Ok(Box::new(v)),
         Err(e) => Value::Err(Box::new(Value::String(Arc::new(e)))),

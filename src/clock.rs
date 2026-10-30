@@ -14,12 +14,22 @@ pub use std::time::Instant;
 /// The current wall-clock time as a `SystemTime`, safely on every target.
 #[cfg(feature = "native")]
 pub fn system_now() -> std::time::SystemTime {
+    if let Some(ms) = crate::sim::virtual_epoch_ms() {
+        return std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms.max(0) as u64);
+    }
     std::time::SystemTime::now()
 }
 
 /// Milliseconds since the Unix epoch.
+///
+/// Inside a simulated world (`sim`) every wall-clock reading here answers
+/// from the world's virtual clock instead: `time.now_ms`, `dates.now` and
+/// the rest read the world's time, never the machine's.
 #[cfg(feature = "native")]
 pub fn epoch_ms() -> i64 {
+    if let Some(ms) = crate::sim::virtual_epoch_ms() {
+        return ms;
+    }
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -75,6 +85,9 @@ pub fn sleep(d: std::time::Duration) {
 pub fn utc_now() -> chrono::DateTime<chrono::Utc> {
     #[cfg(feature = "native")]
     {
+        if let Some(ms) = crate::sim::virtual_epoch_ms() {
+            return chrono::DateTime::from_timestamp_millis(ms).unwrap_or_default();
+        }
         chrono::Utc::now()
     }
     #[cfg(not(feature = "native"))]
@@ -88,6 +101,11 @@ pub fn utc_now() -> chrono::DateTime<chrono::Utc> {
 pub fn local_now_fixed() -> chrono::DateTime<chrono::FixedOffset> {
     #[cfg(feature = "native")]
     {
+        // A world has no time zone of its machine: its local time is UTC,
+        // so a run reproduces on any machine.
+        if crate::sim::virtual_epoch_ms().is_some() {
+            return utc_now().fixed_offset();
+        }
         chrono::Local::now().fixed_offset()
     }
     #[cfg(not(feature = "native"))]

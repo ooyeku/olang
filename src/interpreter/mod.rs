@@ -2497,6 +2497,11 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                             .to_string(),
                     });
                 }
+                // Inside a simulated world the task is the world's: it runs
+                // only while it holds the world's baton, as the seed picks.
+                if crate::sim::in_world() {
+                    return crate::sim::spawn(self, expression);
+                }
                 // Real background execution: the expression evaluates on its
                 // own OS thread against a thread-safe clone of this
                 // interpreter — the same worker pattern http.serve uses. The
@@ -6282,6 +6287,19 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             self.bytecode_tier = kept;
         }
         self.timeline.take()
+    }
+
+    /// Set the bytecode tier aside (a simulated world runs on the
+    /// interpreter tier, where every builtin passes the one dispatch
+    /// point); `resume_bytecode_tier` gives it back.
+    pub fn suspend_bytecode_tier(&mut self) -> Option<Box<crate::ovm::tier::BytecodeTier>> {
+        self.bytecode_tier.take()
+    }
+
+    pub fn resume_bytecode_tier(&mut self, kept: Option<Box<crate::ovm::tier::BytecodeTier>>) {
+        if kept.is_some() {
+            self.bytecode_tier = kept;
+        }
     }
 
     /// Take the timeline back out (to write the trace at end of run).

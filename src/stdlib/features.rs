@@ -11,8 +11,11 @@ use crate::ast::Value;
 use std::sync::Arc;
 
 /// The modules only the native binary has: the operating system's, the
-/// network's, SQLite's, the terminal's and the windows'.
-const NATIVE_ONLY: &[&str] = &["db", "fs", "gui", "http", "os", "proc", "pty", "tty", "vt"];
+/// network's, SQLite's, the terminal's and the windows', and `sim`'s
+/// worlds (their tasks are threads).
+const NATIVE_ONLY: &[&str] = &[
+    "db", "fs", "gui", "http", "os", "proc", "pty", "sim", "tty", "vt",
+];
 
 /// The modules only the full profile adds to the browser's.
 const FULL_ONLY: &[&str] = &["re"];

@@ -1574,6 +1574,7 @@ impl HelpSystem {
         self.add_pty_vt_docs();
         self.add_gui_docs();
         self.add_time_and_encoding_docs();
+        self.add_sim_docs();
         self.add_data_stack_docs();
         self.add_browser_and_toolkit_docs();
         self.add_recent_stdlib_additions();
@@ -2727,6 +2728,57 @@ task.watch(service, inbox)   // a dead service is an Err at the next recv, not a
             "chan",
             "close the sending side (idempotent); queued messages still drain",
             &[r##"chan.close(c)  // receivers drain what is queued, then Err"##],
+        );
+    }
+
+    fn add_sim_docs(&mut self) {
+        self.doc_ex(
+            "sim.world",
+            "sim.world(#{ seed, start })",
+            "World",
+            "sim",
+            "a simulated world: a virtual clock starting at `start` (epoch ms) and a scheduler driven by `seed`",
+            &[r##"let w = sim.world(#{ "seed": 7 })"##],
+        );
+        self.doc_ex(
+            "sim.World.run_fn",
+            "w.run_fn(f, #{ for })",
+            "Map",
+            "sim",
+            "run f() as the world's main program until it ends, `for` virtual ms pass, or every task is blocked; answers #{ outcome, value, error, events, now, steps, tasks }",
+            &[r##"let run = w.run_fn(main, #{ "for": sim.hours(1) })  // run.outcome, run.events"##],
+        );
+        self.doc_ex(
+            "sim.ms",
+            "sim.ms(n)",
+            "Int",
+            "sim",
+            "a duration of n milliseconds, as virtual ms",
+            &[r##"sim.ms(250)  // 250"##],
+        );
+        self.doc_ex(
+            "sim.seconds",
+            "sim.seconds(n)",
+            "Int",
+            "sim",
+            "a duration of n seconds, as virtual ms",
+            &[r##"sim.seconds(2)  // 2000"##],
+        );
+        self.doc_ex(
+            "sim.minutes",
+            "sim.minutes(n)",
+            "Int",
+            "sim",
+            "a duration of n minutes, as virtual ms",
+            &[r##"sim.minutes(3)  // 180000"##],
+        );
+        self.doc_ex(
+            "sim.hours",
+            "sim.hours(n)",
+            "Int",
+            "sim",
+            "a duration of n hours, as virtual ms",
+            &[r##"sim.hours(6)  // 21600000"##],
         );
     }
 

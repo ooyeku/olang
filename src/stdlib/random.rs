@@ -8,16 +8,31 @@ use std::sync::{Mutex, OnceLock};
 /// Thread-safe random number generator
 static RNG: OnceLock<Mutex<StdRng>> = OnceLock::new();
 
-/// Initialize the global random number generator
-fn get_rng() -> &'static Mutex<StdRng> {
-    RNG.get_or_init(|| Mutex::new(rand::make_rng()))
+/// The generator a draw uses: the process's, or — inside a simulated
+/// world (`sim`) — the running task's own stream, split from the world's
+/// seed, so every draw in a world follows from its seed alone.
+struct RngRef(Option<std::sync::Arc<Mutex<StdRng>>>);
+
+impl RngRef {
+    fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'_, StdRng>> {
+        match &self.0 {
+            Some(stream) => stream.lock(),
+            None => RNG.get_or_init(|| Mutex::new(rand::make_rng())).lock(),
+        }
+    }
+}
+
+/// The generator for this call (see `RngRef`).
+fn get_rng() -> RngRef {
+    RngRef(crate::sim::task_rng())
 }
 
 /// Draw `n` uniforms in [0, 1) from the module's RNG — the same stream
 /// `random.random()` uses, so `random.seed(k)` makes statistical
 /// sampling (stats.norm.sample, ...) deterministic too.
 pub(crate) fn draw_uniforms(n: usize) -> Vec<f64> {
-    let mut rng = get_rng().lock().unwrap();
+    let stream = get_rng();
+    let mut rng = stream.lock().unwrap();
     (0..n).map(|_| rng.random::<f64>()).collect()
 }
 

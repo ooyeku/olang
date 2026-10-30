@@ -757,7 +757,7 @@ fn borrows(type_name: &str, module: &str, method: &str) -> bool {
 
 /// Home modules whose functions are methods of their values even before
 /// the table lists them (the data stack grows faster than this table).
-const OPEN_HOMES: &[&str] = &["ods", "learn", "dates", "mat"];
+const OPEN_HOMES: &[&str] = &["ods", "learn", "dates", "mat", "sim.World"];
 
 /// module → function → full name, for every builtin module.
 static MODULE_FUNCTIONS: LazyLock<HashMap<String, HashMap<String, &'static str>>> =

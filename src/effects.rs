@@ -9,6 +9,10 @@
 //!   function of the source?*
 //! - **record/replay** (`Timeline::is_recorded`) asks *does this call's
 //!   result have to be captured for a run to be reproducible?*
+//! - **simulation** (`crate::sim`) asks *inside a simulated world, does
+//!   the world answer this call, or must it be refused?* — see
+//!   [`sim_handling`]. A call the table knows to touch the world and the
+//!   simulator does not answer is refused, never run for real.
 //!
 //! These used to be three independently curated lists, and they drifted:
 //! the expansion denylist predated `ods` file I/O (so a macro could read
@@ -171,6 +175,8 @@ fn recorded_of(op: &str) -> bool {
             | "dates.now"
             | "dates.utc_now"
             | "dates.today"
+            | "dates.stamp"
+            | "dates.stamp_ms"
             // environment and console input.
             | "os.get_env"
             | "os.env"
@@ -227,6 +233,107 @@ fn recorded_of(op: &str) -> bool {
             | "crypto.random_hex"
             | "crypto.generate_key_pair"
             | "crypto.hash_password"
+    )
+}
+
+/// What a simulated world (`sim`) does with a builtin called inside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SimHandling {
+    /// Pure computation (or output): runs as it always does.
+    Pure,
+    /// The world answers it: virtual time, the world's random streams,
+    /// the cooperative scheduler for `spawn`, `task` and `chan`.
+    Simulated,
+    /// It would touch the real world, and the world does not simulate it
+    /// yet: refused with an error inside a world, never run for real.
+    Refused,
+}
+
+/// The fourth consumer: how a simulated world handles `full_name`.
+///
+/// The rule that keeps a world sealed: anything the other three columns
+/// call effectful (capability-gated or recorded) is `Refused` unless it is
+/// listed here as `Simulated`. A new effectful builtin is therefore
+/// refused inside a world the moment it is classified, before anyone
+/// teaches the simulator to answer it. On top of that, a few ungated
+/// effects the gate does not cover are refused by name: the terminal,
+/// windows, processes, `os` as a whole, files read through `asset` and
+/// `testing.snapshot`, the runtime's module loading, and the crypto
+/// calls that draw from the operating system's entropy.
+pub fn sim_handling(full_name: &str) -> SimHandling {
+    if sim_simulated(full_name) {
+        return SimHandling::Simulated;
+    }
+    const REFUSED_PREFIXES: &[&str] = &[
+        "fs.",
+        "http.",
+        "db.",
+        "proc.",
+        "pty.",
+        "os.",
+        "tty.",
+        "gui.",
+        "asset.",
+        "runtime.",
+        "testing.snapshot",
+    ];
+    const REFUSED_NAMES: &[&str] = &[
+        // entropy from the operating system, not the world's seed
+        "crypto.encrypt_aes",
+        "crypto.encrypt_rsa",
+        "crypto.generate_key_pair",
+        "crypto.hash_password",
+        // introspection of real threads and real elapsed time
+        "task.list",
+        "task.parked",
+        // worlds do not nest (yet)
+        "sim.world",
+    ];
+    // what a world allows of `runtime`: pure facts about the build
+    if matches!(full_name, "runtime.features" | "runtime.version") {
+        return SimHandling::Pure;
+    }
+    let pure_helper = full_name.strip_prefix("fs.").is_some_and(fs_pure)
+        || full_name.strip_prefix("http.").is_some_and(http_pure);
+    if pure_helper {
+        return SimHandling::Pure;
+    }
+    if REFUSED_PREFIXES.iter().any(|p| full_name.starts_with(p))
+        || REFUSED_NAMES.contains(&full_name)
+    {
+        return SimHandling::Refused;
+    }
+    let e = classify(full_name);
+    if e.cap.is_some() || e.recorded {
+        return SimHandling::Refused;
+    }
+    SimHandling::Pure
+}
+
+/// The builtins a world answers itself (S1: the clock, randomness, the
+/// scheduler). Everything else effectful is refused by `sim_handling`.
+fn sim_simulated(full_name: &str) -> bool {
+    if full_name.starts_with("random.") || full_name.starts_with("chan.") {
+        return true;
+    }
+    matches!(
+        full_name,
+        "time.now_ms"
+            | "time.monotonic_ms"
+            | "time.monotonic"
+            | "time.sleep"
+            | "dates.now"
+            | "dates.utc_now"
+            | "dates.today"
+            | "dates.stamp"
+            | "dates.stamp_ms"
+            | "crypto.random_bytes"
+            | "crypto.random_hex"
+            | "task.join"
+            | "task.join_timeout"
+            | "task.watch"
+            | "par_map"
+            | "par_filter"
     )
 }
 
@@ -391,6 +498,94 @@ mod tests {
         // refused inside a meta fn, because the module is effectful.
         assert_eq!(classify("fs.join"), Effects::default());
         assert!(expansion_blocked("fs.join"));
+    }
+
+    /// The fourth consumer agrees with the other three: everything the
+    /// gate restricts or the timeline records is either answered by a
+    /// world or refused inside one — nothing effectful runs for real.
+    #[test]
+    fn sim_never_lets_a_classified_effect_through() {
+        let mut surface: Vec<String> = Vec::new();
+        for (module, value) in crate::stdlib::get_stdlib().iter() {
+            if let crate::ast::Value::Struct { fields, .. } = value {
+                for name in fields.keys() {
+                    surface.push(format!("{module}.{name}"));
+                }
+            }
+        }
+        surface.extend(["par_map", "par_filter", "print", "println"].map(String::from));
+        let mut checked = 0;
+        for name in &surface {
+            let e = classify(name);
+            if e.cap.is_some() || e.recorded {
+                checked += 1;
+                assert_ne!(
+                    sim_handling(name),
+                    SimHandling::Pure,
+                    "{name} is effectful but a world would run it for real"
+                );
+            }
+        }
+        assert!(checked > 50, "the stdlib surface was read ({checked})");
+        for name in [
+            "fs.read_file",
+            "fs.write_file",
+            "http.get",
+            "http.serve",
+            "db.open",
+            "proc.run",
+            "os.exec",
+            "os.exit",
+            "os.get_env",
+            "os.on_shutdown",
+            "os.read_line",
+            "crypto.hash_password",
+            "crypto.encrypt_aes",
+            "tty.size",
+            "ods.read_csv_file",
+            "runtime.load_module",
+            "sim.world",
+        ] {
+            assert_eq!(sim_handling(name), SimHandling::Refused, "{name}");
+        }
+        for name in [
+            "time.now_ms",
+            "time.sleep",
+            "dates.now",
+            "random.random",
+            "random.seed",
+            "chan.recv",
+            "chan.send",
+            "task.join",
+            "crypto.random_hex",
+        ] {
+            assert_eq!(sim_handling(name), SimHandling::Simulated, "{name}");
+        }
+        for name in [
+            "str.trim",
+            "fs.join",
+            "http.parse_url",
+            "map_get",
+            "println",
+            "sim.ms",
+        ] {
+            assert_eq!(sim_handling(name), SimHandling::Pure, "{name}");
+        }
+    }
+
+    /// The clocks `dates` reads are recorded, every one of them: `stamp`
+    /// and `stamp_ms` read the wall clock as `now` does.
+    #[test]
+    fn every_dates_clock_is_recorded() {
+        for name in [
+            "dates.now",
+            "dates.utc_now",
+            "dates.today",
+            "dates.stamp",
+            "dates.stamp_ms",
+        ] {
+            assert!(classify(name).recorded, "{name}");
+        }
     }
 
     #[test]

@@ -708,6 +708,16 @@ impl BuiltinFunctions {
         // unless profiling is on.
         interpreter.record_caps_use(name);
 
+        // A simulated world (`sim`): inside one, the world answers the
+        // clock, randomness and the scheduler's operations, and refuses
+        // every effect it does not simulate — before any of them can
+        // reach the real world. One thread-local read outside a world.
+        if crate::sim::in_world()
+            && let Some(answer) = crate::sim::intercept(name, &arguments)
+        {
+            return answer;
+        }
+
         // The Open Timeline: in replay mode a recorded nondeterministic
         // call returns its logged result and the real effect is skipped;
         // in record mode the real call runs and its result is logged just
@@ -834,6 +844,11 @@ impl BuiltinFunctions {
             // Remove "json." prefix
             return crate::stdlib::json::call_json_function(json_function, arguments)
                 .map_err(|e| InterpreterError::runtime(e.to_string()));
+        }
+
+        // The simulator's own surface (`sim.world`, `w.run_fn`, durations)
+        if let Some(sim_function) = name.strip_prefix("sim.") {
+            return crate::sim::surface::call(sim_function, arguments, interpreter);
         }
 
         // Handle task functions
@@ -1770,6 +1785,7 @@ impl BuiltinFunctions {
             && crate::parallel::get_config().max_threads > 1
             && !interpreter.in_meta_mode()
             && !interpreter.coverage_active()
+            && !crate::sim::in_world()
             && Self::kernel_provably_pure(function);
         // OLANG_DEBUG_AUTOPAR=1 answers "why didn't this parallelize?"
         if std::env::var("OLANG_DEBUG_AUTOPAR").is_ok() {
@@ -2011,7 +2027,9 @@ impl BuiltinFunctions {
             let cfg = crate::parallel::get_config();
             // `set_parallel(false)` must actually disable the fan-out; the
             // flag used to be ignored here, so it never did.
-            let workers = if cfg.enabled {
+            // In a simulated world, in order on this thread: one task
+            // runs at a time there, and the world's order is the seed's.
+            let workers = if cfg.enabled && !crate::sim::in_world() {
                 cfg.max_threads.clamp(1, items.len())
             } else {
                 1

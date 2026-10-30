@@ -73,6 +73,7 @@ const MODULES: &[&str] = &[
     "dates",
     "time",
     "random",
+    "sim",
     "crypto",
     "base64",
     "bytes",

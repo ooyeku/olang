@@ -60,6 +60,7 @@ pub mod resolve;
 #[cfg(feature = "native")]
 pub mod runtime_wasm; // The browser runtime the binary embeds
 pub mod scoping;
+pub mod sim; // Deterministic simulation: worlds on a virtual clock and a seeded scheduler
 pub mod stdlib;
 pub mod test_framework;
 pub mod tier_stats; // Where each function ran: `--ovm-stats=json`, pins

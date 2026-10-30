@@ -334,6 +334,10 @@ struct Chan {
     depth: AtomicI64,
     recv_waiting: AtomicUsize,
     send_waiting: AtomicUsize,
+    /// The capacity it was made with: `None` unbounded, `Some(0)` a
+    /// rendezvous channel. A simulated world (`sim`) reads it to keep a
+    /// channel's semantics while it runs every operation as a try.
+    cap: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -453,6 +457,10 @@ fn chan_of(value: &Value) -> Result<Arc<Chan>, Box<dyn std::error::Error>> {
 }
 
 fn register(tx: Tx, rx: Receiver<Value>) -> Value {
+    register_with_cap(tx, rx, None)
+}
+
+fn register_with_cap(tx: Tx, rx: Receiver<Value>, cap: Option<usize>) -> Value {
     handle(Arc::new(Chan {
         id: CHAN_SEQ.fetch_add(1, Ordering::Relaxed),
         tx: Mutex::new(Some(tx)),
@@ -460,6 +468,7 @@ fn register(tx: Tx, rx: Receiver<Value>) -> Value {
         depth: AtomicI64::new(0),
         recv_waiting: AtomicUsize::new(0),
         send_waiting: AtomicUsize::new(0),
+        cap,
     }))
 }
 
@@ -536,7 +545,7 @@ fn chan_bounded(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _ => return Err("chan.bounded expects a non-negative Int capacity".into()),
     };
     let (tx, rx) = crossbeam_channel::bounded(cap);
-    Ok(register(Tx::Bounded(tx), rx))
+    Ok(register_with_cap(Tx::Bounded(tx), rx, Some(cap)))
 }
 
 fn chan_send(mut args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
@@ -853,4 +862,71 @@ fn chan_close(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let chan = chan_of(&args[0])?;
     *chan.tx.lock().unwrap() = None;
     Ok(Value::Unit)
+}
+
+// ─── The primitives a simulated world runs channels on ───────────────
+//
+// Inside a `sim` world every channel operation is a *try*: the world's
+// scheduler, not a blocking wait, decides who runs while a receiver has
+// nothing to take or a sender has no room. These never wait and never
+// park, so the stall detector above is not involved; the world proves
+// its own deadlocks.
+
+/// What a non-waiting send did.
+pub(crate) enum SimSend {
+    Sent,
+    Full(Value),
+    Closed,
+}
+
+/// What a non-waiting receive found.
+pub(crate) enum SimRecv {
+    Got(Value),
+    Empty,
+    Closed,
+}
+
+/// The channel's process-wide id and the capacity it was made with.
+pub(crate) fn sim_identity(value: &Value) -> Result<(u64, Option<usize>), String> {
+    chan_of(value)
+        .map(|c| (c.id, c.cap))
+        .map_err(|e| e.to_string())
+}
+
+/// A channel for a world's rendezvous (`chan.bounded(0)`): one slot, and
+/// the world holds the sender until a receiver has taken its message.
+pub(crate) fn sim_rendezvous() -> Value {
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    register_with_cap(Tx::Bounded(tx), rx, Some(0))
+}
+
+/// Send without waiting. The confinement rule is the caller's to check.
+pub(crate) fn sim_try_send(channel: &Value, value: Value) -> Result<SimSend, String> {
+    let chan = chan_of(channel).map_err(|e| e.to_string())?;
+    let tx = chan.tx.lock().unwrap().clone();
+    let Some(tx) = tx else {
+        return Ok(SimSend::Closed);
+    };
+    let (Tx::Unbounded(t) | Tx::Bounded(t)) = tx;
+    Ok(match t.try_send(value) {
+        Ok(()) => {
+            chan.depth.fetch_add(1, Ordering::Relaxed);
+            SimSend::Sent
+        }
+        Err(crossbeam_channel::TrySendError::Full(v)) => SimSend::Full(v),
+        Err(crossbeam_channel::TrySendError::Disconnected(_)) => SimSend::Closed,
+    })
+}
+
+/// Receive without waiting.
+pub(crate) fn sim_try_recv(channel: &Value) -> Result<SimRecv, String> {
+    let chan = chan_of(channel).map_err(|e| e.to_string())?;
+    Ok(match chan.rx.try_recv() {
+        Ok(v) => {
+            chan.depth.fetch_sub(1, Ordering::Relaxed);
+            SimRecv::Got(v)
+        }
+        Err(TryRecvError::Empty) => SimRecv::Empty,
+        Err(TryRecvError::Disconnected) => SimRecv::Closed,
+    })
 }

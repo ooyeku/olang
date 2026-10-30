@@ -476,6 +476,28 @@ enum Commands {
         args: Vec<String>,
     },
 
+    /// Run a program in a simulated world: a virtual clock and a seeded scheduler
+    Sim {
+        /// The program to run as the world's main program
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// The seed to run (with --seeds: the first of them; default 1)
+        #[arg(long, value_name = "S")]
+        seed: Option<u64>,
+        /// Run this many seeds in turn and report the ones that fail
+        #[arg(long, value_name = "N")]
+        seeds: Option<u64>,
+        /// Stop when this much virtual time has passed (6h, 30m, 10s, 250ms)
+        #[arg(long = "for", value_name = "DURATION")]
+        run_for: Option<String>,
+        /// Print every event of the run (with --seed)
+        #[arg(long)]
+        events: bool,
+        /// Yield points a run may take before it is called a livelock
+        #[arg(long, value_name = "N")]
+        max_steps: Option<u64>,
+    },
+
     /// Generate HTML or Markdown API documentation
     Doc {
         /// Files or directories to document (default: current directory)
@@ -1210,6 +1232,34 @@ fn run() -> i32 {
 
         Some(Commands::Replay { trace, args }) => run_replay(&trace, &args, logger),
 
+        Some(Commands::Sim {
+            file,
+            seed,
+            seeds,
+            run_for,
+            events,
+            max_steps,
+        }) => {
+            let run_for = match run_for.as_deref().map(olang::sim::cli::parse_duration) {
+                None => None,
+                Some(Ok(ms)) => Some(ms),
+                Some(Err(e)) => {
+                    eprintln!("olang sim: --for: {e}");
+                    return 2;
+                }
+            };
+            olang::sim::cli::main(
+                &file,
+                &olang::sim::cli::Options {
+                    seed,
+                    seeds,
+                    run_for,
+                    events,
+                    max_steps,
+                },
+            )
+        }
+
         Some(Commands::Doc {
             mut paths,
             output,
@@ -1506,6 +1556,7 @@ fn missing_path(command: &Commands) -> Option<i32> {
         Commands::Record { file, .. } if gone(file) => say("record", file),
         Commands::Expand { file, .. } if gone(file) => say("expand", file),
         Commands::Replay { trace, .. } if gone(trace) => say("replay", trace),
+        Commands::Sim { file, .. } if gone(file) => say("sim", file),
         Commands::Inspect { binary, .. } if gone(binary) => say("inspect", binary),
         Commands::Doctor { path: Some(p) } if gone(p) => say("doctor", p),
         Commands::Caps { path: Some(p), .. } if gone(p) => say("caps", p),

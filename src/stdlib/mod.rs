@@ -125,6 +125,8 @@ pub fn get_stdlib() -> crate::ast::ValueMap {
     #[cfg(feature = "native")]
     stdlib.insert("vt".to_string(), vt::create_vt_module());
     stdlib.insert("random".to_string(), random::create_random_module());
+    #[cfg(feature = "native")]
+    stdlib.insert("sim".to_string(), crate::sim::surface::create_sim_module());
     stdlib.insert("testing".to_string(), testing::create_testing_module());
     stdlib.insert("str".to_string(), string::create_string_module());
     #[cfg(feature = "regex-module")]

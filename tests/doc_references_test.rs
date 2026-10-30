@@ -241,7 +241,17 @@ fn a_missing_member_does_not_resolve() {
 }
 
 /// Members a module has that the reference leaves out on purpose.
-const INTERNAL: &[(&str, &str)] = &[];
+const INTERNAL: &[(&str, &str)] = &[
+    ("sim.World", SIM_S1),
+    ("sim.World.run_fn", SIM_S1),
+    ("sim.world", SIM_S1),
+    ("sim.ms", SIM_S1),
+    ("sim.seconds", SIM_S1),
+    ("sim.minutes", SIM_S1),
+    ("sim.hours", SIM_S1),
+];
+
+const SIM_S1: &str = "sim S1 is local-only (rc6): documented in plans/SIM-S1.md until its stdlib.md section is written";
 
 /// The member names of the module at `path`, with each one's `typeof`.
 fn members(path: &str) -> Vec<(String, String)> {

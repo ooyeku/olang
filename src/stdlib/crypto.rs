@@ -459,9 +459,21 @@ fn crypto_random_bytes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Er
     }
 
     let mut bytes = vec![0u8; count];
-    rand::rng().fill_bytes(&mut bytes);
+    fill_random(&mut bytes);
 
     Ok(crate::stdlib::bytes::to_value(bytes))
+}
+
+/// Fill `bytes` from the operating system's generator — or, inside a
+/// simulated world (`sim`), from the running task's seeded stream, so a
+/// world's `random_bytes` reproduces with its seed.
+fn fill_random(bytes: &mut [u8]) {
+    if let Some(stream) = crate::sim::task_rng() {
+        let mut rng = stream.lock().unwrap_or_else(|e| e.into_inner());
+        rng.fill_bytes(bytes);
+        return;
+    }
+    rand::rng().fill_bytes(bytes);
 }
 
 /// Generate cryptographically secure random hex string
@@ -488,7 +500,7 @@ fn crypto_random_hex(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
     }
 
     let mut bytes = vec![0u8; count];
-    rand::rng().fill_bytes(&mut bytes);
+    fill_random(&mut bytes);
     let hex_string = hex::encode(bytes);
 
     Ok(Value::String(Arc::new(hex_string)))

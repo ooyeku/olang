@@ -20,6 +20,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `-X`; every `ods` math function, `clip`, `pow` and `round` over a
   Matrix (`ods.tanh(X)`, `X.clip(lo: 0.0)`); `mat.sum(x, axis)`.
 
+## Unreleased: rc.6 (local)
+
+1.0.0-rc.6 lives on the local `rc6` branch until `sim` is polished; the
+remote stays on rc.5.
+
+### Added
+
+- **`sim`, deterministic simulation: the clock and the scheduler (S1).**
+  `sim.world(#{ seed, start })` makes a world; `w.run_fn(f, #{ for })`
+  runs `f` as its main program on a virtual clock (a one-hour
+  `time.sleep` takes microseconds), with `random.*` drawn from streams
+  split from the seed, and `spawn`, `task` and `chan` scheduled
+  cooperatively: one task runs at a time, and at every channel
+  operation, join, sleep and spawn the seed picks who runs next. One
+  seed is one run, event for event; a race some seed exposes comes back
+  with that seed. A run reports its outcome (`done`, `failed`,
+  `deadline`, `deadlock` with every blocked task's site, or
+  `step_limit`) and its events (time, task, kind, detail).
+  `olang sim FILE --seed S` runs a program in a world, and `--seeds N`
+  runs N seeds in turn and names the ones that fail. Inside a world,
+  every effect it does not simulate yet (files, network, database,
+  processes, the environment) is refused with an error and never
+  reaches the real one: `effects.rs` gains a fourth column, and a test
+  holds every effectful builtin to it. Design: plans/SIM-S1.md.
+
+### Fixed
+
+- **`dates.stamp` and `dates.stamp_ms` are recorded** by `olang record`,
+  as the other wall-clock reads are; a replay used to read the clock
+  live there.
+
 ## [1.0.0-rc.5] - 2026-10-27
 
 Release candidate 5: rc.4 with Linux building again. rc.4's tag never
