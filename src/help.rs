@@ -3056,6 +3056,19 @@ task.watch(service, inbox)   // a dead service is an Err at the next recv, not a
             "a duration of n hours, as virtual ms",
             &[r##"sim.hours(6)  // 21600000"##],
         );
+        // S5: seeing a run
+        self.doc_ex(
+            "sim.Run.events",
+            "run.events()",
+            "Frame",
+            "sim",
+            "every event of a run as an ods Frame, one row an event in the order they happened: seq, t (virtual ms), node, task (null for the network), kind, detail, peer and sent (a message's other end and when it was sent), inbound (an arrival rather than a loss on leaving), fault (the world injected it); `run.events` without the call is the same events as a list of maps",
+            &[
+                r##"let f = run.events()  // then ods.filter, group_by, sort_by"##,
+                r##"f.group_by("kind").agg(#{ "n": ods.count() })"##,
+                r##"ods.filter(f, f["fault"])  // every fault, with its node and time"##,
+            ],
+        );
     }
 
     fn add_time_and_encoding_docs(&mut self) {

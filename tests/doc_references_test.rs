@@ -290,7 +290,10 @@ const INTERNAL: &[(&str, &str)] = &[
     ("sim.Run", SIM_S4),
     ("sim.Run.history", SIM_S4),
     ("sim.Run.check", SIM_S4),
+    ("sim.Run.events", SIM_S5),
 ];
+
+const SIM_S5: &str = "sim S5 is local-only (rc6): documented in plans/SIM-S5.md until its stdlib.md section is written";
 
 const SIM_S3: &str = "sim S3 is local-only (rc6): documented in plans/SIM-S3.md until its stdlib.md section is written";
 const SIM_S4: &str = "sim S4 is local-only (rc6): documented in plans/SIM-S4.md until its stdlib.md section is written";

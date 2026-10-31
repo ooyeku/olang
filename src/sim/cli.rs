@@ -140,9 +140,10 @@ pub fn run_file_forced(
         cfg.forced = Some(p.into_iter().next().unwrap_or_default());
     }
     let (_, program, absolute) = read(path)?;
-    // The interpreter tier, as record and replay run: no bytecode tier
-    // is enabled, so every builtin passes the world's dispatch hook.
+    // The bytecode tier unless asked otherwise (`super::bytecode_tier`):
+    // every builtin it calls still passes the world's dispatch hook.
     let mut interpreter = crate::interpreter::Interpreter::new();
+    super::tier_for(&mut interpreter);
     interpreter.set_current_file(&absolute);
     if let Some(deps) = super::surface::package_deps(&absolute) {
         interpreter.set_dependency_map(deps);
@@ -171,6 +172,7 @@ pub fn run_builder_forced(
 ) -> Result<(Report, Vec<RunPlan>), String> {
     let (_, program, absolute) = read(path)?;
     let mut interpreter = crate::interpreter::Interpreter::new();
+    super::tier_for(&mut interpreter);
     interpreter.set_current_file(&absolute);
     // its packages, as `olang run` resolves them (fetching nothing)
     if let Some(deps) = super::surface::package_deps(&absolute) {
@@ -538,6 +540,15 @@ pub fn run_all(
             scope.spawn(|| {
                 let mut cmd = std::process::Command::new(&exe);
                 cmd.arg("sim").arg(file).arg("--worker");
+                // the tier this process runs worlds on, the workers too
+                cmd.env(
+                    "OLANG_SIM_TIER",
+                    if super::bytecode_tier() {
+                        "bytecode"
+                    } else {
+                        "interp"
+                    },
+                );
                 if let Some(ms) = base.run_for {
                     cmd.arg("--for").arg(ms.to_string());
                 }

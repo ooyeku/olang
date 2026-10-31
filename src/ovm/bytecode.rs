@@ -9494,6 +9494,53 @@ impl BytecodeVm {
     /// CallBuiltin's builtin_id indexes this table; entries record arity.
     /// Excluded on purpose: abs/min/max (integer-preserving), log (optional
     /// base), and the integer functions (factorial, gcd, lcm, ...).
+    /// Every builtin the VM, or native code it compiles, answers without
+    /// the bridge (and so without `BuiltinFunctions::call_internal`, where
+    /// a simulated world answers or refuses a call): the float math of
+    /// `CallBuiltin`, the map natives the JIT bakes in, the owned-argument
+    /// fast paths, the higher-order loops and `cell`'s VM forms. Each must
+    /// be pure, so a world runs on this tier as on the interpreter
+    /// (`effects::tests::the_bytecode_tiers_own_natives_are_pure`). `gui.flat*`
+    /// is native too, outside a world only.
+    #[cfg(test)]
+    pub(crate) fn natives_without_bridge() -> Vec<String> {
+        let mut out: Vec<String> = Self::FLOAT_MATH
+            .iter()
+            .map(|(n, _)| n.to_string())
+            .collect();
+        out.extend(
+            [
+                // the JIT's named calls (jit.rs, whitelist_ok)
+                "map_get",
+                "map_has_key",
+                "map_set",
+                // CallNamed's owned fast paths
+                "map_set_in",
+                "map_update",
+                "map_merge",
+                crate::parser::SPREAD_BUILTIN,
+                // try_native_higher_order
+                "map",
+                "filter",
+                "col.any",
+                "col.all",
+                "contains",
+                "len",
+                "head",
+                "first",
+                "last",
+                "typeof",
+            ]
+            .map(String::from),
+        );
+        if let Some(crate::ast::Value::Struct { fields, .. }) =
+            crate::stdlib::get_stdlib().get("cell")
+        {
+            out.extend(fields.keys().map(|k| format!("cell.{k}")));
+        }
+        out
+    }
+
     pub(crate) const FLOAT_MATH: &'static [(&'static str, usize)] = &[
         ("math.sqrt", 1),
         ("math.cbrt", 1),
@@ -10133,9 +10180,12 @@ impl BytecodeVm {
         // come back in the VM's form: Loom reads the placements natively.
         // Code of a module loaded at run time goes the usual way, where
         // the host-only gate refuses it.
+        // In a simulated world `gui` is refused: the bridge below asks the
+        // world, as the interpreter does (the same answer on both tiers).
         #[cfg(feature = "gui")]
         if name.starts_with("gui.flat")
             && !self.in_loaded_module()
+            && !crate::sim::in_world()
             && let Some(result) = crate::stdlib::gui::flat::flat_vm_native(name, args)
         {
             return result.map_err(BytecodeError::RuntimeError);

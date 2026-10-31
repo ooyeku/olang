@@ -483,10 +483,12 @@ enum Commands {
     /// Run a program in a simulated world: a virtual clock and a seeded scheduler
     Sim {
         /// The program to run as the world's main program (or a file that
-        /// builds worlds); `shrink PLAN` shrinks a saved plan further
+        /// builds worlds); `shrink PLAN` shrinks a saved plan further;
+        /// `view PLAN` (or `view FILE --seed S`) draws a run as a timeline
         #[arg(value_name = "FILE")]
         file: Option<PathBuf>,
-        /// With `shrink`: the plan file to shrink
+        /// With `shrink`: the plan file to shrink; with `view`: the plan,
+        /// or the file to run with --seed
         #[arg(value_name = "PLAN")]
         target: Option<PathBuf>,
         /// The seed to run (with --seeds: the first of them; default 1)
@@ -519,6 +521,15 @@ enum Commands {
         /// Serve seeds on stdin and results on stdout (used by --jobs)
         #[arg(long, hide = true)]
         worker: bool,
+        /// With `view`: write the timeline as one HTML page here (opens nothing)
+        #[arg(long, value_name = "OUT")]
+        html: Option<PathBuf>,
+        /// With `view`: write the timeline's data (lanes, events, faults) as JSON here
+        #[arg(long, value_name = "OUT")]
+        json: Option<PathBuf>,
+        /// With `view`: write the page under .sim/ but do not open it
+        #[arg(long)]
+        no_open: bool,
     },
 
     /// Generate HTML or Markdown API documentation
@@ -1266,6 +1277,9 @@ fn run() -> i32 {
             shrink_budget,
             replay,
             worker,
+            html,
+            json,
+            no_open,
         }) => {
             let run_for = match run_for.as_deref().map(olang::sim::cli::parse_duration) {
                 None => None,
@@ -1275,6 +1289,9 @@ fn run() -> i32 {
                     return 2;
                 }
             };
+            if cli.no_ovm {
+                olang::sim::set_bytecode_tier(false);
+            }
             let opts = olang::sim::cli::Options {
                 seed,
                 seeds,
@@ -1290,6 +1307,21 @@ fn run() -> i32 {
             match (file, target) {
                 (Some(f), Some(plan)) if f.as_os_str() == "shrink" => {
                     olang::sim::cli::shrink_plan(&plan, &opts)
+                }
+                (Some(f), Some(target)) if f.as_os_str() == "view" => {
+                    let view = olang::sim::view::ViewOptions {
+                        html,
+                        json,
+                        no_open,
+                    };
+                    olang::sim::view::main(&target, seed, run_for, max_steps, &view)
+                }
+                (Some(f), None) if f.as_os_str() == "view" => {
+                    eprintln!(
+                        "olang sim view: give a plan (olang sim view .sim/5.simplan) or a file \
+                         and a seed (olang sim view FILE --seed 5)"
+                    );
+                    2
                 }
                 (Some(f), _) => olang::sim::cli::main(&f, &opts),
                 (None, _) if replay.is_some() => {
@@ -1603,7 +1635,9 @@ fn missing_path(command: &Commands) -> Option<i32> {
         Commands::Replay { trace, .. } if gone(trace) => say("replay", trace),
         Commands::Sim {
             file: Some(file), ..
-        } if file.as_os_str() != "shrink" && gone(file) => say("sim", file),
+        } if file.as_os_str() != "shrink" && file.as_os_str() != "view" && gone(file) => {
+            say("sim", file)
+        }
         Commands::Inspect { binary, .. } if gone(binary) => say("inspect", binary),
         Commands::Doctor { path: Some(p) } if gone(p) => say("doctor", p),
         Commands::Caps { path: Some(p), .. } if gone(p) => say("caps", p),

@@ -13,6 +13,11 @@
 //! a partition-only bug is found by `olang sim --seeds` and replayed by
 //! `--seed`.
 //!
+//! S5 (the tests after `// ─── S5`): a run's events as an `ods` Frame,
+//! `olang sim view` drawing a run from a plan or a file and a seed, and
+//! every world on the bytecode tier giving the interpreter's runs digest
+//! for digest.
+//!
 //! S4 (the tests after `// ─── S4`): properties that pass and break,
 //! the linearizability checker on known histories, the S2 and S3 bugs
 //! caught as linearizability and durability violations, `--jobs` giving
@@ -1563,4 +1568,313 @@ fn olang_test_runs_sim_blocks_over_a_few_seeds() {
     assert_eq!(code, Some(1), "{text}");
     assert!(text.contains("sim seed 5: "), "{text}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ─── S5: seeing a run, and the bytecode tier ─────────────────────────
+
+#[test]
+fn run_events_is_a_frame_of_every_event_for_analysis() {
+    let v = eval(&format!(
+        r#"{RACE}
+let run = sim.world(#{{ "seed": 3 }}).run_fn(race)
+let f = run.events()
+let sends = ods.filter(f, f["kind"] == "send")
+let by = ods.to_records(ods.sort_by(f.group_by("kind").agg(#{{ "n": ods.count() }}), "kind", false))
+let listed = len(filter(run.events, (e) => e.kind == "send"))
+[ods.n_rows(f), len(run.events), ods.n_rows(sends), listed, ods.columns(f), by, typeof(f)]
+"#
+    ));
+    let parts = list(&v);
+    assert_eq!(parts[0], parts[1], "a row for every event: {v}");
+    assert!(int(&parts[0]) > 10, "{v}");
+    assert_eq!(parts[2], parts[3], "filter agrees with the list: {v}");
+    assert_eq!(
+        parts[4].to_string(),
+        r#"["seq", "t", "node", "task", "kind", "detail", "peer", "sent", "inbound", "fault"]"#
+    );
+    // the counts by kind add up to every event
+    let total: i64 = list(&parts[5]).iter().map(|r| int(&field(r, "n"))).sum();
+    assert_eq!(total, int(&parts[0]), "{v}");
+    assert!(s(&parts[6]).contains("Frame"), "{v}");
+}
+
+#[test]
+fn a_frame_of_a_world_of_nodes_carries_messages_and_faults() {
+    let v = eval_here(
+        r#"
+let w = sim.world(#{ "seed": 5 })
+w.node("kv", ["olang", "kv_server.ol", "7500"])
+w.client("c1", () => {
+    let body = (op) => json.stringify(op) |> unwrap
+    for i in range(0, 5) {
+        let r = http.post("http://kv:7500/rpc", body(#{ "op": "add", "key": "x", "by": 1, "id": to_string(i) }), #{ "timeout_ms": 500 })
+        time.sleep(200)
+    }
+})
+w.at(300, () => { w.partition(["kv"], ["c1"]); time.sleep(400); w.heal() })
+let run = w.run(sim.minutes(1))
+let f = run.events()
+let arrivals = ods.filter(f, f["kind"] == "deliver")
+let parts = ods.to_records(ods.filter(f, f["kind"] == "partition"))
+let peers = ods.to_list(ods.unique(arrivals["peer"]))
+let late = ods.to_records(ods.filter(arrivals, arrivals["t"] < arrivals["sent"]))
+[ods.n_rows(arrivals) > 0, peers, len(late), parts[0].fault, parts[0].node,
+ ods.to_list(arrivals["inbound"]) |> all((b) => b), run.outcome]
+"#,
+    );
+    let parts = list(&v);
+    assert_eq!(parts[0], Value::Boolean(true), "{v}");
+    let mut peers: Vec<String> = list(&parts[1]).iter().map(s).collect();
+    peers.sort();
+    assert_eq!(peers, vec!["c1", "kv"], "{v}");
+    assert_eq!(int(&parts[2]), 0, "nothing arrives before it was sent: {v}");
+    assert_eq!(
+        parts[3],
+        Value::Boolean(true),
+        "a partition is a fault: {v}"
+    );
+    assert_eq!(parts[5], Value::Boolean(true), "{v}");
+    assert_eq!(s(&parts[6]), "done", "{v}");
+}
+
+#[test]
+fn the_view_model_has_a_lane_per_node_arrows_faults_and_down_stretches() {
+    let r = builder_report("log_noisy.ol", 1);
+    let m = olang::sim::view::model(&r, "log_noisy.ol · seed 1");
+    let lanes: Vec<&str> = m["lanes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l.as_str().unwrap())
+        .collect();
+    for node in ["store", "spare", "w1", "w2", "w3"] {
+        assert!(lanes.contains(&node), "{lanes:?}");
+    }
+    let events = m["events"].as_array().unwrap();
+    assert_eq!(events.len(), r.events.len());
+    let class = |c: &str| events.iter().filter(|e| e[7] == c).count();
+    assert!(class("msg") > 100, "messages are arrows");
+    assert!(class("fault") > 10, "faults are marks");
+    // an arrow goes from its sender's lane at its send to its receiver's
+    for e in events.iter().filter(|e| e[7] == "msg") {
+        assert!(e[5].as_i64().unwrap() >= 0 && e[6].as_i64().unwrap() <= e[0].as_i64().unwrap());
+    }
+    // the spare's crashes are stretches it was down, until each restart
+    let spare = lanes.iter().position(|l| *l == "spare").unwrap() as i64;
+    let down = m["down"].as_array().unwrap();
+    assert!(
+        down.iter().filter(|d| d[0] == spare).count() >= 3,
+        "{down:?}"
+    );
+    for d in down {
+        assert!(d[1].as_u64() <= d[2].as_u64(), "{d:?}");
+    }
+    // the partitions are spans over the lanes they cut apart
+    let cuts = m["cuts"].as_array().unwrap();
+    assert!(!cuts.is_empty());
+    assert_eq!(
+        cuts[0][1].as_u64().unwrap() - cuts[0][0].as_u64().unwrap(),
+        1000
+    );
+    assert_eq!(m["failed"], true);
+}
+
+#[test]
+fn olang_sim_view_draws_a_run_from_a_file_and_seed_and_from_a_saved_plan() {
+    let dir = std::env::temp_dir().join(format!("olang-sim-view-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let html = dir.join("kv.html");
+    let json = dir.join("kv.json");
+    let (code, _, err) = sim(&[
+        "view",
+        fixture("kv_partition_bug.ol").to_str().unwrap(),
+        "--seed",
+        "5",
+        "--html",
+        html.to_str().unwrap(),
+        "--json",
+        json.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "{err}");
+    let page = std::fs::read_to_string(&html).unwrap();
+    assert!(page.starts_with("<!doctype html>"), "a page");
+    assert!(page.contains("<title>kv_partition_bug.ol · seed 5</title>"));
+    // one file: nothing is fetched from anywhere (the run's own data, in
+    // between, may name URLs: the requests it made)
+    let head = page.split("const DATA = ").next().unwrap();
+    let code_part = page.split(";\n(() => {").nth(1).expect("the page's code");
+    for outside in ["http://", "https://", "src=\"", "<link", "import("] {
+        assert!(
+            !head.contains(outside) && !code_part.contains(outside),
+            "the page loads {outside}"
+        );
+    }
+    assert!(!page.contains("__DATA__") && !page.contains("__TITLE__"));
+    let model: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&json).unwrap()).unwrap();
+    assert_eq!(model["seed"], 5);
+    assert_eq!(model["failed"], true);
+    assert_eq!(
+        model["lanes"],
+        serde_json::json!(["world", "kv", "c1", "c2", "c3", "c4", "hook-1"])
+    );
+    // the same run as `olang sim --seed 5` reports
+    let report = builder_report("kv_partition_bug.ol", 5);
+    assert_eq!(model["digest"], format!("{:016x}", report.digest()));
+    // the page holds the model as it is
+    assert!(page.contains(&format!("\"digest\":\"{:016x}\"", report.digest())));
+
+    // from a saved plan: the shrunk run, replayed bit for bit
+    let (code, _, err) = Command::new(olang())
+        .current_dir(&dir)
+        .args([
+            "sim",
+            fixture("log_bug.ol").to_str().unwrap(),
+            "--seed",
+            "3",
+            "--shrink",
+        ])
+        .output()
+        .map(|o| {
+            (
+                o.status.code().unwrap_or(-1),
+                String::new(),
+                String::from_utf8_lossy(&o.stderr).to_string(),
+            )
+        })
+        .unwrap();
+    assert_eq!(code, 1, "{err}");
+    let plan = dir.join(".sim/3.simplan");
+    assert!(plan.is_file(), "{err}");
+    let out = dir.join("plan.json");
+    let (code, _, err) = sim(&[
+        "view",
+        plan.to_str().unwrap(),
+        "--json",
+        out.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "{err}");
+    assert!(!err.contains("diverged"), "{err}");
+    let model: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&plan).unwrap()).unwrap();
+    assert_eq!(
+        model["digest"], saved["digest"],
+        "the plan's run, bit for bit"
+    );
+    assert_eq!(model["title"], "log_bug.ol · seed 3");
+    let kinds: Vec<&str> = model["kinds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|k| k.as_str().unwrap())
+        .collect();
+    let crash = kinds
+        .iter()
+        .position(|k| *k == "crash")
+        .expect("the plan's crash");
+    assert!(
+        model["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e[3] == crash && e[7] == "fault"),
+        "the crash is drawn as a fault"
+    );
+    // asking for nothing to view says how
+    let (code, _, err) = sim(&["view"]);
+    assert_eq!(code, 2);
+    assert!(err.contains("olang sim view"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The sweep digest of `file` over `seeds` seeds, on one tier.
+fn tier_digest(file: &str, seeds: &str, tier: &str) -> String {
+    let out = Command::new(olang())
+        .args(["sim", fixture(file).to_str().unwrap(), "--seeds", seeds])
+        .env("OLANG_SIM_TIER", tier)
+        .output()
+        .expect("run olang sim");
+    let err = String::from_utf8_lossy(&out.stderr).to_string();
+    digest_of(&err)
+}
+
+#[test]
+fn every_world_runs_the_same_on_the_bytecode_tier_as_on_the_interpreter() {
+    // S1 programs, S2 networks, S3 disks and SQLite, S4 properties: the
+    // same seeds give the same runs, digest for digest (every event,
+    // fault, the outcome, the time and the steps).
+    for (file, seeds) in [
+        ("lost_update.ol", "12"),
+        ("deadlock.ol", "3"),
+        ("virtual_time.ol", "3"),
+        ("kv_partition_bug.ol", "6"),
+        ("kv_linear.ol", "3"),
+        ("log_bug.ol", "4"),
+        ("log_noisy.ol", "3"),
+        ("log_durable_safe.ol", "2"),
+        ("sqlite_lies.ol", "3"),
+        ("node_env.ol", "2"),
+    ] {
+        let interp = tier_digest(file, seeds, "interp");
+        let bytecode = tier_digest(file, seeds, "bytecode");
+        assert_eq!(interp, bytecode, "{file}: the tiers disagree");
+    }
+}
+
+#[test]
+fn the_tier_a_world_runs_on_reaches_the_workers() {
+    // `--jobs` workers run on the tier their parent was asked for
+    let run = |tier: &str| {
+        let out = Command::new(olang())
+            .args([
+                "sim",
+                fixture("kv_partition_bug.ol").to_str().unwrap(),
+                "--seeds",
+                "4",
+                "--jobs",
+                "2",
+            ])
+            .env("OLANG_SIM_TIER", tier)
+            .output()
+            .unwrap();
+        digest_of(&String::from_utf8_lossy(&out.stderr))
+    };
+    assert_eq!(run("interp"), run("bytecode"));
+    assert_eq!(
+        run("bytecode"),
+        tier_digest("kv_partition_bug.ol", "4", "bytecode")
+    );
+}
+
+#[test]
+fn a_function_compiled_before_a_world_still_meets_the_world() {
+    // `now` and `fetch` are hot (compiled to bytecode) before the world
+    // starts; inside it their builtin calls are the world's: virtual
+    // time, and a network with no such host. A function that reaches for
+    // the operating system is refused, compiled or not.
+    let v = eval(
+        r#"
+fn now() = time.monotonic_ms()
+fn fetch(url) = http.get(url, #{ "timeout_ms": 50 })
+fn peek() = os.username()
+for i in range(0, 200) { let _ = now() }
+let run = sim.world(#{ "seed": 1 }).run_fn(() => {
+    time.sleep(5000)
+    let t = now()
+    let r = fetch("http://nowhere/")
+    let p = match attempt(() => peek()) { Ok(x) => "read", Err(e) => e }
+    [t, is_err(r), p]
+})
+run.value
+"#,
+    );
+    let parts = list(&v);
+    assert_eq!(int(&parts[0]), 5000, "virtual time: {v}");
+    assert_eq!(parts[1], Value::Boolean(true), "{v}");
+    assert!(
+        s(&parts[2]).contains("refused inside a world"),
+        "refused: {v}"
+    );
 }

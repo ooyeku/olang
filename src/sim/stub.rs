@@ -59,3 +59,10 @@ pub mod surface {
         })
     }
 }
+
+/// The tier worlds run on: there are none here.
+pub fn bytecode_tier() -> bool {
+    false
+}
+
+pub fn set_bytecode_tier(_on: bool) {}

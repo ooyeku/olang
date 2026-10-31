@@ -72,6 +72,8 @@ struct Msg {
     /// The mailbox it goes to, for answers (a request goes to a port).
     reply: u64,
     body: Body,
+    /// Virtual ms it was handed to the network (S5: the view's arrows).
+    sent: u64,
 }
 
 struct Listener {
@@ -226,7 +228,10 @@ impl World {
                     self.node_name(to),
                     why.name()
                 );
-                self.net_event(st, from, "drop", detail);
+                self.link_event(st, from, "drop", detail, Some((to, now, false)));
+                if keys.0.is_some() {
+                    Self::last_is_fault(st);
+                }
             }
             Transmit::Deliver(delays) => {
                 for (i, delay) in delays.iter().enumerate() {
@@ -234,7 +239,10 @@ impl World {
                         st.wire.stats.duplicated += 1;
                         let detail =
                             format!("{what} {} → {}", self.node_name(from), self.node_name(to));
-                        self.net_event(st, from, "dup", detail);
+                        self.link_event(st, from, "dup", detail, Some((to, now, false)));
+                        if keys.1.is_some() {
+                            Self::last_is_fault(st);
+                        }
                     }
                     st.wire.stats.sent += 1;
                     st.wire.next_msg += 1;
@@ -246,6 +254,7 @@ impl World {
                             to,
                             reply,
                             body: body.clone(),
+                            sent: now,
                         },
                     );
                     let at = st.sched.now + delay;
@@ -262,23 +271,26 @@ impl World {
         };
         let what = describe(&msg.body);
         let route = format!("{} → {}", self.node_name(msg.from), self.node_name(msg.to));
+        let link = Some((msg.from, msg.sent, true));
         if !st.net.connected(msg.from, msg.to) {
             st.wire.stats.cut += 1;
-            self.net_event(
+            self.link_event(
                 st,
                 msg.to,
                 "drop",
                 format!("{what} {route}: partition (in flight)"),
+                link,
             );
             return;
         }
         if !st.nodes[msg.to].up {
             // A node that is down answers nothing; its peers time out.
-            self.net_event(
+            self.link_event(
                 st,
                 msg.to,
                 "drop",
                 format!("{what} {route}: the node is down"),
+                link,
             );
             return;
         }
@@ -287,11 +299,12 @@ impl World {
                 let key = (msg.to, req.port);
                 let Some(listener) = st.wire.listeners.get(&key) else {
                     st.wire.stats.refused += 1;
-                    self.net_event(
+                    self.link_event(
                         st,
                         msg.to,
                         "refused",
                         format!("{what} {route}: nothing listens on port {}", req.port),
+                        link,
                     );
                     let answer = Body::Refused {
                         req: req.id,
@@ -316,11 +329,12 @@ impl World {
                 };
                 st.wire.stats.delivered += 1;
                 if let Some((status, text)) = refusal {
-                    self.net_event(
+                    self.link_event(
                         st,
                         msg.to,
                         "deliver",
                         format!("{what} {route}: {status} {text}"),
+                        link,
                     );
                     let answer = Body::Response {
                         req: req.id,
@@ -336,11 +350,12 @@ impl World {
                     self.transmit(st, msg.to, msg.from, req.reply, answer);
                     return;
                 }
-                self.net_event(
+                self.link_event(
                     st,
                     msg.to,
                     "deliver",
                     format!("{what} {route} {} {}", req.method, req.path),
+                    link,
                 );
                 if let Some(q) = st.wire.boxes.get_mut(&queue) {
                     q.push_back(Body::Request(req));
@@ -352,16 +367,17 @@ impl World {
                     Some(q) => {
                         q.push_back(body);
                         st.wire.stats.delivered += 1;
-                        self.net_event(st, msg.to, "deliver", format!("{what} {route}"));
+                        self.link_event(st, msg.to, "deliver", format!("{what} {route}"), link);
                         st.sched.wake(Wait::Net(msg.reply));
                     }
                     None => {
                         st.wire.stats.late += 1;
-                        self.net_event(
+                        self.link_event(
                             st,
                             msg.to,
                             "late",
                             format!("{what} {route}: nobody waits for it"),
+                            link,
                         );
                     }
                 }
@@ -712,6 +728,7 @@ impl World {
         let node = left.first().copied().unwrap_or(0);
         self.record_fault(&mut st, node, "partition", detail.clone(), key);
         self.event(&mut st, me, "partition", detail);
+        Self::last_is_fault(&mut st);
     }
 
     pub(super) fn set_heal(&self, me: TaskId) {

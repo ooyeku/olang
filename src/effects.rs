@@ -593,6 +593,28 @@ mod tests {
         assert!(expansion_blocked("fs.join"));
     }
 
+    /// S5: a world runs on the bytecode tier. Every builtin the tier
+    /// bridges passes the one dispatch point where the world answers or
+    /// refuses it; what the VM and its native code answer themselves must
+    /// be pure, or a world on that tier would run it unseen.
+    #[cfg(feature = "native")]
+    #[test]
+    fn the_bytecode_tiers_own_natives_are_pure() {
+        let natives = crate::ovm::bytecode::BytecodeVm::natives_without_bridge();
+        assert!(natives.len() > 30, "{natives:?}");
+        assert!(
+            natives.iter().any(|n| n.starts_with("cell.")),
+            "{natives:?}"
+        );
+        for name in &natives {
+            assert_eq!(
+                sim_handling(name),
+                SimHandling::Pure,
+                "{name} runs natively on the bytecode tier but is not pure in a world"
+            );
+        }
+    }
+
     /// The fourth consumer agrees with the other three: everything the
     /// gate restricts or the timeline records is either answered by a
     /// world or refused inside one — nothing effectful runs for real.

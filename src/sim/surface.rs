@@ -191,7 +191,7 @@ pub fn create_sim_module() -> Value {
                 ("query", 4),
             ][..],
         ),
-        ("Run", &[("history", 2), ("check", 2)][..]),
+        ("Run", &[("history", 2), ("check", 2), ("events", 1)][..]),
     ] {
         let mut m = ValueMap::default();
         for (name, arity) in methods {
@@ -602,9 +602,12 @@ fn run_fn_with(
     cfg.run_for = run_for;
     let (index, forced) = next_run();
     cfg.forced = forced;
-    // The world runs on the interpreter tier: every builtin through the
-    // one dispatch point that sees it (as record and replay run).
-    let kept = interpreter.suspend_bytecode_tier();
+    // Every builtin passes the one dispatch point that sees it, on either
+    // tier; with worlds on the interpreter alone (`--no-ovm`), the
+    // bytecode tier is set aside while the world runs.
+    let kept = (!super::bytecode_tier())
+        .then(|| interpreter.suspend_bytecode_tier())
+        .flatten();
     let template = (!props.is_empty()).then(|| interpreter.thread_safe_clone());
     let f = f.clone();
     let report = super::run_main_with(cfg, NodeInfo::main(Vec::new()), props, template, || {
@@ -1321,7 +1324,9 @@ fn run_nodes(
     }
     let (index, forced) = next_run();
     cfg.forced = forced;
-    let kept = interpreter.suspend_bytecode_tier();
+    let kept = (!super::bytecode_tier())
+        .then(|| interpreter.suspend_bytecode_tier())
+        .flatten();
     let template = interpreter.thread_safe_clone();
     let report = super::run_world(cfg, nodes, plan, template, w.id, props);
     interpreter.resume_bytecode_tier(kept);
@@ -1814,6 +1819,7 @@ fn view_method(
                     vec![recv.clone(), args.get(1).cloned().unwrap_or(Value::Unit)],
                     interpreter,
                 ),
+                "events" => super::view::events_frame(&run.report).map_err(misuse),
                 _ => Err(misuse(format!("unknown method sim.{name}"))),
             }
         }

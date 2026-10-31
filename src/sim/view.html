@@ -1,0 +1,626 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="olang sim view">
+<title>__TITLE__</title>
+<style>
+:root {
+  --bg: #ffffff;
+  --panel: #fafafa;
+  --ink: #18181b;
+  --muted: #71717a;
+  --faint: #a1a1aa;
+  --line: #e4e4e7;
+  --lane: #e9e9ec;
+  --tick: #a1a1aa;
+  --msg: rgba(63, 63, 70, 0.55);
+  --down: #f1f1f3;
+  --accent: #e5484d;
+  --accent-weak: rgba(229, 72, 77, 0.09);
+  --hover: #f4f4f5;
+  --sel: rgba(24, 24, 27, 0.06);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111113;
+    --panel: #161618;
+    --ink: #ededef;
+    --muted: #a1a1aa;
+    --faint: #71717a;
+    --line: #2a2a2e;
+    --lane: #232327;
+    --tick: #6b6b74;
+    --msg: rgba(212, 212, 216, 0.5);
+    --down: #1d1d21;
+    --accent: #ff6369;
+    --accent-weak: rgba(255, 99, 105, 0.12);
+    --hover: #1f1f23;
+    --sel: rgba(237, 237, 239, 0.07);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111113; --panel: #161618; --ink: #ededef; --muted: #a1a1aa; --faint: #71717a;
+  --line: #2a2a2e; --lane: #232327; --tick: #6b6b74; --msg: rgba(212, 212, 216, 0.5);
+  --down: #1d1d21; --accent: #ff6369; --accent-weak: rgba(255, 99, 105, 0.12);
+  --hover: #1f1f23; --sel: rgba(237, 237, 239, 0.07); color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+.mono { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+#app { display: grid; grid-template-columns: minmax(0, 1fr) 380px; grid-template-rows: 44px minmax(0, 1fr); height: 100vh; }
+header {
+  grid-column: 1 / 3; display: flex; align-items: center; gap: 16px;
+  padding: 0 16px; border-bottom: 1px solid var(--line); min-width: 0;
+}
+header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
+#verdict { color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+#verdict:empty { flex: 1; }
+.controls { display: flex; align-items: center; gap: 8px; }
+input[type="search"] {
+  width: 200px; height: 28px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--bg); color: var(--ink); font: inherit; outline: none;
+}
+input[type="search"]:focus { border-color: var(--muted); }
+button {
+  height: 28px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--bg); color: var(--ink); font: inherit; cursor: pointer;
+}
+button:hover { background: var(--hover); }
+#main { display: grid; grid-template-columns: 112px minmax(0, 1fr); grid-template-rows: 28px minmax(0, 1fr) 56px; min-width: 0; min-height: 0; }
+#corner { border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); }
+#axis { border-bottom: 1px solid var(--line); position: relative; cursor: ew-resize; }
+#gutter { border-right: 1px solid var(--line); position: relative; overflow: hidden; }
+#gutter .lane {
+  position: absolute; left: 0; right: 0; padding: 0 12px; display: flex; align-items: center;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink); cursor: default;
+}
+#gutter .lane.down { color: var(--faint); }
+#plot { position: relative; min-width: 0; min-height: 0; cursor: crosshair; }
+#plot.drag { cursor: grabbing; }
+#plot:focus { outline: none; }
+#scrub-gutter { border-top: 1px solid var(--line); border-right: 1px solid var(--line); }
+#scrub { border-top: 1px solid var(--line); position: relative; cursor: pointer; }
+canvas { position: absolute; inset: 0; display: block; }
+aside { border-left: 1px solid var(--line); background: var(--panel); overflow: auto; min-height: 0; }
+.rows { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.row { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 8px; padding: 4px 16px; }
+.row .k { color: var(--muted); }
+.row .v { overflow-wrap: anywhere; }
+.row .v.fault { color: var(--accent); }
+.detail { padding: 10px 16px 12px; border-bottom: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; }
+.near { padding: 6px 0; }
+.near .item {
+  display: grid; grid-template-columns: 104px 68px minmax(0, 1fr); gap: 8px; padding: 3px 16px;
+  cursor: pointer; white-space: nowrap;
+}
+.near .item:hover { background: var(--hover); }
+.near .item.cur { background: var(--sel); }
+.near .item .t { color: var(--muted); text-align: right; }
+.near .item .kd { overflow: hidden; text-overflow: ellipsis; }
+.near .item .d { overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+.near .item.fault .kd { color: var(--accent); }
+#tip {
+  position: fixed; pointer-events: none; z-index: 5; max-width: 420px; padding: 6px 8px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px; display: none;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+}
+#tip .t { color: var(--muted); }
+@media (max-width: 760px) {
+  #app { grid-template-columns: minmax(0, 1fr); grid-template-rows: 44px minmax(0, 1fr) 40vh; }
+  header { grid-column: 1; }
+  aside { border-left: 0; border-top: 1px solid var(--line); }
+  input[type="search"] { width: 120px; }
+  #main { grid-template-columns: 76px minmax(0, 1fr); }
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1 id="title"></h1>
+    <div id="verdict"></div>
+    <div class="controls">
+      <input id="find" type="search" placeholder="Filter" aria-label="Filter events" spellcheck="false">
+      <button id="fit" title="Show the whole run (F)">Fit</button>
+    </div>
+  </header>
+  <div id="main">
+    <div id="corner"></div>
+    <div id="axis"><canvas id="axis-c"></canvas></div>
+    <div id="gutter"></div>
+    <div id="plot" tabindex="0" aria-label="Timeline"><canvas id="plot-c"></canvas></div>
+    <div id="scrub-gutter"></div>
+    <div id="scrub" aria-label="Scrub through virtual time"><canvas id="scrub-c"></canvas></div>
+  </div>
+  <aside id="inspector" aria-live="polite"></aside>
+</div>
+<div id="tip" class="mono"></div>
+<script>
+const DATA = __DATA__;
+(() => {
+"use strict";
+const $ = (id) => document.getElementById(id);
+const E = DATA.events, N = E.length, LANES = DATA.lanes, KINDS = DATA.kinds;
+const T = 0, L = 1, TASK = 2, K = 3, D = 4, P = 5, S = 6, C = 7, IN = 8;
+const END = Math.max(1, DATA.now, N ? E[N - 1][T] : 0);
+let maxLatency = 0;
+for (const e of E) if (e[S] >= 0) maxLatency = Math.max(maxLatency, e[T] - e[S]);
+
+// ── time as people read it ─────────────────────────────────────────
+function fmt(ms) {
+  const h = Math.floor(ms / 3600000), m = Math.floor(ms / 60000) % 60, s = (ms % 60000) / 1000;
+  if (h > 0) return h + "h " + String(m).padStart(2, "0") + "m " + s.toFixed(3).padStart(6, "0") + "s";
+  if (m > 0) return m + "m " + s.toFixed(3).padStart(6, "0") + "s";
+  return s.toFixed(3) + "s";
+}
+// a tick's label: only as fine as the step between ticks
+function fmtTick(ms, step) {
+  ms = Math.round(ms);
+  const h = Math.floor(ms / 3600000), m = Math.floor(ms / 60000) % 60, s = (ms % 60000) / 1000;
+  const dec = step >= 1000 ? 0 : step >= 100 ? 1 : step >= 10 ? 2 : 3;
+  const sec = (h > 0 || m > 0) ? s.toFixed(dec).padStart(dec ? dec + 3 : 2, "0") : s.toFixed(dec);
+  const hm = h > 0 ? h + "h " + String(m).padStart(2, "0") + "m" : m > 0 ? m + "m" : "";
+  if (step >= 60000) return hm || "0s";
+  return (hm ? hm + " " : "") + sec + "s";
+}
+
+// ── state ──────────────────────────────────────────────────────────
+const view = { t0: 0, t1: END * 1.02 + 1 };
+let playhead = END, selected = -1, filter = "", matches = null;
+const css = getComputedStyle(document.documentElement);
+let C_ = {};
+function colors() {
+  const g = (n) => css.getPropertyValue(n).trim();
+  C_ = { bg: g("--bg"), ink: g("--ink"), muted: g("--muted"), faint: g("--faint"), line: g("--line"),
+    lane: g("--lane"), tick: g("--tick"), msg: g("--msg"), down: g("--down"), accent: g("--accent"),
+    accentWeak: g("--accent-weak"), sel: g("--sel") };
+}
+colors();
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { colors(); draw(); });
+
+// ── layout ─────────────────────────────────────────────────────────
+const plot = $("plot"), pc = $("plot-c"), ac = $("axis-c"), sc = $("scrub-c");
+let W = 0, H = 0, AW = 0, SW = 0, SH = 0, laneH = 40, top0 = 0;
+const dpr = () => window.devicePixelRatio || 1;
+function size(c, el) {
+  const r = el.getBoundingClientRect(), k = dpr();
+  c.width = Math.max(1, Math.round(r.width * k)); c.height = Math.max(1, Math.round(r.height * k));
+  c.style.width = r.width + "px"; c.style.height = r.height + "px";
+  return [r.width, r.height];
+}
+function layout() {
+  [W, H] = size(pc, plot);
+  [AW] = size(ac, $("axis"));
+  [SW, SH] = size(sc, $("scrub"));
+  laneH = Math.max(28, Math.min(64, (H - 16) / Math.max(1, LANES.length)));
+  top0 = Math.max(8, (H - laneH * LANES.length) / 2);
+  const g = $("gutter");
+  g.innerHTML = "";
+  LANES.forEach((name, i) => {
+    const d = document.createElement("div");
+    d.className = "lane"; d.textContent = name; d.title = name;
+    d.style.top = (top0 + i * laneH) + "px"; d.style.height = laneH + "px";
+    g.appendChild(d);
+  });
+  draw();
+}
+const laneY = (l) => top0 + l * laneH + laneH / 2;
+const xOf = (t) => (t - view.t0) / (view.t1 - view.t0) * W;
+const tOf = (x) => view.t0 + x / W * (view.t1 - view.t0);
+
+// first event with t >= x
+function lower(t) {
+  let lo = 0, hi = N;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (E[mid][T] < t) lo = mid + 1; else hi = mid; }
+  return lo;
+}
+// last event with t <= x (−1 when none)
+const atOrBefore = (t) => lower(t + 1e-9 + 0.5) - 1;
+
+// a tick every so often, in steps a clock has
+const STEPS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1e3, 2e3, 5e3, 1e4, 15e3, 3e4, 6e4, 12e4, 3e5, 6e5,
+  9e5, 18e5, 36e5, 72e5, 108e5, 216e5, 432e5, 864e5];
+function niceStep(span, px) {
+  const target = span / Math.max(1, px / 110);
+  for (const s of STEPS) if (s >= target) return s;
+  return STEPS[STEPS.length - 1] * Math.ceil(target / STEPS[STEPS.length - 1]);
+}
+
+// ── drawing ────────────────────────────────────────────────────────
+function shapeFault(g, x, y, r) { g.beginPath(); g.moveTo(x, y - r); g.lineTo(x + r, y); g.lineTo(x, y + r); g.lineTo(x - r, y); g.closePath(); }
+function cross(g, x, y, r) { g.beginPath(); g.moveTo(x - r, y - r); g.lineTo(x + r, y + r); g.moveTo(x + r, y - r); g.lineTo(x - r, y + r); g.stroke(); }
+function arrowHead(g, x0, y0, x1, y1, r) {
+  const a = Math.atan2(y1 - y0, x1 - x0);
+  g.beginPath(); g.moveTo(x1, y1);
+  g.lineTo(x1 - r * Math.cos(a - 0.45), y1 - r * Math.sin(a - 0.45));
+  g.lineTo(x1 - r * Math.cos(a + 0.45), y1 - r * Math.sin(a + 0.45));
+  g.closePath(); g.fill();
+}
+const dimmed = (i) => (matches && !matches.has(i));
+
+function draw() {
+  if (!W) return;
+  const g = pc.getContext("2d"), k = dpr();
+  g.setTransform(k, 0, 0, k, 0, 0);
+  g.fillStyle = C_.bg; g.fillRect(0, 0, W, H);
+  const span = view.t1 - view.t0;
+  // grid
+  const step = niceStep(span, W);
+  g.strokeStyle = C_.lane; g.lineWidth = 1;
+  g.beginPath();
+  for (let t = Math.ceil(view.t0 / step) * step; t <= view.t1; t += step) {
+    const x = Math.round(xOf(t)) + 0.5; g.moveTo(x, 0); g.lineTo(x, H);
+  }
+  g.globalAlpha = 0.5; g.stroke(); g.globalAlpha = 1;
+  // partitions: the lanes a cut separated, for as long as it lasted
+  for (const [from, to, left, right] of DATA.cuts) {
+    const ls = left.concat(right); if (!ls.length) continue;
+    const x0 = xOf(from), x1 = xOf(to);
+    if (x1 < 0 || x0 > W) continue;
+    const y0 = top0 + Math.min(...ls) * laneH + 4, y1 = top0 + (Math.max(...ls) + 1) * laneH - 4;
+    g.fillStyle = C_.accentWeak; g.fillRect(x0, y0, Math.max(1, x1 - x0), y1 - y0);
+    g.strokeStyle = C_.accent; g.globalAlpha = 0.5;
+    g.beginPath(); g.moveTo(Math.round(x0) + 0.5, y0); g.lineTo(Math.round(x0) + 0.5, y1); g.stroke();
+    g.globalAlpha = 1;
+  }
+  // lanes, with the stretches a node was down
+  for (let l = 0; l < LANES.length; l++) {
+    const y = Math.round(laneY(l)) + 0.5;
+    g.strokeStyle = C_.line; g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke();
+  }
+  for (const [l, from, to] of DATA.down) {
+    const x0 = Math.max(-2, xOf(from)), x1 = Math.min(W + 2, xOf(to));
+    if (x1 < 0 || x0 > W) continue;
+    g.fillStyle = C_.down;
+    g.fillRect(x0, top0 + l * laneH + laneH * 0.22, Math.max(1, x1 - x0), laneH * 0.56);
+  }
+  // the events in view (and the messages that reach into it)
+  const i0 = lower(view.t0 - maxLatency), i1 = lower(view.t1 + 1);
+  const shown = i1 - i0;
+  const dense = shown > 24000;
+  if (dense) drawDensity(g, i0, i1);
+  const past = (i) => E[i][T] <= playhead;
+  // messages
+  if (!dense) {
+    g.lineWidth = 1;
+    for (let i = i0; i < i1; i++) {
+      const e = E[i]; if (e[S] < 0 || e[P] < 0) continue;
+      const cls = e[C];
+      if (cls !== "msg" && cls !== "lost") continue;
+      let xa, ya, xb, yb;
+      if (e[IN]) { xa = xOf(e[S]); ya = laneY(e[P]); xb = xOf(e[T]); yb = laneY(e[L]); }
+      else { xa = xOf(e[T]); ya = laneY(e[L]); xb = xa + Math.min(28, Math.abs(laneY(e[P]) - ya) * 0.3); yb = ya + (laneY(e[P]) - ya) * 0.4; }
+      if (Math.max(xa, xb) < 0 || Math.min(xa, xb) > W) continue;
+      g.globalAlpha = (dimmed(i) ? 0.15 : 1) * (past(i) ? 1 : 0.4);
+      g.strokeStyle = C_.msg; g.fillStyle = C_.msg;
+      if (cls === "lost") g.setLineDash([3, 3]);
+      g.beginPath(); g.moveTo(xa, ya); g.lineTo(xb, yb); g.stroke();
+      g.setLineDash([]);
+      if (cls === "lost") { g.strokeStyle = C_.muted; cross(g, xb, yb, 3); }
+      else arrowHead(g, xa, ya, xb, yb, 5);
+    }
+    g.globalAlpha = 1;
+  }
+  // marks on the lanes
+  const labelled = span / W < 40; // room to name the faults
+  for (let i = Math.max(i0, lower(view.t0 - 1)); i < i1; i++) {
+    const e = E[i], cls = e[C];
+    if (dense && cls !== "fault" && cls !== "error" && cls !== "life") continue;
+    const x = xOf(e[T]); if (x < -10 || x > W + 10) continue;
+    const y = laneY(e[L]);
+    g.globalAlpha = (dimmed(i) ? 0.15 : 1) * (past(i) ? 1 : 0.4);
+    if (cls === "fault") {
+      g.fillStyle = C_.accent; shapeFault(g, x, y, 5.5); g.fill();
+      if (labelled && !dimmed(i)) {
+        g.font = "11px -apple-system, system-ui, sans-serif"; g.textAlign = "center"; g.textBaseline = "bottom";
+        g.fillStyle = C_.accent; g.fillText(KINDS[e[K]], x, y - 8);
+      }
+    } else if (cls === "error") {
+      g.strokeStyle = C_.accent; g.lineWidth = 1.5; g.beginPath(); g.arc(x, y, 5, 0, Math.PI * 2); g.stroke(); g.lineWidth = 1;
+    } else if (cls === "life") {
+      g.strokeStyle = C_.ink; g.strokeRect(Math.round(x - 3.5) + 0.5, Math.round(y - 3.5) + 0.5, 7, 7);
+    } else if (cls === "edge") {
+      g.fillStyle = C_.muted; g.fillRect(Math.round(x) - 1, y - 6, 2, 12);
+    } else if (cls === "msg" || cls === "lost") {
+      // the arrow's head marks it
+    } else {
+      g.fillStyle = C_.tick; g.fillRect(Math.round(x) - 0.5, y - 3, 1.5, 6);
+    }
+  }
+  g.globalAlpha = 1;
+  // the selected event
+  if (selected >= 0) {
+    const e = E[selected], x = xOf(e[T]), y = laneY(e[L]);
+    if (e[S] >= 0 && e[P] >= 0 && e[IN]) {
+      g.strokeStyle = C_.ink; g.fillStyle = C_.ink; g.lineWidth = 1.5;
+      const xa = xOf(e[S]), ya = laneY(e[P]);
+      g.beginPath(); g.moveTo(xa, ya); g.lineTo(x, y); g.stroke(); arrowHead(g, xa, ya, x, y, 6);
+      g.lineWidth = 1;
+    }
+    g.strokeStyle = C_.ink; g.lineWidth = 1.5;
+    g.beginPath(); g.arc(x, y, 8, 0, Math.PI * 2); g.stroke(); g.lineWidth = 1;
+  }
+  // the playhead
+  const xp = Math.round(xOf(playhead)) + 0.5;
+  if (xp >= 0 && xp <= W) {
+    g.strokeStyle = C_.ink; g.globalAlpha = 0.7; g.beginPath(); g.moveTo(xp, 0); g.lineTo(xp, H); g.stroke(); g.globalAlpha = 1;
+  }
+  drawAxis(step);
+  drawScrub();
+}
+
+// Too many events to draw one by one: each lane's events counted in
+// two-pixel columns, the count as the tick's strength.
+function drawDensity(g, i0, i1) {
+  const cols = Math.ceil(W / 2), bins = LANES.map(() => new Uint32Array(cols));
+  for (let i = i0; i < i1; i++) {
+    const c = Math.floor(xOf(E[i][T]) / 2);
+    if (c >= 0 && c < cols) bins[E[i][L]][c]++;
+  }
+  let max = 1;
+  for (const b of bins) for (const v of b) if (v > max) max = v;
+  g.fillStyle = C_.tick;
+  bins.forEach((b, l) => {
+    const y = laneY(l);
+    for (let c = 0; c < cols; c++) {
+      if (!b[c]) continue;
+      const h = 3 + Math.sqrt(b[c] / max) * (laneH * 0.36);
+      g.globalAlpha = 0.35 + 0.65 * Math.sqrt(b[c] / max);
+      g.fillRect(c * 2, y - h / 2, 1.5, h);
+    }
+  });
+  g.globalAlpha = 1;
+}
+
+function drawAxis(step) {
+  const g = ac.getContext("2d"), k = dpr(), h = 28;
+  g.setTransform(k, 0, 0, k, 0, 0);
+  g.fillStyle = C_.bg; g.fillRect(0, 0, AW, h);
+  g.font = "11px -apple-system, system-ui, sans-serif"; g.textBaseline = "middle"; g.textAlign = "left";
+  g.fillStyle = C_.muted; g.strokeStyle = C_.line;
+  for (let t = Math.ceil(view.t0 / step) * step; t <= view.t1; t += step) {
+    const x = Math.round(xOf(t)) + 0.5;
+    g.beginPath(); g.moveTo(x, h - 6); g.lineTo(x, h); g.stroke();
+    g.fillText(fmtTick(t, step), x + 4, h / 2);
+  }
+  const xp = xOf(playhead);
+  if (xp >= 0 && xp <= AW) {
+    const label = fmt(playhead), w = g.measureText(label).width + 12;
+    const x = Math.min(Math.max(0, xp - w / 2), AW - w);
+    g.fillStyle = C_.ink; g.beginPath(); g.roundRect ? g.roundRect(x, 5, w, 18, 4) : g.rect(x, 5, w, 18); g.fill();
+    g.fillStyle = C_.bg; g.textAlign = "center"; g.fillText(label, x + w / 2, 14);
+  }
+}
+
+// the whole run at once: how busy each moment was, where the faults
+// fell, what part is in view, and the playhead
+let scrubBins = null;
+function drawScrub() {
+  const g = sc.getContext("2d"), k = dpr();
+  g.setTransform(k, 0, 0, k, 0, 0);
+  g.fillStyle = C_.bg; g.fillRect(0, 0, SW, SH);
+  const cols = Math.max(1, Math.floor(SW / 2));
+  if (!scrubBins || scrubBins.length !== cols) {
+    scrubBins = new Uint32Array(cols);
+    for (const e of E) scrubBins[Math.min(cols - 1, Math.floor(e[T] / END * cols))]++;
+  }
+  let max = 1; for (const v of scrubBins) if (v > max) max = v;
+  const sx = (t) => t / END * SW;
+  g.fillStyle = C_.tick; g.globalAlpha = 0.6;
+  for (let c = 0; c < cols; c++) {
+    if (!scrubBins[c]) continue;
+    const h = Math.max(1, Math.sqrt(scrubBins[c] / max) * (SH - 18));
+    g.fillRect(c * 2, SH - 6 - h, 1.5, h);
+  }
+  g.globalAlpha = 1;
+  g.fillStyle = C_.accent;
+  for (const e of E) if (e[C] === "fault" || e[C] === "error") g.fillRect(Math.round(sx(e[T])) - 0.5, 4, 1.5, 6);
+  // the window in view
+  const x0 = Math.max(0, sx(view.t0)), x1 = Math.min(SW, sx(view.t1));
+  g.fillStyle = C_.sel; g.fillRect(x0, 0, Math.max(2, x1 - x0), SH);
+  g.strokeStyle = C_.muted; g.globalAlpha = 0.6; g.strokeRect(Math.round(x0) + 0.5, 0.5, Math.max(2, x1 - x0) - 1, SH - 1); g.globalAlpha = 1;
+  const xp = Math.round(sx(playhead)) + 0.5;
+  g.strokeStyle = C_.ink; g.beginPath(); g.moveTo(xp, 0); g.lineTo(xp, SH); g.stroke();
+}
+
+// ── the inspector ──────────────────────────────────────────────────
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]); }
+function row(k, v, cls) { return '<div class="row"><div class="k">' + k + '</div><div class="v' + (cls ? " " + cls : "") + '">' + v + "</div></div>"; }
+function inspect() {
+  const a = $("inspector");
+  if (selected < 0) { a.innerHTML = ""; return; }
+  const e = E[selected], kind = KINDS[e[K]];
+  let h = '<div class="rows">';
+  h += row("Time", '<span class="mono">' + fmt(e[T]) + "</span>");
+  h += row("Node", esc(LANES[e[L]]));
+  h += row("Task", e[TASK] >= 0 ? String(e[TASK]) : "network");
+  h += row("Kind", esc(kind) + (e[C] === "fault" ? " (fault)" : ""), e[C] === "fault" || e[C] === "error" ? "fault" : "");
+  if (e[S] >= 0 && e[P] >= 0) {
+    if (e[IN]) {
+      h += row("From", esc(LANES[e[P]]));
+      h += row("Sent", '<span class="mono">' + fmt(e[S]) + "</span>");
+      h += row("Latency", '<span class="mono">' + (e[T] - e[S]) + " ms</span>");
+    } else {
+      h += row("To", esc(LANES[e[P]]));
+    }
+  }
+  h += "</div>";
+  if (e[D]) h += '<div class="detail mono">' + esc(e[D]) + "</div>";
+  // what this node did around the instant
+  const around = [];
+  for (let i = selected - 1; i >= 0 && around.length < 8; i--) if (E[i][L] === e[L]) around.unshift(i);
+  around.push(selected);
+  for (let i = selected + 1, n = 0; i < N && n < 8; i++) if (E[i][L] === e[L]) { around.push(i); n++; }
+  h += '<div class="near">';
+  for (const i of around) {
+    const x = E[i];
+    h += '<div class="item mono' + (i === selected ? " cur" : "") + (x[C] === "fault" ? " fault" : "") + '" data-i="' + i + '">' +
+      '<span class="t">' + fmt(x[T]) + '</span><span class="kd">' + esc(KINDS[x[K]]) + '</span><span class="d">' + esc(x[D]) + "</span></div>";
+  }
+  h += "</div>";
+  a.innerHTML = h;
+  for (const el of a.querySelectorAll(".item")) el.addEventListener("click", () => select(+el.dataset.i, true));
+}
+
+function select(i, reveal) {
+  selected = i;
+  if (i >= 0) {
+    playhead = E[i][T];
+    if (reveal) {
+      const x = xOf(E[i][T]);
+      if (x < 0 || x > W) { const span = view.t1 - view.t0; view.t0 = E[i][T] - span / 2; view.t1 = view.t0 + span; }
+    }
+  }
+  inspect(); draw();
+}
+
+// the event nearest a point of the plot, the important ones first
+function hit(px, py) {
+  const l = Math.floor((py - top0) / laneH);
+  if (l < 0 || l >= LANES.length) return -1;
+  const tA = tOf(px - 8), tB = tOf(px + 8);
+  let best = -1, bestScore = Infinity;
+  const rank = { fault: 0, error: 0, life: 1, msg: 2, lost: 2, edge: 3, tick: 4 };
+  for (let i = lower(tA); i < N && E[i][T] <= tB; i++) {
+    if (E[i][L] !== l || dimmed(i)) continue;
+    const d = Math.abs(xOf(E[i][T]) - px), score = rank[E[i][C]] * 20 + d;
+    if (score < bestScore) { bestScore = score; best = i; }
+  }
+  return best;
+}
+
+// ── input ──────────────────────────────────────────────────────────
+function zoomAt(x, factor) {
+  const t = tOf(x), span = Math.min(END * 4 + 1000, Math.max(0.5, (view.t1 - view.t0) * factor));
+  view.t0 = t - (x / W) * span; view.t1 = view.t0 + span; draw();
+}
+plot.addEventListener("wheel", (ev) => {
+  ev.preventDefault();
+  const r = plot.getBoundingClientRect(), x = ev.clientX - r.left;
+  if (Math.abs(ev.deltaX) > Math.abs(ev.deltaY)) {
+    const dt = ev.deltaX / W * (view.t1 - view.t0); view.t0 += dt; view.t1 += dt; draw();
+  } else zoomAt(x, Math.exp(ev.deltaY * (ev.ctrlKey ? 0.01 : 0.0025)));
+}, { passive: false });
+let drag = null;
+plot.addEventListener("pointerdown", (ev) => {
+  plot.focus(); plot.setPointerCapture(ev.pointerId);
+  drag = { x: ev.clientX, t0: view.t0, t1: view.t1, moved: false };
+});
+plot.addEventListener("pointermove", (ev) => {
+  const r = plot.getBoundingClientRect();
+  if (drag) {
+    const dx = ev.clientX - drag.x;
+    if (Math.abs(dx) > 3) { drag.moved = true; plot.classList.add("drag"); }
+    if (drag.moved) { const dt = dx / W * (drag.t1 - drag.t0); view.t0 = drag.t0 - dt; view.t1 = drag.t1 - dt; draw(); }
+    return;
+  }
+  const i = hit(ev.clientX - r.left, ev.clientY - r.top), tip = $("tip");
+  if (i < 0) { tip.style.display = "none"; return; }
+  const e = E[i];
+  tip.innerHTML = '<span class="t">' + fmt(e[T]) + "</span> " + esc(KINDS[e[K]]) + (e[D] ? "<br>" + esc(e[D].slice(0, 160)) : "");
+  tip.style.display = "block";
+  tip.style.left = Math.min(ev.clientX + 14, innerWidth - tip.offsetWidth - 8) + "px";
+  tip.style.top = (ev.clientY + 14) + "px";
+});
+plot.addEventListener("pointerleave", () => { $("tip").style.display = "none"; });
+plot.addEventListener("pointerup", (ev) => {
+  const r = plot.getBoundingClientRect();
+  if (drag && !drag.moved) {
+    const i = hit(ev.clientX - r.left, ev.clientY - r.top);
+    if (i >= 0) select(i, false);
+    else { playhead = Math.max(0, Math.min(END, tOf(ev.clientX - r.left))); select(atOrBefore(playhead), false); playhead = Math.max(0, Math.min(END, tOf(ev.clientX - r.left))); draw(); }
+  }
+  drag = null; plot.classList.remove("drag");
+});
+plot.addEventListener("dblclick", () => fit());
+// the axis scrubs the playhead through what is in view
+function scrubTo(t) {
+  playhead = Math.max(0, Math.min(END, t));
+  const i = atOrBefore(playhead);
+  selected = i; inspect(); draw();
+}
+function dragOn(el, toT) {
+  let on = false;
+  el.addEventListener("pointerdown", (ev) => { on = true; el.setPointerCapture(ev.pointerId); toT(ev); });
+  el.addEventListener("pointermove", (ev) => { if (on) toT(ev); });
+  el.addEventListener("pointerup", () => { on = false; });
+}
+dragOn($("axis"), (ev) => { const r = $("axis").getBoundingClientRect(); scrubTo(tOf(ev.clientX - r.left)); });
+// the overview: click or drag moves the playhead, and the view with it
+dragOn($("scrub"), (ev) => {
+  const r = $("scrub").getBoundingClientRect(), t = (ev.clientX - r.left) / SW * END;
+  const span = view.t1 - view.t0;
+  if (t < view.t0 || t > view.t1) { view.t0 = t - span / 2; view.t1 = view.t0 + span; }
+  scrubTo(t);
+});
+function fit() { view.t0 = -END * 0.01; view.t1 = END * 1.02 + 1; draw(); }
+$("fit").addEventListener("click", fit);
+// keys: ←/→ the previous or next event (with ⇧ the next fault), +/− zoom,
+// F the whole run, Home/End the run's ends
+document.addEventListener("keydown", (ev) => {
+  if (ev.target === $("find")) { if (ev.key === "Escape") { $("find").value = ""; setFilter(""); $("find").blur(); } return; }
+  const next = (dir) => {
+    let i = selected < 0 ? (dir > 0 ? -1 : N) : selected;
+    for (i += dir; i >= 0 && i < N; i += dir) {
+      if (dimmed(i)) continue;
+      if (ev.shiftKey && E[i][C] !== "fault" && E[i][C] !== "error") continue;
+      return i;
+    }
+    return -1;
+  };
+  if (ev.key === "ArrowRight" || ev.key === "ArrowLeft") {
+    const i = next(ev.key === "ArrowRight" ? 1 : -1);
+    if (i >= 0) select(i, true);
+    ev.preventDefault();
+  } else if (ev.key === "+" || ev.key === "=") zoomAt(xOf(playhead), 0.6);
+  else if (ev.key === "-" || ev.key === "_") zoomAt(xOf(playhead), 1 / 0.6);
+  else if (ev.key === "f" || ev.key === "F") fit();
+  else if (ev.key === "Home") select(next(1) >= 0 ? 0 : -1, true);
+  else if (ev.key === "End") select(N - 1, true);
+  else if (ev.key === "/") { $("find").focus(); ev.preventDefault(); }
+});
+function setFilter(q) {
+  filter = q.trim().toLowerCase();
+  if (!filter) matches = null;
+  else {
+    matches = new Set();
+    for (let i = 0; i < N; i++) {
+      const e = E[i];
+      if (KINDS[e[K]].includes(filter) || LANES[e[L]].toLowerCase().includes(filter) || e[D].toLowerCase().includes(filter)) matches.add(i);
+    }
+  }
+  draw();
+}
+$("find").addEventListener("input", (ev) => setFilter(ev.target.value));
+
+// ── start ──────────────────────────────────────────────────────────
+$("title").textContent = DATA.title;
+if (DATA.failed) {
+  const v = DATA.violation;
+  $("verdict").textContent = v ? v.property + " broke at " + fmt(v.t) : DATA.outcome + (DATA.error ? ": " + DATA.error.split("\n")[0] : "");
+  $("verdict").title = v ? v.detail : (DATA.error || "");
+}
+window.addEventListener("resize", layout);
+layout();
+// open on what matters: the violation, else the first fault, else the end
+let start = -1;
+if (DATA.violation) start = atOrBefore(DATA.violation.t);
+if (start < 0) for (let i = 0; i < N; i++) if (E[i][C] === "error") { start = i; break; }
+if (start < 0) for (let i = 0; i < N; i++) if (E[i][C] === "fault") { start = i; break; }
+if (start < 0) start = N - 1;
+select(start, false);
+})();
+</script>
+</body>
+</html>

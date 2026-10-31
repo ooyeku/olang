@@ -28,6 +28,11 @@ impl OdsFrame {
         Value::Native(NativeHandle::new(OdsFrame(frame, Default::default())))
     }
 
+    /// A Frame value from named columns (`sim`'s `run.events()`).
+    pub fn from_series(pairs: Vec<(String, Series)>) -> Result<Value, String> {
+        from_columns(pairs)
+    }
+
     /// The lookup index over column `name`, built on first use.
     pub(crate) fn key_index(&self, name: &str) -> Result<Arc<olang_ods::group::KeyIndex>, String> {
         let mut cache = self.1.lock().unwrap_or_else(|e| e.into_inner());

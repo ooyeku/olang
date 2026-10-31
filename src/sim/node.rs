@@ -328,6 +328,7 @@ pub(super) fn start_node(
         Start::Main => return Err(misuse("sim: the main program is started by its caller")),
         Start::Program { path, source } => Box::new(move || {
             let mut interpreter = Interpreter::new();
+            super::tier_for(&mut interpreter);
             interpreter.set_current_file(&path);
             if let Some(deps) = info.deps {
                 interpreter.set_dependency_map(deps);

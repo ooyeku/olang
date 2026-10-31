@@ -57,6 +57,7 @@ pub mod sched;
 pub mod shrink;
 pub mod surface;
 mod vfs;
+pub mod view;
 mod wire;
 
 pub use node::{CrashPlan, NodeInfo, Plan, Start, run_world};
@@ -120,6 +121,25 @@ pub struct Event {
     pub task: Option<TaskId>,
     pub kind: &'static str,
     pub detail: String,
+    /// S5: a message's other end. On an arrival (`deliver`, `late`,
+    /// `refused`, a drop in flight or at a node that is down) the node it
+    /// came from and the virtual ms it was sent; on a drop or a duplicate
+    /// when sent, the node it was for and the same ms as `t`. What
+    /// `olang sim view` draws as an arrow; not part of the digest.
+    pub link: Option<Link>,
+    /// S5: the event is a fault the world injected (`run.faults` has it
+    /// too). Not part of the digest (the faults are).
+    pub fault: bool,
+}
+
+/// The other end of a message an event is about (`Event::link`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Link {
+    pub peer: Arc<str>,
+    pub sent: u64,
+    /// An arrival at the event's node (from `peer`), not a message lost
+    /// or copied as it left it (for `peer`).
+    pub inbound: bool,
 }
 
 /// What a run ended as, and everything that happened in it.
@@ -591,17 +611,33 @@ impl World {
             task: Some(task),
             kind,
             detail,
+            link: None,
+            fault: false,
         });
     }
 
-    /// Something the network did on its own, at `node`.
-    fn net_event(&self, st: &mut State, node: NodeId, kind: &'static str, detail: String) {
+    /// Something the network did on its own, at `node`, to a message
+    /// whose other end is `peer`, sent at `sent` (`Event::link`).
+    fn link_event(
+        &self,
+        st: &mut State,
+        node: NodeId,
+        kind: &'static str,
+        detail: String,
+        link: Option<(NodeId, u64, bool)>,
+    ) {
         st.events.push(Event {
             t: st.sched.now,
             node: self.nodes[node].name.clone(),
             task: None,
             kind,
             detail,
+            link: link.map(|(peer, sent, inbound)| Link {
+                peer: self.nodes[peer].name.clone(),
+                sent,
+                inbound,
+            }),
+            fault: false,
         });
     }
 
@@ -691,6 +727,14 @@ impl World {
         });
     }
 
+    /// The event just recorded is the one a `record_fault` fault has
+    /// (S5: the view marks it).
+    fn last_is_fault(st: &mut State) {
+        if let Some(e) = st.events.last_mut() {
+            e.fault = true;
+        }
+    }
+
     /// `fault`, with the visit it fired on (`plan.rs`).
     fn fault_at(
         &self,
@@ -717,6 +761,8 @@ impl World {
             task,
             kind,
             detail,
+            link: None,
+            fault: true,
         });
     }
 
@@ -1230,6 +1276,43 @@ fn node_disk_here() -> Option<(u64, String)> {
     let key = vfs::lock(&ctx.world.disks[ctx.node]).key;
     let cwd = ctx.world.lock().nodes[ctx.node].cwd.clone();
     Some((key, cwd))
+}
+
+// ─── S5: the tier a world runs on ───────────────────────────────────
+
+/// 0: as `OLANG_SIM_TIER` says (the bytecode tier unless it is
+/// `interp`); 1: the bytecode tier; 2: the interpreter alone.
+static TIER: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Whether worlds run on the bytecode tier (S5). Every builtin call the
+/// tier makes still passes `BuiltinFunctions::call_internal`, where
+/// `intercept` answers it from the world (the tier's bridge dispatches
+/// there, and the world is found through a thread-local, not through the
+/// interpreter); native (JIT) code calls no builtin that touches the
+/// world. `olang --no-ovm sim` and `OLANG_SIM_TIER=interp` run worlds on
+/// the interpreter alone, as S1–S4 did: the same runs, event for event.
+pub fn bytecode_tier() -> bool {
+    match TIER.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => true,
+        2 => false,
+        _ => !matches!(
+            std::env::var("OLANG_SIM_TIER").as_deref(),
+            Ok("interp") | Ok("interpreter") | Ok("off")
+        ),
+    }
+}
+
+pub fn set_bytecode_tier(on: bool) {
+    TIER.store(if on { 1 } else { 2 }, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Give a world's interpreter the bytecode tier, when worlds run on it
+/// (and it has none).
+pub(crate) fn tier_for(interpreter: &mut Interpreter) {
+    if bytecode_tier() && !interpreter.bytecode_tier_present() {
+        let verbose = std::env::var_os("OLANG_TIER_VERBOSE").is_some();
+        interpreter.enable_bytecode_tier(1, verbose);
+    }
 }
 
 static TEST_SEEDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(3);
