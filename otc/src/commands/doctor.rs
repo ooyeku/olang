@@ -24,7 +24,7 @@ pub fn run(fix: bool) -> Result<()> {
     println!("olang doctor — auditing {}", home.display());
     println!();
 
-    // ── every olang/otc on PATH, and which wins ──────────────────────
+    // ── every olang/otc on PATH, and which wins ─────────────────────
     println!("binaries on PATH:");
     let mut seen_any = false;
     for name in ["olang", "otc"] {
@@ -62,7 +62,7 @@ pub fn run(fix: bool) -> Result<()> {
     }
     println!();
 
-    // ── the bin directory and PATH ───────────────────────────────────
+    // ── the bin directory and PATH ──────────────────────────────────
     let bin = home.join("bin");
     if bin.is_dir() {
         let on_path = path_dirs().iter().any(|d| d == &bin);
@@ -85,7 +85,7 @@ pub fn run(fix: bool) -> Result<()> {
         }
     }
 
-    // ── legacy scaffolding from the old setup script ─────────────────
+    // ── legacy scaffolding from the old setup script ────────────────
     let legacy_dirs = [
         ".otc",
         "projects",
@@ -134,7 +134,7 @@ pub fn run(fix: bool) -> Result<()> {
         }
     }
 
-    // ── history migration ────────────────────────────────────────────
+    // ── history migration ───────────────────────────────────────────
     if let Some(hist) = olang::home::history()
         && !hist.exists()
         && let Some(home_dir) = std::env::var_os("HOME")
@@ -158,7 +158,7 @@ pub fn run(fix: bool) -> Result<()> {
         }
     }
 
-    // ── shelf integrity ──────────────────────────────────────────────
+    // ── shelf integrity ─────────────────────────────────────────────
     match olang::pkg::shelf::Shelf::load() {
         Ok(shelf) => {
             let mut broken = 0;
@@ -188,7 +188,7 @@ pub fn run(fix: bool) -> Result<()> {
         }
     }
 
-    // ── the project here: a lock behind the shelf (information) ──────
+    // ── the project here: a lock behind the shelf (information) ─────
     if let Ok(cwd) = std::env::current_dir()
         && let Some(root) = olang::pkg::manifest::Manifest::find_root(&cwd)
     {
@@ -201,7 +201,7 @@ pub fn run(fix: bool) -> Result<()> {
         }
     }
 
-    // ── sizes of the prunable parts ──────────────────────────────────
+    // ── sizes of the prunable parts ─────────────────────────────────
     for (label, path) in [
         ("cache", home.join("cache")),
         ("state", home.join("state")),
