@@ -18,6 +18,8 @@ pub mod kernel;
 #[cfg(feature = "gamepad")]
 pub mod pad;
 pub mod physics;
+#[cfg(feature = "audio")]
+pub mod audio;
 #[cfg(feature = "gui")]
 pub mod render;
 pub mod wgsl;
@@ -50,6 +52,14 @@ pub fn create_toad_module() -> Value {
         ("clear", 1),
         ("wanted", 1),
         ("scripted", 1),
+        ("audio", 0),
+        ("sound", 1),
+        ("sound_info", 1),
+        ("play", 2),
+        ("stop", 2),
+        ("tune", 2),
+        ("volume", 2),
+        ("listen", 2),
         ("physics", 1),
         ("body", 2),
         ("unbody", 2),
@@ -473,6 +483,38 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(&str) -> 
                 Ok(Value::Map(Arc::new(out)))
             })
         }
+        #[cfg(feature = "audio")]
+        "audio" => Ok(audio::status()),
+        #[cfg(feature = "audio")]
+        "sound" => Ok(audio::sound(a(0))?),
+        #[cfg(feature = "audio")]
+        "sound_info" => Ok(audio::sound_info(id_of(args.first(), "sound")?)?),
+        #[cfg(feature = "audio")]
+        "play" => Ok(audio::play(id_of(args.first(), "sound")?, a(1))?),
+        #[cfg(feature = "audio")]
+        "stop" => {
+            audio::stop(id_of(args.first(), "play")?, num(a(1)).unwrap_or(0.05));
+            Ok(Value::Unit)
+        }
+        #[cfg(feature = "audio")]
+        "tune" => {
+            audio::tune(id_of(args.first(), "play")?, a(1))?;
+            Ok(Value::Unit)
+        }
+        #[cfg(feature = "audio")]
+        "volume" => {
+            let Value::String(bus) = a(0) else {
+                return Err("toad.volume: the bus is master, fx or music".into());
+            };
+            audio::volume(bus, num(a(1)).ok_or("toad.volume: the volume is a number")?)?;
+            Ok(Value::Unit)
+        }
+        #[cfg(feature = "audio")]
+        "listen" => Ok(audio::listen(id_of(args.first(), "sound")?, num(a(1)).unwrap_or(1.0))?),
+        #[cfg(not(feature = "audio"))]
+        "audio" | "sound" | "sound_info" | "play" | "stop" | "tune" | "volume" | "listen" => {
+            Err(format!("toad.{name}: sound needs the native build (feature `audio`)").into())
+        }
         "physics" => with(|st| -> R {
             let w = physics::World::new(a(0))?;
             st.next += 1;
@@ -687,6 +729,7 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(&str) -> 
 /// A colour as written, `(r, g, b)` or `(r, g, b, a)` from 0 to 1, or
 /// `"#rrggbb"` / `"#rrggbbaa"`: sRGB, as a person and CSS mean it, made
 /// linear here for the HDR target (alpha stays as it is).
+#[cfg(feature = "gui")]
 fn rgba(v: Option<&Value>, d: [f32; 4]) -> [f32; 4] {
     let lin = |c: f32| {
         if c <= 0.04045 {

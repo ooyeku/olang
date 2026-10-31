@@ -17,7 +17,7 @@ members = [".", "otc", "playground", "olang-ods", "xtask"]
 exclude = ["vendor"]
 
 [features]
-default = ["native", "full", "gui", "toad", "gamepad"]
+default = ["native", "full", "gui", "toad", "gamepad", "audio"]
 # The whole stdlib. The browser profile the web SDK ships omits these
 # (`cargo build -p olang-playground` without `--features full`): the
 # regex engine and its Unicode tables, and the RSA suite, are a sixth of
@@ -46,6 +46,10 @@ toad = ["dep:rapier2d"]
 # `gamepad`: game controllers for Toad's input (gilrs: the platform's HID
 # gamepads, mapped to one standard layout). Native only.
 gamepad = ["toad", "gui", "dep:gilrs"]
+# `audio`: Toad's mixer (src/stdlib/toad/audio.rs): sounds made in code or
+# read from WAV and Ogg Vorbis files, played through the system's output
+# (cpal: CoreAudio on the Mac). Native only.
+audio = ["toad", "dep:cpal", "dep:hound", "dep:lewton"]
 gui = [
     "native",
     "dep:winit",
@@ -197,6 +201,9 @@ gilrs = { version = "0.11.2", optional = true }
 # joints and queries, behind Toad's own small API. enhanced-determinism:
 # the same steps on the Mac and in wasm.
 rapier2d = { version = "0.36.1", optional = true, features = ["enhanced-determinism"] }
+cpal = { version = "0.18.2", optional = true }
+hound = { version = "3.5.1", optional = true }
+lewton = { version = "0.10.2", optional = true }
 # `fs.scan` / `fs.search`: a tree walked as a checkout is (its .gitignores
 # respected at every level), on worker threads — ripgrep's walker.
 ignore = { version = "0.4", optional = true }

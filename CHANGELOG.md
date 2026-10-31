@@ -29,6 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   swarms colliding with bodies (`toad.collide`) and with each other
   (`toad.meet`) by a grid of their own. `toad.scripted(true)` makes a
   scripted run hear only its script.
+- **Toad's sound** (feature `audio`: cpal, hound, lewton): `toad.sound`
+  makes sounds in code (a synth of waves, slides, envelopes, a low-pass
+  and layers) or reads WAV and Ogg Vorbis; `toad.play`, `stop`, `tune`
+  and `volume` mix voices on an effects and a music bus without clicks,
+  through a soft limiter; `TOAD_MUTE=1` plays silently.
 - **A notebook cell's printed lines stream while it runs.** `olang repl
   --serve` sends what an `eval` prints as `out` events as it is printed
   (the hello's `stream` feature): batched at most every 50 ms, the first

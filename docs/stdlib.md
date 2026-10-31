@@ -3129,6 +3129,14 @@ toad.frame([#{ "swarm": s, "color": "#ff9a3c", "radius": 6.0 }], #{ "size": (128
 | `toad.clear(swarm)` | empty a swarm |
 | `toad.wanted(name)` | whether the live picture wants a new frame (a window drew the last one); `toad.frame` skips one it does not |
 | `toad.scripted(on)` | hear only `toad.press`: the windows' keys and the gamepads are ignored (demos and tests) |
+| `toad.audio()` | the sound output: `Ok(#{ device, rate, channels, voices })` or `Err(why it is silent)` |
+| `toad.sound(spec)` | a sound from a `file` (WAV, Ogg Vorbis) or the synth (`wave`, `freq`, `to`, `attack`, `hold`, `decay`, `volume`, `cutoff`, …, or `layers`) |
+| `toad.sound_info(sound)` | `#{ seconds, channels, rate, peak }` |
+| `toad.play(sound, opts)` | a voice: `volume`, `pan`, `pitch`, `loop`, `music`, `fade` |
+| `toad.stop(voice, fade)` | fade a voice out and let it go |
+| `toad.tune(voice, opts)` | change a playing voice's `volume`, `pan`, `pitch` |
+| `toad.volume(bus, v)` | `master`, `fx` or `music` |
+| `toad.listen(sound, seconds)` | mix a sound offline (tests): `#{ peak, rms, voices_left }` |
 | `toad.physics(opts)` | a 2D physics world (`gravity`, `scale`: world units to a metre) |
 | `toad.body(world, props)` | a rigid body: `kind`, `shape` (circle, box, capsule, poly, chain), `size`, `at`, `rot`, `vel`, `density`, `friction`, `bounce`, `sensor`, … or `parts` |
 | `toad.unbody(world, body)` | remove a body and its joints |
@@ -3167,6 +3175,14 @@ shaded from where its light comes from (outside it, for one that casts);
 unlit, from a fixed sun at the upper left. These keys can sit in a map
 given as the shape's `material`, the shape's own keys winning over it
 (`()` takes one away). `lit: false` shows a shape's colour as written.
+
+**Sound.** A small mixer (feature `audio`, native): sounds made in code
+by a synth of waves, slides, envelopes, a low-pass and layers (an arcade
+game needs no files), or read from WAV and Ogg Vorbis; voices with a
+volume, a pan, a pitch and a loop on the effects or the music bus,
+faded so nothing clicks, summed through a soft limiter. The output opens
+the first time a sound plays; with no device, or `TOAD_MUTE=1`, sounds
+play silently.
 
 **Physics.** A world steps rigid bodies (rapier underneath, deterministic
 run to run) in the game's own units: `scale` world units make a metre

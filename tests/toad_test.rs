@@ -419,3 +419,102 @@ match attempt(() => {body}) {{ Ok(_) => \"built\", Err(e) => show(e) }}"
     assert!(refused(r#"toad.joint(w, toad.body(w, #{}), toad.body(w, #{}), #{ "kind": "rope" })"#).contains("needs a `length`"));
     assert!(refused(r#"toad.push(w, 99, #{})"#).contains("no body 99"));
 }
+
+// ── sound ──────────────────────────────────────────────────────────────
+
+#[cfg(feature = "audio")]
+fn quiet(src: &str) -> String {
+    // SAFETY: the tests that touch it set the same value
+    unsafe { std::env::set_var("TOAD_MUTE", "1") };
+    run(src).expect("ran")
+}
+
+#[cfg(feature = "audio")]
+#[test]
+fn sounds_are_made_in_code_as_long_as_their_envelope() {
+    let out = quiet(
+        r#"
+let blip = toad.sound(#{ "wave": "square", "freq": 880.0, "attack": 0.01, "hold": 0.04, "decay": 0.05, "volume": 0.4 })
+let i = toad.sound_info(blip)
+let late = toad.sound(#{ "layers": [#{ "decay": 0.1 }, #{ "delay": 0.5, "decay": 0.1 }] })
+show((math.round(i.seconds * 100.0), math.round(i.peak * 10.0), i.channels, math.round(toad.sound_info(late).seconds * 10.0)))
+"#,
+    );
+    // 0.1 s long, peaking at its volume, mono; the late layer makes it 0.6 s
+    assert_eq!(out, "(10, 4, 1, 6)");
+}
+
+#[cfg(feature = "audio")]
+#[test]
+fn the_mix_rounds_off_what_is_too_loud_and_lets_a_sound_end() {
+    let out = quiet(
+        r#"
+let loud = toad.sound(#{ "layers": [#{ "wave": "square", "freq": 100.0, "decay": 0.3, "volume": 1.0 },
+                                    #{ "wave": "square", "freq": 100.0, "decay": 0.3, "volume": 1.0 }] })
+let m = toad.listen(loud, 1.0)
+show((toad.sound_info(loud).peak > 1.5, m.peak <= 1.0, m.voices_left))
+"#,
+    );
+    assert_eq!(out, "(true, true, 0)");
+}
+
+#[cfg(feature = "audio")]
+#[test]
+fn a_wav_file_is_read_and_what_cannot_sound_is_refused() {
+    // a tenth of a second of a 16-bit stereo WAV at 22050 Hz, a square
+    let dir = std::env::temp_dir().join(format!("toad-wav-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("beep.wav");
+    let frames = 2205u32;
+    let mut b = Vec::new();
+    let data = frames * 4;
+    b.extend_from_slice(b"RIFF");
+    b.extend_from_slice(&(36 + data).to_le_bytes());
+    b.extend_from_slice(b"WAVEfmt ");
+    b.extend_from_slice(&16u32.to_le_bytes());
+    b.extend_from_slice(&1u16.to_le_bytes());
+    b.extend_from_slice(&2u16.to_le_bytes());
+    b.extend_from_slice(&22050u32.to_le_bytes());
+    b.extend_from_slice(&(22050u32 * 4).to_le_bytes());
+    b.extend_from_slice(&4u16.to_le_bytes());
+    b.extend_from_slice(&16u16.to_le_bytes());
+    b.extend_from_slice(b"data");
+    b.extend_from_slice(&data.to_le_bytes());
+    for i in 0..frames {
+        let v: i16 = if (i / 50) % 2 == 0 { 8000 } else { -8000 };
+        b.extend_from_slice(&v.to_le_bytes());
+        b.extend_from_slice(&v.to_le_bytes());
+    }
+    std::fs::write(&path, b).unwrap();
+    let out = quiet(&format!(
+        r#"
+let s = toad.sound(#{{ "file": "{}" }})
+let i = toad.sound_info(s)
+show((math.round(i.seconds * 10.0), i.channels, i.rate, math.round(i.peak * 100.0)))
+ + " " + show(attempt(() => toad.sound(#{{ "wave": "kazoo" }})))
+ + " " + show(attempt(() => toad.sound(#{{ "file": "x.mp3" }})))
+ + " " + show(attempt(() => toad.volume("loud", 1.0)))
+"#,
+        path.display()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(out.starts_with("(1, 2, 22050, 24)"), "{out}");
+    assert!(out.contains("sine, square, saw, triangle or noise"), "{out}");
+    assert!(out.contains(".wav or .ogg"), "{out}");
+    assert!(out.contains("master, fx or music"), "{out}");
+}
+
+#[cfg(feature = "audio")]
+#[test]
+fn a_muted_run_plays_silently() {
+    let out = quiet(
+        r#"
+let s = toad.sound(#{ "decay": 0.1 })
+let v = toad.play(s, #{ "volume": 0.5, "loop": true })
+toad.tune(v, #{ "pitch": 2.0 })
+toad.stop(v, 0.1)
+show(toad.audio())
+"#,
+    );
+    assert!(out.contains("muted"), "{out}");
+}

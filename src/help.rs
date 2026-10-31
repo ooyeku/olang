@@ -2078,6 +2078,49 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             &["toad.scripted(true)"],
         );
         self.doc_ex(
+            "toad.audio",
+            "toad.audio()",
+            "Result",
+            "toad",
+            "The sound output, opened if it is not: Ok(#{ device, rate, channels, voices }), or Err(why it is silent: no device, or TOAD_MUTE=1). Sounds play silently either way.",
+            &["toad.audio()"],
+        );
+        self.doc_ex(
+            "toad.sound",
+            "toad.sound(spec)",
+            "Int",
+            "toad",
+            "Make a sound: a file (WAV or Ogg Vorbis), or the synth: wave (sine, square, saw, triangle, noise), freq, to (an exponential slide), attack, hold, decay (seconds), volume, duty, vibrato, vibrato_rate, cutoff and cutoff_to (a low-pass), seed; or layers, a list of synth specs each from its delay. Answers its number.",
+            &[r##"toad.sound(#{ "wave": "square", "freq": 520.0, "to": 1300.0, "decay": 0.09 })"##],
+        );
+        self.doc_ex("toad.sound_info", "toad.sound_info(sound)", "Map", "toad", "A sound's #{ seconds, channels, rate, peak }.", &["toad.sound_info(s).seconds"]);
+        self.doc_ex(
+            "toad.play",
+            "toad.play(sound, opts)",
+            "Int",
+            "toad",
+            "Play a sound: volume, pan (-1 left to 1 right), pitch (a rate: 2 is an octave up), loop, music (the music bus), fade (seconds in). Answers the voice's number; past 64 voices the oldest effect gives way.",
+            &[r##"toad.play(s, #{ "volume": 0.8, "pan": -0.3 })"##],
+        );
+        self.doc_ex("toad.stop", "toad.stop(voice, fade)", "Unit", "toad", "Fade a voice out over fade seconds and let it go: no click.", &["toad.stop(v, 0.2)"]);
+        self.doc_ex(
+            "toad.tune",
+            "toad.tune(voice, opts)",
+            "Unit",
+            "toad",
+            "Change a playing voice: volume (reached over fade seconds), pan, pitch. A looping engine's pitch follows its speed this way.",
+            &[r##"toad.tune(v, #{ "pitch": 1.4 })"##],
+        );
+        self.doc_ex("toad.volume", "toad.volume(bus, v)", "Unit", "toad", "Set a bus's volume: master, fx or music.", &[r##"toad.volume("music", 0.5)"##]);
+        self.doc_ex(
+            "toad.listen",
+            "toad.listen(sound, seconds)",
+            "Map",
+            "toad",
+            "Mix a sound offline as the output would hear it, for tests: #{ peak, rms, voices_left } (the limiter keeps the peak at 1 or under).",
+            &["toad.listen(s, 1.0)"],
+        );
+        self.doc_ex(
             "toad.physics",
             "toad.physics(opts)",
             "Int",
