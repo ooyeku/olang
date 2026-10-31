@@ -307,7 +307,7 @@ fn platform() -> Result<&'static str> {
         ("linux", "aarch64") => "linux-arm64",
         ("windows", _) => bail!(
             "otc update does not update a Windows install yet; run the installer again: \
-             irm https://olang.dev/install.ps1 | iex"
+             irm https://raw.githubusercontent.com/ooyeku/olang/main/install.ps1 | iex"
         ),
         (os, arch) => bail!(
             "no prebuilt release for {}/{}; build from source (see docs/installation.md)",

@@ -382,7 +382,7 @@ jobs:
           body: |
             See [CHANGELOG.md](https://github.com/ooyeku/olang/blob/main/CHANGELOG.md) for what changed.
 
-            Install on macOS or Linux with `curl -fsSL https://olang.dev/install.sh | sh`, or with Homebrew: `brew install ooyeku/olang/olang`. The [installation guide](https://olang.dev/book/installation/) covers every other way.
+            Install on macOS or Linux with `curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh`, or with Homebrew: `brew install ooyeku/olang/olang`. The [installation guide](https://olang.dev/book/installation/) covers every other way.
 
             `SHA256SUMS` lists a checksum for every file here, and `SHA256SUMS.sig` is its signature by olang's release key (when present). Each file also has a GitHub build attestation: `gh attestation verify FILE --repo ooyeku/olang`. The `-musl` builds are static and run on any Linux, without windows (`gui`). On macOS, a tarball downloaded with a web browser is quarantined: run `xattr -d com.apple.quarantine olang otc` in its folder before the first run.
 

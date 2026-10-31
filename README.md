@@ -114,10 +114,10 @@ a one-word change: `map` becomes `par_map`.
 On a Mac or Linux, open a terminal, paste this line and press Return:
 
 ```bash
-curl -fsSL https://olang.dev/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh
 ```
 
-On Windows, run `irm https://olang.dev/install.ps1 | iex` in PowerShell.
+On Windows, run `irm https://raw.githubusercontent.com/ooyeku/olang/main/install.ps1 | iex` in PowerShell.
 The installer picks the right download for your computer, checks that
 it is genuine, and needs no Rust and no administrator password. Then
 open a new terminal window and run `olang --version`. With Homebrew,

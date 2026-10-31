@@ -397,7 +397,7 @@ code 0; nofile "$H/.config/fish/conf.d/olang.fish"; nofile "$H/.olang/bin/olang"
 
 # ── other systems ──────────────────────────────────────────────────
 run windows FAKE_OS=MINGW64_NT-10.0-22631 FAKE_ARCH=x86_64 --
-code 1; has "irm https://olang.dev/install.ps1 | iex"; has "wsl --install"; unlogged "curl"
+code 1; has "irm https://raw.githubusercontent.com/ooyeku/olang/main/install.ps1 | iex"; has "wsl --install"; unlogged "curl"
 
 run freebsd-no-rust FAKE_OS=FreeBSD FAKE_ARCH=amd64 --
 code 1; has "there is no ready-made olang for FreeBSD"; has "Rust is not installed"

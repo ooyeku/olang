@@ -1,6 +1,6 @@
 # The olang installer for Windows.
 #
-#   irm https://olang.dev/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/ooyeku/olang/main/install.ps1 | iex
 #
 # (https://raw.githubusercontent.com/ooyeku/olang/main/install.ps1 is the
 # same file.) It downloads the ready-made olang for Windows from the
@@ -270,7 +270,7 @@ function Install-Olang {
             if (-not $line) {
                 Stop-Install "release $v has no ready-made download for Windows." @(
                     'Install a newer release, or use olang inside WSL: run  wsl --install  in PowerShell,',
-                    'restart, open the Ubuntu app, and run:  curl -fsSL https://olang.dev/install.sh | sh')
+                    'restart, open the Ubuntu app, and run:  curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh')
             }
             $expected = $line.Substring(0, 64)
             $zipPath = Join-Path $tmp $zip
@@ -331,7 +331,7 @@ function Install-Olang {
     Say ''
     if ($newShell) { Say '  (It works in this window now. Other windows that were already open need restarting.)' }
     Say '  Start with the tour at https://olang.dev/book/tour/'
-    Say "  To remove olang later: `$env:OLANG_UNINSTALL='1'; irm https://olang.dev/install.ps1 | iex"
+    Say "  To remove olang later: `$env:OLANG_UNINSTALL='1'; irm https://raw.githubusercontent.com/ooyeku/olang/main/install.ps1 | iex"
     Say ''
 }
 
@@ -340,7 +340,7 @@ if ($Help) {
 The olang installer for Windows
 
 Usage:
-  irm https://olang.dev/install.ps1 | iex
+  irm https://raw.githubusercontent.com/ooyeku/olang/main/install.ps1 | iex
   .\install.ps1 [-Version v1.0.0] [-Dir FOLDER] [-NoModifyPath] [-Force] [-Quiet] [-Uninstall]
 
 Each option also has an environment variable: OLANG_VERSION,

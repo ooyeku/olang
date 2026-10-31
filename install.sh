@@ -1,7 +1,7 @@
 #!/bin/sh
 # The olang installer.
 #
-#   curl -fsSL https://olang.dev/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh
 #
 # (https://raw.githubusercontent.com/ooyeku/olang/main/install.sh is the
 # same file.) It downloads the ready-made olang for this computer from
@@ -13,7 +13,7 @@
 # Run `sh install.sh --help` for the options. Options go after `sh -s --`
 # when the script is piped:
 #
-#   curl -fsSL https://olang.dev/install.sh | sh -s -- --version v1.0.0
+#   curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh -s -- --version v1.0.0
 #
 # What it touches: the install folder (~/.olang/bin unless you choose
 # another), one line in your shell's startup file (unless you say not
@@ -27,7 +27,7 @@ set -u
 REPO="ooyeku/olang"
 GITHUB="${OLANG_GITHUB:-https://github.com}"
 GITHUB_API="${OLANG_GITHUB_API:-https://api.github.com}"
-INSTALL_URL="https://olang.dev/install.sh"
+INSTALL_URL="https://raw.githubusercontent.com/ooyeku/olang/main/install.sh"
 HELP_URL="https://olang.dev/book/installation/"
 # The oldest Rust that builds olang: keep equal to `rust-version` in
 # Cargo.toml (tests/install_script_test.rs checks).
@@ -384,7 +384,7 @@ detect_platform() {
         MINGW*|MSYS*|CYGWIN*|Windows_NT)
             fail "this is the installer for macOS and Linux, and this terminal runs on Windows." \
                 "In PowerShell, install olang with:" \
-                "  irm https://olang.dev/install.ps1 | iex" \
+                "  irm https://raw.githubusercontent.com/ooyeku/olang/main/install.ps1 | iex" \
                 "Or use olang inside WSL (Windows Subsystem for Linux): run  wsl --install" \
                 "in PowerShell, restart, open the Ubuntu app, and run the install command there." ;;
         *)

@@ -26,13 +26,13 @@ On a Mac or on Linux, open a terminal (on a Mac, the Terminal app is in
 Applications, then Utilities), paste this line and press Return:
 
 ```bash
-curl -fsSL https://olang.dev/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh
 ```
 
 On Windows, open PowerShell and run:
 
 ```powershell
-irm https://olang.dev/install.ps1 | iex
+irm https://raw.githubusercontent.com/ooyeku/olang/main/install.ps1 | iex
 ```
 
 The installer works out what kind of computer you have, downloads the
@@ -58,7 +58,7 @@ at `https://raw.githubusercontent.com/ooyeku/olang/main/install.sh` (and
 The installer takes a few options. Put them after `sh -s --`:
 
 ```bash
-curl -fsSL https://olang.dev/install.sh | sh -s -- --version v1.0.0
+curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh -s -- --version v1.0.0
 ```
 
 | Option | Environment variable | Effect |
@@ -74,12 +74,12 @@ curl -fsSL https://olang.dev/install.sh | sh -s -- --version v1.0.0
 | `--help` | | list the options |
 
 On Windows, set the environment variable first, for example
-`$env:OLANG_VERSION = 'v1.0.0'; irm https://olang.dev/install.ps1 | iex`.
+`$env:OLANG_VERSION = 'v1.0.0'; irm https://raw.githubusercontent.com/ooyeku/olang/main/install.ps1 | iex`.
 
 In CI, a typical line is:
 
 ```bash
-curl -fsSL https://olang.dev/install.sh | sh -s -- --quiet --no-modify-path
+curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh -s -- --quiet --no-modify-path
 echo "$HOME/.olang/bin" >> "$GITHUB_PATH"
 ```
 
@@ -112,13 +112,13 @@ running their `cargo install` command again.
 ## Uninstalling
 
 ```bash
-curl -fsSL https://olang.dev/install.sh | sh -s -- --uninstall
+curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh -s -- --uninstall
 ```
 
 This removes `olang` and `otc` and the `PATH` line the installer added.
 Your packages, REPL history and toolchains in `~/.olang` stay, unless you
 answer yes when it asks; `rm -rf ~/.olang` removes them later. On
-Windows, run `$env:OLANG_UNINSTALL = '1'; irm https://olang.dev/install.ps1 | iex`.
+Windows, run `$env:OLANG_UNINSTALL = '1'; irm https://raw.githubusercontent.com/ooyeku/olang/main/install.ps1 | iex`.
 
 For other installs: `brew uninstall olang`, or `cargo uninstall olang otc`
 (`make remove` in a checkout does the same).
