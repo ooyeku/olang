@@ -35,6 +35,7 @@ talk to ([Editor support](editors.md)).
 - [The REPL](#the-repl)
 - [`olang --watch`](#olang---watch)
 - [`olang record` and `olang replay` — the Open Timeline](#olang-record-and-olang-replay--the-open-timeline)
+- [`olang sim`](#olang-sim)
 - [Tier statistics (`--ovm-stats=json`)](#tier-statistics---ovm-statsjson)
 - [`--verify-tiers` — live tier verification](#--verify-tiers--live-tier-verification)
 - [Environment variables](#environment-variables)
@@ -66,6 +67,7 @@ talk to ([Editor support](editors.md)).
 | `olang caps [path]` | Show the capability grant a program or binary carries |
 | `olang record <file>` | Run a program and record its inputs to a `.olt` trace |
 | `olang replay <trace>` | Re-run a recorded `.olt` timeline bit-for-bit |
+| `olang sim <file>` | Run a program or a whole system in a [simulated world](sim.md): search seeds for failures, shrink one, replay it |
 | `olang doc [path]` | Generate HTML (or `--format markdown` Markdown) API reference |
 | `olang expand FILE` | Print a file after [macro expansion](macros.md) — the program the runtime actually receives |
 | `olang <notebook.olmd>` | Run a [notebook](#notebooks-olmd): markdown whose `olang` blocks are the program; `run`, `test`, `check`, `fmt` and `expand` take one |
@@ -147,6 +149,7 @@ olang test tests/ --times               # each block's milliseconds, and the slo
 olang test --deps       # the dependencies' blocks too
 olang test lib/calc.ol tests/calc_test.ol   # several files (or directories) in one run, each once
 olang test --format json tests/            # the run as line-delimited events, for an editor
+olang test tests/ --seeds 50   # a block that runs simulated worlds tries 50 seeds (default 3)
 ```
 
 A *test file* is any `.ol` file containing a top-level `test "name" { ... }`
@@ -1895,6 +1898,60 @@ faster tiers. It is a debugging tool, not something for a hot path. And
 an `http.serve` worker is not traced: requests arrive in an order no
 trace could pin down, so a server's handlers run live, and a recorded
 server says so once on stderr.
+
+## `olang sim`
+
+`olang sim` runs a program inside a simulated world, where a seed
+decides the order of every event: which task runs next, how long each
+message takes, when a crash happens. One seed is always the same run,
+so a failure that a search turns up can be replayed exactly. [Simulating
+whole systems](sim.md) is the chapter that teaches it, and [the `sim`
+module](stdlib.md#sim--simulated-worlds) is how a program builds a world
+of several nodes.
+
+```bash
+olang sim bank.ol --seeds 1000            # search: run seeds 1 to 1000, report the failures
+olang sim bank.ol --seed 17 --events      # replay seed 17 and print every event
+olang sim world.ol --seeds 500 --jobs 8   # the same search in eight worker processes
+olang sim world.ol --seed 6 --shrink      # make seed 6's failure as small as it can be
+olang sim --replay .sim/6.simplan         # replay a shrunk failure bit for bit
+olang sim shrink .sim/6.simplan           # shrink a saved plan further
+```
+
+The file is either a program to run as a world's main program, or a
+file that builds worlds itself with `sim.world` (directly or through a
+module it uses). A program of the first kind runs unchanged; a
+world-builder runs as an ordinary program, and every world it makes
+takes the seed from the command line. Package dependencies resolve as
+they do for `olang run`, without fetching anything or writing a lock.
+
+| Flag | Meaning |
+|---|---|
+| `--seed S` | the seed to run (default 1); with `--seeds`, the first of them |
+| `--seeds N` | run N seeds in turn, keep the programs' output quiet, and report each one that fails |
+| `--for DURATION` | stop when this much virtual time has passed: `6h`, `30m`, `10s`, `250ms` |
+| `--events` | print every event of the run (with `--seed`) |
+| `--max-steps N` | the yield points a run may take before it is called a livelock |
+| `--jobs J` | run seeds in J worker processes; the results, and the digest, are the same for any J |
+| `--shrink` | minimise the failing seed's faults, nodes and schedule, and save it as `.sim/<seed>.simplan` |
+| `--shrink-budget N` | the runs the shrinker may spend (default 300) |
+| `--replay PLAN` | replay a saved plan and check it reproduced exactly |
+
+A single seed prints the program's output and then a summary line. On
+a failure it prints the error and the last twenty events. A search
+prints a line for each failing seed, a summary, the digest of every
+event of every seed (equal digests mean equal runs), and the command
+that reproduces the first failure. A seed fails when its program
+raises, deadlocks, runs out of steps or breaks a property; running out
+of virtual time is not a failure.
+
+The exit status is 0 when every seed passed, 1 when one failed, 2 when
+the file cannot be found, and 3 when `--replay` finds the run no longer
+matches its plan (the program changed since it was saved).
+
+`olang test` runs a `test` block that builds worlds over three seeds,
+or `--seeds N` of them, and names the first seed that fails ([Simulation
+in `olang test`](sim.md#simulation-in-olang-test)).
 
 ## Tier statistics (`--ovm-stats=json`)
 

@@ -174,6 +174,11 @@ back. A closure (a function that remembers values from where it was
 made) takes a copy of what it uses, so two threads can never trip over
 each other's data. See [Concurrency](language.md#concurrency).
 
+`olang sim` runs threads, or several programs talking over a network,
+in a simulated world where a seed decides the order of events, so a
+rare race or a badly timed crash can be found and then replayed
+exactly ([Simulating whole systems](sim.md)).
+
 Types are optional and gradual. Code without type annotations runs
 dynamically. Each annotation you add is checked while the program runs,
 on every tier, and `olang check` reports the mistakes it can prove

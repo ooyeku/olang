@@ -46,6 +46,7 @@ examples do what the text says they do.
 | Chapter | Contents |
 |---|---|
 | [Command-line tooling](tooling.md) | Everything the `olang` command does, from running and testing programs to profiling, building, and recording and replaying runs. |
+| [Simulating whole systems](sim.md) | Running programs in a simulated world where a seed decides every event, to find races and crash bugs, shrink them and replay them. |
 | [Packages and dependencies](packages.md) | Projects and `otc`: dependencies, your personal shelf of libraries, capabilities, and binaries that carry their own source. |
 | [Notebooks](notebooks.md) | Notebooks as plain Markdown files with olang cells that run, take parameters, and keep their output. |
 | [Writing fast olang](performance.md) | How to write code the fast engines like, how to see what they decided, and how olang measures up. |
