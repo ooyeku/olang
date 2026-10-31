@@ -245,8 +245,6 @@ resvg = { version = "0.48", default-features = false, features = ["text", "syste
 # table below it was missing from the Linux and Windows builds.
 skrifa = { version = "0.44", optional = true }
 
-# `--trace`: olang's internal trace logging.
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # default-features off: the default set includes "wasmbind" (a wasm-bindgen
 # shim for Utc::now on wasm), which would drag wasm-bindgen imports into the
 # playground artifact. Wall-clock "now" goes through src/clock.rs instead.

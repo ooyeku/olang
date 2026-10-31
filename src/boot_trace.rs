@@ -1,4 +1,4 @@
-//! Where a program's start goes: `OLANG_BOOT_TRACE=1`.
+//! Where a program's start goes: `olang --trace`, or `OLANG_BOOT_TRACE=1`.
 //!
 //! A program on a UI framework spends its first few hundred milliseconds
 //! reading modules, evaluating their declarations and compiling what its
@@ -10,9 +10,11 @@
 //! and at the first frame (or at exit, for a program with no window) a
 //! summary: modules read (parsed or from the
 //! parse cache) and evaluated, functions compiled to bytecode and to
-//! native code, and how long each took.
+//! native code, and how long each took. Each module a `use` finds is a
+//! line too, with where it was found.
 //!
-//! Off, each hook is one relaxed load of a flag decided once per process.
+//! Off, each hook is a relaxed load or two of flags decided once per
+//! process.
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -24,10 +26,17 @@ fn flag() -> bool {
     })
 }
 
-/// Whether the trace is on (decided once per process).
+static FORCED: AtomicBool = AtomicBool::new(false);
+
+/// Turns the trace on for the rest of the process (`--trace`).
+pub fn enable() {
+    FORCED.store(true, Ordering::Relaxed);
+}
+
+/// Whether the trace is on.
 #[inline]
 pub fn on() -> bool {
-    flag()
+    FORCED.load(Ordering::Relaxed) || flag()
 }
 
 /// The process's start on the wall clock, in microseconds since the

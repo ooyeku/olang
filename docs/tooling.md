@@ -2046,7 +2046,7 @@ nothing should depend on them.
 | `OLANG_LOG_LEVEL`, `OLANG_LOG_TIMESTAMP`, `OLANG_LOG_MODULE` | no | The runtime's own log (`ERROR` … `TRACE`; default `WARN`). |
 | `OLANG_TIER_STATS` | no | `1`: machine-readable tier counters on exit. |
 | `OLANG_TIER_VERBOSE` | no | The bytecode tier says what it compiles and refuses. |
-| `OLANG_BOOT_TRACE` | no | `1`: where a program's start goes — a line on stderr at each landmark (the interpreter's thread started, the entry parsed, the program starting, the platform's loop, a window asked for and made, the first frame presented), stamped from the process's start, and at the first frame the modules read and loaded and the compiles, with their times. |
+| `OLANG_BOOT_TRACE` | no | `1`, the same as `--trace`: where a program's start goes — a line on stderr at each landmark (the interpreter's thread started, the entry parsed, the program starting, the platform's loop, a window asked for and made, the first frame presented), stamped from the process's start, each module a `use` found and where, and at the first frame the modules read and loaded and the compiles, with their times. |
 | `OLANG_LAZY_COMPILE` | no | `0`: compile every callee with its caller (the eager route) instead of at its first call, for A/B measurement. |
 | `OLANG_JIT_DEBUG` | no | `1`: JIT compilation decisions: what compiled, what refused, and the instruction or register that refused it. |
 | `OLANG_OSR_DEBUG`, `OLANG_OSR_OFF` | no | On-stack-replacement decisions; `1` disables on-stack replacement. |

@@ -1176,19 +1176,12 @@ already binds — an import never replaces a program's own name. Alias the impor
             None
         };
 
-        if debug_config.enable_resolution_tracing {
-            crate::log::get_logger().debug(
-                "interpreter",
-                &format!(
-                    "Resolving module: '{}' using dependency-free discovery",
-                    module_path
-                ),
-            );
-        }
-
         // Embedded olang-source stdlib modules (builtin packages compiled
         // into the binary) resolve to a special path handled below.
         if crate::stdlib::embedded::is_embedded(module_path) {
+            if crate::boot_trace::on() {
+                crate::boot_trace::mark(&format!("use {}: built into olang", module_path));
+            }
             return Ok(std::path::PathBuf::from(format!(
                 "__embedded__/{}",
                 module_path
@@ -1215,11 +1208,12 @@ already binds — an import never replaces a program's own name. Alias the impor
         let head_is_dependency = self.dependency_map.contains_key(head);
         match self.discover_module_dependency(module_path) {
             Ok(path) => {
-                if debug_config.enable_resolution_tracing {
-                    crate::log::get_logger().debug(
-                        "interpreter",
-                        &format!("Found in dependency: {}", path.display()),
-                    );
+                if crate::boot_trace::on() {
+                    crate::boot_trace::mark(&format!(
+                        "use {}: {} (a dependency)",
+                        module_path,
+                        path.display()
+                    ));
                 }
                 return Ok(path);
             }
@@ -1229,11 +1223,12 @@ already binds — an import never replaces a program's own name. Alias the impor
 
         // Try discovery algorithms in order of priority
         if let Ok(path) = self.discover_module_same_directory(module_path) {
-            if debug_config.enable_resolution_tracing {
-                crate::log::get_logger().debug(
-                    "interpreter",
-                    &format!("Found in same directory: {}", path.display()),
-                );
+            if crate::boot_trace::on() {
+                crate::boot_trace::mark(&format!(
+                    "use {}: {} (beside the importing file)",
+                    module_path,
+                    path.display()
+                ));
             }
             return Ok(path);
         }
@@ -1246,31 +1241,34 @@ already binds — an import never replaces a program's own name. Alias the impor
         if let Some(root) = self.current_package_root()
             && let Ok(path) = self.try_resolve_in_directory(&root, module_path)
         {
-            if debug_config.enable_resolution_tracing {
-                crate::log::get_logger().debug(
-                    "interpreter",
-                    &format!("Found relative to the module's package: {}", path.display()),
-                );
+            if crate::boot_trace::on() {
+                crate::boot_trace::mark(&format!(
+                    "use {}: {} (the importing module's package)",
+                    module_path,
+                    path.display()
+                ));
             }
             return Ok(path);
         }
 
         if let Ok(path) = self.discover_module_project_root(module_path) {
-            if debug_config.enable_resolution_tracing {
-                crate::log::get_logger().debug(
-                    "interpreter",
-                    &format!("Found relative to project root: {}", path.display()),
-                );
+            if crate::boot_trace::on() {
+                crate::boot_trace::mark(&format!(
+                    "use {}: {} (the project)",
+                    module_path,
+                    path.display()
+                ));
             }
             return Ok(path);
         }
 
         if let Ok(path) = self.discover_module_stdlib(module_path) {
-            if debug_config.enable_resolution_tracing {
-                crate::log::get_logger().debug(
-                    "interpreter",
-                    &format!("Found in standard library: {}", path.display()),
-                );
+            if crate::boot_trace::on() {
+                crate::boot_trace::mark(&format!(
+                    "use {}: {} (the standard library)",
+                    module_path,
+                    path.display()
+                ));
             }
             return Ok(path);
         }

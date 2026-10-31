@@ -64,7 +64,8 @@ struct Cli {
     #[arg(short, long, help_heading = "Run options")]
     verbose: bool,
 
-    /// Turn on olang's internal trace logging (for debugging olang itself)
+    /// Show where the start of a run goes: each module found and where,
+    /// timed landmarks, and what was compiled (as OLANG_BOOT_TRACE=1)
     #[arg(long, help_heading = "Run options")]
     trace: bool,
 
@@ -830,9 +831,8 @@ fn run() -> i32 {
     }
 
     if cli.trace {
-        tracing_subscriber::fmt()
-            .with_env_filter("olang=trace")
-            .init();
+        olang::boot_trace::enable();
+        olang::boot_trace::mark("the command line read");
     }
 
     olang::stdio::set_panic_hook();
