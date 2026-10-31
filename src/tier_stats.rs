@@ -191,8 +191,7 @@ pub fn docs_ref(code: &str) -> String {
     format!("docs/tooling.md#tier-{code}")
 }
 
-// ── pins ───────────────────────────────────────────────────────────────
-
+// ── pins ────────────────────────────────────────────────────────────
 /// Each `fn` declared at the start of a line: its name and 1-based
 /// (line, column of the name). The first declaration of a name wins.
 pub fn fn_lines(text: &str) -> HashMap<String, (u32, u32)> {
@@ -327,8 +326,7 @@ impl FileFacts {
     }
 }
 
-// ── the report ─────────────────────────────────────────────────────────
-
+// ── the report ──────────────────────────────────────────────────────
 fn round3(x: f64) -> f64 {
     (x * 1000.0).round() / 1000.0
 }

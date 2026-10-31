@@ -35,8 +35,7 @@ const I_FRESH: usize = 13;
 const F_NATH: usize = 17;
 const PAD: usize = 80;
 
-// ── reading the spec ─────────────────────────────────────────────────
-
+// ── reading the spec ────────────────────────────────────────────────
 struct Spec<'a> {
     theme: &'a crate::ast::ValueMap,
     lifted: HashSet<&'a str>,
@@ -118,8 +117,7 @@ impl<'a> Spec<'a> {
     }
 }
 
-// ── olang's small helpers, as Loom uses them ─────────────────────────
-
+// ── olang's small helpers, as Loom uses them ────────────────────────
 const EMPTY: &[Value] = &[];
 
 // `()`, to answer by reference where olang answers `()` for a missing
@@ -334,8 +332,7 @@ fn border_of(p: Option<&crate::ast::ValueMap>) -> f64 {
     }
 }
 
-// ── styles (loom/lib/theme.ol: tok, font_style, with_style) ──────────
-
+// ── styles (loom/lib/theme.ol: tok, font_style, with_style) ─────────
 fn tok(spec: &Spec, v: &Value) -> Value {
     match v {
         Value::String(s) => match spec.theme.get(s.as_str()) {
@@ -479,8 +476,7 @@ fn with_style(spec: &Spec, look: Value, style: &Value) -> Value {
     }
 }
 
-// ── measuring (as gui.measure measures) ──────────────────────────────
-
+// ── measuring (as gui.measure measures) ─────────────────────────────
 fn measure(
     spec: &Spec,
     ts: &mut TextSystem,
@@ -597,8 +593,7 @@ fn leaf_size(
     Ok((0.0, 0.0))
 }
 
-// ── gui.flatten ──────────────────────────────────────────────────────
-
+// ── gui.flatten ─────────────────────────────────────────────────────
 /// `gui.flatten(root, spec, prev)`: the view read into the core's arrays
 /// — `#{ n, id, nodes, paths, index, gkeys, glifts, wraps, changed }` — or
 /// `()` when the view holds a `memo` node (Loom expands those first).
@@ -1183,8 +1178,7 @@ fn flatten_full(
     ]))
 }
 
-// ── the arrays the engine keeps ──────────────────────────────────────
-
+// ── the arrays the engine keeps ─────────────────────────────────────
 /// One answer's arrays, kept by the engine under the answer's `id`, and
 /// the boxes the core computed over them (`gui.flat_keep`).
 struct FlatState {
@@ -1418,8 +1412,7 @@ fn own_eq(a: &Value, b: &Value) -> bool {
     }
 }
 
-// ── gui.flat_emit ────────────────────────────────────────────────────
-
+// ── gui.flat_emit ───────────────────────────────────────────────────
 fn nums_of(v: &Value, what: &str) -> Res<Vec<f64>> {
     match v {
         Value::List(l) => Ok(l.iter().map(fnum).collect()),
@@ -1646,8 +1639,7 @@ fn group_op(
     op
 }
 
-// ── what the placements are read from, in either tier's form ─────────
-
+// ── what the placements are read from, in either tier's form ────────
 /// A list's items as the interpreter holds them, or as olang's VM does:
 /// last frame's placements come back from Loom in the form they were
 /// answered in (the VM's own lists, when the VM asked).
@@ -1898,8 +1890,7 @@ impl<'a> Fld<'a> {
     }
 }
 
-// ── gui.flat_emit ────────────────────────────────────────────────────
-
+// ── gui.flat_emit ───────────────────────────────────────────────────
 /// A node's placements: last frame's (`j` in its lists, its first
 /// placement's path made `path` when that changed), or made now.
 enum Placed<'a> {
@@ -2251,8 +2242,7 @@ impl Emitted<'_> {
     }
 }
 
-// ── keyed: what last frame placed that this frame keeps ───────────────
-
+// ── keyed: what last frame placed that this frame keeps ─────────────
 /// Last frame's flatten answer, for the keyed keep.
 struct PrevFlat<'a> {
     st: Arc<FlatState>,
@@ -2784,8 +2774,7 @@ fn vm_flat_answer(v: Value) -> OvmValue {
     OvmValue::new_map(Arc::new(out))
 }
 
-// ── gui.flat_diff and gui.flat_index: a frame's placements, read ──────
-
+// ── gui.flat_diff and gui.flat_index: a frame's placements, read ────
 /// A value read where it is, in either tier's form: a VM value, an
 /// interpreter value (a wrapped one's insides), or absent (`()`). Reading
 /// a placement's fields this way converts and copies nothing.

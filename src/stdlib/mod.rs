@@ -1,3 +1,6 @@
+//! The standard library: each module (`fs`, `http`, `json`, `ods`, ...)
+//! and the table a program's `use` and dotted calls resolve against.
+
 use crate::ast::Value;
 use std::sync::Arc;
 

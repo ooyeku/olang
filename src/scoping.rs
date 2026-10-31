@@ -186,8 +186,7 @@ impl Validator {
         }
     }
 
-    // ── statements ────────────────────────────────────────────────────
-
+    // ── statements ──────────────────────────────────────────────────
     fn stmt(&mut self, stmt: &Statement) {
         match stmt {
             // Macros are expanded away before scoping normally runs; on a
@@ -307,8 +306,7 @@ impl Validator {
         self.pop();
     }
 
-    // ── assignment: the two rules ─────────────────────────────────────
-
+    // ── assignment: the two rules ───────────────────────────────────
     fn assign(&mut self, target: &str, value: &Expr) {
         self.expr(value);
         match self.lookup(target) {
@@ -351,8 +349,7 @@ impl Validator {
         }
     }
 
-    // ── expressions ───────────────────────────────────────────────────
-
+    // ── expressions ─────────────────────────────────────────────────
     fn expr(&mut self, e: &Expr) {
         match e {
             Expr::MacroCall { .. } => {}
@@ -430,7 +427,7 @@ impl Validator {
                 }
             }
 
-            // ── plain recursion ──
+            // ── plain recursion ─────────────────────────────────────
             Expr::Call { callee, arguments } => {
                 self.expr(callee);
                 for a in arguments {
@@ -533,7 +530,7 @@ impl Validator {
                 }
             }
 
-            // ── leaves ──
+            // ── leaves ──────────────────────────────────────────────
             Expr::Integer(_)
             | Expr::Float(_)
             | Expr::String(_)

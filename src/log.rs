@@ -1,3 +1,6 @@
+//! olang's internal diagnostics, filtered by `OLANG_LOG_LEVEL` (warnings
+//! and errors by default).
+
 use std::env;
 use std::fmt;
 

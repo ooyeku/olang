@@ -2568,7 +2568,6 @@ impl Gpu {
 }
 
 // ── vector paths: their coverage drawn on the GPU ───────────────────
-
 /// The coverage of a frame's paths (vector.rs's meshes), drawn into atlas
 /// pages: a fill's fan triangles counted into the stencil and covered, a
 /// stroke's segments by their distance (their maximum: a join drawn
@@ -3132,7 +3131,6 @@ fn new_page(device: &wgpu::Device, w: u32, h: u32) -> (wgpu::Texture, wgpu::Text
 }
 
 // ── materials: what is under a box, blurred ─────────────────────────
-
 /// A material's blur: the window's pixels under it averaged in `k`-pixel
 /// blocks, then a Gaussian across and down at that size.
 const BLUR_SHADER: &str = r#"
@@ -3455,7 +3453,6 @@ impl Gpu {
 }
 
 // ── colour: the frame presented in Display P3 ───────────────────────
-
 /// Whether a surface of `format` can be presented in Display P3 (Metal's
 /// can: the layer is then colour-matched to the screen).
 fn wide_gamut(caps: &wgpu::SurfaceCapabilities, format: wgpu::TextureFormat) -> bool {

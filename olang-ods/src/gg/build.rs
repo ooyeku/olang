@@ -160,8 +160,7 @@ impl FacetLayout {
     }
 }
 
-// ── reading a layer's columns ────────────────────────────────────────
-
+// ── reading a layer's columns ───────────────────────────────────────
 fn sorted_levels(vals: impl Iterator<Item = String>, order: Option<&Vec<String>>) -> Vec<String> {
     let set: BTreeSet<String> = vals.collect();
     match order {
@@ -321,8 +320,7 @@ fn constant_params_aes(geom: &str) -> &'static [(&'static str, Aes)] {
     }
 }
 
-// ── the pipeline ─────────────────────────────────────────────────────
-
+// ── the pipeline ────────────────────────────────────────────────────
 struct RawLayer {
     layer: Layer,
     geom: String,
@@ -377,7 +375,7 @@ pub fn build(spec: &Spec, opts: &RenderOptions) -> super::Result<Built> {
         }
     }
 
-    // ── read each layer's aesthetics ──
+    // ── read each layer's aesthetics ────────────────────────────────
     let mut raws: Vec<RawLayer> = Vec::new();
     // the level order of each aesthetic mapped to a Category: its scale's
     // order when the scale gives none
@@ -579,10 +577,10 @@ pub fn build(spec: &Spec, opts: &RenderOptions) -> super::Result<Built> {
         });
     }
 
-    // ── facets ──
+    // ── facets ──────────────────────────────────────────────────────
     let facet = facet_panels(spec, &mut raws)?;
 
-    // ── discrete positions: levels across layers, then codes to 1..k ──
+    // ── discrete positions: levels across layers, then codes to 1..k ───
     for (axis, ps) in [('x', &mut sx), ('y', &mut sy)] {
         let mut levels: BTreeSet<String> = BTreeSet::new();
         let mut any = false;
@@ -616,7 +614,7 @@ pub fn build(spec: &Spec, opts: &RenderOptions) -> super::Result<Built> {
         }
     }
 
-    // ── groups: the interaction of the categorical aesthetics ──
+    // ── groups: the interaction of the categorical aesthetics ───────
     for r in raws.iter_mut() {
         let f = &mut r.frame;
         // a group mapped is the grouping (ggplot): alone, not crossed with
@@ -686,7 +684,7 @@ pub fn build(spec: &Spec, opts: &RenderOptions) -> super::Result<Built> {
         }
     }
 
-    // ── transform continuous positions ──
+    // ── transform continuous positions ──────────────────────────────
     for r in raws.iter_mut() {
         for (axis, ps) in [('x', &sx), ('y', &sy)] {
             if ps.trans == Trans::Identity || ps.kind != PosKind::Continuous {
@@ -708,7 +706,7 @@ pub fn build(spec: &Spec, opts: &RenderOptions) -> super::Result<Built> {
         }
     }
 
-    // ── stats ──
+    // ── stats ───────────────────────────────────────────────────────
     let range_of = |axis: char| -> (f64, f64) {
         let mut lo = f64::INFINITY;
         let mut hi = f64::NEG_INFINITY;
@@ -895,7 +893,7 @@ pub fn build(spec: &Spec, opts: &RenderOptions) -> super::Result<Built> {
         });
     }
 
-    // ── train position scales per panel ──
+    // ── train position scales per panel ─────────────────────────────
     let zoom = opts.zoom.map(|(a, b, _)| (a.min(b), a.max(b)));
     let zoom_panel = opts.zoom.and_then(|z| z.2);
     let (htrain_is_x, h_scale_free) = if flip {
@@ -968,7 +966,7 @@ pub fn build(spec: &Spec, opts: &RenderOptions) -> super::Result<Built> {
         ty.push(t_y);
     }
 
-    // ── non-position scales: train, then map every row ──
+    // ── non-position scales: train, then map every row ──────────────
     let used: BTreeSet<Aes> = layers
         .iter()
         .flat_map(|l| l.frame.cols.keys().copied().filter(|a| a.scaled()))

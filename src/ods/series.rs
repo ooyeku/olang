@@ -7,8 +7,7 @@
 //! lives in this file; that is the engine's job (L0/L2 split in
 //! docs/ods.md).
 //!
-//! Operator semantics chosen for Phase 1 (revisit in the language
-//! reference when the surface stabilizes):
+//! Operator semantics:
 //! - `+ - * /` on Series⊕Series and Series⊕scalar are elementwise with
 //!   broadcast, nulls propagating.
 //! - `< <= > >=` produce Bool-series masks; so do `==`/`!=` **against a
@@ -203,10 +202,7 @@ impl NativeObject for OdsSeries {
     }
 }
 
-// ---------------------------------------------------------------------
-// Value ↔ engine translation
-// ---------------------------------------------------------------------
-
+// ── Value ↔ engine translation ──────────────────────────────────────
 /// An element as a language value: a Date element is a `Date` (the
 /// `dates` module's), a Datetime element its ISO 8601 text (as the
 /// `dates` module writes a moment), a Category element its level.
@@ -633,10 +629,7 @@ fn par_for(class: olang_ods::ParClass, s: &Series) -> bool {
     par(class, s.len())
 }
 
-// ---------------------------------------------------------------------
-// Namespace and dispatch
-// ---------------------------------------------------------------------
-
+// ── Namespace and dispatch ──────────────────────────────────────────
 /// (name, arity) of every series function in the `ods` namespace.
 pub const FUNCTIONS: &[(&str, usize)] = &[
     ("series", 1),
@@ -1009,7 +1002,7 @@ fn dispatch_inner(func: &str, mut args: Vec<Value>, expected: usize) -> Result<V
             )?;
             s.take(&idx).map(make_series_value).map_err(e)
         }
-        // ── windows ──
+        // ── windows ──────────────────────────────────────────────────
         "shift" => {
             let s = want_series(func, &args, 0)?;
             match &args[1] {
@@ -1211,10 +1204,7 @@ fn dispatch_inner(func: &str, mut args: Vec<Value>, expected: usize) -> Result<V
     }
 }
 
-// ---------------------------------------------------------------------
-// Operators
-// ---------------------------------------------------------------------
-
+// ── Operators ───────────────────────────────────────────────────────
 /// Whether `v` is a String series, answered without forcing it.
 fn is_str_series(v: &Value) -> bool {
     let Value::Native(h) = v else { return false };

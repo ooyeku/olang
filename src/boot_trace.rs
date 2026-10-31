@@ -12,7 +12,7 @@
 //! parse cache) and evaluated, functions compiled to bytecode and to
 //! native code, and how long each took.
 //!
-//! Off, each hook is one relaxed load of a flag decided once a process.
+//! Off, each hook is one relaxed load of a flag decided once per process.
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -24,7 +24,7 @@ fn flag() -> bool {
     })
 }
 
-/// Whether the trace is on (decided once a process).
+/// Whether the trace is on (decided once per process).
 #[inline]
 pub fn on() -> bool {
     flag()

@@ -39,10 +39,7 @@ use std::sync::Arc;
 #[cfg(feature = "native")]
 use rayon::prelude::*;
 
-// ---------------------------------------------------------------------
-// The native model value
-// ---------------------------------------------------------------------
-
+// ── The native model value ──────────────────────────────────────────
 #[derive(Debug)]
 pub struct LearnModel {
     pub model: Arc<Model>,
@@ -93,10 +90,7 @@ fn model_of(v: &Value) -> Option<&Arc<Model>> {
     }
 }
 
-// ---------------------------------------------------------------------
-// Namespace
-// ---------------------------------------------------------------------
-
+// ── Namespace ───────────────────────────────────────────────────────
 /// (name, fewest arguments).
 pub const FUNCTIONS: &[(&str, usize)] = &[
     // splitting
@@ -185,10 +179,7 @@ pub fn handles(func: &str) -> bool {
     FUNCTIONS.iter().any(|(n, _)| *n == func)
 }
 
-// ---------------------------------------------------------------------
-// Argument helpers
-// ---------------------------------------------------------------------
-
+// ── Argument helpers ────────────────────────────────────────────────
 type R<T> = Result<T, String>;
 
 fn e(err: olang_ods::OdsError) -> String {
@@ -495,10 +486,7 @@ fn with_seed(opts: Option<&Value>, seed: u64) -> Value {
     Value::Map(Arc::new(m))
 }
 
-// ---------------------------------------------------------------------
-// Dispatch
-// ---------------------------------------------------------------------
-
+// ── Dispatch ────────────────────────────────────────────────────────
 pub fn dispatch(func: &str, args: Vec<Value>) -> R<Value> {
     let min = FUNCTIONS
         .iter()
@@ -626,10 +614,7 @@ fn max_args(func: &str) -> usize {
     }
 }
 
-// ---------------------------------------------------------------------
-// Splitting
-// ---------------------------------------------------------------------
-
+// ── Splitting ───────────────────────────────────────────────────────
 fn test_count(o: &Opts, n: usize) -> R<usize> {
     match o.get("test") {
         None => Ok((0.25 * n as f64).ceil() as usize),
@@ -810,10 +795,7 @@ fn time_splits(args: &[Value]) -> R<Value> {
     Ok(Value::List(Arc::new(out)))
 }
 
-// ---------------------------------------------------------------------
-// Preprocessing
-// ---------------------------------------------------------------------
-
+// ── Preprocessing ───────────────────────────────────────────────────
 fn transformer(func: &str, args: &[Value]) -> R<Value> {
     let f = want_frame(func, args, 0)?;
     let cols = names_arg(func, args.get(1))?;
@@ -869,10 +851,7 @@ fn poly(args: &[Value]) -> R<Value> {
         .map_err(e)
 }
 
-// ---------------------------------------------------------------------
-// Supervised fits
-// ---------------------------------------------------------------------
-
+// ── Supervised fits ─────────────────────────────────────────────────
 const COMMON: &[&str] = &["weights", "task", "class_weight"];
 
 fn allowed(func: &str) -> Vec<&'static str> {
@@ -1316,10 +1295,7 @@ fn silhouette(args: &[Value]) -> R<Value> {
     )))
 }
 
-// ---------------------------------------------------------------------
-// The model as a value
-// ---------------------------------------------------------------------
-
+// ── The model as a value ────────────────────────────────────────────
 fn spec_value(kind: &str, y: Value, x: Value, opts: Value) -> Value {
     map_value(vec![
         ("kind", Value::String(Arc::new(kind.to_string()))),
@@ -1486,10 +1462,7 @@ fn model_value(model: Model, spec: Value) -> Value {
     map_value(out)
 }
 
-// ---------------------------------------------------------------------
-// Prediction
-// ---------------------------------------------------------------------
-
+// ── Prediction ──────────────────────────────────────────────────────
 fn predict(args: &[Value]) -> R<Value> {
     let m = want_model("predict", args, 0)?;
     let f = want_frame("predict", args, 1)?;
@@ -1543,10 +1516,7 @@ fn predict(args: &[Value]) -> R<Value> {
     }
 }
 
-// ---------------------------------------------------------------------
-// Specs and refitting
-// ---------------------------------------------------------------------
-
+// ── Specs and refitting ─────────────────────────────────────────────
 const KINDS: &[&str] = &[
     "linear",
     "ridge",
@@ -1693,10 +1663,7 @@ fn fitted(v: &Value) -> R<Arc<Model>> {
         .ok_or_else(|| "learn: the fit returned no model".to_string())
 }
 
-// ---------------------------------------------------------------------
-// Evaluation
-// ---------------------------------------------------------------------
-
+// ── Evaluation ──────────────────────────────────────────────────────
 fn spec_seed(s: &Spec) -> u64 {
     match &s.opts {
         Value::Map(m) => match m.get("seed") {
@@ -2154,10 +2121,7 @@ fn grid_search(args: &[Value]) -> R<Value> {
     ]))
 }
 
-// ---------------------------------------------------------------------
-// Metrics
-// ---------------------------------------------------------------------
-
+// ── Metrics ─────────────────────────────────────────────────────────
 fn same_len(func: &str, a: &Series, b: &Series) -> R<()> {
     if a.len() != b.len() {
         return Err(format!(

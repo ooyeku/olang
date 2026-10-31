@@ -71,7 +71,7 @@ const FORMAT: u16 = 2;
 pub type Key = [u8; 16];
 
 /// Whether entries are read and written: on, unless
-/// `OLANG_COMPILE_CACHE=0` (read once a process) or there is no home.
+/// `OLANG_COMPILE_CACHE=0` (read once per process) or there is no home.
 pub fn enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| {
@@ -164,10 +164,7 @@ pub fn answer<T: std::hash::Hash + ?Sized>(v: &T) -> u64 {
     h.finish()
 }
 
-// ---------------------------------------------------------------------
-// What an entry holds
-// ---------------------------------------------------------------------
-
+// ── What an entry holds ─────────────────────────────────────────────
 /// One question a compile asked of its scope, with its answer's hash.
 /// `tag` names the question (`crate::ovm::bytecode` defines them); a
 /// `SEGMENT` record starts a group member's own questions, a `LAZY` one
@@ -271,10 +268,7 @@ pub struct Entry {
     pub ids: Vec<(u64, IdRef)>,
 }
 
-// ---------------------------------------------------------------------
-// Serde helpers for the instruction fields that hold process state
-// ---------------------------------------------------------------------
-
+// ── Serde helpers for the instruction fields that hold process state ───
 /// A struct shape as its type and fields, interned again when read.
 pub mod shape_serde {
     use crate::ovm::value::StructShape;
@@ -347,9 +341,7 @@ pub fn value_of(p: &Plain) -> crate::ovm::OvmValue {
     }
 }
 
-// ---------------------------------------------------------------------
-// Packs: one file a module
-// ---------------------------------------------------------------------
+// ── Packs: one file a module ────────────────────────────────────────
 //
 // A module's entries share one file (a pack), named by the build and
 // the module's path, read whole the first time one of its functions

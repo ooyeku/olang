@@ -92,8 +92,7 @@ fn aimed_here() -> bool {
     t == 0 || t == thread_no()
 }
 
-// ── budgets ──────────────────────────────────────────────────────────
-
+// ── budgets ─────────────────────────────────────────────────────────
 /// The message a call over its budget raises (as `interrupted` does).
 pub const BUDGET_MESSAGE: &str = "interrupted: over its time budget";
 

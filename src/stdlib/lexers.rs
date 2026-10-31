@@ -50,8 +50,7 @@ pub fn tokens(src: &str, lang: &str) -> Vec<Tok> {
     out
 }
 
-// ── shared pieces ────────────────────────────────────────────────────
-
+// ── shared pieces ───────────────────────────────────────────────────
 fn ch(src: &str, i: usize) -> Option<char> {
     src.get(i..).and_then(|s| s.chars().next())
 }
@@ -141,8 +140,7 @@ fn string_end(src: &str, mut i: usize, quote: &str, escapes: bool, multiline: bo
 
 const OPERATOR_CHARS: &str = "+-*/%=<>!&|^~?:@";
 
-// ── C-like code: Python, Rust, JavaScript, JSON ──────────────────────
-
+// ── C-like code: Python, Rust, JavaScript, JSON ─────────────────────
 struct Spec {
     keywords: &'static [&'static str],
     constants: &'static [&'static str],
@@ -569,8 +567,7 @@ fn code(src: &str, spec: &Spec) -> Vec<Tok> {
     out
 }
 
-// ── shell ────────────────────────────────────────────────────────────
-
+// ── shell ───────────────────────────────────────────────────────────
 const SHELL_KEYWORDS: &[&str] = &[
     "if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case", "esac",
     "in", "function", "return", "export", "local", "readonly", "select", "time",
@@ -778,8 +775,7 @@ fn shell(src: &str) -> Vec<Tok> {
     out
 }
 
-// ── TOML ─────────────────────────────────────────────────────────────
-
+// ── TOML ────────────────────────────────────────────────────────────
 fn toml(src: &str) -> Vec<Tok> {
     let mut out: Vec<Tok> = Vec::new();
     let n = src.len();
@@ -956,8 +952,7 @@ fn toml(src: &str) -> Vec<Tok> {
     out
 }
 
-// ── Markdown ─────────────────────────────────────────────────────────
-
+// ── Markdown ────────────────────────────────────────────────────────
 fn markdown(src: &str) -> Vec<Tok> {
     let mut out: Vec<Tok> = Vec::new();
     let mut i = 0usize;

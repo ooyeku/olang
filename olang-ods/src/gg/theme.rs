@@ -159,7 +159,7 @@ impl Theme {
         }
     }
 
-    // ── the one type scale ──
+    // ── the one type scale ──────────────────────────────────────────
     pub fn tick(&self) -> f64 {
         (self.base * 0.91 * 10.0).round() / 10.0
     }

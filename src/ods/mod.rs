@@ -1,11 +1,10 @@
-//! ods — the Olang Data Stack.
+//! ods, olang's data stack: Series, Frames, expressions, statistics,
+//! models and charts.
 //!
-//! Phase 0 landed the seam: the module registry, Native values, and the
-//! probe type that pins the plumbing. Phase 1 added Series — a typed,
-//! null-aware 1-D array backed by the `olang-ods` engine crate (pure
-//! kernels, no olang dependency). Phase 2 adds the `stats` namespace:
-//! distributions, t-tests, chi-squared, correlation, and `stats.lm`,
-//! all thin tables over the engine (L2 of the layer cake). See
+//! This layer is the language side. It checks arguments, converts olang
+//! values to and from the `olang-ods` engine crate (pure kernels with no
+//! olang dependency), and registers the native value types with both
+//! execution tiers. The numeric work happens in the engine. See
 //! `docs/ods.md`.
 
 mod colfns;

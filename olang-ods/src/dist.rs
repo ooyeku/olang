@@ -1,6 +1,6 @@
 //! Statistical distributions: thin, total wrappers over statrs.
 //!
-//! Four families cover Phase 2's inference needs — normal, Student's t,
+//! Four families cover the inference functions: normal, Student's t,
 //! chi-squared, and F. Each exposes pdf / cdf / ppf (inverse cdf).
 //! Sampling is deliberately absent here: the language layer samples by
 //! inverse transform, drawing uniforms from olang's own seeded RNG so
@@ -94,10 +94,7 @@ pub fn f_ppf(q: f64, d1: f64, d2: f64) -> Result<f64> {
     Ok(fisher(d1, d2)?.inverse_cdf(q))
 }
 
-// ---------------------------------------------------------------------
-// Every family, vectorized
-// ---------------------------------------------------------------------
-
+// ── Every family, vectorized ────────────────────────────────────────
 use statrs::distribution::{
     Beta as BetaD, Binomial, Discrete, DiscreteCDF, Gamma as GammaD, LogNormal, Poisson,
 };
@@ -353,10 +350,7 @@ where
     }
 }
 
-// ---------------------------------------------------------------------
-// The noncentral t (power)
-// ---------------------------------------------------------------------
-
+// ── The noncentral t (power) ────────────────────────────────────────
 fn pnorm(x: f64) -> f64 {
     0.5 * statrs::function::erf::erfc(-x / std::f64::consts::SQRT_2)
 }

@@ -1,3 +1,7 @@
+//! The tree-walking interpreter: the reference semantics every other tier
+//! must agree with. It evaluates the syntax tree, loads modules, and hands
+//! hot functions to the bytecode tier.
+
 use crate::ast::{
     Argument, BinaryOp, BuiltinFunction, EnumVariantData, Expr, FnRun, Function, FunctionDecl,
     LetDecl, MatchArm, Parameter, Program, RunRef, ShareDecl, Statement, TestDecl, TypeAnnotation,
@@ -166,7 +170,7 @@ struct OpenRun {
     names: HashMap<String, (u32, Value)>,
 }
 
-/// Olang interpreter with optional type checking
+/// olang interpreter with optional type checking
 pub struct Interpreter {
     environment: Environment,
     /// Shared, not owned: every builtin call hands the registry to
@@ -176,7 +180,7 @@ pub struct Interpreter {
     safepoint_manager: Arc<SafepointManager>,
     pub module_debug_config: ModuleDebugConfig,
 
-    // Enhanced module system
+    // Modules
     module_cache: HashMap<String, ModuleCacheEntry>,
     /// Each name an import bound, with the value it bound: a binding that
     /// still holds that value is the import's (a re-run `use` refreshes
@@ -219,16 +223,15 @@ pub struct Interpreter {
     lambda_shapes: HashMap<usize, Arc<LambdaShape>>,
     /// A bridge interpreter's view of the program's functions, by name.
     bridge_functions: Option<Arc<HashMap<String, Arc<Function>>>>,
-    module_loading_stack: Vec<String>, // Feature 7: Track modules currently being loaded for circular detection
+    module_loading_stack: Vec<String>, // what is loading now, to catch an import cycle
 
-    // Feature 8: Smart caching system
+    // Module cache settings and counters
     smart_cache_config: SmartCacheConfig,
     cache_statistics: CacheStatistics,
 
-    // Feature 9: Intuitive error messages
     error_formatter: IntuitiveErrorFormatter,
 
-    // MEMORY PROTECTION: Prevent exponential memory growth
+    // Recursion depth, against runaway recursion
     call_depth: usize,
     max_call_depth: usize,
 
@@ -435,7 +438,6 @@ pub enum ArgSlot {
 
 impl Interpreter {
     pub fn new() -> Self {
-        // Feature 8: Initialize smart caching
         let smart_cache_config = SmartCacheConfig::default();
 
         let mut interpreter = Self {
@@ -444,7 +446,7 @@ impl Interpreter {
             safepoint_manager: Arc::new(SafepointManager::new()),
             module_debug_config: ModuleDebugConfig::default(),
 
-            // Enhanced module system
+            // Modules
             module_cache: HashMap::new(),
             imported: HashMap::new(),
             module_name_index: HashMap::new(),
@@ -458,14 +460,14 @@ impl Interpreter {
             fn_run: None,
             lambda_shapes: HashMap::new(),
             bridge_functions: None,
-            module_loading_stack: Vec::new(), // Feature 7: Track modules currently being loaded for circular detection
+            module_loading_stack: Vec::new(), // what is loading now, to catch an import cycle
 
-            // Feature 8: Smart caching system
+            // Module cache settings and counters
             smart_cache_config,
             cache_statistics: CacheStatistics::default(),
             error_formatter: IntuitiveErrorFormatter::default(),
 
-            // MEMORY PROTECTION: Initialize recursion depth tracking
+            // Recursion depth
             call_depth: 0,
             max_call_depth: DEFAULT_MAX_CALL_DEPTH,
             step_budget: None,
@@ -2078,7 +2080,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 let left_value = self.eval_expr(left)?;
                 match right.as_ref() {
                     Expr::Call { callee, arguments } => {
-                        // Enhanced named argument resolution for pipelines
+                        // Named arguments in a pipeline call
                         let callee_value = self.callee_value(callee)?;
 
                         // The piped value fills the first parameter, so resolve
@@ -2388,13 +2390,13 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 }
             }
             Expr::Spread(expr) => {
-                // For now, just evaluate the inner expression
-                // Spread semantics would be handled at the call site
+                // A spread outside a call or list literal is just its value;
+                // the call site handles real spreading.
                 self.eval_expr(expr)
             }
             Expr::Rest(expr) => {
-                // For now, just evaluate the inner expression
-                // Rest semantics would be handled in pattern matching
+                // Rest only means something in a pattern; as an expression it
+                // is its value.
                 self.eval_expr(expr)
             }
             Expr::Index { object, index } => {
@@ -3632,7 +3634,6 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             // the same boundary checks a real frame would.
             let mut tail_frames_elided = false;
             let result = loop {
-                // Create new environment with current environment as parent
                 let mut new_env = Environment::with_parent(self.environment.clone());
                 // The frame belongs to the function's file: lookups from
                 // inside it read this file's frames and tables, never the
@@ -3786,7 +3787,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         callee: Value,
         arguments: Vec<Value>,
     ) -> Result<Value, InterpreterError> {
-        // MEMORY PROTECTION: Check recursion depth to prevent exponential memory growth
+        // Stop runaway recursion before it exhausts memory
         if self.call_depth >= self.max_call_depth {
             return Err(InterpreterError::RuntimeError {
                 message: format!(
@@ -4114,12 +4115,12 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         BuiltinFunctions::call(&builtin_functions, name, arguments, self)
     }
 
-    /// Feature 9: Get the intuitive error formatter
+    /// The formatter that adds context and suggestions to errors.
     pub fn get_error_formatter(&self) -> &IntuitiveErrorFormatter {
         &self.error_formatter
     }
 
-    /// Feature 9: Format an interpreter error with enhanced context and suggestions
+    /// Format an error with its context and suggestions.
     pub fn format_error(&self, error: &InterpreterError) -> String {
         self.error_formatter.format_error(error)
     }
@@ -4143,7 +4144,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             safepoint_manager: self.safepoint_manager.clone(),
             module_debug_config: self.module_debug_config.clone(),
 
-            // Enhanced module system
+            // Modules
             module_cache: self.module_cache.clone(),
             imported: self.imported.clone(),
             module_name_index: self.module_name_index.clone(),
@@ -4157,16 +4158,15 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             fn_run: None,
             lambda_shapes: HashMap::new(),
             bridge_functions: self.bridge_functions.clone(),
-            module_loading_stack: Vec::new(), // Feature 7: Each thread gets its own loading stack
+            module_loading_stack: Vec::new(), // each thread loads on its own
 
-            // Feature 8: Smart caching system
+            // Module cache settings and counters
             smart_cache_config: self.smart_cache_config.clone(),
             cache_statistics: self.cache_statistics.clone(),
 
-            // Feature 9: Intuitive error messages
             error_formatter: self.error_formatter.clone(),
 
-            // MEMORY PROTECTION: Initialize fresh recursion tracking for each thread
+            // Each thread counts its own recursion depth
             call_depth: 0,
             max_call_depth: self.max_call_depth,
             step_budget: self.step_budget,
@@ -4324,7 +4324,6 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         function: Value,
         args: Vec<Value>,
     ) -> Result<Value, InterpreterError> {
-        // Create a local copy of interpreter state for this thread
         let mut local_interpreter = self.thread_safe_clone();
         local_interpreter.call_function(function, args)
     }
@@ -4838,7 +4837,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             let key = self.eval_expr(&entry.key)?;
             let value = self.eval_expr(&entry.value)?;
 
-            // Convert key to string (maps in Olang use string keys)
+            // Convert key to string (maps in olang use string keys)
             let key_str = match key {
                 Value::String(ref s) => s.as_ref().clone(),
                 Value::Integer(i) => i.to_string(),

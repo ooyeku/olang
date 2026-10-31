@@ -5,7 +5,8 @@ use crate::ast::Value;
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 
-/// Enhanced module cache entry with smart caching features
+/// A loaded module in the cache, with what decides when it is reloaded
+/// or evicted.
 #[derive(Debug, Clone)]
 pub struct ModuleCacheEntry {
     pub module: Value,
@@ -16,7 +17,6 @@ pub struct ModuleCacheEntry {
     pub file_len: Option<u64>,
     pub dependencies: Vec<String>,
 
-    // Feature 8: Smart caching enhancements (simplified for thread safety)
     pub content_hash: String,       // SHA-256 hash of file content
     pub compilation_time: Duration, // Time taken to compile this module
     pub access_count: u64,          // How often this module is accessed
@@ -25,13 +25,12 @@ pub struct ModuleCacheEntry {
     pub memory_size: usize,         // Estimated memory usage of cached data
 }
 
-/// Enhanced module dependency tracking with smart invalidation
+/// Which modules import which, for invalidating dependents.
 #[derive(Debug, Clone)]
 pub struct ModuleDependencyTracker {
     pub dependencies: HashMap<String, Vec<String>>, // module -> its dependencies
     pub dependents: HashMap<String, Vec<String>>,   // module -> modules that depend on it
 
-    // Feature 8: Smart dependency tracking
     pub dependency_timestamps: HashMap<String, SystemTime>, // module -> when it was last compiled
     pub dependency_hashes: HashMap<String, String>,         // module -> content hash
     pub invalidation_queue: Vec<String>,                    // modules pending invalidation
@@ -85,7 +84,7 @@ impl ModuleDependencyTracker {
     }
 }
 
-/// Smart cache configuration and management
+/// Module cache limits and eviction settings.
 #[derive(Debug, Clone)]
 pub struct SmartCacheConfig {
     pub enable_persistent_cache: bool,

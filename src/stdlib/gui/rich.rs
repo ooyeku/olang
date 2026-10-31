@@ -733,7 +733,6 @@ impl RichEditor {
     }
 
     // ── the program's side ──────────────────────────────────────────
-
     pub fn set_font(&mut self, font: &Font, color: Color) {
         if self.font == *font && self.color == color {
             return;
@@ -791,7 +790,7 @@ impl RichEditor {
     }
 
     /// The styles and the spans of a patch (`styles`: a list of style
-    /// maps; `spans`: a list a line, each of `(start, end, style)` in
+    /// maps; `spans`: a list per line, each of `(start, end, style)` in
     /// characters). Read only when the patch's value is the field's: a
     /// program behind the field styles text it has not seen.
     pub fn set_spans(&mut self, styles: Option<&Value>, spans: Option<&Value>) {
@@ -1007,7 +1006,6 @@ impl RichEditor {
     }
 
     // ── paragraphs ──────────────────────────────────────────────────
-
     /// The paragraph holding byte `at`, and `at` within it.
     fn locate(&self, at: usize) -> (usize, usize) {
         let i = match self.paras.binary_search_by(|p| p.start.cmp(&at)) {
@@ -1450,7 +1448,6 @@ impl RichEditor {
     }
 
     // ── keys ────────────────────────────────────────────────────────
-
     fn set_focus_to(&mut self, at: usize, aff: Affinity, extend: bool) {
         self.focus = at.min(self.buffer.len());
         self.affinity = aff;
@@ -1798,7 +1795,6 @@ impl RichEditor {
     }
 
     // ── the input method ────────────────────────────────────────────
-
     pub fn compose(&mut self, text: &str, cursor: Option<(usize, usize)>, ts: &mut TextSystem) {
         if self.readonly {
             return;
@@ -1833,7 +1829,6 @@ impl RichEditor {
     }
 
     // ── the pointer ─────────────────────────────────────────────────
-
     /// A press at (x, y), device pixels from the text's top-left (scroll
     /// included).
     pub fn press(&mut self, x: f32, y: f32, clicks: u32, shift: bool, ts: &mut TextSystem) {
@@ -2079,7 +2074,6 @@ impl RichEditor {
     }
 
     // ── geometry ────────────────────────────────────────────────────
-
     /// The caret, device pixels from the text's top-left (no scroll).
     pub fn caret_box(&mut self, width: f32, ts: &mut TextSystem) -> BoundingBox {
         let (i, l) = self.locate(self.focus);
@@ -2480,7 +2474,6 @@ impl RichEditor {
     }
 
     // ── lenses ──────────────────────────────────────────────────────
-
     /// The program's lenses: the tops move only when a lens's line or
     /// height did.
     pub fn set_lenses(&mut self, lenses: Vec<Lens>) {

@@ -39,10 +39,7 @@ use crate::{Frame, Series};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-// ---------------------------------------------------------------------
-// Errors that point into the formula
-// ---------------------------------------------------------------------
-
+// ── Errors that point into the formula ──────────────────────────────
 fn at(src: &str, (start, end): (usize, usize), msg: impl Into<String>) -> crate::OdsError {
     let width = src[start.min(src.len())..end.min(src.len())]
         .chars()
@@ -58,10 +55,7 @@ fn at(src: &str, (start, end): (usize, usize), msg: impl Into<String>) -> crate:
     ))
 }
 
-// ---------------------------------------------------------------------
-// Tokens
-// ---------------------------------------------------------------------
-
+// ── Tokens ──────────────────────────────────────────────────────────
 #[derive(Clone, Debug, PartialEq)]
 enum Tok {
     Ident(String),
@@ -167,10 +161,7 @@ fn lex(src: &str) -> Result<Vec<Token>> {
     Ok(out)
 }
 
-// ---------------------------------------------------------------------
-// Arithmetic (inside I() and function calls)
-// ---------------------------------------------------------------------
-
+// ── Arithmetic (inside I() and function calls) ──────────────────────
 /// Numeric arithmetic over columns: what `I(…)` and `log(…)` hold.
 #[derive(Clone, Debug)]
 pub enum Arith {
@@ -266,10 +257,7 @@ fn math_named(name: &str) -> Option<Math> {
     }
 }
 
-// ---------------------------------------------------------------------
-// Factors and terms
-// ---------------------------------------------------------------------
-
+// ── Factors and terms ───────────────────────────────────────────────
 #[derive(Clone, Debug)]
 pub enum FactorKind {
     /// A bare column: numeric, or categorical when it holds text.
@@ -864,10 +852,7 @@ impl Response {
     }
 }
 
-// ---------------------------------------------------------------------
-// Coding against a Frame
-// ---------------------------------------------------------------------
-
+// ── Coding against a Frame ──────────────────────────────────────────
 /// A categorical factor's levels, as learned from the training rows.
 #[derive(Clone, Debug)]
 pub enum Levels {

@@ -15,8 +15,7 @@ use crate::ast::Value;
 use pulldown_cmark::{CowStr, Event, LinkType, Options as CmOptions, Parser, Tag, TagEnd};
 use std::sync::Arc;
 
-// ── options and hooks ────────────────────────────────────────────────
-
+// ── options and hooks ───────────────────────────────────────────────
 /// What raw HTML in the source becomes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HtmlMode {
@@ -103,8 +102,7 @@ fn cm_options() -> CmOptions {
         | CmOptions::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS
 }
 
-// ── slugs ────────────────────────────────────────────────────────────
-
+// ── slugs ───────────────────────────────────────────────────────────
 /// The anchor GitHub gives a heading whose text is `text`: lower-cased,
 /// letters, digits, `-` and `_` kept, each space a `-`, everything else
 /// dropped.
@@ -146,8 +144,7 @@ impl Slugs {
     }
 }
 
-// ── escaping and URLs ────────────────────────────────────────────────
-
+// ── escaping and URLs ───────────────────────────────────────────────
 pub fn escape_html(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 8);
     for c in s.chars() {
@@ -198,8 +195,7 @@ fn safe_url(url: &str, image: bool) -> bool {
     }
 }
 
-// ── the renderer ─────────────────────────────────────────────────────
-
+// ── the renderer ────────────────────────────────────────────────────
 struct Walk<'h, H: Hooks + ?Sized> {
     opts: Options,
     hooks: &'h mut H,
@@ -659,7 +655,7 @@ pub fn headings(src: &str) -> Vec<Heading> {
     }
 }
 
-/// The document's text: no markup, a block a line.
+/// The document's text: no markup, one block per line.
 pub fn text(src: &str) -> String {
     let mut out = String::new();
     let mut skip = 0usize;
@@ -689,8 +685,7 @@ pub fn text(src: &str) -> String {
     out.trim_end().to_string()
 }
 
-// ── front matter ─────────────────────────────────────────────────────
-
+// ── front matter ────────────────────────────────────────────────────
 /// Front matter split off: its data (a Map), the body after it, and its
 /// format (`yaml`, `toml`, or `""` when there is none).
 pub fn front(src: &str) -> Result<(Value, String, &'static str), String> {
@@ -1175,8 +1170,7 @@ pub mod yaml {
     }
 }
 
-// ── the module ───────────────────────────────────────────────────────
-
+// ── the module ──────────────────────────────────────────────────────
 pub fn create_md_module() -> Value {
     let mut module = crate::ast::ValueMap::default();
     for (name, arity) in [

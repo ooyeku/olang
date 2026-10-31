@@ -18,10 +18,7 @@ use std::hash::{BuildHasherDefault, Hasher};
 
 type Result<T> = std::result::Result<T, OdsError>;
 
-// ---------------------------------------------------------------------
-// Fx-style hashing
-// ---------------------------------------------------------------------
-
+// ── Fx-style hashing ────────────────────────────────────────────────
 #[derive(Default)]
 pub struct FxHasher {
     hash: u64,
@@ -60,10 +57,7 @@ impl Hasher for FxHasher {
 
 pub(crate) type FxMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
 
-// ---------------------------------------------------------------------
-// Frame
-// ---------------------------------------------------------------------
-
+// ── Frame ───────────────────────────────────────────────────────────
 #[derive(Clone, Debug)]
 pub struct Frame {
     names: Vec<String>,
@@ -379,10 +373,7 @@ impl Frame {
         self.take(&idx)
     }
 
-    // -----------------------------------------------------------------
-    // group_by
-    // -----------------------------------------------------------------
-
+    // ── group_by ────────────────────────────────────────────────────
     pub fn group_by(&self, keys: &[String], aggs: &[AggSpec]) -> Result<Frame> {
         if keys.is_empty() {
             return Err(OdsError::InvalidArgument(
@@ -409,10 +400,7 @@ impl Frame {
         Frame::new(pairs)
     }
 
-    // -----------------------------------------------------------------
-    // join
-    // -----------------------------------------------------------------
-
+    // ── join ────────────────────────────────────────────────────────
     /// Hash join on one key column per side. Null keys never match; a
     /// left join keeps unmatched (and null-key) left rows with nulls on
     /// the right. Right columns keep their names, except the right key
@@ -1066,10 +1054,7 @@ struct JoinTable<'a> {
     rrows: &'a [u32],
 }
 
-// ---------------------------------------------------------------------
-// Windows
-// ---------------------------------------------------------------------
-
+// ── Windows ─────────────────────────────────────────────────────────
 /// How a rank distributes the positions that tie.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RankMethod {
@@ -1276,10 +1261,7 @@ fn scalars_equal(a: Scalar, b: Scalar) -> bool {
     }
 }
 
-// ---------------------------------------------------------------------
-// Reshape
-// ---------------------------------------------------------------------
-
+// ── Reshape ─────────────────────────────────────────────────────────
 impl Frame {
     /// Long to wide: one row per distinct `index` combination, one column
     /// per distinct value of `columns`, each cell the `op` aggregate of
@@ -1560,10 +1542,7 @@ pub(crate) fn scalar_name(v: Scalar, fmt_f64: &dyn Fn(f64) -> String) -> String 
     }
 }
 
-// ---------------------------------------------------------------------
-// Join probe
-// ---------------------------------------------------------------------
-
+// ── Join probe ──────────────────────────────────────────────────────
 /// Left frames at or above this many rows probe in parallel. Below it, the
 /// thread hand-off costs more than the probe saves (benches/crossover.rs:
 /// 0.88x at 50,000 rows, 1.25x at 250,000).
@@ -1848,10 +1827,7 @@ impl Series {
     }
 }
 
-// ---------------------------------------------------------------------
-// Group keys
-// ---------------------------------------------------------------------
-
+// ── Group keys ──────────────────────────────────────────────────────
 /// A hashable group/join key. Floats key by bit pattern (all NaNs are
 /// one group).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -2148,10 +2124,7 @@ pub(crate) fn group_ids_multi(key_cols: &[&Series], n: usize) -> (Vec<u32>, usiz
     (ids, next as usize)
 }
 
-// ---------------------------------------------------------------------
-// Aggregation
-// ---------------------------------------------------------------------
-
+// ── Aggregation ─────────────────────────────────────────────────────
 /// Per-group accumulators from one scatter pass: (sum, count, min, max).
 type F64Acc = (Vec<f64>, Vec<i64>, Vec<f64>, Vec<f64>);
 type I64Acc = (Vec<i64>, Vec<i64>, Vec<i64>, Vec<i64>);
@@ -2726,10 +2699,7 @@ fn col_valid(col: &Series, i: usize) -> bool {
     col.validity().is_none_or(|v| v.get(i))
 }
 
-// ---------------------------------------------------------------------
-// Group aggregation broadcast back (`over`) and multi-key sorting
-// ---------------------------------------------------------------------
-
+// ── Group aggregation broadcast back (`over`) and multi-key sorting ───
 /// Each row's group id over `keys` (first-seen order) and the number of
 /// groups: the dictionary encoding `group_by` runs, reusable.
 pub fn group_ids(keys: &[&Series]) -> Result<(Vec<u32>, usize)> {

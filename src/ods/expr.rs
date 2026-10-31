@@ -218,10 +218,7 @@ pub fn output_name(e: &LExpr) -> Option<String> {
     }
 }
 
-// ---------------------------------------------------------------------
-// Operands and the elementwise builder
-// ---------------------------------------------------------------------
-
+// ── Operands and the elementwise builder ────────────────────────────
 /// Chains deeper than this are evaluated as they grow — a bound on the
 /// plans a long loop of operators would otherwise build.
 const MAX_FUSED_DEPTH: usize = 16;
@@ -448,10 +445,7 @@ pub fn force(expr: &Arc<Expr>, len: usize, deps: &[Value]) -> Result<Series, Str
     Ok(out)
 }
 
-// ---------------------------------------------------------------------
-// Resolution against a Frame
-// ---------------------------------------------------------------------
-
+// ── Resolution against a Frame ──────────────────────────────────────
 struct Resolver<'a> {
     frame: &'a Frame,
     memo: HashMap<usize, Arc<Expr>>,

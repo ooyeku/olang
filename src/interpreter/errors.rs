@@ -46,11 +46,11 @@ pub enum InterpreterError {
     #[error("'?' propagated an Err outside of a function")]
     ErrPropagation(Value),
 
-    // Feature 7: Circular dependency detection
+    // Import cycles
     #[error("Circular dependency detected: {cycle_path}")]
     CircularDependencyDetected { cycle_path: String },
 
-    // Feature 9: Enhanced multi-file error messages
+    // Errors that span files
     #[error("Module '{module_path}' not found")]
     ModuleNotFound {
         module_path: String,
@@ -92,7 +92,7 @@ pub enum InterpreterError {
     },
 }
 
-/// Feature 9: Enhanced error message formatter for multi-file development
+/// Formats errors with their file context and suggestions.
 #[derive(Clone)]
 pub struct IntuitiveErrorFormatter {
     pub use_colors: bool,

@@ -144,7 +144,7 @@ fn help() -> &'static crate::help::HelpSystem {
     HELP.get_or_init(crate::help::HelpSystem::new)
 }
 
-// ── UTF-16 boundary layer ─────────────────────────────────────────────
+// ── UTF-16 boundary layer ───────────────────────────────────────────
 // The protocol's positions are UTF-16 code units; the server's internal
 // coordinates are character indices. Convert exactly at the wire.
 
@@ -945,8 +945,7 @@ fn send_diagnostics(
     Ok(())
 }
 
-// ── cross-file modules ─────────────────────────────────────────────────
-
+// ── cross-file modules ──────────────────────────────────────────────
 /// The directory of a document URI, when it is a real file.
 fn doc_dir(uri: &Uri) -> Option<std::path::PathBuf> {
     uri.to_file_path()
@@ -954,8 +953,7 @@ fn doc_dir(uri: &Uri) -> Option<std::path::PathBuf> {
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))
 }
 
-// ── diagnostics ────────────────────────────────────────────────────────
-
+// ── diagnostics ─────────────────────────────────────────────────────
 /// A file's problems exactly as the server publishes them (what
 /// `olang check --format json` writes): syntax, macro expansion, the
 /// checker's errors and advisories, and the unused names as hints tagged
@@ -1239,8 +1237,7 @@ fn declaration_sites<'a>(
     declared
 }
 
-// ── completions ────────────────────────────────────────────────────────
-
+// ── completions ─────────────────────────────────────────────────────
 /// Context-aware completion. After `mod.` the items are that module's
 /// functions, with signatures and documentation from the help registry —
 /// the same entries `:help` prints. Anywhere else: keywords, global
@@ -1730,8 +1727,7 @@ fn doc_markup(d: &crate::help::FunctionDoc) -> lsp_types::Documentation {
     })
 }
 
-// ── declarations by span (the spans rung) ──────────────────────────────
-
+// ── declarations by span (the spans rung) ───────────────────────────
 /// A top-level declaration's name, kind label, and 1-based span. When
 /// the file does not parse — which is most moments in a live editor,
 /// mid-keystroke — falls back to a line scan, so hover, definition, and
@@ -2802,8 +2798,7 @@ fn rename_checks(
     Ok(())
 }
 
-// ── signature help ─────────────────────────────────────────────────────
-
+// ── signature help ──────────────────────────────────────────────────
 /// The callee and active-parameter index for the innermost unclosed call
 /// at the cursor, then its signature from a local declaration or the
 /// registry.
@@ -3169,8 +3164,7 @@ fn signature_help(
     })
 }
 
-// ── formatting ─────────────────────────────────────────────────────────
-
+// ── formatting ──────────────────────────────────────────────────────
 fn format_edits(text: &str) -> Vec<TextEdit> {
     let formatted = crate::tools::fmt::format_source(text);
     if formatted == text {

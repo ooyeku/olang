@@ -58,8 +58,7 @@ impl Fields {
     }
 }
 
-// ── tokens ─────────────────────────────────────────────────────────────
-
+// ── tokens ──────────────────────────────────────────────────────────
 #[derive(Clone, Debug, PartialEq)]
 enum Tok {
     Ident(String),
@@ -196,8 +195,7 @@ fn tokenize(text: &str) -> Vec<T> {
     out
 }
 
-// ── the place ──────────────────────────────────────────────────────────
-
+// ── the place ───────────────────────────────────────────────────────
 /// Whether the text before the caret ends inside a string.
 pub fn in_string(prefix: &str) -> bool {
     matches!(
@@ -545,8 +543,7 @@ fn pipe_left_start(toks: &[T], p: usize) -> usize {
     0
 }
 
-// ── an expression's fields ─────────────────────────────────────────────
-
+// ── an expression's fields ──────────────────────────────────────────
 /// The fields of the expression `expr`, a name's own resolved by
 /// `resolve`.
 pub fn fields_of(expr: &str, resolve: &mut dyn FnMut(&str) -> Option<Fields>) -> Option<Fields> {

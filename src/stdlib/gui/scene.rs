@@ -343,7 +343,7 @@ pub struct EditProps {
     /// them (a completion's up and down, its tab): `"up"`, `"down"`, `"tab"`.
     pub pass_keys: Vec<String>,
     /// A styled field (`rich.rs`): paragraphs laid out each on its own,
-    /// `spans` a list a line of `(start, end, style)`, `styles` the looks.
+    /// `spans` a list per line of `(start, end, style)`, `styles` the looks.
     pub rich: bool,
     pub spans: Option<Value>,
     pub styles: Option<Value>,
@@ -1389,7 +1389,6 @@ impl Scene {
 }
 
 // ── device-pixel snapping ───────────────────────────────────────────
-
 /// A span `[a, a + len)` in device pixels on whole pixels: a thin one
 /// (under three pixels: a hairline, a rule) keeps its thickness rounded
 /// (half a pixel down, never under one) and moves to the nearest pixel, so

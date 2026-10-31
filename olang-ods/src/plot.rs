@@ -2,8 +2,7 @@
 //!
 //! Output is a complete standalone SVG document string — it composes
 //! with `fs.write_file`, an HTTP response, or the wasm playground
-//! equally well, which is the whole design (docs/ods.md,
-//! Phase 4: "plot output is SVG text").
+//! equally well, which is the point.
 //!
 //! The visual defaults follow a validated categorical palette and the
 //! usual charting discipline: series hues assigned in fixed order
@@ -319,10 +318,7 @@ pub struct XySeries {
     pub point_colors: Vec<String>,
 }
 
-// ---------------------------------------------------------------------
-// Public renderers
-// ---------------------------------------------------------------------
-
+// ── Public renderers ────────────────────────────────────────────────
 pub fn render_xy(series: &[XySeries], opts: &PlotOptions) -> Result<String> {
     if series.is_empty() || series.iter().all(|s| s.xs.is_empty()) {
         return Err(OdsError::InvalidArgument(
@@ -1014,10 +1010,7 @@ fn quantile(sorted: &[f64], q: f64) -> f64 {
     }
 }
 
-// ---------------------------------------------------------------------
-// The chart's description: what it draws, as data
-// ---------------------------------------------------------------------
-
+// ── The chart's description: what it draws, as data ─────────────────
 /// The `class` of the `<metadata>` element every chart carries its
 /// description in (JSON, escaped for XML). A class, not an id: a page
 /// holds many charts.
@@ -1239,10 +1232,7 @@ pub fn description_of(svg: &str) -> Option<String> {
     )
 }
 
-// ---------------------------------------------------------------------
-// Layout and drawing helpers
-// ---------------------------------------------------------------------
-
+// ── Layout and drawing helpers ──────────────────────────────────────
 struct Geometry {
     left: f64,
     top: f64,

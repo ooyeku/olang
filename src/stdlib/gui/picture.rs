@@ -116,8 +116,7 @@ pub fn sniff(b: &[u8]) -> Option<Format> {
     None
 }
 
-// ── reading the source ───────────────────────────────────────────────
-
+// ── reading the source ──────────────────────────────────────────────
 /// The bytes of a source, and its identity: a path's (with its length
 /// and modification time), or the content's hash.
 enum Source {
@@ -245,8 +244,7 @@ fn identify(src: &Value) -> Res<(u64, SrcRef<'_>)> {
     }
 }
 
-// ── decoding ─────────────────────────────────────────────────────────
-
+// ── decoding ────────────────────────────────────────────────────────
 /// A JPEG's EXIF orientation (1 to 8; 1 when it says none).
 fn jpeg_orientation(b: &[u8]) -> u8 {
     let mut i = 2;
@@ -664,8 +662,7 @@ fn make(bytes: &[u8], info: Info, bucket: u32) -> Res<Picture> {
     })
 }
 
-// ── animations ───────────────────────────────────────────────────────
-
+// ── animations ──────────────────────────────────────────────────────
 /// An animated picture's frames, composited, at the size it shows.
 pub struct Anim {
     pub frames: Vec<Arc<Picture>>,
@@ -867,8 +864,7 @@ pub fn decode_anim(b: &[u8], info: Info, bucket: u32) -> Res<Option<Anim>> {
     }
 }
 
-// ── the cache ────────────────────────────────────────────────────────
-
+// ── the cache ───────────────────────────────────────────────────────
 struct Held {
     pic: Arc<Picture>,
     used: u64,

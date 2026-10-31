@@ -76,10 +76,7 @@ pub const COLUMN_FUNCTIONS: &[(&str, usize)] = &[
     ("clip", 3),
 ];
 
-// ---------------------------------------------------------------------
-// The value
-// ---------------------------------------------------------------------
-
+// ── The value ───────────────────────────────────────────────────────
 #[derive(Debug)]
 pub struct OdsMatrix(pub Matrix);
 
@@ -203,10 +200,7 @@ fn par() -> bool {
     crate::parallel::should_parallelize(usize::MAX) && olang_ods::parallel_enabled()
 }
 
-// ---------------------------------------------------------------------
-// Conversions
-// ---------------------------------------------------------------------
-
+// ── Conversions ─────────────────────────────────────────────────────
 /// A Float column with no nulls, shared when it is one already.
 fn dense_column(s: &Series, name: &str, func: &str) -> R<Arc<Vec<f64>>> {
     let (vals, _) = matrix::float_values(s, name).map_err(|e| format!("{}: {}", func, e))?;
@@ -451,10 +445,7 @@ fn index_arg(func: &str, v: Option<&Value>, len: usize, what: &str) -> R<usize> 
     Ok(j as usize)
 }
 
-// ---------------------------------------------------------------------
-// `@`
-// ---------------------------------------------------------------------
-
+// ── `@` ─────────────────────────────────────────────────────────────
 /// `a @ b` with a Matrix on either side.
 pub fn matmul(lhs: &Value, rhs: &Value) -> Option<R<Value>> {
     let (a, b) = (matrix_of(lhs), matrix_of(rhs));
@@ -509,10 +500,7 @@ fn matmul_values(func: &str, lhs: &Value, rhs: &Value) -> R<Value> {
     }
 }
 
-// ---------------------------------------------------------------------
-// + - * / and -X
-// ---------------------------------------------------------------------
-
+// ── + - * / and -X ──────────────────────────────────────────────────
 /// `a op b` element by element with a Matrix on either side: the other a
 /// Matrix of the same shape (or a single row or column of it, broadcast),
 /// a number, or a row of numbers — a Series or list as long as the matrix
@@ -642,10 +630,7 @@ pub fn over_columns(
     Some(out)
 }
 
-// ---------------------------------------------------------------------
-// ods.matrix, ods.corr, ods.cov
-// ---------------------------------------------------------------------
-
+// ── ods.matrix, ods.corr, ods.cov ───────────────────────────────────
 pub fn ods_handles(func: &str) -> bool {
     ODS_FUNCTIONS.iter().any(|(n, _)| *n == func)
 }
@@ -722,10 +707,7 @@ pub fn ods_dispatch(func: &str, args: &[Value]) -> R<Value> {
     }
 }
 
-// ---------------------------------------------------------------------
-// mat.*
-// ---------------------------------------------------------------------
-
+// ── mat.* ───────────────────────────────────────────────────────────
 pub fn dispatch(func: &str, args: Vec<Value>) -> R<Value> {
     let full = format!("mat.{}", func);
     let f = full.as_str();

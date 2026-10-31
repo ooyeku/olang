@@ -103,7 +103,7 @@ fn is_ident(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
-/// The lexemes of `text`: words, numbers, strings (a piece a line;
+/// The lexemes of `text`: words, numbers, strings (one piece per line;
 /// a template's `${…}` lexed as code), comments and punctuation.
 fn lex(text: &str) -> Vec<Lexeme> {
     let bytes = text.as_bytes();
