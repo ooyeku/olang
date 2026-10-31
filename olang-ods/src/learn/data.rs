@@ -317,10 +317,7 @@ impl Design {
     }
 }
 
-// ---------------------------------------------------------------------
-// Class labels
-// ---------------------------------------------------------------------
-
+// ── Class labels ────────────────────────────────────────────────────
 /// The distinct classes of a classification target, sorted the way
 /// sklearn sorts them (false < true, ascending Ints, byte-order
 /// Strings). Class `i` of a fit is `Labels[i]`.

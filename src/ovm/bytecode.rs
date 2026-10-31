@@ -310,7 +310,7 @@ pub struct BytecodeVm {
 
 /// Whether callees compile at their first call: on, unless
 /// `OLANG_LAZY_COMPILE=0` asks for the eager route (every callee compiled
-/// with its caller), for A/B measurement. Read once a process.
+/// with its caller), for A/B measurement. Read once per process.
 fn lazy_callees_default() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| !matches!(std::env::var("OLANG_LAZY_COMPILE").as_deref(), Ok("0")))
@@ -507,7 +507,7 @@ pub struct BytecodeCompiler {
     rec_on: bool,
     rec: std::cell::RefCell<Option<cached::Recording>>,
     /// A known function's answer hash, by the function (its parameters
-    /// encoded once a process, not at every call that asks).
+    /// encoded once per process, not at every call that asks).
     known_digests:
         std::cell::RefCell<rustc_hash::FxHashMap<usize, (Arc<crate::ast::Function>, u64)>>,
 }
@@ -613,7 +613,7 @@ impl PartialEq for FieldCache {
     }
 }
 
-/// Bytecode instruction set - Enhanced with more operations
+/// The bytecode instruction set.
 ///
 /// Serializable for the compile cache (`crate::compile_cache`): a
 /// function id is written as the number it had in the run that compiled
@@ -8965,7 +8965,7 @@ impl BytecodeVm {
                 };
                 Some(run())
             }
-            // ── native collection builtins ─────────────────────────────
+            // ── native collection builtins ───────────────────────────
             // These operate directly on the VM value model with no boundary
             // conversion — the bridged versions converted whole collections
             // to AST per call, which turned environment-threading programs
@@ -11727,8 +11727,6 @@ impl BytecodeCompiler {
                 let start_reg = self.shield_operand(start_reg, !Self::assignment_free(end));
                 let end_reg = self.compile_expression(end)?;
 
-                // Create range value - for now, we'll create a constant range
-                // In a full implementation, this would handle dynamic ranges
                 let dst_reg = self.register_allocator.allocate_register();
                 self.emitter
                     .emit_make_range(dst_reg, start_reg, end_reg, *inclusive);
@@ -15587,7 +15585,7 @@ fn ovm_value_view(
     (v.type_name(), payload, arity, scalar)
 }
 
-// Debug switches read once a process: a compile asked the environment
+// Debug switches read once per process: a compile asked the environment
 // for each (once a function, and once each `Move` the liveness pass
 // looked at), and `getenv` scans the whole environment under a lock.
 static DEBUG_LIVENESS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();

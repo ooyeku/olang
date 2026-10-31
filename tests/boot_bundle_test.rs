@@ -1,4 +1,4 @@
-//! The program image from the language side (roadmap W10): `meta.encode`
+//! The program image from the language side: `meta.encode`
 //! yields bytes behind the `olb2` header, a syntax error is an `Err`,
 //! and the Ok(String) miss names its fix.
 

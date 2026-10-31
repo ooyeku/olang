@@ -4,12 +4,13 @@ Part of [the olang book](README.md) ·
 [Architecture and internals](internals.md) ·
 [Stability and compatibility](stability.md)
 
-This chapter describes the two lower execution tiers in detail: the bytecode
-virtual machine (the OVM) and the Cranelift JIT. It covers what each tier
-compiles, how each stays faithful to the interpreter, and what each does not
-compile. The set of constructs a tier does not support is documented as
-precisely as the set it does, because a program's behavior depends on knowing
-where a tier falls back. The rule every tier follows is in
+olang's speed comes from two engines beneath the interpreter: the
+bytecode virtual machine (the OVM) and a JIT built on Cranelift that
+compiles to native machine code. This chapter covers both in depth: what
+each one compiles, how each stays faithful to the interpreter, and what
+each leaves alone. What a tier doesn't handle is documented as carefully
+as what it does, because knowing where a tier hands back to the
+interpreter is how you understand a program's performance. The rule every tier follows is in
 [Architecture and internals](internals.md#the-interpreter-is-the-authority).
 
 ## Table of contents
@@ -28,7 +29,7 @@ where a tier falls back. The rule every tier follows is in
 
 ## Execution model
 
-olang has three execution tiers.
+olang runs code on three tiers.
 
 | Tier | What it is | When it runs |
 |---|---|---|

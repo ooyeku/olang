@@ -241,10 +241,7 @@ impl KMeans {
     }
 }
 
-// ---------------------------------------------------------------------
-// Silhouette
-// ---------------------------------------------------------------------
-
+// ── Silhouette ──────────────────────────────────────────────────────
 /// Mean silhouette coefficient over `rows` (indices into `x`), Euclidean.
 /// O(m²·dims) for m rows, parallel over rows.
 pub fn silhouette(x: &Matrix, labels: &[usize], rows: &[usize], par: bool) -> f64 {
@@ -303,10 +300,7 @@ pub fn silhouette(x: &Matrix, labels: &[usize], rows: &[usize], par: bool) -> f6
     s / m as f64
 }
 
-// ---------------------------------------------------------------------
-// PCA
-// ---------------------------------------------------------------------
-
+// ── PCA ─────────────────────────────────────────────────────────────
 #[derive(Clone, Debug)]
 pub struct Pca {
     pub mean: Vec<f64>,
@@ -403,10 +397,7 @@ impl Pca {
     }
 }
 
-// ---------------------------------------------------------------------
-// Gaussian mixture
-// ---------------------------------------------------------------------
-
+// ── Gaussian mixture ────────────────────────────────────────────────
 #[derive(Clone, Debug)]
 pub struct Gmm {
     pub weights: Vec<f64>,

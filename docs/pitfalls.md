@@ -2,11 +2,12 @@
 
 Part of [the olang book](README.md) · [Language reference](language.md).
 
-A small number of olang behaviors commonly surprise newcomers, particularly
-programmers arriving from Rust, Python, or JavaScript, where the equivalent
-construct behaves differently. This chapter collects those behaviors in one
-place. Each entry describes the behavior and the idiom that works with
-it; the [Language reference](language.md) has the full rules.
+Every language has a few habits that catch people out at first, and
+olang is no exception. Most of them trip up programmers who know Rust,
+Python or JavaScript, where something that looks the same behaves a
+little differently. This chapter gathers them in one place. Each entry
+says what happens, why, and what to write instead. The [Language
+reference](language.md) has the full rules.
 
 ## Table of contents
 

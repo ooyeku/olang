@@ -129,10 +129,7 @@ pub fn handles(func: &str) -> bool {
     FUNCTIONS.iter().any(|(n, _)| *n == func)
 }
 
-// ---------------------------------------------------------------------
-// Argument helpers
-// ---------------------------------------------------------------------
-
+// ── Argument helpers ────────────────────────────────────────────────
 fn given(v: Option<&Value>) -> Option<&Value> {
     v.filter(|v| !matches!(v, Value::Unit))
 }
@@ -244,10 +241,7 @@ fn alternative<'a>(func: &str, v: Option<&'a Value>) -> Result<&'a str, String> 
     }
 }
 
-// ---------------------------------------------------------------------
-// Dispatch
-// ---------------------------------------------------------------------
-
+// ── Dispatch ────────────────────────────────────────────────────────
 pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
     if let Some(inner) = func.strip_prefix("ts.") {
         return super::ts::dispatch(inner, &args);
@@ -632,10 +626,7 @@ fn bootstrap(args: &[Value]) -> Result<Value, String> {
     ]))
 }
 
-// ---------------------------------------------------------------------
-// Distributions
-// ---------------------------------------------------------------------
-
+// ── Distributions ───────────────────────────────────────────────────
 /// A Series as f64 values (NaN at a null) and its validity, for a
 /// vectorized evaluation.
 fn as_f64(func: &str, s: &Series) -> Result<(Vec<f64>, Option<olang_ods::bitmap::Bitmap>), String> {

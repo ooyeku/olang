@@ -1,4 +1,4 @@
-//! Import aliasing (roadmap W8): `use lib.x { name as alias }` binds
+//! Import aliasing: `use lib.x { name as alias }` binds
 //! the export under the alias, share-use re-exports under the alias,
 //! and `olang check` warns when a later bare `use` shadows an earlier
 //! explicit import. Runtime cases are differentials (tiered vs

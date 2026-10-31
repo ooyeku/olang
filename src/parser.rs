@@ -1,3 +1,7 @@
+//! Source text to syntax tree. The grammar is `grammar.pest` at the
+//! repository root; this module walks pest's parse into the [`crate::ast`]
+//! types and turns parse failures into errors with suggestions.
+
 use crate::ast::{
     Argument, BinaryOp, BitwiseOp, EnumVariant, ErrorTypeDecl, Expr, FieldValue, FunctionDecl,
     LetDecl, MapEntry, MatchArm, Parameter, Pattern, Program, ShareDecl, Statement, StructField,
@@ -2530,7 +2534,6 @@ impl Parser {
                 // Skip "Map" literal
                 inner_pairs.next();
 
-                // Get the key type
                 let key_type = inner_pairs
                     .next()
                     .ok_or_else(|| ParseError::InvalidSyntax {
@@ -2538,7 +2541,6 @@ impl Parser {
                     })?;
                 let key_annotation = self.build_type_annotation(key_type.into_inner())?;
 
-                // Get the value type
                 let value_type = inner_pairs
                     .next()
                     .ok_or_else(|| ParseError::InvalidSyntax {
@@ -2556,7 +2558,6 @@ impl Parser {
             Rule::generic_type => {
                 let mut inner_pairs = pair.into_inner();
 
-                // Get the base type name
                 let base_type = inner_pairs
                     .next()
                     .ok_or_else(|| ParseError::InvalidSyntax {
@@ -2581,7 +2582,6 @@ impl Parser {
             Rule::result_type => {
                 let mut inner_pairs = pair.into_inner();
 
-                // Get the ok type
                 let ok_type = inner_pairs
                     .next()
                     .ok_or_else(|| ParseError::InvalidSyntax {
@@ -2589,7 +2589,6 @@ impl Parser {
                     })?;
                 let ok_annotation = self.build_type_annotation(ok_type.into_inner())?;
 
-                // Get the error type
                 let err_type = inner_pairs
                     .next()
                     .ok_or_else(|| ParseError::InvalidSyntax {
@@ -2866,11 +2865,11 @@ impl Parser {
                 let full_str = pair.as_str(); // Get string before moving
                 let inner_pairs = pair.into_inner();
 
-                // The first pair should tell us the variant
-                // We need to iterate through and find the pattern, then determine variant differently
+                // The children hold the inner pattern and, sometimes, the
+                // `Ok`/`Err` token; failing that, the variant is read from
+                // the pattern's own text.
                 let pairs_vec: Vec<_> = inner_pairs.collect();
 
-                // Let's reconstruct what we need by examining what we have
                 let mut variant = None;
                 let mut inner_pattern = None;
 
@@ -2880,7 +2879,7 @@ impl Parser {
                             inner_pattern = Some(self.build_pattern(p.clone().into_inner())?);
                         }
                         _ => {
-                            // This might be a literal token, let's check the string
+                            // a literal token: `Ok` or `Err`
                             let token_str = p.as_str();
                             if token_str == "Ok" {
                                 variant = Some("Ok");
@@ -2891,7 +2890,7 @@ impl Parser {
                     }
                 }
 
-                // If we didn't find variant from tokens, try the original string
+                // no token: read the variant from the source text
                 if variant.is_none() {
                     if full_str.starts_with("Ok(") {
                         variant = Some("Ok");
@@ -3217,11 +3216,11 @@ impl Parser {
                 let full_str = pair.as_str(); // Get string before moving
                 let inner_pairs = pair.into_inner();
 
-                // The first pair should tell us the variant
-                // We need to iterate through and find the pattern, then determine variant differently
+                // The children hold the inner pattern and, sometimes, the
+                // `Ok`/`Err` token; failing that, the variant is read from
+                // the pattern's own text.
                 let pairs_vec: Vec<_> = inner_pairs.collect();
 
-                // Let's reconstruct what we need by examining what we have
                 let mut variant = None;
                 let mut inner_pattern = None;
 
@@ -3231,7 +3230,7 @@ impl Parser {
                             inner_pattern = Some(self.build_pattern(p.clone().into_inner())?);
                         }
                         _ => {
-                            // This might be a literal token, let's check the string
+                            // a literal token: `Ok` or `Err`
                             let token_str = p.as_str();
                             if token_str == "Ok" {
                                 variant = Some("Ok");
@@ -3242,7 +3241,7 @@ impl Parser {
                     }
                 }
 
-                // If we didn't find variant from tokens, try the original string
+                // no token: read the variant from the source text
                 if variant.is_none() {
                     if full_str.starts_with("Ok(") {
                         variant = Some("Ok");
@@ -4462,7 +4461,6 @@ impl Parser {
     }
 
     fn build_template_string(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        // Get the raw content between backticks
         let raw_content = pairs
             .into_iter()
             .find(|p| p.as_rule() == Rule::template_raw_content)
@@ -5356,7 +5354,6 @@ impl ErrorSuggestionEngine {
     ) -> Vec<ErrorSuggestion> {
         let mut suggestions = Vec::new();
 
-        // Get the line content for analysis
         let lines: Vec<&str> = input.lines().collect();
         let line_content = if line > 0 && line <= lines.len() {
             lines[line - 1]
@@ -5472,9 +5469,9 @@ impl ErrorSuggestionEngine {
                 && ch == ';'
             {
                 suggestions.push(ErrorSuggestion {
-                    message: "Semicolons are not used in Olang".to_string(),
+                    message: "Semicolons are not used in olang".to_string(),
                     fix: Some("Remove the semicolon".to_string()),
-                    help: Some("Olang uses newlines and expression-based syntax".to_string()),
+                    help: Some("olang uses newlines and expression-based syntax".to_string()),
                     severity: SuggestionSeverity::Error,
                 });
             }
@@ -5498,10 +5495,10 @@ impl ErrorSuggestionEngine {
         match token {
             ";" => {
                 suggestions.push(ErrorSuggestion {
-                    message: "Semicolons are not used in Olang".to_string(),
+                    message: "Semicolons are not used in olang".to_string(),
                     fix: Some("Remove the semicolon".to_string()),
                     help: Some(
-                        "Olang uses newlines and expression-based syntax, not semicolons"
+                        "olang uses newlines and expression-based syntax, not semicolons"
                             .to_string(),
                     ),
                     severity: SuggestionSeverity::Error,
@@ -5556,7 +5553,7 @@ impl ErrorSuggestionEngine {
             suggestions.push(ErrorSuggestion {
                 message: "JavaScript-style console.log detected".to_string(),
                 fix: Some("Use `println(...)` instead of `console.log(...)`".to_string()),
-                help: Some("Olang uses `println` for output, not `console.log`".to_string()),
+                help: Some("olang uses `println` for output, not `console.log`".to_string()),
                 severity: SuggestionSeverity::Hint,
             });
         }
@@ -5568,7 +5565,7 @@ impl ErrorSuggestionEngine {
                     "Use `println(...)` or string interpolation `\"Hello {name}\"`".to_string(),
                 ),
                 help: Some(
-                    "Olang uses `println` and string interpolation instead of printf".to_string(),
+                    "olang uses `println` and string interpolation instead of printf".to_string(),
                 ),
                 severity: SuggestionSeverity::Hint,
             });
@@ -5578,7 +5575,7 @@ impl ErrorSuggestionEngine {
             suggestions.push(ErrorSuggestion {
                 message: "Use println for output".to_string(),
                 fix: Some("Use `println(...)` instead of `print(...)`".to_string()),
-                help: Some("Olang's print function is called `println`".to_string()),
+                help: Some("olang's print function is called `println`".to_string()),
                 severity: SuggestionSeverity::Hint,
             });
         }

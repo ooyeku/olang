@@ -3,23 +3,24 @@
 Part of [the olang book](README.md) · [A tour of olang](tour.md) ·
 [Language reference](language.md) · [Standard library reference](stdlib.md)
 
-olang has a source-based package manager. A package is a directory of `.ol`
-files with an `olang.toml` manifest. There is no build step and no compiled
-artifact: dependencies are fetched as source and resolved by the same `use`
-mechanism as local modules, so a dependency is used the same way as code
-written in the same project.
+Once a program grows past one file, or starts using code someone else
+wrote, it becomes a package. In olang a package is simply a folder of
+`.ol` files with an `olang.toml` file describing it. There is no build
+step and nothing compiled to ship around. Dependencies arrive as source
+code and are found by the same `use` statement as your own modules, so
+using a library feels exactly like using code from your own project.
 
-Projects are managed by the companion tool `otc`. Everything that
-touches a *file* lives in `olang` (run, repl, test, fmt, check, bench,
-profile; see [Command-line tooling](tooling.md)); everything that touches
-a *project* lives in `otc`. The workflow is local-first: your own
-libraries, on your own machine, by name, with git and registry sources
-for a dependency that lives elsewhere.
+Projects are managed by `otc`, the companion to `olang`. The split is
+simple: `olang` works on files (running, testing, formatting, checking;
+see [Command-line tooling](tooling.md)), and `otc` works on projects.
+It is local-first. Your own libraries live on your own machine and are
+used by name, and git or a registry come into it only for a dependency
+that lives somewhere else.
 
-This chapter covers scaffolding a project, the manifest, dependencies
-and the library shelf, the home directory and toolchains, the project
-benchmark harness, the lockfile, capabilities, and the transparent
-binary `olang build` writes.
+This chapter covers starting a project, the manifest, dependencies and
+the library shelf, the home folder and toolchains, benchmarks, the
+lockfile, capabilities, and the self-describing binaries `olang build`
+writes.
 
 ## Table of contents
 
@@ -234,10 +235,13 @@ package resolves dependencies automatically**. `olang main.ol` reads
 
 ## The library shelf
 
-The shelf is a per-user catalog of libraries kept by name, so a project
-can depend on a local library without recording where it lives. It needs
-no server, account or network: the shelf is one small TOML file, and the
-libraries are ordinary directories of olang source. A shelvable library
+Most of us end up with a few bits of code we reuse everywhere: a date
+helper, a formatting module, a small client for some service. The shelf
+is olang's place for those. It is your personal catalog of libraries,
+kept by name, so any project can say "I use `geometry`" without
+recording where on your disk `geometry` lives. There is no server,
+account or network involved: the shelf is one small TOML file, and the
+libraries are ordinary folders of olang source. A shelvable library
 is a directory with an `index.ol` (the entry point `use` resolves) or an
 `olang.toml` naming it; `otc new <name> --lib` scaffolds that shape.
 
@@ -794,10 +798,16 @@ immutable, since a tag can be moved and a rev cannot.
 
 ## Capabilities
 
-A package declares what it is allowed to touch. The `[capabilities]`
-block in `olang.toml` gates the effectful stdlib surface — `fs`,
-`http` (as `net`), `db`, `proc`, and the environment functions of
-`os` — at the module boundary; pure computation is never gated.
+In most languages any line of code can read your files or talk to the
+network, including code in a library you installed last week. olang
+lets a package say what it is allowed to touch, and holds it to that.
+These permissions are called capabilities.
+
+They live in a `[capabilities]` block in `olang.toml`, and they cover
+the parts of the standard library that reach outside the program: files
+(`fs`), the network through `http` (`net`), databases (`db`), processes
+(`proc`), and the environment functions of `os` (`env`). Plain
+computation is never restricted; only effects are.
 
 `proc` means "may affect processes", including this one: it covers the
 `proc` module, `os.exec`, and `os.exit`, so a dependency refused `proc`
@@ -812,9 +822,19 @@ db = true
 env = true
 ```
 
-Absent, capabilities are wide open: a program with no manifest, or a
-manifest with no `[capabilities]`, runs unrestricted. A denied call is a runtime
-error naming the capability, the call, and the grant that refused it.
+Without a `[capabilities]` block, nothing is restricted: a program with
+no manifest, or a manifest that doesn't mention capabilities, can do
+anything. Once the block is there, a call it doesn't allow stops the
+program with an error that names the capability, the call, and the grant
+that refused it. Here is a program that reads a file, run with file
+access denied:
+
+```text
+$ olang --deny fs peek.ol
+  × Runtime error: capability 'fs' denied: fs.read_file requires it, and this
+  │ program is granted fs=false net=true proc=true db=true env=true
+  │ ([capabilities] manifest or --deny)
+```
 
 A grant that cannot be honoured is refused, never ignored. A key
 `[capabilities]` does not know (a misspelling, or a capability a later
@@ -823,8 +843,8 @@ does not parse while it declares `[capabilities]`, stops the program
 before it runs, and `olang check` fails on it. The same holds for the
 manifest a built binary carries.
 
-**Per-dependency attenuation** grants a dependency fewer capabilities than
-the application, never more:
+You can also give a single dependency less than the rest of the
+application (never more). We call this attenuation:
 
 ```toml
 [capabilities.dependencies.leftpad]
@@ -1004,10 +1024,12 @@ match runtime.load_module("/work/plugins/tier-map/plugin.ol", grant) {
 
 ## The transparent binary
 
-An executable written by [`olang build`](tooling.md#olang-build) embeds
-its complete source, its `olang.toml` and `olang.lock`, its capability
-manifest, and a checksum over all of them. `olang inspect` reads and
-verifies these files without any other context:
+When someone hands you a program, you usually have to take it on trust.
+An executable written by [`olang build`](tooling.md#olang-build) is
+different: it carries its complete source code, its `olang.toml` and
+`olang.lock`, its capability grant, and a checksum (a fingerprint of the
+contents) over all of them. `olang inspect` reads those back out and
+verifies them, with nothing else needed:
 
 ```bash
 olang inspect ./tool             # a summary: version, checksum, capabilities

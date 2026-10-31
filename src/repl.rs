@@ -1,3 +1,6 @@
+//! The interactive REPL in a terminal: line editing, history, completion,
+//! the `:` commands, and the tutorials.
+
 use crate::ast::Value;
 use crate::help::{Colors, HelpContext, HelpSystem, SearchFilters};
 use crate::interpreter::InterpreterError;
@@ -490,7 +493,6 @@ impl Repl {
     }
 
     pub fn with_tier(verbose: bool, enable_tier: bool) -> Result<Self, ReplError> {
-        // Initialize parallelization for optimal performance
         match crate::parallel::initialize_parallelization(None) {
             Err(e) => {
                 if verbose {
@@ -1667,7 +1669,7 @@ impl Repl {
                 self.show_ovm_report(target.as_deref());
             }
             ":version" | "version" => {
-                println!("Olang v{}", VERSION);
+                println!("olang v{}", VERSION);
             }
             ":history" => {
                 if parts.len() > 1 {
@@ -1895,7 +1897,6 @@ impl Repl {
                     });
                     match read {
                         Ok((content, grant)) => {
-                            // Set the file context for proper module resolution
                             let file_path = std::path::Path::new(filename);
                             let absolute_path = if file_path.is_absolute() {
                                 file_path.to_path_buf()
@@ -2371,14 +2372,14 @@ impl Repl {
                 println!("    • Current variables and types");
                 println!("    • Working category context");
 
-                println!("\n{}Enhanced Examples:{}", Colors::CYAN, Colors::RESET);
+                println!("\n{}Examples:{}", Colors::CYAN, Colors::RESET);
                 println!(
                     "  {}:examples <function>{} - Interactive examples with execution",
                     Colors::BLUE,
                     Colors::RESET
                 );
                 println!(
-                    "  {}help examples{} - Comprehensive example gallery",
+                    "  {}help examples{} - Examples for every category",
                     Colors::BLUE,
                     Colors::RESET
                 );
@@ -3244,7 +3245,7 @@ impl Repl {
         self.interpreter.clear_module_cache();
     }
 
-    /// Enhanced debugging methods
+    /// Debugging commands.
     fn show_debug_help(&self) {
         println!(
             "\n{}",
@@ -3358,7 +3359,6 @@ impl Repl {
                             duration.as_secs_f64() * 1000.0
                         );
 
-                        // Enhanced error context
                         self.show_enhanced_error(&e);
                     }
                 }
@@ -3458,7 +3458,6 @@ impl Repl {
                 );
             }
         } else {
-            // Check if it's a builtin function
             let builtins = self.interpreter.get_builtin_functions();
             if let Some(_builtin) = builtins.get(var_name) {
                 println!(
@@ -3490,11 +3489,9 @@ impl Repl {
         // Parse and evaluate the value expression
         match self.eval_line(&value_expr) {
             Ok(value) => {
-                // Check if variable exists
                 let user_vars = self.interpreter.get_user_variables();
                 let existed = user_vars.contains_key(&var_name);
 
-                // Set the variable
                 self.interpreter
                     .define_variable(var_name.clone(), value.clone());
                 self.note(crate::repl_commands::Note::Value {
@@ -3678,7 +3675,6 @@ impl Repl {
             }
         }
 
-        // Get the last command for context
         let empty_string = String::new();
         let last_command = self.command_history.last().unwrap_or(&empty_string).clone();
 
@@ -3705,7 +3701,6 @@ impl Repl {
                 continue;
             }
 
-            // Check if this line contains a caret pointer
             if line.contains("^") {
                 // This is the error pointer line - highlight it specially
                 let parts: Vec<&str> = line.split('|').collect();
@@ -3930,7 +3925,7 @@ impl Repl {
             // Always suggest the general error help
             if has_error_topics {
                 println!(
-                    "    • Type {} for comprehensive error guidance",
+                    "    • Type {} for help with common errors",
                     "help error.fixes".bright_cyan()
                 );
             }
@@ -4076,7 +4071,6 @@ impl Repl {
             return false;
         }
 
-        // Check if one contains the other
         if target.contains(candidate) || candidate.contains(target) {
             return true;
         }
@@ -4341,7 +4335,7 @@ impl Repl {
                         break;
                     }
                     "e" => {
-                        println!("{}📖 Explanation:{}", Colors::YELLOW, Colors::RESET);
+                        println!("{}Explanation:{}", Colors::YELLOW, Colors::RESET);
                         println!("{}", step.explanation);
                         println!();
                     }
@@ -4416,27 +4410,6 @@ impl Repl {
         }
 
         Ok(())
-    }
-}
-
-pub trait ReplExt {
-    fn eval_expression(&mut self, expr: &str) -> Result<Value, ReplError>;
-    fn define_variable(&mut self, name: &str, value: Value);
-    fn get_variable(&self, name: &str) -> Option<Value>;
-}
-
-impl ReplExt for Repl {
-    fn eval_expression(&mut self, expr: &str) -> Result<Value, ReplError> {
-        self.eval_line(expr)
-    }
-
-    fn define_variable(&mut self, name: &str, value: Value) {
-        self.interpreter.define_variable(name.to_string(), value);
-    }
-
-    fn get_variable(&self, _name: &str) -> Option<Value> {
-        // Note: This would need &mut self to work properly, but keeping for compatibility
-        None // Simplified for now
     }
 }
 

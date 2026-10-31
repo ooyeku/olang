@@ -1,4 +1,4 @@
-//! The render thread (macOS): one a process, it draws and presents every
+//! The render thread (macOS): one per process, it draws and presents every
 //! GPU window's frames, so the main thread never waits on the GPU — a
 //! drawable (`nextDrawable` blocks while the compositor holds them), the
 //! encode, the submit and present — and a slow frame never holds up

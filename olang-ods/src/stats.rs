@@ -12,7 +12,7 @@
 //! rayon-parallel pass over the data, and the k×k system goes through a
 //! small in-crate Cholesky (k is the *column* count — tens, not
 //! thousands — so this is 20 lines of textbook, not a worse LAPACK; the
-//! heavyweight decompositions arrive with the Phase 3 matrix type).
+//! heavier decompositions live with the matrix type).
 //! Standard errors come from the diagonal of `(X'X)⁻¹`, p-values from
 //! the t distribution.
 
@@ -23,10 +23,7 @@ use rayon::prelude::*;
 
 type Result<T> = std::result::Result<T, OdsError>;
 
-// ---------------------------------------------------------------------
-// Pairwise statistics
-// ---------------------------------------------------------------------
-
+// ── Pairwise statistics ─────────────────────────────────────────────
 /// Extract the pairwise-complete values of two equal-length series as
 /// dense f64 vectors.
 fn pairwise_complete(a: &Series, b: &Series) -> Result<(Vec<f64>, Vec<f64>)> {
@@ -111,10 +108,7 @@ pub fn corr(a: &Series, b: &Series) -> Result<Option<f64>> {
     Ok(Some(sxy / (sxx * syy).sqrt()))
 }
 
-// ---------------------------------------------------------------------
-// t-tests
-// ---------------------------------------------------------------------
-
+// ── t-tests ─────────────────────────────────────────────────────────
 #[derive(Clone, Copy, Debug)]
 pub struct TTest {
     pub t: f64,
@@ -220,10 +214,7 @@ pub fn t_test_welch(a: &Series, b: &Series) -> Result<TTest> {
     })
 }
 
-// ---------------------------------------------------------------------
-// Chi-squared goodness of fit
-// ---------------------------------------------------------------------
-
+// ── Chi-squared goodness of fit ─────────────────────────────────────
 #[derive(Clone, Copy, Debug)]
 pub struct Chi2Test {
     pub statistic: f64,
@@ -269,10 +260,7 @@ pub fn chi2_gof(observed: &Series, expected: &Series) -> Result<Chi2Test> {
     })
 }
 
-// ---------------------------------------------------------------------
-// Ordinary least squares
-// ---------------------------------------------------------------------
-
+// ── Ordinary least squares ──────────────────────────────────────────
 #[derive(Clone, Debug)]
 pub struct OlsFit {
     /// Coefficients; index 0 is the intercept.
@@ -496,10 +484,7 @@ fn chol_inverse_diag(l: &[Vec<f64>]) -> Vec<f64> {
         .collect()
 }
 
-// ---------------------------------------------------------------------
-// Rank tests
-// ---------------------------------------------------------------------
-
+// ── Rank tests ──────────────────────────────────────────────────────
 /// Average ranks (1-based, ties sharing their mean rank) of `xs`, and
 /// the tie correction term Σ(t³ − t) over the tied groups.
 pub fn average_ranks(xs: &[f64]) -> (Vec<f64>, f64) {

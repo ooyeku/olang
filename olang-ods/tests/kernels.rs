@@ -1,6 +1,5 @@
 //! Every kernel pinned against a naive reference implementation over
-//! generated data, including null patterns — the property-test discipline
-//! the design doc requires (docs/ods.md, Phase 1 gate).
+//! generated data, including null patterns.
 
 use olang_ods::{ArithOp, CmpOp, DType, OdsError, Scalar, Series};
 
@@ -443,8 +442,7 @@ fn map_unary_domain_and_type_errors() {
     );
 }
 
-// ── cast ──────────────────────────────────────────────────────────────
-
+// ── cast ────────────────────────────────────────────────────────────
 #[test]
 fn cast_to_int_yields_null_where_the_value_is_not_representable() {
     // Rust's `as` would saturate 1e30 to i64::MAX and turn NaN into 0 —
@@ -499,8 +497,7 @@ fn cast_uses_the_formatter_it_is_given_for_floats() {
     assert_eq!(olangish.scalar_at(0), Scalar::Str("320.0".to_string()));
 }
 
-// ── unique / value_counts ─────────────────────────────────────────────
-
+// ── unique / value_counts ───────────────────────────────────────────
 #[test]
 fn value_counts_and_unique_see_all_nans_as_one_value() {
     // Keys are float bit patterns with NaN canonicalized, matching
@@ -516,8 +513,7 @@ fn value_counts_and_unique_see_all_nans_as_one_value() {
     assert!(matches!(values.scalar_at(0), Scalar::F64(x) if x.is_nan()));
 }
 
-// ── string-view columns (spans into a shared buffer) ─────────────────
-
+// ── string-view columns (spans into a shared buffer) ────────────────
 fn cell(s: &olang_ods::Series, i: i64) -> String {
     match s.get(i).expect("get") {
         olang_ods::Scalar::Str(v) => v,

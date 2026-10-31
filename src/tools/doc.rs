@@ -202,8 +202,7 @@ pub fn run(paths: &[PathBuf], output: Option<&Path>, markdown: bool) -> i32 {
     0
 }
 
-// ── rendering ───────────────────────────────────────────────────────────
-
+// ── rendering ───────────────────────────────────────────────────────
 fn render_markdown(modules: &[(String, ModuleDoc)]) -> String {
     let mut out = String::from("# API Reference\n\n");
     for (name, doc) in modules {

@@ -294,7 +294,6 @@ pub struct Program {
 }
 
 // ── --param ─────────────────────────────────────────────────────────
-
 static OVERRIDES: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
 
 /// `--param NAME=VALUE` for this process's notebooks: each overrides the
@@ -555,7 +554,6 @@ fn olang_string(s: &str) -> String {
 }
 
 // ── the file ────────────────────────────────────────────────────────
-
 /// The file's lines, a trailing `\r` taken off each. `split('\n')`, so a
 /// file ending in a newline has an empty last line and the program keeps
 /// the file's line count exactly.
@@ -1403,7 +1401,6 @@ pub fn control_cell_name(code: &str) -> Option<String> {
 }
 
 // ── one name, one cell; top to bottom ───────────────────────────────
-
 /// The top-level names a statement defines: a `let`'s bound names, a
 /// function's, a type's (an enum's variants with it), an error type's, a
 /// trait's; with `uses`, the names a `use` binds (each item, or the
@@ -1905,7 +1902,6 @@ pub fn pinned_outputs(text: &str) -> Vec<(OutputBlock, String)> {
 }
 
 // ── the front matter's YAML ─────────────────────────────────────────
-
 /// The strict subset of YAML a notebook's front matter is read in:
 ///
 /// - block maps (`key: value`) and block lists (`- item`), nested by

@@ -1217,10 +1217,7 @@ pub(crate) fn parse_aggs(value: &Value) -> Result<Vec<AggSpec>, String> {
         .collect()
 }
 
-// ---------------------------------------------------------------------
-// Bridges
-// ---------------------------------------------------------------------
-
+// ── Bridges ─────────────────────────────────────────────────────────
 /// Parse CSV text (with a header row) into a Frame, inferring each
 /// column's type: all-Int → Int, numeric → Float, true/false → Bool,
 /// otherwise String. Empty cells are null.
@@ -1377,14 +1374,8 @@ fn csv_record_splits(text: &str, parts: usize) -> Vec<usize> {
     splits
 }
 
-// ---------------------------------------------------------------------
-// The fused CSV scan: delimiters found and fields parsed in one pass
-// ---------------------------------------------------------------------
-
-// ---------------------------------------------------------------------
-// Delimiter scanning
-// ---------------------------------------------------------------------
-
+// ── The fused CSV scan: delimiters found and fields parsed in one pass ───
+// ── Delimiter scanning ──────────────────────────────────────────────
 /// Positions of every `,` and `\n` in `bytes`, in order. On aarch64 the
 /// classification is NEON: 16 bytes per compare, the 0xFF/0x00 lane
 /// mask narrowed to a 64-bit nibble mask with the `vshrn` idiom (4 bits
@@ -3248,7 +3239,7 @@ fn schema(frame: &Frame) -> Result<Value, String> {
     .map_err(e)
 }
 
-// ── streaming ─────────────────────────────────────────────────────
+// ── streaming ───────────────────────────────────────────────────────
 //
 // A bounded-memory reader: it holds an open file and its position, and
 // hands back one Frame per call. Reading a file larger than memory is

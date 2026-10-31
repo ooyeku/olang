@@ -16,8 +16,7 @@ fn olang_bin() -> &'static str {
     env!("CARGO_BIN_EXE_olang")
 }
 
-// ── shebang ────────────────────────────────────────────────────────────
-
+// ── shebang ─────────────────────────────────────────────────────────
 #[test]
 fn shebang_line_parses_and_runs() {
     assert_eq!(
@@ -64,8 +63,7 @@ fn hash_bang_mid_file_is_still_an_error() {
     );
 }
 
-// ── env (pre-existing surface: get_env/set_env/has_env/list_env) ──────
-
+// ── env (pre-existing surface: get_env/set_env/has_env/list_env) ────
 #[test]
 fn env_surface_round_trips() {
     let v = eval(
@@ -78,8 +76,7 @@ fn env_surface_round_trips() {
     );
 }
 
-// ── stdin ──────────────────────────────────────────────────────────────
-
+// ── stdin ───────────────────────────────────────────────────────────
 fn run_with_stdin(src: &str, stdin: &str) -> String {
     let dir = std::env::temp_dir().join(format!("olang-script-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -113,8 +110,7 @@ fn stdin_reads_all_and_lines_strips_endings() {
     assert_eq!(out.trim(), "3 alpha gamma", "lines split, endings stripped");
 }
 
-// ── the pipe convention ────────────────────────────────────────────────
-
+// ── the pipe convention ─────────────────────────────────────────────
 #[test]
 fn closed_stdout_ends_the_program_quietly() {
     // `olang gen.ol | head -1`: when the reader exits, olang must behave
@@ -153,8 +149,7 @@ fn closed_stdout_ends_the_program_quietly() {
     );
 }
 
-// ── path helpers ───────────────────────────────────────────────────────
-
+// ── path helpers ────────────────────────────────────────────────────
 #[test]
 fn path_helpers_join_and_decompose() {
     assert_eq!(

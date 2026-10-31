@@ -1,18 +1,14 @@
-# Simple Makefile for Olang
-
-.PHONY: build install remove clean test wasm dist prepush
+.PHONY: all build install remove clean test wasm dist prepush
 
 WASM_TARGET := wasm32-unknown-unknown
 WASM_ARTIFACT := target/$(WASM_TARGET)/release/olang_playground.wasm
 
-# Default target
 all: build
 
-# Build the project
 build:
-	cargo build --release
+	cargo build --release -p olang -p otc
 
-# Build the browser runtime, then install olang and otc with it embedded
+# Build the browser runtime, then install olang and otc with it embedded.
 install:
 	cargo xtask install
 
@@ -23,22 +19,19 @@ remove:
 	cargo uninstall olang || true
 	cargo uninstall otc || true
 
-# Clean build artifacts
 clean:
 	cargo clean
 
-# Run tests
+# The test profile is optimized like release but skips whole-program LTO,
+# so the ~170 test binaries link in reasonable time.
 test:
-	cargo test
+	cargo test --workspace --profile fasttest
 
-# The full pre-push gate, matching what CI checks — with one difference
-# that is the whole point: clippy runs on FRESH fingerprints. Cargo skips
-# re-linting crates whose files have not changed, so a toolchain update
-# that adds a new lint passes locally on stale cache and then fails CI
-# (this happened: chunks_exact_to_as_chunks landed in stable, local
-# clippy reported clean from cache, CI's fresh toolchain refused).
-# Touching each crate root forces every crate through the linter the
-# way CI's clean checkout does. Costs ~a minute over the cached run.
+# The checks CI runs, before a push. Clippy runs on fresh fingerprints:
+# Cargo skips re-linting crates whose files have not changed, so a new
+# toolchain lint can pass locally from cache and then fail on CI's clean
+# checkout. Touching each crate root sends every crate through the linter
+# again, for about a minute more.
 prepush:
 	cargo fmt --all -- --check
 	@touch src/lib.rs otc/src/main.rs olang-ods/src/lib.rs playground/src/lib.rs
@@ -48,14 +41,15 @@ prepush:
 	cd examples && ../target/release/olang run run_all.ol
 
 # Build the browser runtimes: the profile the web SDK and the examples
-# ship and the whole-stdlib one (target/wasm-full/olang.wasm), which the
-# next `cargo build` of olang embeds in the binary (build.rs), so no app
-# copies a file. Needs `rustup target add wasm32-unknown-unknown` once.
+# ship, and the whole-stdlib one (target/wasm-full/olang.wasm), which the
+# next `cargo build` of olang embeds in the binary (build.rs). Needs
+# `rustup target add wasm32-unknown-unknown` once.
 wasm:
 	cargo xtask wasm
-# Local cross-check of everything a release ships: the release binaries,
-# the playground wasm, and the VS Code .vsix, staged into dist/out/
-# (gitignored) with a SHA256SUMS to compare against CI's.
+
+# Stage everything a release ships into dist/out/ (gitignored), with a
+# SHA256SUMS to compare against CI's: the release binaries, the playground
+# wasm, and the VS Code .vsix.
 dist: build wasm
 	rm -rf dist/out
 	mkdir -p dist/out

@@ -104,8 +104,7 @@ fn ok(v: Value) -> Value {
     Value::Ok(Box::new(v))
 }
 
-// ── A bad date format is an Err, not an abort ──────────────────────────
-
+// ── A bad date format is an Err, not an abort ───────────────────────
 #[test]
 fn a_bad_date_format_is_an_err() {
     let src = r#"
@@ -127,8 +126,7 @@ main()
     assert_eq!(items[4], ok(s("2026")));
 }
 
-// ── The collections' empty reads and pops ──────────────────────────────
-
+// ── The collections' empty reads and pops ───────────────────────────
 #[test]
 fn an_empty_heap_or_deque_reads_unit_and_pops_to_itself() {
     let src = r#"
@@ -160,8 +158,7 @@ main()
     );
 }
 
-// ── The four tier disagreements ────────────────────────────────────────
-
+// ── The four tier disagreements ─────────────────────────────────────
 #[test]
 fn an_integer_literal_pattern_does_not_match_a_float() {
     let src = r#"
@@ -281,8 +278,7 @@ main()
     );
 }
 
-// ── The naming decisions: find, reduce, re.replace ─────────────────────
-
+// ── The naming decisions: find, reduce, re.replace ──────────────────
 #[test]
 fn find_answers_the_element_or_unit() {
     let src = r#"
@@ -336,8 +332,7 @@ main()
     assert_eq!(agree_tiered(src), Ok(l(vec![s("aXbX"), s("aXb1")])));
 }
 
-// ── Language rulings ───────────────────────────────────────────────────
-
+// ── Language rulings ────────────────────────────────────────────────
 fn parse_err(src: &str) -> String {
     match Parser::new().parse(src) {
         Ok(_) => panic!("expected a parse error\n{src}"),
@@ -612,8 +607,7 @@ unwrap(meta.rename(src, #{ "helper": "h2" }))
     );
 }
 
-// ── A field of () reads () ─────────────────────────────────────────────
-
+// ── A field of () reads () ──────────────────────────────────────────
 #[test]
 fn a_field_of_unit_reads_unit() {
     let src = r#"
@@ -645,8 +639,7 @@ main()
     );
 }
 
-// ── A negative index raises ────────────────────────────────────────────
-
+// ── A negative index raises ─────────────────────────────────────────
 #[test]
 fn a_negative_index_raises_and_first_and_last_read_the_ends() {
     let src = r#"
@@ -699,8 +692,7 @@ main()
     );
 }
 
-// ── A condition is a Bool ──────────────────────────────────────────────
-
+// ── A condition is a Bool ───────────────────────────────────────────
 #[test]
 fn a_condition_is_a_bool() {
     let src = r#"
@@ -720,8 +712,7 @@ main()
     }
 }
 
-// ── Printing writes the source form ────────────────────────────────────
-
+// ── Printing writes the source form ─────────────────────────────────
 #[test]
 fn printing_writes_the_source_form() {
     let src = r#"
@@ -753,8 +744,7 @@ main()
     );
 }
 
-// ── Reserved words ─────────────────────────────────────────────────────
-
+// ── Reserved words ──────────────────────────────────────────────────
 #[test]
 fn the_reserved_words_are_refused_as_names_and_allowed_as_members() {
     for word in ["await", "yield", "async", "defer", "const", "pub"] {
@@ -772,8 +762,7 @@ fn the_reserved_words_are_refused_as_names_and_allowed_as_members() {
     );
 }
 
-// ── task.join answers a Result ─────────────────────────────────────────
-
+// ── task.join answers a Result ──────────────────────────────────────
 #[test]
 fn task_join_tells_a_raise_from_a_returned_err() {
     let src = r#"
@@ -796,8 +785,7 @@ let timed = task.join_timeout(spawn { time.sleep(300); 1 }, #{ "timeout_ms": 10 
     );
 }
 
-// ── math: rounding answers an Int ──────────────────────────────────────
-
+// ── math: rounding answers an Int ───────────────────────────────────
 #[test]
 fn rounding_answers_an_int_on_every_tier() {
     // A hot loop compiles the rounding natively; the last call's Float is
@@ -862,8 +850,7 @@ fn vec_sum_of_ints_is_an_int() {
     );
 }
 
-// ── stdlib records: data-keyed are Maps, results plain objects ─────────
-
+// ── stdlib records: data-keyed are Maps, results plain objects ──────
 #[test]
 fn stdlib_records_are_maps_or_plain_objects() {
     let src = r#"
@@ -902,8 +889,7 @@ let r = http.response(404, "no")
     );
 }
 
-// ── absence is (), "nothing yet" is Ok(()) ─────────────────────────────
-
+// ── absence is (), "nothing yet" is Ok(()) ──────────────────────────
 #[test]
 fn absence_is_unit_and_nothing_yet_is_ok_unit() {
     let src = r#"
@@ -930,8 +916,7 @@ chan.close(c)
     );
 }
 
-// ── dates: RFC 3339 out, read back, milliseconds ───────────────────────
-
+// ── dates: RFC 3339 out, read back, milliseconds ────────────────────
 #[test]
 fn dates_write_rfc3339_and_read_their_own_output() {
     let src = r#"
@@ -966,8 +951,7 @@ let dt = unwrap(dates.datetime(2026, 1, 2, 3, 4, 5))
     );
 }
 
-// ── assignment answers () ──────────────────────────────────────────────
-
+// ── assignment answers () ───────────────────────────────────────────
 #[test]
 fn an_assignment_answers_unit_on_every_tier() {
     let src = r#"
@@ -1034,8 +1018,7 @@ let j = unwrap(json.parse("{\"kind\": \"a\"}"))
     assert!(err.contains("expects Map, got List"), "{err}");
 }
 
-// ── top-level names resolve when the function runs ─────────────────────
-
+// ── top-level names resolve when the function runs ──────────────────
 #[test]
 fn top_level_names_resolve_at_call_time_on_every_tier() {
     let src = r#"
@@ -1081,8 +1064,7 @@ fn local_capture() = { let n = 1; let get = () => n; let n = 2; get() }
     );
 }
 
-// ── bytes at the boundaries ─────────────────────────────────────────────
-
+// ── bytes at the boundaries ─────────────────────────────────────────
 #[test]
 fn bytes_and_repeated_names_at_the_boundaries() {
     let src = r#"
@@ -1121,8 +1103,7 @@ let ww = proc.wait(q)
     );
 }
 
-// ── one name for each key ──────────────────────────────────────────────
-
+// ── one name for each key ───────────────────────────────────────────
 #[test]
 fn keys_mean_one_thing_in_every_module() {
     let dir = std::env::temp_dir().join(format!("olang_freeze_keys_{}", std::process::id()));
@@ -1259,8 +1240,7 @@ fn a_spawn_takes_its_argv() {
     assert!(said.is_empty(), "{said:?}");
 }
 
-// ── the empty record pattern ───────────────────────────────────────────
-
+// ── the empty record pattern ────────────────────────────────────────
 #[test]
 fn the_empty_record_pattern_matches_a_record_and_nothing_else() {
     // `{}` names no key: a Map, an object, a parsed JSON object and a
@@ -1323,8 +1303,7 @@ main()
     );
 }
 
-// ── removed names stay removed ──────────────────────────────────────────
-
+// ── removed names stay removed ──────────────────────────────────────
 #[test]
 fn removed_names_are_gone() {
     for gone in [
@@ -1352,8 +1331,7 @@ fn removed_names_are_gone() {
     );
 }
 
-// ── stability.md agrees with the binary ────────────────────────────────
-
+// ── stability.md agrees with the binary ─────────────────────────────
 #[test]
 fn the_contract_agrees_with_the_binary() {
     // the typeof table, a union alias enforced (not reserved), attempt

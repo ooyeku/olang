@@ -20,10 +20,7 @@ use super::rng::Pcg;
 use super::tree::{self, Criterion, Target, Tree, TreeParams};
 use crate::{Frame, Scalar, Series, dist};
 
-// ---------------------------------------------------------------------
-// Options
-// ---------------------------------------------------------------------
-
+// ── Options ─────────────────────────────────────────────────────────
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskHint {
     Auto,
@@ -196,10 +193,7 @@ pub fn default_boost(seed: u64) -> BoostParams {
     }
 }
 
-// ---------------------------------------------------------------------
-// The model
-// ---------------------------------------------------------------------
-
+// ── The model ───────────────────────────────────────────────────────
 #[derive(Clone, Debug)]
 pub enum Task {
     Regression,
@@ -713,10 +707,7 @@ fn tree_params(o: &TreeOpts, k: usize, task: &Task, forest_classifier: bool) -> 
     }
 }
 
-// ---------------------------------------------------------------------
-// Unsupervised fits and transformers
-// ---------------------------------------------------------------------
-
+// ── Unsupervised fits and transformers ──────────────────────────────
 fn complete(frame: &Frame, cols: &[String], drop_first: bool) -> Result<(Design, Matrix, usize)> {
     let cols: Vec<String> = if cols.is_empty() {
         frame.names().to_vec()
@@ -1061,10 +1052,7 @@ pub fn poly(
     Ok(out)
 }
 
-// ---------------------------------------------------------------------
-// Prediction
-// ---------------------------------------------------------------------
-
+// ── Prediction ──────────────────────────────────────────────────────
 impl Model {
     pub fn classes(&self) -> Option<&Labels> {
         match &self.task {
@@ -1398,10 +1386,7 @@ fn fill_nan_and_null(s: &Series, fill: &Scalar) -> Result<Series> {
     s.fill_null(fill)
 }
 
-// ---------------------------------------------------------------------
-// Explanation: importances and summaries
-// ---------------------------------------------------------------------
-
+// ── Explanation: importances and summaries ──────────────────────────
 fn frame_of(cols: Vec<(&str, Series)>) -> Result<Frame> {
     Frame::new(cols.into_iter().map(|(n, s)| (n.to_string(), s)).collect())
 }
@@ -1730,10 +1715,7 @@ fn scalar_string(s: &Scalar) -> Option<String> {
     }
 }
 
-// ---------------------------------------------------------------------
-// Scoring
-// ---------------------------------------------------------------------
-
+// ── Scoring ─────────────────────────────────────────────────────────
 /// Whether a larger value of `metric` is better.
 pub fn greater_is_better(metric: &str) -> Result<bool> {
     Ok(match metric {

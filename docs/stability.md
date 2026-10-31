@@ -2,15 +2,17 @@
 
 Part of [the olang book](README.md) · [Architecture and internals](internals.md)
 
-This chapter is olang's **compatibility contract**: what is guaranteed, what
-may still change, and what a version number means. Where any other text
-disagrees with what is written here and in the reference chapters, this
-chapter is correct.
+If you build something on olang, you need to know it will keep working.
+This chapter is that promise, written down: what 1.0 guarantees, what may
+still change, and what a version number tells you. If any other part of
+the book seems to disagree with what is written here and in the
+reference chapters, this chapter wins.
 
-The syntax and behavior documented in [the language reference](language.md)
-and [the stdlib reference](stdlib.md) are a commitment, not a snapshot. The
-guarantees below are what 1.0 commits to; the [semver contract](#versioning)
-states what could ever change them.
+The syntax and behavior described in [the language reference](language.md)
+and [the stdlib reference](stdlib.md) are a commitment. They describe how
+olang will keep behaving, not just how it happens to behave today. The
+guarantees below are what 1.0 commits to, and the [versioning
+rules](#versioning) say what could ever change them.
 
 ## Table of contents
 
@@ -54,8 +56,8 @@ will say so, and that is an addition.
 
 ## What each surface guarantees
 
-Not every part of olang carries the same promise. Four tiers, from the
-frozen core outward:
+Not every part of olang carries the same promise. There are four levels,
+from the frozen core outward:
 
 | Tier | What you can rely on | Examples |
 |---|---|---|

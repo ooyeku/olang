@@ -1,4 +1,4 @@
-//! Template-literal lints (roadmap W8): backtick strings process no
+//! Template-literal lints: backtick strings process no
 //! escapes and do not nest, and both mistakes surfaced only at run time.
 //! The semantics are unchanged by ruling — instead, `olang check` warns
 //! on escape-looking sequences (`\n`/`\t`/`\r`) inside templates, and

@@ -1,12 +1,17 @@
 # Macros
 
-A `meta fn` is a function that runs while a program is being *loaded*,
-not while it runs. It receives the source text of its arguments, returns
-source text, and the parser splices that text over the `@` site that
-invoked it — before the interpreter, the bytecode VM, or the JIT ever
-see the program. A macro reads its arguments through the same
+Sometimes you want to write code that writes code: a shorthand that
+expands into something longer, or a declaration that generates its own
+helper functions. olang does this with macros, written as a `meta fn`.
+
+A `meta fn` runs while a program is being loaded, before it runs. It
+receives the source text of its arguments and returns new source text,
+and the parser puts that text in place of the `@` call that asked for
+it. All of this happens before the interpreter, the bytecode VM or the
+JIT see the program. A macro reads its arguments through the same
 [program-as-data format](stdlib.md#meta--the-program-as-data-the-open-ast)
-that `meta.parse` gives any program.
+that `meta.parse` gives any program. Here is a macro that adds an
+`unless` to the language:
 
 Part of [the olang book](README.md) · [Language reference](language.md) ·
 [Standard library reference](stdlib.md)
@@ -37,7 +42,8 @@ let x = 3
 
 ## The rules
 
-Five rules define what a macro can and cannot do.
+Macros are easy to abuse in many languages, so olang keeps them on a
+short leash. Five rules decide what a macro can and cannot do.
 
 **1. Every expansion site says `@`.** A macro is invoked as
 `@name(args)` in expression position, or as `@name` stacked above a

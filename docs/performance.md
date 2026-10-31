@@ -5,16 +5,19 @@ Part of [the olang book](README.md) ·
 [Command-line tooling](tooling.md) ·
 [The data stack](ods.md)
 
-olang's tiers require no configuration: a plain `olang program.ol` runs
-the interpreter, promotes hot functions to the bytecode VM, and compiles
-qualifying code to native machine code with the JIT. Every tier
-reproduces the interpreter's results exactly or declines. What the tiers
-cannot do is rewrite a program into a shape they optimize well. This
-chapter states the shapes that reach the fast path, how to see which
-tier is running your code and verify the result, and what the data stack
-costs against NumPy, pandas, Polars and scikit-learn. [The execution
-model](ovm.md) describes the tiers themselves and holds the
-cross-language standings.
+You never have to switch olang into a fast mode. A plain `olang
+program.ol` starts on the interpreter, moves busy functions to the
+bytecode VM, and compiles suitable code to native machine code with the
+JIT. Every faster tier gives exactly the interpreter's results or
+declines the work, so speed never changes an answer.
+
+What the tiers can't do is rearrange your program into a shape they
+handle well. That part is up to you, and it is usually a small change.
+This chapter shows the shapes that reach the fast path, how to see which
+tier is running your code and check its results, and how the data stack
+compares with NumPy, pandas, Polars and scikit-learn. [The execution
+model](ovm.md) describes the tiers themselves and has the comparisons
+with other languages.
 
 ## Table of contents
 
@@ -185,8 +188,8 @@ The diagnostic variables are development aids; the
 
 ## Verifying a hot program
 
-Optimized paths carry proof obligations, and two are available at run
-time. `--verify-tiers <rate>` re-executes a sample of native results on
+A fast path is only useful if you can trust it, and there are two ways
+to check one while a program runs. `--verify-tiers <rate>` re-executes a sample of native results on
 the bytecode VM and compares bit for bit — a sampled rate of a few
 percent provides continuous spot-checking for a few percent of overhead
 ([tooling](tooling.md#--verify-tiers--live-tier-verification)). And any
@@ -196,13 +199,16 @@ reporting, never a behavior to code around.
 
 ## Sandboxed code runs faster
 
-A program run under a fixed grant (`--deny`, or `olang.toml`'s
-`[capabilities]`) tells the compiler what it may touch, and the
-compiler uses it ([the OVM](ovm.md#compile-time-knowledge)): a
-`caps.allowed("net")` with a literal name is a constant, the branch
-for the denied case is the only one compiled, and the network call it
-no longer holds stops keeping the function off native code. A sandbox
-usually costs a check on every call; here the check is gone.
+In most systems a sandbox makes code slower, because every risky call
+has to be checked. In olang it can make code faster. A program run under
+a fixed grant (`--deny`, or `olang.toml`'s `[capabilities]`) tells the
+compiler what it may touch, and the compiler uses that
+([the OVM](ovm.md#compile-time-knowledge)). A `caps.allowed("net")`
+with a literal name becomes a constant, so only the branch for the
+denied case is compiled. The network call disappears with the other
+branch, and with it the reason the function couldn't be compiled to
+native code. The check that a sandbox would normally pay on every call
+is simply gone.
 
 [benchmarks/sandbox.ol](../benchmarks/sandbox.ol) calls a price lookup
 three million times under `olang --deny net`: it asks a service when it

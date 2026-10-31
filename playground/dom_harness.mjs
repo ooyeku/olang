@@ -663,7 +663,7 @@ if (process.argv[3] === "--boot") {
 }
 
 // `node dom_harness.mjs <wasm> --repaints <bundle.ol>`: the repaint pin.
-// The bundle is a web SDK client (tests/w21_test.rs writes it) mounted on
+// The bundle is a web SDK client (tests/tier_refusals_test.rs writes it) mounted on
 // `#app`; each action is dispatched as a click through the delegated
 // listener, and the patches that reach `#app` are counted: one for a
 // handled action, none for a handler that changes nothing or a change

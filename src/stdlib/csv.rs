@@ -623,7 +623,6 @@ fn csv_column_count(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
     }
 }
 
-/// Placeholder implementations for remaining functions
 /// Add a new row to CSV data
 /// Usage: csv.add_row(csv_data, row_data) -> Result<CSV, Error>
 fn csv_add_row(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
@@ -873,8 +872,8 @@ fn csv_filter_rows(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
         }
     };
 
-    // For now, we'll implement a simple string-based filter
-    // In a full implementation, this would support function predicates
+    // The filter matches a column against a string; predicates are not
+    // supported.
     let filter_value = match &args[2] {
         Value::String(s) => s.as_ref(),
         _ => {
@@ -1191,7 +1190,6 @@ mod tests {
 
     use std::sync::Arc;
 
-    // Helper functions to create test values
     fn string_val(s: &str) -> Value {
         Value::String(Arc::new(s.to_string()))
     }
@@ -1233,22 +1231,11 @@ mod tests {
     /// a Rust `Err`; environmental failure still returns `Ok(Value::Err)`.
     /// Tests that only care *that* the call failed use this; tests that
     /// care *which* assert on the specific shape.
-    #[allow(dead_code)]
     fn assert_fails(result: Result<Value, Box<dyn std::error::Error>>) {
         match result {
             Err(_) => {}
             Ok(Value::Err(_)) => {}
             Ok(other) => panic!("expected a failure, got: {:?}", other),
-        }
-    }
-
-    #[allow(dead_code)]
-    fn assert_err(result: &Value) -> &Value {
-        match result {
-            Value::Err(inner) => inner,
-            _ => {
-                panic!("Expected Err result, got: {:?}", result)
-            }
         }
     }
 

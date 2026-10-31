@@ -95,8 +95,7 @@ pub fn restore_terminal() {
     guard::restore();
 }
 
-// ── options ──────────────────────────────────────────────────────────
-
+// ── options ─────────────────────────────────────────────────────────
 /// What `tty.enter` turns on. `raw` defaults to on; everything else to off.
 #[derive(Debug, Clone, Copy)]
 pub struct Options {
@@ -244,8 +243,7 @@ impl Options {
     }
 }
 
-// ── the session ──────────────────────────────────────────────────────
-
+// ── the session ─────────────────────────────────────────────────────
 /// The one entered terminal.
 struct Session {
     id: i64,
@@ -367,8 +365,7 @@ impl ReaderCtx {
     }
 }
 
-// ── values ───────────────────────────────────────────────────────────
-
+// ── values ──────────────────────────────────────────────────────────
 fn s(text: &str) -> Value {
     Value::String(Arc::new(text.to_string()))
 }
@@ -464,8 +461,7 @@ fn arity(function: &str, args: &[Value], want: usize) -> Result<(), Box<dyn std:
     Ok(())
 }
 
-// ── the functions ────────────────────────────────────────────────────
-
+// ── the functions ───────────────────────────────────────────────────
 fn stdin_is_tty() -> bool {
     #[cfg(unix)]
     return unix::is_tty(libc::STDIN_FILENO);

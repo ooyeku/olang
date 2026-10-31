@@ -1004,8 +1004,7 @@ fn a_line_aligned_to_its_end_is_cut_never_wrapped() {
     assert_eq!(text(&v), r#"[true, true, true]"#);
 }
 
-// ── pictures and files ───────────────────────────────────────────────
-
+// ── pictures and files ──────────────────────────────────────────────
 const QUADS: [[u8; 3]; 4] = [[220, 38, 38], [37, 99, 235], [22, 163, 74], [250, 204, 21]];
 
 /// A window of `size` at `scale` showing image `src` at (0, 0) in a box

@@ -1,20 +1,14 @@
-//! OVM — olang's bytecode execution tier.
+//! OVM, olang's compiled execution tiers.
 //!
-//! Three modules remain after the 0.24 cleanup:
-//!
-//! - [`bytecode`]: the register-based VM and its compiler
-//! - [`tier`]: hot-function promotion from the interpreter
-//! - [`value`]: the reference-counted runtime value model
-//! - [`gc`]: safepoint flags the interpreter polls in loops
-//!
-//! The former routing layer (`OlangVirtualMachine`, `ovm_integration`) and
-//! the speculative engines (pipeline, SIMD, lazy, fusion, adaptive, JIT
-//! scaffolding, region allocator) were deleted: measured against the
-//! rewritten interpreter, the routing layer was ~70% overhead and none of
-//! the engines were wired into execution. See docs/ovm.md for the
-//! architecture that actually runs.
+//! The interpreter runs every function first. A function that gets hot is
+//! promoted ([`tier`]) to the register-based bytecode VM ([`bytecode`]),
+//! and pure-integer hot functions and loops go on to native code through
+//! the baseline JIT ([`jit`]) and on-stack replacement ([`osr`]). [`warm`]
+//! keeps tier profiles between runs, [`value`] is the VM's
+//! reference-counted value model, and [`gc`] holds the safepoint flags the
+//! interpreter polls in loops. docs/ovm.md describes the design.
 
-/// Whether the environment variable `$name` is set, read once a process:
+/// Whether the environment variable `$name` is set, read once per process:
 /// a debug switch on a hot path (`getenv` takes the environment's lock
 /// and scans it, and a VM call or a conversion that asked it each time
 /// spent a tenth of a frame there).
@@ -32,8 +26,8 @@ pub mod jit; // Baseline JIT: pure-integer hot functions to native code
 #[cfg(feature = "native")]
 pub mod osr; // On-stack replacement: hot loop regions to native, mid-frame
 pub mod tier; // Hot-function promotion to the bytecode tier
-pub mod value;
-pub mod warm; // Warm start: cross-run tier profiles // Reference-counted runtime values
+pub mod value; // Reference-counted runtime values
+pub mod warm; // Warm start: cross-run tier profiles
 
 pub use value::OvmValue;
 

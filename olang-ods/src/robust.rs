@@ -135,10 +135,7 @@ pub fn zscore(s: &Series, robust: bool, par: bool) -> Result<Series> {
     })
 }
 
-// ---------------------------------------------------------------------
-// The bootstrap
-// ---------------------------------------------------------------------
-
+// ── The bootstrap ───────────────────────────────────────────────────
 /// A statistic the bootstrap computes natively.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Stat {

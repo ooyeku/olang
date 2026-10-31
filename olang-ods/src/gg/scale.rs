@@ -7,8 +7,7 @@ use super::scene::{Rgba, Shape};
 use super::theme::{Appearance, quiet};
 use super::{Param, Params, ScaleSpec, bad, p_num, p_str, p_strs};
 
-// ── transformations ──────────────────────────────────────────────────
-
+// ── transformations ─────────────────────────────────────────────────
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Trans {
     #[default]
@@ -59,8 +58,7 @@ impl Trans {
     }
 }
 
-// ── breaks ───────────────────────────────────────────────────────────
-
+// ── breaks ──────────────────────────────────────────────────────────
 /// About `n` nice breaks (1, 2, 2.5, 5 × 10^k) inside [lo, hi].
 pub fn nice_breaks(lo: f64, hi: f64, n: usize) -> Vec<f64> {
     if !(lo.is_finite() && hi.is_finite()) {
@@ -158,8 +156,7 @@ pub fn log_breaks(lo: f64, hi: f64, n: usize) -> Vec<f64> {
     out
 }
 
-// ── time ─────────────────────────────────────────────────────────────
-
+// ── time ────────────────────────────────────────────────────────────
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TimeUnit {
     Sec(f64),
@@ -393,8 +390,7 @@ fn time_labels(breaks: &[f64], unit: TimeUnit, datetime: bool) -> Vec<String> {
     out
 }
 
-// ── number labels ────────────────────────────────────────────────────
-
+// ── number labels ───────────────────────────────────────────────────
 fn group3(int_part: &str) -> String {
     let neg = int_part.starts_with('-');
     let digits = int_part.trim_start_matches('-');
@@ -551,8 +547,7 @@ pub fn format_numbers(
         .collect()
 }
 
-// ── position scales ──────────────────────────────────────────────────
-
+// ── position scales ─────────────────────────────────────────────────
 #[derive(Clone, Debug, PartialEq)]
 pub enum Labels {
     Auto,
@@ -979,8 +974,7 @@ fn parse_every(s: &str) -> super::Result<TimeUnit> {
     })
 }
 
-// ── colours ──────────────────────────────────────────────────────────
-
+// ── colours ─────────────────────────────────────────────────────────
 /// A colour by name (CSS's common ones, R's greys) or `#hex`.
 pub fn color(s: &str) -> Option<Rgba> {
     if s.starts_with('#') {

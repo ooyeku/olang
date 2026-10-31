@@ -69,8 +69,7 @@ use std::collections::HashMap;
 const MAGIC: &str = "olang-columns";
 const VERSION: u32 = 1;
 
-// ── writing ───────────────────────────────────────────────────────────
-
+// ── writing ─────────────────────────────────────────────────────────
 /// Set bit `i` of a validity bitmap sized for `rows`.
 fn bitmap(rows: usize, present: impl Fn(usize) -> bool) -> Vec<u8> {
     let mut bits = vec![0u8; rows.div_ceil(8)];
@@ -190,7 +189,7 @@ fn encode_column(series: &Series) -> (Vec<u8>, Encoding, usize) {
             }
         }
         // A category is its dictionary: the levels as they stand (their
-        // order is the category's), then a code a row.
+        // order is the category's), then one code per row.
         DType::Category => {
             let olang_ods::Series::Cat { codes, levels, .. } = series else {
                 unreachable!("a category")
@@ -304,8 +303,7 @@ pub fn encode(frame: &Frame) -> Vec<u8> {
     out
 }
 
-// ── reading ───────────────────────────────────────────────────────────
-
+// ── reading ─────────────────────────────────────────────────────────
 /// What the header says about one column.
 #[derive(Clone)]
 pub struct ColumnSpec {

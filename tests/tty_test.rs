@@ -12,8 +12,7 @@
 use olang::stdlib::tty::decode::{Decoder, Input, Key, Mouse};
 use olang::{Interpreter, Parser, Value};
 
-// ── the decoder ──────────────────────────────────────────────────────
-
+// ── the decoder ─────────────────────────────────────────────────────
 fn feed(bytes: &[u8]) -> Vec<Input> {
     let mut d = Decoder::new();
     let mut out = d.feed(bytes);
@@ -346,8 +345,7 @@ fn event_maps_have_the_documented_shapes() {
     );
 }
 
-// ── str.width ────────────────────────────────────────────────────────
-
+// ── str.width ───────────────────────────────────────────────────────
 fn eval(src: &str) -> Value {
     let program = Parser::new().parse(src).expect("parse");
     Interpreter::new().eval_program(program).expect("eval")
@@ -407,8 +405,7 @@ fn width_and_cell_width_from_olang() {
     assert!(Interpreter::new().eval_program(program).is_err());
 }
 
-// ── the module without a terminal ────────────────────────────────────
-
+// ── the module without a terminal ───────────────────────────────────
 #[test]
 fn off_a_terminal_everything_says_so() {
     // Under `cargo test`, stdout is captured (a pipe), so there is no
@@ -442,8 +439,7 @@ fn off_a_terminal_everything_says_so() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("unknown option \"alt\""));
 }
 
-// ── the restore guarantee, in a pseudo-terminal ──────────────────────
-
+// ── the restore guarantee, in a pseudo-terminal ─────────────────────
 #[cfg(unix)]
 mod pty {
     use std::io::Write;

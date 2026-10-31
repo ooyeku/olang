@@ -88,8 +88,7 @@ pub(crate) fn set_termios(t: &libc::termios) -> Result<(), String> {
     Ok(())
 }
 
-// ── the wake pipe ────────────────────────────────────────────────────
-
+// ── the wake pipe ───────────────────────────────────────────────────
 static WAKE_R: AtomicI32 = AtomicI32::new(-1);
 static WAKE_W: AtomicI32 = AtomicI32::new(-1);
 
@@ -135,8 +134,7 @@ fn drain_wake(fd: libc::c_int) {
     while unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) } > 0 {}
 }
 
-// ── the reader ───────────────────────────────────────────────────────
-
+// ── the reader ──────────────────────────────────────────────────────
 /// Read stdin until told to stop: decode, route replies to a waiting
 /// query, send everything else to the events channel, and turn the
 /// signals the guard noted into events.

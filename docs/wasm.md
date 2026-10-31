@@ -4,16 +4,17 @@ Part of [the olang book](README.md) · [A tour of olang](tour.md) ·
 [Language reference](language.md) · [Standard library reference](stdlib.md) ·
 [The data stack](ods.md)
 
-olang compiles to WebAssembly, so the same language can be used for both a
-web server and the page it serves. A single olang process can serve an API,
-serve the page, and serve the frontend's olang source; the browser loads the
-language as WebAssembly and runs that source against the DOM. The frontend
-and the backend are then two programs written in one language, one of which
-runs in the browser.
+olang also runs inside a web browser. It is compiled to WebAssembly (a
+format every modern browser can run), so the same language
+can power both a web server and the page that server sends out. One olang
+process can serve the API, the page, and the olang source for the front
+end; the browser loads olang itself and runs that source against the
+page. Front end and back end become two programs in one language, and
+one of them happens to run in the browser.
 
-This chapter describes the architecture that supports this, the `dom` module
-that makes a page programmable, the patterns used to write browser olang,
-and a reading of a complete frontend. Code blocks that drive a browser are
+This chapter explains how that fits together, the `dom` module that lets
+olang work with a page, the patterns for writing olang in the browser,
+and a walk through a complete front end. Code blocks that drive a browser are
 marked `no-run`: they are parse-checked by the test suite but need a page to
 execute. The code they show runs in [`examples/web/app/`](../examples/web/app/).
 
@@ -55,24 +56,23 @@ operations dashboard built with the `dash` package and viz). Each page also
 serves its `.ol` source as plain text, so the source of every demo can be
 viewed directly.
 
-The browser fetches the wasm build and the olang source, instantiates
-the language, and runs `app.ol`. From that moment the page is driven
-by olang: rendering, event handling, and API calls are all olang
-functions executing in the browser. The shim is not a framework — it
-is a loader and a device driver, and it never grows, because
-everything application-shaped lives in `app.ol`.
+The browser fetches the wasm build and the olang source, starts the
+language, and runs `app.ol`. From then on olang drives the page:
+drawing it, handling clicks and keys, and calling the API are all olang
+functions running in the browser. The small JavaScript shim is a loader
+and a device driver, nothing more, and it never needs to grow, because
+everything specific to the application lives in `app.ol`.
 
-The same `Result` handling, the same
-`json.parse`, the same pipelines and pattern matching work on both
-sides of the wire, and moving logic between client and server is a
-cut-and-paste, not a rewrite. What runs in the browser is not a
-lookalike or a subset compiled specially for the occasion — it is the
-same interpreter and bytecode tier as the CLI, so a function debugged
-at the REPL behaves identically inside the page.
+The same `Result` handling, the same `json.parse`, and the same
+pipelines and pattern matching work on both sides, so moving logic
+between server and browser is a matter of cut and paste. What runs in
+the browser isn't a lookalike or a special subset. It is the same
+interpreter and bytecode tier as the command line, so a function you
+debugged at the REPL behaves identically inside the page.
 
 ## The architecture
 
-Three layers, each with a single job.
+There are three layers, and each has a single job.
 
 ### The wasm build
 

@@ -386,8 +386,7 @@ ods.null_count(ods.map(ods.series([4.0, m, 9.0]), "sqrt"))
     assert!(err.contains("square root"), "got: {}", err);
 }
 
-// ── fused elementwise chains (Campaign 8, E7) ─────────────────────────
-
+// ── fused elementwise chains (Campaign 8, E7) ───────────────────────
 #[test]
 fn fused_chains_match_the_eager_kernels_exactly() {
     // `a * b + 1.0 - a * 0.25` builds lazily and materializes in one

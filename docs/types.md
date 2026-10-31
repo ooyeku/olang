@@ -1,12 +1,16 @@
 # Types and gradual typing
 
-olang is gradually typed. Code without annotations is fully dynamic and
-carries no runtime type checks. Every annotation that is written is enforced
-in two places: the runtime enforces it at its boundary on every execution
-tier, and the static checker (`olang check`, and the language server in an
-editor) reports violations it can prove before the program runs. This chapter
-describes what annotations mean, where they are enforced, what the checker
-proves, and how to adopt types incrementally.
+You never have to write a type in olang. When you do, olang holds you to
+it. That is what "gradually typed" means here: code without type
+annotations runs fully dynamically, with no type checks and no cost, and
+every annotation you add is enforced in two places. While the program
+runs, olang checks it at the boundary where it applies, on every tier.
+And before the program runs, the static checker (`olang check`, or the
+language server in your editor) reports any violation it can prove.
+
+This chapter explains what annotations mean, where they are checked,
+what the checker can prove, and how to add types to an existing program
+a little at a time.
 
 Part of [the olang book](README.md) · [Language reference](language.md) ·
 [Command-line tooling](tooling.md)
@@ -25,9 +29,9 @@ Blocks marked `no-run` show programs that fail on purpose.
 
 ## The idea: annotations are promises
 
-The author chooses, at each site, whether to annotate. Unannotated code
-behaves as it does in any dynamically typed language; an annotation,
-wherever it appears, is enforced:
+You decide, one place at a time, whether to write a type. Code without
+one behaves as it would in any dynamically typed language. An annotation
+is a promise, and wherever you write one, olang enforces it:
 
 ```olang
 fn label(n: Int) -> String = `#${n}`
@@ -51,7 +55,7 @@ annotation forms — `Int`, `Float`, `String`, `Bool`, `[T]`, `(A, B)`,
 
 ## The three rules
 
-Three rules make enforcement predictable:
+Three rules keep this predictable:
 
 1. **Unannotated code is fully dynamic.** No annotation, no check, no
    cost. Adding types to one function judges that function's boundaries

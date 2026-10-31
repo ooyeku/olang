@@ -1049,7 +1049,6 @@ mod tests {
     use std::sync::Arc;
     use tempfile::{NamedTempFile, tempdir};
 
-    // Helper functions to create test values
     fn string_val(s: &str) -> Value {
         Value::String(Arc::new(s.to_string()))
     }
@@ -1080,7 +1079,6 @@ mod tests {
     /// a Rust `Err`; environmental failure still returns `Ok(Value::Err)`.
     /// Tests that only care *that* the call failed use this; tests that
     /// care *which* assert on the specific shape.
-    #[allow(dead_code)]
     fn assert_fails(result: Result<Value, Box<dyn std::error::Error>>) {
         match result {
             Err(_) => {}

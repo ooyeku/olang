@@ -6,9 +6,11 @@ Part of [the olang book](README.md) · [A tour of olang](tour.md) ·
 [Architecture and internals](internals.md) ·
 [Stability and compatibility](stability.md)
 
-This chapter is the complete reference for the olang language: every
-construct, its syntax, and its behavior, each with a runnable example. Every
-`olang` block runs as written.
+This chapter is the complete reference for the olang language. It goes
+through every construct in turn, giving its syntax and exactly how it
+behaves, with a runnable example for each. If you are learning olang,
+[A tour of olang](tour.md) is a friendlier place to start; come here
+when you want the precise rules. Every `olang` block runs as written.
 
 ## Table of contents
 
@@ -696,7 +698,8 @@ programs need none.
 
 ## Operators and precedence
 
-From loosest to tightest binding:
+Here are the operators in order of precedence, from the loosest binding
+to the tightest:
 
 | Level | Operators | Notes |
 |---|---|---|
@@ -2023,8 +2026,9 @@ println(to_string(len(f)))            // len counts a Frame's rows, a Series' va
 
 ## Error handling
 
-olang uses `Result` values, not exceptions. `Ok(v)` carries a success,
-`Err(e)` an error; functions that can fail return one of the two.
+olang reports failures with `Result` values instead of exceptions. A
+function that can fail returns either `Ok(v)`, carrying its value, or
+`Err(e)`, carrying the error.
 
 ```olang
 fn safe_div(a, b) = if b == 0 => Err("division by zero") else => Ok(a / b)
@@ -2184,8 +2188,8 @@ to the nearest enclosing located statement — its call site.
 
 ## Concurrency
 
-olang has **one** concurrency model, and it is threads. There are three
-pieces, all explicit:
+olang has one model for concurrency, and it is threads. There are three
+pieces, and you always write each of them explicitly:
 
 - **`spawn`** starts work on a real OS thread and hands back a task
   handle; `task.join` collects the result.
@@ -2534,10 +2538,10 @@ for the distinction.
 
 ## Type annotations
 
-This section is the annotation *grammar* reference;
-[the Types chapter](types.md) tells the whole gradual-typing story —
-enforcement semantics, the static checker, and how to adopt types
-incrementally.
+This section lists the forms a type annotation can take. [The Types
+chapter](types.md) tells the rest of the story: how annotations are
+enforced, what the static checker proves, and how to add types to a
+program a little at a time.
 
 Annotations may appear on `let` bindings, parameters, and return types,
 and each one is a promise the runtime keeps. A parameter annotation
@@ -2582,7 +2586,7 @@ it resembles rather than answering Unit at runtime.
 
 ## Appendix: keywords and grammar
 
-Reserved keywords — not usable as identifiers:
+These words are reserved, so you can't use them as names:
 
 ```text
 fn let if else match for while loop break continue return

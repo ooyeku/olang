@@ -567,8 +567,7 @@ pub fn suggest(word: &str) -> Option<&'static str> {
     nearest(word, &names)
 }
 
-// ── styled text ──────────────────────────────────────────────────────
-
+// ── styled text ─────────────────────────────────────────────────────
 /// A piece of a line in one style: `color` a terminal colour's name
 /// (`red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`,
 /// `gray`), bold, dim.
@@ -689,8 +688,7 @@ pub fn strip_ansi(text: &str) -> String {
     out
 }
 
-// ── completion ───────────────────────────────────────────────────────
-
+// ── completion ──────────────────────────────────────────────────────
 /// One completion: what is inserted, a word on what it is.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Item {

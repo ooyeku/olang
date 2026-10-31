@@ -222,7 +222,6 @@ fn str_thousands(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 }
 
 // ── argument helpers ────────────────────────────────────────────────
-
 fn arg_str<'a>(
     args: &'a [Value],
     i: usize,
@@ -260,7 +259,6 @@ fn ok_string(s: String) -> Value {
 }
 
 // ── total operations (return bare values) ───────────────────────────
-
 fn str_to_upper(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     Ok(ok_string(arg_str(&args, 0, "to_upper")?.to_uppercase()))
 }
@@ -737,7 +735,6 @@ fn str_pad(args: Vec<Value>, start: bool) -> Result<Value, Box<dyn std::error::E
 }
 
 // ── number formatting by a spec ─────────────────────────────────────
-
 /// A number (or a number Series) by `spec`.
 fn format_by(
     func: &str,
@@ -942,7 +939,6 @@ fn str_join(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 }
 
 // ── fallible operations (return Result) ─────────────────────────────
-
 fn str_parse_int(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let s = arg_str(&args, 0, "parse_int")?.trim();
     match s.parse::<i64>() {

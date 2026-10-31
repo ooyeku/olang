@@ -3,11 +3,16 @@
 Part of [the olang book](README.md) · [olang in the browser](wasm.md) ·
 [Packages and dependencies](packages.md)
 
-`frameworks/web-sdk` is the foundation layer for building full-stack
-web applications in olang — one process serving a JSON API and a wasm
-frontend, with one route table driving both sides. A working app is
-two small files, and its primitives (views as data, one store, one
-route table) are the parts a larger framework builds on.
+A web app usually means two programs in two languages: a server, and
+JavaScript in the browser, with an API between them that both sides
+have to agree on. The web SDK lets you write both halves in olang. One
+process serves a JSON API and the page, the browser runs your olang
+front end, and a single table of routes drives both sides, so the server
+and the browser can't drift apart.
+
+A working app is two small files. The SDK lives in `frameworks/web-sdk`
+and is deliberately small: views as data, one store, and one route
+table. Those are the pieces a larger framework would build on.
 
 ## Table of contents
 
@@ -26,32 +31,33 @@ route table) are the parts a larger framework builds on.
 
 ## The five contracts
 
-Everything else is built from these:
+The whole SDK rests on five ideas. Everything else is built from them.
 
-1. **Views are data.** An HTML tree is maps and lists — an element is
-   `#{ "tag", "attrs", "children" }` — so a framework can transform,
-   inspect, or diff views.
-   Rendering escapes by default; `raw` is the one opt-out.
-2. **`mount` + re-render.** One place where data becomes pixels. A
-   repaint hands the node tree to the host as data (`dom.patch`) and the
-   host diffs it against the live DOM — no markup is rendered on the
-   wasm side or parsed on the page: text is updated in place,
-   attributes are diffed, and children match by `data-key` (else by
-   position and tag), so the nodes that did not change are the nodes
-   the browser keeps — focus, caret, scroll, an open select. Give list
-   rows a `"data-key"` and reordering moves their elements instead of
-   rebuilding them — a moved row keeps the focus and the caret of a
-   control inside it, which a browser otherwise drops when an element
-   leaves the document and returns; wrap a subtree in `memo(key, inputs, build)` and it
-   is neither rebuilt nor diffed while its inputs stand. Events are
-   delegated, so nothing re-binds either way.
-3. **One store.** `apply(f)` transforms state and repaints. State
-   lives in a wasm-side cell — values never cross into JavaScript and
-   back, so they keep their olang shapes exactly.
-4. **One route table.** `route` and `rpc` declare endpoints once; the
-   server dispatches them and the browser calls them by name.
-5. **`render` is isomorphic.** The same view data renders server-side
-   (pages, emails, static sites) and in the browser.
+1. **Views are data.** An HTML tree is plain maps and lists. An element
+   is `#{ "tag", "attrs", "children" }`, so a framework can transform,
+   inspect or compare views like any other data. Rendering escapes text
+   by default, and `raw` is the one way to opt out.
+2. **`mount` and re-render.** There is one place where data becomes
+   what you see. A repaint hands the new node tree to the browser side
+   as data (`dom.patch`), and the host compares it with the live page.
+   No markup is built on the wasm side or parsed on the page. Text is
+   updated in place, attributes are compared, and children are matched
+   by `data-key` (or else by position and tag). The nodes that didn't
+   change are the ones the browser keeps, along with their focus, caret,
+   scroll position or open select. Give list rows a `"data-key"` and
+   reordering moves their elements instead of rebuilding them, so a
+   moved row keeps the focus and caret of a control inside it, which a
+   browser would otherwise drop. Wrap a subtree in `memo(key, inputs,
+   build)` and it is neither rebuilt nor compared while its inputs stay
+   the same. Events are delegated, so nothing needs re-binding either
+   way.
+3. **One store.** `apply(f)` transforms the state and repaints. State
+   lives in a cell on the wasm side and never crosses into JavaScript
+   and back, so it keeps its olang shape exactly.
+4. **One route table.** `route` and `rpc` declare each endpoint once.
+   The server dispatches them, and the browser calls them by name.
+5. **`render` works on both sides.** The same view data renders on the
+   server (pages, emails, static sites) and in the browser.
 
 ## A complete application
 

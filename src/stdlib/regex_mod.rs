@@ -134,7 +134,6 @@ fn string(s: &str) -> Value {
 }
 
 // ── operations ──────────────────────────────────────────────────────
-
 /// Total: does the pattern compile at all?
 fn re_is_valid(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let pattern = arg_str(&args, 0, "is_valid")?;

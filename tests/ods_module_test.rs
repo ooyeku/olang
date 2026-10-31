@@ -56,10 +56,7 @@ fn assert_tier_transparent(source: &str) -> Result<Value, String> {
     interpreted
 }
 
-// ---------------------------------------------------------------------
-// The load-bearing property: the tier boundary is an Arc clone.
-// ---------------------------------------------------------------------
-
+// ── The load-bearing property: the tier boundary is an Arc clone. ───
 #[test]
 fn native_value_crosses_tier_boundary_as_same_arc() {
     let handle = NativeHandle::new(OdsProbe { tag: 42 });
@@ -85,10 +82,9 @@ fn native_values_round_trip_by_policy() {
     assert!(olang::ovm::bytecode::BytecodeVm::round_trips(&value));
 }
 
-// ---------------------------------------------------------------------
-// Both tiers observe the same module: dispatch, typeof, display,
-// equality, operator interception.
-// ---------------------------------------------------------------------
+// ── both tiers see the same module ──────────────────────────────────
+//
+// Dispatch, typeof, display, equality and operator interception.
 
 #[test]
 fn probe_arithmetic_is_tier_transparent() {

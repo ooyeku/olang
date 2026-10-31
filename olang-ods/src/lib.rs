@@ -439,10 +439,7 @@ pub enum Series {
     },
 }
 
-// ---------------------------------------------------------------------
-// Construction
-// ---------------------------------------------------------------------
-
+// ── Construction ────────────────────────────────────────────────────
 fn split_options<T: Copy + Default>(opts: Vec<Option<T>>) -> (Vec<T>, Option<Bitmap>) {
     if opts.iter().all(|o| o.is_some()) {
         return (opts.into_iter().map(|o| o.unwrap()).collect(), None);
@@ -724,10 +721,7 @@ impl Series {
         Series::from_i64((start..upper).collect())
     }
 
-    // -----------------------------------------------------------------
-    // Introspection
-    // -----------------------------------------------------------------
-
+    // ── Introspection ───────────────────────────────────────────────
     pub fn dtype(&self) -> DType {
         match self {
             Series::F64 { .. } => DType::F64,
@@ -821,10 +815,7 @@ impl Series {
         (0..self.len()).all(|i| self.scalar_at(i) == other.scalar_at(i))
     }
 
-    // -----------------------------------------------------------------
-    // Elementwise arithmetic
-    // -----------------------------------------------------------------
-
+    // ── Elementwise arithmetic ──────────────────────────────────────
     /// `self ⊕ other`, elementwise. Nulls propagate; only positions where
     /// both operands are valid compute (so error checks apply only there).
     /// String concatenation, elementwise: `a + b` over two String
@@ -1046,10 +1037,7 @@ impl Series {
         })
     }
 
-    // -----------------------------------------------------------------
-    // Comparisons
-    // -----------------------------------------------------------------
-
+    // ── Comparisons ─────────────────────────────────────────────────
     pub fn compare(&self, op: CmpOp, other: &Series) -> Result<Series> {
         if self.len() != other.len() {
             return Err(OdsError::LengthMismatch {
@@ -1198,10 +1186,7 @@ impl Series {
         })
     }
 
-    // -----------------------------------------------------------------
-    // Reductions (skip nulls)
-    // -----------------------------------------------------------------
-
+    // ── Reductions (skip nulls) ─────────────────────────────────────
     pub fn sum(&self, par: bool) -> Result<Scalar> {
         match self {
             Series::F64 { values, validity } => {
@@ -1469,10 +1454,7 @@ impl Series {
         }
     }
 
-    // -----------------------------------------------------------------
-    // Rearrangement and selection
-    // -----------------------------------------------------------------
-
+    // ── Rearrangement and selection ─────────────────────────────────
     /// Ascending sort; nulls go last. Floats use IEEE total order (NaN
     /// sorts after +inf).
     pub fn sort(&self, par: bool) -> Result<Series> {
@@ -1898,10 +1880,7 @@ impl Series {
         }
     }
 
-    // -----------------------------------------------------------------
-    // Conversion
-    // -----------------------------------------------------------------
-
+    // ── Conversion ──────────────────────────────────────────────────
     /// Convert every element to `to`, keeping nulls null.
     ///
     /// A conversion that cannot represent a value yields a null rather
@@ -2106,10 +2085,7 @@ impl Series {
         }))
     }
 
-    // -----------------------------------------------------------------
-    // Nulls
-    // -----------------------------------------------------------------
-
+    // ── Nulls ───────────────────────────────────────────────────────
     pub fn is_null(&self) -> Series {
         let n = self.len();
         Series::from_bool((0..n).map(|i| !self.is_valid(i)).collect())
@@ -2219,15 +2195,15 @@ impl Series {
     }
 }
 
-// ---------------------------------------------------------------------
-// f64 kernels — dense fast paths use eight accumulators (strict FP
-// forbids the compiler from breaking the add dependency chain itself, so
-// a naive `.sum()` runs at add latency, ~5x slower than memory
-// bandwidth; the summation order differs from left-to-right by design,
-// exactly like NumPy's pairwise sum). Null paths go word-wise over the
-// validity bitmap: an all-ones word runs the dense kernel on its
-// 64-element block, anything else iterates set bits.
-// ---------------------------------------------------------------------
+// ── f64 kernels ─────────────────────────────────────────────────────
+//
+// The dense paths keep eight accumulators. Strict floating point stops
+// the compiler from breaking the add dependency chain itself, so a naive
+// `.sum()` runs at add latency, about five times slower than memory
+// bandwidth. The summation order differs from left-to-right on purpose,
+// as NumPy's pairwise sum does. Null paths walk the validity bitmap a
+// word at a time: an all-ones word runs the dense kernel on its
+// 64-element block, and anything else iterates the set bits.
 
 fn f64_sum_dense(values: &[f64]) -> f64 {
     let mut acc = [0.0f64; 8];
@@ -2418,10 +2394,10 @@ fn f64_arith_scalar(
     })
 }
 
-// ---------------------------------------------------------------------
-// i64 kernels — checked, sequential (checked semantics don't autovectorize
-// anyway, and errors must be deterministic).
-// ---------------------------------------------------------------------
+// ── i64 kernels ─────────────────────────────────────────────────────
+//
+// Checked and sequential: checked arithmetic doesn't autovectorize
+// anyway, and errors must be deterministic.
 
 fn i64_checked(op: ArithOp, x: i64, y: i64) -> Result<i64> {
     match op {
@@ -2482,10 +2458,7 @@ fn i64_arith_scalar(
     })
 }
 
-// ---------------------------------------------------------------------
-// Comparison helpers
-// ---------------------------------------------------------------------
-
+// ── Comparison helpers ──────────────────────────────────────────────
 fn cmp_one<T: PartialOrd>(x: T, y: T, op: CmpOp) -> bool {
     match op {
         CmpOp::Eq => x == y,

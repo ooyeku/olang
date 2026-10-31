@@ -141,8 +141,7 @@ fn terminal_file_and_input_commands_print_as_before() {
     pinned("files");
 }
 
-// ── the protocol ─────────────────────────────────────────────────────
-
+// ── the protocol ────────────────────────────────────────────────────
 struct Serve {
     child: Child,
     stdin: ChildStdin,

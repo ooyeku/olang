@@ -124,8 +124,7 @@ pub fn compute(name: &str, f: &LFrame, p: &Params, ctx: &StatCtx) -> super::Resu
     }
 }
 
-// ── bin ──────────────────────────────────────────────────────────────
-
+// ── bin ─────────────────────────────────────────────────────────────
 /// The bin edges over a range: `bins` (30) or `binwidth`, aligned to
 /// `boundary` or `center` (ggplot's rules), or `breaks`.
 pub fn bin_edges(range: (f64, f64), p: &Params) -> Vec<f64> {
@@ -230,8 +229,7 @@ fn bin(f: &LFrame, p: &Params, ctx: &StatCtx) -> super::Result<LFrame> {
     Ok(out.frame())
 }
 
-// ── count ────────────────────────────────────────────────────────────
-
+// ── count ───────────────────────────────────────────────────────────
 fn count(f: &LFrame) -> super::Result<LFrame> {
     let x = match f.cols.get(&Aes::X) {
         Some(Col::Num(v)) => v,
@@ -282,8 +280,7 @@ fn sum(f: &LFrame) -> super::Result<LFrame> {
     Ok(out.frame())
 }
 
-// ── density ──────────────────────────────────────────────────────────
-
+// ── density ─────────────────────────────────────────────────────────
 /// A bandwidth by rule: nrd0 (Silverman's rule of thumb, R's default),
 /// nrd (Scott's variant), or a number.
 pub fn bandwidth(xs_sorted: &[f64], rule: &str) -> super::Result<f64> {
@@ -530,8 +527,7 @@ fn density(f: &LFrame, p: &Params, ctx: &StatCtx) -> super::Result<LFrame> {
     Ok(out.frame())
 }
 
-// ── boxplot and violin ───────────────────────────────────────────────
-
+// ── boxplot and violin ──────────────────────────────────────────────
 fn group_x(f: &LFrame) -> f64 {
     f.num(Aes::X)
         .and_then(|x| x.iter().copied().find(|v| v.is_finite()))
@@ -657,8 +653,7 @@ pub fn violin_widths(f: &mut LFrame, scale: &str) {
     f.stat.insert("violinwidth".into(), vw);
 }
 
-// ── summary ──────────────────────────────────────────────────────────
-
+// ── summary ─────────────────────────────────────────────────────────
 fn summary(f: &LFrame, p: &Params) -> super::Result<LFrame> {
     let x = need(f, Aes::X, "summary")?;
     let y = need(f, Aes::Y, "summary")?;
@@ -731,8 +726,7 @@ fn summary(f: &LFrame, p: &Params) -> super::Result<LFrame> {
     Ok(out.frame())
 }
 
-// ── smooth ───────────────────────────────────────────────────────────
-
+// ── smooth ──────────────────────────────────────────────────────────
 /// A smoother's fit over a grid: (x, fit, se, df) — df the residual
 /// degrees of freedom the interval uses.
 pub struct Fit {
@@ -1202,8 +1196,7 @@ fn smooth(f: &LFrame, p: &Params, ctx: &StatCtx) -> super::Result<LFrame> {
     Ok(out.frame())
 }
 
-// ── ecdf and qq ──────────────────────────────────────────────────────
-
+// ── ecdf and qq ─────────────────────────────────────────────────────
 fn ecdf(f: &LFrame, ctx: &StatCtx) -> super::Result<LFrame> {
     let xs = sorted_finite(need(f, Aes::X, "ecdf")?);
     let mut out = Out::default();
@@ -1297,8 +1290,7 @@ fn qq_line(f: &LFrame, p: &Params) -> super::Result<LFrame> {
     Ok(out.frame())
 }
 
-// ── 2-D bins ─────────────────────────────────────────────────────────
-
+// ── 2-D bins ────────────────────────────────────────────────────────
 fn two_bins(p: &Params) -> (f64, f64) {
     match p_nums(p, "bins") {
         Some(b) if b.len() >= 2 => (b[0], b[1]),
