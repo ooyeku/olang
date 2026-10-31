@@ -1,205 +1,432 @@
-# Release binaries — fires on every v* tag push. Builds olang + otc for the three
-# supported desktop targets plus the playground wasm artifact, checksums
-# everything, and attaches it all to a GitHub Release for the tag.
+# Release: runs when a v* tag is pushed, or by hand for an existing tag
+# (Actions, Release, Run workflow, with the tag), which rebuilds and
+# re-uploads that release.
 #
-# The trailing job pushes an updated Homebrew formula to the
-# ooyeku/homebrew-olang tap when a TAP_PUSH_TOKEN secret is configured
-# (and skips quietly when it is not). The VS Code Marketplace and the
-# Zed registry remain manual per-channel steps.
+# It builds olang and otc for every platform the installers know, writes
+# SHA256SUMS over all of them, signs SHA256SUMS with the key in the
+# OLANG_SIGNING_KEY secret, records a GitHub build attestation for each
+# file, and publishes the GitHub release. A last job moves the Homebrew
+# tap when the TAP_PUSH_TOKEN secret is set. dist/signing/README.md
+# covers the secrets, all optional until install.sh carries a key.
+#
+# The Linux builds run in containers: manylinux_2_28 (glibc 2.28, so one
+# build runs on Linux from 2019 on) and Alpine (a static musl build for
+# Alpine and anything older). dist/release/build-linux.sh is the recipe.
+#
+# Supply chain: every action is pinned to a commit, each job asks only
+# for the permissions it uses, and values from the event reach shell
+# steps through environment variables, never pasted into the script.
 
 name: Release
 
 on:
-  workflow_dispatch:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The release tag to rebuild, e.g. v1.0.0"
+        required: true
+        type: string
 
-permissions:
-  contents: write
+permissions: {}
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
-  build:
+  macos:
     name: Build (${{ matrix.name }})
-    runs-on: ${{ matrix.os }}
+    runs-on: macos-latest
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: macos-arm64
-            os: macos-latest
             target: aarch64-apple-darwin
           - name: macos-x64
-            os: macos-latest
             target: x86_64-apple-darwin
-          - name: linux-x64
-            os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          - name: linux-arm64
-            os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-
     steps:
-      - uses: actions/checkout@v4
+      - name: Check the tag
+        run: |
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::'$TAG' is not a release tag like v1.0.0"; exit 1 ;;
+          esac
+          case "$TAG" in *[!A-Za-z0-9.-]*) echo "::error::unexpected characters in '$TAG'"; exit 1 ;; esac
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master, 2026-10
+        with:
+          toolchain: stable
           targets: ${{ matrix.target }},wasm32-unknown-unknown
 
-      - name: Cache cargo registry and build
-        uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ${{ matrix.target }}
-
-      # reqwest uses native-tls (OpenSSL headers); the gui engine needs
-      # fontconfig, xkbcommon and wayland (as ci.yml installs)
-      - name: Install OpenSSL and the gui libraries (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev libfontconfig1-dev libxkbcommon-dev libwayland-dev
 
       # The browser runtime the olang binary embeds (build.rs reads the
       # artifact cargo xtask wasm leaves in target/).
       - name: Build the browser runtime
         run: cargo xtask wasm
 
-      - name: Build release binaries
-        run: cargo build --release --target ${{ matrix.target }} -p olang -p otc
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }} -p olang -p otc
+
+      - name: Stage
+        env:
+          NAME: ${{ matrix.name }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          STAGE="olang-${TAG#v}-$NAME"
+          mkdir "$STAGE"
+          cp "target/$TARGET/release/olang" "target/$TARGET/release/otc" LICENSE README.md "$STAGE/"
+          strip "$STAGE/olang" "$STAGE/otc"
+          echo "STAGE=$STAGE" >> "$GITHUB_ENV"
+
+      # Developer ID signing and notarisation, only when the Apple secrets
+      # exist (dist/signing/README.md). Without them the programs keep the
+      # linker's ad-hoc signature, which the installer is fine with.
+      - name: Sign and notarise
+        env:
+          P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
+          P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: |
+          if [ -z "$P12" ] || [ -z "$NOTARY_KEY" ]; then
+            echo "No Apple Developer ID secrets: keeping the ad-hoc signature."
+            exit 0
+          fi
+          umask 077
+          KEYCHAIN="$RUNNER_TEMP/release.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 24)
+          printf '%s' "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          printf '%s' "$NOTARY_KEY" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN"
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -n 1)
+          [ -n "$IDENTITY" ] || { echo "::error::no Developer ID Application identity in APPLE_DEVELOPER_ID_P12"; exit 1; }
+          for bin in olang otc; do
+            codesign --force --timestamp --options runtime \
+              --entitlements dist/macos/entitlements.plist \
+              --sign "$IDENTITY" "$STAGE/$bin"
+            codesign --verify --strict --verbose=2 "$STAGE/$bin"
+          done
+          ditto -c -k "$STAGE" "$RUNNER_TEMP/notarise.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarise.zip" \
+            --key "$RUNNER_TEMP/notary.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" \
+            --wait --timeout 30m
+          rm -f "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/notary.p8"
+          security delete-keychain "$KEYCHAIN"
 
       - name: Package
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          STAGE="olang-${VERSION}-${{ matrix.name }}"
-          mkdir "$STAGE"
-          cp "target/${{ matrix.target }}/release/olang" "target/${{ matrix.target }}/release/otc" "$STAGE/"
-          strip "$STAGE/olang" "$STAGE/otc"
-          cp LICENSE README.md "$STAGE/"
           tar -czf "$STAGE.tar.gz" "$STAGE"
           shasum -a 256 "$STAGE.tar.gz"
 
-      # macos-latest runners are arm64; the x64 cross-build only runs here
-      # under Rosetta, so keep the smoke test to targets the host executes
-      # natively.
+      # macos-latest runners are Apple silicon. The x64 build runs there
+      # under Rosetta when it is installed; skip its check otherwise.
       - name: Smoke test
-        if: matrix.name != 'macos-x64'
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          "./olang-${VERSION}-${{ matrix.name }}/olang" --version
-          "./olang-${VERSION}-${{ matrix.name }}/otc" --version
+          if "./$STAGE/olang" --version; then "./$STAGE/otc" --version
+          elif [ "${{ matrix.name }}" = macos-x64 ]; then echo "Rosetta is not available; skipping the x64 run."
+          else exit 1; fi
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: tarball-${{ matrix.name }}
+          name: build-${{ matrix.name }}
           path: olang-*.tar.gz
+          if-no-files-found: error
+
+  linux:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            runner: ubuntu-24.04
+            image: quay.io/pypa/manylinux_2_28_x86_64@sha256:e0adf18521ad35192df733a6c62d35df7801957d24e0470238aacecfab2188a3
+          - name: linux-arm64
+            runner: ubuntu-24.04-arm
+            image: quay.io/pypa/manylinux_2_28_aarch64@sha256:a3e02308c822fb6ce0d12248b0c941817ba5e1a1bc9e7bb5929f29c50eaa40a9
+          - name: linux-x64-musl
+            runner: ubuntu-24.04
+            image: alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f
+          - name: linux-arm64-musl
+            runner: ubuntu-24.04-arm
+            image: alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f
+    steps:
+      - name: Check the tag
+        run: |
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::'$TAG' is not a release tag like v1.0.0"; exit 1 ;;
+          esac
+          case "$TAG" in *[!A-Za-z0-9.-]*) echo "::error::unexpected characters in '$TAG'"; exit 1 ;; esac
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+
+      # The build runs inside the container; checkout and upload stay on
+      # the runner, so no action has to run on an old or musl system.
+      - name: Build in ${{ matrix.image }}
+        env:
+          IMAGE: ${{ matrix.image }}
+          NAME: ${{ matrix.name }}
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work -e CARGO_TERM_COLOR \
+            "$IMAGE" sh dist/release/build-linux.sh "${TAG#v}" "$NAME"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-${{ matrix.name }}
+          path: olang-*.tar.gz
+          if-no-files-found: error
+
+  # Windows is built when it can be: a failure here does not hold the
+  # release back, and install.ps1 points people to WSL when a release has
+  # no Windows download.
+  windows:
+    name: Build (windows-x64)
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      # aws-lc (the TLS library) ships assembled objects for Windows, so
+      # the build needs no NASM
+      AWS_LC_SYS_PREBUILT_NASM: "1"
+    steps:
+      - name: Check the tag
+        run: |
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::'$TAG' is not a release tag like v1.0.0"; exit 1 ;;
+          esac
+          case "$TAG" in *[!A-Za-z0-9.-]*) echo "::error::unexpected characters in '$TAG'"; exit 1 ;; esac
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master, 2026-10
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc,wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: x86_64-pc-windows-msvc
+
+      - name: Build the browser runtime
+        run: cargo xtask wasm
+
+      - name: Build
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc -p olang -p otc
+
+      - name: Package and smoke test
+        run: |
+          STAGE="olang-${TAG#v}-windows-x64"
+          mkdir "$STAGE"
+          cp target/x86_64-pc-windows-msvc/release/olang.exe target/x86_64-pc-windows-msvc/release/otc.exe LICENSE README.md "$STAGE/"
+          "./$STAGE/olang.exe" --version
+          "./$STAGE/otc.exe" --version
+          echo 'println("hello from olang")' > hello.ol
+          "./$STAGE/olang.exe" hello.ol
+          7z a -tzip "$STAGE.zip" "$STAGE" > /dev/null
+          sha256sum "$STAGE.zip"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-windows-x64
+          path: olang-*.zip
           if-no-files-found: error
 
   wasm:
     name: Build (playground wasm)
-    runs-on: ubuntu-latest
-
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master, 2026-10
+        with:
+          toolchain: stable
           targets: wasm32-unknown-unknown
 
-      - name: Cache cargo registry and build
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: wasm32-unknown-unknown
-
       - name: Build playground wasm
-        run: cargo build -p olang-playground --target wasm32-unknown-unknown --release
+        run: cargo build -p olang-playground --target wasm32-unknown-unknown --release --locked
 
       - name: Package
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          cp target/wasm32-unknown-unknown/release/olang_playground.wasm \
-             "olang-playground-${VERSION}.wasm"
-          shasum -a 256 "olang-playground-${VERSION}.wasm"
+          cp target/wasm32-unknown-unknown/release/olang_playground.wasm "olang-playground-${TAG#v}.wasm"
+          sha256sum "olang-playground-${TAG#v}.wasm"
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: playground-wasm
+          name: build-playground-wasm
           path: olang-playground-*.wasm
           if-no-files-found: error
 
   release:
-    name: Create GitHub Release
-    needs: [build, wasm]
-    runs-on: ubuntu-latest
-
+    name: Sign and publish
+    needs: [macos, linux, wasm, windows]
+    # every build but Windows must succeed (see the windows job)
+    if: ${{ !cancelled() && needs.macos.result == 'success' && needs.linux.result == 'success' && needs.wasm.result == 'success' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write      # create the release and upload its files
+      id-token: write      # the attestation's signing certificate
+      attestations: write  # store the attestations
     steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
+      # for install.sh's public key, which the signature must match
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: assets
+          pattern: build-*
           merge-multiple: true
 
-      - name: Generate SHA256SUMS
+      - name: Write SHA256SUMS
         run: |
           cd assets
-          shasum -a 256 -- * > SHA256SUMS
+          sha256sum -- * > SHA256SUMS
           cat SHA256SUMS
 
-      - name: Create release
-        uses: softprops/action-gh-release@v2
+      - name: Sign SHA256SUMS
+        env:
+          SIGNING_KEY: ${{ secrets.OLANG_SIGNING_KEY }}
+        run: |
+          # install.sh's SIGNING_KEY, the public key every installer checks with
+          sed -n '/^SIGNING_KEY="-----BEGIN PUBLIC KEY-----/,/-----END PUBLIC KEY-----"$/p' install.sh |
+            sed 's/^SIGNING_KEY="//; s/"$//' > "$RUNNER_TEMP/install.pub"
+          if [ -z "$SIGNING_KEY" ]; then
+            if [ -s "$RUNNER_TEMP/install.pub" ]; then
+              echo "::error::install.sh checks signatures, but the OLANG_SIGNING_KEY secret is not set, so this release would not install."
+              exit 1
+            fi
+            echo "::notice::OLANG_SIGNING_KEY is not set: this release is not signed (dist/signing/README.md)."
+            exit 0
+          fi
+          umask 077
+          printf '%s\n' "$SIGNING_KEY" > "$RUNNER_TEMP/release.key"
+          openssl dgst -sha256 -sign "$RUNNER_TEMP/release.key" -out assets/SHA256SUMS.sig assets/SHA256SUMS
+          rm -f "$RUNNER_TEMP/release.key"
+          if [ -s "$RUNNER_TEMP/install.pub" ]; then
+            openssl dgst -sha256 -verify "$RUNNER_TEMP/install.pub" -signature assets/SHA256SUMS.sig assets/SHA256SUMS || {
+              echo "::error::the signature does not verify with install.sh's SIGNING_KEY: the secret and the key in install.sh are not a pair."
+              exit 1
+            }
+          else
+            echo "::warning::signed, but install.sh has no SIGNING_KEY yet, so the installer does not check the signature."
+          fi
+
+      # A record, signed by GitHub, of which workflow run built each file:
+      # `gh attestation verify FILE --repo ooyeku/olang` checks it.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          name: ${{ github.ref_name }}
+          subject-path: |
+            assets/*.tar.gz
+            assets/*.zip
+            assets/*.wasm
+
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: ${{ env.TAG }}
+          name: ${{ env.TAG }}
           draft: false
           # a version with a suffix (v1.0.0-rc.1) is a prerelease
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(env.TAG, '-') }}
+          overwrite_files: true
           files: |
             assets/*.tar.gz
+            assets/*.zip
             assets/*.wasm
             assets/SHA256SUMS
-          body: >
-            Release ${{ github.ref_name }}. See
-            [CHANGELOG.md](https://github.com/ooyeku/olang/blob/main/CHANGELOG.md)
-            for what changed. `SHA256SUMS` covers every attached file; the
-            Homebrew formula in `dist/homebrew/` consumes the macOS/Linux
-            tarballs. Install with the one-line script in the README, the
-            Homebrew tap, or a tarball below. A tarball downloaded with a
-            web browser is quarantined by macOS: run `xattr -d
-            com.apple.quarantine olang otc` in its folder before the first
-            run (see docs/installation.md).
+            assets/SHA256SUMS.sig
+          body: |
+            See [CHANGELOG.md](https://github.com/ooyeku/olang/blob/main/CHANGELOG.md) for what changed.
+
+            Install on macOS or Linux with `curl -fsSL https://olang.dev/install.sh | sh`, or with Homebrew: `brew install ooyeku/olang/olang`. The [installation guide](https://olang.dev/book/installation/) covers every other way.
+
+            `SHA256SUMS` lists a checksum for every file here, and `SHA256SUMS.sig` is its signature by olang's release key (when present). Each file also has a GitHub build attestation: `gh attestation verify FILE --repo ooyeku/olang`. The `-musl` builds are static and run on any Linux, without windows (`gui`). On macOS, a tarball downloaded with a web browser is quarantined: run `xattr -d com.apple.quarantine olang otc` in its folder before the first run.
 
   homebrew:
-    name: Update Homebrew tap
+    name: Update the Homebrew tap
     needs: release
     # a prerelease does not move the tap: `brew install` stays on the
     # last release
-    if: ${{ !contains(github.ref_name, '-') }}
-    runs-on: ubuntu-latest
-
+    if: ${{ !cancelled() && needs.release.result == 'success' && !contains(inputs.tag || github.ref_name, '-') }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
 
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: assets
+          pattern: build-*
           merge-multiple: true
 
-      - name: Push formula to the tap
+      - name: Push the formula to the tap
         env:
           TAP_PUSH_TOKEN: ${{ secrets.TAP_PUSH_TOKEN }}
         run: |
           if [ -z "$TAP_PUSH_TOKEN" ]; then
-            echo "TAP_PUSH_TOKEN not configured; skipping the tap update."
+            echo "TAP_PUSH_TOKEN is not set; skipping the tap update (dist/homebrew/README.md)."
             exit 0
           fi
-          VERSION="${GITHUB_REF_NAME#v}"
-          sha() { shasum -a 256 "assets/olang-${VERSION}-$1.tar.gz" | cut -d' ' -f1; }
+          VERSION="${TAG#v}"
+          sha() { sha256sum "assets/olang-${VERSION}-$1.tar.gz" | cut -d' ' -f1; }
           git clone "https://x-access-token:${TAP_PUSH_TOKEN}@github.com/ooyeku/homebrew-olang.git" tap
-          sed -e "s/@VERSION@/${VERSION}/g"               -e "s/@SHA_MACOS_ARM64@/$(sha macos-arm64)/"               -e "s/@SHA_MACOS_X64@/$(sha macos-x64)/"               -e "s/@SHA_LINUX_X64@/$(sha linux-x64)/"               -e "s/@SHA_LINUX_ARM64@/$(sha linux-arm64)/"               dist/homebrew/olang.rb.tmpl > tap/Formula/olang.rb
+          sed -e "s/@VERSION@/${VERSION}/g" \
+              -e "s/@SHA_MACOS_ARM64@/$(sha macos-arm64)/" \
+              -e "s/@SHA_MACOS_X64@/$(sha macos-x64)/" \
+              -e "s/@SHA_LINUX_X64@/$(sha linux-x64)/" \
+              -e "s/@SHA_LINUX_ARM64@/$(sha linux-arm64)/" \
+              dist/homebrew/olang.rb.tmpl > tap/Formula/olang.rb
+          if grep -q '@[A-Z_0-9]*@' tap/Formula/olang.rb; then
+            echo "::error::the formula still has placeholders"; exit 1
+          fi
           cd tap
           git config user.name "olang-release"
           git config user.email "release@olang.invalid"

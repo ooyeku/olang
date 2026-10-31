@@ -90,10 +90,15 @@ examples/data-processing/statlab/*.svg
 examples/*/*/main
 examples/*/*/ledger
 
-# Local distribution staging (make dist). dist/homebrew (the formula
-# template) and the Linux verification pass stay tracked.
+# Local distribution staging (make dist goes to dist/out). The release
+# recipes beside it stay tracked: the Homebrew formula template, the
+# Linux build and verification scripts, the macOS entitlements and the
+# signing notes.
 /dist/*
 !/dist/homebrew/
 !/dist/linux-verify.sh
+!/dist/release/
+!/dist/macos/
+!/dist/signing/
 editors/vscode/dist/
 examples/data-processing/meterflow/cache/
