@@ -39,8 +39,13 @@ The installer works out what kind of computer you have, downloads the
 matching olang, checks that the download is genuine, and puts `olang`
 and `otc` in a folder in your home directory (`~/.olang/bin`). It adds
 that folder to your `PATH`, the list of places your terminal looks for
-programs. It needs no administrator password and no Rust. When it
-finishes, open a new terminal window and run:
+programs. It needs no administrator password and no Rust.
+
+A terminal only reads that list when it opens, so the window you
+installed from doesn't know about olang yet. When the installer
+finishes, either quit and reopen your terminal, or bring the change
+into the window you have with `source` and the file the installer names
+(for zsh, the usual shell on a Mac, that is `source ~/.zshrc`). Then run:
 
 ```bash
 olang --version
