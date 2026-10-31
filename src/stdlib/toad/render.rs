@@ -48,6 +48,15 @@ fn turn(p: vec2<f32>, a: f32) -> vec2<f32> {
     let c = cos(a); let s = sin(a);
     return vec2(p.x * c - p.y * s, p.x * s + p.y * c);
 }
+/// What a pass writes: linear light, or (the screen, mode 3, drawn over
+/// the finished frame) display-encoded sRGB, premultiplied either way.
+fn out_of(c: vec4<f32>) -> vec4<f32> {
+    if (v.mode < 2.5) { return c; }
+    let a = max(c.a, 1e-5);
+    let l = clamp(c.rgb / a, vec3(0.0), vec3(1.0));
+    let e = select(1.055 * pow(l, vec3(1.0 / 2.4)) - 0.055, l * 12.92, l <= vec3(0.0031308));
+    return vec4(e * c.a, c.a);
+}
 fn corner(i: u32) -> vec2<f32> {
     var c = array<vec2<f32>, 6>(vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(-1.0, 1.0),
                                 vec2(-1.0, 1.0), vec2(1.0, -1.0), vec2(1.0, 1.0));
@@ -137,7 +146,7 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) i: u32) -> O {
     var o: O;
     o.at = to_clip(v, s.c + turn(q, s.rot));
     // the light scene draws only what emits or casts
-    if (v.mode > 0.5 && s.emit <= 0.0 && s.blocks <= 0.0) { o.at = vec4(2.0, 2.0, 2.0, 1.0); }
+    if (v.mode > 0.5 && v.mode < 2.5 && s.emit <= 0.0 && s.blocks <= 0.0) { o.at = vec4(2.0, 2.0, 2.0, 1.0); }
     o.q = q;
     o.i = i;
     return o;
@@ -260,7 +269,7 @@ fn fs(o: O) -> @location(0) vec4<f32> {
     if (s.pattern > 0.5) { pv = pattern_at(s, p); }
     let alb = mix(s.color.rgb, s.color2.rgb, pv);
     let e = alb * s.emit * cov;
-    if (v.mode > 0.5) {
+    if (v.mode > 0.5 && v.mode < 2.5) {
         // the light scene: its light, and whether it blocks
         return vec4(e, cov * s.blocks);
     }
@@ -297,12 +306,12 @@ fn fs(o: O) -> @location(0) vec4<f32> {
                 l = light_at(v, o.at);
             }
         }
-        if (!shaded) { return vec4(alb * l * a + e, a); }
+        if (!shaded) { return out_of(vec4(alb * l * a + e, a)); }
         let ld = normalize(vec3(-0.45, 0.6, 0.66));
         let diffuse = clamp(dot(n_w, ld) / ld.z, 0.0, 2.5);
         let hv = normalize(ld + vec3(0.0, 0.0, 1.0));
         let spec = pow(max(dot(n_w, hv), 0.0), mix(8.0, 90.0, s.gloss)) * s.gloss * 1.2;
-        return vec4((alb * diffuse + vec3(spec)) * l * a + e, a);
+        return out_of(vec4((alb * diffuse + vec3(spec)) * l * a + e, a));
     }
     // lit and shaded: the light around it from four sides (outside it for
     // a blocker, where light arrives; around the pixel otherwise), each
@@ -344,16 +353,16 @@ fn fs(o: O) -> @location(0) vec4<f32> {
     let ld = normalize(vec3(pull / max(length(pull), 1e-6), 0.6));
     let hv = normalize(ld + vec3(0.0, 0.0, 1.0));
     let spec = pow(max(dot(n_w, hv), 0.0), mix(8.0, 90.0, s.gloss)) * s.gloss * 1.6 * dirk;
-    return vec4((alb + vec3(spec)) * l * a + e, a);
+    return out_of(vec4((alb + vec3(spec)) * l * a + e, a));
 }
 "#;
 
-/// A sprite: centre, half size, turn, whether it is unlit, room, tint
-/// (rgba: past 1 glows).
+/// A sprite: centre, half size, turn, whether it is unlit, its light
+/// (`emit`), whether it casts, tint (rgba: past 1 glows).
 pub const SPRITE_FLOATS: usize = 12;
 
 const SPRITES: &str = r#"
-struct P { c: vec2<f32>, half: vec2<f32>, rot: f32, unlit: f32, pad1: f32, pad2: f32, tint: vec4<f32> };
+struct P { c: vec2<f32>, half: vec2<f32>, rot: f32, unlit: f32, emit: f32, blocks: f32, tint: vec4<f32> };
 @group(0) @binding(0) var<storage, read> sp: array<P>;
 @group(0) @binding(1) var<uniform> v: V;
 @group(0) @binding(2) var pic: texture_2d<f32>;
@@ -365,6 +374,8 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) i: u32) -> O {
     let c = corner(vi);
     var o: O;
     o.at = to_clip(v, s.c + turn(c * s.half, s.rot));
+    // the light scene draws only the sprites that give or block light
+    if (v.mode > 0.5 && v.mode < 2.5 && s.emit <= 0.0 && s.blocks <= 0.0) { o.at = vec4(2.0, 2.0, 2.0, 1.0); }
     o.uv = vec2(c.x * 0.5 + 0.5, 0.5 - c.y * 0.5);
     o.i = i;
     return o;
@@ -375,9 +386,27 @@ fn fs(o: O) -> @location(0) vec4<f32> {
     let s = sp[o.i];
     let t = s.tint;
     let c = textureSample(pic, smp, o.uv);
+    if (v.mode > 0.5 && v.mode < 2.5) {
+        // the light scene: its colours as light, its shape as a blocker
+        return vec4(c.rgb * t.rgb * s.emit * t.a, select(0.0, c.a, s.blocks > 0.5 && c.a > 0.5));
+    }
     var l = vec3(1.0);
-    if (s.unlit < 0.5) { l = light_at(v, o.at); }
-    return vec4(c.rgb * t.rgb * l, c.a) * t.a;
+    if (s.unlit < 0.5 && v.lit > 0.5) {
+        if (s.blocks > 0.5) {
+            // a blocker: no light inside it, so the light just outside each
+            // side, blended across it
+            let local = vec2((o.uv.x - 0.5) * 2.0 * s.half.x, (0.5 - o.uv.y) * 2.0 * s.half.y);
+            let m = 6.0 / v.scale;
+            let lr = light_off(v, o.at, turn(vec2(s.half.x + m, 0.0) - local, s.rot));
+            let ll = light_off(v, o.at, turn(vec2(-s.half.x - m, 0.0) - local, s.rot));
+            let lt = light_off(v, o.at, turn(vec2(0.0, s.half.y + m) - local, s.rot));
+            let lb = light_off(v, o.at, turn(vec2(0.0, -s.half.y - m) - local, s.rot));
+            l = (mix(ll, lr, o.uv.x) + mix(lt, lb, o.uv.y)) * 0.5;
+        } else {
+            l = light_at(v, o.at);
+        }
+    }
+    return out_of(vec4(c.rgb * t.rgb * l + c.rgb * t.rgb * s.emit, c.a) * t.a);
 }
 "#;
 
@@ -633,10 +662,12 @@ pub struct Layer<'a> {
 /// One part of a frame, drawn in order.
 pub enum Part<'a> {
     Swarm(Layer<'a>),
-    /// `SHAPE_FLOATS` per shape.
-    Shapes(Vec<f32>),
-    /// Runs of one picture: `SPRITE_FLOATS` per sprite.
-    Sprites(Vec<(Arc<crate::stdlib::gui::canvas::Picture>, Vec<f32>)>),
+    /// `SHAPE_FLOATS` per shape; whether they are on the screen (points
+    /// from the top left, y down, no camera, no light) rather than in the
+    /// world.
+    Shapes(Vec<f32>, bool),
+    /// Runs of one picture: `SPRITE_FLOATS` per sprite; on the screen.
+    Sprites(Vec<(Arc<crate::stdlib::gui::canvas::Picture>, Vec<f32>)>, bool),
 }
 
 /// The camera and the finish.
@@ -662,6 +693,8 @@ pub struct View {
     pub gi_down: u32,
     /// Seconds, for patterns that move.
     pub time: f32,
+    /// Pixels per point on the screen layers.
+    pub ui_scale: f32,
 }
 
 const HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -695,6 +728,9 @@ pub struct Renderer {
     points: Pipe,
     shapes: Pipe,
     sprites: Pipe,
+    /// The same two drawing onto the finished frame (the screen).
+    shapes_ui: wgpu::RenderPipeline,
+    sprites_ui: wgpu::RenderPipeline,
     light_layout: wgpu::BindGroupLayout,
     jfa: Pipe,
     dist: Pipe,
@@ -838,6 +874,8 @@ impl Renderer {
             pipe("toad sprites", format!("{VIEW}{LIGHT}{SPRITES}"), &[&pl2, &light_layout], HDR, Some(over)),
             pl2,
         );
+        let shapes_ui = pipe("toad screen shapes", format!("{VIEW}{LIGHT}{SHAPES}"), &[&shapes.1, &light_layout], OUT, Some(over));
+        let sprites_ui = pipe("toad screen sprites", format!("{VIEW}{LIGHT}{SPRITES}"), &[&sprites.1, &light_layout], OUT, Some(over));
         let jl = layout("toad jfa", &[entry(0, f, texture(false)), entry(1, f, uniform())]);
         let jfa = (pipe("toad jfa", format!("{FULL}{JFA}"), &[&jl], SEEDS, None), jl);
         let dl = layout("toad dist", &[entry(0, f, texture(false))]);
@@ -888,6 +926,8 @@ impl Renderer {
             points,
             shapes,
             sprites,
+            shapes_ui,
+            sprites_ui,
             light_layout,
             jfa,
             dist,
@@ -1016,6 +1056,7 @@ impl Renderer {
         &'s self,
         parts: &[Part<'_>],
         vbuf: &wgpu::Buffer,
+        screen: Option<&wgpu::Buffer>,
         views: &[wgpu::TextureView],
         light: bool,
     ) -> Vec<(&'s wgpu::RenderPipeline, wgpu::BindGroup, u32, u32)> {
@@ -1024,6 +1065,7 @@ impl Renderer {
         let mut views = views.iter();
         for p in parts {
             match p {
+                Part::Swarm(_) if screen.is_some() => {}
                 Part::Swarm(l) => {
                     let mut u = [0u32; 16];
                     u[12] = l.reach.to_bits();
@@ -1049,23 +1091,36 @@ impl Renderer {
                     });
                     out.push((&self.points.0, bg, 6, l.n as u32));
                 }
-                Part::Shapes(inst) if !inst.is_empty() => {
+                Part::Shapes(inst, on_screen) if !inst.is_empty() => {
+                    // the screen's are drawn on their own, over the finish
+                    if *on_screen != screen.is_some() {
+                        continue;
+                    }
+                    let vb = screen.unwrap_or(vbuf);
                     let sb = self.buffer("toad shapes", bytemuck::cast_slice(inst), wgpu::BufferUsages::STORAGE);
                     let bg = d.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("toad shapes"),
                         layout: &self.shapes.1,
                         entries: &[
                             wgpu::BindGroupEntry { binding: 0, resource: sb.as_entire_binding() },
-                            wgpu::BindGroupEntry { binding: 1, resource: vbuf.as_entire_binding() },
+                            wgpu::BindGroupEntry { binding: 1, resource: vb.as_entire_binding() },
                         ],
                     });
-                    out.push((&self.shapes.0, bg, 6, (inst.len() / SHAPE_FLOATS) as u32));
+                    let pipe = if screen.is_some() { &self.shapes_ui } else { &self.shapes.0 };
+                    out.push((pipe, bg, 6, (inst.len() / SHAPE_FLOATS) as u32));
                 }
-                Part::Sprites(runs) => {
+                Part::Sprites(runs, on_screen) => {
+                    let skip = *on_screen != screen.is_some();
+                    let vb = screen.unwrap_or(vbuf);
                     for (_, inst) in runs {
                         let view = views.next().expect("a view per run");
-                        // sprites neither give light nor block it
-                        if inst.is_empty() || light {
+                        if skip {
+                            continue;
+                        }
+                        // in the light scene only the runs that give or block light
+                        if inst.is_empty()
+                            || (light && !inst.chunks(SPRITE_FLOATS).any(|r| r[6] > 0.0 || r[7] > 0.0))
+                        {
                             continue;
                         }
                         let sb = self.buffer("toad sprites", bytemuck::cast_slice(inst), wgpu::BufferUsages::STORAGE);
@@ -1074,15 +1129,16 @@ impl Renderer {
                             layout: &self.sprites.1,
                             entries: &[
                                 wgpu::BindGroupEntry { binding: 0, resource: sb.as_entire_binding() },
-                                wgpu::BindGroupEntry { binding: 1, resource: vbuf.as_entire_binding() },
+                                wgpu::BindGroupEntry { binding: 1, resource: vb.as_entire_binding() },
                                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(view) },
                                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&self.sampler) },
                             ],
                         });
-                        out.push((&self.sprites.0, bg, 6, (inst.len() / SPRITE_FLOATS) as u32));
+                        let pipe = if screen.is_some() { &self.sprites_ui } else { &self.sprites.0 };
+                        out.push((pipe, bg, 6, (inst.len() / SPRITE_FLOATS) as u32));
                     }
                 }
-                Part::Shapes(_) => {}
+                Part::Shapes(..) => {}
             }
         }
         out
@@ -1154,7 +1210,7 @@ impl Renderer {
         // every sprite's texture first (uploads need `&mut self`)
         let mut sprite_views = Vec::new();
         for p in parts {
-            if let Part::Sprites(runs) = p {
+            if let Part::Sprites(runs, _) = p {
                 for (pic, _) in runs {
                     let view = self.picture(pic);
                     sprite_views.push(view);
@@ -1178,7 +1234,7 @@ impl Renderer {
             let down = v.gi_down as f32;
             let gsize = (w.div_ceil(v.gi_down), h.div_ceil(v.gi_down));
             let gv = self.uniform("toad light view", &view_words(gsize, v.scale / down, 1.0, 1.0 / down));
-            let gdraws = self.draws(parts, &gv, &sprite_views, true);
+            let gdraws = self.draws(parts, &gv, None, &sprite_views, true);
             let white = self.light_group(&self.white);
             {
                 let scene_v = tv(&t.gi_scene);
@@ -1259,7 +1315,7 @@ impl Renderer {
             // swarms' light: a pool around each point, added (no shadow)
             let pv = self.uniform("toad pools", &view_words(gsize, v.scale / down, 2.0, 1.0 / down));
             let pools: Vec<_> = self
-                .draws(parts, &pv, &sprite_views, true)
+                .draws(parts, &pv, None, &sprite_views, true)
                 .into_iter()
                 .filter(|d| std::ptr::eq(d.0, &self.points.0))
                 .collect();
@@ -1288,7 +1344,7 @@ impl Renderer {
         // 4. the frame, lit
         let hv = tv(&t.hdr);
         let vbuf = self.uniform("toad view", &view_words((w, h), v.scale, 0.0, 1.0));
-        let draws = self.draws(parts, &vbuf, &sprite_views, false);
+        let draws = self.draws(parts, &vbuf, None, &sprite_views, false);
         let light = self.light_group(&light_view);
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1358,6 +1414,37 @@ impl Renderer {
             ],
             wgpu::LoadOp::Clear(wgpu::Color::BLACK),
         );
+        // 7. the screen: points from the top left (y turned up by the
+        // caller), no camera, no light, drawn over the finished frame as
+        // written
+        let k = v.ui_scale.max(0.01);
+        let sbuf = self.uniform(
+            "toad screen",
+            &[
+                w as f32, h as f32, w as f32 / (2.0 * k), -(h as f32) / (2.0 * k), k, 0.0, 3.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                0.0, v.time, 0.0,
+            ],
+        );
+        let ui = self.draws(parts, &vbuf, Some(&sbuf), &sprite_views, false);
+        if !ui.is_empty() {
+            let white = self.light_group(&self.white);
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("toad screen"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &ov,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                })],
+                ..Default::default()
+            });
+            for (pipe, bg, verts, n) in &ui {
+                pass.set_pipeline(pipe);
+                pass.set_bind_group(0, bg, &[]);
+                pass.set_bind_group(1, &white, &[]);
+                pass.draw(0..*verts, 0..*n);
+            }
+        }
         let row = (w * 4).div_ceil(256) * 256;
         let d = &self.gpu.device;
         let rb = read.then(|| {

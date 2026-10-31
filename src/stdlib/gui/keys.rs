@@ -37,6 +37,20 @@ pub fn device_release(name: &str) {
     }
 }
 
+static POINTER: Mutex<Option<(f32, f32)>> = Mutex::new(None);
+
+/// The pointer moved to `(x, y)` in a window (points from its top left).
+pub fn device_pointer(x: f32, y: f32) {
+    if !is_scripted() {
+        *POINTER.lock().unwrap_or_else(|e| e.into_inner()) = Some((x, y));
+    }
+}
+
+/// Where the pointer last was in a window, if it has been in one.
+pub fn pointer() -> Option<(f32, f32)> {
+    *POINTER.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// A device let go of everything (a window lost focus, a pad went away).
 pub fn device_release_all() {
     if !is_scripted() {
@@ -73,6 +87,17 @@ pub fn release(name: &str) {
         if h.down.remove(name) {
             *h.released.entry(name.to_string()).or_default() += 1;
         }
+    });
+}
+
+/// Exactly `names` are down, and nothing went down or up: where a
+/// replay left the keys (a rewind, a reload), so a key held across it is
+/// not pressed again.
+pub fn hold(names: &[String]) {
+    with(|h| {
+        h.down = names.iter().cloned().collect();
+        h.pressed.clear();
+        h.released.clear();
     });
 }
 

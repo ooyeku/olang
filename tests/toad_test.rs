@@ -518,3 +518,131 @@ show(toad.audio())
     );
     assert!(out.contains("muted"), "{out}");
 }
+
+// ── T5: characters, one-way platforms, warming, the screen, sprites
+// that light, sparks that collide, seeds ─────────────────────────────
+
+#[test]
+fn a_walker_jumps_up_through_a_one_way_ledge_and_stands_on_it() {
+    let src = r#"
+let w = toad.physics(#{})
+toad.body(w, #{ "kind": "static", "shape": "box", "size": (4000.0, 40.0), "at": (0.0, -20.0) })
+toad.body(w, #{ "kind": "static", "shape": "box", "size": (300.0, 16.0), "at": (0.0, 160.0), "one_way": true })
+let me = toad.body(w, #{ "kind": "kinematic", "shape": "capsule", "size": (30.0, 60.0), "rot": 1.5708, "at": (0.0, 31.0) })
+toad.warm(w)
+let mut vy = 0.0
+for i in range(0, 240) {
+    let ground = toad.pose(w, me).grounded
+    vy = if ground && i == 10 => 900.0 else if ground => 0.0 else => vy - 2000.0 / 120.0
+    toad.walk(w, me, (0.0, vy / 120.0), #{})
+    toad.simulate(w, 1.0 / 120.0)
+}
+let p = toad.pose(w, me)
+// a ball thrown up through it lands on it too
+let ball = toad.body(w, #{ "shape": "circle", "size": 10.0, "at": (100.0, 40.0), "vel": (0.0, 900.0) })
+for i in range(0, 240) { toad.simulate(w, 1.0 / 120.0) }
+show((p.grounded, math.round(p.at[1]), math.round(toad.pose(w, ball).at[1])))
+"#;
+    // the ledge's top is 168: the capsule's half (30.5 with its skin), the ball's radius
+    assert_eq!(run(src).as_deref(), Ok("(true, 199, 178)"));
+}
+
+#[test]
+fn a_walk_asks_for_a_kinematic_body() {
+    let out = run(r#"
+let w = toad.physics(#{})
+let b = toad.body(w, #{ "shape": "circle" })
+show(attempt(() => toad.walk(w, b, (1.0, 0.0), #{})))
+"#)
+    .expect("ran");
+    assert!(out.contains("kinematic"), "{out}");
+}
+
+#[test]
+fn screen_layers_are_placed_in_points_and_drawn_as_written() {
+    let src = r##"
+match toad.gpu() {
+    Err(e) => "no gpu",
+    Ok(_) => {
+        let f = toad.frame([#{ "screen": true, "shapes": [#{ "kind": "box", "at": (40.0, 30.0), "size": (40.0, 20.0), "color": "#3080c0" }] }],
+            #{ "size": (200, 100), "ui_scale": 2.0, "center": (500.0, 500.0), "scale": 3.0, "gi": 1.0, "bloom": 0.1,
+               "probe": [(80, 60), (80, 20)] })
+        show(f.probe)
+    }
+}"##;
+    let out = run(src).expect("ran");
+    // the camera does not move it, the light and the finish do not change it
+    assert!(out == "[(48, 128, 192), (0, 0, 0)]" || out == "no gpu", "{out}");
+}
+
+#[test]
+fn a_sprite_can_give_light_and_cast_a_shadow() {
+    let dir = std::env::temp_dir().join(format!("toad-sprite-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let disc = dir.join("disc.png");
+    let src = format!(
+        r##"
+match toad.gpu() {{
+    Err(e) => "no gpu",
+    Ok(_) => {{
+        let png = toad.frame([#{{ "shapes": [#{{ "kind": "circle", "size": 30.0, "color": "#ffffff" }}] }}], #{{ "size": (64, 64), "png": true }}).png
+        fs.write_bytes("{disc}", png)
+        let floor = #{{ "kind": "box", "size": (2000.0, 2000.0), "color": "#808080" }}
+        let v = #{{ "size": (512, 512), "scale": 1.0, "gi": 1.0, "probe": [(256 - 70, 256), (256 + 70, 256)] }}
+        let lum = (c) => c[0] + c[1] + c[2]
+        let glow = toad.frame([#{{ "shapes": [floor] }}, #{{ "sprites": [#{{ "src": "{disc}", "size": 1.0, "emit": 20.0 }}] }}], v)
+        let lamp = #{{ "kind": "circle", "at": (-160.0, 0.0), "size": 8.0, "color": "#ffffff", "emit": 30.0 }}
+        let shade = toad.frame([#{{ "shapes": [floor, lamp] }}, #{{ "sprites": [#{{ "src": "{disc}", "size": 1.5, "cast": true }}] }}], v)
+        show(lum(glow.probe[0]) > 100 && lum(shade.probe[0]) > lum(shade.probe[1]) + 100)
+    }}
+}}"##,
+        disc = disc.display()
+    );
+    let out = run(&src).expect("ran");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(out == "true" || out == "no gpu", "{out}");
+}
+
+#[test]
+fn sparks_collide_on_the_gpu() {
+    let src = r#"
+fn ok(r) = match r { Ok(v) => v, Err(e) => raise(e) }
+match toad.gpu() {
+    Err(e) => "no gpu",
+    Ok(_) => {
+        let w = toad.physics(#{})
+        toad.body(w, #{ "kind": "static", "shape": "box", "size": (2000.0, 40.0), "at": (0.0, -20.0), "round": 4.0 })
+        toad.body(w, #{ "kind": "static", "shape": "circle", "size": 60.0, "at": (0.0, 100.0) })
+        fn fall(p, w) = #{ "pos": p.pos + p.vel * w.dt, "vel": p.vel + (0.0, -980.0) * w.dt }
+        let s = ok(toad.swarm(ok(toad.kernel(fall, #{ "pos": (0.0, 0.0), "vel": (0.0, 0.0) }, #{})), 4000, "show"))
+        toad.spawn(s, 4000, #{ "pos": ("box", (-300.0, 300.0), (300.0, 600.0)), "seed": 3 })
+        for i in range(0, 240) {
+            toad.step(s, #{ "dt": 1.0 / 120.0 })
+            toad.collide(s, w, #{ "radius": 3.0, "bounce": 0.3 })
+        }
+        let ps = toad.read(s, "pos") |> filter((p) => abs(p[0]) < 990.0)
+        let through = ps |> filter((p) => p[1] < 2.0) |> len
+        let inside = ps |> filter((p) => math.sqrt(p[0] * p[0] + (p[1] - 100.0) * (p[1] - 100.0)) < 62.0) |> len
+        show((through, inside))
+    }
+}"#;
+    let out = run(src).expect("ran");
+    assert!(out == "(0, 0)" || out == "no gpu", "{out}");
+}
+
+#[test]
+fn swarms_seeded_alike_draw_alike_and_a_dropped_one_is_gone() {
+    let src = r#"
+fn ok(r) = match r { Ok(v) => v, Err(e) => raise(e) }
+fn still(p, w) = #{ "pos": p.pos }
+let k = ok(toad.kernel(still, #{ "pos": (0.0, 0.0) }, #{}))
+let a = ok(toad.swarm(k, 50, "play", 7))
+let b = ok(toad.swarm(k, 50, "play", 7))
+let c = ok(toad.swarm(k, 50, "play", 8))
+for s in [a, b, c] { toad.spawn(s, 50, #{ "pos": ("disc", (0.0, 0.0), 100.0) }) }
+let same = toad.read(a, "pos") == toad.read(b, "pos") && toad.read(a, "pos") != toad.read(c, "pos")
+toad.drop(a)
+show((same, attempt(() => toad.count(a)) |> show |> str.contains("no such swarm")))
+"#;
+    assert_eq!(run(src).as_deref(), Ok("(true, true)"));
+}

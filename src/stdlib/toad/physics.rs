@@ -25,6 +25,7 @@ use super::{map_of, num, pair};
 use crate::ast::{Value, ValueMap};
 #[cfg(feature = "native")]
 use rayon::prelude::*;
+use rapier2d::control::{CharacterAutostep, CharacterLength, KinematicCharacterController};
 use rapier2d::prelude::*;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -40,6 +41,12 @@ pub struct World {
     /// Each moving body's pose before the last step (world units), for
     /// drawing between steps.
     prev: HashMap<i64, ([f32; 2], f32)>,
+    /// One-way colliders, by the side (local) things may land on.
+    one_way: HashMap<ColliderHandle, Vector>,
+    /// Touches found by `warm`, told with the first step.
+    pending: Vec<Touch>,
+    /// Whether a walking body stood on something after its last walk.
+    grounded: HashMap<i64, bool>,
 }
 
 fn v(p: (f32, f32), k: f32) -> Vector {
@@ -88,6 +95,9 @@ impl World {
             bodies: HashMap::new(),
             joints: HashMap::new(),
             prev: HashMap::new(),
+            one_way: HashMap::new(),
+            pending: Vec::new(),
+            grounded: HashMap::new(),
         })
     }
 
@@ -104,8 +114,10 @@ impl World {
     /// `poly`, `chain`), `size` (a radius, or the whole `(w, h)`),
     /// `round`, `points` (a polygon's or a chain's, local), `at` and
     /// `rot` (its place on the body), `density`, `friction`, `bounce`,
-    /// `sensor`, `groups` (`(member, collides_with)`, bit masks).
-    fn collider(&self, m: &ValueMap, id: i64) -> Result<ColliderBuilder, String> {
+    /// `sensor`, `groups` (`(member, collides_with)`, bit masks),
+    /// `one_way` (true: things land on its top and pass up through it; or
+    /// the side, a pair, local).
+    fn collider(&self, m: &ValueMap, id: i64) -> Result<(ColliderBuilder, Option<Vector>), String> {
         let k = self.k;
         let shape = match m.get("shape") {
             Some(Value::String(s)) => s.to_string(),
@@ -182,7 +194,15 @@ impl World {
             // a trigger notices kinematic and fixed bodies too
             b = b.active_collision_types(ActiveCollisionTypes::all());
         }
-        Ok(b)
+        let one_way = match m.get("one_way") {
+            Some(Value::Boolean(true)) => Some(Vector::new(0.0, 1.0)),
+            Some(x) => pair(x).map(|p| Vector::new(p.0, p.1).normalize_or_zero()),
+            None => None,
+        };
+        if one_way.is_some() {
+            b = b.active_hooks(ActiveHooks::MODIFY_SOLVER_CONTACTS);
+        }
+        Ok((b, one_way))
     }
 
     /// A body: `kind` (`dynamic`, `static`, `kinematic`), `at`, `rot`,
@@ -233,10 +253,14 @@ impl World {
                 vec![one]
             }
         };
-        let colliders: Vec<ColliderBuilder> = parts.iter().map(|p| self.collider(p, id)).collect::<Result<_, _>>()?;
+        let colliders: Vec<(ColliderBuilder, Option<Vector>)> =
+            parts.iter().map(|p| self.collider(p, id)).collect::<Result<_, _>>()?;
         let h = self.w.bodies.insert(b);
-        for c in colliders {
-            self.w.colliders.insert_with_parent(c, h, &mut self.w.bodies);
+        for (c, one_way) in colliders {
+            let ch = self.w.colliders.insert_with_parent(c, h, &mut self.w.bodies);
+            if let Some(n) = one_way {
+                self.one_way.insert(ch, n);
+            }
         }
         self.bodies.insert(id, h);
         self.prev.insert(id, ([at.0, at.1], rot));
@@ -246,6 +270,12 @@ impl World {
     pub fn remove_body(&mut self, id: i64) {
         if let Some(h) = self.bodies.remove(&id) {
             self.prev.remove(&id);
+            self.grounded.remove(&id);
+            if let Some(b) = self.w.bodies.get(h) {
+                for c in b.colliders() {
+                    self.one_way.remove(c);
+                }
+            }
             self.w.remove_body_with_colliders(h, true);
             // its joints went with it
             let joints = &self.w.impulse_joints;
@@ -389,8 +419,10 @@ impl World {
         }
         self.w.integration_parameters.dt = dt.max(1e-6);
         let ev = Events::default();
-        self.w.step_with_events(&(), &ev);
-        let raw = ev.0.into_inner().unwrap_or_else(|e| e.into_inner());
+        let hooks = Hooks { one_way: &self.one_way };
+        self.w.step_with_events(&hooks, &ev);
+        let mut raw = std::mem::take(&mut self.pending);
+        raw.extend(ev.0.into_inner().unwrap_or_else(|e| e.into_inner()));
         let mut out = Vec::with_capacity(raw.len());
         for e in raw {
             let (Some(a), Some(b)) = (self.id_of_collider(e.a), self.id_of_collider(e.b)) else {
@@ -411,6 +443,90 @@ impl World {
         Value::List(Arc::new(out))
     }
 
+    /// Build what the first step would (the broad phase, the contacts),
+    /// so a large world's first step costs no more than the rest; the
+    /// touches found are told with that step.
+    pub fn warm(&mut self) {
+        // a step of no time: the pipeline's own broad and narrow phase built
+        // and nothing moved (rapier keeps a zero-length step still; its
+        // collision pipeline alone would leave pairs the solver refuses)
+        let ev = Events::default();
+        let hooks = Hooks { one_way: &self.one_way };
+        let dt = self.w.integration_parameters.dt;
+        self.w.integration_parameters.dt = 0.0;
+        self.w.step_with_events(&hooks, &ev);
+        self.w.integration_parameters.dt = dt;
+        self.pending.extend(ev.0.into_inner().unwrap_or_else(|e| e.into_inner()));
+    }
+
+    /// Walk a kinematic body by `delta` (world units) as a character does:
+    /// sliding along walls, up `slope` (degrees, 45) and onto steps up to
+    /// `step` high, snapped down to the ground within `snap`, up through
+    /// one-way platforms and onto them. It gets there by the end of the
+    /// next step. Answers `#{ moved, grounded, sliding }`.
+    pub fn walk(&mut self, id: i64, delta: (f32, f32), opts: &Value, dt: f32) -> Result<Value, String> {
+        let h = self.handle(id)?;
+        let k = self.k;
+        let empty = ValueMap::default();
+        let m = match opts {
+            Value::Unit => &empty,
+            o => map_of(o, "the walk's options")?,
+        };
+        let b = self.w.bodies.get(h).ok_or("toad: the body is gone")?;
+        if !b.is_kinematic() {
+            return Err("toad.walk: a walking body is kinematic (`kind: \"kinematic\"`)".into());
+        }
+        let ch = *b.colliders().first().ok_or("toad.walk: the body has no shape")?;
+        let co = self.w.colliders.get(ch).ok_or("toad: the body's shape is gone")?;
+        let shape = co.shared_shape().clone();
+        let pos = *co.position();
+        let bottom = co.compute_aabb().mins.y;
+        let n = |key: &str, d: f32| m.get(key).and_then(num).unwrap_or(d);
+        let ctl = KinematicCharacterController {
+            up: Vector::new(0.0, 1.0),
+            offset: CharacterLength::Absolute(0.5 * k),
+            slide: true,
+            autostep: match m.get("step").and_then(num) {
+                Some(hgt) if hgt > 0.0 => Some(CharacterAutostep {
+                    max_height: CharacterLength::Absolute(hgt * k),
+                    min_width: CharacterLength::Absolute(hgt * 0.5 * k),
+                    include_dynamic_bodies: false,
+                }),
+                _ => None,
+            },
+            max_slope_climb_angle: n("slope", 45.0).to_radians(),
+            min_slope_slide_angle: (n("slope", 45.0) + 5.0).to_radians(),
+            snap_to_ground: Some(CharacterLength::Absolute(n("snap", 4.0) * k)),
+            ..Default::default()
+        };
+        let up = delta.1 > 0.0;
+        let one_way = &self.one_way;
+        let colliders = &self.w.colliders;
+        // a one-way platform stops a walker only from above: not while it
+        // rises, nor while any of it is below the platform's top
+        let pass = |c: ColliderHandle, _co: &Collider| -> bool {
+            match one_way.get(&c) {
+                None => true,
+                Some(_) => {
+                    let top = colliders.get(c).map(|p| p.compute_aabb().maxs.y).unwrap_or(f32::MIN);
+                    !up && bottom >= top - 0.02
+                }
+            }
+        };
+        let filter = QueryFilter::default().exclude_sensors().exclude_rigid_body(h).predicate(&pass);
+        let q = self.w.query_pipeline_with_filter(filter);
+        let mv = ctl.move_shape(dt.max(1e-6), &q, &*shape, &pos, v(delta, k), |_| {});
+        let b = self.w.bodies.get_mut(h).ok_or("toad: the body is gone")?;
+        let to = b.translation() + mv.translation;
+        b.set_next_kinematic_translation(to);
+        self.grounded.insert(id, mv.grounded);
+        Ok(map(vec![
+            ("moved", tup(&[mv.translation.x / k, mv.translation.y / k])),
+            ("grounded", Value::Boolean(mv.grounded)),
+            ("sliding", Value::Boolean(mv.is_sliding_down_slope)),
+        ]))
+    }
+
     /// A body's pose and motion now and before the last step:
     /// `#{ at, rot, vel, spin, was_at, was_rot }`, or `()`.
     pub fn pose(&self, id: i64) -> Value {
@@ -423,7 +539,9 @@ impl World {
         let rot = b.rotation().angle();
         let (was_at, was_rot) = self.prev.get(&id).copied().unwrap_or((at, rot));
         let lv = b.linvel();
+        let grounded = self.grounded.get(&id).copied().unwrap_or(false);
         map(vec![
+            ("grounded", Value::Boolean(grounded)),
             ("at", tup(&at)),
             ("rot", Value::Float(rot as f64)),
             ("vel", tup(&[lv.x / k, lv.y / k])),
@@ -497,9 +615,74 @@ impl World {
         Ok(Value::List(Arc::new(ids.into_iter().map(Value::Integer).collect())))
     }
 
+    /// The solid colliders as the GPU tests them, in world units: 8
+    /// floats each (centre, turn, kind, half size, rounding, room): kind
+    /// 0 a circle (radius in the rounding), 1 a box (rounded), 2 a capsule
+    /// along x (a chain is one per segment). A polygon is its bounds.
+    pub fn gpu_shapes(&self) -> Vec<f32> {
+        let k = self.k;
+        let mut out = Vec::new();
+        for (_, co) in self.w.colliders.iter() {
+            if co.is_sensor() {
+                continue;
+            }
+            let pose = co.position();
+            let rot = pose.rotation.angle();
+            let c = pose.translation;
+            let sh = co.shape();
+            let mut push = |cx: f32, cy: f32, r: f32, kind: f32, hx: f32, hy: f32, round: f32| {
+                out.extend_from_slice(&[cx / k, cy / k, r, kind, hx / k, hy / k, round / k, 0.0]);
+            };
+            if let Some(b) = sh.as_ball() {
+                push(c.x, c.y, rot, 0.0, b.radius, b.radius, b.radius);
+            } else if let Some(b) = sh.as_cuboid() {
+                push(c.x, c.y, rot, 1.0, b.half_extents.x, b.half_extents.y, 0.0);
+            } else if let Some(b) = sh.as_round_cuboid() {
+                let r = b.border_radius;
+                let h = b.inner_shape.half_extents;
+                push(c.x, c.y, rot, 1.0, h.x + r, h.y + r, r);
+            } else if let Some(cap) = sh.as_capsule() {
+                let (a, b) = (pose.transform_point(cap.segment.a), pose.transform_point(cap.segment.b));
+                let d = b - a;
+                let m = (a + b) * 0.5;
+                push(m.x, m.y, d.y.atan2(d.x), 2.0, d.length() * 0.5, cap.radius, cap.radius);
+            } else if let Some(pl) = sh.as_polyline() {
+                for seg in pl.segments() {
+                    let (a, b) = (pose.transform_point(seg.a), pose.transform_point(seg.b));
+                    let d = b - a;
+                    let m = (a + b) * 0.5;
+                    push(m.x, m.y, d.y.atan2(d.x), 2.0, d.length() * 0.5, 0.0, 0.0);
+                }
+            } else {
+                let bb = co.compute_aabb();
+                let m = (bb.mins + bb.maxs) * 0.5;
+                let h = (bb.maxs - bb.mins) * 0.5;
+                push(m.x, m.y, 0.0, 1.0, h.x, h.y, 0.0);
+            }
+        }
+        out
+    }
+
     /// The number of bodies and joints.
     pub fn counts(&self) -> (usize, usize) {
         (self.bodies.len(), self.joints.len())
+    }
+}
+
+/// One-way platforms: a contact with one stands only when it pushes the
+/// other body out of the platform's open side.
+struct Hooks<'a> {
+    one_way: &'a HashMap<ColliderHandle, Vector>,
+}
+
+impl PhysicsHooks for Hooks<'_> {
+    fn modify_solver_contacts(&self, context: &mut ContactModificationContext) {
+        let angle = std::f32::consts::FRAC_PI_4;
+        if let Some(n) = self.one_way.get(&context.collider1) {
+            context.update_as_oneway_platform(*n, angle);
+        } else if let Some(n) = self.one_way.get(&context.collider2) {
+            context.update_as_oneway_platform(-*n, angle);
+        }
     }
 }
 

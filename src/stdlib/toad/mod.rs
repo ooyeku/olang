@@ -39,7 +39,7 @@ pub fn create_toad_module() -> Value {
         ("kernel", 3),
         ("wgsl", 1),
         ("ops", 1),
-        ("swarm", 3),
+        ("swarm", 4),
         ("spawn", 3),
         ("step", 2),
         ("sync", 1),
@@ -52,6 +52,7 @@ pub fn create_toad_module() -> Value {
         ("clear", 1),
         ("wanted", 1),
         ("scripted", 1),
+        ("hold", 1),
         ("audio", 0),
         ("sound", 1),
         ("sound_info", 1),
@@ -61,6 +62,9 @@ pub fn create_toad_module() -> Value {
         ("volume", 2),
         ("listen", 2),
         ("physics", 1),
+        ("drop", 1),
+        ("warm", 1),
+        ("walk", 4),
         ("body", 2),
         ("unbody", 2),
         ("push", 3),
@@ -365,6 +369,10 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(&str) -> 
                 Value::String(s) => s.to_string(),
                 _ => "play".to_string(),
             };
+            let seed = match a(3) {
+                Value::Integer(n) => Some(*n as u64),
+                _ => None,
+            };
             let p = with(|s| s.kernels.get(&k).cloned()).ok_or("toad: no such kernel")?;
             let gpu: Option<Device> = match kind.as_str() {
                 #[cfg(feature = "gui")]
@@ -395,7 +403,9 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(&str) -> 
                         cols: cpu::Columns::new(width, cap),
                         gpu,
                         head: 0,
-                        rng: 0x70AD ^ (s.next as u64).wrapping_mul(0x9E37_79B9),
+                        // its random stream: from the seed given (a swarm made
+                        // again draws the same), else from its number
+                        rng: 0x70AD ^ seed.unwrap_or(s.next as u64).wrapping_mul(0x9E37_79B9),
                     },
                 );
                 s.next
@@ -515,6 +525,16 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(&str) -> 
         "audio" | "sound" | "sound_info" | "play" | "stop" | "tune" | "volume" | "listen" => {
             Err(format!("toad.{name}: sound needs the native build (feature `audio`)").into())
         }
+        "drop" => {
+            // a swarm or a physics world, and what it held (a game rebuilt
+            // from its start: a rewind, a reload)
+            let id = id_of(args.first(), "swarm or physics world")?;
+            with(|st| {
+                st.swarms.remove(&id);
+                st.worlds.remove(&id);
+            });
+            Ok(Value::Unit)
+        }
         "physics" => with(|st| -> R {
             let w = physics::World::new(a(0))?;
             st.next += 1;
@@ -522,7 +542,7 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(&str) -> 
             st.worlds.insert(id, w);
             Ok(Value::Integer(id))
         }),
-        "body" | "unbody" | "push" | "joint" | "unjoint" | "simulate" | "pose" | "ray" | "overlap" => {
+        "body" | "unbody" | "push" | "joint" | "unjoint" | "simulate" | "pose" | "ray" | "overlap" | "warm" | "walk" => {
             let wid = id_of(args.first(), "physics")?;
             with(|st| -> R {
                 let w = st.worlds.get_mut(&wid).ok_or("toad: no such physics world")?;
@@ -548,6 +568,17 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(&str) -> 
                     "simulate" => w.simulate(num(a(1)).ok_or("toad.simulate: dt is a number")?),
                     "pose" => w.pose(n(1, "body")?),
                     "ray" => w.ray(pt(1, "from")?, pt(2, "to")?, a(3))?,
+                    "warm" => {
+                        w.warm();
+                        Value::Unit
+                    }
+                    "walk" => {
+                        let dt = match a(3) {
+                            Value::Map(m) => m.get("dt").and_then(num).unwrap_or(1.0 / 120.0),
+                            _ => 1.0 / 120.0,
+                        };
+                        w.walk(n(1, "body")?, pt(2, "the step")?, a(3), dt)?
+                    }
                     _ => w.overlap(pt(1, "at")?, num(a(2)).ok_or("toad.overlap: the radius is a number")?, a(3))?,
                 })
             })
@@ -558,8 +589,35 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(&str) -> 
             with(|st| -> R {
                 let w = st.worlds.get_mut(&wid).ok_or("toad: no such physics world")?;
                 let sw = st.swarms.get_mut(&sid).ok_or("toad: no such swarm")?;
+                #[cfg(feature = "gui")]
+                if let Some(g) = &sw.gpu {
+                    // a show swarm collides on the GPU: no counts come back
+                    let m = map_of(a(2), "the collision's options")?;
+                    let f = &sw.program.fields;
+                    let slot = |k: &str, ty: Ty| -> Option<usize> {
+                        match m.get(k) {
+                            Some(Value::String(n)) => f.get(n).filter(|s| s.ty == ty).map(|s| s.at),
+                            _ => None,
+                        }
+                    };
+                    let c = wgsl::GpuCollide {
+                        pos: f.get("pos").filter(|s| s.ty == Ty::V2).map(|s| s.at).ok_or("toad.collide: the swarm has no pair `pos`")?,
+                        vel: f.get("vel").filter(|s| s.ty == Ty::V2).map(|s| s.at),
+                        mark: slot("mark", Ty::F),
+                        die: matches!(m.get("die"), Some(Value::Boolean(true))),
+                        radius: m.get("radius").and_then(num).unwrap_or(4.0),
+                        bounce: m.get("bounce").and_then(num).unwrap_or(0.5).clamp(0.0, 1.0),
+                        friction: m.get("friction").and_then(num).unwrap_or(0.0).clamp(0.0, 1.0),
+                        rest: m.get("rest").and_then(num).unwrap_or(20.0).max(0.0),
+                    };
+                    g.collide(sw.cols.n, &w.gpu_shapes(), &c);
+                    let mut out = ValueMap::default();
+                    out.insert("hits".into(), Value::List(Arc::new(Vec::new())));
+                    out.insert("died".into(), Value::Integer(0));
+                    return Ok(Value::Map(Arc::new(out)));
+                }
                 if sw.gpu.is_some() {
-                    return Err("toad.collide: a show swarm lives on the GPU; collide a play swarm".into());
+                    return Err("toad.collide: a show swarm needs the GPU build to collide".into());
                 }
                 let (hits, dead) = physics::collide(w, &sw.program, &mut sw.cols, a(2))?;
                 let died = if dead.is_empty() { 0 } else { cpu::compact(&mut sw.cols, &dead) };
@@ -687,6 +745,14 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(&str) -> 
             out.insert("down".into(), list(down));
             out.insert("pressed".into(), list(pressed));
             out.insert("released".into(), list(released));
+            // where the pointer is in the window, in points from its top left
+            out.insert(
+                "mouse".into(),
+                match crate::stdlib::gui::keys::pointer() {
+                    Some((x, y)) => Value::Tuple(Arc::new(vec![Value::Float(x as f64), Value::Float(y as f64)])),
+                    None => Value::Unit,
+                },
+            );
             let p = |v: (f32, f32)| Value::Tuple(Arc::new(vec![Value::Float(v.0 as f64), Value::Float(v.1 as f64)]));
             out.insert("left".into(), p(ls));
             out.insert("right".into(), p(rs));
@@ -700,6 +766,16 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(&str) -> 
             // hear only the script: the devices' keys, buttons and sticks
             // are ignored while it is on
             crate::stdlib::gui::keys::scripted(matches!(a(0), Value::Boolean(true)));
+            Ok(Value::Unit)
+        }
+        #[cfg(feature = "gui")]
+        "hold" => {
+            // exactly these keys down, nothing pressed or let go
+            let Value::List(ks) = a(0) else {
+                return Err("toad.hold: the keys are a list of names".into());
+            };
+            let names: Vec<String> = ks.iter().filter_map(|k| if let Value::String(s) = k { Some(s.to_string()) } else { None }).collect();
+            crate::stdlib::gui::keys::hold(&names);
             Ok(Value::Unit)
         }
         #[cfg(feature = "gui")]
@@ -886,6 +962,7 @@ fn frame(layers: &Value, view: &Value) -> R {
         seed: 0.0,
         gi_down: (getn("gi_res", 4.0).round() as u32).clamp(1, 8),
         time: getn("time", 0.0),
+        ui_scale: getn("ui_scale", 1.0),
     };
     let probes: Vec<(u32, u32)> = match vm.get("probe") {
         Some(Value::List(ps)) => ps.iter().filter_map(pair).map(|(x, y)| (x.max(0.0) as u32, y.max(0.0) as u32)).collect(),
@@ -936,12 +1013,22 @@ fn frame(layers: &Value, view: &Value) -> R {
         let mut parts = Vec::new();
         for l in layers.iter() {
             let lm = map_of(l, "a frame layer")?;
+            // a screen layer: points from the top left, y down; drawn with
+            // y turned up for the renderer
+            let on_screen = matches!(lm.get("screen"), Some(Value::Boolean(true)));
             if let Some(Value::List(shapes)) = lm.get("shapes") {
                 let mut inst = Vec::with_capacity(shapes.len() * render::SHAPE_FLOATS);
                 for s in shapes.iter() {
                     shape_of(s, &mut inst)?;
                 }
-                parts.push(render::Part::Shapes(inst));
+                if on_screen {
+                    // y down as written: the centre and the turn mirrored
+                    for r in inst.chunks_mut(render::SHAPE_FLOATS) {
+                        r[1] = -r[1];
+                        r[4] = -r[4];
+                    }
+                }
+                parts.push(render::Part::Shapes(inst, on_screen));
                 continue;
             }
             if let Some(Value::List(sprites)) = lm.get("sprites") {
@@ -993,16 +1080,31 @@ fn frame(layers: &Value, view: &Value) -> R {
                         let t = rgba(sm.get("tint"), [1.0, 1.0, 1.0, 1.0]);
                         (pic, w, h, t, !lit_flag(true))
                     };
+                    // `anchor`: which point of it `at` is, (0, 0) its top left to
+                    // (1, 1) its bottom right; the middle by default
+                    let (ax, ay) = sm.get("anchor").and_then(pair).unwrap_or((0.5, 0.5));
+                    let down = if on_screen { 1.0 } else { -1.0 };
+                    let at = (at.0 + (0.5 - ax) * w, at.1 + down * (0.5 - ay) * h);
+                    let emit = sm.get("emit").and_then(num).unwrap_or(0.0).max(0.0);
+                    let cast = matches!(sm.get("cast"), Some(Value::Boolean(true)));
                     let row = [
-                        at.0, at.1, w / 2.0, h / 2.0, rot, if unlit { 1.0 } else { 0.0 }, 0.0, 0.0,
-                        t[0] * glow, t[1] * glow, t[2] * glow, t[3],
+                        at.0, at.1, w / 2.0, h / 2.0, rot, if unlit { 1.0 } else { 0.0 }, emit,
+                        if cast { 1.0 } else { 0.0 }, t[0] * glow, t[1] * glow, t[2] * glow, t[3],
                     ];
                     match runs.last_mut() {
                         Some((p, v)) if p.id == pic.id => v.extend_from_slice(&row),
                         _ => runs.push((pic, row.to_vec())),
                     }
                 }
-                parts.push(render::Part::Sprites(runs));
+                if on_screen {
+                    for (_, rows) in runs.iter_mut() {
+                        for r in rows.chunks_mut(render::SPRITE_FLOATS) {
+                            r[1] = -r[1];
+                            r[4] = -r[4];
+                        }
+                    }
+                }
+                parts.push(render::Part::Sprites(runs, on_screen));
                 continue;
             }
             let sid = id_of(lm.get("swarm"), "swarm")?;

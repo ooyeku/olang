@@ -3115,7 +3115,7 @@ toad.frame([#{ "swarm": s, "color": "#ff9a3c", "radius": 6.0 }], #{ "size": (128
 | Function | |
 |---|---|
 | `toad.kernel(f, fields, world)` | compile `fn(p, w) = #{ field: new value }`: `fields` and `world` map names to defaults (a number, or a pair); `"dead"` removes an entity; refused, with the reason, where a GPU cannot follow |
-| `toad.swarm(kernel, max, kind)` | `"play"`: on the CPU, every core, deterministic, its dead removed; `"show"`: on the GPU, for what is only seen |
+| `toad.swarm(kernel, max, kind, seed)` | `"play"`: on the CPU, every core, deterministic, its dead removed; `"show"`: on the GPU, for what is only seen; `seed` starts its random stream (a swarm made again draws the same) |
 | `toad.spawn(swarm, n, fields)` | values or generators per entity: `("between", lo, hi)`, `("cone", dir, spread)`, `("disc", centre, r)`, `("box", lo, hi)`; `"seed"` restarts the stream |
 | `toad.step(swarm, world)` | one step of every entity: `#{ alive, died }` |
 | `toad.sync(swarm)` | wait for a show swarm's queued steps |
@@ -3124,7 +3124,7 @@ toad.frame([#{ "swarm": s, "color": "#ff9a3c", "radius": 6.0 }], #{ "size": (128
 | `toad.wgsl(kernel)` | the WGSL a kernel runs as |
 | `toad.ops(kernel)` | how many scalar operations it compiled to |
 | `toad.gpu()` | the GPU and its backend |
-| `toad.input()` | the keyboard, mouse and gamepads as switches: `#{ down, pressed, released }` since the last read, the sticks `left` and `right`, the triggers `lt` and `rt`, `pads` connected |
+| `toad.input()` | the keyboard, mouse and gamepads as switches: `#{ down, pressed, released }` since the last read, the sticks `left` and `right`, the triggers `lt` and `rt`, `pads` connected, and `mouse` (points from the window's top left) |
 | `toad.press(key, down)` | press or let go of a key as a hand would (scripts and tests) |
 | `toad.clear(swarm)` | empty a swarm |
 | `toad.wanted(name)` | whether the live picture wants a new frame (a window drew the last one); `toad.frame` skips one it does not |
@@ -3137,6 +3137,10 @@ toad.frame([#{ "swarm": s, "color": "#ff9a3c", "radius": 6.0 }], #{ "size": (128
 | `toad.tune(voice, opts)` | change a playing voice's `volume`, `pan`, `pitch` |
 | `toad.volume(bus, v)` | `master`, `fx` or `music` |
 | `toad.listen(sound, seconds)` | mix a sound offline (tests): `#{ peak, rms, voices_left }` |
+| `toad.hold(keys)` | exactly these keys down, nothing pressed or let go (where a replay left them) |
+| `toad.drop(id)` | let go of a swarm or a physics world |
+| `toad.warm(world)` | build its collision structures now: the first step costs no more than the rest |
+| `toad.walk(world, body, delta, opts)` | walk a kinematic body as a character: walls, slopes (`slope`), steps (`step`), the ground (`snap`), one-way platforms; `#{ moved, grounded, sliding }` |
 | `toad.physics(opts)` | a 2D physics world (`gravity`, `scale`: world units to a metre) |
 | `toad.body(world, props)` | a rigid body: `kind`, `shape` (circle, box, capsule, poly, chain), `size`, `at`, `rot`, `vel`, `density`, `friction`, `bounce`, `sensor`, … or `parts` |
 | `toad.unbody(world, body)` | remove a body and its joints |
@@ -3147,7 +3151,7 @@ toad.frame([#{ "swarm": s, "color": "#ff9a3c", "radius": 6.0 }], #{ "size": (128
 | `toad.pose(world, body)` | `#{ at, rot, vel, spin, was_at, was_rot }` |
 | `toad.ray(world, from, to, opts)` | the first body a ray meets: `#{ body, at, normal, t }`, or `()` |
 | `toad.overlap(world, at, radius, opts)` | the bodies within `radius` of `at` |
-| `toad.collide(swarm, world, opts)` | a play swarm against the bodies: pushed out, bounced, killed or marked; `#{ hits, died }` |
+| `toad.collide(swarm, world, opts)` | a swarm against the bodies: pushed out, bounced, killed or marked; `#{ hits, died }` (a show swarm collides on the GPU and answers no counts) |
 | `toad.meet(a, b, opts)` | two play swarms meeting: killed or marked; `#{ met, died_a, died_b }` |
 | `toad.frame(layers, view)` | draw swarms, shapes (circle, box, capsule, ring, triangle, line, each with a material) and sprites (pictures or text) in order into an HDR target, lit, bloomed, graded and tone mapped; `"live": name` shows it in a Loom window as the image `("live", name)`; `"png": true` answers its pixels, `"probe": [(x, y)]` the colours there |
 
@@ -3192,6 +3196,13 @@ back from `toad.simulate` once a step. Play swarms collide by a grid of
 their own rather than as bodies: `toad.collide` against a world's
 bodies, `toad.meet` against another play swarm. Tens of thousands of
 entities a step cost a fraction of a millisecond, the same every run.
+
+**The screen.** A layer with `screen: true` is placed in points from the
+window's top left, y down (`ui_scale` pixels a point), drawn over the
+finished frame with its colours as written: no camera, no light, no
+bloom or grading. A game's menus and HUD are drawn this way. A sprite's
+`anchor` says which of its points `at` is ((0, 0) its top left).
+Sprites can also give light (`emit`) and block it (`cast`).
 
 **Text in the world.** A sprite with `text` instead of `src` is that
 text: `size` is its font size in world units, with `color`, `glow`,

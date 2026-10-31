@@ -2368,6 +2368,7 @@ impl App {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 let l = position.to_logical::<f32>(scale);
+                super::keys::device_pointer(l.x, l.y);
                 self.input(
                     id,
                     Input::Pointer {

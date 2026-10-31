@@ -34,6 +34,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   and layers) or reads WAV and Ogg Vorbis; `toad.play`, `stop`, `tune`
   and `volume` mix voices on an effects and a music bus without clicks,
   through a soft limiter; `TOAD_MUTE=1` plays silently.
+- **Toad for making games** (T5): screen layers drawn over the finished
+  frame as written (a game's UI), sprite `anchor`, `emit` and `cast`;
+  `toad.walk` (a character controller: walls, slopes, steps, the ground)
+  and one-way platforms; `toad.warm` (a large world's first step no
+  dearer than the rest); show swarms colliding on the GPU; `toad.hold`,
+  `toad.drop` and `toad.swarm`'s `seed`, so a game rebuilt from its
+  inputs (a rewind, a reload) is exactly the game it was; the mouse in
+  `toad.input`.
 - **A notebook cell's printed lines stream while it runs.** `olang repl
   --serve` sends what an `eval` prints as `out` events as it is printed
   (the hello's `stream` feature): batched at most every 50 ms, the first

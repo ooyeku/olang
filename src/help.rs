@@ -2017,10 +2017,10 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
         );
         self.doc_ex(
             "toad.swarm",
-            "toad.swarm(kernel, max, kind)",
+            "toad.swarm(kernel, max, kind, seed)",
             "Result<Int, String>",
             "toad",
-            "A swarm of up to `max` entities the kernel steps: \"play\" on the CPU (every core; deterministic; its dead removed and counted) for what the game depends on, \"show\" on the GPU (a compute shader) for what is only seen.",
+            "A swarm of up to `max` entities the kernel steps: \"play\" on the CPU (every core; deterministic; its dead removed and counted) for what the game depends on, \"show\" on the GPU (a compute shader) for what is only seen. `seed` (an Int) starts its random stream (spawn generators without one of their own), so a swarm made again draws the same.",
             &[r##"toad.swarm(k, 100000, "show")"##],
         );
         self.doc_ex(
@@ -2121,6 +2121,38 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             &["toad.listen(s, 1.0)"],
         );
         self.doc_ex(
+            "toad.hold",
+            "toad.hold(keys)",
+            "Unit",
+            "toad",
+            "Exactly these keys and buttons down, nothing pressed or let go: where a replay (a rewind, a reload) left them, so a key held across it is not pressed again.",
+            &[r##"toad.hold(["d", "space"])"##],
+        );
+        self.doc_ex(
+            "toad.drop",
+            "toad.drop(id)",
+            "Unit",
+            "toad",
+            "Let go of a swarm or a physics world and everything it held (a game rebuilt from its start: a rewind, a reload).",
+            &["toad.drop(s)"],
+        );
+        self.doc_ex(
+            "toad.warm",
+            "toad.warm(world)",
+            "Unit",
+            "toad",
+            "Build a world's collision structures now (a step of no time: nothing moves), so a large world's first step costs no more than the rest; the touches found are told with that step.",
+            &["toad.warm(w)"],
+        );
+        self.doc_ex(
+            "toad.walk",
+            "toad.walk(world, body, delta, opts)",
+            "Map",
+            "toad",
+            "Walk a kinematic body by delta (world units) as a character: sliding along walls, up slope (degrees, 45) and onto steps up to step high, snapped to the ground within snap, up through one-way platforms and onto them; it gets there by the end of the next step. Answers #{ moved, grounded, sliding }; toad.pose says grounded too.",
+            &[r##"toad.walk(w, me, (4.0, -2.0), #{ "step": 12.0 })"##],
+        );
+        self.doc_ex(
             "toad.physics",
             "toad.physics(opts)",
             "Int",
@@ -2133,7 +2165,7 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "toad.body(world, props)",
             "Int",
             "toad",
-            "A rigid body: kind (dynamic, static, kinematic), shape (circle, box, capsule, poly, chain) with size, round or points, at, rot, vel, spin, density, friction, bounce, sensor, damping, spin_damping, fixed_rot, bullet, gravity (a scale), groups ((member, collides_with) bit masks); or parts, a list of shapes each with its own at and rot. Answers its number.",
+            "A rigid body: kind (dynamic, static, kinematic), shape (circle, box, capsule, poly, chain) with size, round or points, at, rot, vel, spin, density, friction, bounce, sensor, one_way (things land on its top and pass up through it), damping, spin_damping, fixed_rot, bullet, gravity (a scale), groups ((member, collides_with) bit masks); or parts, a list of shapes each with its own at and rot. Answers its number.",
             &[r##"toad.body(w, #{ "shape": "box", "size": (40.0, 40.0), "at": (0.0, 200.0) })"##],
         );
         self.doc_ex("toad.unbody", "toad.unbody(world, body)", "Unit", "toad", "Remove a body, its colliders and its joints.", &["toad.unbody(w, b)"]);
@@ -2191,7 +2223,7 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "toad.collide(swarm, world, opts)",
             "Map",
             "toad",
-            "A play swarm against the world's bodies, by a grid of its own: each entity a circle of radius (a number or a field) at pos, pushed out of what it touches, its vel bounced by bounce and slowed by friction (a bounce slower than rest is none). die: those touching die; mark: a field set to 1 for those that touched; push: each one's mass, shoving dynamic bodies; sensors: whether sensors count. Answers #{ hits: [(body, n)], died }.",
+            "A swarm against the world's bodies (a show swarm on the GPU, no counts back; a play swarm by a grid of its own): each entity a circle of radius (a number or a field) at pos, pushed out of what it touches, its vel bounced by bounce and slowed by friction (a bounce slower than rest is none). die: those touching die; mark: a field set to 1 for those that touched; push: each one's mass, shoving dynamic bodies; sensors: whether sensors count. Answers #{ hits: [(body, n)], died }.",
             &[r##"toad.collide(s, w, #{ "radius": 4.0, "bounce": 0.5, "mark": "hit" })"##],
         );
         self.doc_ex(
@@ -2215,7 +2247,7 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "toad.frame(layers, view)",
             "Map",
             "toad",
-            "Draw a frame: layers in order, each a swarm (#{ swarm, color, radius, glow, light, reach }: in a lit frame each point pools light of `light` strength `reach` world units around it), shapes (#{ shapes: [#{ kind, at, size, rot, round, outline, color, glow, emit, cast }] }; circle, box, capsule, ring, triangle, line with from, to, width; a surface from color2, pattern (noise, stripes, dots, water, rings, checker, gradient, radial, cells), scale, speed, angle, seed, relief, bump, gloss, lit, each also from a `material` map) or sprites (#{ sprites: [#{ src, at, size, rot, tint, lit }] }, or #{ text, size, color, glow, font, weight, align } for text in the world), into an HDR target, lit, bloomed, graded and tone mapped. `view`: size, center, scale, rot, bg, exposure, vignette; gi (the light's gain: 2D global illumination by radiance cascades; 0 unlit), gi_res (the light pass's coarseness, 4 a quarter), ambient, bloom, contrast, saturation, tint, grain, time (seconds: moving patterns); \"live\": a name shows it in a Loom window (an image whose source is (\"live\", name)), queued and not waited for; \"png\": true answers its pixels; \"probe\": [(x, y)] answers the colours there (0–255, for tests). Colours are sRGB, (r, g, b, a) or \"#rrggbb\". Answers #{ ms, png? }.",
+            "Draw a frame: layers in order, each a swarm (#{ swarm, color, radius, glow, light, reach }: in a lit frame each point pools light of `light` strength `reach` world units around it), shapes (#{ shapes: [#{ kind, at, size, rot, round, outline, color, glow, emit, cast }] }; circle, box, capsule, ring, triangle, line with from, to, width; a surface from color2, pattern (noise, stripes, dots, water, rings, checker, gradient, radial, cells), scale, speed, angle, seed, relief, bump, gloss, lit, each also from a `material` map) or sprites (#{ sprites: [#{ src, at, size, rot, tint, lit, anchor, emit, cast }] }, or #{ text, size, color, glow, font, weight, align } for text in the world); a layer with screen: true is in points from the window's top left (y down, ui_scale pixels a point), drawn over the finished frame as written: a game's UI; into an HDR target, lit, bloomed, graded and tone mapped. `view`: size, center, scale, rot, bg, exposure, vignette; gi (the light's gain: 2D global illumination by radiance cascades; 0 unlit), gi_res (the light pass's coarseness, 4 a quarter), ambient, bloom, contrast, saturation, tint, grain, time (seconds: moving patterns); \"live\": a name shows it in a Loom window (an image whose source is (\"live\", name)), queued and not waited for; \"png\": true answers its pixels; \"probe\": [(x, y)] answers the colours there (0–255, for tests). Colours are sRGB, (r, g, b, a) or \"#rrggbb\". Answers #{ ms, png? }.",
             &[r##"toad.frame([#{ "shapes": [#{ "kind": "circle", "at": (0.0, 0.0), "size": 40.0, "color": "#ffd28a" }] }], #{ "size": (1280, 720), "live": "game" })"##],
         );
     }
