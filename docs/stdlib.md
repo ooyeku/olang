@@ -6,12 +6,16 @@ Part of [the olang book](README.md) · [A tour of olang](tour.md) ·
 [Packages and dependencies](packages.md) ·
 [Stability and compatibility](stability.md)
 
-This chapter documents the standard library: the global builtins, which are
-always in scope, and the modules — those implemented in Rust and those
-written in olang and compiled into the binary. As in the
-[language reference](language.md), every `olang` block is executed by the
-test suite. Blocks marked `no-run` are parse-checked only, because they need
-a file system, a network, or a browser.
+olang comes with a large standard library, so most programs need nothing
+else. This chapter documents all of it: the global functions that are
+always available, and the modules, some written in Rust and some written
+in olang and built into the binary. It is meant for looking things up.
+Each section starts with a short explanation, followed by tables of what
+each function takes and returns.
+
+As in the [language reference](language.md), every `olang` block here is
+run by the test suite. Blocks marked `no-run` are only checked for
+syntax, because they need a file system, a network or a browser.
 
 ## Table of contents
 
@@ -428,8 +432,8 @@ println(show(attempt(() => raise("widget: no kind dial"))))   // Err("widget: no
 
 ## `str` — strings
 
-The complete string toolkit. The module's one convention does a lot of
-work: pure transformations (`trim`, `replace`, `to_upper`, ...) return
+`str` has everything for working with text. One convention does a lot
+of work here: pure transformations (`trim`, `replace`, `to_upper`, ...) return
 their value directly and never fail on well-formed arguments
 (out-of-range positions clamp, absent substrings report `()`), while
 the two genuine *parsers*
@@ -515,8 +519,8 @@ println(str.cell_width("🇯🇵"))      // 2
 
 ## `col` / `colx` — collections
 
-Higher-order operations beyond the global builtins. The global builtins
-cover what nearly every program touches (`map`, `filter`, `fold`,
+`col` has the higher-order list operations that didn't make it into the
+global builtins. The builtins cover what nearly every program touches (`map`, `filter`, `fold`,
 `sort`); `col` holds the rest — quantifiers, partitions, key-function
 variants. `colx` (`use colx`) implements the higher-order core of `col`
 in olang, embedded in the binary: `all`, `any`, `count_by`,
@@ -569,10 +573,10 @@ println(to_string(col.last([1, 2, 3])))
 
 ## `math` / `mathx` — mathematics
 
-Pure numeric functions — every one takes numbers to numbers with no
-`Result` wrapping, which lets them ride the fastest execution paths (the
-float functions compile all the way to native code in hot loops; see
-[the OVM chapter](ovm.md#the-jit)).
+`math` holds plain numeric functions. Every one takes numbers and
+returns a number, with no `Result` to unwrap, which lets them run on
+the fastest execution paths: in a hot loop the float functions compile
+all the way to native code (see [the OVM chapter](ovm.md#the-jit)).
 
 | Group | Functions |
 |---|---|
@@ -613,8 +617,8 @@ scope than `math`, and differential-tested against it.
 
 ## `vec` — vectors over lists
 
-The kernels numeric code otherwise spells as index loops, over lists of
-Int or Float: `vec.dot(a, b)`, `vec.add(a, b)`, `vec.sub(a, b)`,
+`vec` does the arithmetic you would otherwise write as index loops over
+lists of Int or Float: `vec.dot(a, b)`, `vec.add(a, b)`, `vec.sub(a, b)`,
 `vec.scale(a, k)`, `vec.sum(a)`, `vec.norm(a)`, `vec.mean(a)`. Results
 are Float (or Float lists), but `vec.sum` of a list of Ints is an Int
 (0 for an empty list), as the global `sum` is; lengths must agree; a non-finite result
@@ -631,7 +635,7 @@ println(to_string(vec.norm([3.0, 4.0])))              // 5.0
 
 ## `bigint` — arbitrary precision
 
-Integers without a ceiling. `bigint.of` takes an Int or a string of
+A BigInt is an integer with no upper limit. `bigint.of` takes an Int or a string of
 decimal digits; the value then uses the ordinary operators — `+ - * / %`
 and the comparisons — and a plain Int operand promotes to BigInt on
 contact. The arithmetic follows the Int rules exactly (division
@@ -665,8 +669,8 @@ sanctioned, explicitly lossy conversion.
 
 ## `asset` — a package's files
 
-The files a package ships beside its code — fonts, images, data — read
-by the package's name: from its directory when the program runs from
+A package can ship files beside its code, such as fonts, images or
+data, and `asset` reads them by the package's name: from its directory when the program runs from
 source, and from the application itself when it was built with `olang
 build --app` (the package lists them under `assets` in `olang.toml`).
 A path stays inside its package.
@@ -683,9 +687,9 @@ let font = unwrap(asset.read("loom", "fonts/Inter.ttf.br"))
 
 ## Collections, in olang
 
-One module — `collections` — of six submodules, written entirely in
-olang, compiled into the binary, and **automatically available**: the
-name loads on first touch, so `collections.heap.push(...)` works in a
+`collections` is one module with six submodules, written entirely in
+olang and compiled into the binary. It is available without a `use`:
+the name loads the first time you touch it, so `collections.heap.push(...)` works in a
 bare script with no `use`, one name is all the library claims on the
 global surface, and a program that never reaches for it never pays for
 it. (A binding of your own named `collections` always wins.)
@@ -811,8 +815,8 @@ println(row)                                     // {"id":7,"name":"ada","tags":
 
 ## `toml` — TOML
 
-The config format olang's own `olang.toml` manifests use, with `json`'s
-core surface: `parse`, `stringify`, `is_valid`. Both modules bridge
+TOML is the config format olang's own `olang.toml` files use. The
+module has the same core functions as `json`: `parse`, `stringify`, `is_valid`. Both modules bridge
 values through the same conversions, so a table parses to the same Map
 shapes JSON objects do — tables become Maps, arrays become Lists,
 datetimes become their string rendering. A TOML document is a table at
@@ -831,7 +835,7 @@ println(to_string(toml.is_valid("not [ valid")))
 
 ## `csv` — CSV
 
-Quoted fields, embedded commas, and header-aware parsing.
+`csv` handles quoted fields, commas inside fields, and header rows.
 `parse_with_headers` yields rows as maps keyed by the header (`#{ "name":
 "Ada" }`, read `row.name` or `row["first name"]`; all cells
 are strings — convert explicitly).
@@ -858,12 +862,12 @@ println(`${rows[0].name}, total ${total}`)
 
 ## `md` — Markdown
 
-CommonMark with GitHub's extensions — tables, task lists,
-strikethrough, footnotes and bare-URL autolinks — rendered to HTML,
-with GitHub's heading anchors, the document's outline, its front
-matter, and hooks that draw code blocks, links and headings the
-caller's way. The parser is pulldown-cmark; every profile carries it,
-the browser's included.
+`md` renders Markdown to HTML. It follows CommonMark with GitHub's
+extensions (tables, task lists, strikethrough, footnotes and bare-URL
+autolinks). Headings get GitHub's anchors, and you can also get the
+document's outline and its front matter, or pass hooks that draw code
+blocks, links and headings your own way. The parser is pulldown-cmark,
+and every build includes it, the browser's too.
 
 | Function | Result |
 |---|---|
@@ -912,8 +916,9 @@ println(md.slug("`http` — HTTP"))         // http--http
 
 ## `re` — regular expressions
 
-Rust regex syntax (no backtracking, so patterns run in linear time and a
-hostile input cannot hang a program). Matching functions return `Result`
+`re` uses Rust's regex syntax. It never backtracks, so a pattern runs in
+time proportional to its input and a hostile input can't hang your
+program. Matching functions return `Result`
 because the *pattern* can be malformed — the usual shape is one
 `unwrap` around a pattern you wrote yourself, or `re.is_valid` first
 for a pattern that arrives at runtime.
@@ -1013,7 +1018,8 @@ println(unwrap(dates.start_of_month("2026-10-08")))  // 2026-10-01
 
 ## `time` — clocks and sleeping
 
-`dates` is calendars; `time` is measurement and pacing.
+Where `dates` deals with calendars, `time` is for measuring how long
+things take and for pacing a program.
 
 | Function | Description |
 |---|---|
@@ -1125,8 +1131,9 @@ rule concerns crossing, not tasks.
 
 ## `chan` — channels
 
-Message passing between `spawn`ed tasks: multi-producer multi-consumer
-queues of olang values. `chan.new()` makes an unbounded channel;
+Channels let `spawn`ed tasks pass messages to each other. A channel is
+a queue of olang values that any number of tasks can send to and
+receive from. `chan.new()` makes an unbounded channel;
 `chan.bounded(n)` holds at most `n` in-flight messages, and senders
 block when it is full (`chan.bounded(0)` is a rendezvous — a send waits
 for its receiver). Handles are plain values, so they cross the `spawn`
@@ -1204,8 +1211,8 @@ println(`${total} from ${unwrap(task.join(worker))} squares`)
 
 ## `random` — randomness
 
-One global, seedable generator. `random.seed(n)` makes every subsequent
-draw deterministic — which turns a simulation, a shuffled test fixture,
+`random` has one global generator, and you can seed it. `random.seed(n)`
+makes every draw after it predictable, which turns a simulation, a shuffled test fixture,
 or a [`stats` sample](#stats--statistical-inference) into something you
 can reproduce exactly, so randomized code stays debuggable and
 testable.
@@ -1361,7 +1368,8 @@ println(show(bytes.from_string("hi!") == b))           // true
 
 ## `compress` — gzip, brotli and deflate
 
-In-memory compression for the wire and the disk. gzip and deflate are
+`compress` shrinks data in memory, for sending or for saving. gzip and
+deflate are
 on every target, the browser runtime's included; brotli is native (its
 encoder is nearly a megabyte of wasm, and a page decodes brotli
 itself). Every
@@ -1391,8 +1399,9 @@ println(show(unwrap(bytes.to_string(unwrap(compress.gunzip(packed)))) == body)) 
 
 ## `base64` — base64
 
-Binary-safe text encoding in its three practical variants — standard,
-URL-safe, and unpadded. Encoding always succeeds and takes a string or
+Base64 turns any data into plain text that is safe to put in a URL, a
+JSON document or an email. The module has the three variants you meet
+in practice: standard, URL-safe and unpadded. Encoding always succeeds and takes a string or
 [`Bytes`](#bytes--binary-data); decoding returns `Result`, since
 arbitrary text may not be valid base64 — `decode` yields text,
 `decode_bytes` yields raw bytes.
@@ -1413,8 +1422,8 @@ println(show(len(unwrap(base64.decode_bytes(enc)))))   // 5
 
 ## `fs` — file system
 
-Whole-value I/O: `read_file` returns the entire contents as one string,
-and `write_file` replaces them. There are no file handles and no
+`fs` reads and writes whole files at once: `read_file` returns the
+entire contents as one string, and `write_file` replaces them. There are no file handles and no
 open/close lifecycle to manage, which fits a language whose programs
 transform values. Every function that touches the disk and can fail
 returns `Result`, because the file system is the classic source of
@@ -1736,8 +1745,8 @@ println(meta.highlight("version = \"1.0\"  # pinned", "toml"))
 
 ## `runtime` — what this binary carries
 
-The olang binary carries its browser runtimes (olang compiled for
-`wasm32-unknown-unknown`): the browser profile the web SDK ships and the
+The olang binary carries its own browser runtimes, which are olang
+compiled for `wasm32-unknown-unknown`: the browser profile the web SDK ships and the
 full one, the whole standard library, both embedded at build time from
 the artifacts `cargo xtask wasm` builds. The web SDK's `serve` reads it from here, so an app has no
 wasm file to build, copy, or keep in step with the binary; a program
@@ -1845,9 +1854,10 @@ println(typeof(caps.granted().fs))
 
 ## `os` — operating system
 
-The process's view of its world: arguments, environment, directories,
-stdin, and the ability to run other programs. Together with `fs` it is
-what makes olang a scripting language in the practical sense — the
+`os` is the program's view of the machine it runs on: its arguments,
+the environment, directories, standard input, and running other
+programs. Together with `fs` it is what makes olang a practical
+scripting language: the
 [task CLI](../examples/) and the examples harness are built on little
 else.
 
@@ -2018,7 +2028,7 @@ Ctrl-C.
 Where `proc` pipes a child's stdin and stdout, `pty` gives it a terminal
 of its own: the child leads a new session with the pty's slave as its
 controlling terminal (job control, `^C`, window sizes and full-screen
-programs work), and the program holds the master side. What a terminal
+programs work), and the program holds the master side. It is what a terminal
 emulator runs a shell in. macOS and Linux (an `Err`
 elsewhere: `pty.available()`); capability-gated as `proc`.
 
@@ -2047,10 +2057,10 @@ pty.close(p)
 
 ## `vt` — a terminal's screen
 
-What a program on a terminal writes — xterm's escape sequences — read
-into a grid of cells with a scrollback, and drawn as a canvas's
-operations: a terminal emulator's core, in Rust so a megabyte of output
-costs milliseconds. Screens are `Screen` handles into a registry: one may
+`vt` is the core of a terminal emulator. It reads what a program writes
+to a terminal (xterm's escape sequences) into a grid of cells with a
+scrollback, and draws that grid as canvas operations. It is written in
+Rust, so a megabyte of output costs milliseconds. Screens are `Screen` handles into a registry: one may
 be fed on a reader's thread and drawn on the window's.
 
 It reads UTF-8 (wide characters take two cells, combining marks join the
@@ -2358,7 +2368,7 @@ tested on macOS; the Linux and Windows builds are unverified
 
 ## `gui` — windows drawn by olang
 
-The engine under Loom, olang's desktop framework: a
+`gui` is the engine under Loom, olang's desktop framework. A
 program lays its view out itself and sends `gui` **positioned, keyed
 nodes**; `gui` draws them on the GPU (or with the software reference),
 edits text fields (input methods included), hit-tests, keeps the
@@ -2760,7 +2770,7 @@ unverified ([Platforms](stability.md#platforms)).
 
 ## `http` — HTTP
 
-Both sides of HTTP in one module: a client for calling APIs, and
+`http` covers both sides of the web: a client for calling APIs, and
 `http.serve`, a blocking HTTP/1.1 server with keep-alive and a bounded
 worker pool. The design leans on the rest of the language rather
 than inventing its own idioms: requests are fallible so they return
@@ -2887,8 +2897,11 @@ same server also delivering its own browser frontend from disk.
 
 ## `db` — SQLite
 
-A connection handle flows through every call. `:memory:` gives a fresh
-in-process database, so the examples below run in the test suite.
+`db` is an embedded SQLite database, so a program can keep structured
+data without running a database server. You open a connection and pass
+its handle to every call. Opening `:memory:` gives you a fresh database
+that lives only in memory, which is how the examples below run in the
+test suite.
 
 | Function | Description |
 |---|---|
@@ -3355,6 +3368,17 @@ println(ods.round(mat.eigh(mat.of([[2.0, 1.0], [1.0, 2.0]])).values, 9).to_list(
 println(ods.corr(f, ["a", "y"])["a"].to_list())
 ```
 
+Arithmetic and the math functions work entry by entry, and always give
+back a Matrix of Floats:
+
+```olang
+let X = mat.of([[0.25, -2.25], [4.0, 9.0]])
+println(mat.sqrt(mat.abs(X)).to_list())   // [[0.5, 1.5], [2.0, 3.0]]
+println(mat.floor(X).to_list())           // [[0.0, -3.0], [4.0, 9.0]]
+println(mat.sign(X).to_list())            // [[1.0, -1.0], [1.0, 1.0]]
+println((X * 2.0 + 1.0).to_list())        // [[1.5, -3.5], [9.0, 19.0]]
+```
+
 | Function | Description |
 |---|---|
 | `ods.matrix(f, cols?, nulls = "raise")` | a Matrix of a Frame's numeric columns (all of them, or the ones named) or of a list of Series; Int and Bool become Float |
@@ -3364,12 +3388,24 @@ println(ods.corr(f, ["a", "y"])["a"].to_list())
 | `mat.col(x, j)` / `mat.row(x, i)` / `mat.shape(x)` | column `j` as a Series (shared) / row `i` as a list / `[rows, cols]`; `len(x)` is the row count |
 | `mat.sum(x, axis = 0)` / `mat.mean(x, axis = 0)` / `mat.std(x, axis = 0, ddof = 1)` | a Series: one value per column (axis 0) or per row (axis 1) |
 | `x + y`, `x - y`, `x * y`, `x / y`, `-x` | elementwise: Matrices of one shape, a number on either side, or a row (`1 × k`) or column (`n × 1`) Matrix, or a Series or list as long as `x` is wide (a row), broadcast as NumPy does |
-| `mat.tanh(x)`, `mat.exp(x)`, `mat.sigmoid(x)`, `mat.clip(x, lo?, hi?)`, `mat.pow(x, e)`, `mat.round(x, digits?)`, … | each `ods` math function, `clip`, `pow` and `round` over every column (Matrix in, Matrix out); `X.tanh()`, and `ods.tanh(X)` too |
+| `mat.abs(x)` `mat.sign(x)` `mat.sqrt(x)` `mat.cbrt(x)` | the absolute value, the sign (-1.0, 0.0 or 1.0), the square root and the cube root of every entry |
+| `mat.exp(x)` `mat.exp2(x)` `mat.expm1(x)` | e to the power of each entry, 2 to the power, and `exp(v) - 1`, accurate for entries near zero |
+| `mat.ln(x)` `mat.ln1p(x)` `mat.log2(x)` `mat.log10(x)` | the natural logarithm of each entry, `ln(1 + v)` (accurate near zero), and the base-2 and base-10 logarithms |
+| `mat.sin(x)` `mat.cos(x)` `mat.tan(x)` `mat.asin(x)` `mat.acos(x)` `mat.atan(x)` | the trigonometric functions and their inverses, in radians |
+| `mat.sinh(x)` `mat.cosh(x)` `mat.tanh(x)` | the hyperbolic functions |
+| `mat.sigmoid(x)` / `mat.logit(x)` | the logistic function `1 / (1 + e^-v)` of each entry / its inverse, `ln(v / (1 - v))` |
+| `mat.floor(x)` `mat.ceil(x)` `mat.trunc(x)` / `mat.round(x, digits?)` | each entry rounded down, up, or toward zero (still Floats) / rounded to `digits` places |
+| `mat.clip(x, lo?, hi?)` / `mat.pow(x, e)` | each entry held between `lo` and `hi` / raised to the power `e` |
 | `mat.solve(a, b)` / `mat.inv(a)` | `x` with `a x = b` (LU with partial pivoting; `b` a vector or a Matrix) / the inverse |
 | `mat.cholesky(a)` | the lower factor `L` of a symmetric positive-definite `a = L Lᵀ` |
 | `mat.eigh(a)` | `#{ values, vectors }` of a symmetric matrix, largest first, each vector's largest component positive |
 | `mat.cdist(x, c, metric = "sqeuclidean")` | distances between the rows of `x` and of `c`, an `n × m` Matrix; `"euclidean"`, `"cityblock"` (`"manhattan"`), `"chebyshev"`, `"cosine"` |
 | `mat.to_frame(x, names?)` / `mat.to_list(x)` | the columns as a Frame (named `0`, `1`, … by default) / the rows as lists |
+
+The elementwise functions each take a Matrix and return a new Matrix of
+the same shape, applying the matching `ods` math function to every
+column. Each is a method too (`X.tanh()`), and the `ods` form accepts a
+Matrix as well (`ods.tanh(X)`).
 
 [Matrices](ods.md#matrices--odsmatrix-and-mat) in the data stack's
 chapter explains the storage and the kernels, and compares them with
@@ -3377,8 +3413,9 @@ NumPy.
 
 ## `stats` — statistical inference
 
-Distributions, tests, power, robust statistics, the bootstrap and time
-series (`stats.ts`). Every statistic is pinned against SciPy reference
+`stats` covers probability distributions, hypothesis tests, power
+calculations, robust statistics, the bootstrap and time series
+(`stats.ts`). Every statistic is pinned against SciPy reference
 values in the test suite. Tests and fits return maps. Sampling draws
 from a generator when given `rng:` (a [`random.rng`](#random--randomness)
 or an Int seed), else from the `random` module's seeded stream, so
@@ -3656,9 +3693,9 @@ scikit-learn.
 
 ## `plot` — charts as SVG text
 
-Charts render to complete standalone SVG documents as strings — write
-one with `fs.write_file`, serve it over `http`, or land it on a page
-with `dom.set_html`. `plot.line`, `plot.scatter`, `plot.area`,
+`plot` draws charts as complete SVG documents, returned as strings. You
+can save one with `fs.write_file`, serve it over `http`, or put it on a
+page with `dom.set_html`. `plot.line`, `plot.scatter`, `plot.area`,
 `plot.lines` (multi-series with legend), `plot.xy` (layered marks over
 shared scales), `plot.bar`, `plot.bars` (grouped), `plot.stacked`,
 `plot.hist`, `plot.heatmap`, and `plot.box` take Series data plus one
@@ -3737,7 +3774,8 @@ type and how each handles nulls.
 
 ## `gg` — a grammar of graphics
 
-**`use gg`** says a plot the way ggplot2 does: data, aesthetic mappings,
+`gg` describes a plot the way R's ggplot2 does (bring it in with `use
+gg`): data, aesthetic mappings,
 and layers (a geom drawn from a stat's output after a position), then
 scales, a facet, a coordinate system, labels and a theme. A plot is a
 value — a map built in steps, each subject-first so it pipes — and

@@ -2,14 +2,18 @@
 
 Part of [the olang book](README.md) · [Command-line tooling](tooling.md)
 
-A notebook is olang code in cells between prose: a markdown file whose
-name ends `.olmd`. olang reads it as a program, so `olang run`, `test`,
-`check`, `fmt` and `expand` take a notebook as they take a `.ol` file,
-and every location they report is a line of the notebook itself. This
-chapter is the reference for the file format and for how olang reads it.
-An editor runs a notebook cell by cell, and draws its outputs and
-controls, through the notebook kernel
-([`olang repl --serve --notebook`](tooling.md#olang-repl---serve)).
+A notebook mixes writing and code: paragraphs that explain an analysis,
+with cells of olang between them that do the work. In olang a notebook
+is a plain Markdown file whose name ends in `.olmd`, so it reads well on
+GitHub or in any text editor, and it diffs cleanly in version control.
+
+olang reads a notebook as one program. `olang run`, `test`, `check`,
+`fmt` and `expand` all accept a notebook just as they accept a `.ol`
+file, and every location they report is a line in the notebook itself.
+In an editor, the notebook kernel
+([`olang repl --serve --notebook`](tooling.md#olang-repl---serve)) runs
+it cell by cell and draws the outputs and controls. This chapter is the
+reference for the file format and for how olang reads it.
 
 ## Table of contents
 

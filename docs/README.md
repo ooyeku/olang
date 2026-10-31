@@ -1,12 +1,18 @@
 # The olang book
 
-This is the documentation for olang, a dynamically typed functional
-programming language implemented in Rust. It covers the language, its
-standard library and data stack, its tools, the browser runtime, and the
-implementation.
+This book is the guide to olang, a programming language for small
+tools, data work and web apps that you can trust after they are written.
+It starts with what olang is and why it exists, teaches the language
+through one worked example, and then goes as deep as you like: the full
+language, the standard library, the tools, olang in the browser, and how
+the engines underneath work.
 
-Every olang code block in the book is run by the test suite, so the examples
-match the implementation.
+You don't have to read it in order. If you are new, the first three
+chapters are the place to start. The rest is easier to dip into when you
+need something.
+
+Every olang example in the book is run by the test suite, so the
+examples do what the text says they do.
 
 ## Contents
 
@@ -14,76 +20,84 @@ match the implementation.
 
 | Chapter | Contents |
 |---|---|
-| [Introduction](introduction.md) | What olang is, what comes with it, and how this book is organized. |
-| [Installation](installation.md) | Installing `olang` and `otc`, running programs, and the REPL. |
-| [A tour of olang](tour.md) | The language taught by building one program, from a list of strings to a statistical report. |
-| [Common pitfalls](pitfalls.md) | Behaviors that surprise newcomers, each with the idiom that avoids it. |
-| [Stability and compatibility](stability.md) | What 1.0 promises: what is stable, what is experimental, the platforms it covers, and what a version number means. |
+| [Introduction](introduction.md) | What olang is, why you might want it, and how this book is laid out. |
+| [Installation](installation.md) | Getting olang onto your machine, running your first program, and the interactive prompt. |
+| [A tour of olang](tour.md) | Learn the language by building one program, from a few lines of text to a small statistical report. |
+| [Common pitfalls](pitfalls.md) | The things that tend to catch people out, and what to write instead. |
+| [Stability and compatibility](stability.md) | What 1.0 promises: which parts are stable, which are still experimental, which platforms are covered, and what a version number means. |
 
 ### The language
 
 | Chapter | Contents |
 |---|---|
-| [Language reference](language.md) | Every construct: values and mutability, operators and precedence, collections, control flow, pattern matching, functions, pipelines and method chains, user-defined types, traits, errors, concurrency, and modules. |
-| [Types and gradual typing](types.md) | Annotations enforced at runtime on every tier, the `olang check` static checker, element types, and adding types incrementally. |
-| [Macros](macros.md) | Extending olang in olang: `meta fn`, `@` invocation, decorators, compile-time evaluation, and the rules expansion follows. |
+| [Language reference](language.md) | The precise rules for every part of the language, from values and operators to pattern matching, types, errors, concurrency and modules. |
+| [Types and gradual typing](types.md) | Adding types when you want them: how annotations are checked as the program runs, and how `olang check` catches mistakes before it does. |
+| [Macros](macros.md) | Writing olang code that writes olang code: `meta fn`, `@` calls, decorators, and the rules they follow. |
 
 ### The standard library
 
 | Chapter | Contents |
 |---|---|
-| [Standard library reference](stdlib.md) | The global builtins and every module: native modules, the embedded olang modules and packages, and the program-as-data interface (`meta`). |
-| [The data stack](ods.md) | Series, Frames, expressions, grouping, dates and categories, matrices, statistics and time series, machine learning with model formulas, and charts with `plot` and `gg`. |
+| [Standard library reference](stdlib.md) | Every built-in function and module, with what each one takes and returns. |
+| [The data stack](ods.md) | Working with data: columns and tables, grouping and joins, dates, matrices, statistics, machine learning, and charts. |
 
 ### Tools
 
 | Chapter | Contents |
 |---|---|
-| [Command-line tooling](tooling.md) | The `olang` command line: running, testing, formatting, checking, fixing, profiling, benchmarking, building, documenting, and recording and replaying runs. |
-| [Packages and dependencies](packages.md) | Projects and `otc`: manifests, dependencies, the library shelf, the lockfile, toolchains, capabilities, and the transparent binary. |
-| [Notebooks](notebooks.md) | The `.olmd` format: markdown with olang cells, cell options, params, capabilities, controls, and pinned output. |
-| [Writing fast olang](performance.md) | The program shapes the execution tiers optimize, bulk data on the data stack, reading the tiers' decisions, and measured performance. |
-| [Editor support](editors.md) | The language server (`olang lsp`) and the VS Code and Zed extensions. |
+| [Command-line tooling](tooling.md) | Everything the `olang` command does, from running and testing programs to profiling, building, and recording and replaying runs. |
+| [Packages and dependencies](packages.md) | Projects and `otc`: dependencies, your personal shelf of libraries, capabilities, and binaries that carry their own source. |
+| [Notebooks](notebooks.md) | Notebooks as plain Markdown files with olang cells that run, take parameters, and keep their output. |
+| [Writing fast olang](performance.md) | How to write code the fast engines like, how to see what they decided, and how olang measures up. |
+| [Editor support](editors.md) | Setting up VS Code, Zed or any other editor that speaks the language server protocol. |
 
 ### The browser
 
 | Chapter | Contents |
 |---|---|
-| [olang in the browser](wasm.md) | The WebAssembly runtime, the `dom` module, events, canvas draw-lists, the `ui` view layer, routing and storage, and Web Workers. |
-| [The web SDK](web-sdk.md) | Full-stack web applications: one route table for server and browser, views as data, the store, forms, the bundle, and server push. |
+| [olang in the browser](wasm.md) | Running olang inside a web page: the page itself, events, drawing, views, routing and background workers. |
+| [The web SDK](web-sdk.md) | Building a whole web app in olang, with one set of routes and views shared by the server and the browser. |
 
 ### Going deeper
 
 | Chapter | Contents |
 |---|---|
-| [Architecture and internals](internals.md) | The pipeline, the interpreter as the authority, refusal and deoptimization, the value model, modules, testing, and the repository layout. |
-| [The execution model: OVM and JIT](ovm.md) | The bytecode VM and the Cranelift JIT in depth: what each compiles, how each stays faithful, the compile cache, and measured performance. |
+| [Architecture and internals](internals.md) | How the implementation fits together, for anyone who wants to read or work on it. |
+| [The execution model: OVM and JIT](ovm.md) | The bytecode VM and the JIT in depth: what each one compiles, how each stays faithful to the interpreter, and what they cost and gain. |
 
 ## Reading paths
 
-- **Learning the language.** Read the [Introduction](introduction.md) and
-  [Installation](installation.md), work through [A tour of olang](tour.md)
-  and [Common pitfalls](pitfalls.md), then keep the
-  [Language reference](language.md) at hand while reading the programs in
-  [`examples/`](../examples/).
-- **Analysing data.** [The data stack](ods.md), with the reference tables
-  in the [Standard library reference](stdlib.md#ods--series-and-frames).
-- **Building a project.** [Packages and dependencies](packages.md) and
-  [Command-line tooling](tooling.md).
-- **Building for the web.** [olang in the browser](wasm.md), then
-  [The web SDK](web-sdk.md).
-- **Making a program faster.** [Writing fast olang](performance.md), then
-  [The execution model](ovm.md).
-- **Working on the implementation.** [Architecture and
-  internals](internals.md) and [The execution model](ovm.md).
+If you want to learn the language, read the [Introduction](introduction.md)
+and [Installation](installation.md), work through [A tour of
+olang](tour.md) and [Common pitfalls](pitfalls.md), and then keep the
+[Language reference](language.md) open while you read the programs in
+[`examples/`](../examples/).
+
+If you are here to analyse data, go to [The data stack](ods.md), and use
+the tables in the [Standard library
+reference](stdlib.md#ods--series-and-frames) as you go.
+
+To build a project of your own, read [Packages and
+dependencies](packages.md) and [Command-line tooling](tooling.md). For
+the web, start with [olang in the browser](wasm.md) and then [The web
+SDK](web-sdk.md).
+
+To make a program faster, read [Writing fast olang](performance.md) and
+then [The execution model](ovm.md). And if you want to work on olang
+itself, [Architecture and internals](internals.md) and [The execution
+model](ovm.md) are where to begin.
 
 ## Conventions
 
-- ` ```olang ` blocks are run by the test suite and must run as written.
-- ` ```olang no-run ` blocks are parse-checked but not run; they need files,
-  a network, a browser, or several modules.
-- Fallible operations return a `Result`; examples call `unwrap` to stay
-  short.
-- [Stability and compatibility](stability.md) is the authoritative statement
-  of what is stable. Where any other text disagrees with it, that chapter is
-  correct.
+A block marked ` ```olang ` is run by the test suite and works exactly
+as written. A block marked ` ```olang no-run ` is checked for syntax but
+not run, usually because it needs files, a network, a browser or several
+modules at once.
+
+Operations that can fail return a `Result`, which holds either a value
+or an error. To keep them short, the examples often call `unwrap` to
+take the value out; real programs usually handle the error instead.
+
+[Stability and compatibility](stability.md) is the official word on
+what is stable. If anything else in the book seems to disagree with it,
+that chapter wins.

@@ -5,10 +5,12 @@ Part of [the olang book](README.md) · [Language reference](language.md) ·
 [The execution model: OVM and JIT](ovm.md) ·
 [Stability and compatibility](stability.md)
 
-This chapter describes how the olang runtime is implemented. It is written for
-readers changing the implementation and for readers studying how a language is
-built: the pipeline, the rules every execution tier follows, the value
-model, modules, errors, testing, and where each part lives. The bytecode and JIT tiers are covered in detail in
+This chapter is a look under the hood. It is written for anyone who
+wants to work on olang itself, and for anyone curious about how a
+language is built. It covers the path a program takes from text to
+result, the rules every execution tier follows, how values are
+represented, modules, errors, testing, and where each part lives in the
+repository. The bytecode and JIT tiers are covered in detail in
 [The execution model: OVM and JIT](ovm.md), and the rules governing what may
 change are in [Stability and compatibility](stability.md).
 
