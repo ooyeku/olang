@@ -315,13 +315,13 @@ fetched() { logged "releases/download/v$1/olang-$1-$2.tar.gz"; }
 # ── macOS ──────────────────────────────────────────────────────────
 run mac-arm64 --
 code 0; installed 1.1.0; fetched 1.1.0 macos-arm64; secure
-has "macOS, Apple silicon, 15.1"; has "1.1.0 (the newest)"; has "Installed olang and otc"
+has "macOS 15.1 (Apple silicon)"; has "1.1.0 (the newest)"; has "Installed olang and otc"
 has "Added ~/.olang/bin to your PATH in ~/.zshrc"; has "olang is installed."; has "quit and reopen your terminal"; has "source ~/.zshrc"
 grep -qxF 'export PATH="$HOME/.olang/bin:$PATH"' "$H/.zshrc" && ok_ || bad ".zshrc lacks the PATH line"
 printf '%s\n' "$OUT" | grep -q "$(printf '\033')" && bad "colour codes without a terminal" || ok_
 
 again mac-arm64-again --
-code 0; has "olang 1.1.0 is already installed here"; has ".zshrc already adds ~/.olang/bin"
+code 0; has "Checking your olang"; has "olang 1.1.0 is already installed here, so there is nothing to update"; has ".zshrc already adds ~/.olang/bin"
 unlogged "tar.gz"
 [ "$(grep -c 'olang/bin' "$H/.zshrc")" = 1 ] && ok_ || bad "the PATH line was added twice"
 
@@ -337,7 +337,7 @@ run mac-rosetta FAKE_ARCH=x86_64 FAKE_ROSETTA=1 --
 code 0; fetched 1.1.0 macos-arm64; has "Apple silicon"
 
 run mac-intel FAKE_ARCH=x86_64 FAKE_MACOS=12.7 --
-code 0; fetched 1.1.0 macos-x64; has "macOS, Intel, 12.7"
+code 0; fetched 1.1.0 macos-x64; has "macOS 12.7 (Intel)"
 
 run mac-version-eq -- --version=1.0.0
 code 0; installed 1.0.0
@@ -460,6 +460,8 @@ code 1; has "neither 'curl' nor 'wget'"
 # ── signatures ─────────────────────────────────────────────────────
 if [ -n "$SIGNING" ]; then
     SCRIPT="$T/install-signed.sh"
+    run sig-help -- --help
+    code 0; has "the release's signed checksums"
     run sig-good --
     code 0; installed 1.1.0; has "Signature verified"; logged "v1.1.0/SHA256SUMS.sig"; secure
     run sig-bad -- --version v1.2.0
@@ -486,6 +488,8 @@ fi
 # ── options, folders and PATH ──────────────────────────────────────
 run help -- --help
 code 0; has "Usage:"; has "--uninstall"; unlogged "curl"
+# with no signing key yet, the help claims checksums, not signatures
+has "the checksums published with the release"; lacks "signed checksums"
 
 run unknown-option -- --frobnicate
 code 1; has "does not know the option '--frobnicate'"
