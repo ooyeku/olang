@@ -233,12 +233,12 @@ impl Tapping {
 
 #[cfg(feature = "native")]
 fn tap_push(bytes: &[u8]) {
-    if let Ok(mut tap) = TAP.lock() {
-        if let Some(t) = tap.as_mut() {
-            t.pending.extend_from_slice(bytes);
-            if t.last.elapsed() >= TAP_EVERY {
-                t.flush();
-            }
+    if let Ok(mut tap) = TAP.lock()
+        && let Some(t) = tap.as_mut()
+    {
+        t.pending.extend_from_slice(bytes);
+        if t.last.elapsed() >= TAP_EVERY {
+            t.flush();
         }
     }
 }
@@ -254,12 +254,11 @@ pub fn tap_begin(send: Tap) {
             .spawn(|| {
                 loop {
                     std::thread::sleep(TAP_TICK);
-                    if TAPPED.load(std::sync::atomic::Ordering::Relaxed) {
-                        if let Ok(mut tap) = TAP.lock() {
-                            if let Some(t) = tap.as_mut() {
-                                t.flush();
-                            }
-                        }
+                    if TAPPED.load(std::sync::atomic::Ordering::Relaxed)
+                        && let Ok(mut tap) = TAP.lock()
+                        && let Some(t) = tap.as_mut()
+                    {
+                        t.flush();
                     }
                 }
             });
@@ -279,15 +278,15 @@ pub fn tap_begin(send: Tap) {
 #[cfg(feature = "native")]
 pub fn tap_end() {
     TAPPED.store(false, std::sync::atomic::Ordering::SeqCst);
-    if let Ok(mut tap) = TAP.lock() {
-        if let Some(mut t) = tap.take() {
-            t.flush();
-            // a lone half of a character at the very end
-            if !t.pending.is_empty() {
-                let rest = std::mem::take(&mut t.pending);
-                if t.sent < HEAD_MAX {
-                    (t.send)(&String::from_utf8_lossy(&rest));
-                }
+    if let Ok(mut tap) = TAP.lock()
+        && let Some(mut t) = tap.take()
+    {
+        t.flush();
+        // a lone half of a character at the very end
+        if !t.pending.is_empty() {
+            let rest = std::mem::take(&mut t.pending);
+            if t.sent < HEAD_MAX {
+                (t.send)(&String::from_utf8_lossy(&rest));
             }
         }
     }
