@@ -61,15 +61,15 @@ pub fn poll() -> ((f32, f32), (f32, f32), f32, f32, usize) {
             match ev.event {
                 gilrs::EventType::ButtonPressed(b, _) => {
                     if let Some(n) = name(b) {
-                        crate::stdlib::gui::keys::press(n);
+                        crate::stdlib::gui::keys::device_press(n);
                     }
                 }
                 gilrs::EventType::ButtonReleased(b, _) => {
                     if let Some(n) = name(b) {
-                        crate::stdlib::gui::keys::release(n);
+                        crate::stdlib::gui::keys::device_release(n);
                     }
                 }
-                gilrs::EventType::Disconnected => crate::stdlib::gui::keys::release_all(),
+                gilrs::EventType::Disconnected => crate::stdlib::gui::keys::device_release_all(),
                 _ => {}
             }
         }

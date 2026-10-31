@@ -4,9 +4,45 @@
 //! keyboard as a set of switches, read once a step (Toad's input reads
 //! this). A press and release between two reads still counts once each.
 //! A window losing focus lets go of everything (no key stays stuck down).
+//! A scripted run (`scripted`) hears only its script: the devices'
+//! presses are ignored while it is on, so a demo or a test plays the same
+//! whoever is at the machine.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static SCRIPTED: AtomicBool = AtomicBool::new(false);
+
+/// Hear only the script's hands (`press`, `release`), not the devices'.
+pub fn scripted(on: bool) {
+    SCRIPTED.store(on, Ordering::SeqCst);
+}
+
+pub fn is_scripted() -> bool {
+    SCRIPTED.load(Ordering::SeqCst)
+}
+
+/// A device's key or button went down (a window's, a gamepad's).
+pub fn device_press(name: &str) {
+    if !is_scripted() {
+        press(name);
+    }
+}
+
+/// A device's key or button came up.
+pub fn device_release(name: &str) {
+    if !is_scripted() {
+        release(name);
+    }
+}
+
+/// A device let go of everything (a window lost focus, a pad went away).
+pub fn device_release_all() {
+    if !is_scripted() {
+        release_all();
+    }
+}
 
 #[derive(Default)]
 struct Held {

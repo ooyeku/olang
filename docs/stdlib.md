@@ -3118,7 +3118,20 @@ toad.frame([#{ "swarm": s, "color": "#ff9a3c", "radius": 6.0 }], #{ "size": (128
 | `toad.press(key, down)` | press or let go of a key as a hand would (scripts and tests) |
 | `toad.clear(swarm)` | empty a swarm |
 | `toad.wanted(name)` | whether the live picture wants a new frame (a window drew the last one); `toad.frame` skips one it does not |
-| `toad.frame(layers, view)` | draw swarms, shapes (circle, box, capsule, ring, triangle, line) and sprites in order into an HDR target, lit, bloomed, graded and tone mapped; `"live": name` shows it in a Loom window as the image `("live", name)`; `"png": true` answers its pixels, `"probe": [(x, y)]` the colours there |
+| `toad.scripted(on)` | hear only `toad.press`: the windows' keys and the gamepads are ignored (demos and tests) |
+| `toad.physics(opts)` | a 2D physics world (`gravity`, `scale`: world units to a metre) |
+| `toad.body(world, props)` | a rigid body: `kind`, `shape` (circle, box, capsule, poly, chain), `size`, `at`, `rot`, `vel`, `density`, `friction`, `bounce`, `sensor`, … or `parts` |
+| `toad.unbody(world, body)` | remove a body and its joints |
+| `toad.push(world, body, props)` | `impulse`, `force`, `torque`, `vel`, `spin`, or `at`/`rot` (a teleport; a kinematic body's next place) |
+| `toad.joint(world, a, b, props)` | `pin`, `weld`, `slide`, `rope` or `spring`, anchored at `at_a` and `at_b` |
+| `toad.unjoint(world, joint)` | remove a joint |
+| `toad.simulate(world, dt)` | one step: the touches that started or stopped, `#{ a, b, start, sensor, at, normal }` |
+| `toad.pose(world, body)` | `#{ at, rot, vel, spin, was_at, was_rot }` |
+| `toad.ray(world, from, to, opts)` | the first body a ray meets: `#{ body, at, normal, t }`, or `()` |
+| `toad.overlap(world, at, radius, opts)` | the bodies within `radius` of `at` |
+| `toad.collide(swarm, world, opts)` | a play swarm against the bodies: pushed out, bounced, killed or marked; `#{ hits, died }` |
+| `toad.meet(a, b, opts)` | two play swarms meeting: killed or marked; `#{ met, died_a, died_b }` |
+| `toad.frame(layers, view)` | draw swarms, shapes (circle, box, capsule, ring, triangle, line, each with a material) and sprites (pictures or text) in order into an HDR target, lit, bloomed, graded and tone mapped; `"live": name` shows it in a Loom window as the image `("live", name)`; `"png": true` answers its pixels, `"probe": [(x, y)]` the colours there |
 
 Colours are sRGB as written, `(r, g, b, a)` or `"#rrggbb"`; `glow` takes
 a shape past white.
@@ -3133,6 +3146,33 @@ world units around each point (no shadow). The finish: `bloom`,
 `exposure`, `contrast`, `saturation`, `tint`, `grain`, `vignette`, then
 AgX. Show swarms, `toad.gpu` and `toad.frame` need a GPU
 (the native build with `gui`); kernels and play swarms run anywhere.
+
+**Materials.** A shape's surface is drawn in code: `pattern` (`noise`,
+`stripes`, `dots`, `water`, `rings`, `checker`, `gradient`, `radial`,
+`cells`) between `color` and `color2`, `scale` world units across,
+moving at `speed` (the view's `time`, seconds), turned by `angle`, from
+`seed`; `relief` (a bevel that deep at its edges), `bump` (the pattern
+raised) and `gloss` (0 to 1: a highlight). A raised or glossy surface is
+shaded from where its light comes from (outside it, for one that casts);
+unlit, from a fixed sun at the upper left. These keys can sit in a map
+given as the shape's `material`, the shape's own keys winning over it
+(`()` takes one away). `lit: false` shows a shape's colour as written.
+
+**Physics.** A world steps rigid bodies (rapier underneath, deterministic
+run to run) in the game's own units: `scale` world units make a metre
+for the solver, and positions, sizes, speeds and gravity go in and come
+out in world units. Bodies and joints are numbered; a body's touches come
+back from `toad.simulate` once a step. Play swarms collide by a grid of
+their own rather than as bodies: `toad.collide` against a world's
+bodies, `toad.meet` against another play swarm. Tens of thousands of
+entities a step cost a fraction of a millisecond, the same every run.
+
+**Text in the world.** A sprite with `text` instead of `src` is that
+text: `size` is its font size in world units, with `color`, `glow`,
+`font` (`"body"`, `"mono"` or a family), `weight`, `italic`, `align` and
+`rot`. It is set at the size it shows (a step of a fifth of an octave),
+so it stays sharp at any zoom, and shows its colour as written unless
+`lit: true`.
 
 ## `http` — HTTP
 

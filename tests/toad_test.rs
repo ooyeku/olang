@@ -212,3 +212,210 @@ match toad.gpu() {
     }
 }
 
+
+#[test]
+fn a_material_is_shaded_from_where_the_light_is() {
+    // a domed disc (relief) with a light to its right: its right side
+    // brighter than its left; the same disc flat is even
+    let src = r##"
+match toad.gpu() {
+    Err(e) => "no gpu",
+    Ok(_) => {
+        let floor = #{ "kind": "box", "at": (0.0, 0.0), "size": (2000.0, 2000.0), "color": "#202020" }
+        let lamp = #{ "kind": "circle", "at": (200.0, 0.0), "size": 10.0, "color": "#ffffff", "emit": 30.0 }
+        let dome = #{ "kind": "circle", "at": (0.0, 0.0), "size": 90.0, "color": "#808080", "relief": 80.0, "gloss": 0.4, "cast": true }
+        let v = #{ "size": (512, 512), "scale": 1.0, "gi": 1.0, "probe": [(256 + 60, 256), (256 - 60, 256)] }
+        let f = toad.frame([#{ "shapes": [floor, dome, lamp] }], v)
+        let lum = (c) => c[0] + c[1] + c[2]
+        show(lum(f.probe[0]) > lum(f.probe[1]) + 40) + " " + show(f.probe)
+    }
+}"##;
+    let out = run(src).expect("ran");
+    assert!(out.starts_with("true") || out == "no gpu", "{out}");
+}
+
+#[test]
+fn a_pattern_is_named_and_a_shape_overrides_its_material() {
+    let refused = run(r##"
+match toad.gpu() {
+    Err(e) => "pattern one of",
+    Ok(_) => match attempt(() => toad.frame([#{ "shapes": [#{ "kind": "box", "pattern": "plaid" }] }], #{ "size": (16, 16) })) {
+        Ok(_) => "drawn",
+        Err(e) => show(e)
+    }
+}"##)
+    .expect("ran");
+    assert!(refused.contains("pattern") && refused.contains("one of"), "{refused}");
+    // a checker material, and the same with its pattern taken away: the
+    // second shows one colour
+    let src = r##"
+match toad.gpu() {
+    Err(e) => "no gpu",
+    Ok(_) => {
+        let mat = #{ "color": "#000000", "color2": "#ffffff", "pattern": "checker", "scale": 8.0 }
+        let a = toad.frame([#{ "shapes": [#{ "kind": "box", "size": (64.0, 64.0), "material": mat }] }],
+                           #{ "size": (64, 64), "probe": [(28, 28), (36, 28)] })
+        let b = toad.frame([#{ "shapes": [#{ "kind": "box", "size": (64.0, 64.0), "material": mat, "pattern": () }] }],
+                           #{ "size": (64, 64), "probe": [(28, 28), (36, 28)] })
+        show(a.probe[0] != a.probe[1]) + " " + show(b.probe[0] == b.probe[1])
+    }
+}"##;
+    let out = run(src).expect("ran");
+    assert!(out == "true true" || out == "no gpu", "{out}");
+}
+
+#[test]
+fn text_in_the_world_is_drawn_at_its_size() {
+    // a label's ink is where it is and not beside it, at any zoom
+    let src = r##"
+match toad.gpu() {
+    Err(e) => "no gpu",
+    Ok(_) => {
+        let l = #{ "text": "MMMM", "at": (0.0, 0.0), "size": 40.0, "color": "#ffffff" }
+        let lum = (c) => c[0] + c[1] + c[2]
+        let row = range(0, 40) |> map((i) => (88 + i * 2, 64))
+        let ink = (f) => f.probe |> fold(0, (m, c) => max(m, lum(c)))
+        let one = toad.frame([#{ "sprites": [l] }], #{ "size": (256, 128), "scale": 1.0, "probe": row })
+        let two = toad.frame([#{ "sprites": [l] }], #{ "size": (256, 128), "scale": 2.5, "probe": row })
+        let above = toad.frame([#{ "sprites": [l] }], #{ "size": (256, 128), "scale": 1.0, "probe": row |> map((p) => (p[0], 8)) })
+        show(ink(one) > 400 && ink(two) > 400 && ink(above) < 30) + " " + show((ink(one), ink(two), ink(above)))
+    }
+}"##;
+    let out = run(src).expect("ran");
+    assert!(out.starts_with("true") || out == "no gpu", "{out}");
+}
+
+// ── physics ────────────────────────────────────────────────────────────
+
+const FLOOR: &str = r#"
+fn ok(r) = match r { Ok(v) => v, Err(e) => raise(e) }
+let w = toad.physics(#{ "gravity": (0.0, -980.0) })
+let floor = toad.body(w, #{ "kind": "static", "shape": "box", "size": (2000.0, 40.0), "at": (0.0, -20.0) })
+fn steps(n) = { let mut all = []
+    for i in range(0, n) { all = all + toad.simulate(w, 1.0 / 120.0) }
+    all }
+"#;
+
+#[test]
+fn a_body_falls_rests_and_says_it_touched() {
+    let src = format!(
+        "{FLOOR}
+let ball = toad.body(w, #{{ \"shape\": \"circle\", \"size\": 25.0, \"at\": (0.0, 400.0) }})
+let touches = steps(240)
+let at = toad.pose(w, ball).at
+let first = touches[0]
+show(abs(at[1] - 25.0) < 0.5) + \" \" + show((first.a, first.b, first.start)) + \" \" + show(first.normal)"
+    );
+    let out = run(&src).expect("ran");
+    // the ball rests on the floor's top (0) by its radius; the first touch
+    // is the two of them starting, the normal up from the ball's side
+    assert!(out.starts_with("true (2, 1, true)") || out.starts_with("true (1, 2, true)"), "{out}");
+}
+
+#[test]
+fn a_ray_meets_the_first_body_and_overlap_finds_what_is_there() {
+    let src = format!(
+        "{FLOOR}
+let ball = toad.body(w, #{{ \"kind\": \"static\", \"shape\": \"circle\", \"size\": 25.0, \"at\": (0.0, 100.0) }})
+steps(1)
+let hit = toad.ray(w, (0.0, 300.0), (0.0, -300.0), #{{}})
+let past = toad.ray(w, (0.0, 300.0), (0.0, -300.0), #{{ \"skip\": ball }})
+let none = toad.ray(w, (500.0, 300.0), (500.0, 200.0), #{{}})
+show((hit.body == ball, abs(hit.at[1] - 125.0) < 0.1, past.body == floor, none == (), toad.overlap(w, (0.0, 100.0), 5.0, #{{}}) == [ball]))"
+    );
+    assert_eq!(run(&src).as_deref(), Ok("(true, true, true, true, true)"));
+}
+
+#[test]
+fn joints_hold_bodies_together() {
+    // a ball on a 100-unit rope from a fixed point never falls further
+    let src = format!(
+        "{FLOOR}
+let hook = toad.body(w, #{{ \"kind\": \"static\", \"shape\": \"circle\", \"size\": 4.0, \"at\": (0.0, 600.0) }})
+let ball = toad.body(w, #{{ \"shape\": \"circle\", \"size\": 10.0, \"at\": (80.0, 600.0) }})
+toad.joint(w, hook, ball, #{{ \"kind\": \"rope\", \"length\": 100.0 }})
+let mut far = 0.0
+for i in range(0, 360) {{
+    toad.simulate(w, 1.0 / 120.0)
+    let p = toad.pose(w, ball).at
+    far = max(far, math.sqrt(p[0] * p[0] + (p[1] - 600.0) * (p[1] - 600.0)))
+}}
+show(far < 104.0) + \" \" + show(far)"
+    );
+    let out = run(&src).expect("ran");
+    assert!(out.starts_with("true"), "{out}");
+}
+
+#[test]
+fn physics_is_the_same_every_run() {
+    let src = format!(
+        "{FLOOR}
+for i in range(0, 40) {{
+    toad.body(w, #{{ \"shape\": if i % 2 == 0 => \"circle\" else => \"box\", \"size\": if i % 2 == 0 => 10.0 else => (20.0, 20.0),
+                     \"at\": (to_float(i % 8) * 22.0, 30.0 + to_float(i / 8) * 25.0), \"rot\": to_float(i) * 0.3 }})
+}}
+steps(300)
+show(range(2, 42) |> map((id) => toad.pose(w, id).at))"
+    );
+    let a = run(&src).expect("ran");
+    let b = run(&src).expect("ran");
+    assert_eq!(a, b);
+}
+
+#[test]
+fn a_swarm_lands_on_bodies_bounces_and_is_counted() {
+    let src = format!(
+        "{FLOOR}
+fn fall(p, w) = #{{ \"pos\": p.pos + p.vel * w.dt, \"vel\": p.vel + (0.0, -980.0) * w.dt }}
+let s = ok(toad.swarm(ok(toad.kernel(fall, #{{ \"pos\": (0.0, 0.0), \"vel\": (0.0, 0.0), \"hit\": 0.0 }}, #{{}})), 2000, \"play\"))
+toad.spawn(s, 2000, #{{ \"pos\": (\"box\", (0.0, 300.0), (800.0, 200.0)), \"seed\": 3 }})
+let mut hits = 0
+for i in range(0, 240) {{
+    toad.step(s, #{{ \"dt\": 1.0 / 120.0 }})
+    let r = toad.collide(s, w, #{{ \"radius\": 3.0, \"bounce\": 0.2, \"mark\": \"hit\" }})
+    hits = hits + (r.hits |> fold(0, (a, h) => a + h[1]))
+}}
+let low = toad.read(s, \"pos\") |> fold(1e9, (a, p) => min(a, p[1]))
+toad.step(s, #{{ \"dt\": 1.0 / 120.0 }})
+let gone = toad.collide(s, w, #{{ \"radius\": 3.0, \"die\": true }})
+show(low > 2.9) + \" \" + show(hits > 2000) + \" \" + show(gone.died) + \" \" + show(toad.count(s))"
+    );
+    // none fell through; every one touched the floor at least once; all
+    // resting on it die when touching kills
+    assert_eq!(run(&src).as_deref(), Ok("true true 2000 0"));
+}
+
+#[test]
+fn two_swarms_meet_each_taken_once_in_order() {
+    let src = r#"
+fn ok(r) = match r { Ok(v) => v, Err(e) => raise(e) }
+fn still(p, w) = #{ "pos": p.pos }
+let k = ok(toad.kernel(still, #{ "pos": (0.0, 0.0), "met": 0.0 }, #{}))
+let shots = ok(toad.swarm(k, 10, "play"))
+let foes = ok(toad.swarm(k, 10, "play"))
+// three shots on one foe; one shot alone; one foe alone
+for x in [0.0, 1.0, 2.0, 100.0] { toad.spawn(shots, 1, #{ "pos": (x, 0.0) }) }
+for x in [0.5, 300.0] { toad.spawn(foes, 1, #{ "pos": (x, 0.0) }) }
+let r = toad.meet(shots, foes, #{ "radius_a": 2.0, "radius_b": 2.0, "kill": "both" })
+show((r.met, r.died_a, r.died_b, toad.count(shots), toad.count(foes), toad.read(shots, "pos") |> map((p) => p[0])))
+"#;
+    // the first shot in order takes the foe; the other two pass
+    assert_eq!(run(src).as_deref(), Ok("(1, 1, 1, 3, 1, [1.0, 2.0, 100.0])"));
+}
+
+#[test]
+fn what_physics_cannot_build_is_refused_with_the_reason() {
+    let refused = |body: &str| -> String {
+        run(&format!(
+            "let w = toad.physics(#{{}})
+match attempt(() => {body}) {{ Ok(_) => \"built\", Err(e) => show(e) }}"
+        ))
+        .expect("ran")
+    };
+    assert!(refused(r#"toad.body(w, #{ "shape": "blob" })"#).contains("circle, box, capsule, poly or chain"));
+    assert!(refused(r#"toad.body(w, #{ "kind": "floaty" })"#).contains("dynamic, static or kinematic"));
+    assert!(refused(r#"toad.body(w, #{ "shape": "poly" })"#).contains("needs `points`"));
+    assert!(refused(r#"toad.joint(w, toad.body(w, #{}), toad.body(w, #{}), #{ "kind": "glue" })"#).contains("pin, weld, slide, rope or spring"));
+    assert!(refused(r#"toad.joint(w, toad.body(w, #{}), toad.body(w, #{}), #{ "kind": "rope" })"#).contains("needs a `length`"));
+    assert!(refused(r#"toad.push(w, 99, #{})"#).contains("no body 99"));
+}

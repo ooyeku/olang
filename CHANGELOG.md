@@ -18,6 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   swarms, shapes and sprites, live in a Loom window; and `gui` live
   pictures (an image whose source is `("live", name)`), held keys for
   games, and `gui.read(w, "frame")`.
+- **Toad's frames are lit and have surfaces.** 2D global illumination by
+  radiance cascades, soft shadows, shapes that emit and cast, swarms that
+  pool light, bloom and a grade over AgX; materials drawn in code (nine
+  patterns, relief, bump, gloss, a shape's `material`); text in the world
+  (a sprite with `text`, set by `gui`'s fonts at the size it shows).
+- **Toad's physics** (rapier2d 0.36, deterministic): `toad.physics`,
+  bodies, joints (pin, weld, slide, rope, spring), pushes, poses, rays and
+  overlaps in the game's own units, touches batched once a step; play
+  swarms colliding with bodies (`toad.collide`) and with each other
+  (`toad.meet`) by a grid of their own. `toad.scripted(true)` makes a
+  scripted run hear only its script.
 - **A notebook cell's printed lines stream while it runs.** `olang repl
   --serve` sends what an `eval` prints as `out` events as it is printed
   (the hello's `stream` feature): batched at most every 50 ms, the first

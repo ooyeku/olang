@@ -17,9 +17,12 @@ pub mod cpu;
 pub mod kernel;
 #[cfg(feature = "gamepad")]
 pub mod pad;
+pub mod physics;
 #[cfg(feature = "gui")]
 pub mod render;
 pub mod wgsl;
+#[cfg(feature = "gui")]
+pub mod words;
 
 use crate::ast::{Value, ValueMap};
 use kernel::{Layout, Program, Ty};
@@ -46,6 +49,19 @@ pub fn create_toad_module() -> Value {
         ("press", 2),
         ("clear", 1),
         ("wanted", 1),
+        ("scripted", 1),
+        ("physics", 1),
+        ("body", 2),
+        ("unbody", 2),
+        ("push", 3),
+        ("joint", 4),
+        ("unjoint", 2),
+        ("simulate", 2),
+        ("pose", 2),
+        ("ray", 4),
+        ("overlap", 4),
+        ("collide", 3),
+        ("meet", 3),
     ] {
         module.insert(
             name.to_string(),
@@ -100,6 +116,7 @@ struct Swarm {
 struct State {
     kernels: HashMap<i64, Arc<Program>>,
     swarms: HashMap<i64, Swarm>,
+    worlds: HashMap<i64, physics::World>,
     next: i64,
     #[cfg(feature = "gui")]
     renderer: Option<render::Renderer>,
@@ -456,6 +473,91 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(&str) -> 
                 Ok(Value::Map(Arc::new(out)))
             })
         }
+        "physics" => with(|st| -> R {
+            let w = physics::World::new(a(0))?;
+            st.next += 1;
+            let id = st.next;
+            st.worlds.insert(id, w);
+            Ok(Value::Integer(id))
+        }),
+        "body" | "unbody" | "push" | "joint" | "unjoint" | "simulate" | "pose" | "ray" | "overlap" => {
+            let wid = id_of(args.first(), "physics")?;
+            with(|st| -> R {
+                let w = st.worlds.get_mut(&wid).ok_or("toad: no such physics world")?;
+                let n = |i: usize, what: &str| -> Result<i64, String> { id_of(args.get(i), what) };
+                let pt = |i: usize, what: &str| -> Result<(f32, f32), String> {
+                    pair(a(i)).ok_or_else(|| format!("toad.{name}: {what} is a pair"))
+                };
+                Ok(match name {
+                    "body" => Value::Integer(w.add_body(a(1))?),
+                    "unbody" => {
+                        w.remove_body(n(1, "body")?);
+                        Value::Unit
+                    }
+                    "push" => {
+                        w.push(n(1, "body")?, a(2))?;
+                        Value::Unit
+                    }
+                    "joint" => Value::Integer(w.add_joint(n(1, "body")?, n(2, "body")?, a(3))?),
+                    "unjoint" => {
+                        w.remove_joint(n(1, "joint")?);
+                        Value::Unit
+                    }
+                    "simulate" => w.simulate(num(a(1)).ok_or("toad.simulate: dt is a number")?),
+                    "pose" => w.pose(n(1, "body")?),
+                    "ray" => w.ray(pt(1, "from")?, pt(2, "to")?, a(3))?,
+                    _ => w.overlap(pt(1, "at")?, num(a(2)).ok_or("toad.overlap: the radius is a number")?, a(3))?,
+                })
+            })
+        }
+        "collide" => {
+            let sid = id_of(args.first(), "swarm")?;
+            let wid = id_of(args.get(1), "physics")?;
+            with(|st| -> R {
+                let w = st.worlds.get_mut(&wid).ok_or("toad: no such physics world")?;
+                let sw = st.swarms.get_mut(&sid).ok_or("toad: no such swarm")?;
+                if sw.gpu.is_some() {
+                    return Err("toad.collide: a show swarm lives on the GPU; collide a play swarm".into());
+                }
+                let (hits, dead) = physics::collide(w, &sw.program, &mut sw.cols, a(2))?;
+                let died = if dead.is_empty() { 0 } else { cpu::compact(&mut sw.cols, &dead) };
+                let hits = hits
+                    .into_iter()
+                    .map(|(b, k)| Value::Tuple(Arc::new(vec![Value::Integer(b), Value::Integer(k)])))
+                    .collect();
+                let mut out = ValueMap::default();
+                out.insert("hits".into(), Value::List(Arc::new(hits)));
+                out.insert("died".into(), Value::Integer(died as i64));
+                Ok(Value::Map(Arc::new(out)))
+            })
+        }
+        "meet" => {
+            let sa = id_of(args.first(), "swarm")?;
+            let sb = id_of(args.get(1), "swarm")?;
+            if sa == sb {
+                return Err("toad.meet: a swarm meets another swarm, not itself".into());
+            }
+            with(|st| -> R {
+                let mut a_sw = st.swarms.remove(&sa).ok_or("toad: no such swarm")?;
+                let r = (|| -> R {
+                    let b_sw = st.swarms.get_mut(&sb).ok_or("toad: no such swarm")?;
+                    if a_sw.gpu.is_some() || b_sw.gpu.is_some() {
+                        return Err("toad.meet: show swarms live on the GPU; play swarms meet".into());
+                    }
+                    let (met, da, db) =
+                        physics::meet(&a_sw.program, &mut a_sw.cols, &b_sw.program, &mut b_sw.cols, a(2))?;
+                    let died_a = if da.is_empty() { 0 } else { cpu::compact(&mut a_sw.cols, &da) };
+                    let died_b = if db.is_empty() { 0 } else { cpu::compact(&mut b_sw.cols, &db) };
+                    let mut out = ValueMap::default();
+                    out.insert("met".into(), Value::Integer(met));
+                    out.insert("died_a".into(), Value::Integer(died_a as i64));
+                    out.insert("died_b".into(), Value::Integer(died_b as i64));
+                    Ok(Value::Map(Arc::new(out)))
+                })();
+                st.swarms.insert(sa, a_sw);
+                r
+            })
+        }
         "clear" => {
             let sid = id_of(args.first(), "swarm")?;
             with(|st| {
@@ -530,7 +632,11 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(&str) -> 
         #[cfg(feature = "gui")]
         "input" => {
             #[cfg(feature = "gamepad")]
-            let (ls, rs, lt, rt, pads) = pad::poll();
+            let (ls, rs, lt, rt, pads) = {
+                let p = pad::poll();
+                // a scripted run's sticks are still
+                if crate::stdlib::gui::keys::is_scripted() { ((0.0, 0.0), (0.0, 0.0), 0.0, 0.0, p.4) } else { p }
+            };
             #[cfg(not(feature = "gamepad"))]
             let (ls, rs, lt, rt, pads) = ((0.0f32, 0.0f32), (0.0f32, 0.0f32), 0.0f32, 0.0f32, 0usize);
             let (down, pressed, released) = crate::stdlib::gui::keys::read();
@@ -546,6 +652,13 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(&str) -> 
             out.insert("rt".into(), Value::Float(rt as f64));
             out.insert("pads".into(), Value::Integer(pads as i64));
             Ok(Value::Map(Arc::new(out)))
+        }
+        #[cfg(feature = "gui")]
+        "scripted" => {
+            // hear only the script: the devices' keys, buttons and sticks
+            // are ignored while it is on
+            crate::stdlib::gui::keys::scripted(matches!(a(0), Value::Boolean(true)));
+            Ok(Value::Unit)
         }
         #[cfg(feature = "gui")]
         "press" => {
@@ -607,19 +720,32 @@ fn rgba(v: Option<&Value>, d: [f32; 4]) -> [f32; 4] {
 /// and height), `rot`, `round`, `outline`, `color`, `glow` (multiplies
 /// the colour past 1.0), `emit` (light of its own: its colour times
 /// this), `cast` (true: it blocks light); a line goes `from` `at` `to`
-/// with `width`.
+/// with `width`. Its surface, from the shape or else its `material` (a
+/// map of the same keys): `relief` (a bevel that deep at its edges, lit
+/// from where the light is), `gloss` (0 to 1: a highlight), `pattern`
+/// (one of `render::PATTERNS`) between `color` and `color2`, at `scale`
+/// world units, moving at `speed`, turned by `angle`, from `seed`;
+/// `bump` (the pattern raised), and `lit: false` (its colour as it is).
 #[cfg(feature = "gui")]
 fn shape_of(v: &Value, out: &mut Vec<f32>) -> Result<(), String> {
     let m = map_of(v, "a shape")?;
+    let mat = match m.get("material") {
+        Some(Value::Map(mm)) => Some(mm.clone()),
+        Some(Value::Unit) | None => None,
+        Some(_) => return Err("toad.frame: a shape's `material` is a map (from `material`)".into()),
+    };
+    // the shape's own, `()` included (none of it), else the material's
+    let get = |k: &str| m.get(k).or_else(|| mat.as_ref().and_then(|mm| mm.get(k)));
     let kind = match m.get("kind") {
         Some(Value::String(k)) => k.to_string(),
         _ => "circle".to_string(),
     };
-    let n = |k: &str, d: f32| m.get(k).and_then(num).unwrap_or(d);
+    let n = |k: &str, d: f32| get(k).and_then(num).unwrap_or(d);
     let p = |k: &str| m.get(k).and_then(pair);
-    let mut c = rgba(m.get("color"), [1.0, 1.0, 1.0, 1.0]);
     let glow = n("glow", 1.0);
-    for x in c.iter_mut().take(3) {
+    let mut c = rgba(get("color"), [1.0, 1.0, 1.0, 1.0]);
+    let mut c2 = rgba(get("color2"), c);
+    for x in c.iter_mut().take(3).chain(c2.iter_mut().take(3)) {
         *x *= glow;
     }
     let (at, half, rot, k, line) = match kind.as_str() {
@@ -663,10 +789,23 @@ fn shape_of(v: &Value, out: &mut Vec<f32>) -> Result<(), String> {
             (at, half, n("rot", 0.0), k, line)
         }
     };
-    let cast = if matches!(m.get("cast"), Some(Value::Boolean(true))) { 1.0 } else { 0.0 };
+    let flag = |k: &str, d: bool| match get(k) {
+        Some(Value::Boolean(b)) => *b,
+        _ => d,
+    };
+    let cast = if flag("cast", false) { 1.0 } else { 0.0 };
+    let pattern = match get("pattern") {
+        None | Some(Value::Unit) => 0.0,
+        Some(Value::String(name)) => render::PATTERNS.iter().position(|p| *p == name.as_str()).ok_or_else(|| {
+            format!("toad.frame: a pattern is one of {}, not {}", render::PATTERNS.join(", "), name)
+        })? as f32,
+        Some(_) => return Err("toad.frame: a shape's `pattern` is a name".into()),
+    };
     out.extend_from_slice(&[
-        at.0, at.1, half.0, half.1, rot, k, n("round", 0.0), line, c[0], c[1], c[2], c[3], n("emit", 0.0), cast, 0.0,
-        0.0,
+        at.0, at.1, half.0, half.1, rot, k, n("round", 0.0), line, c[0], c[1], c[2], c[3], n("emit", 0.0), cast,
+        n("relief", 0.0).max(0.0), n("gloss", 0.0).clamp(0.0, 1.0), c2[0], c2[1], c2[2], c2[3], pattern,
+        n("scale", 24.0), n("speed", 0.0), n("seed", 0.0).max(0.0), n("angle", 0.0),
+        if flag("lit", true) { 0.0 } else { 1.0 }, n("bump", 0.0).max(0.0), 0.0, 0.0, 0.0, 0.0, 0.0,
     ]);
     Ok(())
 }
@@ -703,6 +842,7 @@ fn frame(layers: &Value, view: &Value) -> R {
         grain: getn("grain", 0.0),
         seed: 0.0,
         gi_down: (getn("gi_res", 4.0).round() as u32).clamp(1, 8),
+        time: getn("time", 0.0),
     };
     let probes: Vec<(u32, u32)> = match vm.get("probe") {
         Some(Value::List(ps)) => ps.iter().filter_map(pair).map(|(x, y)| (x.max(0.0) as u32, y.max(0.0) as u32)).collect(),
@@ -766,21 +906,54 @@ fn frame(layers: &Value, view: &Value) -> R {
                 let mut runs: Vec<(Arc<crate::stdlib::gui::canvas::Picture>, Vec<f32>)> = Vec::new();
                 for s in sprites.iter() {
                     let sm = map_of(s, "a sprite")?;
-                    let src = sm.get("src").ok_or("toad.frame: a sprite needs a `src`")?;
-                    let (pic, _) = crate::stdlib::gui::picture::get(src, None, None)?
-                        .ok_or("toad.frame: a sprite's picture could not be read")?;
                     let at = sm.get("at").and_then(pair).unwrap_or((0.0, 0.0));
-                    let (w, h) = match sm.get("size") {
-                        Some(v) => match (num(v), pair(v)) {
-                            (Some(k), _) => (pic.width as f32 * k, pic.height as f32 * k),
-                            (_, Some(p)) => p,
-                            _ => (pic.width as f32, pic.height as f32),
-                        },
-                        None => (pic.width as f32, pic.height as f32),
-                    };
                     let rot = sm.get("rot").and_then(num).unwrap_or(0.0);
-                    let t = rgba(sm.get("tint"), [1.0, 1.0, 1.0, 1.0]);
-                    let row = [at.0, at.1, w / 2.0, h / 2.0, rot, 0.0, 0.0, 0.0, t[0], t[1], t[2], t[3]];
+                    let glow = sm.get("glow").and_then(num).unwrap_or(1.0);
+                    let lit_flag = |d: bool| match sm.get("lit") {
+                        Some(Value::Boolean(b)) => *b,
+                        _ => d,
+                    };
+                    let (pic, w, h, t, unlit) = if let Some(Value::String(text)) = sm.get("text") {
+                        // text in the world: `size` is its font size in world
+                        // units, set at the size it shows
+                        let size = sm.get("size").and_then(num).unwrap_or(24.0).max(0.01);
+                        let px = words::step_px(size * view.scale);
+                        let align = match sm.get("align") {
+                            Some(Value::String(a)) => crate::stdlib::gui::text::Align::parse(a)
+                                .ok_or_else(|| format!("toad.frame: a text's `align` is start, center or end, not {}", a))?,
+                            _ => crate::stdlib::gui::text::Align::Center,
+                        };
+                        let family = match sm.get("font") {
+                            Some(Value::String(f)) => f.to_string(),
+                            _ => "body".to_string(),
+                        };
+                        let weight = sm.get("weight").and_then(num).unwrap_or(600.0);
+                        let italic = matches!(sm.get("italic"), Some(Value::Boolean(true)));
+                        let (pic, _) = words::picture(text, &family, weight, italic, px, align)
+                            .ok_or("toad.frame: the text could not be set")?;
+                        let k = size / px;
+                        let (w, h) = (pic.width as f32 * k, pic.height as f32 * k);
+                        let t = rgba(sm.get("color"), [1.0, 1.0, 1.0, 1.0]);
+                        (pic, w, h, t, !lit_flag(false))
+                    } else {
+                        let src = sm.get("src").ok_or("toad.frame: a sprite needs a `src` (or a `text`)")?;
+                        let (pic, _) = crate::stdlib::gui::picture::get(src, None, None)?
+                            .ok_or("toad.frame: a sprite's picture could not be read")?;
+                        let (w, h) = match sm.get("size") {
+                            Some(v) => match (num(v), pair(v)) {
+                                (Some(k), _) => (pic.width as f32 * k, pic.height as f32 * k),
+                                (_, Some(p)) => p,
+                                _ => (pic.width as f32, pic.height as f32),
+                            },
+                            None => (pic.width as f32, pic.height as f32),
+                        };
+                        let t = rgba(sm.get("tint"), [1.0, 1.0, 1.0, 1.0]);
+                        (pic, w, h, t, !lit_flag(true))
+                    };
+                    let row = [
+                        at.0, at.1, w / 2.0, h / 2.0, rot, if unlit { 1.0 } else { 0.0 }, 0.0, 0.0,
+                        t[0] * glow, t[1] * glow, t[2] * glow, t[3],
+                    ];
                     match runs.last_mut() {
                         Some((p, v)) if p.id == pic.id => v.extend_from_slice(&row),
                         _ => runs.push((pic, row.to_vec())),

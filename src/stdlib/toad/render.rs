@@ -34,10 +34,10 @@ use std::sync::Arc;
 /// scene: the target's size in pixels, the world point at its centre,
 /// pixels per world unit, its turn, the mode (0 the frame, 1 the light
 /// scene), the point radius scale, the ambient light, the light's gain,
-/// and whether surfaces are lit.
+/// whether surfaces are lit, and the clock (seconds: patterns that move).
 const VIEW: &str = r#"
 struct V { size: vec2<f32>, center: vec2<f32>, scale: f32, rot: f32, mode: f32, pxk: f32,
-           ambient: vec4<f32>, gi: f32, lit: f32, pad0: f32, pad1: f32 };
+           ambient: vec4<f32>, gi: f32, lit: f32, time: f32, pad1: f32 };
 fn to_clip(v: V, p: vec2<f32>) -> vec4<f32> {
     let c = cos(-v.rot); let s = sin(-v.rot);
     let q = p - v.center;
@@ -112,12 +112,19 @@ fn fs(o: O) -> @location(0) vec4<f32> {
 "#;
 
 /// A shape: centre, half size, turn, kind, rounding, outline, colour
-/// (straight, linear), emission, whether it casts, and room.
-pub const SHAPE_FLOATS: usize = 16;
+/// (straight, linear), emission, whether it casts, then its material:
+/// relief, gloss, a second colour, a pattern (kind, scale, speed, seed,
+/// angle), whether it is unlit, its bump, and room.
+pub const SHAPE_FLOATS: usize = 32;
+
+/// The patterns a material draws (`pattern`), by number.
+pub const PATTERNS: &[&str] = &["none", "noise", "stripes", "dots", "water", "rings", "checker", "gradient", "radial", "cells"];
 
 const SHAPES: &str = r#"
 struct S { c: vec2<f32>, half: vec2<f32>, rot: f32, kind: f32, round: f32, line: f32,
-           color: vec4<f32>, emit: f32, blocks: f32, pad0: f32, pad1: f32 };
+           color: vec4<f32>, emit: f32, blocks: f32, relief: f32, gloss: f32,
+           color2: vec4<f32>, pattern: f32, pscale: f32, pspeed: f32, seed: f32,
+           pangle: f32, unlit: f32, bump: f32, pad0: f32, pad1: vec4<f32> };
 @group(0) @binding(0) var<storage, read> sh: array<S>;
 @group(0) @binding(1) var<uniform> v: V;
 struct O { @builtin(position) at: vec4<f32>, @location(0) q: vec2<f32>, @location(1) @interpolate(flat) i: u32 };
@@ -161,6 +168,86 @@ fn sdf(s: S, p: vec2<f32>) -> f32 {
     if (s.line > 0.0) { d = abs(d) - s.line * 0.5; }
     return d;
 }
+
+// ── the material: procedural patterns ─────────────────────────────────
+fn hash2(p: vec2<i32>, seed: u32) -> f32 {
+    var h = u32(p.x) * 374761393u + u32(p.y) * 668265263u + seed * 2246822519u;
+    h = (h ^ (h >> 13u)) * 1274126177u;
+    h = h ^ (h >> 16u);
+    return f32(h) / 4294967295.0;
+}
+fn vnoise(p: vec2<f32>, seed: u32) -> f32 {
+    let i = vec2<i32>(floor(p));
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = hash2(i, seed);
+    let b = hash2(i + vec2(1, 0), seed);
+    let c = hash2(i + vec2(0, 1), seed);
+    let d = hash2(i + vec2(1, 1), seed);
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+fn fbm(p0: vec2<f32>, seed: u32, octaves: u32) -> f32 {
+    var p = p0; var a = 0.5; var t = 0.0; var n = 0.0;
+    for (var i = 0u; i < octaves; i++) {
+        t += vnoise(p, seed + i) * a;
+        n += a;
+        p = vec2(p.x * 1.6 - p.y * 1.2, p.x * 1.2 + p.y * 1.6);
+        a *= 0.5;
+    }
+    return t / n;
+}
+// the nearest of a grid of jittered points: (distance, the next nearest)
+fn cells(p: vec2<f32>, seed: u32) -> vec2<f32> {
+    let i = vec2<i32>(floor(p));
+    var d1 = 9.0; var d2 = 9.0;
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let c = i + vec2(x, y);
+            let o = vec2(hash2(c, seed), hash2(c, seed + 7u));
+            let d = length(vec2<f32>(c) + o - p);
+            if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) { d2 = d; }
+        }
+    }
+    return vec2(d1, d2);
+}
+// how far toward `color2` the pattern is at local point `p` (0 to 1)
+fn pattern_at(s: S, p: vec2<f32>) -> f32 {
+    let kind = u32(s.pattern + 0.5);
+    if (kind == 0u) { return 0.0; }
+    let seed = u32(s.seed);
+    let t = v.time * s.pspeed;
+    let ca = cos(s.pangle); let sa = sin(s.pangle);
+    let r = vec2(p.x * ca + p.y * sa, -p.x * sa + p.y * ca);
+    let q = r / max(s.pscale, 0.001);
+    if (kind == 1u) { return fbm(q + vec2(t, t * 0.6), seed, 4u); }                       // noise
+    if (kind == 2u) { return 0.5 + 0.5 * sin((q.x + t) * 6.2831853); }                // stripes
+    if (kind == 3u) {                                                                  // dots
+        let g = fract(q + vec2(t, 0.0)) - 0.5;
+        return 1.0 - smoothstep(0.22, 0.3, length(g));
+    }
+    if (kind == 4u) {                                                                  // water
+        let a = fbm(q * 0.8 + vec2(t * 0.35, t * 0.2), seed, 2u);
+        let b = fbm(q * 1.7 - vec2(t * 0.25, -t * 0.4) + vec2(a * 1.5), seed + 9u, 3u);
+        return clamp(b * 1.25 - 0.15, 0.0, 1.0);
+    }
+    if (kind == 5u) { return 0.5 + 0.5 * sin((length(q) - t) * 6.2831853); }          // rings
+    if (kind == 6u) {                                                                  // checker
+        let c = vec2<i32>(floor(q + vec2(t, 0.0)));
+        return f32((c.x + c.y) & 1);
+    }
+    if (kind == 7u) {                                                                  // gradient
+        let ext = max(abs(s.half.x * ca) + abs(s.half.y * sa), 0.001);
+        return clamp(r.x / ext * 0.5 + 0.5, 0.0, 1.0);
+    }
+    if (kind == 8u) { return clamp(length(p) / max(max(s.half.x, s.half.y), 0.001), 0.0, 1.0); } // radial
+    if (kind == 9u) {                                                                  // cells
+        let c = cells(q + vec2(t, 0.0), seed);
+        return clamp(1.0 - (c.y - c.x) * 2.5, 0.0, 1.0);
+    }
+    return 0.0;
+}
+
+
 @fragment
 fn fs(o: O) -> @location(0) vec4<f32> {
     let s = sh[o.i];
@@ -168,32 +255,105 @@ fn fs(o: O) -> @location(0) vec4<f32> {
     let d = sdf(s, p);
     let cov = clamp(0.5 - d * v.scale, 0.0, 1.0);
     if (cov <= 0.0) { discard; }
-    let e = s.color.rgb * s.emit * cov;
+    // the pattern once: the colour, and (with a bump) the slope from it
+    var pv = 0.0;
+    if (s.pattern > 0.5) { pv = pattern_at(s, p); }
+    let alb = mix(s.color.rgb, s.color2.rgb, pv);
+    let e = alb * s.emit * cov;
     if (v.mode > 0.5) {
         // the light scene: its light, and whether it blocks
         return vec4(e, cov * s.blocks);
     }
     let a = cov * s.color.a;
-    var l = vec3(1.0);
-    if (s.blocks > 0.5 && v.lit > 0.5) {
-        // a blocker: the light just outside its nearest edge
-        let k = 0.5;
-        let g = vec2(sdf(s, p + vec2(k, 0.0)) - sdf(s, p - vec2(k, 0.0)),
-                     sdf(s, p + vec2(0.0, k)) - sdf(s, p - vec2(0.0, k)));
-        let n = turn(normalize(g + vec2(1e-6)), s.rot);
-        l = light_off(v, o.at, n * (max(-d, 0.0) + 6.0 / v.scale));
-    } else {
-        l = light_at(v, o.at);
+    let lit = v.lit > 0.5 && s.unlit < 0.5;
+    // the surface's normal: a bevel `relief` deep at its edges, and the
+    // pattern's bumps
+    let k = 0.5;
+    let g = vec2(sdf(s, p + vec2(k, 0.0)) - sdf(s, p - vec2(k, 0.0)),
+                 sdf(s, p + vec2(0.0, k)) - sdf(s, p - vec2(0.0, k)));
+    let out_n = normalize(g + vec2(1e-6));
+    var nrm = vec3(0.0, 0.0, 1.0);
+    if (s.relief > 0.0) {
+        let edge = 1.0 - clamp(max(-d, 0.0) / s.relief, 0.0, 1.0);
+        nrm = normalize(vec3(out_n * edge * edge * 1.8, 1.0));
     }
-    return vec4(s.color.rgb * l * a + e, a);
+    if (s.bump > 0.0 && s.pattern > 0.5) {
+        let h = max(s.pscale, 0.001) * 0.15;
+        let gx = pattern_at(s, p + vec2(h, 0.0)) - pv;
+        let gy = pattern_at(s, p + vec2(0.0, h)) - pv;
+        nrm = normalize(nrm + vec3(-gx, -gy, 0.0) * s.bump * 4.0);
+    }
+    let n_w = vec3(turn(nrm.xy, s.rot), nrm.z);
+    let shaded = s.relief > 0.0 || s.gloss > 0.0 || (s.bump > 0.0 && s.pattern > 0.5);
+    let w3 = vec3(0.2126, 0.7152, 0.0722);
+    if (!shaded || !lit) {
+        // unlit: a fixed sun from the upper left shows the relief
+        var l = vec3(1.0);
+        if (lit) {
+            // a blocker takes the light just outside its nearest edge
+            if (s.blocks > 0.5) {
+                l = light_off(v, o.at, turn(out_n, s.rot) * (max(-d, 0.0) + 6.0 / v.scale));
+            } else {
+                l = light_at(v, o.at);
+            }
+        }
+        if (!shaded) { return vec4(alb * l * a + e, a); }
+        let ld = normalize(vec3(-0.45, 0.6, 0.66));
+        let diffuse = clamp(dot(n_w, ld) / ld.z, 0.0, 2.5);
+        let hv = normalize(ld + vec3(0.0, 0.0, 1.0));
+        let spec = pow(max(dot(n_w, hv), 0.0), mix(8.0, 90.0, s.gloss)) * s.gloss * 1.2;
+        return vec4((alb * diffuse + vec3(spec)) * l * a + e, a);
+    }
+    // lit and shaded: the light around it from four sides (outside it for
+    // a blocker, where light arrives; around the pixel otherwise), each
+    // side lighting what faces it
+    let dirs = array<vec2<f32>, 4>(vec2(1.0, 0.0), vec2(-1.0, 0.0), vec2(0.0, 1.0), vec2(0.0, -1.0));
+    var side: array<vec3<f32>, 4>;
+    var here = vec3(0.0);
+    if (s.blocks > 0.5) {
+        // from the pixel to just past the shape's far reach on each side
+        let reach = max(s.half.x, s.half.y) + s.line + 6.0 / v.scale;
+        let me = turn(p, s.rot);
+        for (var k = 0u; k < 4u; k++) { side[k] = light_off(v, o.at, dirs[k] * reach - me); }
+    } else {
+        let r = 12.0 / v.scale;
+        for (var k = 0u; k < 4u; k++) { side[k] = light_off(v, o.at, dirs[k] * r); }
+        here = light_at(v, o.at);
+    }
+    var l = vec3(0.0);
+    var wsum = 0.0;
+    var pull = vec2(0.0);
+    var lsum = 0.0;
+    for (var k = 0u; k < 4u; k++) {
+        let lk = dot(side[k], w3);
+        pull += dirs[k] * lk;
+        lsum += lk;
+        let w = max(dot(n_w, normalize(vec3(dirs[k], 0.6))), 0.0);
+        l += side[k] * w;
+        wsum += 0.5145;
+    }
+    l = l / wsum;
+    // how one-sided the light is: 0 all round, 1 from one side
+    let dirk = clamp(length(pull) / max(lsum, 1e-4) * 3.0, 0.0, 1.0);
+    if (s.blocks < 0.5) {
+        // a surface away from blockers: its own light, shaded by its facing
+        let flat_l = here;
+        let facing = l / max(dot((side[0] + side[1] + side[2] + side[3]) * 0.25, w3), 1e-4) * dot(here, w3);
+        l = mix(flat_l * nrm.z, facing, dirk);
+    }
+    let ld = normalize(vec3(pull / max(length(pull), 1e-6), 0.6));
+    let hv = normalize(ld + vec3(0.0, 0.0, 1.0));
+    let spec = pow(max(dot(n_w, hv), 0.0), mix(8.0, 90.0, s.gloss)) * s.gloss * 1.6 * dirk;
+    return vec4((alb + vec3(spec)) * l * a + e, a);
 }
 "#;
 
-/// A sprite: centre, half size, turn, alpha, tint (rgba).
+/// A sprite: centre, half size, turn, whether it is unlit, room, tint
+/// (rgba: past 1 glows).
 pub const SPRITE_FLOATS: usize = 12;
 
 const SPRITES: &str = r#"
-struct P { c: vec2<f32>, half: vec2<f32>, rot: f32, pad0: f32, pad1: f32, pad2: f32, tint: vec4<f32> };
+struct P { c: vec2<f32>, half: vec2<f32>, rot: f32, unlit: f32, pad1: f32, pad2: f32, tint: vec4<f32> };
 @group(0) @binding(0) var<storage, read> sp: array<P>;
 @group(0) @binding(1) var<uniform> v: V;
 @group(0) @binding(2) var pic: texture_2d<f32>;
@@ -212,9 +372,12 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) i: u32) -> O {
 @fragment
 fn fs(o: O) -> @location(0) vec4<f32> {
     // pictures are premultiplied; the texture is sRGB, so this is linear
-    let t = sp[o.i].tint;
+    let s = sp[o.i];
+    let t = s.tint;
     let c = textureSample(pic, smp, o.uv);
-    return vec4(c.rgb * t.rgb * light_at(v, o.at), c.a) * t.a;
+    var l = vec3(1.0);
+    if (s.unlit < 0.5) { l = light_at(v, o.at); }
+    return vec4(c.rgb * t.rgb * l, c.a) * t.a;
 }
 "#;
 
@@ -497,6 +660,8 @@ pub struct View {
     pub seed: f32,
     /// The light pass's size: the frame's over this (2: half, 4: quarter).
     pub gi_down: u32,
+    /// Seconds, for patterns that move.
+    pub time: f32,
 }
 
 const HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -1001,7 +1166,7 @@ impl Renderer {
         let view_words = |size: (u32, u32), scale: f32, mode: f32, pxk: f32| -> [f32; 16] {
             [
                 size.0 as f32, size.1 as f32, v.center.0, v.center.1, scale, v.rot, mode, pxk,
-                v.ambient[0], v.ambient[1], v.ambient[2], 0.0, v.gi, if lit { 1.0 } else { 0.0 }, 0.0, 0.0,
+                v.ambient[0], v.ambient[1], v.ambient[2], 0.0, v.gi, if lit { 1.0 } else { 0.0 }, v.time, 0.0,
             ]
         };
         let mut enc = self.gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

@@ -2356,9 +2356,9 @@ impl App {
                     let base = ke.key_without_modifiers();
                     if let Some(name) = key_name(&base).or_else(|| key_name(&ke.logical_key)) {
                         if ke.state == ElementState::Pressed {
-                            super::keys::press(&name);
+                            super::keys::device_press(&name);
                         } else {
-                            super::keys::release(&name);
+                            super::keys::device_release(&name);
                         }
                     }
                 }
@@ -2412,9 +2412,9 @@ impl App {
                         _ => "mouse:other",
                     };
                     if state == ElementState::Pressed {
-                        super::keys::press(name);
+                        super::keys::device_press(name);
                     } else {
-                        super::keys::release(name);
+                        super::keys::device_release(name);
                     }
                 }
                 let button = match button {
@@ -2497,7 +2497,7 @@ impl App {
             },
             WindowEvent::Focused(on) => {
                 if !on {
-                    super::keys::release_all();
+                    super::keys::device_release_all();
                 }
                 self.input(id, Input::Focused(on));
                 // the tabs it is shown among, as they stand now

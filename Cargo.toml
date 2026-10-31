@@ -43,7 +43,7 @@ rsa-crypto = ["dep:rsa"]
 # kernels compiled from olang functions and swarms stepped on the CPU,
 # in any build (the browser's too). With `gui` as well, show swarms and
 # frames run on `gui`'s wgpu device.
-toad = []
+toad = ["dep:rapier2d"]
 # `gamepad`: game controllers for Toad's input (gilrs: the platform's HID
 # gamepads, mapped to one standard layout). Native only.
 gamepad = ["toad", "gui", "dep:gilrs"]
@@ -193,7 +193,11 @@ im = { version = "15.1", features = ["serde"] }  # Persistent/immutable collecti
 
 # Parallelization
 rayon = { version = "1.12", optional = true }
-gilrs = { version = "0.11.2", optional = true }  # Data parallelism library
+gilrs = { version = "0.11.2", optional = true }
+# Toad's physics (src/stdlib/toad/physics.rs): 2D rigid bodies, colliders,
+# joints and queries, behind Toad's own small API. enhanced-determinism:
+# the same steps on the Mac and in wasm.
+rapier2d = { version = "0.36.1", optional = true, features = ["enhanced-determinism"] }
 # `fs.scan` / `fs.search`: a tree walked as a checkout is (its .gitignores
 # respected at every level), on worker threads — ripgrep's walker.
 ignore = { version = "0.4", optional = true }

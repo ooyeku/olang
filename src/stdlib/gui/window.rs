@@ -5302,7 +5302,7 @@ pub fn snap_line(y: f32, h: f32) -> (f32, f32) {
     (y.round(), h.round().max(1.0))
 }
 
-fn push_glyphs(shaped: &Shaped, ox: f32, oy: f32, clip: Clip, dl: &mut DisplayList) {
+pub(crate) fn push_glyphs(shaped: &Shaped, ox: f32, oy: f32, clip: Clip, dl: &mut DisplayList) {
     // a span's background behind its glyphs
     for d in shaped.decos.iter().filter(|d| !d.over) {
         dl.prims
