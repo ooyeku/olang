@@ -3359,6 +3359,17 @@ println(ods.round(mat.eigh(mat.of([[2.0, 1.0], [1.0, 2.0]])).values, 9).to_list(
 println(ods.corr(f, ["a", "y"])["a"].to_list())
 ```
 
+Arithmetic and the math functions work entry by entry, and always give
+back a Matrix of Floats:
+
+```olang
+let X = mat.of([[0.25, -2.25], [4.0, 9.0]])
+println(mat.sqrt(mat.abs(X)).to_list())   // [[0.5, 1.5], [2.0, 3.0]]
+println(mat.floor(X).to_list())           // [[0.0, -3.0], [4.0, 9.0]]
+println(mat.sign(X).to_list())            // [[1.0, -1.0], [1.0, 1.0]]
+println((X * 2.0 + 1.0).to_list())        // [[1.5, -3.5], [9.0, 19.0]]
+```
+
 | Function | Description |
 |---|---|
 | `ods.matrix(f, cols?, nulls = "raise")` | a Matrix of a Frame's numeric columns (all of them, or the ones named) or of a list of Series; Int and Bool become Float |
@@ -3368,12 +3379,24 @@ println(ods.corr(f, ["a", "y"])["a"].to_list())
 | `mat.col(x, j)` / `mat.row(x, i)` / `mat.shape(x)` | column `j` as a Series (shared) / row `i` as a list / `[rows, cols]`; `len(x)` is the row count |
 | `mat.sum(x, axis = 0)` / `mat.mean(x, axis = 0)` / `mat.std(x, axis = 0, ddof = 1)` | a Series: one value per column (axis 0) or per row (axis 1) |
 | `x + y`, `x - y`, `x * y`, `x / y`, `-x` | elementwise: Matrices of one shape, a number on either side, or a row (`1 × k`) or column (`n × 1`) Matrix, or a Series or list as long as `x` is wide (a row), broadcast as NumPy does |
-| `mat.tanh(x)`, `mat.exp(x)`, `mat.sigmoid(x)`, `mat.clip(x, lo?, hi?)`, `mat.pow(x, e)`, `mat.round(x, digits?)`, … | each `ods` math function, `clip`, `pow` and `round` over every column (Matrix in, Matrix out); `X.tanh()`, and `ods.tanh(X)` too |
+| `mat.abs(x)` `mat.sign(x)` `mat.sqrt(x)` `mat.cbrt(x)` | the absolute value, the sign (-1.0, 0.0 or 1.0), the square root and the cube root of every entry |
+| `mat.exp(x)` `mat.exp2(x)` `mat.expm1(x)` | e to the power of each entry, 2 to the power, and `exp(v) - 1`, accurate for entries near zero |
+| `mat.ln(x)` `mat.ln1p(x)` `mat.log2(x)` `mat.log10(x)` | the natural logarithm of each entry, `ln(1 + v)` (accurate near zero), and the base-2 and base-10 logarithms |
+| `mat.sin(x)` `mat.cos(x)` `mat.tan(x)` `mat.asin(x)` `mat.acos(x)` `mat.atan(x)` | the trigonometric functions and their inverses, in radians |
+| `mat.sinh(x)` `mat.cosh(x)` `mat.tanh(x)` | the hyperbolic functions |
+| `mat.sigmoid(x)` / `mat.logit(x)` | the logistic function `1 / (1 + e^-v)` of each entry / its inverse, `ln(v / (1 - v))` |
+| `mat.floor(x)` `mat.ceil(x)` `mat.trunc(x)` / `mat.round(x, digits?)` | each entry rounded down, up, or toward zero (still Floats) / rounded to `digits` places |
+| `mat.clip(x, lo?, hi?)` / `mat.pow(x, e)` | each entry held between `lo` and `hi` / raised to the power `e` |
 | `mat.solve(a, b)` / `mat.inv(a)` | `x` with `a x = b` (LU with partial pivoting; `b` a vector or a Matrix) / the inverse |
 | `mat.cholesky(a)` | the lower factor `L` of a symmetric positive-definite `a = L Lᵀ` |
 | `mat.eigh(a)` | `#{ values, vectors }` of a symmetric matrix, largest first, each vector's largest component positive |
 | `mat.cdist(x, c, metric = "sqeuclidean")` | distances between the rows of `x` and of `c`, an `n × m` Matrix; `"euclidean"`, `"cityblock"` (`"manhattan"`), `"chebyshev"`, `"cosine"` |
 | `mat.to_frame(x, names?)` / `mat.to_list(x)` | the columns as a Frame (named `0`, `1`, … by default) / the rows as lists |
+
+The elementwise functions each take a Matrix and return a new Matrix of
+the same shape, applying the matching `ods` math function to every
+column. Each is a method too (`X.tanh()`), and the `ods` form accepts a
+Matrix as well (`ods.tanh(X)`).
 
 [Matrices](ods.md#matrices--odsmatrix-and-mat) in the data stack's
 chapter explains the storage and the kernels, and compares them with
