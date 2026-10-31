@@ -1,11 +1,15 @@
-//! Roadmap W19 — the embedded runtime: `runtime.wasm()`, the image
-//! stamp, and the cross-file check that was already there.
+//! The embedded browser runtime: `runtime.wasm()`, the image stamp, and
+//! `olang check` reading aliases and enums across files.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn workspace(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("olang_w19_{}_{}", std::process::id(), tag));
+    let dir = std::env::temp_dir().join(format!(
+        "olang_embedded_runtime_{}_{}",
+        std::process::id(),
+        tag
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -107,7 +111,7 @@ fn olang_check_reads_aliases_and_enums_across_files() {
 /// image in the dom harness under a ceiling. Measured at 8 ms (1 ms
 /// decode, 7 ms run, the first render included) on an M-series laptop
 /// in 2026-09; the ceiling leaves room for a slower CI host and fails
-/// on a regression of the kind W16 found (217 ms with an empty list),
+/// on a regression like one seen before (217 ms with an empty list),
 /// not on noise. Skips where node or the wasm artifact is absent.
 #[test]
 fn the_sdk_demo_boots_from_its_image_under_the_budget() {

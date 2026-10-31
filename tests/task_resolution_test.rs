@@ -1,14 +1,18 @@
-//! Roadmap W14 — the fourth reading of open-track: a second same-named
-//! definition no longer slows every caller, a lib function reached inside
-//! a task compiles as it does inline, later top-level bindings resolve in
-//! tasks, `==` across types answers false, and `attempt(f)` turns a raise
-//! into a Result.
+//! How names resolve on a task: a second definition with the same name
+//! does not slow every caller, a library function reached inside a task
+//! compiles as it does inline, and later top-level bindings resolve in
+//! tasks. Also `==` across types answering false, and `attempt(f)` turning
+//! a raise into a Result.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn workspace(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("olang_w14_{}_{}", std::process::id(), tag));
+    let dir = std::env::temp_dir().join(format!(
+        "olang_task_resolution_{}_{}",
+        std::process::id(),
+        tag
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir

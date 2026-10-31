@@ -31,8 +31,7 @@ fn err(source: &str) -> String {
     }
 }
 
-// ── the basics ────────────────────────────────────────────────────────
-
+// ── the basics ──────────────────────────────────────────────────────
 #[test]
 fn a_cell_holds_and_replaces_a_value() {
     assert_eq!(run("let c = cell(7)\ncell.get(c)\n").unwrap(), "7");
@@ -91,8 +90,7 @@ fn a_cell_is_the_accumulator_a_closure_cannot_be() {
     assert_eq!(out, "10");
 }
 
-// ── identity ──────────────────────────────────────────────────────────
-
+// ── identity ────────────────────────────────────────────────────────
 #[test]
 fn cells_compare_by_identity_not_contents() {
     // A cell is a location. Two cells holding equal values are still two
@@ -111,8 +109,7 @@ fn a_cell_shows_its_contents() {
     assert_eq!(run("show(cell(41))").unwrap(), "cell(41)");
 }
 
-// ── confinement ───────────────────────────────────────────────────────
-
+// ── confinement ─────────────────────────────────────────────────────
 #[test]
 fn reading_a_cell_from_a_spawned_task_is_an_error() {
     // `spawn` snapshots the whole environment, so the cell rides along —
@@ -197,8 +194,7 @@ fn sending_a_cells_contents_is_the_supported_route() {
     assert_eq!(out, "Ok(11)");
 }
 
-// ── re-entrancy ───────────────────────────────────────────────────────
-
+// ── re-entrancy ─────────────────────────────────────────────────────
 #[test]
 fn touching_a_cell_from_inside_its_own_update_is_an_error() {
     // Silently clobbering the inner write is exactly the bug class cells
@@ -249,8 +245,7 @@ fn a_failed_update_leaves_the_cell_usable() {
     assert_eq!(eval("cell.update(c, (n) => n + 1)\n").unwrap(), "2");
 }
 
-// ── errors on non-cells ───────────────────────────────────────────────
-
+// ── errors on non-cells ─────────────────────────────────────────────
 #[test]
 fn cell_operations_reject_values_that_are_not_cells() {
     for source in [
@@ -266,8 +261,7 @@ fn cell_operations_reject_values_that_are_not_cells() {
     assert!(e.contains("Channel handle"), "{e}");
 }
 
-// ── the tiers agree ───────────────────────────────────────────────────
-
+// ── the tiers agree ─────────────────────────────────────────────────
 #[test]
 fn cell_state_survives_promotion_to_the_bytecode_tier() {
     // A function hot enough to be compiled must observe the same cell as

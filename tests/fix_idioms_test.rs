@@ -112,8 +112,7 @@ const RECORDS: &[&str] = &[
     "\"text\"",
 ];
 
-// ── fixtures ───────────────────────────────────────────────────────────
-
+// ── fixtures ────────────────────────────────────────────────────────
 fn fixture(name: &str) -> String {
     let path = format!("{}/tests/fixtures/fix/{name}", env!("CARGO_MANIFEST_DIR"));
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"))
@@ -181,8 +180,7 @@ fn a_file_whose_rewrite_would_read_differently_is_left() {
     assert_eq!(out, "\u{feff}#!/usr/bin/env olang\nfn f(o) = o.k ?? 0\n");
 }
 
-// ── each form, on every tier ───────────────────────────────────────────
-
+// ── each form, on every tier ────────────────────────────────────────
 #[test]
 fn guards_answer_as_before() {
     for decl in [

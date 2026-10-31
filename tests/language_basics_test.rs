@@ -1,10 +1,10 @@
+//! The core language end to end: expressions, functions, data, errors and
+//! default parameters, run through the interpreter.
+
 use olang::ast::Value;
 use olang::{Interpreter, Parser};
 
-// =============================================================================
-// PHASE 1 TESTS - FUNDAMENTAL FEATURES (COMPLETE)
-// =============================================================================
-
+// ── Fundamentals ────────────────────────────────────────────────────
 #[test]
 fn test_basic_integer_literal() {
     let parser = Parser::new();
@@ -259,10 +259,7 @@ fn test_builtin_functions() {
     assert_eq!(result, olang::ast::Value::Integer(3));
 }
 
-// =============================================================================
-// PHASE 3 TESTS - ERROR HANDLING (COMPLETE)
-// =============================================================================
-
+// ── Error handling ──────────────────────────────────────────────────
 #[test]
 fn test_error_handling_result_creation() {
     let parser = Parser::new();
@@ -339,16 +336,12 @@ fn test_error_handling_try_operator() {
     assert_eq!(result, olang::ast::Value::Integer(100));
 }
 
-// =============================================================================
-// CURRENT LIMITATIONS (TO BE ADDRESSED)
-// =============================================================================
-
+// ── Precedence and concatenation ────────────────────────────────────
 #[test]
 fn test_operator_precedence_multiplication_first() {
     let parser = Parser::new();
     let mut interpreter = Interpreter::new();
 
-    // This should evaluate to 7 (1 + 6) but currently returns 1
     let source = "1 + 2 * 3";
     let program = parser.parse(source).expect("Failed to parse");
     let result = interpreter
@@ -356,21 +349,6 @@ fn test_operator_precedence_multiplication_first() {
         .expect("Failed to evaluate");
 
     assert_eq!(result, olang::ast::Value::Integer(7));
-}
-
-#[test]
-#[ignore] // Ignore until block parsing is fixed
-fn test_block_expressions_with_multiple_statements() {
-    let parser = Parser::new();
-    let mut interpreter = Interpreter::new();
-
-    let source = "{ let x = 1; let y = 2; x + y }";
-    let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter
-        .eval_program(program)
-        .expect("Failed to evaluate");
-
-    assert_eq!(result, olang::ast::Value::Integer(3));
 }
 
 #[test]
@@ -390,10 +368,7 @@ fn test_string_concatenation_multiple() {
     );
 }
 
-// =============================================================================
-// FEATURE COMPLETENESS TESTS
-// =============================================================================
-
+// ── Everything at once ──────────────────────────────────────────────
 #[test]
 fn test_comprehensive_language_features() {
     let parser = Parser::new();
@@ -474,10 +449,7 @@ fn test_type_annotations_comprehensive() {
     assert_eq!(result, olang::ast::Value::Integer(52));
 }
 
-// =============================================================================
-// DEFAULT PARAMETER TESTS
-// =============================================================================
-
+// ── Default parameters ──────────────────────────────────────────────
 #[test]
 fn test_default_parameters_single_default() {
     let parser = Parser::new();

@@ -1,7 +1,5 @@
-//! The 0.68 "last-mile" stdlib surface: the `Bytes` value kind, the
-//! first-class `Date` value, and the HTTP client's options map.
-//! (fix.md item 5; items 1–4 and 6 are covered by the loop/append,
-//! precedence, effects, and conventions suites.)
+//! The `Bytes` value kind, the first-class `Date` value, and the HTTP
+//! client's options map.
 
 use olang::interpreter::Interpreter;
 use olang::parser::Parser;
@@ -24,8 +22,7 @@ fn err(source: &str) -> String {
     }
 }
 
-// ── Bytes ─────────────────────────────────────────────────────────────
-
+// ── Bytes ───────────────────────────────────────────────────────────
 #[test]
 fn bytes_construct_inspect_and_convert() {
     assert_eq!(run("typeof(bytes.from_list([1, 2]))").unwrap(), "Bytes");
@@ -95,8 +92,7 @@ fn base64_and_crypto_accept_bytes() {
     );
 }
 
-// ── Date ──────────────────────────────────────────────────────────────
-
+// ── Date ────────────────────────────────────────────────────────────
 #[test]
 fn date_is_a_first_class_value() {
     assert_eq!(
@@ -292,8 +288,7 @@ fn dates_misuse_raises_instead_of_returning_err() {
     );
 }
 
-// ── HTTP client options ───────────────────────────────────────────────
-
+// ── HTTP client options ─────────────────────────────────────────────
 #[test]
 fn http_option_misuse_raises_before_any_network_io() {
     // Options are validated before a request is attempted, so these are

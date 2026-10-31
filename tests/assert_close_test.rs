@@ -1,4 +1,4 @@
-//! `assert_close(actual, expected, tolerance, message?)` (roadmap W8):
+//! `assert_close(actual, expected, tolerance, message?)`:
 //! the tolerance-based numeric assertion beside the existing asserts,
 //! with the same everywhere-an-expression reach and raising semantics.
 //! Every runtime case is a differential against `--no-ovm`.

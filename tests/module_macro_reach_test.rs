@@ -1,14 +1,17 @@
-//! Roadmap W18 — what open-track and Shuttle asked for after 0.84.0:
-//! the route index keeps the first route at a path, a module's
-//! functions and macros reach their private helpers at expansion, a
-//! package module reaches a sibling's macro, and a served test needs
-//! no OLANG_TEST juggling for `http.defer`.
+//! What a module's macros can reach: the route index keeps the first route
+//! at a path, a module's functions and macros reach their private helpers at
+//! expansion, a package module reaches a sibling's macro, and a served test
+//! needs no OLANG_TEST juggling for `http.defer`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn workspace(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("olang_w18_{}_{}", std::process::id(), tag));
+    let dir = std::env::temp_dir().join(format!(
+        "olang_module_macro_reach_{}_{}",
+        std::process::id(),
+        tag
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -202,7 +205,7 @@ fn a_modules_test_block_above_its_callee_runs_after_the_declarations() {
     );
     // Imported under `olang test`, the module's tests run at load: the one
     // above its callee must see the whole module declared. A directory
-    // run, because a named file runs its own blocks only (W21).
+    // run, because a named file runs its own blocks only.
     let (out, err, rc) = olang(&ws, &["test", "tests"]);
     assert_eq!(rc, 0, "{out}{err}");
     assert!(out.contains("2 passed, 0 failed"), "{out}{err}");

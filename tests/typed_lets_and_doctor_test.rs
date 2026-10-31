@@ -1,12 +1,16 @@
-//! Roadmap W20 — toward 0.85.0: typed lets on the VM, range consumers
-//! on the VM, union aliases, the manifest's check promotion, the
-//! project doctor, and a timeline that follows spawned tasks.
+//! Typed lets and range consumers on the VM, union aliases, the manifest's
+//! promotion of warning classes to errors, the project doctor, and a
+//! timeline that follows spawned tasks.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn workspace(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("olang_w20_{}_{}", std::process::id(), tag));
+    let dir = std::env::temp_dir().join(format!(
+        "olang_typed_lets_and_doctor_{}_{}",
+        std::process::id(),
+        tag
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir

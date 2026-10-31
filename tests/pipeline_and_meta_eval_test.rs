@@ -1,13 +1,12 @@
-//! Language rows from roadmap W9, pinned as differentials against
-//! `--no-ovm`: pipelines into arbitrary callables (the native/wasm
-//! split), `to_string` as the identity on strings, `meta.eval`'s budget,
-//! and `col.any`/`col.all` agreeing (and staying fast) when a hot
-//! function calls them with a capturing predicate.
+//! Pipelines into any callable (native and wasm alike), `to_string` as the
+//! identity on strings, `meta.eval`'s step and time budgets, and
+//! `col.any`/`col.all` agreeing, and staying fast, when a hot function calls
+//! them with a capturing predicate. Differentials against `--no-ovm`.
 
 use std::process::Command;
 
 fn run(source: &str, no_ovm: bool) -> (String, i32) {
-    let dir = std::env::temp_dir().join("olang_w9_language_tests");
+    let dir = std::env::temp_dir().join("olang_pipeline_and_meta_eval_tests");
     std::fs::create_dir_all(&dir).expect("mkdir");
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -213,7 +212,10 @@ fn project(tag: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
         p.hash(&mut h);
         c.hash(&mut h);
     }
-    let dir = std::env::temp_dir().join(format!("olang_w9_project_{:x}", h.finish()));
+    let dir = std::env::temp_dir().join(format!(
+        "olang_pipeline_and_meta_eval_project_{:x}",
+        h.finish()
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     for (path, contents) in files {
         let full = dir.join(path);
@@ -324,7 +326,7 @@ fn a_script_outside_a_project_falls_back_to_the_working_directorys_project() {
             ("lib/util.ol", "share fn twice(x) = x * 2\n"),
         ],
     );
-    let scratch = std::env::temp_dir().join("olang_w9_scratch_outside");
+    let scratch = std::env::temp_dir().join("olang_pipeline_and_meta_eval_scratch_outside");
     std::fs::create_dir_all(&scratch).unwrap();
     let script = scratch.join("probe.ol");
     std::fs::write(&script, "use lib.util { twice }\nprintln(show(twice(4)))\n").unwrap();

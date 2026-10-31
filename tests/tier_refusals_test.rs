@@ -1,12 +1,17 @@
-//! Roadmap W21 — what open-track's build-out document asked for: a map
-//! that crosses the tiers in O(1), a tier that refuses less and says
-//! what it refused, and the editor rows of 2026-09-20.
+//! A map that crosses the tiers in O(1), a bytecode tier that refuses less
+//! and says what it refused, the checker's package-root imports, the cost
+//! of a declared function, and the editor-facing pieces of the test runner
+//! and the web SDK.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn workspace(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("olang_w21_{}_{}", std::process::id(), tag));
+    let dir = std::env::temp_dir().join(format!(
+        "olang_tier_refusals_{}_{}",
+        std::process::id(),
+        tag
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -802,7 +807,7 @@ fn a_program_profiles_itself_and_reads_the_counts_back() {
 
 #[test]
 fn the_checker_means_what_the_file_imported() {
-    // Resolving imports (W21) gave the checker every function of every
+    // Resolving imports gave the checker every function of every
     // module a file touches, keyed by bare name — so a local `p` was the
     // SDK's `p(attrs, children)`, a function the file never imported had
     // a say, and of two packages' `watch` the wrong one was checked.

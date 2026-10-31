@@ -38,8 +38,7 @@ fn suggestion_text(source: &str) -> String {
         .join("\n")
 }
 
-// ── W5: asserts are expressions too ───────────────────────────────────
-
+// ── W5: asserts are expressions too ─────────────────────────────────
 #[test]
 fn assert_eq_works_in_a_match_arm() {
     // The grammar rewrites asserts only in statement position; expression
@@ -69,8 +68,7 @@ fn all_five_asserts_resolve_as_expressions() {
     assert!(e.contains("still on"), "custom message lost: {e}");
 }
 
-// ── W3: calling a non-function names the value and its type ───────────
-
+// ── W3: calling a non-function names the value and its type ─────────
 #[test]
 fn calling_an_int_names_the_binding_and_type() {
     let e = err("let x = 5\nx(1)");
@@ -91,8 +89,7 @@ fn calling_a_string_uses_the_right_article() {
     assert!(e.contains("'s' is a String, not a function"), "got: {e}");
 }
 
-// ── W3: module not found teaches the shelf ────────────────────────────
-
+// ── W3: module not found teaches the shelf ──────────────────────────
 #[test]
 fn module_not_found_help_names_the_shelf_workflow() {
     let error = olang::interpreter::InterpreterError::ModuleNotFound {
@@ -113,8 +110,7 @@ fn module_not_found_help_names_the_shelf_workflow() {
     );
 }
 
-// ── W3: C-style braces after `if` name the arrow form ─────────────────
-
+// ── W3: C-style braces after `if` name the arrow form ───────────────
 #[test]
 fn brace_after_if_suggests_the_arrow() {
     let text = suggestion_text("let x = 5\nif x > 1 {\n    println(\"big\")\n}\n");
@@ -137,8 +133,7 @@ fn while_keeps_its_braces_without_complaint() {
     );
 }
 
-// ── W3: unclosed delimiters name the opener ───────────────────────────
-
+// ── W3: unclosed delimiters name the opener ─────────────────────────
 #[test]
 fn unclosed_paren_reports_where_it_opened() {
     let text = suggestion_text("fn f(x) = {\n    let y = (x + 1\n    y * 2\n}\nf(3)\n");

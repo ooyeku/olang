@@ -1,4 +1,4 @@
-//! Error spans through promoted code (roadmap W8): the whole report —
+//! Error spans through promoted code: the whole report —
 //! message, span, and call stack — must be byte-identical between the
 //! tiered binary and `--no-ovm`, for errors raised from every
 //! acceleration shape: JIT-compiled calls, OSR'd loop regions, fused

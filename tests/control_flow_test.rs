@@ -1,5 +1,5 @@
-//! Roadmap Tier 2: `return expr` (early exit from functions), `break value`
-//! (loops as expressions), and `error` declarations with real semantics.
+//! `return expr` (early exit from functions), `break value` (loops as
+//! expressions), and `error` declarations.
 
 use olang::{Interpreter, Parser, Value};
 
@@ -22,8 +22,7 @@ fn s(v: Value) -> String {
     }
 }
 
-// ── return ─────────────────────────────────────────────────────────────
-
+// ── return ──────────────────────────────────────────────────────────
 #[test]
 fn return_exits_the_function_early() {
     let src = r#"
@@ -89,8 +88,7 @@ fn return_at_top_level_is_an_error() {
     assert!(eval_res("return 5").is_err());
 }
 
-// ── break value ────────────────────────────────────────────────────────
-
+// ── break value ─────────────────────────────────────────────────────
 #[test]
 fn loop_breaks_with_a_value() {
     let src = r#"
@@ -126,8 +124,7 @@ total
     assert_eq!(eval(src), Value::Integer(10));
 }
 
-// ── error declarations ─────────────────────────────────────────────────
-
+// ── error declarations ──────────────────────────────────────────────
 #[test]
 fn error_variants_construct_and_match() {
     let src = r#"

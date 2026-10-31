@@ -1,12 +1,12 @@
-//! The W10 ledger rows: fixed-decimal formatting, `db.transaction`,
-//! `db.migrate`, the `query_one` absent shape, and the Result-returning
-//! constructors (`ods.try_series`, `ods.try_frame_from_records`,
+//! What a ledger needs: fixed-decimal formatting, `db.transaction`,
+//! `db.migrate`, the shape of an absent `query_one`, and the constructors
+//! that return a Result (`ods.try_series`, `ods.try_frame_from_records`,
 //! `viz.check`). Differentials against `--no-ovm` where a tier is involved.
 
 use std::process::Command;
 
 fn run(source: &str, no_ovm: bool) -> (String, i32) {
-    let dir = std::env::temp_dir().join("olang_w10_ledger_tests");
+    let dir = std::env::temp_dir().join("olang_db_and_fixed_format_tests");
     std::fs::create_dir_all(&dir).expect("mkdir");
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();

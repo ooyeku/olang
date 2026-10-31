@@ -297,7 +297,7 @@ fn frame_error_paths() {
     assert!(err.contains("no column named"), "got: {}", err);
 }
 
-// ── DP2: the file IO surface ──────────────────────────────────────────
+// ── the file IO surface ─────────────────────────────────────────────
 //
 // The data chapter described an end-to-end story the stack could not
 // finish: it could read CSV *text* but had no way to reach a file, and no
@@ -385,8 +385,7 @@ ods.to_csv(f)
     .expect("tier agreement");
 }
 
-// ── DP2: the streaming reader ─────────────────────────────────────────
-
+// ── the streaming reader ────────────────────────────────────────────
 /// Build a CSV of `n` rows and hand back its path.
 fn big_csv(tag: &str, n: usize) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("olang_stream_{}_{}", tag, std::process::id()));
@@ -521,8 +520,7 @@ fn opening_a_missing_file_is_an_err() {
     assert_eq!(shown(&out), "\"true\"".to_string());
 }
 
-// ── Table rendering ───────────────────────────────────────────────────
-
+// ── Table rendering ─────────────────────────────────────────────────
 /// The table a Frame renders to. `to_string` yields a String value whose
 /// own Display adds the surrounding quotes, which would skew the width
 /// assertions below, so they come off here rather than in each test.
@@ -666,8 +664,7 @@ ods.n_rows(ods.head(f))
     .expect("tier agreement");
 }
 
-// ── JSON lines ────────────────────────────────────────────────────────
-
+// ── JSON lines ──────────────────────────────────────────────────────
 /// A JSON-lines file of `n` records, and its path.
 fn big_jsonl(tag: &str, n: usize) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("olang_jsonl_{}_{}", tag, std::process::id()));
@@ -874,8 +871,7 @@ ods.to_jsonl(f)
     .expect("tier agreement");
 }
 
-// ── Subscript ─────────────────────────────────────────────────────────
-
+// ── Subscript ───────────────────────────────────────────────────────
 #[test]
 fn a_frame_is_indexed_by_column_name() {
     // The gesture this exists for: `ods.column` and `ods.get` were 13% of
@@ -991,8 +987,7 @@ r[0]
     assert!(!err.is_empty());
 }
 
-// ── describe and schema ───────────────────────────────────────────────
-
+// ── describe and schema ─────────────────────────────────────────────
 #[test]
 fn describe_summarizes_every_column() {
     // A Frame rather than a map, so it prints as a table and can itself
@@ -1069,8 +1064,7 @@ fn short_floats_are_left_exactly_as_they_are() {
     assert!(text.contains("25.5"), "{text}");
 }
 
-// ── The native columnar format ────────────────────────────────────────
-
+// ── The native columnar format ──────────────────────────────────────
 /// A path in a fresh directory for a columnar file.
 fn olc_path(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("olang_olc_{}_{}", tag, std::process::id()));
@@ -1395,8 +1389,7 @@ ods.to_list(unwrap(ods.read_frame("{p}", ["s"]))["s"])
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
-// ── Mask combination, concat, and the join default ────────────────────
-
+// ── Mask combination, concat, and the join default ──────────────────
 #[test]
 fn masks_combine_with_all_of_and_any_of() {
     // Filtering on more than one condition is the normal case, and `&&`
@@ -1606,8 +1599,7 @@ ods.to_list(ods.concat([kept, kept])["k"])
     .expect("tier agreement");
 }
 
-// ── DP3 Tier 1: the verbs a first pipeline hits immediately ───────────
-
+// ── the verbs a first pipeline hits immediately ─────────────────────
 #[test]
 fn rename_makes_a_collided_join_usable() {
     // The motivating case. `join` suffixes a collision `_right`, and
@@ -1775,8 +1767,7 @@ let g = ods.rename(ods.drop_null(ods.distinct(f)), #{"v": "value"})
     .expect("tier agreement");
 }
 
-// ── DP3 Tier 2: the verbs reached for once `describe` has shown the shape ──
-
+// ── the verbs reached for once `describe` has shown the shape ───────
 #[test]
 fn value_counts_orders_by_frequency_then_first_appearance() {
     let out = eval(
@@ -2034,8 +2025,7 @@ show([ok(100000, 5), ok(100, 25), ok(100, 26), ok(100, 100), ok(1, 1), ok(10, 0)
     );
 }
 
-// ── DP3 Tier 3a: the rest of the join kinds ───────────────────────────
-
+// ── the rest of the join kinds ──────────────────────────────────────
 const JOIN_L: &str = r#"ods.frame([["k", ["east", "west", ()]], ["v", [1, 2, 3]]])"#;
 const JOIN_R: &str = r#"ods.frame([["k", ["east", "north", ()]], ["n", [10, 20, 30]]])"#;
 
@@ -2130,8 +2120,7 @@ let r = {JOIN_R}
     .expect("tier agreement");
 }
 
-// ── DP3 Tier 3b: reshape ──────────────────────────────────────────────
-
+// ── reshape ─────────────────────────────────────────────────────────
 const LONG_CSV: &str = "region,quarter,amount\\neast,Q1,10.0\\neast,Q2,20.0\\nwest,Q1,5.0\\nwest,Q3,7.0\\neast,Q1,3.0\\n";
 
 #[test]
@@ -2285,8 +2274,7 @@ let wide = ods.pivot(ods.read_csv("{LONG_CSV}"), "region", "quarter", "amount", 
     .expect("tier agreement");
 }
 
-// ── DP3 Tier 3c: window functions ─────────────────────────────────────
-
+// ── DP3 Tier 3c: window functions ───────────────────────────────────
 #[test]
 fn shift_moves_a_column_and_leaves_nulls_at_the_edge() {
     // Nulls rather than a wrapped value, because the window has an edge:
@@ -2545,8 +2533,7 @@ fn a_large_unquoted_file_reads_identically_to_a_small_one() {
     assert_eq!(format!("{}", got), "[120000, 14399880000, 7]");
 }
 
-// ── Membership and substring masks ────────────────────────────────────
-
+// ── Membership and substring masks ──────────────────────────────────
 #[test]
 fn is_in_and_contains_make_masks_that_compose() {
     let out = eval(

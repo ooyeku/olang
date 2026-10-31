@@ -1,5 +1,4 @@
-//! The learn, stats and gg gaps the D6 notebook rewrite found, on every
-//! tier: the interpreter alone (`--no-ovm`), every function compiled at
+//! learn, stats and gg behaviour, checked on every tier: the interpreter alone (`--no-ovm`), every function compiled at
 //! its first call (`--ovm-tier=1`), and the default.
 //!
 //! - options given as an object (`{ n_trees: 7 }`) are options, as a

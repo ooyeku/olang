@@ -98,8 +98,7 @@ fn s(text: &str) -> Value {
     Value::String(std::sync::Arc::new(text.to_string()))
 }
 
-// ── E1: `m.key` ─────────────────────────────────────────────────────────
-
+// ── E1: `m.key` ─────────────────────────────────────────────────────
 #[test]
 fn dot_reads_a_maps_key() {
     let src = r#"
@@ -296,8 +295,7 @@ main()
     assert_eq!(agree(src), Ok(Value::Float(40.0)));
 }
 
-// ── E2: `a ?? b` ────────────────────────────────────────────────────────
-
+// ── E2: `a ?? b` ────────────────────────────────────────────────────
 #[test]
 fn coalesce_takes_the_right_only_for_unit() {
     let src = r#"
@@ -451,8 +449,7 @@ main()
     assert_eq!(agree(src), Ok(Value::Integer(500 + 300)));
 }
 
-// ── E5: one record kind for the builtins ────────────────────────────────
-
+// ── E5: one record kind for the builtins ────────────────────────────
 #[test]
 fn every_map_builtin_takes_every_record_kind() {
     // Each builtin over a map, an object (small and wide, the VM's two
@@ -547,8 +544,7 @@ fn the_builtins_still_refuse_what_is_not_a_record() {
     }
 }
 
-// ── E6: spreads and nested updates ──────────────────────────────────────
-
+// ── E6: spreads and nested updates ──────────────────────────────────
 fn list(items: Vec<Value>) -> Value {
     Value::List(std::sync::Arc::new(items))
 }
@@ -740,8 +736,7 @@ fn the_parser_names_an_unsupported_spread() {
     }
 }
 
-// ── a module reads like a record ───────────────────────────────────────
-
+// ── a module reads like a record ────────────────────────────────────
 #[test]
 fn a_module_member_the_module_lacks_raises_read_or_called() {
     let src = r#"

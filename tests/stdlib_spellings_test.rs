@@ -1,12 +1,12 @@
-//! Standard-library rows from roadmap W9, pinned as differentials
-//! against `--no-ovm`: `map_get_in`, the `col.` mirrors of the global
-//! collection helpers (`drop`, `col.index_of`, `col.slice`), `max`/`min`
-//! over scalars, `dates.stamp`, and `viz`'s spec-key checking.
+//! Standard-library spellings: `map_get_in`, the `col.` mirrors of the
+//! global collection helpers (`drop`, `col.index_of`, `col.slice`),
+//! `max`/`min` over scalars, `dates.stamp`, and `viz`'s spec-key checking.
+//! Differentials against `--no-ovm`.
 
 use std::process::Command;
 
 fn run(source: &str, no_ovm: bool) -> (String, i32) {
-    let dir = std::env::temp_dir().join("olang_w9_stdlib_tests");
+    let dir = std::env::temp_dir().join("olang_stdlib_spellings_tests");
     std::fs::create_dir_all(&dir).expect("mkdir");
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();

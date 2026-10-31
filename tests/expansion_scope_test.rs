@@ -1,12 +1,17 @@
-//! Roadmap W12: the expansion scope as a closed list, positions on
-//! test-body statements, the callee's name from a compiled frame,
-//! `task.watch`, and the boot pin (image decode beats source parse).
+//! The names a macro expansion can see form a closed list. Also positions
+//! on test-body statements, the callee's name from a compiled frame,
+//! `task.watch`, and the boot check that decoding a program image beats
+//! parsing its source.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn workspace(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("olang_w12c_{}_{}", std::process::id(), tag));
+    let dir = std::env::temp_dir().join(format!(
+        "olang_expansion_scope_{}_{}",
+        std::process::id(),
+        tag
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir

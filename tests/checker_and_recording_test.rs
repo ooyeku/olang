@@ -1,10 +1,18 @@
-//! Roadmap W17 — the sixth reading of open-track and Shuttle.
+//! Forward references at the entry file's top level, a package's private
+//! functions on a task, JSON objects compared with maps, `chan.ask`,
+//! deferred HTTP handlers, the checker's enum and record-shape rules,
+//! `meta.exports`, fresh names, and recordings that cover db reads,
+//! channels and joins.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn workspace(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("olang_w17_{}_{}", std::process::id(), tag));
+    let dir = std::env::temp_dir().join(format!(
+        "olang_checker_and_recording_{}_{}",
+        std::process::id(),
+        tag
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir

@@ -1,5 +1,5 @@
-//! Roadmap Tier 3: the `time` module, `fs.walk`/`fs.glob`, `os.exec`
-//! options, `str.fmt`, and db transactions.
+//! The `time` module, `fs.walk`/`fs.glob`, `os.exec` options, `str.fmt`,
+//! and db transactions.
 
 use olang::{Interpreter, Parser, Value};
 
@@ -22,8 +22,7 @@ fn s(v: Value) -> String {
     }
 }
 
-// ── time ───────────────────────────────────────────────────────────────
-
+// ── time ────────────────────────────────────────────────────────────
 #[test]
 fn time_clocks_and_sleep() {
     let src = r#"
@@ -40,8 +39,7 @@ fn time_sleep_rejects_negatives() {
     assert!(eval_res("time.sleep(-5)").is_err());
 }
 
-// ── fs.walk / fs.glob ──────────────────────────────────────────────────
-
+// ── fs.walk / fs.glob ───────────────────────────────────────────────
 #[test]
 fn walk_lists_files_recursively_and_sorted() {
     // The repo's own docs directory: known, stable, nested-free but real.
@@ -70,8 +68,7 @@ show(len(hits) > 5) + "/" + show(contains(hits, "examples/language/regex/main.ol
     assert_eq!(s(eval(src)), "true/true");
 }
 
-// ── os.exec options ────────────────────────────────────────────────────
-
+// ── os.exec options ─────────────────────────────────────────────────
 #[test]
 fn exec_cwd_option_sets_the_working_directory() {
     let src = r#"
@@ -113,8 +110,7 @@ fn exec_rejects_unknown_options() {
     );
 }
 
-// ── str.fmt ────────────────────────────────────────────────────────────
-
+// ── str.fmt ─────────────────────────────────────────────────────────
 #[test]
 fn fmt_fills_placeholders_in_display_form() {
     let src = r#"str.fmt("{} of {} ({})", 3, "hearts", true)"#;
@@ -132,8 +128,7 @@ fn fmt_arity_mismatches_error() {
     assert!(eval_res(r#"str.fmt("{}", 1, 2)"#).is_err());
 }
 
-// ── db transactions ────────────────────────────────────────────────────
-
+// ── db transactions ─────────────────────────────────────────────────
 #[test]
 fn rollback_discards_and_commit_keeps() {
     let src = r#"

@@ -1,4 +1,4 @@
-//! Module resolution across package boundaries (roadmap W9): a module
+//! Module resolution across package boundaries: a module
 //! inside a dependency resolves its own `use lib.x` against its package,
 //! and the module cache is keyed by the resolved file rather than the
 //! dotted name — so two packages that each have a `lib.util` never hand

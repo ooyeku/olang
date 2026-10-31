@@ -1,13 +1,16 @@
-//! Roadmap W13 — the third reading of open-track: a macro imported from a
-//! library's front door, an imported module's tests running once per
-//! invocation, `trust_proxy` and `req.remote_addr`, and a graceful drain
-//! through `os.on_shutdown` + `http.shutdown`.
+//! A macro imported from a library's front door, an imported module's
+//! tests running once per invocation, `trust_proxy` and `req.remote_addr`,
+//! and a graceful drain through `os.on_shutdown` and `http.shutdown`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn workspace(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("olang_w13_{}_{}", std::process::id(), tag));
+    let dir = std::env::temp_dir().join(format!(
+        "olang_library_macros_and_drain_{}_{}",
+        std::process::id(),
+        tag
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir

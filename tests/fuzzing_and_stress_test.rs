@@ -22,10 +22,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-// =============================================================================
-// PROPERTY-BASED TESTING INFRASTRUCTURE
-// =============================================================================
-
+// ── PROPERTY-BASED TESTING INFRASTRUCTURE ───────────────────────────
 /// Property-based testing framework for Olang
 pub struct PropertyTester {
     parser: Parser,
@@ -99,10 +96,7 @@ impl PropertyTester {
     }
 }
 
-// =============================================================================
-// PARSER FUZZING INFRASTRUCTURE
-// =============================================================================
-
+// ── PARSER FUZZING INFRASTRUCTURE ───────────────────────────────────
 /// Parser fuzzing framework
 pub struct ParserFuzzer {
     parser: Parser,
@@ -262,10 +256,7 @@ impl ParserFuzzer {
     }
 }
 
-// =============================================================================
-// INTERPRETER STRESS TESTING
-// =============================================================================
-
+// ── INTERPRETER STRESS TESTING ──────────────────────────────────────
 /// Interpreter stress testing framework
 pub struct InterpreterStressTester {
     interpreter: Interpreter,
@@ -426,10 +417,7 @@ impl InterpreterStressTester {
     }
 }
 
-// =============================================================================
-// PERFORMANCE REGRESSION TESTING
-// =============================================================================
-
+// ── PERFORMANCE REGRESSION TESTING ──────────────────────────────────
 /// Performance regression testing framework
 pub struct PerformanceRegressionTester {
     baseline_results: HashMap<String, Duration>,
@@ -518,10 +506,7 @@ pub struct PerformanceRegression {
     pub regression_ratio: f64,
 }
 
-// =============================================================================
-// COMPREHENSIVE FUZZING TEST SUITE
-// =============================================================================
-
+// ── COMPREHENSIVE FUZZING TEST SUITE ────────────────────────────────
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -825,10 +810,7 @@ mod tests {
     }
 }
 
-// =============================================================================
-// ADDITIONAL PROPERTY TESTS
-// =============================================================================
-
+// ── ADDITIONAL PROPERTY TESTS ───────────────────────────────────────
 #[cfg(test)]
 mod additional_property_tests {
     use super::*;
@@ -915,10 +897,7 @@ mod additional_property_tests {
     }
 }
 
-// =============================================================================
-// PROPTEST PROPERTY TESTS
-// =============================================================================
-
+// ── PROPTEST PROPERTY TESTS ─────────────────────────────────────────
 #[cfg(test)]
 mod proptest_tests {
     use super::*;

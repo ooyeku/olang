@@ -48,8 +48,7 @@ fn shows(source: &str) -> String {
     }
 }
 
-// ── the mutation primitives ───────────────────────────────────────────
-
+// ── the mutation primitives ─────────────────────────────────────────
 #[test]
 fn col_set_swap_filled_semantics() {
     assert_eq!(shows("col.set([1, 2, 3], 1, 9)"), "[1, 9, 3]");
@@ -124,8 +123,7 @@ fn shows_of(v: Value) -> String {
     }
 }
 
-// ── automatic availability ────────────────────────────────────────────
-
+// ── automatic availability ──────────────────────────────────────────
 #[test]
 fn the_collections_module_loads_with_no_use() {
     // One name on the global surface, submodules within it — fully
@@ -176,8 +174,7 @@ fn the_submodule_names_claim_no_bare_globals() {
     assert!(err.contains("Undefined variable: deque"), "{}", err);
 }
 
-// ── the embedded test blocks run here ─────────────────────────────────
-
+// ── the embedded test blocks run here ───────────────────────────────
 #[test]
 fn every_bundled_module_passes_its_own_tests() {
     for module in ["heap", "deque", "bitset", "dsu", "table", "alg"] {
@@ -216,8 +213,7 @@ fn every_bundled_module_passes_its_own_tests() {
     }
 }
 
-// ── properties on seeded inputs ───────────────────────────────────────
-
+// ── properties on seeded inputs ─────────────────────────────────────
 #[test]
 fn heap_drains_in_sorted_order() {
     let src = "\

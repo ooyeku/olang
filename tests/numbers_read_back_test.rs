@@ -18,8 +18,7 @@ fn eval(source: &str) -> Result<Value, String> {
         .map_err(|e| e.to_string())
 }
 
-// ── scientific-notation literals ──────────────────────────────────────
-
+// ── scientific-notation literals ────────────────────────────────────
 #[test]
 fn exponent_only_floats_parse() {
     for (src, want) in [
@@ -52,8 +51,7 @@ fn neighbors_of_the_float_grammar_are_untouched() {
     assert!(eval("1e+").is_err());
 }
 
-// ── print/parse round-trip ────────────────────────────────────────────
-
+// ── print/parse round-trip ──────────────────────────────────────────
 proptest! {
     /// Every finite f64, printed by the runtime's own formatter, parses
     /// back to the identical bits. This is the round-trip the lane is
@@ -100,8 +98,7 @@ fn the_observed_offenders_round_trip() {
     }
 }
 
-// ── JSON numeric fidelity ─────────────────────────────────────────────
-
+// ── JSON numeric fidelity ───────────────────────────────────────────
 #[test]
 fn json_integers_within_i64_are_lossless() {
     // 2^53 + 1: exactly where f64 starts losing integers.

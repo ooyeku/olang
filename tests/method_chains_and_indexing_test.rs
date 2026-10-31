@@ -1,7 +1,6 @@
-//! The language gaps the D6 notebook rewrite found, each closed at the
-//! root: a method chain whose steps start their lines with `.`, `[]` on
-//! a map, an object or a struct, a parameter that destructures its
-//! argument, and an object key that is not a name.
+//! A method chain whose steps start their lines with `.`, `[]` on a map,
+//! an object or a struct, a parameter that destructures its argument, and
+//! an object key that is not a name.
 //!
 //! Every case runs three ways and must agree exactly — the interpreter
 //! (the reference), the bytecode VM (each function compiled directly,
@@ -107,8 +106,7 @@ fn parses(source: &str) -> bool {
     Parser::new().parse(source).is_ok()
 }
 
-// ── A chain's steps on lines of their own ──────────────────────────────
-
+// ── A chain's steps on lines of their own ───────────────────────────
 #[test]
 fn a_line_that_starts_with_a_dot_continues_the_chain_above() {
     let src = r#"
@@ -163,8 +161,7 @@ fn a_leading_dot_chain_reads_as_the_one_line_chain() {
     assert_eq!(unlocated(one), unlocated(many));
 }
 
-// ── `[]` on a map, an object, a struct ─────────────────────────────────
-
+// ── `[]` on a map, an object, a struct ──────────────────────────────
 #[test]
 fn a_map_or_an_object_is_indexed_by_key_as_map_get_reads() {
     let src = r#"
@@ -240,8 +237,7 @@ main()
     assert_eq!(agree(src).unwrap(), Value::Integer(1200));
 }
 
-// ── Parameters that destructure ────────────────────────────────────────
-
+// ── Parameters that destructure ─────────────────────────────────────
 #[test]
 fn a_lambda_or_fn_parameter_destructures_its_argument() {
     let src = r#"
@@ -336,8 +332,7 @@ main()
     assert_eq!(shown(agree(src).unwrap()), "(3, (1, 2), 7, \"eq\")");
 }
 
-// ── Quoted object keys ─────────────────────────────────────────────────
-
+// ── Quoted object keys ──────────────────────────────────────────────
 #[test]
 fn an_object_key_may_be_a_string() {
     let src = r#"

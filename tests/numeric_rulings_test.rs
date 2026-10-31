@@ -1,12 +1,12 @@
-//! The W2 rulings, pinned as differentials against `--no-ovm`: a Float is
-//! always finite (overflow raises on every tier, math functions included,
-//! and out-of-range text does not parse), and Series division between Int
-//! columns is true division.
+//! A Float is always finite: overflow raises on every tier, math functions
+//! included, and out-of-range text does not parse. Series division between
+//! Int columns is true division. Each case is a differential against
+//! `--no-ovm`.
 
 use std::process::Command;
 
 fn run(source: &str, no_ovm: bool) -> (String, i32) {
-    let dir = std::env::temp_dir().join("olang_w2_rulings_tests");
+    let dir = std::env::temp_dir().join("olang_numeric_rulings_tests");
     std::fs::create_dir_all(&dir).expect("mkdir");
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();

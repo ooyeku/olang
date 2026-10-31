@@ -1,14 +1,17 @@
-//! The rest of the board (roadmap W9/W10/W11 leftovers): snapshot tests,
-//! `olang test --watch`'s flag, `olang check --fix`, the `vec` module and
-//! `ods.to_matrix`, `ods.date_part`/`split`/`split_at`, imported functions
-//! inside meta fn bodies, one "Runtime error:" prefix, and a compiled
-//! frame's error placed in its own file.
+//! Snapshot tests, `olang test --watch`'s flag, `olang check --fix`, the
+//! `vec` module and `ods.to_matrix`, `ods.date_part`/`split`/`split_at`,
+//! imported functions inside meta fn bodies, one "Runtime error:" prefix,
+//! and a compiled frame's error placed in its own file.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn workspace(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("olang_w12_{}_{}", std::process::id(), tag));
+    let dir = std::env::temp_dir().join(format!(
+        "olang_snapshots_and_check_fix_{}_{}",
+        std::process::id(),
+        tag
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir

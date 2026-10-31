@@ -230,8 +230,7 @@ show(f(-17, 5)) + " " + show(f(17, -5)) + " " + show(f(-17, -5))
     );
 }
 
-// ── float specialization ───────────────────────────────────────────────
-
+// ── float specialization ────────────────────────────────────────────
 #[test]
 fn float_kernels_are_correct_under_the_jit() {
     assert_jit_transparent(
@@ -364,8 +363,7 @@ show(flip(2.5)) + " " + show(flip(-2.5)) + " " + show(flip(0.0) == 0.0)
     );
 }
 
-// ── cross-function native calls ────────────────────────────────────────
-
+// ── cross-function native calls ─────────────────────────────────────
 #[test]
 fn helper_calls_compile_and_agree() {
     assert_jit_transparent(
@@ -466,8 +464,7 @@ show(red(30)) + " " + show(green(31)) + " " + show(blue(32))
     );
 }
 
-// ── struct field access ────────────────────────────────────────────────
-
+// ── struct field access ─────────────────────────────────────────────
 #[test]
 fn struct_field_kernels_agree() {
     assert_jit_transparent(
@@ -541,8 +538,7 @@ show(f(12)) + " " + show(f(-5))
     );
 }
 
-// ── heap values: list indexing and for-loop iteration ──────────────────
-
+// ── heap values: list indexing and for-loop iteration ───────────────
 #[test]
 fn list_indexing_kernels_agree() {
     assert_jit_transparent(
@@ -622,8 +618,7 @@ show(first([1, 2.5]))
     );
 }
 
-// ── tuple extraction ───────────────────────────────────────────────────
-
+// ── tuple extraction ────────────────────────────────────────────────
 #[test]
 fn tuple_returning_functions_agree() {
     assert_jit_transparent(
@@ -684,8 +679,7 @@ show(ok) + " " + show(bad)
     );
 }
 
-// ── struct construction ────────────────────────────────────────────────
-
+// ── struct construction ─────────────────────────────────────────────
 #[test]
 fn native_constructors_agree() {
     assert_jit_transparent(
@@ -750,8 +744,7 @@ show(build_sum(200))
     );
 }
 
-// ── strings ────────────────────────────────────────────────────────────
-
+// ── strings ─────────────────────────────────────────────────────────
 #[test]
 fn string_kernels_agree() {
     assert_jit_transparent(
@@ -802,7 +795,7 @@ join_n("ab", 50)
     );
 }
 
-// ── Results: construction, tests, extraction, returns ──────────────────
+// ── Results: construction, tests, extraction, returns ───────────────
 //
 // The JIT's ninth kind. Results ride borrowed Arc<ResultObject> pointers
 // like structs; payload reads are guarded per side, construction is
@@ -988,7 +981,7 @@ read(quarter(8)) + read(quarter(6)) + read(quarter(5))
     );
 }
 
-// ── Lists: construction, concat, returns ───────────────────────────────
+// ── Lists: construction, concat, returns ────────────────────────────
 //
 // MakeList and list + list compile in straight-line code (scratch-owned,
 // same allocation discipline as structs); list-returning constructors
@@ -1129,7 +1122,7 @@ total()
     );
 }
 
-// ── struct-element lists ───────────────────────────────────────────────
+// ── struct-element lists ────────────────────────────────────────────
 //
 // MakeList with uniform struct elements compiles as ListStruct: each
 // borrowed element pointer is resolved back to an owned Arc (a scratch
@@ -1252,7 +1245,7 @@ show(use_it(3.0))
     );
 }
 
-// ── string-element lists ───────────────────────────────────────────────
+// ── string-element lists ────────────────────────────────────────────
 //
 // ListStr, the fourth list kind. Element reads hand out borrowed
 // pointers like struct elements; construction resolves scratch/arg
@@ -1319,7 +1312,7 @@ read(5)
     );
 }
 
-// ── maps ───────────────────────────────────────────────────────────────
+// ── maps ────────────────────────────────────────────────────────────
 //
 // Kind::Map(payload): string-keyed maps with a uniform value payload.
 // map_get is a key-guarded read (a miss — the VM returns Unit — deopts),
@@ -1483,7 +1476,7 @@ fn eval_with_stats(source: &str) -> (Result<Value, String>, olang::ovm::tier::Ti
     })
 }
 
-// ── The constructor call boundary ──
+// ── The constructor call boundary ───────────────────────────────────
 //
 // Perf guard for the regression where `fn make(i) = [i, i * 2]` called
 // 3M times from a bytecode loop ran ~26% slower once the JIT learned to
@@ -1584,7 +1577,7 @@ use_it(21)
     );
 }
 
-// ── the watermark: allocation inside native loops ──────────────────────
+// ── the watermark: allocation inside native loops ───────────────────
 //
 // A loop may allocate when every heap value born in an iteration
 // provably dies in it: scratch is marked at loop entry and truncated at
@@ -1736,7 +1729,6 @@ tally(400) + mtally(400)
 }
 
 // ── Campaign 7, T4: transitive inlining ─────────────────────────────
-
 #[test]
 fn helper_chains_inline_transitively_and_agree() {
     // score → dist2 → sq: three levels of helper. dist2 has a call of

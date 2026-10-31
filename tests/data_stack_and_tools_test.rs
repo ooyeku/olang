@@ -1,5 +1,5 @@
-//! What building olang's website found in the data stack and the tools,
-//! held: a module's missing member raises on every tier; `group_by` and
+//! Data stack and tooling behaviour that building the website relied on:
+//! a module's missing member raises on every tier; `group_by` and
 //! `agg` refuse text where an aggregation goes; a gg plot's ids are its
 //! own, and its theme takes a paper and an ink; `olang test` walks what a
 //! checkout keeps and runs a test from its own folder; a rule's

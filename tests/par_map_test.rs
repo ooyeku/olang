@@ -203,8 +203,7 @@ fn par_map_workers_cannot_reach_a_cell_in_the_calling_thread() {
     assert!(e.contains("cell escaped its thread"), "{e}");
 }
 
-// ── `par for`: the loop form of the same boundary ─────────────────────
-
+// ── `par for`: the loop form of the same boundary ───────────────────
 #[test]
 fn par_for_cannot_write_a_binding_from_the_enclosing_scope() {
     // `par for` fans a loop body across worker threads, each running

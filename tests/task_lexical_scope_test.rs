@@ -1,13 +1,17 @@
-//! Roadmap W15 — closing the gap: a frame resolves names in its own
-//! lexical scopes and its module's table, never in the caller's frame; a
-//! drained `serve` answers `Ok(())`; `compress` exists; and the whole
-//! program can run on a task (`--in-task`) to pin a task's speed.
+//! A frame resolves names in its own lexical scopes and its module's table,
+//! never in the caller's frame. Also a drained `serve` answering `Ok(())`,
+//! `compress`, and running the whole program on a task (`--in-task`) to
+//! measure a task's speed.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn workspace(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("olang_w15_{}_{}", std::process::id(), tag));
+    let dir = std::env::temp_dir().join(format!(
+        "olang_task_lexical_scope_{}_{}",
+        std::process::id(),
+        tag
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir

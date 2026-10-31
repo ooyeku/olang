@@ -1,13 +1,9 @@
+//! Template strings and interpolation, match guards and ranges, and union
+//! types, each alone and together.
+
 use olang::{Interpreter, Parser};
 
-// =============================================================================
-// V0.13 FEATURE TESTS - COMPREHENSIVE COVERAGE
-// =============================================================================
-
-// =============================================================================
-// FEATURE 1: Enhanced String Literals & Template Interpolation
-// =============================================================================
-
+// ── String literals and template interpolation ──────────────────────
 #[test]
 fn test_basic_template_interpolation() {
     let parser = Parser::new();
@@ -208,10 +204,7 @@ fn test_empty_template_interpolation() {
     );
 }
 
-// =============================================================================
-// FEATURE 2: Advanced Pattern Matching with Guards & Ranges
-// =============================================================================
-
+// ── Match guards and ranges ─────────────────────────────────────────
 #[test]
 fn test_integer_range_patterns() {
     let parser = Parser::new();
@@ -415,10 +408,7 @@ fn test_nested_pattern_matching() {
     );
 }
 
-// =============================================================================
-// FEATURE 3: Union Types & Enhanced Type System
-// =============================================================================
-
+// ── Union types ─────────────────────────────────────────────────────
 #[test]
 fn test_literal_type_patterns() {
     let parser = Parser::new();
@@ -555,10 +545,7 @@ fn test_log_level_union_types() {
     );
 }
 
-// =============================================================================
-// COMBINED V0.13 FEATURES INTEGRATION TESTS
-// =============================================================================
-
+// ── Together ────────────────────────────────────────────────────────
 #[test]
 fn test_user_management_system_comprehensive() {
     let parser = Parser::new();

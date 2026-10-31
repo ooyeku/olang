@@ -1,10 +1,16 @@
-//! Roadmap W23 — the parser, the cliffs, and the checker.
+//! The parser's precedence ladder for binary expressions, accumulations
+//! that cost the same however they are spelled, and the checker reporting
+//! what every run would refuse.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn workspace(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("olang_w23_{}_{}", std::process::id(), tag));
+    let dir = std::env::temp_dir().join(format!(
+        "olang_binary_ladder_{}_{}",
+        std::process::id(),
+        tag
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -37,7 +43,7 @@ fn the_ladder_is_what_binary_expressions_mean() {
     // One flat grammar rule and precedence climbing replaced a rule per
     // level (the queue a parse needs fell by two thirds). What each level
     // means is unchanged — and every olang file in the repository builds
-    // the same tree as before (tests/w21_test.rs holds the chunked parse to
+    // the same tree as before (tests/tier_refusals_test.rs holds the chunked parse to
     // the whole one; the change itself was held to 0.86.0's trees for 298
     // files, byte for byte).
     let ws = workspace("ladder");

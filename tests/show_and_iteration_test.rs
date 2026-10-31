@@ -1,6 +1,6 @@
-//! Roadmap Tier 1: display rendering (`show`), map/object iteration
-//! (`entries`, `for (k, v)`), write-side struct-likeness for the map
-//! builtins, and strings iterating by character.
+//! Display rendering (`show`), map and object iteration (`entries`,
+//! `for (k, v)`), write-side struct-likeness for the map builtins, and
+//! strings iterating by character.
 
 use olang::{Interpreter, Parser, Value};
 
@@ -17,8 +17,7 @@ fn s(v: Value) -> String {
     }
 }
 
-// ── show ───────────────────────────────────────────────────────────────
-
+// ── show ────────────────────────────────────────────────────────────
 #[test]
 fn show_renders_strings_bare_and_others_like_to_string() {
     assert_eq!(s(eval(r#"show("hi")"#)), "hi");
@@ -30,8 +29,7 @@ fn show_renders_strings_bare_and_others_like_to_string() {
     assert_eq!(s(eval(r#"to_string(["hi"])"#)), "[\"hi\"]");
 }
 
-// ── entries ────────────────────────────────────────────────────────────
-
+// ── entries ─────────────────────────────────────────────────────────
 #[test]
 fn entries_yields_key_value_tuples_in_the_maps_order() {
     let src = r#"
@@ -48,8 +46,7 @@ fn entries_reads_objects_and_parsed_json() {
     assert_eq!(eval(src), Value::Integer(1));
 }
 
-// ── write-side struct-likeness ─────────────────────────────────────────
-
+// ── write-side struct-likeness ──────────────────────────────────────
 #[test]
 fn map_set_updates_parsed_json_preserving_its_kind() {
     let src = r#"
@@ -82,8 +79,7 @@ fn map_set_on_a_plain_map_still_returns_a_map() {
     assert_eq!(s(eval(src)), "Map");
 }
 
-// ── for-loop upgrades ──────────────────────────────────────────────────
-
+// ── for-loop upgrades ───────────────────────────────────────────────
 #[test]
 fn for_iterates_strings_by_character() {
     let src = r#"

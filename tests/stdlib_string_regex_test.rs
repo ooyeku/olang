@@ -19,7 +19,6 @@ fn s(v: Value) -> String {
 }
 
 // ── str: total operations return bare values ────────────────────────
-
 #[test]
 fn str_case_and_trim() {
     assert_eq!(s(eval(r#"str.to_upper("abc")"#)), "ABC");
@@ -61,7 +60,6 @@ fn str_char_indexing_is_unicode() {
 }
 
 // ── str: fallible operations return Result ──────────────────────────
-
 #[test]
 fn str_parse_returns_result() {
     assert_eq!(eval(r#"unwrap(str.parse_int("42"))"#), Value::Integer(42));
@@ -73,7 +71,6 @@ fn str_parse_returns_result() {
 }
 
 // ── re: every operation returns Result (fallible on bad pattern) ────
-
 #[test]
 fn re_matching() {
     assert_eq!(
@@ -128,7 +125,6 @@ fn re_bad_pattern_is_recoverable_err() {
 }
 
 // ── convention: total vs fallible across the wider stdlib ───────────
-
 #[test]
 fn stdlib_convention_holds() {
     // Total operations return bare values (no unwrap needed)
@@ -187,7 +183,7 @@ let groups = unwrap(re.captures("^(\\S+ \\S+) \\[(\\w+)\\] (.+)$", "2026-08-06 0
     );
 }
 
-// ── concurrency (found by dogfooding the scheduler) ──
+// ── concurrency (found by dogfooding the scheduler) ─────────────────
 //
 // These began as four Promise regressions. 0.63 removed that API; what
 // they were really guarding — that a dynamically-built list of jobs

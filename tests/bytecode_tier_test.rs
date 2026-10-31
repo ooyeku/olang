@@ -586,7 +586,7 @@ d(1) + d(2) + d(3)
 #[test]
 fn a_refused_helper_does_not_take_its_caller() {
     // `bump` spawns, which the tier does not compile — a task needs the
-    // interpreter's own environment to clone. Until W21 that refusal spread
+    // interpreter's own environment to clone. That refusal used to spread
     // to every caller; now the caller compiles and reaches the refused
     // function through the interpreter, so `label` is promoted, `bump` is
     // named in the refusals, and the answer is unchanged. (`spawn` is the
@@ -1638,8 +1638,7 @@ go([1, 2, 3])
     assert_tier_transparent(src);
 }
 
-// ── logical operators (Tier 4: compiled as conditional jumps) ──────────
-
+// ── logical operators (Tier 4: compiled as conditional jumps) ───────
 #[test]
 fn logical_and_or_promote_and_agree() {
     // Guards everywhere: functions with && / || must now compile AND match
@@ -1693,8 +1692,7 @@ n
     assert!(tiered.is_err(), "bytecode tier should type-error too");
 }
 
-// ── field access + indexing (roadmap lane 13) ─────────────────────────
-
+// ── field access + indexing (roadmap lane 13) ───────────────────────
 #[test]
 fn field_access_promotes_and_agrees() {
     assert_tier_transparent(
@@ -1860,8 +1858,7 @@ to_string(wrap("done").value)
     assert!(eval(src, Some(2)).is_ok());
 }
 
-// ── module math builtins compile in the tier ──────────────────────────
-
+// ── module math builtins compile in the tier ────────────────────────
 #[test]
 fn math_builtins_promote_and_agree() {
     // A field-access + math kernel (the N-body shape) must promote and match
@@ -1938,8 +1935,7 @@ n
     );
 }
 
-// ── template strings and nested fn declarations ───────────────────────
-
+// ── template strings and nested fn declarations ─────────────────────
 #[test]
 fn template_strings_promote_and_stringify_identically() {
     // Interpolation rules are the interpreter's: String raw, Int/Float/
@@ -2091,8 +2087,7 @@ f(1)
     assert_tier_transparent(src);
 }
 
-// ── struct shapes and inline caches ───────────────────────────────────
-
+// ── struct shapes and inline caches ─────────────────────────────────
 #[test]
 fn polymorphic_field_sites_stay_correct_across_shapes() {
     // One GetField site reading `.x` off three different shapes in
@@ -2141,8 +2136,7 @@ read(p) + read(make(7))
     assert_eq!(eval(src, Some(1)).unwrap(), Value::Integer(405 + 708));
 }
 
-// ── the register slab (frame windows) ─────────────────────────────────
-
+// ── the register slab (frame windows) ───────────────────────────────
 #[test]
 fn deep_recursion_carries_heap_values_across_frame_windows() {
     // Frames are windows on one shared slab. A window bug (overlap, stale
@@ -2182,8 +2176,7 @@ t
     assert_tier_transparent(src);
 }
 
-// ── function-valued callees (CallValue) ───────────────────────────────
-
+// ── function-valued callees (CallValue) ─────────────────────────────
 #[test]
 fn higher_order_user_functions_promote_and_agree() {
     // A function passed as an argument crosses the boundary (functions
@@ -2380,8 +2373,7 @@ first + hear(c)
     assert_tier_transparent(src);
 }
 
-// ── str module builtins ───────────────────────────────────────────────
-
+// ── str module builtins ─────────────────────────────────────────────
 #[test]
 fn str_module_calls_promote_and_agree() {
     let src = r#"
@@ -2416,8 +2408,7 @@ acc
     assert_tier_transparent(src);
 }
 
-// ── enums: construction, unit variants, and patterns ──────────────────
-
+// ── enums: construction, unit variants, and patterns ────────────────
 #[test]
 fn enum_construction_and_matching_promote_and_agree() {
     let src = r#"
@@ -2541,8 +2532,7 @@ probe(A(7)) + probe(B) + probe(7) + probe((1, 2, 3))
     assert_tier_transparent(src);
 }
 
-// ── struct construction compiles ──────────────────────────────────────
-
+// ── struct construction compiles ────────────────────────────────────
 #[test]
 fn struct_construction_promotes_and_agrees() {
     let src = r#"
@@ -2628,8 +2618,7 @@ make(4)
     assert_tier_transparent(src);
 }
 
-// ── native collection builtins ────────────────────────────────────────
-
+// ── native collection builtins ──────────────────────────────────────
 #[test]
 fn native_collection_builtins_agree_across_maps_and_structs() {
     // map_get / map_set / map_has_key / entries work on maps AND
@@ -2711,8 +2700,7 @@ go()
     assert_tier_transparent(src);
 }
 
-// ── native higher-order builtins (map / filter / sum in the VM) ───────
-
+// ── native higher-order builtins (map / filter / sum in the VM) ─────
 #[test]
 fn native_map_filter_sum_agree_with_the_interpreter() {
     let src = r#"
@@ -2816,8 +2804,7 @@ go(xs)
     );
 }
 
-// ── unary operators compile ───────────────────────────────────────────
-
+// ── unary operators compile ─────────────────────────────────────────
 #[test]
 fn unary_negation_and_not_promote_and_agree() {
     // Until these compiled, a single `-x` anywhere in a function refused
@@ -2862,8 +2849,7 @@ neg("nope")
     );
 }
 
-// ── register slot reuse (perf: skipping drop glue) ────────────────────
-
+// ── register slot reuse (perf: skipping drop glue) ──────────────────
 #[test]
 fn registers_alternating_between_heap_and_immediate_values_stay_correct() {
     // Writing a register skips drop glue when the value being overwritten
@@ -2914,8 +2900,7 @@ all + tag("zz", 9)
     );
 }
 
-// ── argument-conversion cache (perf: the tier boundary) ───────────────
-
+// ── argument-conversion cache (perf: the tier boundary) ─────────────
 #[test]
 fn repeated_calls_with_the_same_list_stay_correct() {
     // The tier caches Value->OvmValue conversion by allocation identity.
@@ -3348,7 +3333,7 @@ fn literal_type_enforcement_is_tier_transparent() {
     assert_tier_transparent("fn strict(b: true) = b\nstrict(false)");
 }
 
-// ── runtime error traces ───────────────────────────────────────────────
+// ── runtime error traces ────────────────────────────────────────────
 //
 // A runtime error carries the innermost located statement's span and the
 // call stack live at that point (ErrorLocation). The interpreter has
@@ -3503,7 +3488,7 @@ feed()
     );
 }
 
-// ── AddAssign fusion: in-place string building ─────────────────────────
+// ── AddAssign fusion: in-place string building ──────────────────────
 //
 // `x = x + rhs` fuses into AddAssign, which appends in place when x
 // holds the only reference to its string (Arc count proves no aliases;
@@ -3603,7 +3588,7 @@ f()
     );
 }
 
-// ── AddAssign fusion: in-place list building ───────────────────────────
+// ── AddAssign fusion: in-place list building ────────────────────────
 //
 // The list analog of the string case: `xs = xs + [v]` fuses into
 // AddAssign, which extends in place when xs holds the only reference to
@@ -3942,7 +3927,7 @@ f(3, 4) + f(5, 6) + f(7, 8)
     );
 }
 
-// ── Pre-1.0 bug-hunt regressions ──────────────────────────────────────
+// ── Pre-1.0 bug-hunt regressions ────────────────────────────────────
 //
 // A differential fuzzer ran ~10,000 generated programs under `--no-ovm`
 // and `--ovm-tier=1` and found no tier divergence; these pin the seams

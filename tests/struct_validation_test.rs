@@ -193,7 +193,7 @@ match p { Point { x, y } => x * y }
     assert_eq!(eval(src).unwrap(), Value::Integer(35));
 }
 
-// ── Unknown type names in annotations ─────────────────────────────────
+// ── Unknown type names in annotations ───────────────────────────────
 //
 // A `FieldTypeCheck` for a bare custom name is `Named(name)`, enforced by
 // comparing runtime type names — so an *undeclared* name matches nothing
@@ -266,8 +266,7 @@ fn unknown_type_at_param_return_and_let_sites() {
     }
 }
 
-// ── Error-UX pass: common mistakes get a message that points at the fix ──
-
+// ── Error-UX pass: common mistakes get a message that points at the fix ───
 #[test]
 fn a_missing_method_is_reported_as_a_method_not_a_field() {
     // `value.method()` where no impl exists reached the field-access error

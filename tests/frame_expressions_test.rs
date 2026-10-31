@@ -1,6 +1,6 @@
-//! The frame and dtype gaps the D6 notebook rewrite found, on every tier
-//! (the interpreter alone, every function compiled at its first call, and
-//! the default): a Category compared in an expression and by `ods.eq`
+//! Frames and dtypes in expressions, checked on every tier (the
+//! interpreter alone, every function compiled at its first call, and the
+//! default): a Category compared in an expression and by `ods.eq`
 //! (which panicked), text joined by `+` in an expression, a Datetime's
 //! reductions in an expression, `unpivot` over Int and Float, a number
 //! spec's `0` flag, strftime's directives, `take` of a list and

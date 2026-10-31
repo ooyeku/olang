@@ -1,15 +1,19 @@
-//! Roadmap W11 — the second reading of open-track: test blocks scope
-//! their bindings, a path import wins over a stdlib name, a missing
-//! dependency is named at the `use` that needs it, `dates.stamp_ms`,
-//! `http.serve`'s bind option, a raising task reports itself, `olang
-//! check`'s shadow warnings, and a name defined in several modules costs
-//! no more to call than a name defined once.
+//! Scope and shadowing: test blocks scope their bindings, a path import
+//! wins over a stdlib module of the same name, a missing dependency is
+//! named at the `use` that needs it, and `olang check` warns about shadowed
+//! imports and module names. Also `dates.stamp_ms`, `http.serve`'s bind
+//! option, a task that raises reporting itself, and a name defined in
+//! several modules costing no more to call than one defined once.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn workspace(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("olang_w11_{}_{}", std::process::id(), tag));
+    let dir = std::env::temp_dir().join(format!(
+        "olang_scope_and_shadowing_{}_{}",
+        std::process::id(),
+        tag
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir

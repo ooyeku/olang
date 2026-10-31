@@ -1,13 +1,16 @@
-//! Roadmap W16 — the fifth reading of open-track: a drain that a long
-//! poll on a kept-alive connection cannot hold open, and a package's
-//! front door that carries the macros its index imports.
+//! A drain that a long poll on a kept-alive connection cannot hold open,
+//! and a package's front door that carries the macros its index imports.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn workspace(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("olang_w16_{}_{}", std::process::id(), tag));
+    let dir = std::env::temp_dir().join(format!(
+        "olang_keepalive_drain_{}_{}",
+        std::process::id(),
+        tag
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir

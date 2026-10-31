@@ -30,8 +30,7 @@ fn err(source: &str) -> String {
     }
 }
 
-// ── try/catch is gone ─────────────────────────────────────────────────
-
+// ── try/catch is gone ───────────────────────────────────────────────
 #[test]
 fn try_and_catch_are_ordinary_identifiers() {
     // Removed in 0.65, and freed the moment the migration scaffolding
@@ -68,8 +67,7 @@ fn match_and_unwrap_or_say_what_catch_said() {
     );
 }
 
-// ── a runtime error is not recoverable in place ───────────────────────
-
+// ── a runtime error is not recoverable in place ─────────────────────
 #[test]
 fn a_runtime_error_stops_the_program() {
     // Deliberate: these are bugs, and 0.61-0.64 spent four releases making
@@ -78,8 +76,7 @@ fn a_runtime_error_stops_the_program() {
     assert!(e.contains("cannot add"), "{e}");
 }
 
-// ── recovery is structural ────────────────────────────────────────────
-
+// ── recovery is structural ──────────────────────────────────────────
 #[test]
 fn a_task_boundary_turns_a_runtime_error_into_a_value() {
     let out = run(
@@ -101,8 +98,7 @@ fn one_failing_task_does_not_take_the_program_with_it() {
     assert_eq!(out, "handled and still running");
 }
 
-// ── the discarded-Result warning ──────────────────────────────────────
-
+// ── the discarded-Result warning ────────────────────────────────────
 fn warnings(source: &str) -> Vec<String> {
     let program = Parser::new().parse(source).expect("parses");
     olang::tools::check::check_program(&program)
