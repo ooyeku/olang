@@ -99,7 +99,7 @@ Current configuration:
 Show types: true
 8 : int
 Show types: false
-Olang v<version>
+olang v<version>
 Command history:
   1: let x = 41
   2: twice(z)

@@ -56,7 +56,7 @@ Anything without a leading colon is olang: [36muse collections { heap }[0m, [
     trim_start, width, words
 
   Try :help str.<fn> for a function's documentation.
-[1m=== Olang Syntax Reference ===[0m
+[1m=== olang Syntax Reference ===[0m
 
 [32mVariables:[0m
   let name = "Alice"          // Immutable binding
@@ -242,7 +242,7 @@ Usage: :search <query> [filters]
 [1m=== Interactive Tutorials ===[0m
 
 [34mTUTORIAL: basic_operations[0m [32m([1mBeginner[0m)[0m
-   [2mLearn basic Olang operations and syntax[0m
+   [2mLearn basic olang operations and syntax[0m
    [2mTIME: 5 minutes • 3 steps[0m
 
 [34mTUTORIAL: file_handling[0m [33m([1mIntermediate[0m)[0m
@@ -265,7 +265,7 @@ Usage: :search <query> [filters]
 [1m=== Interactive Tutorials ===[0m
 
 [34mTUTORIAL: basic_operations[0m [32m([1mBeginner[0m)[0m
-   [2mLearn basic Olang operations and syntax[0m
+   [2mLearn basic olang operations and syntax[0m
    [2mTIME: 5 minutes • 3 steps[0m
 
 [34mTUTORIAL: file_handling[0m [33m([1mIntermediate[0m)[0m
@@ -287,7 +287,7 @@ Usage: :search <query> [filters]
 
 [1m=== Tutorial: basic_operations ===[0m
 
-[32mLearn basic Olang operations and syntax[0m
+[32mLearn basic olang operations and syntax[0m
 [33mDifficulty:[0m Beginner
 [33mEstimated Time:[0m 5 minutes
 
@@ -303,7 +303,7 @@ Usage: :search <query> [filters]
 [0m
 
 [33mExplanation:[0m
-[2mOlang follows standard operator precedence: multiplication before addition[0m
+[2molang follows standard operator precedence: multiplication before addition[0m
 
 [36mHINTS:[0m
    • [2mUse parentheses to change precedence: (2 + 3) * 4[0m
@@ -382,9 +382,9 @@ greet("World")
     • Current variables and types
     • Working category context
 
-[36mEnhanced Examples:[0m
+[36mExamples:[0m
   [34m:examples <function>[0m - Interactive examples with execution
-  [34mhelp examples[0m - Comprehensive example gallery
+  [34mhelp examples[0m - Examples for every category
   All examples are runnable and include explanations
 
 [36mSearch Result Types:[0m
@@ -399,7 +399,7 @@ greet("World")
 
 [32mBased on your recent activity:[0m
 
-[34m1. [0mTutorial: basic_operations - Learn Olang fundamentals[0m
+[34m1. [0mTutorial: basic_operations - Learn olang fundamentals[0m
 [34m2. [0m:help examples - See practical examples[0m
 [34m3. [0m:help syntax - Language syntax reference[0m
 

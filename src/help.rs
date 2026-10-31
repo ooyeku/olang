@@ -1,3 +1,6 @@
+//! The REPL's built-in help: function reference entries, search, topics
+//! and the interactive tutorials.
+
 use std::collections::HashMap;
 use std::fmt;
 
@@ -105,7 +108,7 @@ pub struct FunctionDoc {
     pub see_also: Vec<String>,
 }
 
-/// Comprehensive help system for Olang
+/// Comprehensive help system for olang
 pub struct HelpSystem {
     functions: HashMap<String, FunctionDoc>,
     categories: HashMap<String, Vec<String>>,
@@ -402,7 +405,7 @@ impl HelpSystem {
     fn initialize_tutorials(&mut self) {
         self.add_tutorial(Tutorial {
             name: "basic_operations".to_string(),
-            description: "Learn basic Olang operations and syntax".to_string(),
+            description: "Learn basic olang operations and syntax".to_string(),
             difficulty: "Beginner".to_string(),
             estimated_time: "5 minutes".to_string(),
             prerequisites: vec![],
@@ -412,7 +415,7 @@ impl HelpSystem {
                     description: "Let's start with simple arithmetic operations".to_string(),
                     code: "2 + 3 * 4".to_string(),
                     expected_output: "14".to_string(),
-                    explanation: "Olang follows standard operator precedence: multiplication before addition".to_string(),
+                    explanation: "olang follows standard operator precedence: multiplication before addition".to_string(),
                     hints: vec!["Use parentheses to change precedence: (2 + 3) * 4".to_string()],
                 },
                 TutorialStep {
@@ -817,7 +820,7 @@ impl HelpSystem {
 
         // Always include general suggestions
         if suggestions.is_empty() {
-            suggestions.push("Tutorial: basic_operations - Learn Olang fundamentals".to_string());
+            suggestions.push("Tutorial: basic_operations - Learn olang fundamentals".to_string());
             suggestions.push(":help examples - See practical examples".to_string());
             suggestions.push(":help syntax - Language syntax reference".to_string());
         }
@@ -9927,7 +9930,7 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
             description: "Inspect the type of any expression without evaluating side effects"
                 .to_string(),
             syntax: ":type <expression>".to_string(),
-            parameters: vec!["expression - Any valid Olang expression".to_string()],
+            parameters: vec!["expression - Any valid olang expression".to_string()],
             return_type: "Type Name".to_string(),
             examples: vec![
                 ":type 42                // Int".to_string(),
@@ -10057,7 +10060,7 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
             description: "Measure execution time of expressions for performance analysis"
                 .to_string(),
             syntax: ":time <expression>".to_string(),
-            parameters: vec!["expression - Any valid Olang expression to time".to_string()],
+            parameters: vec!["expression - Any valid olang expression to time".to_string()],
             return_type: "Result + Timing".to_string(),
             examples: vec![
                 ":time range(1000) |> map((x) => x * x)  // Time complex operation".to_string(),
@@ -10156,7 +10159,7 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
 
         self.add_function(FunctionDoc {
             name: ":export".to_string(),
-            description: "Export current environment to a runnable Olang script file".to_string(),
+            description: "Export current environment to a runnable olang script file".to_string(),
             syntax: ":export <filename>".to_string(),
             parameters: vec!["filename - Path where to save the generated script".to_string()],
             return_type: "File Generation".to_string(),
@@ -10392,7 +10395,7 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
     /// Show practical examples  
     pub fn show_examples(&self) -> String {
         format!(
-            "{}=== Olang Examples ==={}
+            "{}=== olang Examples ==={}
 
 {}Basic Operations:{}
   2 + 3 * 4                    // Arithmetic: 14
@@ -10450,7 +10453,7 @@ For more examples on specific functions, use: {}:help <function_name>{}",
     /// Show syntax reference
     pub fn show_syntax(&self) -> String {
         format!(
-            "{}=== Olang Syntax Reference ==={}
+            "{}=== olang Syntax Reference ==={}
 
 {}Variables:{}
   let name = \"Alice\"          // Immutable binding
@@ -10748,9 +10751,9 @@ For function-specific syntax, use: {}:help <function_name>{}",
 
         self.add_function(FunctionDoc {
             name: "json.stringify".to_string(),
-            description: "Convert Olang values to JSON string representation".to_string(),
+            description: "Convert olang values to JSON string representation".to_string(),
             syntax: "json.stringify(value)".to_string(),
-            parameters: vec!["value: Any - Olang value to convert to JSON".to_string()],
+            parameters: vec!["value: Any - olang value to convert to JSON".to_string()],
             return_type: "Result<String, Error>".to_string(),
             examples: vec![
                 "json.stringify({name: \"Alice\", age: 25})  // Ok(\"{\\\"name\\\":\\\"Alice\\\",\\\"age\\\":25}\") — keys in the record's order".to_string(),
@@ -12366,7 +12369,6 @@ For function-specific syntax, use: {}:help <function_name>{}",
 
         let mut matrix = vec![vec![0; b_len + 1]; a_len + 1];
 
-        // Initialize first row and column
         for i in 0..=a_len {
             matrix[i][0] = i;
         }
