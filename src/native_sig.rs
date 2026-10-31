@@ -757,7 +757,16 @@ fn borrows(type_name: &str, module: &str, method: &str) -> bool {
 
 /// Home modules whose functions are methods of their values even before
 /// the table lists them (the data stack grows faster than this table).
-const OPEN_HOMES: &[&str] = &["ods", "learn", "dates", "mat", "sim.World"];
+const OPEN_HOMES: &[&str] = &[
+    "ods",
+    "learn",
+    "dates",
+    "mat",
+    "sim.World",
+    "sim.State",
+    "sim.Disk",
+    "sim.Run",
+];
 
 /// module → function → full name, for every builtin module.
 static MODULE_FUNCTIONS: LazyLock<HashMap<String, HashMap<String, &'static str>>> =
@@ -880,7 +889,11 @@ pub fn method_receiver(value: &Value) -> Option<(&'static str, &'static str)> {
         Value::Native(h) => Some((h.0.module(), h.0.type_name())),
         Value::Map(m) => match m.get("model") {
             Some(Value::Native(h)) if h.0.type_name() == "Model" => Some(("learn", "Model")),
-            _ => None,
+            // a simulated run's map: `run.history(name)` is its method
+            _ => match m.get("handle") {
+                Some(Value::Native(h)) if h.0.module() == "sim.Run" => Some(("sim.Run", "Run")),
+                _ => None,
+            },
         },
         _ => None,
     }

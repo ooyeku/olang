@@ -4,6 +4,11 @@
 // acknowledged write survives a crash. The store holds versions in
 // order, so the first put after a crash that lost an acknowledged one is
 // refused (409) with the version the store fell back to.
+//
+// Each put is recorded in the history "puts" (sim.record: nothing outside
+// a world): invoked, then ok (acknowledged), fail (refused) or info (no
+// answer: it may or may not have been kept). A property reads it
+// (log_props.ol).
 
 /// "ok", "down" (no answer: not acknowledged, retried), or the version
 /// the store holds when it refused the put.
@@ -30,10 +35,17 @@ share fn writer(server, key, until) = {
     while time.monotonic_ms() < until {
         time.sleep(random.randint(50, 400))
         attempts = attempts + 1
+        sim.record("puts", #{ "type": "invoke", "f": "put", "value": [key, acked + 1] })
         let answer = put(server, key, acked + 1)
-        if answer == "ok" => { acked = acked + 1 }
-        else if answer != "down" => lost(key, acked, answer)
-        else => ()
+        if answer == "ok" => {
+            sim.record("puts", #{ "type": "ok", "value": [key, acked + 1] })
+            acked = acked + 1
+        }
+        else if answer != "down" => {
+            sim.record("puts", #{ "type": "fail" })
+            lost(key, acked, answer)
+        }
+        else => sim.record("puts", #{ "type": "info" })
     }
     // the last word: wait for the store to be back, then read
     let mut v = version_of(server, key)

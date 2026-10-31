@@ -106,6 +106,43 @@ remote stays on rc.5.
   keeps every acknowledged issue through kills and graceful stops, and
   loses them to power cuts (its WAL runs at `synchronous=NORMAL`).
   Design: plans/SIM-S3.md.
+- **`sim`: properties, search and shrinking (S4).** What must hold is a
+  value: `sim.always(name, pred)`, `sim.never(name, pred)`,
+  `sim.eventually(name, within, pred)` and `sim.linearizable(name,
+  history, model)`, given to `w.run(#{ for, props })` (or `w.run_fn`),
+  checked at every instant of virtual time at which anything ran, and
+  the run stops at the first violation with the property, the virtual
+  time and the step (`run.violation`, outcome `violated`).
+  `sim.check(run, props)` checks after the fact (running the world again,
+  watched: one seed is one run) and raises. A predicate gets the world's
+  state: `s.now`, `s.history(name)`, `s.up(node)`, and `s.disk(node)`, the
+  node's disk as a power cut now would leave it (`.read`, `.exists`,
+  `.list`, `.current`, and `.query(db, sql)` on the durable image of a
+  SQLite database); its effects are refused and it changes nothing.
+  `sim.record(name, op)` keeps a Jepsen-style history (`run.history
+  (name)`), and `sim.linearize(history, model)` is a Wing–Gong–Lowe
+  checker with memoisation, per-key for `sim.kv()`, `sim.register(init)`
+  or an olang model `#{ init, step }`, answering unknown past its bound.
+  Every fault (crash points, lying syncs, buggify points, lost and
+  duplicated messages, `w.crash/kill/stop/partition/slow_disk`) is keyed
+  by the visit it fired on, so a run's faults are a plan that forces it
+  again exactly. `olang sim FILE --seeds N --jobs J` runs seeds in J
+  worker processes with the same results (the summary ends with a digest
+  of the sweep), and `--shrink` minimises the first failure: ddmin over
+  the faults, optional nodes left out (`#{ optional: true }`), restart
+  delays shortened, a stickier schedule (fewer preemptions), printing
+  "shrunk: 57 faults → 1" and saving `.sim/<seed>.simplan`, which
+  `olang sim --replay` runs again bit for bit and `olang sim shrink`
+  shrinks further. `olang test` runs a test block that runs worlds over
+  three seeds (`--seeds N`), naming the seed that fails. The proof: S2's
+  partition bug caught as a linearizability violation, S3's log bug as a
+  durability violation; a noisy failing world shrunk from 57 faults to
+  its one power cut; olang-track keeps every acknowledged issue through
+  100 seeds of power cuts now that it syncs every commit. A connection's
+  `id` and `chan.stat`'s `id` are the world's own numbers in a world, so
+  a seed renders the same in any process; event details render at most
+  what they keep (olang-track 7.9 s → 7.0 s a simulated 10 minutes).
+  Design: plans/SIM-S4.md.
 
 ### Fixed
 

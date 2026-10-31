@@ -266,9 +266,34 @@ const INTERNAL: &[(&str, &str)] = &[
     ("sim.hours", SIM_S1),
     ("sim.disk", SIM_S3),
     ("sim.maybe", SIM_S3),
+    ("sim.always", SIM_S4),
+    ("sim.never", SIM_S4),
+    ("sim.eventually", SIM_S4),
+    ("sim.linearizable", SIM_S4),
+    ("sim.check", SIM_S4),
+    ("sim.record", SIM_S4),
+    ("sim.linearize", SIM_S4),
+    ("sim.register", SIM_S4),
+    ("sim.kv", SIM_S4),
+    ("sim.seed", SIM_S4),
+    ("sim.State", SIM_S4),
+    ("sim.State.disk", SIM_S4),
+    ("sim.State.history", SIM_S4),
+    ("sim.State.up", SIM_S4),
+    ("sim.Disk", SIM_S4),
+    ("sim.Disk.read", SIM_S4),
+    ("sim.Disk.read_bytes", SIM_S4),
+    ("sim.Disk.exists", SIM_S4),
+    ("sim.Disk.list", SIM_S4),
+    ("sim.Disk.current", SIM_S4),
+    ("sim.Disk.query", SIM_S4),
+    ("sim.Run", SIM_S4),
+    ("sim.Run.history", SIM_S4),
+    ("sim.Run.check", SIM_S4),
 ];
 
 const SIM_S3: &str = "sim S3 is local-only (rc6): documented in plans/SIM-S3.md until its stdlib.md section is written";
+const SIM_S4: &str = "sim S4 is local-only (rc6): documented in plans/SIM-S4.md until its stdlib.md section is written";
 const SIM_S2: &str = "sim S2 is local-only (rc6): documented in plans/SIM-S2.md until its stdlib.md section is written";
 const SIM_S1: &str = "sim S1 is local-only (rc6): documented in plans/SIM-S1.md until its stdlib.md section is written";
 

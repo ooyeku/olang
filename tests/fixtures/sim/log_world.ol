@@ -10,7 +10,10 @@
 
 use log_client { writer }
 
-share fn run_store(mode, minutes) = {
+share fn run_store(mode, minutes) = run_store_with(mode, minutes, [])
+
+/// `run_store`, with properties checked as it runs (log_props.ol).
+share fn run_store_with(mode, minutes, props) = {
     let w = sim.world(#{ "seed": 1, "net": #{ "latency": (1, 20) } })
     w.node("store", ["olang", "log_store.ol"], #{ "env": #{ "MODE": mode },
         "disk": sim.disk(#{ "torn_writes": true }),
@@ -26,5 +29,5 @@ share fn run_store(mode, minutes) = {
             let crashed = attempt(() => w.crash("store", #{ "restart_after": sim.seconds(1) }))
         } else => ()
     })
-    w.run(sim.minutes(minutes + 5))
+    w.run(#{ "for": sim.minutes(minutes + 5), "props": props })
 }

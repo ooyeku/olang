@@ -208,6 +208,7 @@ fn exit(ctx: &Ctx, code: i64) -> Result<Value, InterpreterError> {
             n,
             Halt::Exit,
             &format!("os.exit({code})"),
+            None,
         );
         st.killed[ctx.task] = Some(Ended::Exit);
     }
@@ -241,12 +242,23 @@ impl World {
             ));
             r.random::<f64>() < MAYBE_ON
         });
-        let fires = on && st.maybe_rng.random::<f64>() < MAYBE_FIRES;
-        if fires {
-            let node = st.task_node.get(me).copied().unwrap_or(0);
-            self.fault(&mut st, Some(me), node, "maybe", point.to_string());
+        let drawn = on && st.maybe_rng.random::<f64>() < MAYBE_FIRES;
+        let node = st.task_node.get(me).copied().unwrap_or(0);
+        let now = st.sched.now;
+        let d = st
+            .sites
+            .visit(super::plan::Site::Maybe, node as u64, now, drawn, None);
+        if d.fire {
+            self.fault_at(
+                &mut st,
+                Some(me),
+                node,
+                "maybe",
+                point.to_string(),
+                Some(d.key),
+            );
         }
-        fires
+        d.fire
     }
 
     /// At an effect boundary of a node with a crash plan: crash here,
@@ -258,17 +270,22 @@ impl World {
         let hit = {
             let st = self.lock();
             World::stopped(&st, ctx.task)?;
-            st.nodes[ctx.node].up && super::vfs::lock(&self.disks[ctx.node]).draw_crash()
+            if st.nodes[ctx.node].up {
+                super::vfs::lock(&self.disks[ctx.node]).draw_crash(plan.restart_after)
+            } else {
+                None
+            }
         };
-        if !hit {
+        let Some(key) = hit else {
             return Ok(());
-        }
+        };
         let _ = self.halt(
             ctx.task,
             ctx.node,
             Halt::Crash,
-            plan.restart_after,
+            key.delay,
             &format!("at {name}"),
+            Some(key),
         );
         Err(Ended::Crash)
     }
@@ -300,8 +317,29 @@ impl World {
     /// `w.slow_disk(n, factor)`.
     pub(super) fn set_slow(&self, me: TaskId, n: usize, factor: f64) {
         let mut st = self.lock();
+        let now = st.sched.now;
+        let d = st
+            .sites
+            .visit(super::plan::Site::SlowDisk, n as u64, now, true, None);
+        if !d.fire {
+            return;
+        }
         super::vfs::lock(&self.disks[n]).disk.opts.slow = factor;
         let detail = format!("{} ×{factor}", self.nodes[n].name);
-        self.fault(&mut st, Some(me), n, "slow_disk", detail);
+        self.fault_at(&mut st, Some(me), n, "slow_disk", detail, Some(d.key));
+    }
+
+    /// A fault called in code (`w.crash`, `w.kill`, `w.stop`,
+    /// `w.partition`) at `place`: whether it happens (always, unless a
+    /// plan forces the run and does not list it) and its key.
+    pub(super) fn code_fault(
+        &self,
+        site: super::plan::Site,
+        place: usize,
+        delay: Option<u64>,
+    ) -> super::plan::Decision {
+        let mut st = self.lock();
+        let now = st.sched.now;
+        st.sites.visit(site, place as u64, now, true, delay)
     }
 }

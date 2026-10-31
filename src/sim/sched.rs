@@ -57,6 +57,9 @@ pub enum Wait {
 pub enum Fire {
     Task(TaskId),
     Deliver(u64),
+    /// A property wants a look at this instant (`sim.eventually`'s
+    /// deadline), even if nothing else happens then.
+    Check,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,6 +84,8 @@ pub enum End {
     Deadlock(Vec<(TaskId, String)>),
     /// More yield points than the budget allows without the run ending.
     StepLimit,
+    /// A property broke (S4: the world holds which, when, and why).
+    Violated,
 }
 
 impl End {
@@ -91,6 +96,7 @@ impl End {
             End::Deadline => "deadline",
             End::Deadlock(_) => "deadlock",
             End::StepLimit => "step_limit",
+            End::Violated => "violated",
         }
     }
 }
@@ -122,6 +128,16 @@ pub struct Sched {
     /// Deliveries whose time has come, not yet handed to the world.
     due: VecDeque<u64>,
     rng: StdRng,
+    /// S4: properties are checked before the clock moves on (`Pick::Check`).
+    pub checking: bool,
+    checked_steps: u64,
+    check_forced: bool,
+    /// Yield points at which a task that could have gone on lost the baton.
+    pub preemptions: u64,
+    /// The chance a task that yields and could go on keeps the baton (a
+    /// plan's simpler schedule; 0 draws as S1 did).
+    stick: f64,
+    stick_rng: StdRng,
 }
 
 impl Sched {
@@ -139,7 +155,31 @@ impl Sched {
             timer_seq: 0,
             due: VecDeque::new(),
             rng: StdRng::seed_from_u64(seed),
+            checking: false,
+            checked_steps: 0,
+            check_forced: false,
+            preemptions: 0,
+            stick: 0.0,
+            stick_rng: StdRng::seed_from_u64(seed ^ 0x5717_c4),
         }
+    }
+
+    /// A stickier schedule: a task that yields and could go on keeps the
+    /// baton with chance `p` (1: until it blocks), from its own stream.
+    pub fn set_stick(&mut self, p: f64, seed: u64) {
+        self.stick = p.clamp(0.0, 1.0);
+        self.stick_rng = StdRng::seed_from_u64(seed);
+    }
+
+    pub fn stick(&self) -> f64 {
+        self.stick
+    }
+
+    /// Have the properties looked at at virtual time `at`.
+    pub fn check_at(&mut self, at: u64) {
+        self.timer_seq += 1;
+        self.timers
+            .insert((at.max(self.now), self.timer_seq, Fire::Check));
     }
 
     /// A new runnable task; its id is the next in spawn order.
@@ -257,6 +297,17 @@ impl Sched {
         self.pick_with(&mut |_, _| {})
     }
 
+    /// Is a property check due before the clock moves (or the run ends)?
+    fn check_due(&mut self) -> bool {
+        if self.checking && (self.steps != self.checked_steps || self.check_forced) {
+            self.checked_steps = self.steps;
+            self.check_forced = false;
+            true
+        } else {
+            false
+        }
+    }
+
     /// `pick`, with the network: each delivery that falls due is handed
     /// to `deliver(self, id)`, which puts the message where it goes and
     /// wakes whoever waits for it (and may send more: a refusal). The
@@ -265,12 +316,13 @@ impl Sched {
     pub fn pick_with(&mut self, deliver: &mut dyn FnMut(&mut Sched, u64)) -> Result<TaskId, End> {
         let mut counted = true;
         loop {
-            match self.next(counted)? {
+            match self.next(counted, usize::MAX)? {
                 Pick::Run(t) => return Ok(t),
                 Pick::Deliver(id) => {
                     counted = false;
                     deliver(self, id);
                 }
+                Pick::Check => counted = false,
             }
         }
     }
@@ -282,7 +334,11 @@ impl Sched {
     ///
     /// Deliveries due at an instant are all handed out before a task is
     /// drawn, so the tasks they wake are in the draw.
-    pub fn next(&mut self, counted: bool) -> Result<Pick, End> {
+    ///
+    /// `prev` is the task giving up the baton: when it could go on and
+    /// another is chosen, that is a preemption (counted); a sticky
+    /// schedule keeps it running instead, as often as `stick` says.
+    pub fn next(&mut self, counted: bool, prev: TaskId) -> Result<Pick, End> {
         if counted {
             self.steps += 1;
             if self.steps > self.max_steps {
@@ -297,12 +353,26 @@ impl Sched {
                 .filter(|t| self.is_runnable(*t))
                 .collect();
             if !runnable.is_empty() {
+                let prev_runs = self.is_runnable(prev);
+                if prev_runs
+                    && self.stick > 0.0
+                    && runnable.len() > 1
+                    && (self.stick >= 1.0 || self.stick_rng.random::<f64>() < self.stick)
+                {
+                    return Ok(Pick::Run(prev));
+                }
                 let i = if runnable.len() == 1 {
                     0
                 } else {
                     self.rng.random_range(0..runnable.len())
                 };
+                if prev_runs && runnable[i] != prev {
+                    self.preemptions += 1;
+                }
                 return Ok(Pick::Run(runnable[i]));
+            }
+            if self.check_due() {
+                return Ok(Pick::Check);
             }
             let Some(&(at, _, _)) = self.timers.iter().next() else {
                 return Err(End::Deadlock(self.blocked_sites()));
@@ -326,6 +396,7 @@ impl Sched {
                         self.timed_out[t] = true;
                     }
                     Fire::Deliver(id) => self.due.push_back(id),
+                    Fire::Check => self.check_forced = true,
                 }
             }
         }
@@ -337,6 +408,9 @@ impl Sched {
 pub enum Pick {
     Run(TaskId),
     Deliver(u64),
+    /// Nothing can run at this instant and the clock is about to move (or
+    /// the run to end): the world checks its properties first.
+    Check,
 }
 
 /// splitmix64: one well-mixed 64-bit value from another. Seeds for the

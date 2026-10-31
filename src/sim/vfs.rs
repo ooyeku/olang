@@ -63,12 +63,21 @@ pub struct NodeDisk {
     pub crash_rng: StdRng,
     pub crash_p: f64,
     pub mem: Mem,
-    /// What happened (kind, detail), for the world's event stream.
-    pub events: Vec<(&'static str, String)>,
+    /// What happened (kind, detail, the fault's visit), for the world's
+    /// event stream.
+    pub events: Vec<(&'static str, String, Option<super::plan::Key>)>,
     /// Set when the node is to crash at a disk point: every later write
-    /// fails, and the `db` call's wrapper crashes the node.
-    pub crash_at: Option<String>,
+    /// fails, and the `db` call's wrapper crashes the node. With the
+    /// visit it fell on.
+    pub crash_at: Option<(String, super::plan::Key)>,
     pub key: u64,
+    /// S4: this disk's fault sites (crash points, lying syncs), keyed by
+    /// its node's number and the world's clock.
+    pub sites: super::plan::Sites,
+    pub place: u64,
+    pub clock: Arc<AtomicU64>,
+    /// The node's crash plan's restart delay (what a crash point carries).
+    pub restart_after: Option<u64>,
 }
 
 pub type Shared = Arc<Mutex<NodeDisk>>;
@@ -84,13 +93,29 @@ impl NodeDisk {
             events: Vec::new(),
             crash_at: None,
             key: 0,
+            sites: super::plan::Sites::drawn(),
+            place: 0,
+            clock: Arc::new(AtomicU64::new(0)),
+            restart_after: None,
         }
     }
 
-    /// Does this sync lie?
-    pub fn draw_lie(&mut self) -> bool {
+    fn now(&self) -> u64 {
+        self.clock.load(Ordering::Relaxed)
+    }
+
+    /// Does this sync lie? The visit's key when it does.
+    pub fn draw_lie(&mut self) -> Option<super::plan::Key> {
         let p = self.disk.opts.fsync_lies;
-        p > 0.0 && self.rng.random::<f64>() < p
+        if p <= 0.0 {
+            return None;
+        }
+        let drawn = self.rng.random::<f64>() < p;
+        let now = self.now();
+        let d = self
+            .sites
+            .visit(super::plan::Site::FsyncLie, self.place, now, drawn, None);
+        d.fire.then_some(d.key)
     }
 
     /// How long a sync takes, in µs of virtual time.
@@ -99,9 +124,22 @@ impl NodeDisk {
         (base as f64 * self.disk.opts.slow).round() as u64
     }
 
-    /// Does the node crash here?
-    pub fn draw_crash(&mut self) -> bool {
-        self.crash_p > 0.0 && self.crash_rng.random::<f64>() < self.crash_p
+    /// Does the node crash here? The visit's key (carrying the restart
+    /// delay) when it does.
+    pub fn draw_crash(&mut self, restart_after: Option<u64>) -> Option<super::plan::Key> {
+        if self.crash_p <= 0.0 {
+            return None;
+        }
+        let drawn = self.crash_rng.random::<f64>() < self.crash_p;
+        let now = self.now();
+        let d = self.sites.visit(
+            super::plan::Site::CrashPoint,
+            self.place,
+            now,
+            drawn,
+            restart_after,
+        );
+        d.fire.then_some(d.key)
     }
 
     /// One sync of inode `ino` (named `path`), with its faults drawn:
@@ -109,25 +147,25 @@ impl NodeDisk {
     pub fn sync_file(&mut self, ino: u64, path: &str) -> (bool, u64) {
         let lie = self.draw_lie();
         let cost = self.sync_latency_us();
-        self.disk.sync_ino(ino, Some(path), lie);
-        self.events.push(if lie {
-            ("fsync_lie", path.to_string())
+        self.disk.sync_ino(ino, Some(path), lie.is_some());
+        self.events.push(if lie.is_some() {
+            ("fsync_lie", path.to_string(), lie)
         } else {
-            ("fsync", path.to_string())
+            ("fsync", path.to_string(), None)
         });
-        (lie, cost)
+        (lie.is_some(), cost)
     }
 
     pub fn sync_dir(&mut self, dir: &str) -> (bool, u64) {
         let lie = self.draw_lie();
         let cost = self.sync_latency_us();
-        self.disk.sync_dir(dir, lie);
-        self.events.push(if lie {
-            ("fsync_lie", format!("{dir} (directory)"))
+        self.disk.sync_dir(dir, lie.is_some());
+        self.events.push(if lie.is_some() {
+            ("fsync_lie", format!("{dir} (directory)"), lie)
         } else {
-            ("fsync", format!("{dir} (directory)"))
+            ("fsync", format!("{dir} (directory)"), None)
         });
-        (lie, cost)
+        (lie.is_some(), cost)
     }
 
     /// The process is gone (crashed or killed): its locks and its WAL
@@ -387,8 +425,9 @@ fn may_change(g: &mut NodeDisk, h: &Handle, what: &str, code: c_int) -> Result<(
     if g.disk.boot != h.boot || g.crash_at.is_some() {
         return Err(code);
     }
-    if g.draw_crash() {
-        g.crash_at = Some(format!("{what} {}", h.path));
+    let restart = g.restart_after;
+    if let Some(key) = g.draw_crash(restart) {
+        g.crash_at = Some((format!("{what} {}", h.path), key));
         return Err(code);
     }
     Ok(())
@@ -420,7 +459,7 @@ unsafe extern "C" fn x_write(
         match g.disk.write_at(h.ino, off, bytes, now()) {
             Ok(()) => ffi::SQLITE_OK,
             Err(e) if e == disk::NO_SPACE => {
-                g.events.push(("disk_full", h.path.clone()));
+                g.events.push(("disk_full", h.path.clone(), None));
                 ffi::SQLITE_FULL
             }
             Err(_) => ffi::SQLITE_IOERR_WRITE,
@@ -870,8 +909,9 @@ unsafe extern "C" fn x_delete(
         if g.crash_at.is_some() {
             return ffi::SQLITE_IOERR_DELETE;
         }
-        if g.draw_crash() {
-            g.crash_at = Some(format!("xDelete {path}"));
+        let restart = g.restart_after;
+        if let Some(key) = g.draw_crash(restart) {
+            g.crash_at = Some((format!("xDelete {path}"), key));
             return ffi::SQLITE_IOERR_DELETE;
         }
         if g.disk.unlink(&path).is_err() {

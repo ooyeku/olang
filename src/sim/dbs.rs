@@ -55,17 +55,24 @@ fn open(ctx: &Ctx, args: &[Value]) -> Result<Value, InterpreterError> {
     w.yield_point(ctx.task)?;
     let vfs_name = vfs::registered().map_err(misuse)?;
     let owner = NEXT_OWNER.fetch_add(1, Ordering::Relaxed);
-    let (path, exists, boot) = {
-        let st = w.lock();
+    let (path, exists, boot, local) = {
+        let mut st = w.lock();
+        st.db_opens += 1;
+        let local = st.db_opens as i64;
         World::stopped(&st, ctx.task)?;
         let d = vfs::lock(&w.disks[ctx.node]);
         if given.is_empty() || given.as_str() == ":memory:" {
             // An in-memory database: no file; its temporary files are
             // the VFS's own memory.
-            (given.to_string(), true, d.disk.boot)
+            (given.to_string(), true, d.disk.boot, local)
         } else {
             let p = disk::normalize(&st.nodes[ctx.node].cwd, given);
-            (vfs::sqlite_path(d.key, &p), d.disk.exists(&p), d.disk.boot)
+            (
+                vfs::sqlite_path(d.key, &p),
+                d.disk.exists(&p),
+                d.disk.boot,
+                local,
+            )
         }
     };
     let answer = crate::stdlib::db::open_simulated(
@@ -75,6 +82,7 @@ fn open(ctx: &Ctx, args: &[Value]) -> Result<Value, InterpreterError> {
             path,
             exists,
             owner,
+            local,
         },
     )
     .map_err(|e| InterpreterError::runtime(e.to_string()))?;
@@ -151,15 +159,15 @@ fn settle(ctx: &Ctx) -> Result<(), Ended> {
         w.flush_disk(&mut st, ctx.task, ctx.node);
         vfs::lock(&w.disks[ctx.node]).crash_at.clone()
     };
-    if let Some(point) = crash_at {
+    if let Some((point, key)) = crash_at {
         vfs::take_debt_ms();
-        let restart = w.nodes[ctx.node].crash.and_then(|c| c.restart_after);
         let _ = w.halt(
             ctx.task,
             ctx.node,
             super::node::Halt::Crash,
-            restart,
+            key.delay,
             &format!("at {point}"),
+            Some(key),
         );
         return Err(Ended::Crash);
     }

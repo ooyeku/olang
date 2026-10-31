@@ -6124,7 +6124,6 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         // inside it ends at the closing brace instead of replacing a
         // module-level name for every later block in the file (a test's
         // `let fs = …` once shadowed the `fs` module 400 lines down).
-        self.environment = Environment::with_parent(self.environment.clone());
         let outer_test = if self.arg_record.is_some() {
             self.current_test
                 .replace(Arc::from(test_decl.name.as_str()))
@@ -6140,27 +6139,47 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         } else {
             None
         };
-        let mut error = None;
-        let mut located = None;
-        let mut stmt_line = None;
-        for statement in &test_decl.body {
-            if let Statement::Located { line, .. } = statement {
-                stmt_line = Some(*line);
-            }
-            if let Err(e) = self.eval_statement(statement) {
-                error = Some(e.to_string());
-                if events {
-                    located = self.pending_error_location.take();
-                    self.pending_error_frames = None;
+        // A block that runs simulated worlds (`sim`) is a sim test: it runs
+        // once per seed of a small budget (`olang test --seeds N`, 3 by
+        // default), every world it makes taking that seed, and fails on
+        // the first seed that fails, naming it.
+        #[cfg(feature = "native")]
+        let sim_outer = !crate::sim::in_world() && crate::sim::surface::collecting_seed().is_none();
+        #[cfg(feature = "native")]
+        if sim_outer {
+            crate::sim::surface::collect_begin(1);
+        }
+        #[cfg_attr(not(feature = "native"), allow(unused_mut))]
+        let (mut error, mut located, mut stmt_line) = self.run_test_body(&test_decl.body, events);
+        #[cfg(feature = "native")]
+        if sim_outer {
+            let worlds = !crate::sim::surface::collect_end().is_empty();
+            if worlds {
+                let budget = crate::sim::test_seeds();
+                let (_, failed_at_one) = crate::stdlib::testing::tally_snapshot();
+                let mut failed_seed = (error.is_some() || failed_at_one > failed_before).then_some(1);
+                let mut seed = 2;
+                while failed_seed.is_none() && seed <= budget {
+                    crate::sim::surface::collect_begin(seed);
+                    (error, located, stmt_line) = self.run_test_body(&test_decl.body, events);
+                    crate::sim::surface::collect_end();
+                    let (_, failed_now) = crate::stdlib::testing::tally_snapshot();
+                    if error.is_some() || failed_now > failed_before {
+                        failed_seed = Some(seed);
+                    }
+                    seed += 1;
                 }
-                break;
+                if let Some(s) = failed_seed {
+                    let why = error.take().unwrap_or_else(|| "assertions failed".to_string());
+                    error = Some(format!(
+                        "sim seed {s}: {why} (reproduce: its worlds with seed {s}; olang test \
+                         --seeds N widens the search)"
+                    ));
+                }
             }
         }
         if self.arg_record.is_some() {
             self.current_test = outer_test;
-        }
-        if let Some(parent) = self.environment.parent.take() {
-            self.environment = Arc::try_unwrap(parent).unwrap_or_else(|arc| (*arc).clone());
         }
         if error.is_none() {
             let (_, failed_after) = crate::stdlib::testing::tally_snapshot();
@@ -6196,6 +6215,40 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             ms,
         });
         Ok(Value::Unit)
+    }
+
+    /// A test block's statements, in a scope of their own: the error
+    /// that stopped them, where, and the last statement's line.
+    fn run_test_body(
+        &mut self,
+        body: &[Statement],
+        events: bool,
+    ) -> (
+        Option<String>,
+        Option<crate::ast::ErrorLocation>,
+        Option<u32>,
+    ) {
+        self.environment = Environment::with_parent(self.environment.clone());
+        let mut error = None;
+        let mut located = None;
+        let mut stmt_line = None;
+        for statement in body {
+            if let Statement::Located { line, .. } = statement {
+                stmt_line = Some(*line);
+            }
+            if let Err(e) = self.eval_statement(statement) {
+                error = Some(e.to_string());
+                if events {
+                    located = self.pending_error_location.take();
+                    self.pending_error_frames = None;
+                }
+                break;
+            }
+        }
+        if let Some(parent) = self.environment.parent.take() {
+            self.environment = Arc::try_unwrap(parent).unwrap_or_else(|arc| (*arc).clone());
+        }
+        (error, located, stmt_line)
     }
 
     /// Turn on test-runner mode: `test` blocks record outcomes (readable via

@@ -192,7 +192,29 @@ impl World {
     /// Hand `body` to the network, from `from` to `to`.
     fn transmit(&self, st: &mut State, from: NodeId, to: NodeId, reply: u64, body: Body) {
         let what = describe(&body);
-        match st.net.transmit(from, to) {
+        // Loss and duplication are fault sites (`plan.rs`): what the link
+        // drew, or what a forced plan says.
+        let now = st.sched.now;
+        let place = super::plan::link_place(from, to);
+        let mut keys = (None, None);
+        let sites = &mut st.sites;
+        let sent = st.net.transmit_with(from, to, &mut |_link, lost, dup| {
+            let l = sites.visit(super::plan::Site::Loss, place, now, lost, None);
+            keys.0 = l.fire.then_some(l.key);
+            let d = sites.visit(super::plan::Site::Dup, place, now, dup, None);
+            keys.1 = (d.fire && !l.fire).then_some(d.key);
+            (l.fire, d.fire)
+        });
+        let route = || format!("{what} {} → {}", self.node_name(from), self.node_name(to));
+        if let Some(key) = keys.0 {
+            self.record_fault(st, from, "loss", route(), Some(key));
+        }
+        if let Some(key) = keys.1
+            && matches!(sent, Transmit::Deliver(_))
+        {
+            self.record_fault(st, from, "dup", route(), Some(key));
+        }
+        match sent {
             Transmit::Dropped(why) => {
                 match why {
                     super::net::Drop::Loss => st.wire.stats.lost += 1,
@@ -671,7 +693,13 @@ impl World {
 
     // ─── the network, changed while the world runs ───────────────────
 
-    pub(super) fn set_partition(&self, me: TaskId, left: &[NodeId], right: &[NodeId]) {
+    pub(super) fn set_partition(
+        &self,
+        me: TaskId,
+        left: &[NodeId],
+        right: &[NodeId],
+        key: Option<super::plan::Key>,
+    ) {
         let mut st = self.lock();
         st.net.partition(left, right);
         let names = |ns: &[NodeId]| {
@@ -681,6 +709,8 @@ impl World {
                 .join(", ")
         };
         let detail = format!("[{}] | [{}]", names(left), names(right));
+        let node = left.first().copied().unwrap_or(0);
+        self.record_fault(&mut st, node, "partition", detail.clone(), key);
         self.event(&mut st, me, "partition", detail);
     }
 

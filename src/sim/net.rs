@@ -155,6 +155,18 @@ impl Net {
     /// One message from `a` to `b`: what happens to it. A loopback takes
     /// no draws; a cut link takes none either (nothing crosses it).
     pub fn transmit(&mut self, a: NodeId, b: NodeId) -> Transmit {
+        self.transmit_with(a, b, &mut |_, lost, dup| (lost, dup))
+    }
+
+    /// `transmit`, with what the link drew (lost, duplicated) handed to
+    /// `decide`, which answers what happens (a plan's forced decisions:
+    /// `plan.rs`). The draws are the same either way.
+    pub fn transmit_with(
+        &mut self,
+        a: NodeId,
+        b: NodeId,
+        decide: &mut dyn FnMut(Link, bool, bool) -> (bool, bool),
+    ) -> Transmit {
         if a == b {
             return Transmit::Deliver(vec![0]);
         }
@@ -167,6 +179,7 @@ impl Net {
         let first = self.latency(link);
         let dup = self.rng.random::<f64>() < link.dup;
         let second = self.latency(link);
+        let (lost, dup) = decide(link, lost, dup);
         if lost {
             return Transmit::Dropped(Drop::Loss);
         }

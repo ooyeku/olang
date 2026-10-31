@@ -381,6 +381,9 @@ enum Commands {
         /// front matter's default (repeatable)
         #[arg(long = "param", value_name = "NAME=VALUE")]
         params: Vec<String>,
+        /// Seeds each sim test block runs (a block that runs worlds; default 3)
+        #[arg(long, value_name = "N")]
+        seeds: Option<u64>,
     },
 
     /// Compile a program to a self-contained executable
@@ -478,9 +481,13 @@ enum Commands {
 
     /// Run a program in a simulated world: a virtual clock and a seeded scheduler
     Sim {
-        /// The program to run as the world's main program
+        /// The program to run as the world's main program (or a file that
+        /// builds worlds); `shrink PLAN` shrinks a saved plan further
         #[arg(value_name = "FILE")]
-        file: PathBuf,
+        file: Option<PathBuf>,
+        /// With `shrink`: the plan file to shrink
+        #[arg(value_name = "PLAN")]
+        target: Option<PathBuf>,
         /// The seed to run (with --seeds: the first of them; default 1)
         #[arg(long, value_name = "S")]
         seed: Option<u64>,
@@ -496,6 +503,21 @@ enum Commands {
         /// Yield points a run may take before it is called a livelock
         #[arg(long, value_name = "N")]
         max_steps: Option<u64>,
+        /// Run seeds in this many worker processes (results are the same for any J)
+        #[arg(long, value_name = "J")]
+        jobs: Option<usize>,
+        /// Minimise the first failing seed's faults and schedule, and save it under .sim/
+        #[arg(long)]
+        shrink: bool,
+        /// Runs the shrinker may spend (default 300)
+        #[arg(long, value_name = "N")]
+        shrink_budget: Option<usize>,
+        /// Replay a saved plan (.sim/<seed>.simplan) bit for bit
+        #[arg(long, value_name = "PLAN")]
+        replay: Option<PathBuf>,
+        /// Serve seeds on stdin and results on stdout (used by --jobs)
+        #[arg(long, hide = true)]
+        worker: bool,
     },
 
     /// Generate HTML or Markdown API documentation
@@ -920,7 +942,11 @@ fn run() -> i32 {
             record_args,
             fail_if_none,
             params,
+            seeds,
         }) => {
+            if let Some(n) = seeds {
+                olang::sim::set_test_seeds(n);
+            }
             if let Err(code) = notebook_params(&params) {
                 return code;
             }
@@ -945,6 +971,10 @@ fn run() -> i32 {
                 if let Some(only) = &only {
                     argv.push("--only".to_string());
                     argv.push(only.clone());
+                }
+                if let Some(n) = seeds {
+                    argv.push("--seeds".to_string());
+                    argv.push(n.to_string());
                 }
                 if times {
                     argv.push("--times".to_string());
@@ -1234,11 +1264,17 @@ fn run() -> i32 {
 
         Some(Commands::Sim {
             file,
+            target,
             seed,
             seeds,
             run_for,
             events,
             max_steps,
+            jobs,
+            shrink,
+            shrink_budget,
+            replay,
+            worker,
         }) => {
             let run_for = match run_for.as_deref().map(olang::sim::cli::parse_duration) {
                 None => None,
@@ -1248,16 +1284,34 @@ fn run() -> i32 {
                     return 2;
                 }
             };
-            olang::sim::cli::main(
-                &file,
-                &olang::sim::cli::Options {
-                    seed,
-                    seeds,
-                    run_for,
-                    events,
-                    max_steps,
-                },
-            )
+            let opts = olang::sim::cli::Options {
+                seed,
+                seeds,
+                run_for,
+                events,
+                max_steps,
+                jobs,
+                shrink,
+                shrink_budget,
+                replay: replay.clone(),
+                worker,
+            };
+            match (file, target) {
+                (Some(f), Some(plan)) if f.as_os_str() == "shrink" => {
+                    olang::sim::cli::shrink_plan(&plan, &opts)
+                }
+                (Some(f), _) => olang::sim::cli::main(&f, &opts),
+                (None, _) if replay.is_some() => {
+                    olang::sim::cli::main(std::path::Path::new(""), &opts)
+                }
+                (None, _) => {
+                    eprintln!(
+                        "olang sim: give a FILE (olang sim FILE --seeds N), or --replay PLAN, \
+                         or `olang sim shrink PLAN`"
+                    );
+                    2
+                }
+            }
         }
 
         Some(Commands::Doc {
@@ -1556,7 +1610,9 @@ fn missing_path(command: &Commands) -> Option<i32> {
         Commands::Record { file, .. } if gone(file) => say("record", file),
         Commands::Expand { file, .. } if gone(file) => say("expand", file),
         Commands::Replay { trace, .. } if gone(trace) => say("replay", trace),
-        Commands::Sim { file, .. } if gone(file) => say("sim", file),
+        Commands::Sim {
+            file: Some(file), ..
+        } if file.as_os_str() != "shrink" && gone(file) => say("sim", file),
         Commands::Inspect { binary, .. } if gone(binary) => say("inspect", binary),
         Commands::Doctor { path: Some(p) } if gone(p) => say("doctor", p),
         Commands::Caps { path: Some(p), .. } if gone(p) => say("caps", p),

@@ -33,6 +33,7 @@
 
 use super::net::{Link, NodeId};
 use super::node::Kind;
+use super::plan::Site;
 use super::{Config, NodeInfo, Plan, Report, Start};
 use crate::ast::{BuiltinFunction, Value, ValueMap};
 use crate::interpreter::{Interpreter, InterpreterError};
@@ -162,6 +163,48 @@ pub fn create_sim_module() -> Value {
     for unit in ["ms", "seconds", "minutes", "hours"] {
         module.insert(unit.to_string(), builtin(unit, 1));
     }
+    // S4: properties, histories, linearizability
+    for (name, arity) in [
+        ("always", 2),
+        ("never", 2),
+        ("eventually", 3),
+        ("linearizable", 3),
+        ("check", 2),
+        ("record", 2),
+        ("linearize", 3),
+        ("register", 1),
+        ("kv", 0),
+        ("seed", 0),
+    ] {
+        module.insert(name.to_string(), builtin(name, arity));
+    }
+    for (ty, methods) in [
+        ("State", &[("disk", 2), ("history", 2), ("up", 2)][..]),
+        (
+            "Disk",
+            &[
+                ("read", 2),
+                ("read_bytes", 2),
+                ("exists", 2),
+                ("list", 2),
+                ("current", 2),
+                ("query", 4),
+            ][..],
+        ),
+        ("Run", &[("history", 2), ("check", 2)][..]),
+    ] {
+        let mut m = ValueMap::default();
+        for (name, arity) in methods {
+            m.insert(name.to_string(), builtin(&format!("{ty}.{name}"), *arity));
+        }
+        module.insert(
+            ty.to_string(),
+            Value::Struct {
+                type_name: "Module".to_string(),
+                fields: Arc::new(m),
+            },
+        );
+    }
     let mut world = ValueMap::default();
     for (name, arity) in [
         ("run_fn", 3),
@@ -205,6 +248,9 @@ fn misuse(message: impl Into<String>) -> InterpreterError {
 struct Collect {
     seed: u64,
     reports: Vec<Report>,
+    /// S4: the plan forcing each world run of the file, by its number.
+    plans: Option<Vec<super::plan::RunPlan>>,
+    next_index: usize,
 }
 
 thread_local! {
@@ -215,12 +261,38 @@ thread_local! {
 /// on this thread until `collect_end` takes `seed`, and every run's
 /// report is kept.
 pub fn collect_begin(seed: u64) {
+    collect_begin_forced(seed, None);
+}
+
+/// `collect_begin`, with each world run of the file forced by its plan
+/// (`plans[i]` for the i-th run; a run past the list draws).
+pub fn collect_begin_forced(seed: u64, plans: Option<Vec<super::plan::RunPlan>>) {
     COLLECT.with(|c| {
         *c.borrow_mut() = Some(Collect {
             seed,
             reports: Vec::new(),
+            plans,
+            next_index: 0,
         })
     });
+}
+
+/// The next world run's number and the plan forcing it, when `olang sim`
+/// collects.
+fn next_run() -> (usize, Option<super::plan::RunPlan>) {
+    COLLECT.with(|c| match c.borrow_mut().as_mut() {
+        Some(c) => {
+            let i = c.next_index;
+            c.next_index += 1;
+            (i, c.plans.as_ref().and_then(|p| p.get(i).cloned()))
+        }
+        None => (0, None),
+    })
+}
+
+/// The seed `olang sim` (or `olang test`) runs worlds with, if any.
+pub fn collecting_seed() -> Option<u64> {
+    COLLECT.with(|c| c.borrow().as_ref().map(|c| c.seed))
 }
 
 /// The reports of the worlds run since `collect_begin`.
@@ -243,6 +315,30 @@ pub fn call(
     interpreter: &mut Interpreter,
 ) -> Result<Value, InterpreterError> {
     match name {
+        "always" | "never" | "eventually" | "linearizable" => property(name, &args),
+        "check" => check(args, interpreter),
+        "record" => record(&args),
+        "linearize" => linearize_call(&args, interpreter),
+        "register" => {
+            let mut m = ValueMap::default();
+            m.insert("model".into(), s("register"));
+            m.insert("init".into(), args.first().cloned().unwrap_or(Value::Unit));
+            Ok(Value::Map(Arc::new(m)))
+        }
+        "kv" => {
+            let mut m = ValueMap::default();
+            m.insert("model".into(), s("kv"));
+            m.insert("init".into(), Value::Map(Arc::new(ValueMap::default())));
+            Ok(Value::Map(Arc::new(m)))
+        }
+        "seed" => Ok(match (super::current(), collecting_seed()) {
+            (Some(ctx), _) => Value::Integer(ctx.world.seed as i64),
+            (None, Some(seed)) => Value::Integer(seed as i64),
+            (None, None) => Value::Unit,
+        }),
+        m if m.starts_with("State.") || m.starts_with("Disk.") || m.starts_with("Run.") => {
+            view_method(m, args, interpreter)
+        }
         "world" => world(&args),
         "disk" => disk_value(&args),
         "maybe" => match args.as_slice() {
@@ -258,16 +354,16 @@ pub fn call(
                 return Err(misuse(format!("Unknown sim function: sim.{name}")));
             };
             let mut args = args.into_iter();
-            let w = args.next();
-            let w = match &w {
-                Some(Value::Native(h)) => h.0.as_any().downcast_ref::<WorldObject>(),
+            let wv = args.next().unwrap_or(Value::Unit);
+            let w = match &wv {
+                Value::Native(h) => h.0.as_any().downcast_ref::<WorldObject>(),
                 _ => None,
             }
             .ok_or_else(|| misuse(format!("{method} is a method of a world (sim.world)")))?;
             let rest: Vec<Value> = args.collect();
             match method {
-                "run_fn" => run_fn(w, rest, interpreter),
-                "run" => run(w, rest, interpreter),
+                "run_fn" => run_fn(w, &wv, rest, interpreter),
+                "run" => run(w, &wv, rest, interpreter),
                 "node" => node(w, rest, interpreter),
                 "client" => client(w, rest, interpreter),
                 "at" => hook(w, rest, false),
@@ -466,9 +562,10 @@ fn run_for(opts: Option<&Value>, what: &str) -> Result<Option<u64>, InterpreterE
     }
 }
 
-/// `w.run_fn(f, #{ for })`: run `f()` as the world's main program.
+/// `w.run_fn(f, #{ for, props })`: run `f()` as the world's main program.
 fn run_fn(
     world: &WorldObject,
+    wv: &Value,
     args: Vec<Value>,
     interpreter: &mut Interpreter,
 ) -> Result<Value, InterpreterError> {
@@ -482,16 +579,70 @@ fn run_fn(
             f.type_name()
         )));
     }
+    let opts = args.next();
+    let (run_for, props) = run_opts(opts.as_ref(), args.next().as_ref(), "run_fn")?;
+    let report = run_fn_with(world, &f, run_for, props, interpreter)?;
+    collected(&report);
+    let rerun = Rerun {
+        world: wv.clone(),
+        run_for,
+        main: Some(f),
+    };
+    Ok(report_value_with(&report, Some(rerun)))
+}
+
+fn run_fn_with(
+    world: &WorldObject,
+    f: &Value,
+    run_for: Option<u64>,
+    props: Vec<super::props::Property>,
+    interpreter: &mut Interpreter,
+) -> Result<Report, InterpreterError> {
     let mut cfg = world.cfg.clone();
-    cfg.run_for = run_for(args.next().as_ref(), "run_fn")?;
+    cfg.run_for = run_for;
+    let (index, forced) = next_run();
+    cfg.forced = forced;
     // The world runs on the interpreter tier: every builtin through the
     // one dispatch point that sees it (as record and replay run).
     let kept = interpreter.suspend_bytecode_tier();
-    let report = super::run(cfg, || interpreter.call_function(f, Vec::new()));
+    let template = (!props.is_empty()).then(|| interpreter.thread_safe_clone());
+    let f = f.clone();
+    let report = super::run_main_with(cfg, NodeInfo::main(Vec::new()), props, template, || {
+        interpreter.call_function(f, Vec::new())
+    });
     interpreter.resume_bytecode_tier(kept);
-    let report = report.map_err(misuse)?;
-    collected(&report);
-    Ok(report_value(&report))
+    let mut report = report.map_err(misuse)?;
+    report.run_index = index;
+    Ok(report)
+}
+
+/// A run's options: a duration, or `#{ for, props }`; `props` may also
+/// come second (`w.run(sim.hours(1), [props])`).
+fn run_opts(
+    opts: Option<&Value>,
+    second: Option<&Value>,
+    what: &str,
+) -> Result<(Option<u64>, Vec<super::props::Property>), InterpreterError> {
+    let mut props = Vec::new();
+    let run_for = match opts {
+        Some(o @ Value::Map(m)) if m.contains_key("props") => {
+            let mut rest = (**m).clone();
+            if let Some(p) = rest.shift_remove("props") {
+                props = props_of(&p, what)?;
+            }
+            let _ = o;
+            run_for(Some(&Value::Map(Arc::new(rest))), what)?
+        }
+        Some(list @ Value::List(_)) => {
+            props = props_of(list, what)?;
+            None
+        }
+        other => run_for(other, what)?,
+    };
+    if let Some(p) = second {
+        props.extend(props_of(p, what)?);
+    }
+    Ok((run_for, props))
 }
 
 /// A node's name: lowercase letters, digits and `-`, a letter first, so
@@ -732,10 +883,14 @@ fn node_options(info: &mut NodeInfo, opts: &Value, what: &str) -> Result<(), Int
                 }
                 info.crash = Some(super::CrashPlan { p, restart_after });
             }
+            "optional" => match v {
+                Value::Boolean(b) => info.optional = *b,
+                _ => return Err(misuse(format!("{what}: `optional` is true or false"))),
+            },
             other => {
                 return Err(misuse(format!(
                     "{what}: unknown option `{other}` (a node knows env, skew, deny, disk, \
-                     files, cwd, stdin and crash)"
+                     files, cwd, stdin, crash and optional)"
                 )));
             }
         }
@@ -935,7 +1090,10 @@ fn partition(w: &WorldObject, args: Vec<Value>) -> Result<Value, InterpreterErro
                 .iter()
                 .map(|n| resolve(&ctx, n, what))
                 .collect::<Result<Vec<_>, _>>()?;
-            ctx.world.set_partition(ctx.task, &l, &r);
+            let place = l.first().copied().unwrap_or(0);
+            if let Some(key) = forced_call(&ctx, Site::Partition, place, None, what) {
+                ctx.world.set_partition(ctx.task, &l, &r, Some(key));
+            }
         }
         None => w.spec().cuts.push((left, right)),
     }
@@ -969,6 +1127,29 @@ fn restart_after(opts: Option<&Value>, what: &str) -> Result<Option<u64>, Interp
     }
 }
 
+/// A fault called in code: its key when it happens, `None` when a forced
+/// plan leaves it out (then the call does nothing, and says so).
+fn forced_call(
+    ctx: &super::Ctx,
+    site: Site,
+    node: NodeId,
+    delay: Option<u64>,
+    what: &str,
+) -> Option<super::plan::Key> {
+    let d = ctx.world.code_fault(site, node, delay);
+    if d.fire {
+        Some(d.key)
+    } else {
+        let name = ctx.world.nodes[node].name.clone();
+        ctx.world.note(
+            ctx.task,
+            "skipped",
+            format!("{what}({name}): left out by the plan"),
+        );
+        None
+    }
+}
+
 /// `w.crash(n, #{ restart_after })` / `w.kill(n, ...)`, inside the
 /// running world.
 fn halt(
@@ -988,8 +1169,15 @@ fn halt(
     let name = node_name(args.first().unwrap_or(&Value::Unit), what)?;
     let n = resolve(&ctx, &name, what)?;
     let after = restart_after(args.get(1), what)?;
+    let site = match how {
+        super::node::Halt::Crash => Site::Crash,
+        _ => Site::Kill,
+    };
+    let Some(key) = forced_call(&ctx, site, n, after, what) else {
+        return Ok(Value::Unit);
+    };
     ctx.world
-        .halt(ctx.task, n, how, after, what)
+        .halt(ctx.task, n, how, key.delay, what, Some(key))
         .map_err(misuse)?;
     // A node that stops itself stops here.
     super::World::stopped(&ctx.world.lock(), ctx.task)?;
@@ -1007,7 +1195,12 @@ fn stop(w: &WorldObject, args: Vec<Value>) -> Result<Value, InterpreterError> {
     let name = node_name(args.first().unwrap_or(&Value::Unit), what)?;
     let n = resolve(&ctx, &name, what)?;
     let after = restart_after(args.get(1), what)?;
-    ctx.world.stop(ctx.task, n, after).map_err(misuse)?;
+    let Some(key) = forced_call(&ctx, Site::Stop, n, after, what) else {
+        return Ok(Value::Unit);
+    };
+    ctx.world
+        .stop(ctx.task, n, key.delay, Some(key))
+        .map_err(misuse)?;
     super::World::stopped(&ctx.world.lock(), ctx.task)?;
     Ok(Value::Unit)
 }
@@ -1073,15 +1266,34 @@ fn restart(w: &WorldObject, args: Vec<Value>) -> Result<Value, InterpreterError>
     Ok(Value::Unit)
 }
 
-/// `w.run(duration)` / `w.run(#{ for })`: run the world's nodes.
+/// `w.run(duration)` / `w.run(#{ for, props })`: run the world's nodes,
+/// stopping at the first property that breaks.
 fn run(
     w: &WorldObject,
+    wv: &Value,
     args: Vec<Value>,
     interpreter: &mut Interpreter,
 ) -> Result<Value, InterpreterError> {
+    let (run_for, props) = run_opts(args.first(), args.get(1), "w.run")?;
+    let report = run_nodes(w, run_for, props, interpreter)?;
+    collected(&report);
+    let rerun = Rerun {
+        world: wv.clone(),
+        run_for,
+        main: None,
+    };
+    Ok(report_value_with(&report, Some(rerun)))
+}
+
+fn run_nodes(
+    w: &WorldObject,
+    run_for: Option<u64>,
+    props: Vec<super::props::Property>,
+    interpreter: &mut Interpreter,
+) -> Result<Report, InterpreterError> {
     let what = "w.run";
     let mut cfg = w.cfg.clone();
-    cfg.run_for = run_for(args.first(), what)?;
+    cfg.run_for = run_for;
     let spec = w.spec().clone();
     if spec.nodes.iter().all(|(n, _)| n.kind == Kind::Hook) {
         return Err(misuse(
@@ -1107,18 +1319,57 @@ fn run(
             r.iter().map(|n| id(n)).collect::<Result<_, _>>()?,
         ));
     }
+    let (index, forced) = next_run();
+    cfg.forced = forced;
     let kept = interpreter.suspend_bytecode_tier();
     let template = interpreter.thread_safe_clone();
-    let report = super::run_world(cfg, nodes, plan, template, w.id);
+    let report = super::run_world(cfg, nodes, plan, template, w.id, props);
     interpreter.resume_bytecode_tier(kept);
-    let report = report.map_err(misuse)?;
-    collected(&report);
-    Ok(report_value(&report))
+    let mut report = report.map_err(misuse)?;
+    report.run_index = index;
+    Ok(report)
 }
 
 /// A report as olang data.
 pub fn report_value(r: &Report) -> Value {
+    report_value_with(r, None)
+}
+
+/// A report as olang data, with what it takes to run it again
+/// (`sim.check`).
+fn report_value_with(r: &Report, rerun: Option<Rerun>) -> Value {
     let mut m = ValueMap::default();
+    m.insert(
+        "handle".to_string(),
+        Value::Native(NativeHandle::new(RunObject {
+            report: Arc::new(r.clone()),
+            rerun,
+        })),
+    );
+    m.insert(
+        "violation".to_string(),
+        match &r.violation {
+            None => Value::Unit,
+            Some(v) => {
+                let mut e = ValueMap::default();
+                e.insert("property".into(), s(&v.property));
+                e.insert("kind".into(), s(v.kind));
+                e.insert("t".into(), Value::Integer(v.t as i64));
+                e.insert("step".into(), Value::Integer(v.step as i64));
+                e.insert("detail".into(), s(&v.detail));
+                Value::Map(Arc::new(e))
+            }
+        },
+    );
+    m.insert(
+        "preemptions".to_string(),
+        Value::Integer(r.preemptions as i64),
+    );
+    let mut histories = ValueMap::default();
+    for (name, h) in &r.histories {
+        histories.insert(name.clone(), Value::List(h.clone()));
+    }
+    m.insert("histories".to_string(), Value::Map(Arc::new(histories)));
     m.insert("seed".to_string(), Value::Integer(r.seed as i64));
     m.insert("outcome".to_string(), s(r.outcome));
     m.insert("value".to_string(), r.value.clone().unwrap_or(Value::Unit));
@@ -1225,4 +1476,346 @@ pub fn report_value(r: &Report) -> Value {
     }
     m.insert("disks".to_string(), Value::Map(Arc::new(disks)));
     Value::Map(Arc::new(m))
+}
+
+// ─── S4: properties, histories, checks ───────────────────────────────
+
+/// What it takes to run a world again, as `sim.check` does: the world
+/// value, its run's duration, and the main function of a `run_fn`.
+#[derive(Debug, Clone)]
+struct Rerun {
+    world: Value,
+    run_for: Option<u64>,
+    main: Option<Value>,
+}
+
+/// The handle a run's map carries (`run.history(name)`, `run.check`).
+#[derive(Debug)]
+struct RunObject {
+    report: Arc<Report>,
+    rerun: Option<Rerun>,
+}
+
+impl NativeObject for RunObject {
+    fn module(&self) -> &'static str {
+        "sim.Run"
+    }
+    fn type_name(&self) -> &'static str {
+        "Run"
+    }
+    fn display(&self) -> String {
+        format!("<run seed {} {}>", self.report.seed, self.report.outcome)
+    }
+    fn native_eq(&self, other: &dyn NativeObject) -> bool {
+        other
+            .as_any()
+            .downcast_ref::<RunObject>()
+            .is_some_and(|o| Arc::ptr_eq(&o.report, &self.report))
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// The run behind a run's map (or its handle).
+fn run_object(v: &Value) -> Option<&RunObject> {
+    let handle = match v {
+        Value::Map(m) => m.get("handle")?,
+        other => other,
+    };
+    match handle {
+        Value::Native(h) => h.0.as_any().downcast_ref::<RunObject>(),
+        _ => None,
+    }
+}
+
+fn text_arg<'a>(v: Option<&'a Value>, what: &str) -> Result<&'a str, InterpreterError> {
+    match v {
+        Some(Value::String(t)) => Ok(t.as_str()),
+        Some(other) => Err(misuse(format!(
+            "{what} expects a String, got {}",
+            other.type_name()
+        ))),
+        None => Err(misuse(format!("{what} expects a String"))),
+    }
+}
+
+/// `sim.always(name, pred)`, `sim.never(name, pred)`,
+/// `sim.eventually(name, within, pred)`,
+/// `sim.linearizable(name, history, model)`.
+fn property(kind: &str, args: &[Value]) -> Result<Value, InterpreterError> {
+    use super::props::{Hist, Kind, Property, PropertyObject};
+    let what = format!("sim.{kind}");
+    let name = text_arg(args.first(), &format!("{what}: the property's name"))?.to_string();
+    let p = match kind {
+        "always" | "never" => Property {
+            name,
+            kind: if kind == "always" {
+                Kind::Always
+            } else {
+                Kind::Never
+            },
+            pred: function_arg(args.get(1), &format!("{what}(name, pred)"))?,
+        },
+        "eventually" => {
+            let within = match args.get(1) {
+                Some(Value::Integer(ms)) if *ms >= 0 => *ms as u64,
+                _ => {
+                    return Err(misuse(
+                        "sim.eventually(name, within, pred): `within` is virtual ms (sim.seconds(30))",
+                    ));
+                }
+            };
+            Property {
+                name,
+                kind: Kind::Eventually(within),
+                pred: function_arg(args.get(2), "sim.eventually(name, within, pred)")?,
+            }
+        }
+        _ => {
+            let history = match args.get(1) {
+                Some(Value::String(h)) => Hist::Named(h.to_string()),
+                Some(Value::List(h)) => Hist::Given(h.clone()),
+                _ => {
+                    return Err(misuse(
+                        "sim.linearizable(name, history, model): the history is a recorded \
+                         history's name (sim.record) or a list of its entries",
+                    ));
+                }
+            };
+            let model = args.get(2).cloned().ok_or_else(|| {
+                misuse("sim.linearizable(name, history, model): a model (sim.register(0), sim.kv(), #{ init, step })")
+            })?;
+            Property {
+                name,
+                kind: Kind::Linearizable { history, model },
+                pred: Value::Unit,
+            }
+        }
+    };
+    Ok(Value::Native(NativeHandle::new(PropertyObject(p))))
+}
+
+/// A list of properties (or one).
+fn props_of(v: &Value, what: &str) -> Result<Vec<super::props::Property>, InterpreterError> {
+    let one = |v: &Value| -> Result<super::props::Property, InterpreterError> {
+        match v {
+            Value::Native(h) => {
+                h.0.as_any()
+                    .downcast_ref::<super::props::PropertyObject>()
+                    .map(|p| p.0.clone())
+                    .ok_or_else(|| {
+                        misuse(format!(
+                            "{what}: `props` holds properties (sim.always, ...)"
+                        ))
+                    })
+            }
+            other => Err(misuse(format!(
+                "{what}: `props` holds properties (sim.always, sim.never, sim.eventually, \
+                 sim.linearizable), got {}",
+                other.type_name()
+            ))),
+        }
+    };
+    match v {
+        Value::List(items) => items.iter().map(one).collect(),
+        Value::Unit => Ok(Vec::new()),
+        other => Ok(vec![one(other)?]),
+    }
+}
+
+/// `sim.check(run, props)`: do `props` hold of `run`? Linearizability is
+/// checked over the run's recorded histories; any other property runs
+/// the world again with the properties attached (one seed is one run, so
+/// it is the same run, now watched) and stops at the first violation.
+/// Raises naming the property, the virtual time and the step; answers
+/// the run (the watched one, when it ran again).
+fn check(args: Vec<Value>, interpreter: &mut Interpreter) -> Result<Value, InterpreterError> {
+    let what = "sim.check(run, props)";
+    let run = args.first().and_then(run_object).ok_or_else(|| {
+        misuse(format!(
+            "{what}: the first argument is a run (w.run, w.run_fn)"
+        ))
+    })?;
+    let props = props_of(args.get(1).unwrap_or(&Value::Unit), what)?;
+    let report: Report = if props.iter().all(|p| p.at_end_only()) {
+        let mut r = (*run.report).clone();
+        for p in &props {
+            let super::props::Kind::Linearizable { history, model } = &p.kind else {
+                continue;
+            };
+            let entries = match history {
+                super::props::Hist::Given(h) => h.clone(),
+                super::props::Hist::Named(n) => r.histories.get(n).cloned().unwrap_or_default(),
+            };
+            let verdict =
+                super::props::linearize(interpreter, &entries, model, super::props::LIN_MAX_STEPS)
+                    .map_err(|e| misuse(format!("{what}: \"{}\": {e}", p.name)))?;
+            if let super::lin::Verdict::Violation(why) = verdict {
+                r.violation = Some(super::props::Violation {
+                    property: p.name.clone(),
+                    kind: "linearizable",
+                    t: r.now,
+                    step: r.steps,
+                    detail: why,
+                });
+                r.outcome = "violated";
+                r.error = r.violation.as_ref().map(|v| v.describe());
+                collected(&r);
+                break;
+            }
+        }
+        r
+    } else {
+        let Some(rerun) = &run.rerun else {
+            return Err(misuse(format!(
+                "{what}: this run cannot be run again (it came from another check)"
+            )));
+        };
+        let w = match &rerun.world {
+            Value::Native(h) => h.0.as_any().downcast_ref::<WorldObject>(),
+            _ => None,
+        }
+        .ok_or_else(|| misuse(format!("{what}: the run's world is gone")))?;
+        let r = match &rerun.main {
+            Some(f) => run_fn_with(w, f, rerun.run_for, props, interpreter)?,
+            None => run_nodes(w, rerun.run_for, props, interpreter)?,
+        };
+        collected(&r);
+        r
+    };
+    if let Some(v) = &report.violation {
+        return Err(misuse(format!("sim.check: property {}", v.describe())));
+    }
+    Ok(report_value(&report))
+}
+
+/// `sim.record(name, op)`: add an operation to the history `name`
+/// (nothing outside a world).
+fn record(args: &[Value]) -> Result<Value, InterpreterError> {
+    let name = text_arg(args.first(), "sim.record(name, op): the history's name")?;
+    let op = match args.get(1) {
+        Some(Value::Map(m)) => m,
+        _ => {
+            return Err(misuse(
+                "sim.record(name, op): op is #{ type: invoke|ok|fail|info, f, value }",
+            ));
+        }
+    };
+    if let Some(ctx) = super::current() {
+        ctx.world.record(ctx.task, name, op).map_err(misuse)?;
+    }
+    Ok(Value::Unit)
+}
+
+/// `sim.linearize(history, model, #{ max_steps })`: the checker on its own.
+fn linearize_call(
+    args: &[Value],
+    interpreter: &mut Interpreter,
+) -> Result<Value, InterpreterError> {
+    let what = "sim.linearize(history, model)";
+    let history = match args.first() {
+        Some(Value::List(h)) => h.clone(),
+        Some(v) if run_object(v).is_some() => {
+            return Err(misuse(format!(
+                "{what}: give run.history(name), not the run"
+            )));
+        }
+        _ => return Err(misuse(format!("{what}: the history is a list of entries"))),
+    };
+    let model = args.get(1).ok_or_else(|| {
+        misuse(format!(
+            "{what}: a model (sim.register(0), sim.kv(), #{{ init, step }})"
+        ))
+    })?;
+    let max = match args.get(2).and_then(fields_of) {
+        Some(o) => int_field(o, "max_steps", what)?
+            .map(|n| n.max(1) as u64)
+            .unwrap_or(super::props::LIN_MAX_STEPS),
+        None => super::props::LIN_MAX_STEPS,
+    };
+    let verdict = super::props::linearize(interpreter, &history, model, max)
+        .map_err(|e| misuse(format!("{what}: {e}")))?;
+    Ok(super::props::verdict_value(&verdict))
+}
+
+/// `s.disk(n)`, `s.history(name)`, `s.up(n)`; a disk view's reads;
+/// `run.history(name)`, `run.check(props)`.
+fn view_method(
+    name: &str,
+    args: Vec<Value>,
+    interpreter: &mut Interpreter,
+) -> Result<Value, InterpreterError> {
+    let (ty, method) = name.split_once('.').unwrap_or((name, ""));
+    let recv = args.first().cloned().unwrap_or(Value::Unit);
+    let arg = |i: usize, what: &str| {
+        text_arg(args.get(i), &format!("{name}: {what}")).map(str::to_string)
+    };
+    match ty {
+        "State" => {
+            let st = match &recv {
+                Value::Native(h) => h.0.as_any().downcast_ref::<super::props::StateObject>(),
+                _ => None,
+            }
+            .ok_or_else(|| {
+                misuse(format!(
+                    "{method} is a method of a world's state (a predicate's s)"
+                ))
+            })?;
+            let a = arg(1, "a name")?;
+            match method {
+                "disk" => st.disk(&a),
+                "history" => st.history(&a),
+                "up" => st.up(&a),
+                _ => Err(format!("unknown method sim.{name}")),
+            }
+            .map_err(misuse)
+        }
+        "Disk" => {
+            let d = match &recv {
+                Value::Native(h) => h.0.as_any().downcast_ref::<super::props::DiskObject>(),
+                _ => None,
+            }
+            .ok_or_else(|| {
+                misuse(format!(
+                    "{method} is a method of a disk view (s.disk(node))"
+                ))
+            })?;
+            let a = arg(1, "a path")?;
+            match method {
+                "read" => d.read(&a, false),
+                "read_bytes" => d.read(&a, true),
+                "exists" => d.exists(&a),
+                "list" => d.list(&a),
+                "current" => d.current(&a),
+                "query" => {
+                    let sql = arg(2, "the SQL")?;
+                    let params = match args.get(3) {
+                        Some(Value::List(p)) => p.to_vec(),
+                        _ => Vec::new(),
+                    };
+                    d.query(&a, &sql, &params)
+                }
+                _ => Err(format!("unknown method sim.{name}")),
+            }
+            .map_err(misuse)
+        }
+        _ => {
+            let run = run_object(&recv)
+                .ok_or_else(|| misuse(format!("{method} is a method of a run (w.run)")))?;
+            match method {
+                "history" => {
+                    let a = arg(1, "the history's name")?;
+                    Ok(Value::List(
+                        run.report.histories.get(&a).cloned().unwrap_or_default(),
+                    ))
+                }
+                "check" => check(
+                    vec![recv.clone(), args.get(1).cloned().unwrap_or(Value::Unit)],
+                    interpreter,
+                ),
+                _ => Err(misuse(format!("unknown method sim.{name}"))),
+            }
+        }
+    }
 }
