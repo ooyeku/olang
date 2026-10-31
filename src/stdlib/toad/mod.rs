@@ -1140,7 +1140,13 @@ fn frame(layers: &Value, view: &Value) -> R {
             }));
         }
         let renderer = st.renderer.as_mut().unwrap();
-        let px = renderer.frame(&view, &parts, want_png, live.as_deref());
+        // `cpu`: the frame's pixels too, published for a window drawn in
+        // software (Studio's canvas runs a game headless)
+        let cpu = live.is_some() && matches!(vm.get("cpu"), Some(Value::Boolean(true)));
+        let px = renderer.frame(&view, &parts, want_png || cpu, live.as_deref());
+        if cpu && let (Some(n), Some(p)) = (&live, &px) {
+            crate::stdlib::gui::live::publish_pixels(n, view.size.0, view.size.1, p.clone());
+        }
         let ms = t0.elapsed().as_secs_f64() * 1000.0;
         let mut out = ValueMap::default();
         out.insert("ms".into(), Value::Float(ms));

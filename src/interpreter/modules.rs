@@ -622,6 +622,7 @@ already binds — an import never replaces a program's own name. Alias the impor
     /// raised `Undefined variable` on the interpreter tier).
     pub fn load_module_at(&mut self, file: &std::path::Path) -> Result<Value, InterpreterError> {
         let dir = file.parent().map(|d| d.to_path_buf()).unwrap_or_default();
+        self.add_project_dependencies(&dir);
         let forgotten = self.take_modules_under(&dir);
         let name = file.to_string_lossy().to_string();
         let loaded = self.load_module_resolved(file.to_path_buf(), &name);
@@ -890,8 +891,12 @@ already binds — an import never replaces a program's own name. Alias the impor
         self.module_cache
             .insert(file_path_str.clone(), placeholder_entry);
 
-        // Execute the module and collect exports
-        let result = {
+        // Execute the module and collect exports. A closure, not a block: a
+        // `?` or `return` inside stops the module, not this function, so
+        // the importer's environment is always given back below (a failed
+        // load once left the importer inside the failed module's scope).
+        #[allow(clippy::redundant_closure_call)]
+        let result = (|| -> Result<Value, InterpreterError> {
             let mut exports = crate::ast::ValueMap::default();
             let mut dependencies = Vec::new();
 
@@ -1126,7 +1131,7 @@ already binds — an import never replaces a program's own name. Alias the impor
             )?;
 
             Ok(module)
-        };
+        })();
 
         // Restore original environment and module path
         self.environment = saved_env;
@@ -1287,6 +1292,27 @@ already binds — an import never replaces a program's own name. Alias the impor
     pub fn set_dependency_map(&mut self, map: HashMap<String, std::path::PathBuf>) {
         crate::vfs::note_package_roots(&map);
         self.dependency_map = map;
+    }
+
+    /// The dependencies of the project holding `dir` (its nearest
+    /// `olang.toml`), added where the map has no package of that name: a
+    /// module loaded from another project (`runtime.load_module`: Studio's
+    /// canvas running an app) finds its own packages, `use toad` the
+    /// project's Toad rather than the standard module of that name.
+    pub fn add_project_dependencies(&mut self, dir: &std::path::Path) {
+        let Some(root) = crate::pkg::manifest::Manifest::find_root(dir) else {
+            return;
+        };
+        let opts = crate::pkg::InstallOptions {
+            registry: std::env::var("OLANG_REGISTRY").ok().map(std::path::PathBuf::from),
+            ..Default::default()
+        };
+        let (map, _missing) = crate::pkg::install_lenient(&root, &opts);
+        let fresh: HashMap<String, std::path::PathBuf> =
+            map.into_iter().filter(|(k, _)| !self.dependency_map.contains_key(k)).collect();
+        if !fresh.is_empty() {
+            self.add_to_dependency_map(fresh);
+        }
     }
 
     /// Merge entries into the dependency map without clearing existing ones,

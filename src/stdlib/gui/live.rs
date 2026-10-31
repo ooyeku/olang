@@ -84,6 +84,26 @@ pub fn publish(name: &str, view: wgpu::TextureView, w: u32, h: u32) -> u64 {
     id
 }
 
+/// Publish a frame's pixels (RGBA8, `w` × `h`, display-encoded and
+/// opaque) as `name`'s picture: for a window drawn in software (headless,
+/// Studio's canvas), which draws pixels, not textures. Answers its id.
+pub fn publish_pixels(name: &str, w: u32, h: u32, rgba: Vec<u8>) -> u64 {
+    let id = super::canvas::next_picture_id();
+    let pic = Arc::new(Picture { id, width: w, height: h, rgba });
+    if let Ok(mut m) = LIVE.lock() {
+        let e = m.get_or_insert_with(HashMap::new).entry(name.to_string()).or_insert_with(|| Entry {
+            pic: pic.clone(),
+            ids: Vec::new(),
+            shown: false,
+            at: std::time::Instant::now(),
+        });
+        e.pic = pic;
+        e.shown = false;
+        e.at = std::time::Instant::now();
+    }
+    id
+}
+
 /// A window drew `name`'s picture `id`.
 pub fn shown(name: &str, id: u64) {
     if let Ok(mut m) = LIVE.lock()

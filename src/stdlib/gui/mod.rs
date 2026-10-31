@@ -1283,6 +1283,16 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
         _ => {}
     }
     let input = input_of(&args[1])?;
+    // the pointer and its buttons as a platform's would be held: a game
+    // run headless (Studio's canvas) reads them as it reads the mouse
+    if let Input::Pointer { action, x, y, button, .. } = &input {
+        keys::device_pointer(*x, *y);
+        match action {
+            PointerAction::Down => keys::device_press(&format!("mouse:{button}")),
+            PointerAction::Up => keys::device_release(&format!("mouse:{button}")),
+            _ => {}
+        }
+    }
     let mut out = Vec::new();
     // A headless window's key, as the platform moves it: `window_focus`
     // makes the window key (or not), and a press in a window that is not
