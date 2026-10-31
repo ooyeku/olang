@@ -4,16 +4,18 @@ Part of [the olang book](README.md) · [Language reference](language.md) ·
 [Standard library reference](stdlib.md) ·
 [Architecture and internals](internals.md)
 
-This chapter is the reference for the `olang` command line: running
-programs, the test runner, the formatter, the rewriting tools, the
-static checker, the REPL and its editor protocol, benchmarks and the
-profiler, standalone executables, documentation, record and replay, and
-tier statistics. Everything that touches a *project* — scaffolding,
-dependencies, the library shelf, toolchains and the project benchmark
-harness — is the companion tool `otc`, described in
-[Packages and dependencies](packages.md). Notebooks have
-[their own chapter](notebooks.md), and so does the language server
-([Editor support](editors.md)).
+This chapter is the reference for the `olang` command: running
+programs, testing them, formatting and checking them, the REPL, the
+profiler, building standalone executables, generating documentation, and
+recording runs so you can replay them later. It is written to be looked
+things up in, so each command has its own section.
+
+A few jobs live elsewhere. Anything to do with a whole project, such as
+creating one, adding dependencies or managing your shelf of libraries,
+belongs to the companion tool `otc`, covered in [Packages and
+dependencies](packages.md). Notebooks have [their own
+chapter](notebooks.md), and so does the language server that editors
+talk to ([Editor support](editors.md)).
 
 ## Table of contents
 
@@ -135,7 +137,7 @@ consumer ignores fields it does not know. The documents:
 
 ## `olang test`
 
-Discovers and runs [`test` blocks](language.md#testing) across a directory:
+`olang test` finds the [`test` blocks](language.md#testing) in a folder and runs them:
 
 ```bash
 olang test              # everything under the current directory
@@ -324,7 +326,9 @@ run it when you want the report, not on every save.
 
 ## `olang fmt`
 
-A conservative, safety-verified formatter:
+`olang fmt` tidies the layout of your source files. It is cautious by
+design: it checks that every file it rewrites still means exactly the
+same program, and leaves the file alone if not.
 
 ```bash
 olang fmt                 # format the current directory, in place
@@ -332,7 +336,8 @@ olang fmt src/ lib/       # specific paths
 olang fmt --check .       # report what would change; non-zero exit (CI)
 ```
 
-Two layers, applied only *outside* string literals and comments.
+It works in two layers, and never touches the inside of strings or
+comments.
 
 **Line hygiene**: CRLF line endings become LF, trailing whitespace is
 stripped, leading tabs become 4 spaces, runs of blank lines collapse
@@ -414,8 +419,9 @@ the file is left untouched and reported. A second run changes nothing.
 
 ## `olang fix guards`, `defaults`, `first-last`, `units`
 
-Four more rewrites, built as `olang fix maps` is: the places come from the grammar's parse tree, the text is changed
-only there (layout and comments stay byte for byte), parentheses are
+These four rewrites work the same way as `olang fix maps`. The places
+to change come from the grammar's parse tree, the text is changed only
+there (layout and comments stay byte for byte), parentheses are
 added only where precedence needs them, and a file whose rewrite would
 read back as a different program is left untouched and reported. Each
 runs to its fixed point, so a second run changes nothing.
@@ -496,10 +502,12 @@ left, as for `olang fix maps`.
 
 ## `olang check`
 
-Everything the compiler can tell you before the program runs, in three
-classes of finding: type errors an annotation provably contradicts (the
-static side of [gradual typing](types.md)), scope and mutability errors
-that refuse a program before it runs, and advisory warnings.
+`olang check` tells you everything the compiler can work out before the
+program runs. Its findings come in three kinds: type errors that an
+annotation provably contradicts (the static side of [gradual
+typing](types.md)), scope and mutability errors that would stop the
+program from running, and advisory warnings about code that works but
+probably isn't what you meant.
 
 ```bash
 olang check               # every .ol file under the current directory
@@ -1407,7 +1415,9 @@ dependency keeps it).
 
 ## `olang bench`
 
-Reproducible timings for `.ol` programs, and a regression guard:
+`olang bench` times `.ol` programs in a repeatable way, and can compare
+a run against a saved baseline so you notice when something gets
+slower:
 
 ```bash
 olang bench kernels/                     # every .ol file in the directory
@@ -1464,7 +1474,8 @@ baseline as it does without `--format`.
 
 ## `olang profile`
 
-Where a program spends its time, per function, **and on which tier**:
+`olang profile` shows where a program spends its time, function by
+function, and which tier ran each one:
 
 ```bash
 olang profile report.ol                  # sample at 1 kHz, list the top 20
@@ -1611,8 +1622,8 @@ since it sees Rust symbols, not olang functions.
 
 ## `olang build`
 
-Bundle a program into a **standalone executable** — a single file that
-runs on a machine with no olang installed:
+`olang build` bundles a program into a standalone executable: a single
+file that runs on a machine with no olang installed.
 
 ```bash
 olang build examples/tools/watch/main.ol            # → ./main
@@ -1667,7 +1678,7 @@ which `olang inspect` reads and verifies: see
 
 ## `olang doc`
 
-Generate an API reference from doc comments:
+`olang doc` turns your doc comments into an API reference:
 
 ```bash
 olang doc src/                    # → doc.html (themed, browsable)
@@ -1777,7 +1788,7 @@ one program. This is the mode for pasting several statements at once.
 
 ## `olang --watch`
 
-The edit-run loop as a flag:
+`--watch` reruns a program every time you save:
 
 ```bash
 olang --watch script.ol       # rerun whenever any .ol or .olmd file nearby changes
@@ -1790,8 +1801,10 @@ save landing mid-run queues an immediate rerun. Ctrl+C stops both.
 
 ## `olang record` and `olang replay` — the Open Timeline
 
-Record a run's nondeterministic inputs to a portable trace, then replay
-the run bit-for-bit — anywhere, any time:
+A bug that depends on a random number, the time of day or a network
+reply is hard to catch, because the next run is different. The Open
+Timeline is olang's answer: record a run once, and you can replay it
+exactly, as many times as you like, anywhere.
 
 ```bash
 olang record program.ol             # run, logging every nondeterministic input;
@@ -1799,63 +1812,89 @@ olang record program.ol             # run, logging every nondeterministic input;
 olang replay program.olt            # re-run: identical, from the trace alone
 ```
 
-`olang record <file>` is the command form. When you are already invoking
-a file directly, the `--record <trace>` run option does the same thing:
+`olang record <file>` is the command form. If you are already running a
+file directly, the `--record <trace>` run option does the same thing:
 `olang --record bug.olt program.ol`.
 
-A program can only observe nondeterminism through a small, explicit set
-of stdlib calls — `random.*`, the clocks in `time`, the
-environment/stdin/`exec` surface of `os`, filesystem reads, `http`, and
-the seeded-random parts of `crypto`. `--record` performs each such call
-for real and logs its result in order; `replay` intercepts the same
-calls and returns the logged results instead. Because olang programs are
-deterministic given their inputs (immutable values, capture-by-value
-closures, a seeded RNG), reproducing the inputs reproduces the entire
-run — the same random rolls, the same timestamps, the same environment,
-down to the last digit.
+Here is the whole idea on a program that rolls three dice. The trace
+file replays the run even after the program is deleted:
 
-The `.olt` trace embeds the program source, so it is self-contained: replay
-works from a directory where the program does not exist, on another machine,
-at a later time. A crashed run is also recorded — the trace is written as the
-run fails — so the failure replays exactly and can be re-examined as many
-times as needed.
+```bash
+$ olang record dice.ol
+rolled [5, 2, 6], total 13
+$ rm dice.ol
+$ olang replay dice.olt
+rolled [5, 2, 6], total 13
+olang replay: clean — 3 recorded event(s) reproduced
+```
 
-Replay is honest about drift. If the program's sequence of
-nondeterministic calls no longer matches the trace — a *different* call,
-or the *same* call with *different arguments* — replay stops at the exact
-point and says so, rather than silently producing a different run. The
-trace records a fingerprint of each call's arguments for that check, and
-map iteration order is deterministic (the order its keys were set), so the two never
-disagree by accident. A clean replay is a proof that the recorded inputs
-fully determined the run.
+### How it works
 
-The database and the other threads are in the model. Every `db.` call
-is recorded — the connection handle `db.open` answers included, so a
-replay never opens the database: the handle replays, and every query
-and statement on it replays after it. The trace is the main thread's
-view of the program: what it receives from other threads — a
-`chan.recv`, `chan.recv_timeout`, `chan.try_recv`, or `chan.ask`
-answer, a `task.join` result — is logged in the order it arrived, and
-`chan.send` is logged too, so a replay fills no channel. A `spawn`ed
-task has a stream of its own: every event carries the thread that made
-it (0 for the main thread, the task's spawn number otherwise), the task
-records its database calls, random draws, and channel sends under its
-id, and under replay it runs against that stream — its effects are
-served, not repeated, so a worker that wrote a database while recording
-writes nothing on replay. A program that spawns in the same order meets
-the same streams. A message may carry a handle rather than data — the
-reply channel of `#{ req, reply }`, a task — and a handle is logged as
-a marker and revived as a fresh one under replay; every operation on it
-replays from the log, so the revived handle is never really used. A
-task that diverges from its stream fails the replay: the verdict is
-"clean" only when every thread reproduced.
+A program can only see the unpredictable outside world through a small,
+fixed set of standard library calls: `random.*`, the clocks in `time`,
+the environment, standard input and `exec` in `os`, file reads, `http`,
+and the parts of `crypto` that draw random numbers. When recording, olang
+makes each of those calls for real and writes down its result, in order.
+When replaying, it catches the same calls and hands back the results it
+wrote down.
 
-Two limits apply. Record/replay runs on the interpreter tier (the
-one dispatch point that sees every builtin), so a recorded run forgoes
-the bytecode tier — a debugging tool, not a hot path. And an
-`http.serve` worker is not traced: its requests arrive in an order no
-trace can pin, so its effects run live and a recorded server says so
-once on stderr.
+Everything else in an olang program is already predictable. Values never
+change, closures copy what they capture, and the random generator is
+seeded. So once the inputs are the same, the whole run is the same: the
+same dice, the same timestamps, the same environment, down to the last
+digit.
+
+The `.olt` trace carries the program's source inside it, so it is
+self-contained. It replays from a folder where the program doesn't
+exist, on another machine, or months later. A run that crashes is
+recorded too, because the trace is written as the run fails, so you can
+re-examine the failure as often as you need.
+
+Replay is honest when things no longer line up. If the program now
+makes a different call from the one in the trace, or the same call with
+different arguments, replay stops at that exact point and tells you,
+instead of quietly producing a different run. To make that check, the
+trace stores a fingerprint of each call's arguments. Map iteration order
+is also fixed (keys come back in the order they were set), so the two
+never disagree by accident. A clean replay is proof that the recorded
+inputs fully determined the run.
+
+### Databases and threads
+
+The database and other threads are covered as well. Every `db.` call is
+recorded, including the connection handle `db.open` returns, so a
+replay never opens the database at all: the handle is replayed, and so
+is every query and statement made through it.
+
+The trace is the main thread's view of the program. Whatever it receives
+from other threads (a `chan.recv`, `chan.recv_timeout`, `chan.try_recv`
+or `chan.ask` answer, or a `task.join` result) is logged in the order it
+arrived. `chan.send` is logged too, so a replay fills no channel.
+
+A `spawn`ed task gets a stream of its own. Every event records which
+thread made it (0 for the main thread, otherwise the task's spawn
+number), and a task's database calls, random draws and channel sends are
+logged under its number. During replay the task runs against its own
+stream: its effects are served from the log rather than repeated, so a
+worker that wrote to a database while recording writes nothing on
+replay. A program that spawns its tasks in the same order meets the same
+streams.
+
+A message can carry a handle instead of data, such as the reply channel
+in `#{ req, reply }`, or a task. A handle is logged as a marker and
+revived as a fresh one during replay. Every operation on it replays from
+the log, so the revived handle is never really used. If any task drifts
+from its stream, the replay fails: the verdict is "clean" only when every
+thread reproduced.
+
+### Limits
+
+There are two. Recording and replay run on the interpreter tier, the
+one place that sees every built-in call, so a recorded run gives up the
+faster tiers. It is a debugging tool, not something for a hot path. And
+an `http.serve` worker is not traced: requests arrive in an order no
+trace could pin down, so a server's handlers run live, and a recorded
+server says so once on stderr.
 
 ## Tier statistics (`--ovm-stats=json`)
 
