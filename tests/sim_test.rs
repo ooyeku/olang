@@ -12,6 +12,12 @@
 //! duplication and partitions; one seed is one world, event for event;
 //! a partition-only bug is found by `olang sim --seeds` and replayed by
 //! `--seed`.
+//!
+//! S4 (the tests after `// ─── S4`): properties that pass and break,
+//! the linearizability checker on known histories, the S2 and S3 bugs
+//! caught as linearizability and durability violations, `--jobs` giving
+//! the same results as one process, and the shrinker taking a noisy
+//! failing world down to the fault that matters, replayed bit for bit.
 
 use olang::Value;
 use olang::interpreter::Interpreter;
@@ -1163,15 +1169,398 @@ fn olang_track_keeps_every_acknowledged_issue_through_kills_and_stops() {
 }
 
 #[test]
-fn olang_track_loses_acknowledged_issues_when_the_power_goes() {
-    // Its database runs WAL at synchronous=NORMAL (Shuttle's `harden`):
-    // a commit is not synced until a checkpoint, so a power cut takes the
-    // issues acknowledged since the last one. A process crash never does.
+fn olang_track_runs_the_same_on_one_job_and_three() {
+    // A real application in one process, seed after seed, gives what a
+    // fresh worker gives: no process-wide counter (a connection's id, a
+    // channel's) reaches a run.
     let Some(dir) = olang_track() else {
         eprintln!("skipped: no olang-track checkout (and shelf) beside this one");
         return;
     };
-    let (code, err) = track_sim(&dir, "power", &["--seeds", "3"]);
+    let (c1, e1) = track_sim(&dir, "power", &["--seeds", "3", "--jobs", "1"]);
+    let (c3, e3) = track_sim(&dir, "power", &["--seeds", "3", "--jobs", "3"]);
+    assert_eq!((c1, c3), (0, 0), "{e1}\n{e3}");
+    assert_eq!(digest_of(&e1), digest_of(&e3), "{e1}\n{e3}");
+}
+
+#[test]
+fn olang_track_keeps_acknowledged_issues_through_power_cuts() {
+    // S3 found WAL at synchronous=NORMAL losing the issues acknowledged
+    // since the last checkpoint to a power cut; olang-track now syncs
+    // every commit (synchronous=FULL, its commit cc4fd13), and power cuts
+    // lose nothing acknowledged. Run across two worker processes.
+    let Some(dir) = olang_track() else {
+        eprintln!("skipped: no olang-track checkout (and shelf) beside this one");
+        return;
+    };
+    let (code, err) = track_sim(&dir, "power", &["--seeds", "2", "--jobs", "2"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(err.contains("2 passed"), "{err}");
+}
+
+// ─── S4: properties, search and shrinking ────────────────────────────
+
+/// A history-driven world: `n` writes, each recorded as invoked and, `gap`
+/// ms later, completed, with `gap` ms between them. (Without the pause
+/// between, a write would complete and the next be invoked within one
+/// millisecond, and no check would ever see none open: properties are
+/// checked at instants.)
+const PROPS: &str = r#"
+fn work(n, gap) = {
+    for i in range(0, n) {
+        sim.record("ops", #{ "type": "invoke", "f": "write", "value": i })
+        time.sleep(gap)
+        sim.record("ops", #{ "type": "ok" })
+        time.sleep(gap)
+    }
+    n
+}
+fn pending(s) = {
+    let h = s.history("ops")
+    len(filter(h, (e) => e.type == "invoke")) - len(filter(h, (e) => e.type == "ok"))
+}
+"#;
+
+#[test]
+fn always_never_and_eventually_hold_and_break_with_the_time_and_step() {
+    let v = eval(&format!(
+        r#"{PROPS}
+let w = sim.world(#{{ "seed": 3 }})
+let ok = w.run_fn(() => work(5, 100), #{{ "props": [
+    sim.always("at most one open", (s) => pending(s) <= 1),
+    sim.never("time runs backwards", (s) => s.now < 0),
+    sim.eventually("every write completes", 150, (s) => pending(s) == 0)
+] }})
+let always = w.run_fn(() => work(5, 100), #{{ "props": [sim.always("fewer than 3 writes", (s) => len(s.history("ops")) < 6)] }})
+let never = w.run_fn(() => work(5, 100), [sim.never("a third write", (s) => len(s.history("ops")) >= 5)])
+let slow = w.run_fn(() => work(3, 1000), #{{ "props": [sim.eventually("every write completes", 150, (s) => pending(s) == 0)] }})
+let raises = w.run_fn(() => work(2, 10), #{{ "props": [sim.always("bad", (s) => 1 / 0 == 1)] }})
+let effect = w.run_fn(() => work(2, 10), #{{ "props": [sim.always("peeks", (s) => time.now_ms() > 0)] }})
+[ok.outcome, ok.violation, always.violation, never.violation, slow.violation, raises.violation.detail, effect.violation.detail]
+"#
+    ));
+    let out = list(&v);
+    assert_eq!(s(&out[0]), "done", "{out:?}");
+    assert_eq!(out[1], Value::Unit);
+    let always = &out[2];
+    assert_eq!(s(&field(always, "property")), "fewer than 3 writes");
+    assert_eq!(s(&field(always, "kind")), "always");
+    assert_eq!(int(&field(always, "t")), 500, "the third write's completion, at 500 ms");
+    assert!(int(&field(always, "step")) > 0);
+    let never = &out[3];
+    assert_eq!(s(&field(never, "property")), "a third write");
+    assert_eq!(int(&field(never, "t")), 400, "the third write's invoke");
+    let slow = &out[4];
+    assert_eq!(s(&field(slow, "kind")), "eventually");
+    assert_eq!(
+        int(&field(slow, "t")),
+        151,
+        "reported at the stretch's deadline, though nothing happens then"
+    );
+    assert!(s(&out[5]).contains("its predicate raised"), "{}", s(&out[5]));
+    assert!(s(&out[6]).contains("cannot call time.now_ms"), "{}", s(&out[6]));
+}
+
+#[test]
+fn properties_given_to_w_run_stop_it_and_sim_check_runs_it_again_watched() {
+    let v = eval_here(
+        r#"
+use log_props { acked_puts_are_durable }
+use log_world { run_store }
+let run = run_store("ack_then_sync", 1)
+let found = attempt(() => sim.check(run, [acked_puts_are_durable()]))
+let fine = sim.check(run_store("sync_then_ack", 1), [acked_puts_are_durable()])
+[run.outcome, run.handle != (), len(run.history("puts")) > 10, found, fine.outcome]
+"#,
+    );
+    let out = list(&v);
+    assert_eq!(s(&out[0]), "failed", "unwatched, the writer's own check fails it later");
+    assert_eq!(out[1], Value::Boolean(true));
+    assert_eq!(out[2], Value::Boolean(true), "run.history(name) answers the history");
+    let found = s(&out[3]);
+    assert!(
+        found.contains("sim.check: property")
+            && found.contains("an acknowledged put is on the store's disk")
+            && found.contains("broke at 0."),
+        "{found}"
+    );
+    assert_eq!(s(&out[4]), "done");
+}
+
+#[test]
+fn a_predicate_reads_a_node_disk_as_a_power_cut_would_leave_it() {
+    // The predicate raises with what it saw once the client has written:
+    // the violation's detail carries it.
+    let v = eval_here(
+        r#"
+let w = sim.world(#{ "seed": 1 })
+w.client("n", () => {
+    unwrap(fs.write_file("/a", "synced"))
+    unwrap(fs.sync("/a"))
+    unwrap(fs.write_file("/a", "pending"))
+    unwrap(fs.write_file("/b", "never synced"))
+    time.sleep(10)
+})
+let run = w.run(#{ "props": [sim.always("snapshot", (s) => {
+    let d = s.disk("n")
+    let views = [d.read("/a"), d.current("/a"), d.read("/b"), d.exists("/b"), d.current("/b"), d.exists("/a")]
+    if views[1] == "pending" => { assert(false, to_string(views)); true } else => true
+})] })
+[run.violation.t, run.violation.detail]
+"#,
+    );
+    let out = list(&v);
+    let t = int(&out[0]);
+    assert!((1..=3).contains(&t), "the instant the sync (1–3 ms) returns: {t}");
+    let detail = s(&out[1]);
+    assert!(
+        detail.contains(r#"["synced", "pending", (), false, "never synced", true]"#),
+        "{detail}"
+    );
+}
+
+#[test]
+fn a_predicate_queries_the_durable_image_of_a_sqlite_database() {
+    // Acknowledged puts must be rows of the database as a power cut would
+    // leave it: true on an honest disk, false when fsync lies.
+    let src = |lies: &str| {
+        format!(
+            r#"
+use log_client {{ writer }}
+fn acked(s) = fold(s.history("puts"), #{{}}, (acc, e) =>
+    if e.type == "ok" => map_set(acc, e.value[0], e.value[1]) else => acc)
+fn durable(s) = match s.disk("store").query("/data/kv.db", "SELECT key, version FROM kv WHERE version > ?", [0]) {{
+    Ok(rows) => fold(rows, #{{}}, (acc, r) => map_set(acc, r.key, r.version)),
+    Err(e) => #{{}}
+}}
+let w = sim.world(#{{ "seed": 2, "net": #{{ "latency": (1, 20) }} }})
+w.node("store", ["olang", "sqlite_store.ol"], #{{ "disk": sim.disk(#{{ "fsync_lies": {lies} }}) }})
+w.client("w1", () => writer("http://store:7600", "k1", sim.seconds(20)))
+let run = w.run(#{{ "for": sim.seconds(30), "props": [sim.always("acked puts are durable rows", (s) => {{
+    let d = durable(s)
+    let a = acked(s)
+    all(map_keys(a), (k) => (map_get(d, k) ?? 0) >= map_get(a, k))
+}})] }})
+[run.outcome, len(run.history("puts"))]
+"#
+        )
+    };
+    let honest = list(&eval_here(&src("0")));
+    assert_eq!(s(&honest[0]), "done", "{honest:?}");
+    assert!(int(&honest[1]) > 20, "{honest:?}");
+    let lying = list(&eval_here(&src("1.0")));
+    assert_eq!(s(&lying[0]), "violated", "{lying:?}");
+}
+
+#[test]
+fn the_linearizability_checker_is_right_on_known_histories() {
+    let v = eval(
+        r#"
+fn e(t, p, f, v) = #{ "type": t, "process": p, "f": f, "value": v }
+fn ok(p, v) = #{ "type": "ok", "process": p, "value": v }
+fn verdict(h, m) = sim.linearize(h, m).verdict
+// a write overlapping two reads that see old, then new: fine
+let fine = [e("invoke", "w", "write", 1), e("invoke", "a", "read", ()), ok("a", 0),
+    e("invoke", "b", "read", ()), ok("b", 1), ok("w", ())]
+// new, then old, after the first read finished: no order explains it
+let flip = [e("invoke", "w", "write", 1), e("invoke", "a", "read", ()), ok("a", 1),
+    e("invoke", "b", "read", ()), ok("b", 0), ok("w", ())]
+// a timed-out write may or may not have happened, but not both
+let maybe = [e("invoke", "w", "write", 5), #{ "type": "info", "process": "w" },
+    e("invoke", "a", "read", ()), ok("a", 5)]
+let both = maybe + [e("invoke", "a", "read", ()), ok("a", 0)]
+// two compare-and-sets from 0 both succeeding
+let cas = [e("invoke", "a", "cas", [0, 1]), e("invoke", "b", "cas", [0, 2]), ok("a", ()), ok("b", ())]
+// a model in olang: a counter whose `inc` answers the new value
+let counter = #{ "init": 0, "step": (st, op) =>
+    if op.f == "inc" => (if !op.known || op.output == st + 1 => Ok(st + 1) else => Err("wrong count"))
+    else => Err("unknown op") }
+let incs = [e("invoke", "a", "inc", ()), e("invoke", "b", "inc", ()), ok("b", 1), ok("a", 2)]
+let twice = [e("invoke", "a", "inc", ()), ok("a", 1), e("invoke", "b", "inc", ()), ok("b", 3)]
+[verdict(fine, sim.register(0)), verdict(flip, sim.register(0)), verdict(maybe, sim.register(0)),
+ verdict(both, sim.register(0)), verdict(cas, sim.register(0)),
+ verdict(incs, counter), verdict(twice, counter),
+ sim.linearize(flip, sim.register(0), #{ "max_steps": 2 }).verdict]
+"#,
+    );
+    let got: Vec<String> = list(&v).iter().map(s).collect();
+    assert_eq!(
+        got,
+        [
+            "linearizable",
+            "violation",
+            "linearizable",
+            "violation",
+            "violation",
+            "linearizable",
+            "violation",
+            "unknown"
+        ]
+    );
+}
+
+#[test]
+fn the_kv_partition_bug_is_a_linearizability_violation() {
+    let file = fixture("kv_linear.ol");
+    let (code, _, err) = sim(&[file.to_str().unwrap(), "--seeds", "16", "--jobs", "4"]);
+    assert_eq!(code, 1, "no seed broke linearizability:\n{err}");
+    assert!(
+        err.contains("\"every add counts once\" broke at") && err.contains("no order of the"),
+        "{err}"
+    );
+    // with clients that retry under the same id, every seed is linearizable
+    let out = Command::new(olang())
+        .arg("sim")
+        .arg(&file)
+        .args(["--seeds", "8", "--jobs", "4"])
+        .env("KV_BUGGY", "0")
+        .output()
+        .expect("run olang sim");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    assert!(err.contains("8 passed"), "{err}");
+}
+
+#[test]
+fn the_log_bug_is_a_durability_violation_and_the_safe_store_holds() {
+    let (code, _, err) = sim(&[fixture("log_durable_bug.ol").to_str().unwrap(), "--seeds", "4"]);
     assert_eq!(code, 1, "{err}");
-    assert!(err.contains("lost an acknowledged write"), "{err}");
+    assert_eq!(
+        err.matches("\"an acknowledged put is on the store's disk\" broke at").count(),
+        4,
+        "{err}"
+    );
+    let (code, _, err) = sim(&[fixture("log_durable_safe.ol").to_str().unwrap(), "--seeds", "4", "--jobs", "2"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(err.contains("4 passed"), "{err}");
+}
+
+fn digest_of(err: &str) -> String {
+    err.lines()
+        .find_map(|l| l.strip_prefix("digest: "))
+        .unwrap_or_else(|| panic!("no digest in:\n{err}"))
+        .to_string()
+}
+
+#[test]
+fn one_job_and_four_jobs_give_the_same_results() {
+    for (file, seeds) in [("kv_linear.ol", "8"), ("log_bug.ol", "8"), ("sqlite_lies.ol", "4")] {
+        let path = fixture(file);
+        let path = path.to_str().unwrap();
+        let (c1, _, e1) = sim(&[path, "--seeds", seeds, "--jobs", "1"]);
+        let (c4, _, e4) = sim(&[path, "--seeds", seeds, "--jobs", "4"]);
+        assert_eq!(c1, c4, "{file}");
+        assert_eq!(digest_of(&e1), digest_of(&e4), "{file}:\n{e1}\n{e4}");
+        let failures = |e: &str| -> Vec<String> {
+            e.lines().filter(|l| l.starts_with("seed ")).map(String::from).collect()
+        };
+        assert_eq!(failures(&e1), failures(&e4), "{file}");
+        assert!(e4.contains("4 job(s)"), "{e4}");
+    }
+}
+
+#[test]
+fn a_recorded_run_comes_back_exactly_from_its_plan() {
+    for file in ["log_bug.ol", "kv_partition_bug.ol", "sqlite_lies.ol"] {
+        let path = fixture(file);
+        let (first, plans) =
+            olang::sim::cli::run_builder_forced(&path, 5, None).expect("runs");
+        assert!(first.plannable_faults() > 0, "{file}: no faults");
+        let (again, _) =
+            olang::sim::cli::run_builder_forced(&path, 5, Some(plans.clone())).expect("runs");
+        assert_eq!(first.digest(), again.digest(), "{file}");
+        assert_eq!(first.events, again.events, "{file}");
+        // with no faults at all, another run
+        let mut none = plans.clone();
+        for p in &mut none {
+            p.faults.clear();
+        }
+        let (quiet, _) = olang::sim::cli::run_builder_forced(&path, 5, Some(none)).expect("runs");
+        assert_eq!(quiet.plannable_faults(), 0, "{file}");
+        assert_ne!(quiet.digest(), first.digest(), "{file}");
+    }
+}
+
+#[test]
+fn the_shrinker_takes_a_noisy_world_down_to_its_one_fault_and_it_replays() {
+    let dir = std::env::temp_dir().join(format!("olang-sim-shrink-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = fixture("log_noisy.ol");
+    let run = |args: &[&str]| {
+        let out = Command::new(olang())
+            .arg("sim")
+            .args(args)
+            .current_dir(&dir)
+            .output()
+            .expect("run olang sim");
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        )
+    };
+    let (code, err) = run(&[file.to_str().unwrap(), "--seed", "1", "--shrink", "--jobs", "2"]);
+    assert_eq!(code, 1, "{err}");
+    let line = err
+        .lines()
+        .find(|l| l.starts_with("shrunk: "))
+        .unwrap_or_else(|| panic!("no shrink line:\n{err}"));
+    let before: usize = line["shrunk: ".len()..]
+        .split(' ')
+        .next()
+        .and_then(|n| n.parse().ok())
+        .unwrap();
+    assert!(before >= 20, "a noisy world: {line}");
+    assert!(line.contains("→ 1 ·"), "{line}");
+    assert!(line.contains("left out: spare"), "{line}");
+    assert!(err.contains("crash      store"), "the fault left is the store's power cut:\n{err}");
+    let plan = dir.join(".sim/1.simplan");
+    assert!(plan.is_file(), "{err}");
+    // the plan replays bit for bit, every time
+    for _ in 0..2 {
+        let (code, err) = run(&["--replay", plan.to_str().unwrap()]);
+        assert_eq!(code, 1, "{err}");
+        assert!(err.contains("replayed") && err.contains("bit for bit"), "{err}");
+        assert!(err.contains("lost an acknowledged write"), "{err}");
+    }
+    // a shrunk plan shrinks no further
+    let (code, err) = run(&["shrink", plan.to_str().unwrap()]);
+    assert_eq!(code, 0, "{err}");
+    assert!(err.contains("shrunk: 1 fault → 1"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn olang_test_runs_sim_blocks_over_a_few_seeds() {
+    let file = fixture("sim_blocks_test.ol");
+    let out = Command::new(olang())
+        .arg("test")
+        .arg(&file)
+        .output()
+        .expect("run olang test");
+    let text = String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains("3 passed, 0 failed"), "{text}");
+    // a block that fails on one seed names it; --seeds widens the search
+    let dir = std::env::temp_dir().join(format!("olang-sim-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let t = dir.join("seeded_test.ol");
+    std::fs::write(
+        &t,
+        "test \"not seed 5\" {\n    let run = sim.world(#{}).run_fn(() => sim.seed())\n    assert(run.value != 5, \"seed five\")\n}\n",
+    )
+    .unwrap();
+    let run = |extra: &[&str]| {
+        let out = Command::new(olang()).arg("test").arg(&t).args(extra).output().unwrap();
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr),
+        )
+    };
+    let (code, text) = run(&[]);
+    assert_eq!(code, Some(0), "three seeds do not reach 5: {text}");
+    let (code, text) = run(&["--seeds", "6"]);
+    assert_eq!(code, Some(1), "{text}");
+    assert!(text.contains("sim seed 5: "), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

@@ -433,9 +433,17 @@ pub fn transaction_enter(conn: &Value) -> Option<TxGuard> {
 }
 
 /// A connection handle is a struct { id: Integer }; pull the id back out.
+/// The registry's key is its handle's when it has one: a connection a
+/// simulated world opened shows the world's own number as `id` (so a run
+/// renders the same in any process), and its handle holds the key.
 fn connection_id(value: &Value) -> Result<i64, Value> {
     match value {
         Value::Struct { type_name, fields } if type_name == "Connection" => {
+            if let Some(Value::Native(h)) = fields.get("handle")
+                && let Some(ConnectionOwner { id: Some(id) }) = h.0.as_any().downcast_ref()
+            {
+                return Ok(*id);
+            }
             match fields.get("id") {
                 Some(Value::Integer(id)) => Ok(*id),
                 _ => Err(err("db: malformed connection handle")),
@@ -1187,6 +1195,8 @@ pub struct SimOpen<'a> {
     pub exists: bool,
     /// The world's number for the connection (never 0).
     pub owner: u64,
+    /// The connection's number within its world (1, 2, ...): its `id`.
+    pub local: i64,
 }
 
 /// The owner of a connection or a cursor: 0 for one on the real file
@@ -1337,7 +1347,8 @@ fn open_with(
     reg.connections.insert(id, entry);
 
     let mut fields = crate::ast::ValueMap::default();
-    fields.insert("id".to_string(), Value::Integer(id));
+    let shown = sim.as_ref().map(|s| s.local).unwrap_or(id);
+    fields.insert("id".to_string(), Value::Integer(shown));
     fields.insert("path".to_string(), string(path));
     fields.insert("handle".to_string(), connection_owner(id));
     Ok(ok(Value::Struct {

@@ -37,6 +37,26 @@ fn until_answered(name, body, buggy) = {
     (tries, value)
 }
 
+/// `client`, recording every add and the final read in the history "kv"
+/// (sim.record) and checking nothing itself: a linearizability property
+/// does the checking (kv_linear.ol). The server answers an add with the
+/// key's new total, so an add that counted twice shows in the history.
+share fn recorded_client(name, buggy, until) = {
+    let mut adds = 0
+    while time.monotonic_ms() < until {
+        time.sleep(random.randint(500, 3000))
+        adds = adds + 1
+        let id = name + "-" + to_string(adds)
+        sim.record("kv", #{ "type": "invoke", "f": "add", "value": [name, 1] })
+        let (tries, v) = until_answered(name, #{ "op": "add", "key": name, "by": 1, "id": id }, buggy)
+        sim.record("kv", #{ "type": "ok", "value": v })
+    }
+    sim.record("kv", #{ "type": "invoke", "f": "get", "value": [name] })
+    let (tries, total) = until_answered(name, #{ "op": "get", "key": name, "id": name + "-read" }, false)
+    sim.record("kv", #{ "type": "ok", "value": total })
+    #{ "adds": adds, "total": total }
+}
+
 share fn client(name, buggy, until) = {
     let mut adds = 0
     let mut retries = 0

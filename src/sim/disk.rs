@@ -696,6 +696,61 @@ impl Disk {
         }
     }
 
+    /// What would be left of `path` if the power went now, as bytes:
+    /// its durable contents under its durable name (S4: properties read
+    /// a node's disk this way). `None` when the name is not durable.
+    pub fn durable_read(&self, path: &str) -> Option<&[u8]> {
+        match self.durable.get(path)? {
+            Entry::File(ino) => self.inodes.get(ino).map(|i| i.durable.as_slice()),
+            Entry::Dir => None,
+        }
+    }
+
+    /// The durable names directly in `dir`.
+    pub fn durable_list(&self, dir: &str) -> Option<Vec<String>> {
+        if !matches!(self.durable.get(dir), Some(Entry::Dir)) {
+            return None;
+        }
+        Some(
+            self.durable
+                .keys()
+                .filter(|p| child_of(dir, p))
+                .map(|p| p.rsplit('/').next().unwrap_or("").to_string())
+                .collect(),
+        )
+    }
+
+    /// The disk as a power cut now would leave it, with no tearing: a
+    /// copy holding only what is durable (for reading a database's
+    /// durable state with SQLite, `props.rs`).
+    pub fn durable_image(&self) -> Disk {
+        let mut image = Disk {
+            opts: DiskOpts::default(),
+            inodes: BTreeMap::new(),
+            next_ino: self.next_ino,
+            names: self.durable.clone(),
+            durable: self.durable.clone(),
+            boot: 0,
+            stats: DiskStats::default(),
+        };
+        for e in self.durable.values() {
+            if let Entry::File(ino) = e
+                && let Some(i) = self.inodes.get(ino)
+            {
+                image.inodes.insert(
+                    *ino,
+                    Inode {
+                        data: i.durable.clone(),
+                        durable: i.durable.clone(),
+                        pending: Vec::new(),
+                        modified: i.modified,
+                    },
+                );
+            }
+        }
+        image
+    }
+
     /// The process dies but the machine stays up: nothing written is
     /// lost; files the dead process held are no longer its.
     pub fn kill(&mut self) {

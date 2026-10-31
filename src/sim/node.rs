@@ -86,6 +86,9 @@ pub struct NodeInfo {
     /// Its program's package dependencies (name → directory), resolved
     /// as `olang run` resolves them, when it lives in a package.
     pub deps: Option<HashMap<String, PathBuf>>,
+    /// S4: the world-builder lets the shrinker leave it out
+    /// (`#{ optional: true }`).
+    pub optional: bool,
 }
 
 /// Crashes the seed places: at every effect a node's tasks make (and
@@ -122,6 +125,7 @@ impl NodeInfo {
             stdin: None,
             crash: None,
             deps: None,
+            optional: false,
         }
     }
 
@@ -233,9 +237,10 @@ pub fn run_world(
     plan: Plan,
     template: Interpreter,
     spec: u64,
+    props: Vec<super::props::Property>,
 ) -> Result<Report, String> {
     let (infos, starts): (Vec<NodeInfo>, Vec<Start>) = nodes.into_iter().unzip();
-    let world = Arc::new(World::new(&cfg, infos, starts, Some(template), spec));
+    let world = Arc::new(World::new(&cfg, infos, starts, Some(template), spec, props));
     {
         let mut st = world.lock();
         for (a, b, link) in &plan.links {
@@ -253,15 +258,27 @@ fn coordinate() -> Result<Value, InterpreterError> {
     let ctx = current().ok_or_else(|| misuse("sim: the coordinator runs inside its world"))?;
     let w = &ctx.world;
     for n in 1..w.nodes.len() {
+        if w.dropped[n] {
+            // left out by the plan: a node that never starts
+            let mut st = w.lock();
+            st.nodes[n].up = false;
+            st.nodes[n].exit = Some(Ok(Value::Unit));
+            let detail = format!("{} (left out by the plan)", w.nodes[n].name);
+            w.event(&mut st, 0, "dropped", detail);
+            continue;
+        }
         start_node(w, 0, n)?;
     }
     let watched: Vec<NodeId> = {
+        let live = |n: &NodeId| !w.dropped[*n];
         let clients: Vec<NodeId> = (1..w.nodes.len())
             .filter(|n| w.nodes[*n].kind == Kind::Client)
+            .filter(live)
             .collect();
         if clients.is_empty() {
             (1..w.nodes.len())
                 .filter(|n| w.nodes[*n].kind == Kind::Program)
+                .filter(live)
                 .collect()
         } else {
             clients
@@ -436,7 +453,7 @@ impl World {
                     } else {
                         "its program returned".to_string()
                     };
-                    self.halt_locked(st, me, n, Halt::Exit, &why);
+                    self.halt_locked(st, me, n, Halt::Exit, &why, None);
                 }
             } else if is_main {
                 st.nodes[n].exit.get_or_insert(Err("crashed".into()));
@@ -455,6 +472,7 @@ impl World {
         n: NodeId,
         how: Halt,
         cause: &str,
+        key: Option<super::plan::Key>,
     ) -> String {
         let lost = {
             let mut d = vfs::lock(&self.disks[n]);
@@ -512,8 +530,8 @@ impl World {
             _ => format!("{} ({cause})", self.nodes[n].name),
         };
         match how {
-            Halt::Crash => self.fault(st, Some(me), n, "crash", detail),
-            Halt::Kill => self.fault(st, Some(me), n, "kill", detail),
+            Halt::Crash => self.fault_at(st, Some(me), n, "crash", detail, key),
+            Halt::Kill => self.fault_at(st, Some(me), n, "kill", detail, key),
             Halt::Exit => self.event(st, me, "exit", detail),
         }
         st.sched.wake(Wait::Stdin(n));
@@ -530,6 +548,7 @@ impl World {
         how: Halt,
         restart_after: Option<u64>,
         cause: &str,
+        key: Option<super::plan::Key>,
     ) -> Result<(), String> {
         let verb = match how {
             Halt::Crash => "w.crash",
@@ -548,7 +567,7 @@ impl World {
                 Some(ms) => format!("{cause}, restart after {ms} ms"),
                 None => cause.to_string(),
             };
-            self.halt_locked(&mut st, me, n, how, &cause);
+            self.halt_locked(&mut st, me, n, how, &cause, key);
             st.nodes[n].restart_pending = restart_after.is_some();
         }
         if let Some(ms) = restart_after {
@@ -605,6 +624,7 @@ impl World {
         me: TaskId,
         n: NodeId,
         restart_after: Option<u64>,
+        key: Option<super::plan::Key>,
     ) -> Result<(), String> {
         if n == 0 {
             return Err("w.stop: the world itself cannot stop".into());
@@ -622,6 +642,7 @@ impl World {
                 Halt::Kill,
                 restart_after,
                 "w.stop: no shutdown handler",
+                key,
             );
         }
         {
@@ -636,7 +657,7 @@ impl World {
                 self.nodes[n].name,
                 handlers.len()
             );
-            self.fault(&mut st, Some(me), n, "stop", detail);
+            self.fault_at(&mut st, Some(me), n, "stop", detail, key);
         }
         for (mut interpreter, handler) in handlers {
             spawn_task(self, me, n, None, "shutdown handler", move || {

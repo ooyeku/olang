@@ -48,9 +48,13 @@ pub mod disk;
 mod files;
 pub mod http;
 mod life;
+pub mod lin;
 pub mod net;
 mod node;
+pub mod plan;
+pub mod props;
 pub mod sched;
+pub mod shrink;
 pub mod surface;
 mod vfs;
 mod wire;
@@ -89,6 +93,8 @@ pub struct Config {
     pub max_steps: u64,
     /// What a link does unless `w.link` says otherwise.
     pub net: net::Link,
+    /// S4: the fault decisions to force instead of drawing (`plan.rs`).
+    pub forced: Option<plan::RunPlan>,
 }
 
 impl Default for Config {
@@ -99,6 +105,7 @@ impl Default for Config {
             run_for: None,
             max_steps: DEFAULT_MAX_STEPS,
             net: net::Link::default(),
+            forced: None,
         }
     }
 }
@@ -146,6 +153,21 @@ pub struct Report {
     pub faults: Vec<Fault>,
     /// Each node's disk, as the run left it: (node, what it did).
     pub disks: Vec<(String, disk::DiskStats)>,
+    /// S4: every fault that fired, as a plan that forces this run again
+    /// (`plan.rs`), with the nodes it left out and its schedule.
+    pub plan: plan::RunPlan,
+    /// The property that broke, when one did (`props.rs`).
+    pub violation: Option<props::Violation>,
+    /// Yield points at which a task that could have gone on lost the baton.
+    pub preemptions: u64,
+    /// What `sim.record` recorded, by name (`run.history(name)`).
+    pub histories: BTreeMap<String, Arc<Vec<Value>>>,
+    /// The nodes the world-builder marked `optional` (the shrinker may
+    /// leave them out).
+    pub optional: Vec<String>,
+    /// Which world run of its file this is (0 first): a plan file forces
+    /// each run of a file by its number.
+    pub run_index: usize,
 }
 
 /// A fault the world injected: when, where, what, and the yield point
@@ -157,6 +179,9 @@ pub struct Fault {
     pub kind: &'static str,
     pub detail: String,
     pub step: u64,
+    /// The visit it fired on, when the fault is one a plan can force (a
+    /// full disk is a consequence, not a decision: none).
+    pub key: Option<plan::Key>,
 }
 
 impl Report {
@@ -178,13 +203,106 @@ impl Report {
             net: NetStats::default(),
             faults: Vec::new(),
             disks: Vec::new(),
+            plan: plan::RunPlan::default(),
+            violation: None,
+            preemptions: 0,
+            histories: BTreeMap::new(),
+            optional: Vec::new(),
+            run_index: 0,
         }
     }
 
     /// Whether this run is a failure worth a seed: the main program
-    /// raised, every task deadlocked, or the run never settled.
+    /// raised, every task deadlocked, the run never settled, or a
+    /// property broke.
     pub fn failed(&self) -> bool {
-        matches!(self.outcome, "failed" | "deadlock" | "step_limit")
+        matches!(
+            self.outcome,
+            "failed" | "deadlock" | "step_limit" | "violated"
+        )
+    }
+
+    /// The faults a plan can force (what the shrinker counts).
+    pub fn plannable_faults(&self) -> usize {
+        self.faults.iter().filter(|f| f.key.is_some()).count()
+    }
+
+    /// What kind of failure this is, the same however the run got there:
+    /// the property's name when one broke, else the outcome and the error
+    /// with its numbers taken out (`client w# : ... version #`). The
+    /// shrinker keeps a change only when the failure keeps its signature.
+    pub fn signature(&self) -> String {
+        if let Some(v) = &self.violation {
+            return format!("property {}", v.property);
+        }
+        let text = self.error.as_deref().unwrap_or("");
+        let first = text.lines().next().unwrap_or("");
+        let mut out = String::with_capacity(first.len());
+        let mut digits = false;
+        for c in first.chars() {
+            if c.is_ascii_digit() {
+                if !digits {
+                    out.push('#');
+                }
+                digits = true;
+            } else {
+                digits = false;
+                out.push(c);
+            }
+        }
+        format!("{}: {out}", self.outcome)
+    }
+
+    /// A hash of everything the run did (events, faults, outcome, time,
+    /// steps), the same on every machine and in every process: two runs
+    /// are the same run when their digests are equal.
+    pub fn digest(&self) -> u64 {
+        let mut h = Fnv::new();
+        h.str(self.outcome);
+        h.u64(self.now);
+        h.u64(self.steps);
+        h.str(self.error.as_deref().unwrap_or(""));
+        for e in &self.events {
+            h.u64(e.t);
+            h.str(&e.node);
+            h.u64(e.task.map(|t| t as u64 + 1).unwrap_or(0));
+            h.str(e.kind);
+            h.str(&e.detail);
+        }
+        for f in &self.faults {
+            h.u64(f.t);
+            h.str(&f.node);
+            h.str(f.kind);
+            h.str(&f.detail);
+            h.u64(f.step);
+        }
+        if let Some(v) = &self.violation {
+            h.str(&v.property);
+            h.u64(v.t);
+            h.u64(v.step);
+        }
+        h.0
+    }
+}
+
+/// FNV-1a, 64 bits: a digest that is the same everywhere.
+pub(crate) struct Fnv(pub u64);
+
+impl Fnv {
+    pub fn new() -> Fnv {
+        Fnv(0xcbf2_9ce4_8422_2325)
+    }
+    pub fn bytes(&mut self, b: &[u8]) {
+        for x in b {
+            self.0 = (self.0 ^ *x as u64).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    pub fn str(&mut self, s: &str) {
+        self.u64(s.len() as u64);
+        self.bytes(s.as_bytes());
+    }
+    pub fn u64(&mut self, n: u64) {
+        self.bytes(&n.to_le_bytes());
     }
 }
 
@@ -231,6 +349,21 @@ struct State {
     db_owners: BTreeMap<u64, (NodeId, u64)>,
     /// `db.transaction` in progress: connection → (task, depth).
     tx: BTreeMap<i64, (TaskId, usize)>,
+    /// S4: the world's fault sites (code, buggify points, the network);
+    /// each disk keeps its own (`vfs::NodeDisk`).
+    sites: plan::Sites,
+    /// `sim.record`: each history, as the olang values `run.history`
+    /// answers (shared, so a property reads one without copying it).
+    histories: BTreeMap<String, Arc<Vec<Value>>>,
+    record_seq: u64,
+    /// The property that broke.
+    violation: Option<props::Violation>,
+    /// Tasks each node has started so far: a node's k-th task draws from
+    /// its own k-th stream, whatever the other nodes do (so leaving an
+    /// optional node out moves no other node's draws).
+    node_tasks: Vec<u64>,
+    /// Connections `db.open` made in this world (each one's `id`).
+    db_opens: u64,
 }
 
 /// A simulated world. Shared (`Arc`) by every task thread in it.
@@ -255,6 +388,13 @@ pub struct World {
     /// `os.on_shutdown` handlers per node: each with the interpreter
     /// clone it registered.
     handlers: Mutex<BTreeMap<NodeId, Vec<(Interpreter, Value)>>>,
+    /// The virtual clock, readable without the state's lock (a disk's
+    /// fault sites key their visits by it).
+    clock: Arc<std::sync::atomic::AtomicU64>,
+    /// S4: the properties checked as the world runs (`props.rs`).
+    checker: Option<Mutex<props::Checker>>,
+    /// Optional nodes the plan leaves out: never started.
+    dropped: Vec<bool>,
 }
 
 impl Drop for World {
@@ -304,11 +444,58 @@ impl World {
         starts: Vec<Start>,
         template: Option<Interpreter>,
         spec: u64,
+        props: Vec<props::Property>,
     ) -> World {
         let mut sched = Sched::new(sched::split(cfg.seed, 1));
         sched.deadline = cfg.run_for;
         sched.max_steps = cfg.max_steps;
         let node_states = nodes.iter().map(node::NodeState::new).collect();
+        let clock = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let nodes_len = nodes.len();
+        // A forced run: each site answers from the plan (`plan.rs`).
+        let node_id = |name: &str| nodes.iter().position(|n| &*n.name == name);
+        let resolved: Vec<(plan::Site, u64, u64, u64, Option<u64>)> = cfg
+            .forced
+            .iter()
+            .flat_map(|p| p.faults.iter())
+            .filter_map(|e| {
+                let site = plan::Site::from_name(&e.site)?;
+                let place = plan::place_of(site, &e.at, &node_id)?;
+                Some((site, place, e.t, e.k, e.delay))
+            })
+            .collect();
+        let disk_site = |s: plan::Site| matches!(s, plan::Site::CrashPoint | plan::Site::FsyncLie);
+        let sites_for = |node: Option<usize>| match &cfg.forced {
+            None => plan::Sites::drawn(),
+            Some(_) => plan::Sites::forced(resolved.iter().copied().filter(|e| match node {
+                Some(n) => disk_site(e.0) && e.1 == n as u64,
+                None => !disk_site(e.0),
+            })),
+        };
+        let dropped: Vec<bool> = nodes
+            .iter()
+            .map(|n| {
+                n.optional
+                    && cfg
+                        .forced
+                        .as_ref()
+                        .is_some_and(|p| p.drop.iter().any(|d| d == &*n.name))
+            })
+            .collect();
+        if let Some(p) = &cfg.forced
+            && p.stick > 0.0
+        {
+            sched.set_stick(p.stick, sched::split(cfg.seed, 7));
+        }
+        if !props.is_empty() {
+            sched.checking = true;
+        }
+        let checker = (!props.is_empty()).then(|| {
+            Mutex::new(props::Checker::new(
+                props,
+                template.as_ref().map(|t| t.thread_safe_clone()),
+            ))
+        });
         let disks = nodes
             .iter()
             .enumerate()
@@ -323,12 +510,12 @@ impl World {
                     StdRng::seed_from_u64(sched::split(sched::split(cfg.seed, n), i as u64))
                 };
                 let crash_p = info.crash.map(|c| c.p).unwrap_or(0.0);
-                let nd = Arc::new(Mutex::new(vfs::NodeDisk::new(
-                    d,
-                    stream(3),
-                    stream(4),
-                    crash_p,
-                )));
+                let mut node_disk = vfs::NodeDisk::new(d, stream(3), stream(4), crash_p);
+                node_disk.place = i as u64;
+                node_disk.restart_after = info.crash.and_then(|c| c.restart_after);
+                node_disk.sites = sites_for(Some(i));
+                node_disk.clock = clock.clone();
+                let nd = Arc::new(Mutex::new(node_disk));
                 vfs::register(&nd);
                 nd
             })
@@ -361,9 +548,18 @@ impl World {
                 maybe_rng: StdRng::seed_from_u64(sched::split(cfg.seed, 5)),
                 db_owners: BTreeMap::new(),
                 tx: BTreeMap::new(),
+                sites: sites_for(None),
+                histories: BTreeMap::new(),
+                record_seq: 0,
+                violation: None,
+                node_tasks: vec![0; nodes_len],
+                db_opens: 0,
             }),
             disks,
             handlers: Mutex::new(BTreeMap::new()),
+            clock,
+            checker,
+            dropped,
         }
     }
 
@@ -372,7 +568,8 @@ impl World {
     }
 
     /// Task `t`'s own random stream, split from the world's seed by
-    /// (node, task). Node 0's streams are S1's (seed, task) ones.
+    /// (node, task). Node 0's streams are S1's (seed, task) ones; another
+    /// node's `t` is the task's number within its node.
     fn task_rng(&self, node: NodeId, t: TaskId) -> Arc<Mutex<StdRng>> {
         let seed = if node == 0 {
             sched::split(self.seed, 1_000 + t as u64)
@@ -410,14 +607,41 @@ impl World {
 
     /// Choose who runs next (`Sched::next`), handling every delivery
     /// that falls due on the way.
-    fn pick(&self, st: &mut State) -> Result<TaskId, End> {
+    ///
+    /// With properties, the scheduler stops before the clock moves on (and
+    /// before the world ends) to have them checked: the lock is let go
+    /// while they run (the baton stays here, so nothing else runs), and a
+    /// property that breaks ends the world.
+    fn pick<'a>(
+        &'a self,
+        mut st: MutexGuard<'a, State>,
+    ) -> (MutexGuard<'a, State>, Result<TaskId, End>) {
         let mut counted = true;
+        let prev = st.running;
         loop {
-            match st.sched.next(counted)? {
-                Pick::Run(t) => return Ok(t),
-                Pick::Deliver(id) => {
+            match st.sched.next(counted, prev) {
+                Err(end) => return (st, Err(end)),
+                Ok(Pick::Run(t)) => {
+                    self.clock
+                        .store(st.sched.now, std::sync::atomic::Ordering::Relaxed);
+                    return (st, Ok(t));
+                }
+                Ok(Pick::Deliver(id)) => {
                     counted = false;
-                    self.deliver(st, id);
+                    self.clock
+                        .store(st.sched.now, std::sync::atomic::Ordering::Relaxed);
+                    self.deliver(&mut st, id);
+                }
+                Ok(Pick::Check) => {
+                    counted = false;
+                    let (now, step) = (st.sched.now, st.sched.steps);
+                    drop(st);
+                    let broke = self.check_props(now, step, false);
+                    st = self.lock();
+                    if let Some(v) = broke {
+                        st.violation = Some(v);
+                        return (st, Err(End::Violated));
+                    }
                 }
             }
         }
@@ -444,6 +668,39 @@ impl World {
         kind: &'static str,
         detail: String,
     ) {
+        self.fault_at(st, task, node, kind, detail, None)
+    }
+
+    /// A fault the world records without an event of its own (the
+    /// network's drops and duplicates, a partition: each has its event).
+    fn record_fault(
+        &self,
+        st: &mut State,
+        node: NodeId,
+        kind: &'static str,
+        detail: String,
+        key: Option<plan::Key>,
+    ) {
+        st.faults.push(Fault {
+            t: st.sched.now,
+            node: self.nodes[node].name.clone(),
+            kind,
+            detail,
+            step: st.sched.steps,
+            key,
+        });
+    }
+
+    /// `fault`, with the visit it fired on (`plan.rs`).
+    fn fault_at(
+        &self,
+        st: &mut State,
+        task: Option<TaskId>,
+        node: NodeId,
+        kind: &'static str,
+        detail: String,
+        key: Option<plan::Key>,
+    ) {
         let name = self.nodes[node].name.clone();
         let task = task.filter(|t| st.task_node.get(*t) == Some(&node));
         st.faults.push(Fault {
@@ -452,6 +709,7 @@ impl World {
             kind,
             detail: detail.clone(),
             step: st.sched.steps,
+            key,
         });
         st.events.push(Event {
             t: st.sched.now,
@@ -466,9 +724,9 @@ impl World {
     /// syncs and faults), as events of `task`.
     fn flush_disk(&self, st: &mut State, task: TaskId, node: NodeId) {
         let events = std::mem::take(&mut vfs::lock(&self.disks[node]).events);
-        for (kind, detail) in events {
+        for (kind, detail, key) in events {
             if matches!(kind, "fsync_lie" | "disk_full") {
-                self.fault(st, Some(task), node, kind, detail);
+                self.fault_at(st, Some(task), node, kind, detail, key);
             } else {
                 self.event(st, task, kind, detail);
             }
@@ -496,6 +754,11 @@ impl World {
             End::Deadline => "the run's time is up".to_string(),
             End::StepLimit => format!("{} yield points without settling", st.sched.steps - 1),
             End::MainReturned => String::new(),
+            End::Violated => st
+                .violation
+                .as_ref()
+                .map(|v| v.describe())
+                .unwrap_or_default(),
         };
         if !matches!(end, End::MainReturned) {
             let running = st.running;
@@ -509,14 +772,15 @@ impl World {
     /// Hand the baton to whoever the seed picks (perhaps `me` again) and
     /// wait for it to come back.
     fn reschedule<'a>(
-        &self,
-        mut st: MutexGuard<'a, State>,
+        &'a self,
+        st: MutexGuard<'a, State>,
         me: TaskId,
     ) -> (MutexGuard<'a, State>, Result<(), Ended>) {
         if let Err(e) = Self::stopped(&st, me) {
             return (st, Err(e));
         }
-        match self.pick(&mut st) {
+        let (mut st, picked) = self.pick(st);
+        match picked {
             Ok(next) if next == me => {}
             Ok(next) => {
                 st.running = next;
@@ -574,6 +838,13 @@ impl World {
         if let Some(global) = global {
             st.tasks_by_global.insert(global, t);
         }
+        let stream = if node == 0 {
+            t as u64
+        } else {
+            let k = st.node_tasks[node];
+            st.node_tasks[node] += 1;
+            k
+        };
         let detail = if what.is_empty() {
             format!("task {t}")
         } else {
@@ -581,7 +852,7 @@ impl World {
         };
         self.event(&mut st, parent, "spawn", detail);
         drop(st);
-        (t, self.task_rng(node, t))
+        (t, self.task_rng(node, stream as usize))
     }
 
     /// A spawned task's first wait: for the seed to pick it.
@@ -624,7 +895,8 @@ impl World {
             st.cvs[0].notify_one();
             return;
         }
-        match self.pick(&mut st) {
+        let (mut st, picked) = self.pick(st);
+        match picked {
             Ok(next) => {
                 st.running = next;
                 st.cvs[next].notify_one();
@@ -684,6 +956,11 @@ impl World {
                 )),
             ),
             (End::Deadline, _) => ("deadline", None, None),
+            (End::Violated, _) => (
+                "violated",
+                None,
+                st.violation.as_ref().map(|v| v.describe()),
+            ),
             (End::StepLimit, _) => (
                 "step_limit",
                 None,
@@ -693,6 +970,7 @@ impl World {
                 )),
             ),
         };
+        let plan = self.recorded_plan(&st);
         Report {
             seed: self.seed,
             outcome,
@@ -715,6 +993,54 @@ impl World {
                 .filter(|(n, _)| n.kind != node::Kind::Hook)
                 .map(|(n, d)| (n.name.to_string(), vfs::lock(d).disk.stats.clone()))
                 .collect(),
+            plan,
+            violation: st.violation.clone(),
+            preemptions: st.sched.preemptions,
+            histories: std::mem::take(&mut st.histories),
+            optional: self
+                .nodes
+                .iter()
+                .filter(|n| n.optional)
+                .map(|n| n.name.to_string())
+                .collect(),
+            run_index: 0,
+        }
+    }
+
+    /// The plan that forces this run again: every fault that fired, keyed
+    /// by its visit; the nodes left out; the schedule's stickiness.
+    fn recorded_plan(&self, st: &State) -> plan::RunPlan {
+        let name = |n: usize| {
+            self.nodes
+                .get(n)
+                .map(|i| i.name.to_string())
+                .unwrap_or_default()
+        };
+        plan::RunPlan {
+            faults: st
+                .faults
+                .iter()
+                .filter_map(|f| {
+                    let key = f.key?;
+                    Some(plan::Entry {
+                        site: key.site.name().to_string(),
+                        at: plan::place_name(key.site, key.place, &name),
+                        t: key.t,
+                        k: key.k,
+                        delay: key.delay,
+                        kind: f.kind.to_string(),
+                        detail: f.detail.clone(),
+                    })
+                })
+                .collect(),
+            drop: self
+                .nodes
+                .iter()
+                .zip(&self.dropped)
+                .filter(|(_, d)| **d)
+                .map(|(n, _)| n.name.to_string())
+                .collect(),
+            stick: st.sched.stick(),
         }
     }
 
@@ -885,10 +1211,14 @@ pub fn virtual_epoch_ms() -> Option<i64> {
     Some(ctx.world.wall_ms(ctx.node))
 }
 
-/// This task's random stream, when this thread is in a world.
+/// This task's random stream, when this thread is in a world (a
+/// property's predicate draws from a stream of its own).
 pub fn task_rng() -> Option<Arc<Mutex<StdRng>>> {
     if !in_world() {
         return None;
+    }
+    if let Some(rng) = props::check_rng() {
+        return Some(rng);
     }
     CTX.with(|c| c.borrow().as_ref().map(|ctx| ctx.rng.clone()))
 }
@@ -900,6 +1230,18 @@ fn node_disk_here() -> Option<(u64, String)> {
     let key = vfs::lock(&ctx.world.disks[ctx.node]).key;
     let cwd = ctx.world.lock().nodes[ctx.node].cwd.clone();
     Some((key, cwd))
+}
+
+static TEST_SEEDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(3);
+
+/// Seeds `olang test` runs a block that runs worlds with (3 unless
+/// `--seeds` says).
+pub fn test_seeds() -> u64 {
+    TEST_SEEDS.load(std::sync::atomic::Ordering::Relaxed).max(1)
+}
+
+pub fn set_test_seeds(n: u64) {
+    TEST_SEEDS.store(n.max(1), std::sync::atomic::Ordering::Relaxed);
 }
 
 /// `sim.maybe(point)`: false outside a world; inside one, true when the
@@ -931,7 +1273,29 @@ pub fn run_main(
     if in_world() {
         return Err("sim: worlds do not nest: a world cannot run inside another".to_string());
     }
-    let world = Arc::new(World::new(&cfg, vec![info], vec![Start::Main], None, 0));
+    run_main_with(cfg, info, Vec::new(), None, main)
+}
+
+/// `run_main`, with properties checked as it runs (`template` is the
+/// interpreter their predicates run on).
+pub fn run_main_with(
+    cfg: Config,
+    info: NodeInfo,
+    props: Vec<props::Property>,
+    template: Option<Interpreter>,
+    main: impl FnOnce() -> Result<Value, InterpreterError>,
+) -> Result<Report, String> {
+    if in_world() {
+        return Err("sim: worlds do not nest: a world cannot run inside another".to_string());
+    }
+    let world = Arc::new(World::new(
+        &cfg,
+        vec![info],
+        vec![Start::Main],
+        template,
+        0,
+        props,
+    ));
     run_in(world, main)
 }
 
@@ -961,6 +1325,23 @@ fn run_in(
         Ok(r) => r.map_err(|e| error_text(&e)),
         Err(_) => Err("sim: the main program panicked (an engine bug)".to_string()),
     };
+    // A last look at the properties, as the world stands at its end
+    // (unless one already broke, or the run failed on its own).
+    if result.is_ok() && world.checker.is_some() {
+        let ended = world.lock().ended.clone();
+        if matches!(ended, None | Some(End::MainReturned) | Some(End::Deadline)) {
+            let (now, step) = {
+                let st = world.lock();
+                (st.sched.now, st.sched.steps)
+            };
+            if let Some(v) = world.check_props(now, step, true) {
+                let mut st = world.lock();
+                world.event(&mut st, 0, "violated", v.describe());
+                st.violation = Some(v);
+                st.ended = Some(End::Violated);
+            }
+        }
+    }
     drop(entered);
     Ok(world.main_exit(result))
 }
@@ -988,13 +1369,38 @@ fn error_text(e: &InterpreterError) -> String {
 }
 
 /// A value, short enough for an event's detail.
+///
+/// Written through a writer that stops the formatting once it has more
+/// than it keeps: an event's detail costs the same for a value of ten
+/// bytes or ten megabytes (it rendered the whole value and cut it, about
+/// a tenth of an olang-track seed's time).
 fn render(v: &Value) -> String {
-    let text = v.to_string();
-    if text.chars().count() > 120 {
-        let cut: String = text.chars().take(117).collect();
+    struct Bounded {
+        text: String,
+        chars: usize,
+    }
+    impl std::fmt::Write for Bounded {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
+            for c in s.chars() {
+                if self.chars == 121 {
+                    return Err(std::fmt::Error);
+                }
+                self.text.push(c);
+                self.chars += 1;
+            }
+            Ok(())
+        }
+    }
+    let mut out = Bounded {
+        text: String::new(),
+        chars: 0,
+    };
+    let _ = std::fmt::Write::write_fmt(&mut out, format_args!("{v}"));
+    if out.chars > 120 {
+        let cut: String = out.text.chars().take(117).collect();
         format!("{cut}...")
     } else {
-        text
+        out.text
     }
 }
 
@@ -1034,6 +1440,13 @@ pub fn intercept(
     args: &[Value],
     interpreter: &mut Interpreter,
 ) -> Option<Result<Value, InterpreterError>> {
+    // A property's predicate: pure calls run, every effect is refused.
+    if props::checking() {
+        return match crate::effects::sim_handling(name) {
+            SimHandling::Pure => None,
+            _ => Some(Err(misuse(props::refusal(name)))),
+        };
+    }
     let ctx = current()?;
     match crate::effects::sim_handling(name) {
         SimHandling::Pure => {
@@ -1085,6 +1498,25 @@ fn simulated(
         "time.monotonic" if args.is_empty() => Ok(Value::Float(w.now() as f64)),
         "time.sleep" => sleep(ctx, args),
         "chan.bounded" if matches!(args, [Value::Integer(0)]) => Ok(w.new_rendezvous()),
+        // the channel's number is the world's (the process's would differ
+        // from one run to the next in one process: Shuttle's log bus
+        // writes it into the environment)
+        "chan.stat" => match args {
+            [c] => (|| {
+                let real = crate::stdlib::chan::call_chan_function("stat", args.to_vec())
+                    .map_err(|e| misuse(e.to_string()))?;
+                let (local, _) = w.chan_info(c).map_err(misuse)?;
+                Ok(match &real {
+                    Value::Map(m) => {
+                        let mut m = (**m).clone();
+                        m.insert("id".to_string(), Value::Integer(local as i64));
+                        Value::Map(Arc::new(m))
+                    }
+                    _ => real.clone(),
+                })
+            })(),
+            _ => Err(misuse("chan.stat expects a channel")),
+        },
         "chan.send" => match args {
             [c, v] => send(ctx, c, v.clone()),
             _ => Err(misuse("chan.send expects a channel and a value")),
@@ -1339,6 +1771,9 @@ fn join(ctx: &Ctx, task: &Value, timeout: Option<u64>) -> Result<Value, Interpre
 /// `spawn expr` inside a world: a task of the world, on a thread of its
 /// own that runs only while it holds the baton.
 pub fn spawn(interpreter: &Interpreter, expr: &Expr) -> Result<Value, InterpreterError> {
+    if props::checking() {
+        return Err(misuse(props::refusal("spawn")));
+    }
     let Some(ctx) = current() else {
         return Err(misuse(
             "sim: spawn outside a world reached the world's spawn",

@@ -335,10 +335,12 @@ fn sync(ctx: &Ctx, args: &[Value]) -> Result<Value, InterpreterError> {
         return Err(super::Ended::Crash.into());
     }
     let lie = d.draw_lie();
-    let r = d.disk.sync(&p, lie);
+    let r = d.disk.sync(&p, lie.is_some());
     drop(d);
     match r {
-        Ok(()) if lie => w.fault(&mut st, Some(ctx.task), ctx.node, "fsync_lie", p),
+        Ok(()) if lie.is_some() => {
+            w.fault_at(&mut st, Some(ctx.task), ctx.node, "fsync_lie", p, lie)
+        }
         Ok(()) => w.event(&mut st, ctx.task, "fsync", p),
         Err(e) => return Ok(err(format!("Failed to sync '{given}': {e}"))),
     }
