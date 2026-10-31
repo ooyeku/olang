@@ -1500,14 +1500,12 @@ pub fn refusal(name: &str) -> String {
         "crypto" => "the operating system's entropy",
         "task" => "real threads and real elapsed time",
         "sim" => {
-            return format!(
-                "sim: {name} is refused inside a world: worlds do not nest (one world per run in S1)"
-            );
+            return format!("sim: {name} is refused inside a world: worlds do not nest");
         }
         _ => "the real world",
     };
     format!(
-        "sim: {name} is refused inside a world: {what} is not simulated yet (a world \
+        "sim: {name} is refused inside a world: a world does not simulate {what} yet (it \
          simulates time, randomness, spawn, task, chan, http between its nodes, each \
          node's files and SQLite on its own disk, and its environment, stdin and exit), \
          and a world never reaches the real one"

@@ -431,7 +431,8 @@ fn sim(args: &[&str]) -> (i32, String, String) {
     (
         out.status.code().unwrap_or(-1),
         String::from_utf8_lossy(&out.stdout).to_string(),
-        String::from_utf8_lossy(&out.stderr).to_string(),
+        (String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr))
+            .to_string(),
     )
 }
 
@@ -1158,7 +1159,8 @@ fn track_sim(dir: &std::path::Path, crash: &str, args: &[&str]) -> (i32, String)
         .expect("run olang sim");
     (
         out.status.code().unwrap_or(-1),
-        String::from_utf8_lossy(&out.stderr).to_string(),
+        (String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr))
+            .to_string(),
     )
 }
 
@@ -1421,7 +1423,8 @@ fn the_kv_partition_bug_is_a_linearizability_violation() {
         .env("KV_BUGGY", "0")
         .output()
         .expect("run olang sim");
-    let err = String::from_utf8_lossy(&out.stderr);
+    let err =
+        String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(0), "{err}");
     assert!(err.contains("8 passed"), "{err}");
 }
@@ -1501,7 +1504,9 @@ fn the_shrinker_takes_a_noisy_world_down_to_its_one_fault_and_it_replays() {
             .expect("run olang sim");
         (
             out.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&out.stderr).to_string(),
+            (String::from_utf8_lossy(&out.stdout).to_string()
+                + &String::from_utf8_lossy(&out.stderr))
+                .to_string(),
         )
     };
     let (code, err) = run(&[file.to_str().unwrap(), "--seed", "1", "--shrink", "--jobs", "2"]);
@@ -1739,7 +1744,9 @@ fn olang_sim_view_draws_a_run_from_a_file_and_seed_and_from_a_saved_plan() {
             (
                 o.status.code().unwrap_or(-1),
                 String::new(),
-                String::from_utf8_lossy(&o.stderr).to_string(),
+                (String::from_utf8_lossy(&o.stdout).to_string()
+                    + &String::from_utf8_lossy(&o.stderr))
+                    .to_string(),
             )
         })
         .unwrap();
@@ -1789,14 +1796,17 @@ fn olang_sim_view_draws_a_run_from_a_file_and_seed_and_from_a_saved_plan() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The sweep digest of `file` over `seeds` seeds, on one tier.
+/// The sweep digest of `file` over `seeds` seeds, on one tier (the
+/// report is on stdout, diagnostics on stderr).
 fn tier_digest(file: &str, seeds: &str, tier: &str) -> String {
     let out = Command::new(olang())
         .args(["sim", fixture(file).to_str().unwrap(), "--seeds", seeds])
         .env("OLANG_SIM_TIER", tier)
         .output()
         .expect("run olang sim");
-    let err = String::from_utf8_lossy(&out.stderr).to_string();
+    let err = (String::from_utf8_lossy(&out.stdout).to_string()
+        + &String::from_utf8_lossy(&out.stderr))
+        .to_string();
     digest_of(&err)
 }
 
@@ -1839,7 +1849,10 @@ fn the_tier_a_world_runs_on_reaches_the_workers() {
             .env("OLANG_SIM_TIER", tier)
             .output()
             .unwrap();
-        digest_of(&String::from_utf8_lossy(&out.stderr))
+        digest_of(
+            &(String::from_utf8_lossy(&out.stdout).to_string()
+                + &String::from_utf8_lossy(&out.stderr)),
+        )
     };
     assert_eq!(run("interp"), run("bytecode"));
     assert_eq!(
@@ -1876,5 +1889,53 @@ run.value
     assert!(
         s(&parts[2]).contains("refused inside a world"),
         "refused: {v}"
+    );
+}
+
+#[test]
+fn every_sim_and_peg_member_has_help() {
+    let help = olang::help::HelpSystem::new();
+    let mut missing = Vec::new();
+    let module = olang::sim::surface::create_sim_module();
+    let Value::Struct { fields, .. } = &module else {
+        panic!("sim is a module")
+    };
+    for (name, value) in fields.iter() {
+        match value {
+            Value::Struct { fields: inner, .. } => {
+                for method in inner.keys() {
+                    missing.push(format!("sim.{name}.{method}"));
+                }
+            }
+            _ => missing.push(format!("sim.{name}")),
+        }
+    }
+    for f in ["grammar", "parse", "check", "examples", "dump"] {
+        missing.push(format!("peg.{f}"));
+    }
+    missing.retain(|n| help.get_function(n).is_none());
+    assert!(missing.is_empty(), "no :help for {missing:?}");
+}
+
+#[test]
+fn olang_sim_reports_on_stdout_and_refuses_events_over_many_seeds() {
+    let file = fixture("kv_partition_bug.ol");
+    let out = Command::new(olang())
+        .args(["sim", file.to_str().unwrap(), "--seeds", "2"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("digest: ") && stdout.contains("2 seed(s)"),
+        "{stdout}"
+    );
+    let (code, _, err) = sim(&[file.to_str().unwrap(), "--seeds", "2", "--events"]);
+    assert_eq!(code, 2);
+    assert!(err.contains("--events prints one run's events"), "{err}");
+    // a refusal reads as a sentence
+    let v = eval("sim.world(#{}).run_fn(() => proc.spawn(\"ls\", [])).error");
+    assert!(
+        s(&v).contains("a world does not simulate processes yet"),
+        "{v}"
     );
 }

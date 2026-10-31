@@ -311,7 +311,7 @@ pub fn main(
             eprintln!("olang sim view: {}: {e}", path.display());
             return 2;
         }
-        eprintln!("olang sim view: wrote {}", path.display());
+        println!("olang sim view: wrote {}", path.display());
     }
     let html_path = match (&opts.html, &opts.json) {
         (Some(p), _) => Some(p.clone()),
@@ -330,7 +330,7 @@ pub fn main(
             eprintln!("olang sim view: {}: {e}", path.display());
             return 2;
         }
-        eprintln!("olang sim view: wrote {}", path.display());
+        println!("olang sim view: wrote {}", path.display());
         if opts.html.is_none() && !opts.no_open {
             open_in_browser(&path);
         }

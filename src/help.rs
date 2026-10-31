@@ -1579,6 +1579,7 @@ impl HelpSystem {
         self.add_toad_docs();
         self.add_time_and_encoding_docs();
         self.add_sim_docs();
+        self.add_peg_docs();
         self.add_data_stack_docs();
         self.add_browser_and_toolkit_docs();
         self.add_recent_stdlib_additions();
@@ -3056,6 +3057,295 @@ task.watch(service, inbox)   // a dead service is an Err at the next recv, not a
             "a duration of n hours, as virtual ms",
             &[r##"sim.hours(6)  // 21600000"##],
         );
+        // S2–S4: nodes, the network, the disk, properties
+        self.doc_ex(
+            "sim.World.run",
+            r##"w.run(duration) · w.run(#{ for, props })"##,
+            "Map",
+            "sim",
+            r##"run the world's nodes for `for` virtual ms (or until every client is done, or a property breaks); answers the run: #{ outcome, value, error, events, now, steps, nodes, history, net, faults, disks, violation, histories }"##,
+            &[r##"let run = w.run(sim.hours(1))"##, r##"w.run(#{ "for": sim.minutes(10), "props": [sim.always("acked is durable", ok)] })"##],
+        );
+        self.doc_ex(
+            "sim.World.node",
+            r##"w.node(name, argv, opts)"##,
+            "Node",
+            "sim",
+            r##"an olang program as a node: its own interpreter, argv, env, disk and grant; `opts`: env, skew, disk, files, cwd, stdin, crash #{ p, restart_after }, deny, optional (the shrinker may leave it out)"##,
+            &[r##"w.node("kv", ["olang", "kv_server.ol", "7500"], #{ "disk": sim.disk(#{ "torn_writes": true }) })"##],
+        );
+        self.doc_ex(
+            "sim.World.client",
+            r##"w.client(name, f, opts)"##,
+            "Node",
+            "sim",
+            r##"a node that is an olang function (a workload): f() runs on a clone of the interpreter that built the world; the run is done when every client has returned"##,
+            &[r##"w.client("c1", () => writer("http://kv:7500", "k1", sim.hours(1)))"##],
+        );
+        self.doc_ex(
+            "sim.World.at",
+            r##"w.at(t, f)"##,
+            "Unit",
+            "sim",
+            r##"run f() as a hook at virtual time t (ms): faults as code"##,
+            &[r##"w.at(sim.minutes(3), () => w.crash("kv", #{ "restart_after": 1000 }))"##],
+        );
+        self.doc_ex(
+            "sim.World.every",
+            r##"w.every(dt, f)"##,
+            "Unit",
+            "sim",
+            r##"run f() as a hook every dt virtual ms"##,
+            &[r##"w.every(sim.seconds(20), () => w.crash("kv", #{ "restart_after": 1000 }))"##],
+        );
+        self.doc_ex(
+            "sim.World.link",
+            r##"w.link(a, b, #{ latency, loss, dup })"##,
+            "Unit",
+            "sim",
+            r##"set how the link between two nodes behaves: a latency range (ms), and the chance a message is lost or duplicated; links not set take the world's `net`"##,
+            &[r##"w.link("kv", "c1", #{ "latency": (50, 400), "loss": 0.02 })"##],
+        );
+        self.doc_ex(
+            "sim.World.partition",
+            r##"w.partition(left, right)"##,
+            "Unit",
+            "sim",
+            r##"cut every link between two groups of nodes until w.heal(); a message in flight across the cut is dropped when it arrives (a fault)"##,
+            &[r##"w.partition(["kv"], ["c1", "c2"])"##],
+        );
+        self.doc_ex(
+            "sim.World.heal",
+            r##"w.heal()"##,
+            "Unit",
+            "sim",
+            r##"end every partition: each link carries messages again"##,
+            &[r##"w.heal()"##],
+        );
+        self.doc_ex(
+            "sim.World.crash",
+            r##"w.crash(node, #{ restart_after })"##,
+            "Unit",
+            "sim",
+            r##"the power goes: the node's memory is lost and its disk keeps only what was synced; it restarts `restart_after` ms later when given (a fault)"##,
+            &[r##"w.crash("store", #{ "restart_after": sim.seconds(1) })"##],
+        );
+        self.doc_ex(
+            "sim.World.restart",
+            r##"w.restart(node)"##,
+            "Unit",
+            "sim",
+            r##"run a stopped node's program again, fresh, on the disk its stop left"##,
+            &[r##"w.restart("store")"##],
+        );
+        self.doc_ex(
+            "sim.World.kill",
+            r##"w.kill(node, #{ restart_after })"##,
+            "Unit",
+            "sim",
+            r##"SIGKILL: memory gone, every write kept (unsynced still), no shutdown handlers (a fault)"##,
+            &[r##"w.kill("store", #{ "restart_after": 1000 })"##],
+        );
+        self.doc_ex(
+            "sim.World.stop",
+            r##"w.stop(node, #{ restart_after })"##,
+            "Unit",
+            "sim",
+            r##"SIGTERM: the node's os.on_shutdown handlers run, then it is down; with none, a kill (a fault)"##,
+            &[r##"w.stop("store", #{ "restart_after": 1000 })"##],
+        );
+        self.doc_ex(
+            "sim.World.slow_disk",
+            r##"w.slow_disk(node, factor)"##,
+            "Unit",
+            "sim",
+            r##"make a node's syncs `factor` times slower (a fault)"##,
+            &[r##"w.slow_disk("store", 50)"##],
+        );
+        self.doc_ex(
+            "sim.World.write_stdin",
+            r##"w.write_stdin(node, text)"##,
+            "Unit",
+            "sim",
+            r##"add text to a node's stdin (os.read_line reads it)"##,
+            &[r##"w.write_stdin("store", "reload\n")"##],
+        );
+        self.doc_ex(
+            "sim.World.close_stdin",
+            r##"w.close_stdin(node)"##,
+            "Unit",
+            "sim",
+            r##"close a node's stdin: os.read_line answers Err("eof") once it is read"##,
+            &[r##"w.close_stdin("store")"##],
+        );
+        self.doc_ex(
+            "sim.always",
+            r##"sim.always(name, pred)"##,
+            "Map",
+            "sim",
+            r##"a property: pred(s) is true at every instant anything ran; given to w.run(#{ props }) or sim.check"##,
+            &[r##"sim.always("an acked put is durable", (s) => acked(s) <= durable(s.disk("kv")))"##],
+        );
+        self.doc_ex(
+            "sim.never",
+            r##"sim.never(name, pred)"##,
+            "Map",
+            "sim",
+            r##"a property: pred(s) is false at every instant anything ran"##,
+            &[r##"sim.never("two leaders", (s) => leaders(s) > 1)"##],
+        );
+        self.doc_ex(
+            "sim.eventually",
+            r##"sim.eventually(name, within, pred)"##,
+            "Map",
+            "sim",
+            r##"a property: pred(s) is never false for longer than `within` virtual ms at a stretch (broken at the stretch's deadline)"##,
+            &[r##"sim.eventually("the replicas agree", sim.seconds(30), (s) => agree(s))"##],
+        );
+        self.doc_ex(
+            "sim.linearizable",
+            r##"sim.linearizable(name, history, model)"##,
+            "Map",
+            "sim",
+            r##"a property: the history recorded under `history` (sim.record) is linearizable against `model` (sim.register, sim.kv, or #{ init, step }); checked once, at the end"##,
+            &[r##"sim.linearizable("every add counts once", "kv", sim.kv())"##],
+        );
+        self.doc_ex(
+            "sim.check",
+            r##"sim.check(run, props) · run.check(props)"##,
+            "Map",
+            "sim",
+            r##"check properties after the fact: linearizability over the run's histories; any other property runs the world again, watched (one seed is one run); raises naming the property and its time when one breaks"##,
+            &[r##"sim.check(run, [sim.always("no loss", ok)])"##],
+        );
+        self.doc_ex(
+            "sim.record",
+            r##"sim.record(name, op)"##,
+            "Unit",
+            "sim",
+            r##"add an operation to the history `name` (Jepsen's shape: #{ type: invoke|ok|fail|info, f, value }); the world adds process, node, t and index; nothing outside a world"##,
+            &[r##"sim.record("kv", #{ "type": "invoke", "f": "put", "value": ["k", 1] })"##],
+        );
+        self.doc_ex(
+            "sim.linearize",
+            r##"sim.linearize(history, model, #{ max_steps })"##,
+            "Map",
+            "sim",
+            r##"the linearizability checker on its own (Wing and Gong with Lowe's memo, split by key for kv) → #{ ok, verdict, reason }; verdict is "unknown" past max_steps (2,000,000)"##,
+            &[r##"sim.linearize(run.history("kv"), sim.kv()).verdict"##],
+        );
+        self.doc_ex(
+            "sim.register",
+            r##"sim.register(init)"##,
+            "Map",
+            "sim",
+            r##"a model for sim.linearize: one register with write v, read → v, cas [old, new]"##,
+            &[r##"sim.linearizable("reg", "r", sim.register(0))"##],
+        );
+        self.doc_ex(
+            "sim.kv",
+            r##"sim.kv()"##,
+            "Map",
+            "sim",
+            r##"a model for sim.linearize: a key-value map with put [k, v], get [k] → v, add [k, by] → total, cas [k, old, new]"##,
+            &[r##"sim.linearizable("kv", "kv", sim.kv())"##],
+        );
+        self.doc_ex(
+            "sim.seed",
+            r##"sim.seed()"##,
+            "Int",
+            "sim",
+            r##"the seed of the world this runs in, or the seed olang sim / olang test runs worlds with; () otherwise"##,
+            &[r##"sim.seed()"##],
+        );
+        self.doc_ex(
+            "sim.State.disk",
+            r##"s.disk(node)"##,
+            "Disk",
+            "sim",
+            r##"in a predicate: a node's disk as a power cut now would leave it (read, read_bytes, exists, list, current, query)"##,
+            &[r##"s.disk("store").read("/data/log")"##],
+        );
+        self.doc_ex(
+            "sim.State.history",
+            r##"s.history(name)"##,
+            "List",
+            "sim",
+            r##"in a predicate: the history recorded under name so far"##,
+            &[r##"len(s.history("kv"))"##],
+        );
+        self.doc_ex(
+            "sim.State.up",
+            r##"s.up(node)"##,
+            "Bool",
+            "sim",
+            r##"in a predicate: whether a node is running"##,
+            &[r##"s.up("store")"##],
+        );
+        self.doc_ex(
+            "sim.Disk.read",
+            r##"d.read(path)"##,
+            "String",
+            "sim",
+            r##"the durable contents of a file under its durable name; () when the name is not durable"##,
+            &[r##"s.disk("store").read("/data/log")"##],
+        );
+        self.doc_ex(
+            "sim.Disk.read_bytes",
+            r##"d.read_bytes(path)"##,
+            "Bytes",
+            "sim",
+            r##"the durable contents of a file, as Bytes; () when the name is not durable"##,
+            &[r##"s.disk("store").read_bytes("/data/log")"##],
+        );
+        self.doc_ex(
+            "sim.Disk.exists",
+            r##"d.exists(path)"##,
+            "Bool",
+            "sim",
+            r##"whether the name is durable"##,
+            &[r##"s.disk("store").exists("/data/log")"##],
+        );
+        self.doc_ex(
+            "sim.Disk.list",
+            r##"d.list(dir)"##,
+            "List",
+            "sim",
+            r##"the durable names in a folder"##,
+            &[r##"s.disk("store").list("/data")"##],
+        );
+        self.doc_ex(
+            "sim.Disk.current",
+            r##"d.current(path)"##,
+            "String",
+            "sim",
+            r##"what the node reads now, synced or not"##,
+            &[r##"s.disk("store").current("/data/log")"##],
+        );
+        self.doc_ex(
+            "sim.Disk.query",
+            r##"d.query(db, sql, params)"##,
+            "Result",
+            "sim",
+            r##"Ok(rows) from the durable image of a SQLite database (recovered as SQLite would after the crash), or Err when it cannot be read"##,
+            &[r##"s.disk("kv").query("/data/kv.db", "SELECT count(*) AS n FROM kv", [])"##],
+        );
+        self.doc_ex(
+            "sim.Run.history",
+            r##"run.history(name)"##,
+            "List",
+            "sim",
+            r##"the history recorded under name (sim.record) in the run"##,
+            &[r##"run.history("kv")"##],
+        );
+        self.doc_ex(
+            "sim.Run.check",
+            r##"run.check(props)"##,
+            "Map",
+            "sim",
+            r##"sim.check(run, props)"##,
+            &[r##"run.check([sim.linearizable("kv", "kv", sim.kv())])"##],
+        );
         // S5: seeing a run
         self.doc_ex(
             "sim.Run.events",
@@ -3068,6 +3358,50 @@ task.watch(service, inbox)   // a dead service is an Err at the next recv, not a
                 r##"f.group_by("kind").agg(#{ "n": ods.count() })"##,
                 r##"ods.filter(f, f["fault"])  // every fault, with its node and time"##,
             ],
+        );
+    }
+
+    /// `peg`: grammars from text to trees (an embedded module, `use peg`).
+    fn add_peg_docs(&mut self) {
+        self.doc_ex(
+            "peg.grammar",
+            r##"peg.grammar(text, actions, options)"##,
+            "Result",
+            "peg",
+            r##"compile a grammar: Ok(grammar) or Err(error). `actions` (optional) maps a rule or label to a function from its node to a value; `options`: start, recover (sync strings), memo ("auto", "all", "none"). The grammar's parse(input), parse_with(input, opts), accepts(input), check() and examples(n, seed) are its methods; rules, start and source are there to read"##,
+            &[r##"let g = unwrap(peg.grammar(`setting = key:Name "=" val:Num  Name = [a-z_]+  Num = [0-9]+  skip = [ ]+`))"##, r##"g.parse("width = 80")  // Ok(tree)"##, r##"g.accepts("width =")  // false"##],
+        );
+        self.doc_ex(
+            "peg.parse",
+            r##"peg.parse(g, input, opts)"##,
+            "Result",
+            "peg",
+            r##"g.parse_with(input, opts): Ok(tree), or the start rule's value with actions, or Err(error) with the expected tokens and a caret; `opts`: start, recover"##,
+            &[r##"peg.parse(g, "width = 80", #{ "start": "setting" })"##],
+        );
+        self.doc_ex(
+            "peg.check",
+            r##"peg.check(g) · g.check()"##,
+            "List",
+            "peg",
+            r##"problems in a grammar (or its text): [#{ kind, rule, message }], empty when there are none"##,
+            &[r##"peg.check(g)  // []"##],
+        );
+        self.doc_ex(
+            "peg.examples",
+            r##"peg.examples(g, n, seed) · g.examples(n, seed)"##,
+            "List",
+            "peg",
+            r##"up to n different texts the grammar accepts, generated from its rules; the same texts for the same seed"##,
+            &[r##"peg.examples(g, 5, 1)"##],
+        );
+        self.doc_ex(
+            "peg.dump",
+            r##"peg.dump(tree)"##,
+            "String",
+            "peg",
+            r##"a tree as indented text, one node a line, for tests and for looking"##,
+            &[r##"println(peg.dump(unwrap(g.parse("width = 80"))))"##],
         );
     }
 

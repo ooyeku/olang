@@ -294,6 +294,13 @@ pub fn main(file: &Path, opts: &Options) -> i32 {
     if opts.worker {
         return worker(file, &base);
     }
+    if opts.events && opts.seeds.is_some() {
+        eprintln!(
+            "olang sim: --events prints one run's events; give it one seed (--seed S) \
+             rather than --seeds, or see a run with `olang sim view FILE --seed S`"
+        );
+        return 2;
+    }
     if let Some(plan) = &opts.replay {
         return replay(plan, opts.events);
     }
@@ -327,13 +334,13 @@ fn one_seed(file: &Path, seed: u64, base: Config, all_events: bool) -> i32 {
 /// A run, told as `--seed` tells it: the code it exits with.
 fn show_run(report: &Report, seed: u64, real: f64, all_events: bool) -> i32 {
     if all_events {
-        eprintln!("events:");
+        println!("events:");
         for e in &report.events {
-            eprintln!("{}", fmt_event(e));
+            println!("{}", fmt_event(e));
         }
     }
     for e in report.events.iter().filter(|e| e.kind == "fail") {
-        eprintln!(
+        println!(
             "olang sim: {} task {} failed: {}",
             e.node,
             e.task.unwrap_or(0),
@@ -343,19 +350,19 @@ fn show_run(report: &Report, seed: u64, real: f64, all_events: bool) -> i32 {
     if report.failed() {
         if !all_events {
             let tail = report.events.len().saturating_sub(20);
-            eprintln!(
+            println!(
                 "the last {} of {} events:",
                 report.events.len() - tail,
                 report.events.len()
             );
             for e in &report.events[tail..] {
-                eprintln!("{}", fmt_event(e));
+                println!("{}", fmt_event(e));
             }
         }
-        eprintln!("olang sim: seed {seed}: {}", failure_line(report));
+        println!("olang sim: seed {seed}: {}", failure_line(report));
         return 1;
     }
-    eprintln!(
+    println!(
         "olang sim: seed {seed}: {} at {} virtual · {} task(s) · {} events · {:.3} s real",
         report.outcome,
         fmt_virtual(report.now),
@@ -364,7 +371,7 @@ fn show_run(report: &Report, seed: u64, real: f64, all_events: bool) -> i32 {
         real
     );
     if report.stuck {
-        eprintln!("olang sim: note: a task did not stop when the world ended");
+        println!("olang sim: note: a task did not stop when the world ended");
     }
     0
 }
@@ -685,9 +692,9 @@ fn many_seeds(file: &Path, from: u64, n: u64, base: Config, opts: &Options) -> i
     let virtual_ms: u128 = results.iter().map(|r| r.now as u128).sum();
     let rate = virtual_ms as f64 / real;
     for r in &failed {
-        eprintln!("seed {}: {}", r.seed, r.failure.clone().unwrap_or_default());
+        println!("seed {}: {}", r.seed, r.failure.clone().unwrap_or_default());
     }
-    eprintln!(
+    println!(
         "olang sim: {} seed(s) · {} passed · {} failed · {} simulated per second ({:.2} virtual hours) · {} job(s) · {:.3} s real",
         n,
         results.len() - failed.len(),
@@ -697,9 +704,9 @@ fn many_seeds(file: &Path, from: u64, n: u64, base: Config, opts: &Options) -> i
         jobs,
         real
     );
-    eprintln!("digest: {}", sweep_digest(&results));
+    println!("digest: {}", sweep_digest(&results));
     if let Some(first) = failed.first() {
-        eprintln!(
+        println!(
             "reproduce: olang sim {} --seed {}",
             file.display(),
             first.seed
@@ -769,9 +776,9 @@ fn shrink_seed(
             return None;
         }
     };
-    eprintln!("{}", shrunk.summary());
+    println!("{}", shrunk.summary());
     for line in shrunk.listing() {
-        eprintln!("  {line}");
+        println!("  {line}");
     }
     let absolute = if file.is_absolute() {
         file.to_path_buf()
@@ -800,7 +807,7 @@ fn shrink_seed(
     });
     match saved {
         Ok(()) => {
-            eprintln!(
+            println!(
                 "plan: {}   (olang sim {} --replay {})",
                 path.display(),
                 file.display(),
@@ -843,7 +850,7 @@ fn replay(plan_path: &Path, all_events: bool) -> i32 {
     let code = show_run(&report, plan.seed, real, all_events);
     let digest = format!("{:016x}", report.digest());
     if digest == plan.digest {
-        eprintln!(
+        println!(
             "olang sim: replayed {} bit for bit (digest {digest}, {} fault(s))",
             plan_path.display(),
             report.plannable_faults()
