@@ -196,7 +196,7 @@ pub fn enabled() -> bool {
     registry().enabled.load(Ordering::Relaxed)
 }
 
-// ── the instrumented mode ─────────────────────────────────────────────
+// ── the instrumented mode ───────────────────────────────────────────
 //
 // The sampler needs a second thread, and a browser session has none.
 // The instrumented mode answers the same question — which olang
@@ -1224,8 +1224,7 @@ impl Session {
     }
 }
 
-// ── the profile as data (`olang profile --format json`, a live profile) ──
-
+// ── the profile as data (`olang profile --format json`, a live profile) ───
 static DETAIL: AtomicBool = AtomicBool::new(false);
 
 /// True when frames are keyed by their file and paths keep each frame's
@@ -1471,7 +1470,7 @@ pub fn stats_call_totals() -> (u64, u64) {
     (calls, deopts)
 }
 
-// ── tier statistics (`--ovm-stats=json`, `olang repl --serve`'s `stats`) ──
+// ── tier statistics (`--ovm-stats=json`, `olang repl --serve`'s `stats`) ───
 //
 // The question a profile answers per sample, kept per function for a
 // whole run: how many calls each tier served, how much time each tier

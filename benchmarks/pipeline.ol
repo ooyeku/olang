@@ -1,4 +1,4 @@
-// pipeline.ol — the DP4 end-to-end benchmark, ods edition.
+// pipeline.ol — the end-to-end pipeline benchmark, ods edition.
 //
 // Eight stages of a realistic ETL pass over benchmarks/data/sales.csv;
 // each prints `STAGE <name> <ms> <checksum>` and the run ends with

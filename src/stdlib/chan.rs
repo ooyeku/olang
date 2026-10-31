@@ -46,7 +46,6 @@ mod hosted {
         Disconnected,
     }
 
-    #[allow(dead_code)]
     pub enum TrySendError<T> {
         Full(T),
         Disconnected(T),

@@ -3,7 +3,7 @@ name = "otc"
 version = "0.77.0"
 edition = "2024"
 rust-version = "1.97"
-authors = ["Olang Team"]
+authors = ["Ola Yeku <ooyeku@gmail.com>"]
 description = "olang toolchain — scaffolding, package management, and code analysis"
 license = "MIT"
 repository = "https://github.com/ooyeku/olang"
@@ -13,9 +13,16 @@ anyhow = "1.0"
 clap = { version = "4.6", features = ["derive"] }
 clap_complete = "4.6"
 libc = "0.2"
-olang = { path = ".." }
+# The engine's default features come through otc's own `gui` feature,
+# so the static musl release (built with --no-default-features) can
+# leave windows out of both programs.
+olang = { path = "..", default-features = false, features = ["native", "full"] }
 semver = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 reqwest = { version = "0.13", features = ["blocking", "json"] }
 sha2 = "0.10"
+
+[features]
+default = ["gui"]
+gui = ["olang/gui"]

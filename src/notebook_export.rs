@@ -35,7 +35,6 @@ pub enum Mode {
 pub const TABLE_ROWS: usize = 20;
 
 // ── reading the document ────────────────────────────────────────────
-
 /// The document's entry for each of `nb`'s code cells, in order (None
 /// where it has none: a cell never run, a `no-run` cell).
 pub fn cell_entries<'a>(nb: &crate::notebook::Notebook, doc: &'a J) -> Vec<Option<&'a J>> {
@@ -103,7 +102,6 @@ fn interp_of(doc: &J) -> Vec<(String, J)> {
 }
 
 // ── values in words ─────────────────────────────────────────────────
-
 /// A float's text as a person reads it, as Studio draws one: six
 /// significant digits, no trailing zeros but one after the point
 /// (`0.290016`, `1204.5`, `12.0`); a very large or small one as it is.
@@ -270,7 +268,6 @@ fn size_words(n: u64, cols: usize) -> String {
 }
 
 // ── a pinned output ─────────────────────────────────────────────────
-
 /// What a pinned cell's output block holds, from its reply: `(kind,
 /// body)` — `table` (its columns aligned: names, types, a rule, its first
 /// rows, its size), `chart` (the chart's SVG), `text` (a value's words,
@@ -381,7 +378,6 @@ pub fn table_text(
 }
 
 // ── one output as HTML ──────────────────────────────────────────────
-
 /// One cell's output as HTML: what it printed, then its value by kind (a
 /// table, a chart in both themes, a picture, a control, a number, words,
 /// a record's entries), or its error. `as_markdown`: a String drawn as
@@ -1054,7 +1050,6 @@ fn brush_range(val: &str) -> Option<(f64, f64)> {
 }
 
 // ── prose ───────────────────────────────────────────────────────────
-
 /// Markdown as HTML (CommonMark with tables and strikethrough); raw HTML
 /// in it is escaped, never passed through.
 ///
@@ -1323,7 +1318,6 @@ pub fn blocks(text: &str, doc: &J) -> J {
 }
 
 // ── code ────────────────────────────────────────────────────────────
-
 /// A cell's code highlighted as the language server colours it.
 fn code_html(code: &str) -> String {
     use crate::tools::semantic::*;
@@ -1371,7 +1365,6 @@ fn code_html(code: &str) -> String {
 }
 
 // ── the page ────────────────────────────────────────────────────────
-
 /// The grant in words (`fs read · net off`).
 fn grant_words(nb: &crate::notebook::Notebook) -> String {
     let Some(c) = &nb.capabilities else {
@@ -1978,7 +1971,6 @@ function run(argv) {
 "#;
 
 // ── a notebook as an app ────────────────────────────────────────────
-
 /// Where web-sdk is (the framework a published app serves with): `given`,
 /// else `WEB_SDK_DIR`, else the shelf's `web`, else beside this olang's
 /// own checkout (`frameworks/web-sdk` above the binary).

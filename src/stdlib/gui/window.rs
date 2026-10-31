@@ -2551,7 +2551,6 @@ impl WinState {
     }
 
     // ── the display list ────────────────────────────────────────────
-
     /// The window's wide colours (`gui.set`'s `wide`), `None` for none:
     /// the next frame drawn whole with them.
     pub fn set_wide(&mut self, m: Option<super::wide::WideMap>) {
@@ -5341,7 +5340,6 @@ pub(crate) fn push_glyphs(shaped: &Shaped, ox: f32, oy: f32, clip: Clip, dl: &mu
 }
 
 // ── the display list ────────────────────────────────────────────────
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Clip {
     pub x0: f32,

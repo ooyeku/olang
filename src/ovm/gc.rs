@@ -165,7 +165,8 @@ impl SafepointManager {
         }
     }
 
-    /// Simplified safepoint request - just set flag, no complex coordination
+    /// Ask running threads to pause: set the flag and give them a moment
+    /// to see it.
     pub fn request_safepoint(&self) -> Result<(), GcError> {
         self.safepoint_requested.store(true, Ordering::Relaxed);
 
@@ -180,7 +181,7 @@ impl SafepointManager {
         self.safepoint_requested.store(false, Ordering::Relaxed);
     }
 
-    /// Simplified safepoint poll - just check flag
+    /// Pause briefly if a safepoint has been requested.
     pub fn safepoint_poll(&self) -> Result<(), GcError> {
         if self.safepoint_requested.load(Ordering::Relaxed) {
             // Brief pause to allow coordination to proceed
@@ -189,12 +190,12 @@ impl SafepointManager {
         Ok(())
     }
 
-    /// Register thread (simplified tracking)
+    /// Count a thread in.
     pub fn register_thread(&self) {
         self.active_threads.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Unregister thread (simplified tracking)
+    /// Count a thread out.
     pub fn unregister_thread(&self) {
         self.active_threads.fetch_sub(1, Ordering::Relaxed);
     }
@@ -212,16 +213,16 @@ impl SafepointManager {
         self.safepoint_requested.load(Ordering::Relaxed)
     }
 
-    /// Request GC collection (simplified)
+    /// Request a collection pass.
     pub fn request_collection(&self) {
         let _ = self.request_safepoint();
     }
 
-    /// Get simplified debug info
+    /// The safepoint state, for debugging.
     pub fn get_debug_info(&self) -> SafepointDebugInfo {
         SafepointDebugInfo {
             safepoint_requested: self.safepoint_requested.load(Ordering::Relaxed),
-            threads_at_safepoint: 0, // Simplified - not tracked
+            threads_at_safepoint: 0, // not tracked
             total_threads: self.active_threads.load(Ordering::Relaxed),
         }
     }

@@ -1,9 +1,12 @@
+//! The syntax tree the parser builds, and `Value`, the interpreter's
+//! runtime value.
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use std::sync::Arc;
 
-/// Represents a complete Olang program
+/// Represents a complete olang program
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Program {
     pub statements: Vec<Statement>,
@@ -28,7 +31,7 @@ pub struct ErrorLocation {
     pub hint: Option<String>,
 }
 
-/// Statement types in Olang
+/// Statement types in olang
 ///
 /// Equality is span-insensitive: `Located` wrappers are stripped from both
 /// sides before comparing, so two parses of the same program compare equal
@@ -215,7 +218,7 @@ pub struct Parameter {
     pub default_value: Option<Expr>,
 }
 
-/// Expression types supported by Olang
+/// Expression types supported by olang
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Expr {
     /// `@name(args)` — a macro invocation (docs/macros.md), gone before
@@ -1674,19 +1677,19 @@ pub enum TypeError {
     CannotInfer {
         expression: String,
     },
-    /// Enhanced error for constraint violations
+    /// A value that breaks a type's constraint.
     ConstraintViolation {
         type_name: String,
         constraint: String,
         location: String,
     },
-    /// Enhanced error for union type mismatches
+    /// A value that matches none of a union's types.
     UnionMismatch {
         expected_types: Vec<TypeAnnotation>,
         found: TypeAnnotation,
         location: String,
     },
-    /// Enhanced error for intersection type issues
+    /// A value that misses part of an intersection type.
     IntersectionMismatch {
         required_types: Vec<TypeAnnotation>,
         found: TypeAnnotation,

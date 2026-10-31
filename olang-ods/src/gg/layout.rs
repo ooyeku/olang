@@ -81,8 +81,7 @@ pub fn radius(size: f64) -> f64 {
     }
 }
 
-// ── legends ──────────────────────────────────────────────────────────
-
+// ── legends ─────────────────────────────────────────────────────────
 #[derive(Clone, Debug, Default)]
 struct KeyVis {
     color: Option<Rgba>,
@@ -599,8 +598,7 @@ fn draw_guide(
     }
 }
 
-// ── axes ─────────────────────────────────────────────────────────────
-
+// ── axes ────────────────────────────────────────────────────────────
 /// Which of a facet's labels to keep so none overlap: every k-th.
 fn thin_labels(pos: &[f64], labels: &[String], size: f64, horizontal: bool) -> usize {
     if !horizontal || labels.len() < 2 {
@@ -640,8 +638,7 @@ fn axis_info(s: &super::scale::PosScale, t: &Trained, title: &str) -> AxisInfo {
     }
 }
 
-// ── the plot ─────────────────────────────────────────────────────────
-
+// ── the plot ────────────────────────────────────────────────────────
 pub fn draw(b: &Built) -> super::Result<Scene> {
     let t = &b.theme;
     let fct = &b.facet;
@@ -651,7 +648,7 @@ pub fn draw(b: &Built) -> super::Result<Scene> {
     let void = t.void();
     let mut items: Vec<Item> = Vec::new();
 
-    // ── the frame's words ──
+    // ── the frame's words ───────────────────────────────────────────
     let title = b.labels.get("title").cloned().unwrap_or_default();
     let subtitle = b.labels.get("subtitle").cloned().unwrap_or_default();
     let caption = b.labels.get("caption").cloned().unwrap_or_default();
@@ -683,7 +680,7 @@ pub fn draw(b: &Built) -> super::Result<Scene> {
         cl.len() as f64 * t.caption() * 1.45 + 6.0
     };
 
-    // ── the horizontal and vertical axes' scales ──
+    // ── the horizontal and vertical axes' scales ────────────────────
     let (hscale, vscale) = if b.flip {
         (&b.sy, &b.sx)
     } else {
@@ -700,7 +697,7 @@ pub fn draw(b: &Built) -> super::Result<Scene> {
         (b.x_title.clone(), b.y_title.clone())
     };
 
-    // ── legends ──
+    // ── legends ─────────────────────────────────────────────────────
     let gs = guides(b);
     let pos = t.legend.as_str();
     let horizontal = pos == "bottom" || pos == "top";
@@ -718,7 +715,7 @@ pub fn draw(b: &Built) -> super::Result<Scene> {
         }
     }
 
-    // ── axes' room ──
+    // ── axes' room ──────────────────────────────────────────────────
     let ts = t.tick();
     let any_h_breaks = !void && htrained.iter().any(|tr| !tr.breaks.is_empty());
     let any_v_breaks = !void && vtrained.iter().any(|tr| !tr.breaks.is_empty());
@@ -1083,7 +1080,7 @@ pub fn draw(b: &Built) -> super::Result<Scene> {
         });
     }
 
-    // ── axis titles ──
+    // ── axis titles ─────────────────────────────────────────────────
     let plot_left = coords.iter().map(|c| c.x).fold(f64::INFINITY, f64::min);
     let plot_right = coords
         .iter()
@@ -1118,7 +1115,7 @@ pub fn draw(b: &Built) -> super::Result<Scene> {
         });
     }
 
-    // ── title, subtitle, caption ──
+    // ── title, subtitle, caption ────────────────────────────────────
     let mut ty = m;
     for l in &tl {
         items.push(Item::Text {
@@ -1158,7 +1155,7 @@ pub fn draw(b: &Built) -> super::Result<Scene> {
         cy += t.caption() * 1.45;
     }
 
-    // ── legends ──
+    // ── legends ─────────────────────────────────────────────────────
     if pos != "none" && !gs.is_empty() {
         if horizontal {
             let mut y = if pos == "top" {

@@ -282,10 +282,7 @@ fn arg_extreme(col: &Series, ids: &[u32], n: usize, want_max: bool) -> Result<Se
     ))
 }
 
-// ---------------------------------------------------------------------
-// Crosstab
-// ---------------------------------------------------------------------
-
+// ── Crosstab ────────────────────────────────────────────────────────
 /// How a crosstab's cells are made shares.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Normalize {
@@ -439,10 +436,7 @@ pub fn crosstab(
     Frame::new(pairs)
 }
 
-// ---------------------------------------------------------------------
-// Runs
-// ---------------------------------------------------------------------
-
+// ── Runs ────────────────────────────────────────────────────────────
 /// Whether rows `i` and `i - 1` hold the same value (two nulls are the
 /// same; a null and a value are not).
 fn same_as_previous(s: &Series, i: usize) -> bool {
@@ -539,10 +533,7 @@ pub fn runs(s: &Series) -> Result<Frame> {
     ])
 }
 
-// ---------------------------------------------------------------------
-// Keyed lookup
-// ---------------------------------------------------------------------
-
+// ── Keyed lookup ────────────────────────────────────────────────────
 /// A hash index over one column: value → its first row. Built once and
 /// asked many times (`ods.lookup`'s cache).
 #[derive(Debug)]

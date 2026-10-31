@@ -201,7 +201,7 @@ fn wait_with_rusage(
 
 #[cfg(not(unix))]
 fn wait_with_rusage(
-    mut child: std::process::Child,
+    child: std::process::Child,
 ) -> anyhow::Result<(std::process::ExitStatus, f64, String)> {
     let output = child.wait_with_output()?;
     Ok((

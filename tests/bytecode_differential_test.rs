@@ -713,7 +713,7 @@ fn a_wrapped_map_compares_shows_and_travels_like_a_map() {
         "f",
         std::slice::from_ref(&store),
     );
-    // (`json.stringify` of a wrapper is pinned in tests/w21_test.rs: this
+    // (`json.stringify` of a wrapper is pinned in tests/tier_refusals_test.rs: this
     // bare-VM harness has no stdlib modules in scope.)
     assert_same(
         "fn f(m) = `${map_get(m, \"count\")} of ${len(map_get(m, \"recent\"))}`",

@@ -97,8 +97,7 @@ fn s(text: &str) -> Value {
     Value::String(std::sync::Arc::new(text.to_string()))
 }
 
-// ── A lambda stage ends at the next `|>` ───────────────────────────────
-
+// ── A lambda stage ends at the next `|>` ────────────────────────────
 #[test]
 fn a_lambda_stage_ends_at_the_next_pipe() {
     let src = r#"
@@ -176,8 +175,7 @@ main()
     assert_eq!(agree(src), Ok(Value::Integer(7)));
 }
 
-// ── A tuple after a comparison is an operand ───────────────────────────
-
+// ── A tuple after a comparison is an operand ────────────────────────
 #[test]
 fn a_tuple_after_a_comparison_is_compared_not_a_lambda() {
     let src = r#"
@@ -217,8 +215,7 @@ main()
     assert_eq!(agree(src), Ok(Value::Integer(4)));
 }
 
-// ── `xs[i] = v` ─────────────────────────────────────────────────────────
-
+// ── `xs[i] = v` ─────────────────────────────────────────────────────
 fn ints(xs: &[i64]) -> Value {
     Value::List(std::sync::Arc::new(
         xs.iter().map(|n| Value::Integer(*n)).collect(),
@@ -345,8 +342,7 @@ fn an_element_assignment_is_an_assignment() {
     assert!(err.to_string().contains("not declared mutable"), "{err}");
 }
 
-// ── `raise` ─────────────────────────────────────────────────────────────
-
+// ── `raise` ─────────────────────────────────────────────────────────
 #[test]
 fn raise_stops_with_its_message_intact() {
     let src = r#"
@@ -382,8 +378,7 @@ main()
     assert_eq!(err, "Runtime error: check: n must be positive, got 0");
 }
 
-// ── A function named as a builtin calls itself ─────────────────────────
-
+// ── A function named as a builtin calls itself ──────────────────────
 #[test]
 fn a_function_named_as_a_builtin_calls_itself_on_every_tier() {
     // Its declaration-time closure holds the builtin `find`; the bytecode
@@ -403,8 +398,7 @@ fn sort(xs, n) = if n == 0 => xs else => sort(xs + [n], n - 1)
     );
 }
 
-// ── Tuples order lexicographically ──────────────────────────────────────
-
+// ── Tuples order lexicographically ──────────────────────────────────
 #[test]
 fn tuples_order_lexicographically_under_every_comparison() {
     let src = r#"
@@ -477,8 +471,7 @@ main()
     );
 }
 
-// ── `abs`, `all`, `any` ─────────────────────────────────────────────────
-
+// ── `abs`, `all`, `any` ─────────────────────────────────────────────
 #[test]
 fn abs_all_and_any_are_global() {
     let src = r#"
@@ -524,8 +517,7 @@ main()
     );
 }
 
-// ── Bitwise operators and `break value` on the bytecode tier ────────────
-
+// ── Bitwise operators and `break value` on the bytecode tier ────────
 #[test]
 fn bitwise_operators_compile_on_every_tier() {
     let src = r#"
@@ -620,8 +612,7 @@ fn a_refusal_names_the_construct() {
     }
 }
 
-// ── A missing `}` in a map literal ──────────────────────────────────────
-
+// ── A missing `}` in a map literal ──────────────────────────────────
 #[test]
 fn a_statement_inside_an_open_map_literal_names_the_literal() {
     for (src, at) in [

@@ -224,7 +224,6 @@ fn splice(args: Vec<Value>) -> Result<Value, InterpreterError> {
 }
 
 // ── helpers ─────────────────────────────────────────────────────────
-
 fn list_arg<'a>(
     args: &'a [Value],
     i: usize,
@@ -387,7 +386,6 @@ fn compare_keys(a: &Value, b: &Value) -> std::cmp::Ordering {
 }
 
 // ── operations ──────────────────────────────────────────────────────
-
 fn min_max_by(
     args: Vec<Value>,
     interpreter: &mut Interpreter,

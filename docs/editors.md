@@ -1,10 +1,13 @@
 # Editor support
 
-olang includes a language server: `olang lsp` speaks the Language Server
-Protocol over stdio from the same binary that runs programs, so there is
-no separate installation, and the editor's diagnostics come from the
-parser and checker the runtime uses. This chapter covers what the server
-provides and how to configure VS Code, Zed and other editors.
+Your editor can understand olang as well as olang does: errors as you
+type, completion, hover help and go-to-definition. That comes from a
+language server, a background program editors talk to through a shared
+protocol (the Language Server Protocol). It is built into the `olang`
+binary as `olang lsp`, so there is nothing extra to install, and the
+errors your editor shows come from the very parser and checker that run
+your programs. This chapter covers what the server provides and how to
+set up VS Code, Zed and other editors.
 
 Part of [the olang book](README.md) · [Command-line tooling](tooling.md)
 

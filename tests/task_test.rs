@@ -29,8 +29,7 @@ fn err(source: &str) -> String {
     }
 }
 
-// ── spawn and join ────────────────────────────────────────────────────
-
+// ── spawn and join ──────────────────────────────────────────────────
 #[test]
 fn spawn_returns_a_task_that_join_collects() {
     // `spawn` takes a *call* — `spawn f(x)`, not a bare expression, so
@@ -101,8 +100,7 @@ fn joining_twice_returns_the_memoized_result() {
     assert_eq!(out, "7 7");
 }
 
-// ── failure is a value ────────────────────────────────────────────────
-
+// ── failure is a value ──────────────────────────────────────────────
 #[test]
 fn a_failed_task_yields_err_rather_than_aborting() {
     let out = run("fn boom(n) = n + \"not a number\"\n\
@@ -122,8 +120,7 @@ fn one_failed_task_does_not_kill_the_batch() {
     assert_eq!(out, "[0, -1, 20]");
 }
 
-// ── timeouts bound the wait, not the work ─────────────────────────────
-
+// ── timeouts bound the wait, not the work ───────────────────────────
 #[test]
 fn join_timeout_reports_a_timeout_without_stopping_the_task() {
     // The load-bearing property, and the one an `async` model would have
@@ -152,8 +149,7 @@ fn join_timeout_rejects_a_negative_budget() {
     assert!(e.contains("non-negative"), "{e}");
 }
 
-// ── errors on non-tasks ───────────────────────────────────────────────
-
+// ── errors on non-tasks ─────────────────────────────────────────────
 #[test]
 fn task_operations_reject_values_that_are_not_tasks() {
     for source in [
@@ -168,8 +164,7 @@ fn task_operations_reject_values_that_are_not_tasks() {
     assert!(e.contains("Cell handle"), "{e}");
 }
 
-// ── the removed surface ───────────────────────────────────────────────
-
+// ── the removed surface ─────────────────────────────────────────────
 #[test]
 fn the_async_vocabulary_is_gone_and_its_words_are_reserved() {
     // 0.63 removed async/await/Promise; the freeze pass reserved `async`
@@ -186,8 +181,7 @@ fn the_async_vocabulary_is_gone_and_its_words_are_reserved() {
     );
 }
 
-// ── the tiers agree ───────────────────────────────────────────────────
-
+// ── the tiers agree ─────────────────────────────────────────────────
 #[test]
 fn task_handles_survive_promotion_to_the_bytecode_tier() {
     // A hot function that spawns and joins must behave identically once

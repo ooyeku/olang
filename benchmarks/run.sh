@@ -1,5 +1,5 @@
 #!/bin/bash
-# run.sh — the DP4 pipeline benchmark runner.
+# run.sh — the pipeline benchmark runner.
 #
 #   benchmarks/run.sh [reps] [rows]
 #

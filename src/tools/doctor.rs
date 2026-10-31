@@ -95,7 +95,7 @@ pub fn run(path: &Path) -> i32 {
 fn audit(root: &Path) -> Vec<Finding> {
     let mut out = Vec::new();
 
-    // ── the manifest and its dependencies ────────────────────────────
+    // ── the manifest and its dependencies ───────────────────────────
     let manifest = match crate::pkg::manifest::Manifest::load(root) {
         Ok(m) => {
             out.push(ok(format!(
@@ -215,12 +215,12 @@ fn audit(root: &Path) -> Vec<Finding> {
         }
     }
 
-    // ── a lock behind the shelf: what runs is the lock's commit ──────
+    // ── a lock behind the shelf: what runs is the lock's commit ─────
     for line in crate::pkg::lock_behind_shelf(root) {
         out.push(note(line));
     }
 
-    // ── the pin a consumer keeps on olang itself ─────────────────────
+    // ── the pin a consumer keeps on olang itself ────────────────────
     let pin = root.join(".olang-ref");
     if pin.exists() {
         let text = std::fs::read_to_string(&pin).unwrap_or_default();
@@ -231,7 +231,7 @@ fn audit(root: &Path) -> Vec<Finding> {
         )));
     }
 
-    // ── the browser runtime ──────────────────────────────────────────
+    // ── the browser runtime ─────────────────────────────────────────
     match crate::runtime_wasm::embedded() {
         Some(bytes) => out.push(ok(format!(
             "browser runtime embedded: {} KB, hash {}",

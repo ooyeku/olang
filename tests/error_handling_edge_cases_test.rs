@@ -1,9 +1,6 @@
 use olang::{Interpreter, Parser};
 
-// =============================================================================
-// ERROR HANDLING EDGE CASES TESTS
-// =============================================================================
-
+// ── ERROR HANDLING EDGE CASES TESTS ─────────────────────────────────
 #[test]
 fn test_division_by_zero_error() {
     let parser = Parser::new();

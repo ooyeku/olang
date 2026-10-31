@@ -132,7 +132,7 @@ pub fn call_json_function(
     }
 }
 
-/// Parse a JSON string into an Olang value
+/// Parse a JSON string into an olang value
 /// Usage: json.parse("{\"name\": \"John\", \"age\": 30}") -> Result<Object, Error>
 fn json_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
@@ -158,7 +158,7 @@ fn json_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     }
 }
 
-/// Convert an Olang value to JSON string
+/// Convert an olang value to JSON string
 /// Usage: json.stringify({"name": "John", "age": 30}) -> Result<String, Error>
 fn json_stringify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
@@ -921,7 +921,7 @@ fn json_deep_clone(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
     }
 }
 
-/// Convert serde_json::Value to Olang Value.
+/// Convert serde_json::Value to olang Value.
 ///
 /// Numeric fidelity is the contract (docs/stability.md): integers within
 /// i64 arrive losslessly as Int, JSON decimals arrive as the nearest
@@ -989,7 +989,7 @@ pub(crate) fn json_to_olang_value(json_value: serde_json::Value) -> Result<Value
 /// at 128.
 pub(crate) const MAX_VALUE_DEPTH: usize = 512;
 
-/// Convert Olang Value to serde_json::Value
+/// Convert olang Value to serde_json::Value
 pub(crate) fn olang_value_to_json(value: &Value) -> Result<serde_json::Value, JsonError> {
     value_to_json_at(value, 0)
 }

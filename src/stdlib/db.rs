@@ -326,7 +326,6 @@ pub fn call_db_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn s
 }
 
 // ── helpers ─────────────────────────────────────────────────────────
-
 fn ok(v: Value) -> Value {
     Value::Ok(Box::new(v))
 }
@@ -652,7 +651,6 @@ fn open_conn(st: &ConnState) -> &Connection {
 }
 
 // ── raw statements (db.query_rows and cursors) ──────────────────────
-
 /// The connection's last error, as a failure.
 ///
 /// SAFETY: `db` is a live connection handle, used under its lock.
@@ -880,7 +878,6 @@ fn prepare_bound(
 }
 
 // ── the connection's owner ──────────────────────────────────────────
-
 /// The `handle` field of `db.open`'s `Connection`: every copy of the
 /// connection value shares it, and dropping the last one closes the
 /// connection (once its cursors are dropped too, which hold it open), as
@@ -949,7 +946,6 @@ pub fn detached_connection_owner() -> Value {
 }
 
 // ── the cursor value ────────────────────────────────────────────────
-
 /// `db.cursor`'s answer: a handle on a statement the connection's state
 /// owns (see the module doc). Dropping the last copy finalizes it.
 struct CursorObject {
@@ -1055,7 +1051,6 @@ fn cursor_of<'a>(func: &str, value: &'a Value) -> Result<&'a CursorObject, Value
 }
 
 // ── operations ──────────────────────────────────────────────────────
-
 /// db.migrate(conn, steps) -> Result<Int>: bring the database to the head
 /// of `steps` — a list of versions, each a list of statements (or one
 /// statement). A `schema_version` table records the applied version;
@@ -1652,7 +1647,6 @@ fn db_close(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 }
 
 // ── Frames: db.query_frame, db.insert_frame ─────────────────────────
-
 /// One column's cells as SQLite gave them.
 enum Cells {
     Int(Vec<Option<i64>>),

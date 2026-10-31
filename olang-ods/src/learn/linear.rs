@@ -119,10 +119,7 @@ pub fn linear_predict(x: &Matrix, beta: &[f64], intercept: bool) -> Vec<f64> {
     out
 }
 
-// ---------------------------------------------------------------------
-// OLS
-// ---------------------------------------------------------------------
-
+// ── OLS ─────────────────────────────────────────────────────────────
 #[derive(Clone, Debug)]
 pub struct OlsFit {
     /// Intercept first (when fitted), then one per feature.
@@ -258,10 +255,7 @@ impl OlsFit {
     }
 }
 
-// ---------------------------------------------------------------------
-// Ridge, lasso, elastic net
-// ---------------------------------------------------------------------
-
+// ── Ridge, lasso, elastic net ───────────────────────────────────────
 #[derive(Clone, Debug)]
 pub struct Penalized {
     /// Intercept first, then one per feature.
@@ -399,10 +393,7 @@ fn soft(z: f64, t: f64) -> f64 {
     }
 }
 
-// ---------------------------------------------------------------------
-// Logistic regression
-// ---------------------------------------------------------------------
-
+// ── Logistic regression ─────────────────────────────────────────────
 #[derive(Clone, Debug)]
 pub struct LogitFit {
     /// Intercept first.

@@ -145,10 +145,7 @@ fn frame(cols: Vec<(&str, Series)>) -> Result<Value, String> {
     super::frame::from_columns(cols.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
 }
 
-// ---------------------------------------------------------------------
-// Time
-// ---------------------------------------------------------------------
-
+// ── Time ────────────────────────────────────────────────────────────
 /// A Date or Datetime column naming each value's time.
 #[derive(Clone, Debug)]
 pub struct Times {
@@ -231,10 +228,7 @@ impl Times {
     }
 }
 
-// ---------------------------------------------------------------------
-// The fitted model
-// ---------------------------------------------------------------------
-
+// ── The fitted model ────────────────────────────────────────────────
 #[derive(Debug)]
 pub struct OdsHoltWinters {
     pub model: Arc<HoltWinters>,
@@ -345,10 +339,7 @@ fn forecast_value(values: Vec<f64>, times: Option<&Times>) -> Result<Value, Stri
     }
 }
 
-// ---------------------------------------------------------------------
-// Dispatch
-// ---------------------------------------------------------------------
-
+// ── Dispatch ────────────────────────────────────────────────────────
 pub fn dispatch(func: &str, args: &[Value]) -> Result<Value, String> {
     let a = |i: usize| args.get(i);
     match func {

@@ -79,7 +79,7 @@ struct Live {
 
 static LIVE: Mutex<Option<Live>> = Mutex::new(None);
 
-/// Start a live profile (once a process; a second call is refused).
+/// Start a live profile (once per process; a second call is refused).
 pub fn start(spec: LiveSpec) -> bool {
     start_as(spec, false)
 }

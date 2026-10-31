@@ -1074,10 +1074,7 @@ fn rewrite_temporal(op: Op, args: &[Arc<Expr>], kids: &[Option<DType>]) -> Optio
     })
 }
 
-// ---------------------------------------------------------------------
-// Plans
-// ---------------------------------------------------------------------
-
+// ── Plans ───────────────────────────────────────────────────────────
 #[derive(Debug)]
 enum Kind {
     Col(Series),
@@ -2078,10 +2075,7 @@ fn broadcast(s: &Scalar, dt: DType, n: usize) -> Series {
     }
 }
 
-// ---------------------------------------------------------------------
-// Buffers and views
-// ---------------------------------------------------------------------
-
+// ── Buffers and views ───────────────────────────────────────────────
 struct Out {
     vals: OutVals,
     valid: Option<Vec<u64>>,
@@ -2282,10 +2276,7 @@ struct Dst<'a> {
     valid: &'a mut [u64],
 }
 
-// ---------------------------------------------------------------------
-// Kernels
-// ---------------------------------------------------------------------
-
+// ── Kernels ─────────────────────────────────────────────────────────
 /// `out[i] = f(a[i], b[i])` for slices or constants on either side;
 /// generic, so each operator is its own loop and vectorizes.
 #[inline(always)]
@@ -3218,10 +3209,7 @@ fn cast(to: DType, a: &Arg<'_>, dst: &mut Dst<'_>, n: usize, has_nulls: bool) ->
     None
 }
 
-// ---------------------------------------------------------------------
-// Reductions
-// ---------------------------------------------------------------------
-
+// ── Reductions ──────────────────────────────────────────────────────
 /// What [`Plan::reduce`] folds a root into.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reduce {

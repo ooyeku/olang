@@ -112,8 +112,7 @@ fn par_is_not_a_reserved_word() {
     assert_eq!(result, "6");
 }
 
-// ── Review findings: forms that had no way to be written ──────────────
-
+// ── Review findings: forms that had no way to be written ────────────
 /// Both tiers, same source, same answer. The three forms below are new,
 /// and a new form is exactly where the tiers drift apart.
 fn both_tiers(source: &str) -> String {

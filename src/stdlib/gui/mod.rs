@@ -252,7 +252,6 @@ fn gui_function(name: &str, args: Vec<Value>) -> DynRes {
 }
 
 // ── the registry and the events channel ─────────────────────────────
-
 pub type Shared = Arc<Mutex<WinState>>;
 
 static WINDOWS: OnceLock<Mutex<HashMap<u64, Shared>>> = OnceLock::new();
@@ -320,7 +319,6 @@ fn arity(function: &str, args: &[Value], min: usize, max: usize) -> Res<()> {
 }
 
 // ── the functions ───────────────────────────────────────────────────
-
 fn gui_available(args: Vec<Value>) -> Res<Value> {
     arity("gui.available", &args, 0, 0)?;
     Ok(Value::Boolean(platform::available()))

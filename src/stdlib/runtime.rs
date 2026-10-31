@@ -437,8 +437,7 @@ fn runtime_answer(
     Value::Map(Arc::new(out))
 }
 
-// ── a host's calls: modules loaded at run time ───────────────────────
-
+// ── a host's calls: modules loaded at run time ──────────────────────
 fn host_err(message: impl Into<String>) -> crate::interpreter::InterpreterError {
     crate::interpreter::InterpreterError::RuntimeError {
         message: message.into(),

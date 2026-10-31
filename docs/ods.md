@@ -3,14 +3,20 @@
 Part of [the olang book](README.md) · [A tour of olang](tour.md) ·
 [Standard library reference](stdlib.md) · [Writing fast olang](performance.md)
 
-This chapter describes olang's data stack: typed columns and tables,
-expressions over them, matrices, statistical inference, time series,
-machine learning, and charts. It walks through each part with examples;
-[the standard library reference](stdlib.md#ods--series-and-frames)
-lists every function and option, and [Writing fast
-olang](performance.md#bulk-data-belongs-in-ods) holds the measurements.
+olang has the tools for data analysis built in, the kind of work you
+might otherwise do with pandas, NumPy, R or a spreadsheet. You can load a
+CSV file, clean it, group and join it, run statistical tests, fit a
+model and draw a chart, all without installing anything. Underneath, the
+heavy lifting runs as native code, so it is fast on large data.
 
-The modules are:
+This chapter walks through each part with examples: columns and tables,
+expressions over them, matrices, statistics and time series, machine
+learning, and charts. [The standard library
+reference](stdlib.md#ods--series-and-frames) lists every function and
+option, and [Writing fast olang](performance.md#bulk-data-belongs-in-ods)
+has the measurements.
+
+The data stack is made of these modules:
 
 | Module | What it holds | In scope |
 |---|---|---|
@@ -43,17 +49,18 @@ plain `olang` block in this chapter runs as written; blocks marked
 
 ## The columnar model
 
-A Series stores one column of one type in a contiguous native buffer,
-with a validity bitmap for its nulls. A Frame is a table of named,
-equal-length Series. Operations run native kernels over whole columns,
-so a computation written as column operations does no per-row
-interpretation; across large columns they also run in parallel.
+Two shapes carry everything. A Series is one column of values, all of
+one type, stored together in native memory, with a record of which
+entries are missing. A Frame is a table: named Series of equal length,
+side by side. Operations work on whole columns at once in native code,
+so a calculation written with column operations never interprets
+anything row by row, and on large columns it also runs in parallel.
 [`examples/data-processing/dataproc/`](../examples/data-processing/dataproc/)
 holds the same job written as a fold over a list of maps (`records.ol`)
 and as Frame operations (`main.ol`); on 200,000 generated rows the
 second is about eighty times faster.
 
-Two rules carry everything that follows:
+Two rules follow from that, and the rest of the chapter builds on them:
 
 - **Operators are vectorized.** Arithmetic and comparison on a column
   run native kernels over the whole buffer; a comparison yields a mask

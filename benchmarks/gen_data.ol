@@ -1,4 +1,4 @@
-// gen_data.ol — deterministic dataset for the DP4 pipeline benchmark.
+// gen_data.ol — deterministic dataset for the pipeline benchmark.
 //
 // Writes two CSVs into benchmarks/data/:
 //

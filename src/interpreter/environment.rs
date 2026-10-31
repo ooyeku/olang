@@ -18,7 +18,6 @@ pub(crate) fn fresh_scope() -> u64 {
 /// Configuration for module resolution debugging
 #[derive(Debug, Clone)]
 pub struct ModuleDebugConfig {
-    pub enable_resolution_tracing: bool,
     pub log_search_paths: bool,
     pub show_resolution_timing: bool,
     pub verbose_error_messages: bool,
@@ -27,7 +26,6 @@ pub struct ModuleDebugConfig {
 impl Default for ModuleDebugConfig {
     fn default() -> Self {
         Self {
-            enable_resolution_tracing: std::env::var("OLANG_DEBUG_MODULES").is_ok(),
             log_search_paths: true,
             show_resolution_timing: false,
             verbose_error_messages: true,

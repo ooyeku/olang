@@ -1,13 +1,14 @@
 # A tour of olang
 
-This tour teaches olang by building one small program: a report over a
-field station's temperature log. Each stop introduces one idea — values,
-functions, pattern matching, types, errors, parallelism, the data stack,
-testing — and applies it to the same data, so by the end you have seen a
-complete, realistic olang program grow from a list of strings into a
-statistical report with a chart.
+The best way to get a feel for a language is to build something with it.
+In this tour we build one small program: a report on a weather station's
+temperature log. We start with a few lines of text, and each stop adds
+one idea and puts it to work on the same data. By the end you will have
+a complete program that parses the log, copes with bad lines, and prints
+a summary per station.
 
-Every code block runs exactly as shown.
+Every code block runs exactly as shown, so feel free to paste them into
+a file or the REPL as you go.
 
 Part of [the olang book](README.md) ·
 [Language](language.md) · [Standard library](stdlib.md) ·
@@ -24,7 +25,7 @@ Part of [the olang book](README.md) ·
 - [Data with shape: structs and enums](#data-with-shape-structs-and-enums)
 - [Behavior with dispatch: traits](#behavior-with-dispatch-traits)
 - [Errors are values](#errors-are-values)
-- [Parallelism, without a GIL](#parallelism-without-a-gil)
+- [Using every core](#using-every-core)
 - [The data stack](#the-data-stack)
 - [Testing](#testing)
 - [The whole program](#the-whole-program)
@@ -32,8 +33,10 @@ Part of [the olang book](README.md) ·
 
 ## Running a program
 
-With olang installed ([Installation](installation.md)), save a program in a
-file and pass it to `olang`; with no file, `olang` starts the REPL:
+Once olang is installed ([Installation](installation.md)), save a program
+in a file ending in `.ol` and pass it to `olang`. Run `olang` on its own
+and you get the REPL, an interactive prompt where you can type olang and
+see the answer straight away:
 
 ```bash
 olang program.ol          # run a file (arguments after it reach os.args())
@@ -46,13 +49,15 @@ olang                     # start the REPL (:help lists commands)
 println("hello, olang")
 ```
 
-Newlines end statements — no semicolons needed. `//` starts a comment.
+A new line ends a statement, so there are no semicolons to remember.
+`//` starts a comment that runs to the end of the line.
 
 ## Values and bindings
 
-Our program starts with data: a log of temperature readings, one line
-per measurement, as it might arrive from a file or an HTTP response.
-`let` binds names to values; backtick strings interpolate with `${...}`:
+Our program starts with data: a temperature log with one reading per
+line, the way it might arrive from a file or a web request. `let` gives
+a value a name. Strings written in backticks can include values with
+`${...}`:
 
 ```olang
 let station = "high-meadow"
@@ -66,7 +71,10 @@ let log = [
 println(`${len(log)} readings from ${station}`)
 ```
 
-Lists, tuples, maps, and objects are all literals:
+olang has four ways to group values, and each is written the way it
+looks. A list is an ordered row of anything. A tuple is a small fixed
+group whose positions mean something. A map links string keys to values,
+and an object has fixed field names you reach with a dot:
 
 ```olang
 let list = [1, 2, 3]                 // ordered, heterogeneous
@@ -80,9 +88,9 @@ println(`${user.name} scored ${scores.ada}`)
 
 ### Values never change
 
-This is the first big idea, and everything later builds on it: **olang
-values are immutable**. Operations that look like modification return a
-new value and leave the original alone:
+This is the first big idea in olang, and a lot of what comes later rests
+on it: once a value exists, it never changes. Anything that looks like
+an edit actually makes a new value and leaves the original as it was:
 
 ```olang
 let base = [1, 2]
@@ -95,12 +103,12 @@ let m2 = #{ ...m, "b": 2 }       // a new map
 println(`${map_len(m)} then ${map_len(m2)}`)
 ```
 
-A binding declared `let mut` can be reassigned; a plain `let` cannot,
-and the values they point at cannot be mutated in place either. Programs
-therefore
-flow data through transformations rather than editing shared state —
-which is also, as a later stop shows, exactly what makes olang's
-parallelism safe.
+If you need a name that points at different values over time, declare
+it with `let mut`. You are still not changing a value in place; you are
+pointing the name at a new one. In practice this means olang programs
+pass data through a series of transformations instead of editing shared
+state, and that turns out to be exactly what makes parallel code safe,
+as you'll see later in the tour.
 
 ```olang
 let mut count = 0
@@ -110,9 +118,9 @@ println(to_string(count))
 
 ## Everything is an expression
 
-`if` chains produce values; blocks yield their last expression. There
-is no statement/expression divide to work around — a conditional is
-just a value you bind:
+In olang, an `if` produces a value, and a block `{ ... }` produces the
+value of its last line. So a decision is just something you can give a
+name to:
 
 ```olang
 let temp = 23.5
@@ -124,14 +132,15 @@ println(feel)
 
 ## Functions and pipelines
 
-Functions are `fn name(args) = expression`; a block `{ ... }` is an
-expression too, so multi-statement bodies are `fn f(x) = { ... }`. The
-pipeline operator `|>` feeds a value into the next call's first
-argument, so a chain of transformations reads top-to-bottom.
+A function is written `fn name(args) = expression`. When the body needs
+more than one line, the expression is a block: `fn f(x) = { ... }`. The
+pipe operator `|>` passes the value on its left into the call on its
+right, as the first argument, so a chain of steps reads from top to
+bottom.
 
-Time to extract something from the log. Each line is
-`station,day,temp`; splitting on commas and taking the third field
-gives the temperature:
+Let's pull something useful out of the log. Each line has the form
+`station,day,temp`, so splitting it on commas and taking the third piece
+gives us the temperature:
 
 ```olang
 let log = [
@@ -153,23 +162,24 @@ println(`${warm_days} warm readings`)
 println(`average ${average(log |> map(temp_of))}`)
 ```
 
-Functions are first-class: `temp_of` is passed to `map` by name, and
-the lambda `(t) => t > 20.0` is a function literal. Most of the
-standard library takes its data as the first argument precisely so it
-chains with `|>`.
+Functions are values like any other. Here `temp_of` is handed to `map`
+by name, and `(t) => t > 20.0` is a small function written on the spot,
+often called a lambda. Most of the standard library takes its data as
+the first argument so that it chains neatly with `|>`.
 
-(That `unwrap` trusts the input blindly — a malformed line would abort
-the program. The error-handling stop fixes this properly.)
+One caveat: `unwrap` trusts the input completely, so a malformed line
+would stop the program. We'll fix that properly when we get to errors.
 
 ## Pattern matching
 
-`match` tests a value against patterns in order and produces the first
-matching arm's value. Patterns destructure as they match, which is what
-makes them stronger than a chain of `if`s: the *shape* of the data
-picks the arm, and the pieces arrive already named.
+`match` compares a value against a list of patterns, in order, and gives
+back the result of the first one that fits. What makes it more useful
+than a chain of `if`s is that a pattern can take the value apart while
+it checks it. The shape of the data picks the branch, and the pieces
+arrive already named.
 
-A log line has a shape — three comma-separated fields — and `match` on
-the split list captures all three at once:
+A log line has a shape, three fields separated by commas, so a single
+pattern on the split line can check that and name all three parts:
 
 ```olang
 fn describe(line) = match split(line, ",") {
@@ -181,7 +191,8 @@ println(describe("north,2026-08-01,21.5"))
 println(describe("not a reading"))
 ```
 
-Guards cover the classification side:
+A guard, written `if` after a pattern, adds a condition. That suits
+sorting temperatures into bands:
 
 ```olang
 fn band(t) = match t {
@@ -193,18 +204,20 @@ fn band(t) = match t {
 println(band(-4.0) + ", " + band(21.5) + ", " + band(31.0))
 ```
 
-A value that matches no arm is a runtime error, so a `match` usually ends
-with the `_` wildcard. When the scrutinee's type is known, `olang check`
-warns about cases the arms do not cover. The
-[language reference](language.md#pattern-matching) lists every pattern
-kind — literals, tuples, lists with `...rest`, structs, enum variants,
-ranges, guards.
+If a value matches none of the patterns, that is an error when the
+program runs, so a `match` usually ends with `_`, which matches
+anything. When olang knows the type being matched, `olang check` warns
+you about cases you forgot. The [language
+reference](language.md#pattern-matching) lists every kind of pattern,
+including tuples, lists with a `...rest`, structs, enum variants and
+ranges.
 
 ## Data with shape: structs and enums
 
-Strings-with-commas only carry a program so far. A `struct` declares a
-record type with named fields, and construction is validated — a
-missing or misspelled field is an error, not a silent `Unit`:
+Strings with commas in them only get a program so far. A `struct`
+declares a record type with named fields, and olang checks each one when
+you build it: a missing or misspelled field is an error on the spot,
+instead of turning up later as an empty value.
 
 ```olang
 type Reading = struct { station: String, day: String, temp: Float }
@@ -223,10 +236,9 @@ println(`${r.station}: ${r.temp}`)
 println(typeof(r))   // Reading
 ```
 
-An `enum` declares a closed set of alternatives, each optionally
-carrying data — and `match` is how you take them apart. Enums and
-`match` are two halves of one feature: the enum promises which cases
-exist, the `match` handles them:
+An `enum` declares a fixed set of alternatives, and each one can carry
+data of its own. Enums and `match` are made for each other: the enum
+says which cases exist, and the `match` handles each of them.
 
 ```olang
 type Sky = enum { Clear, Overcast, Rain(Float) }   // Rain carries mm
@@ -243,10 +255,11 @@ println(week |> map(describe) |> join(", "))
 
 ## Behavior with dispatch: traits
 
-A trait declares methods; `impl Trait for Type` provides them, and a
-method call dispatches on the receiver's runtime type. Traits may give
-default method bodies that impls can override — the mechanism for "same
-operation, per-type behavior":
+Sometimes different kinds of data need to answer the same question in
+their own way. A trait names a set of methods, and `impl Trait for Type`
+supplies them for one type. When you call a method, olang picks the
+version that belongs to the value's type. A trait can also provide a
+default version of a method, which a type is free to replace:
 
 ```olang
 type Reading = struct { station: String, temp: Float }
@@ -270,21 +283,24 @@ for entry in [Reading { station: "north", temp: 21.5 }, Gap { station: "south" }
 }
 ```
 
-The list holds two different types; each element dispatches to its own
-implementation. This is olang's polymorphism — no inheritance, no class
-hierarchy, just types opting in to capabilities.
+The list holds two different types, and each one answers with its own
+code. That is all there is to polymorphism in olang. There are no
+classes and no inheritance; a type simply opts in to the traits it
+supports.
 
 ## Errors are values
 
-olang has no exception handling for expected failures. A function that can fail returns a `Result`:
-`Ok(value)` on success, `Err(error)` on failure — and the caller
-decides, with ordinary code, what failure means. `str.parse_float` is
-such a function, which is why the earlier `unwrap` was unsafe: `unwrap`
-extracts an `Ok` and *aborts* on `Err`.
+olang doesn't use exceptions for failures you can expect, like a number
+that doesn't parse. Instead, a function that can fail returns a
+`Result`, which is either `Ok(value)` when things worked or
+`Err(error)` when they didn't. The caller decides what a failure means,
+using ordinary code. `str.parse_float` is one of these functions, which
+is why our earlier `unwrap` was risky: `unwrap` takes the value out of
+an `Ok`, and stops the program if it finds an `Err`.
 
-The honest version of our parser returns a `Result` itself and uses
-`?` to propagate failure upward — `expr?` unwraps an `Ok` or returns
-the `Err` to the caller immediately:
+A more honest parser returns a `Result` of its own. Inside it, `?`
+after an expression means "take the value if this worked, and otherwise
+return the error to my caller right now":
 
 ```olang
 type Reading = struct { station: String, day: String, temp: Float }
@@ -301,8 +317,9 @@ println(to_string(parse("junk")))
 println(to_string(parse("north,2026-08-02,warm")))   // bad float: Err
 ```
 
-Because errors are values, "process what you can, report what you
-can't" is a fold over `Result`s — no exception handler, no nesting:
+Because errors are plain values, "process what you can and count what
+you can't" needs no special machinery. You filter the results like any
+other list:
 
 ```olang
 type Reading = struct { station: String, day: String, temp: Float }
@@ -320,24 +337,27 @@ let bad = log |> map(parse) |> filter(is_err) |> len
 println(`${len(readings)} parsed, ${bad} rejected`)
 ```
 
-For consuming a single `Result` there is a whole toolkit — `match` on
-`Ok(v)`/`Err(e)`, `unwrap_or(r, default)`, `match` on the two arms —
-and `error` declarations give failures structure beyond strings. The
-[language reference](language.md#error-handling) covers all of it.
+There are plenty of other ways to handle a single `Result`: a `match`
+on `Ok(v)` and `Err(e)`, `unwrap_or(r, default)` to fall back on a
+value, and `error` declarations when a plain string isn't enough to
+describe what went wrong. The [language
+reference](language.md#error-handling) covers them all.
 
-## Parallelism, without a GIL
+## Using every core
 
-Suppose each reading needs real computation — a calibration model, a
-simulation, anything CPU-heavy. olang fans work across every core with
-three constructs, all built on OS threads (there is no global
-interpreter lock):
+Suppose each reading needed real work, such as running a calibration
+model or a simulation. olang can spread that work across all your
+processor's cores. It uses real operating-system threads and, unlike
+Python, has no global lock that lets only one of them run at a time.
+There are three tools for it:
 
-- `spawn expr` starts evaluating on a background thread and returns a
-  task handle; `task.join` collects its result.
-- `par_map(xs, f)` is `map` fanned across the cores: same arguments,
-  same results in the same order.
-- `par for x in xs { ... }` is the parallel loop — for per-element
-  *effects* rather than values, with an implicit barrier at the end.
+- `spawn expr` starts working on `expr` in the background and hands you
+  a task; `task.join` waits for its result.
+- `par_map(xs, f)` is `map` spread across the cores. It takes the same
+  arguments and gives the same results, in the same order.
+- `par for x in xs { ... }` is a parallel loop, for when each item needs
+  doing rather than returning a value. It waits for every item to finish
+  before moving on.
 
 ```olang
 fn calibrate(t) = {              // stand-in for heavy per-reading work
@@ -357,10 +377,9 @@ println(to_string(unwrap(task.join(a)) < unwrap(task.join(b))))
 
 ### The snapshot rule
 
-This rule governs all olang concurrency. Every parallel construct — `spawn`, `par_map`, `par for`, and ordinary
-closures too — **captures its environment by value**: the worker sees a
-snapshot of the bindings as they were when it started, and writing to
-them inside the worker updates only the worker's own copy:
+One rule governs all of this. Every parallel tool, and every ordinary
+closure too, captures the values it uses by copying them. A worker sees
+a snapshot of the names around it as they were when it started:
 
 ```olang
 let factor = 10
@@ -368,10 +387,10 @@ let scaled = par_map([1, 2, 3], (n) => n * factor)   // reads the snapshot
 println(to_string(sum(scaled)))                       // 60
 ```
 
-Reading captured values is exactly what you want and costs nothing.
-*Writing* one is the trap, and the language closes it: assigning to a
-binding captured from an enclosing scope is refused before the program
-runs, because the write could only reach the worker's own copy.
+Reading from the snapshot is exactly what you want, and it costs
+nothing. Writing to it would be a trap, since the change could only ever
+reach the worker's own copy. So olang refuses it before the program
+even starts, and explains why:
 
 ```text
 cannot assign to 'tally': it is captured from an enclosing scope, and
@@ -380,33 +399,35 @@ the new value, or hold the state in a cell (`let tally = cell(...)`, then
 `cell.set(tally, ...)`)
 ```
 
-A `par for` body is refused on the same grounds and says so in its own
-words, pointing at `par_map` and `chan` instead of a cell — a cell
-belongs to the thread that made it, so it cannot cross to a worker.
+A `par for` body that tries the same thing gets a similar message,
+pointing you to `par_map` or a channel instead. (A cell can't help
+there, because a cell belongs to the thread that made it.)
 
-This rule is what makes parallelizing a computation a safe, one-word
-change. No worker can see another's writes, so there are no data races
-and no locks; there is nothing shared to corrupt. When you want values back, use the construct
-that returns them: `par_map` collects results in order, `spawn` hands
-you a task handle for `task.join`, and aggregation is a `fold` over what
-came back.
+This rule is why making a calculation parallel is usually a one-word
+change. No worker can see another worker's writes, so there are no data
+races and no locks to get wrong. When you want results back, use the
+tool that returns them: `par_map` collects them in order, `spawn` gives
+you a task to `task.join`, and you can combine what comes back with a
+`fold`.
 
-A failing worker doesn't kill the batch, either — joining a failed task
-yields an `Err` value, handled with the same Result toolkit as any
-other failure. The [language reference](language.md#concurrency)
-has the full semantics; [`examples/concurrency/parmap/`](../examples/concurrency/parmap/)
-measures the speedup on real kernels.
+If one worker fails, the rest carry on. Joining a failed task gives you
+an `Err`, which you handle like any other error. The [language
+reference](language.md#concurrency) has the full details, and
+[`examples/concurrency/parmap/`](../examples/concurrency/parmap/)
+measures the speedup on real workloads.
 
 ## The data stack
 
-Our report wants statistics, and olang builds the tools in: `ods`
-(typed columns and tables), `stats` (inference), and `plot` (SVG
-charts), all in scope without an import.
+Our report needs some statistics, and olang has the tools built in:
+`ods` for columns and tables, `stats` for statistical tests, and `plot`
+for charts. All three are available without an import.
 
-A **Series** is a typed, null-aware column. Operators on it are
-vectorized (one native kernel over the whole column instead of an
-interpreted loop), and comparisons yield masks for filtering. A
-Series' functions are also its methods:
+A Series is a column of values of one type, which may include missing
+values. Arithmetic on a Series works on the whole column at once, in
+native code, instead of looping in olang. Comparing a Series gives you a
+column of true and false values, called a mask, which you can use to
+filter. And anything you can do to a Series with a function, you can
+also do with a method:
 
 ```olang
 let temps = ods.series([21.5, 19.0, 23.5, 24.0, 18.5])
@@ -417,10 +438,10 @@ let warm = temps.filter(temps > 20.0)
 println(warm.to_list())                  // [21.5, 23.5, 24.0]
 ```
 
-A **Frame** is a table of named Series. `ods.read_csv` turns the log,
-unchanged, into one. `group_by` partitions its rows, and `agg` computes
-one column per entry from expressions over the columns, written with
-`col`. A method chain may start each step on a line of its own:
+A Frame is a table made of named Series. `ods.read_csv` turns our log,
+as it is, into one. `group_by` splits the rows into groups, and `agg`
+computes one new column per entry, using expressions written with
+`col`. As here, each step of a chain can go on a line of its own:
 
 ```olang
 use ods { col }
@@ -444,9 +465,10 @@ for rec in summary.to_records() {
 }
 ```
 
-From there, `stats.t_test` asks whether the two stations really differ,
-and `plot.line` renders a chart as a complete SVG document in a string,
-ready to write to disk or serve over HTTP:
+From there, `stats.t_test` can tell us whether the two stations really
+differ or just look different by chance. `plot.line` draws a chart and
+returns it as a complete SVG document in a string, ready to save to a
+file or send from a web server:
 
 ```olang
 let north = ods.series([21.5, 19.0, 23.5])
@@ -458,17 +480,17 @@ let svg = plot.line(ods.series([1.0, 2.0, 3.0]), north, title: "north station")
 println(str.contains(svg, "<svg"))
 ```
 
-[The data stack](ods.md) is the full chapter: every Series and Frame
-verb, expressions, matrices, inference and time series, machine
-learning with model formulas, and the grammar of graphics.
+[The data stack](ods.md) has the whole story: every Series and Frame
+operation, expressions, matrices, statistics and time series, machine
+learning with model formulas, and a grammar of graphics for charts.
 [`examples/data-processing/statlab/`](../examples/data-processing/statlab/)
-is a complete statistical study built on this stack.
+is a complete statistical study built on it.
 
 ## Testing
 
-Tests live next to the code they guard, in `test "name" { ... }`
-blocks, with assertions that abort on failure. Our parser has earned
-one:
+Tests live right next to the code they check, in `test "name" { ... }`
+blocks. Inside, assertions stop the test if something is wrong. Our
+parser has earned a test of its own:
 
 ```olang
 type Reading = struct { station: String, day: String, temp: Float }
@@ -489,16 +511,16 @@ test "parse handles good and bad lines" {
 println("tests passed")
 ```
 
-`olang test` discovers and runs every `test` block under a directory,
-reports each file's passes and failures, and exits non-zero when
-anything fails — it slots straight into CI. See
+`olang test` finds and runs every `test` block in a folder, reports what
+passed and failed in each file, and exits with an error code if anything
+failed, so it fits straight into automated checks. See
 [Tooling](tooling.md#olang-test).
 
 ## The whole program
 
-Every idea from the tour, in one runnable program: parse with `Result`,
-keep the good lines, aggregate per station on a Frame, and print the
-report:
+Here is everything from the tour in one program. It parses each line
+into a `Result`, keeps the good ones, groups them by station in a Frame,
+and prints the report:
 
 ```olang
 type Reading = struct { station: String, day: String, temp: Float }
@@ -540,20 +562,27 @@ for rec in summary.to_records() {
 println(str.fmt("{} malformed lines rejected", rejected))
 ```
 
-In a real deployment the log would arrive via `fs.read_file` or
-`http.get`, the chart would leave via `fs.write_file`, and the whole
-thing might sit behind `http.serve` — the same code, wrapped in I/O.
-[`examples/`](../examples/) is full of programs that take that step.
+In real use, the log would come from `fs.read_file` or `http.get`, a
+chart might be written out with `fs.write_file`, and the whole thing
+could sit behind `http.serve` as a small web service. The core of the
+program wouldn't change; it would just be wrapped in input and output.
+[`examples/`](../examples/) has plenty of programs that take that step.
 
 ## Where to next
 
-- [The language reference](language.md) — every construct, precisely.
-- [The standard library](stdlib.md) — every builtin and module.
-- [The data stack](ods.md) — Series, Frames, inference, and charts, in depth.
-- [olang in the browser](wasm.md) — the same language driving a web page.
-- [Packages](packages.md) — multi-file programs and dependencies.
-- [`examples/`](../examples/) — complete programs: a task CLI, a template
-  engine, a regex engine, a parser combinator library, a Lisp interpreter
-  written in olang (`minilisp/`), a full-stack issue tracker (`app/`), a
-  parallel statistical study on the data stack (`statlab/`), and more.
-  Run them all with `cd examples && olang run_all.ol`.
+- [The language reference](language.md) gives the precise rules for
+  every part of the language.
+- [The standard library](stdlib.md) documents every built-in function
+  and module.
+- [The data stack](ods.md) goes deep on Series, Frames, statistics and
+  charts.
+- [olang in the browser](wasm.md) shows the same language driving a web
+  page.
+- [Packages](packages.md) covers programs that span several files, and
+  dependencies.
+- [`examples/`](../examples/) has complete programs to read: a task
+  manager for the command line, a template engine, a regex engine, a
+  parser combinator library, a Lisp interpreter written in olang
+  (`minilisp/`), a full-stack issue tracker (`app/`), a parallel
+  statistical study (`statlab/`), and more. Run them all with
+  `cd examples && olang run_all.ol`.

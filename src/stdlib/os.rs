@@ -1127,7 +1127,6 @@ mod tests {
     use super::*;
     use std::env;
 
-    // Helper functions for creating test values
     fn string_val(s: &str) -> Value {
         Value::String(Arc::new(s.to_string()))
     }
@@ -1144,7 +1143,6 @@ mod tests {
         Value::Float(f)
     }
 
-    // Helper function to assert Ok result and extract inner value
     fn assert_ok(result: &Value) -> &Value {
         match result {
             Value::Ok(inner) => inner,
@@ -1160,7 +1158,6 @@ mod tests {
     /// a Rust `Err`; environmental failure still returns `Ok(Value::Err)`.
     /// Tests that only care *that* the call failed use this; tests that
     /// care *which* assert on the specific shape.
-    #[allow(dead_code)]
     fn assert_fails(result: Result<Value, Box<dyn std::error::Error>>) {
         match result {
             Err(_) => {}
@@ -1169,7 +1166,6 @@ mod tests {
         }
     }
 
-    // Helper function to assert Err result and extract error message
     fn assert_err(result: &Value) -> &Value {
         match result {
             Value::Err(inner) => inner,
@@ -1179,7 +1175,6 @@ mod tests {
         }
     }
 
-    // Helper function to extract string from Value
     fn extract_string(value: &Value) -> &str {
         match value {
             Value::String(s) => s,
@@ -1189,7 +1184,6 @@ mod tests {
         }
     }
 
-    // Helper function to extract boolean from Value
     fn extract_bool(value: &Value) -> bool {
         match value {
             Value::Boolean(b) => *b,
@@ -1199,7 +1193,6 @@ mod tests {
         }
     }
 
-    // Helper function to extract integer from Value
     fn extract_int(value: &Value) -> i64 {
         match value {
             Value::Integer(i) => *i,
@@ -1209,7 +1202,6 @@ mod tests {
         }
     }
 
-    // Helper function to extract list from Value
     fn extract_list(value: &Value) -> &[Value] {
         match value {
             Value::List(items) => items,
@@ -1219,7 +1211,6 @@ mod tests {
         }
     }
 
-    // Helper function to extract struct fields from Value
     fn extract_struct_fields(value: &Value) -> &crate::ast::ValueMap {
         match value {
             Value::Struct { fields, .. } => fields,

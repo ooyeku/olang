@@ -3129,8 +3129,7 @@ enum Merge {
 }
 
 impl Checker {
-    // ── pass 1: signatures and struct shapes ───────────────────────────
-
+    // ── pass 1: signatures and struct shapes ─────────────────────────
     fn collect(&mut self, program: &Program) {
         for stmt in &program.statements {
             self.collect_statement(stmt.unwrapped());
@@ -3341,8 +3340,7 @@ impl Checker {
         }
     }
 
-    // ── scope helpers ──────────────────────────────────────────────────
-
+    // ── scope helpers ───────────────────────────────────────────────
     fn lookup(&self, name: &str) -> SType {
         for scope in self.scopes.iter().rev() {
             if let Some(t) = scope.get(name) {
@@ -4058,8 +4056,7 @@ impl Checker {
         self.scopes.iter().any(|s| s.contains_key(name)) || self.sigs.contains_key(name)
     }
 
-    // ── native values: Series, Frame, Date (L1, L2) ───────────────────
-
+    // ── native values: Series, Frame, Date (L1, L2) ─────────────────
     /// The native type a checker type is, when it is one whose methods
     /// and signatures `native_sig` knows (and the file declares no type
     /// of that name).
@@ -4192,8 +4189,7 @@ impl Checker {
         }
     }
 
-    // ── inference: conservative, Unknown-biased ────────────────────────
-
+    // ── inference: conservative, Unknown-biased ─────────────────────
     fn infer(&self, expr: &Expr) -> SType {
         match expr {
             Expr::Integer(_) => SType::Int,
@@ -4564,8 +4560,7 @@ impl Checker {
         }
     }
 
-    // ── pass 2: the walk ───────────────────────────────────────────────
-
+    // ── pass 2: the walk ────────────────────────────────────────────
     fn check_statement(&mut self, stmt: &Statement, span: (u32, u32)) {
         match stmt {
             Statement::Located { line, column, stmt } => {
@@ -5762,8 +5757,7 @@ mod tests {
         assert_eq!(d.len(), 1);
     }
 
-    // ── stage 3: element types ─────────────────────────────────────────
-
+    // ── stage 3: element types ──────────────────────────────────────
     #[test]
     fn list_literal_elements_are_checked_with_index_paths() {
         let d = check("let xs: List<Int> = [1, \"a\", 3]\n");
@@ -5874,8 +5868,7 @@ mod tests {
         assert!(check("fn f(x: Int) = x\nlet v = if true => \"a\" else => 1\nf(v)\n").is_empty());
     }
 
-    // ── 0.61: `let` is required, and `mut` is a guarantee ──────────────
-
+    // ── 0.61: `let` is required, and `mut` is a guarantee ───────────
     #[test]
     fn assignment_without_a_declaration_is_an_error() {
         let d = check("count = 1\n");
@@ -5916,8 +5909,7 @@ mod tests {
         );
     }
 
-    // ── 0.50 arc: cross-file context ───────────────────────────────────
-
+    // ── 0.50 arc: cross-file context ────────────────────────────────
     #[test]
     fn shared_declarations_are_checked_and_seed_context() {
         // `share fn` signatures are signatures (previously invisible).
@@ -5971,8 +5963,7 @@ mod tests {
         );
     }
 
-    // ── 0.61: blocks scope their bindings ──────────────────────────────
-
+    // ── 0.61: blocks scope their bindings ───────────────────────────
     #[test]
     fn using_a_block_scoped_binding_after_the_block_is_an_error() {
         let d = check(
@@ -6042,8 +6033,7 @@ mod tests {
         assert_eq!(d.len(), 1, "{d:?}");
     }
 
-    // ── 0.50 arc: literal types ────────────────────────────────────────
-
+    // ── 0.50 arc: literal types ─────────────────────────────────────
     #[test]
     fn literal_unions_are_lightweight_enums() {
         let src = "fn set(s: \"open\" | \"done\") = s\n";
@@ -6078,8 +6068,7 @@ mod tests {
         assert_eq!(d.len(), 1, "st satisfies, bad provably violates: {:?}", d);
     }
 
-    // ── 0.50 arc: hover types ──────────────────────────────────────────
-
+    // ── 0.50 arc: hover types ───────────────────────────────────────
     #[test]
     fn hover_types_render_signatures_and_inferred_lets() {
         let program = Parser::new()
@@ -6095,8 +6084,7 @@ mod tests {
         assert_eq!(h["mystery"], "let mystery");
     }
 
-    // ── 0.50 arc: Promise at non-async sites ───────────────────────────
-
+    // ── 0.50 arc: Promise at non-async sites ────────────────────────
     #[test]
     fn a_task_handle_is_an_ordinary_value_to_the_checker() {
         // 0.63 deleted async/await/Promise and 0.65 deleted try/catch;
@@ -6110,8 +6098,7 @@ mod tests {
         assert!(Parser::new().parse("let async = 1\n").is_err());
     }
 
-    // ── stage 4: Result payloads ───────────────────────────────────────
-
+    // ── stage 4: Result payloads ────────────────────────────────────
     #[test]
     fn result_literal_payloads_decompose() {
         let d = check("fn f(r: Result<Int, String>) = r\nf(Ok(\"s\"))\n");
@@ -6167,8 +6154,7 @@ mod tests {
         assert!(d[0].message.contains("expects String, got Int"));
     }
 
-    // ── 0.50 arc: unions ───────────────────────────────────────────────
-
+    // ── 0.50 arc: unions ────────────────────────────────────────────
     #[test]
     fn union_annotations_accept_any_branch_and_reject_all_branch_misses() {
         let src = "fn f(x: Int | String) = x\n";
@@ -6204,8 +6190,7 @@ mod tests {
         assert!(check("fn f<T>(x: T | Int) = x\nf(true)\n").is_empty());
     }
 
-    // ── 0.50 arc: function types ───────────────────────────────────────
-
+    // ── 0.50 arc: function types ────────────────────────────────────
     #[test]
     fn function_annotations_check_callability_and_arity() {
         let src = "fn apply(f: (Int) -> Int, x: Int) = f(x)\n";

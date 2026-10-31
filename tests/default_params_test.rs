@@ -1,4 +1,4 @@
-//! Default parameter values (roadmap W8): every case is a differential
+//! Default parameter values: every case is a differential
 //! — the tiered binary and `--no-ovm` must print the same bytes. The
 //! semantics under test: a default evaluates at call time, in the
 //! callee's scope (closure plus every earlier parameter, never the

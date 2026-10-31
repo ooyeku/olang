@@ -23,8 +23,7 @@ fn s(v: Value) -> String {
     }
 }
 
-// ── structural equality ────────────────────────────────────────────────
-
+// ── structural equality ─────────────────────────────────────────────
 #[test]
 fn lists_compare_structurally() {
     assert_eq!(eval("[1, 2] == [1, 2]"), Value::Boolean(true));
@@ -59,8 +58,7 @@ P { x: 1 } == P { x: 1 }
     assert_eq!(eval(src), Value::Boolean(true));
 }
 
-// ── `?` propagation ────────────────────────────────────────────────────
-
+// ── `?` propagation ─────────────────────────────────────────────────
 #[test]
 fn assert_eq_compares_as_equality_does() {
     // `==` holds between a parsed JSON object and the `#{}` map it reads
@@ -145,7 +143,6 @@ fn question_mark_at_top_level_is_an_error() {
 }
 
 // ── functions ───────────────────────────────────────────────────────
-
 #[test]
 fn a_function_has_no_equality_inside_a_value_either() {
     // `==` refuses two bare functions, and so a value holding one: the

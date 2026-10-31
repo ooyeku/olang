@@ -71,7 +71,7 @@ fn the_local_workflow_end_to_end() {
     // binary, no parallel access.
     unsafe { std::env::set_var("OLANG_SHELF", &shelf) };
 
-    // ── scaffold all three shapes ──────────────────────────────────
+    // ── scaffold all three shapes ───────────────────────────────────
     let r = run_in(&base, &shelf, &["new", "greetings", "--lib"]);
     assert!(r.ok, "new --lib: {}", r.output);
     parses(&base.join("greetings/index.ol"));
@@ -118,7 +118,7 @@ fn the_local_workflow_end_to_end() {
     let r = run_in(&base, &shelf, &["new", "x", "--lib", "--web"]);
     assert!(!r.ok, "--lib --web must refuse: {}", r.output);
 
-    // ── the shelf ──────────────────────────────────────────────────
+    // ── the shelf ───────────────────────────────────────────────────
     let r = run_in(&base, &shelf, &["lib", "add", "greetings"]);
     assert!(r.ok, "lib add: {}", r.output);
     assert!(r.output.contains("Shelved 'greetings'"), "{}", r.output);
@@ -132,7 +132,7 @@ fn the_local_workflow_end_to_end() {
     assert!(!r.ok);
     assert!(r.output.contains("index.ol"), "{}", r.output);
 
-    // ── add by name, from the app ──────────────────────────────────
+    // ── add by name, from the app ───────────────────────────────────
     let app = base.join("myapp");
     let r = run_in(&app, &shelf, &["add", "greetings"]);
     assert!(r.ok, "add by name: {}", r.output);
@@ -170,7 +170,7 @@ fn the_local_workflow_end_to_end() {
     let r = run_in(&app, &shelf, &["add", "greetings"]);
     assert!(!r.ok, "double add must refuse: {}", r.output);
 
-    // ── list, install --frozen, remove ─────────────────────────────
+    // ── list, install --frozen, remove ──────────────────────────────
     let r = run_in(&app, &shelf, &["list"]);
     assert!(r.output.contains("shelf:greetings"), "{}", r.output);
 
@@ -184,7 +184,7 @@ fn the_local_workflow_end_to_end() {
     let r = run_in(&app, &shelf, &["remove", "greetings"]);
     assert!(!r.ok, "removing a non-dependency must refuse");
 
-    // ── add by path, auto-init ─────────────────────────────────────
+    // ── add by path, auto-init ──────────────────────────────────────
     let fresh = base.join("fresh");
     std::fs::create_dir_all(&fresh).unwrap();
     let r = run_in(&fresh, &shelf, &["add", "../greetings"]);
@@ -196,7 +196,7 @@ fn the_local_workflow_end_to_end() {
         "path recorded relative to the root: {manifest}"
     );
 
-    // ── shelf removal ──────────────────────────────────────────────
+    // ── shelf removal ───────────────────────────────────────────────
     let r = run_in(&base, &shelf, &["lib", "remove", "greetings"]);
     assert!(r.ok, "{}", r.output);
     let r = run_in(&base, &shelf, &["lib", "list"]);

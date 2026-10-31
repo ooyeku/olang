@@ -1283,7 +1283,6 @@ impl Session {
     }
 
     // ── a recorded run ──────────────────────────────────────────────
-
     /// `record`: from now each cell's evaluation records what it read (the
     /// clock, random numbers, the environment, files, processes, the
     /// network, the database); `record` with `path` writes the trace there
@@ -1664,7 +1663,6 @@ impl Session {
     }
 
     // ── scopes ──────────────────────────────────────────────────────
-
     fn take_scope(&mut self, file: Option<&Path>) -> (String, Scope, Vec<String>) {
         // a kernel's own scope is its notebook's
         let nb = self.notebook_path();
@@ -1849,7 +1847,6 @@ impl Session {
     }
 
     // ── eval ────────────────────────────────────────────────────────
-
     fn eval(&mut self, msg: &J, running: &AtomicBool) -> J {
         let code = msg
             .get("code")
@@ -2258,7 +2255,6 @@ impl Session {
     }
 
     // ── commands ────────────────────────────────────────────────────
-
     /// A `:` command run as the terminal REPL runs it (`Repl::run_command`),
     /// in the prompt's scope. What it says is streamed as it is said
     /// (`{"event": "out", "id", "text", "err"}`) and sent whole with the
@@ -2663,7 +2659,6 @@ impl Session {
     }
 
     // ── reload ──────────────────────────────────────────────────────
-
     fn reload(&mut self, msg: &J, running: &AtomicBool) -> J {
         let t0 = Instant::now();
         let Some(path) = msg
@@ -2759,7 +2754,6 @@ impl Session {
     }
 
     // ── values ──────────────────────────────────────────────────────
-
     fn hold(&mut self, v: &Value, held: &mut Vec<u64>) -> u64 {
         let h = self.next_handle;
         self.next_handle += 1;
@@ -3333,7 +3327,6 @@ impl Session {
     }
 
     // ── views ───────────────────────────────────────────────────────
-
     fn render(&mut self, msg: &J, running: &AtomicBool) -> J {
         let t0 = Instant::now();
         let Some(h) = msg.get("h").and_then(|h| h.as_u64()) else {
@@ -3431,7 +3424,6 @@ impl Session {
 }
 
 // ── helpers ─────────────────────────────────────────────────────────
-
 /// Whether prompt input is a REPL command: `:word`, `!shell`, `quit`.
 /// A value as olang source that makes it again, as far as a literal does
 /// (a string quoted, anything else as it displays).

@@ -98,7 +98,6 @@ impl Interpreter {
                 },
                 Value::Enum(enum_value),
             ) => {
-                // Check if variant names match
                 if variant_name != &enum_value.variant_name {
                     return Ok(false);
                 }
