@@ -3,7 +3,7 @@ name = "olang"
 version = "1.0.0-rc.5"
 edition = "2024"
 authors = ["Ola Yeku <ooyeku@gmail.com>"]
-description = "olang — the Open Language: open code (meta.parse), open artifacts (inspectable binaries + capabilities), open execution (deterministic record/replay); a batteries-included functional language with a data stack, no-GIL parallelism, and a three-tier runtime"
+description = "olang, the Open Language: a functional language with a data stack, parallelism without a GIL, binaries you can inspect, and runs you can record and replay"
 license = "MIT"
 readme = "README.md"
 rust-version = "1.97"
@@ -22,9 +22,8 @@ default = ["native", "full", "gui"]
 # (`cargo build -p olang-playground` without `--features full`): the
 # regex engine and its Unicode tables, and the RSA suite, are a sixth of
 # the runtime (1.7 MB of 10.5, 0.4 MB of 2.6 brotli) and nothing a page
-# needs. A playground that runs
-# any program keeps them (`runtime.wasm("full")`; `cargo xtask wasm`
-# builds both).
+# needs. A playground that runs any program keeps them
+# (`runtime.wasm("full")`; `cargo xtask wasm` builds both).
 full = ["regex-module", "rsa-crypto"]
 # `alloc-count`: has the accounting allocator (`src/memory.rs`) also count
 # allocations made, for measuring allocations per benchmark iteration;
@@ -159,7 +158,7 @@ argon2 = "0.5"
 rustyline = { version = "18.0", optional = true }
 clap_complete = "4.6"
 clap = { version = "4.6", features = ["derive"] }
-colored = "2.0"  # Terminal colors for better display
+colored = "2.0"
 
 # Error handling and utilities
 anyhow = "1.0"
@@ -246,13 +245,19 @@ resvg = { version = "0.48", default-features = false, features = ["text", "syste
 # table below it was missing from the Linux and Windows builds.
 skrifa = { version = "0.44", optional = true }
 
-# Optional: For better debugging and development
-tracing = "0.1"
+# `--trace`: olang's internal trace logging.
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # default-features off: the default set includes "wasmbind" (a wasm-bindgen
 # shim for Utc::now on wasm), which would drag wasm-bindgen imports into the
 # playground artifact. Wall-clock "now" goes through src/clock.rs instead.
 chrono = { version = "0.4.41", default-features = false, features = ["clock", "std"] }
+
+# build.rs compresses and hashes the embedded browser runtime once, at
+# build time (see its header).
+[build-dependencies]
+flate2 = "1.1"
+brotli = "8"
+sha2 = "0.10"
 
 # Playground (wasm) build: the same crate compiled to wasm32-unknown-unknown
 # with --no-default-features. The "native" feature carries every dependency
@@ -268,13 +273,6 @@ chrono = { version = "0.4.41", default-features = false, features = ["clock", "s
 #   wasm32 target); src/playground.rs defines __getrandom_v03_custom.
 # - getrandom 0.2 (rand_core 0.6 era: rsa, aes-gcm, argon2): the "custom"
 #   feature plus register_custom_getrandom!.
-# build.rs compresses and hashes the embedded browser runtime once, at
-# build time (see its header).
-[build-dependencies]
-flate2 = "1.1"
-brotli = "8"
-sha2 = "0.10"
-
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = "0.4"
 getrandom02 = { package = "getrandom", version = "0.2", features = ["custom"] }
@@ -288,9 +286,6 @@ libc = "0.2"
 # (`os.on_interrupt`'s). Only the low-level registry is used.
 signal-hook = { version = "0.4", default-features = false }
 
-# The `tty` module on Windows: console raw mode and the console input
-# records (keys, mouse, resize, focus). On Unix the module decodes the
-# byte stream itself (src/stdlib/tty/decode.rs) — see its header for why.
 # Linux: parley's font lookup (fontique) loads fontconfig when it first
 # looks for system fonts instead of linking it, so the released binary
 # starts on a server or minimal install that has no fontconfig (it then
@@ -298,6 +293,9 @@ signal-hook = { version = "0.4", default-features = false }
 [target.'cfg(target_os = "linux")'.dependencies]
 fontique = { version = "0.11", features = ["fontconfig-dlopen"], optional = true }
 
+# The `tty` module on Windows: console raw mode and the console input
+# records (keys, mouse, resize, focus). On Unix the module decodes the
+# byte stream itself (src/stdlib/tty/decode.rs); see its header for why.
 [target.'cfg(windows)'.dependencies]
 crossterm = { version = "0.29", default-features = false, features = ["events", "windows", "bracketed-paste"] }
 
@@ -391,7 +389,7 @@ panic = "unwind"
 
 [profile.dev]
 opt-level = 0
-debug = true 
+debug = true
 
 [[bench]]
 name = "interpreter_bench"
