@@ -23,15 +23,36 @@
 //! dropped on arrival, and each of its tasks unwinds at its next yield
 //! point. Memory is simply gone: a restart (`w.restart(n)`, or
 //! `#{ restart_after }`) runs the node's program again on a fresh
-//! interpreter. (S3 adds the disk that survives a crash.)
+//! interpreter.
+//!
+//! **S3: how a node stops.** A node's process can end four ways, and
+//! each treats the disk as the real one would:
+//!
+//! - **`w.crash(n)`**: the power goes. Memory is gone and the disk is
+//!   what was synced (`disk.rs`). No shutdown handler runs.
+//! - **`w.kill(n)`**: SIGKILL. Memory is gone, the disk keeps every write
+//!   (the operating system has them); no handler runs.
+//! - **`w.stop(n)`**: SIGTERM. The node's `os.on_shutdown` handlers run,
+//!   each as a task of the node, and the node ends when its program
+//!   returns; with no handler, it is a kill.
+//! - **Its program ends** (it returns, or calls `os.exit`): the process
+//!   exits, its other tasks stop and its servers close, nothing is lost.
+//!   `os.exit(n)` with `n` other than 0 fails the run, as a raise does.
+//!
+//! A restart is a fresh process: a fresh interpreter, the environment,
+//! working directory and stdin the node was given, and the disk as the
+//! stop left it.
 
+use super::disk::DiskOpts;
 use super::net::{Link, NodeId};
 use super::sched::{TaskId, Wait};
 use super::wire::COORD_BOX;
-use super::{Config, Ctx, Ended, Report, State, World, current, error_text, misuse, spawn_task};
+use super::{
+    Config, Ctx, Ended, Report, State, World, current, error_text, misuse, spawn_task, vfs,
+};
 use crate::ast::{Value, ValueMap};
 use crate::interpreter::{Interpreter, InterpreterError};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -51,6 +72,29 @@ pub struct NodeInfo {
     /// A client holds the run open until it finishes; a program does
     /// when there are no clients.
     pub kind: Kind,
+    /// How its disk misbehaves (`#{ disk: sim.disk(...) }`).
+    pub disk: DiskOpts,
+    /// The files its disk starts with, durable (`#{ files }`).
+    pub files: Vec<(String, Vec<u8>)>,
+    /// Its working directory (`#{ cwd }`, `/` unless given).
+    pub cwd: String,
+    /// What its stdin holds when it starts (`#{ stdin }`); without one
+    /// its stdin is empty and closed, as `< /dev/null` is.
+    pub stdin: Option<String>,
+    /// Crashes at random effect boundaries (`#{ crash: #{ p, restart_after } }`).
+    pub crash: Option<CrashPlan>,
+    /// Its program's package dependencies (name → directory), resolved
+    /// as `olang run` resolves them, when it lives in a package.
+    pub deps: Option<HashMap<String, PathBuf>>,
+}
+
+/// Crashes the seed places: at every effect a node's tasks make (and
+/// every write and sync SQLite makes for it) the node crashes with
+/// probability `p`, and comes back `restart_after` ms later if given.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CrashPlan {
+    pub p: f64,
+    pub restart_after: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +116,12 @@ impl NodeInfo {
             skew_ms: 0,
             deny: None,
             kind: Kind::World,
+            disk: DiskOpts::default(),
+            files: Vec::new(),
+            cwd: "/".to_string(),
+            stdin: None,
+            crash: None,
+            deps: None,
         }
     }
 
@@ -120,10 +170,34 @@ pub(super) struct NodeState {
     pub crashes: u64,
     /// The last client port it used (connections number from 49152).
     pub next_port: u16,
+    /// Its process's environment (`os.set_env` changes it; a restart
+    /// starts from the one it was given).
+    pub env: BTreeMap<String, String>,
+    pub cwd: String,
+    pub stdin: Stdin,
+    /// `w.stop` asked it to stop: its handlers are running.
+    pub stopping: bool,
+}
+
+/// A node's stdin: what is written and not yet read, and whether more
+/// can come.
+#[derive(Debug, Clone, Default)]
+pub(super) struct Stdin {
+    pub buf: String,
+    pub open: bool,
+}
+
+impl Stdin {
+    fn given(text: &Option<String>) -> Stdin {
+        Stdin {
+            buf: text.clone().unwrap_or_default(),
+            open: text.is_some(),
+        }
+    }
 }
 
 impl NodeState {
-    pub fn new() -> NodeState {
+    pub fn new(info: &NodeInfo) -> NodeState {
         NodeState {
             up: true,
             main: None,
@@ -131,8 +205,23 @@ impl NodeState {
             restart_pending: false,
             crashes: 0,
             next_port: 49_151,
+            env: info.env.clone(),
+            cwd: info.cwd.clone(),
+            stdin: Stdin::given(&info.stdin),
+            stopping: false,
         }
     }
+}
+
+/// How a node's process ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Halt {
+    /// The power went: the disk keeps what was synced.
+    Crash,
+    /// SIGKILL: the disk keeps every write.
+    Kill,
+    /// The program ended (returned, or `os.exit`).
+    Exit,
 }
 
 /// Run a world of nodes: start each, coordinate, report.
@@ -223,6 +312,9 @@ pub(super) fn start_node(
         Start::Program { path, source } => Box::new(move || {
             let mut interpreter = Interpreter::new();
             interpreter.set_current_file(&path);
+            if let Some(deps) = info.deps {
+                interpreter.set_dependency_map(deps);
+            }
             if let Some(caps) = info.deny {
                 interpreter.set_capabilities(crate::caps::CapTable {
                     app: caps,
@@ -269,6 +361,17 @@ pub(super) fn start_node(
             })
         }
     };
+    {
+        // A fresh process: the environment, directory and stdin it was
+        // given; the disk as it was left.
+        let mut st = w.lock();
+        let info = &w.nodes[n];
+        let s = &mut st.nodes[n];
+        s.env = info.env.clone();
+        s.cwd = info.cwd.clone();
+        s.stdin = Stdin::given(&info.stdin);
+        s.stopping = false;
+    }
     let (t, _handle) = spawn_task(w, parent, n, None, &label, body)?;
     let mut st = w.lock();
     let s = &mut st.nodes[n];
@@ -301,8 +404,8 @@ fn sleep_until(ctx: &Ctx, at: u64) -> Result<(), Ended> {
 
 impl World {
     /// Bookkeeping as a task ends (under the lock): a node's main task
-    /// records how the node ended, a raise fails the run, and the
-    /// coordinator looks again.
+    /// records how the node ended, a raise fails the run, a program's
+    /// end is its process's end, and the coordinator looks again.
     pub(super) fn node_task_exit(
         &self,
         st: &mut State,
@@ -312,7 +415,7 @@ impl World {
         let n = st.task_node[me];
         if n != 0 || self.nodes.len() > 1 {
             let is_main = st.nodes[n].main == Some(me);
-            if is_main && !st.killed[me] {
+            if is_main && st.killed[me].is_none() {
                 st.nodes[n].exit = Some(outcome.clone());
                 if let Err(e) = outcome {
                     let e = e.strip_prefix("Runtime error: ").unwrap_or(e);
@@ -325,63 +428,226 @@ impl World {
                         st.failure = Some(format!("{what} {}: {e}", self.nodes[n].name));
                     }
                 }
+                // A program's process ends with its program: what it
+                // spawned stops, its servers close.
+                if self.nodes[n].kind == Kind::Program && st.nodes[n].up {
+                    let why = if st.nodes[n].stopping {
+                        "stopped: its program returned".to_string()
+                    } else {
+                        "its program returned".to_string()
+                    };
+                    self.halt_locked(st, me, n, Halt::Exit, &why);
+                }
             } else if is_main {
-                st.nodes[n].exit = Some(Err("crashed".into()));
+                st.nodes[n].exit.get_or_insert(Err("crashed".into()));
             }
         }
         st.sched.wake(Wait::Net(COORD_BOX));
     }
 
-    /// `w.crash(n)`: node `n` stops where it stands.
-    pub(super) fn crash(
+    /// Node `n`'s process ends (under the lock): its tasks are told to
+    /// stop, its servers close, its handlers are dropped, and its disk is
+    /// what `how` leaves (see the module doc). Returns what the disk lost.
+    pub(super) fn halt_locked(
+        &self,
+        st: &mut State,
+        me: TaskId,
+        n: NodeId,
+        how: Halt,
+        cause: &str,
+    ) -> String {
+        let lost = {
+            let mut d = vfs::lock(&self.disks[n]);
+            let lost = match how {
+                Halt::Crash => {
+                    let mut rng =
+                        std::mem::replace(&mut d.rng, rand::SeedableRng::seed_from_u64(0));
+                    let lost = d.disk.crash(&mut rng);
+                    d.rng = rng;
+                    lost
+                }
+                Halt::Kill | Halt::Exit => {
+                    d.disk.kill();
+                    String::new()
+                }
+            };
+            d.forget_process();
+            lost
+        };
+        st.nodes[n].up = false;
+        st.nodes[n].stopping = false;
+        st.nodes[n].stdin.open = false;
+        if how == Halt::Crash {
+            st.nodes[n].crashes += 1;
+        }
+        self.drop_listeners(st, n);
+        let why = match how {
+            Halt::Crash => Ended::Crash,
+            Halt::Kill => Ended::Kill,
+            Halt::Exit => Ended::Exit,
+        };
+        for t in 0..st.sched.task_count() {
+            // The task ending the process by its program's return (or by
+            // os.exit, which unwinds it itself) is left to end.
+            if st.task_node[t] != n || st.sched.is_done(t) || (t == me && how == Halt::Exit) {
+                continue;
+            }
+            st.killed[t] = Some(why);
+            st.sched.kick(t);
+        }
+        if st.nodes[n].main.is_some_and(|t| st.sched.is_done(t)) {
+            st.nodes[n].exit.get_or_insert(Err("crashed".into()));
+        }
+        // the handlers go with the process (dropped outside this lock's
+        // other users: they are only interpreters and functions)
+        let dropped = self
+            .handlers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&n);
+        drop(dropped);
+        let detail = match how {
+            Halt::Crash if lost.is_empty() => format!("{} ({cause})", self.nodes[n].name),
+            Halt::Crash => format!("{} ({cause}): {lost}", self.nodes[n].name),
+            _ => format!("{} ({cause})", self.nodes[n].name),
+        };
+        match how {
+            Halt::Crash => self.fault(st, Some(me), n, "crash", detail),
+            Halt::Kill => self.fault(st, Some(me), n, "kill", detail),
+            Halt::Exit => self.event(st, me, "exit", detail),
+        }
+        st.sched.wake(Wait::Stdin(n));
+        st.sched.wake(Wait::Net(COORD_BOX));
+        lost
+    }
+
+    /// `w.crash(n)` / `w.kill(n)`: node `n` stops where it stands, and
+    /// with `restart_after` comes back that many ms later.
+    pub(super) fn halt(
+        self: &Arc<World>,
+        me: TaskId,
+        n: NodeId,
+        how: Halt,
+        restart_after: Option<u64>,
+        cause: &str,
+    ) -> Result<(), String> {
+        let verb = match how {
+            Halt::Crash => "w.crash",
+            Halt::Kill => "w.kill",
+            Halt::Exit => "os.exit",
+        };
+        if n == 0 {
+            return Err(format!("{verb}: the world itself cannot stop"));
+        }
+        {
+            let mut st = self.lock();
+            if !st.nodes[n].up {
+                return Err(format!("{verb}: {} is down already", self.nodes[n].name));
+            }
+            let cause = match restart_after {
+                Some(ms) => format!("{cause}, restart after {ms} ms"),
+                None => cause.to_string(),
+            };
+            self.halt_locked(&mut st, me, n, how, &cause);
+            st.nodes[n].restart_pending = restart_after.is_some();
+        }
+        if let Some(ms) = restart_after {
+            self.restart_later(me, n, ms)?;
+        }
+        Ok(())
+    }
+
+    /// Restart `n` `ms` after it is down (a stopping node is waited for).
+    pub(super) fn restart_later(
+        self: &Arc<World>,
+        me: TaskId,
+        n: NodeId,
+        ms: u64,
+    ) -> Result<(), String> {
+        let world = self.clone();
+        spawn_task(
+            self,
+            me,
+            0,
+            None,
+            &format!("restart {}", self.nodes[n].name),
+            move || {
+                let ctx = current().ok_or("sim: a restart runs inside its world")?;
+                let stop = |e: Ended| InterpreterError::from(e).to_string();
+                // Back `ms` after now, once the node is down and its old
+                // tasks have unwound (a stopping node runs its handlers
+                // first; a crashed one's tasks unwind at once).
+                let mut at = world.now() + ms;
+                loop {
+                    sleep_until(&ctx, at).map_err(stop)?;
+                    let ready = {
+                        let st = world.lock();
+                        !st.nodes[n].up
+                            && (0..st.sched.task_count())
+                                .all(|t| st.task_node[t] != n || st.sched.is_done(t))
+                    };
+                    if ready {
+                        break;
+                    }
+                    at = world.now() + 10;
+                }
+                world.restart(ctx.task, n).map(|_| Value::Unit)
+            },
+        )
+        .map_err(|e| error_text(&e))?;
+        Ok(())
+    }
+
+    /// `w.stop(n)`: SIGTERM. Its shutdown handlers run as tasks of the
+    /// node; without one, it is a kill.
+    pub(super) fn stop(
         self: &Arc<World>,
         me: TaskId,
         n: NodeId,
         restart_after: Option<u64>,
     ) -> Result<(), String> {
         if n == 0 {
-            return Err("w.crash: the world itself cannot crash".into());
+            return Err("w.stop: the world itself cannot stop".into());
+        }
+        let handlers = self
+            .handlers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&n)
+            .unwrap_or_default();
+        if handlers.is_empty() {
+            return self.halt(
+                me,
+                n,
+                Halt::Kill,
+                restart_after,
+                "w.stop: no shutdown handler",
+            );
         }
         {
             let mut st = self.lock();
             if !st.nodes[n].up {
-                return Err(format!("w.crash: {} is down already", self.nodes[n].name));
+                return Err(format!("w.stop: {} is down already", self.nodes[n].name));
             }
-            let detail = match restart_after {
-                Some(ms) => format!("{} (restart after {ms} ms)", self.nodes[n].name),
-                None => self.nodes[n].name.to_string(),
-            };
-            self.event(&mut st, me, "crash", detail);
-            st.nodes[n].up = false;
-            st.nodes[n].crashes += 1;
+            st.nodes[n].stopping = true;
             st.nodes[n].restart_pending = restart_after.is_some();
-            self.drop_listeners(&mut st, n);
-            for t in 0..st.sched.task_count() {
-                if st.task_node[t] == n && !st.sched.is_done(t) {
-                    st.killed[t] = true;
-                    st.sched.kick(t);
-                }
-            }
-            if st.nodes[n].main.is_some_and(|t| st.sched.is_done(t)) {
-                st.nodes[n].exit.get_or_insert(Err("crashed".into()));
-            }
+            let detail = format!(
+                "{} ({} shutdown handler(s))",
+                self.nodes[n].name,
+                handlers.len()
+            );
+            self.fault(&mut st, Some(me), n, "stop", detail);
+        }
+        for (mut interpreter, handler) in handlers {
+            spawn_task(self, me, n, None, "shutdown handler", move || {
+                interpreter
+                    .call_function(handler, vec![Value::String(Arc::new("shutdown".into()))])
+                    .map_err(|e| error_text(&e))
+            })
+            .map_err(|e| error_text(&e))?;
         }
         if let Some(ms) = restart_after {
-            let world = self.clone();
-            let at = self.now() + ms;
-            spawn_task(
-                self,
-                me,
-                0,
-                None,
-                &format!("restart {}", self.nodes[n].name),
-                move || {
-                    let ctx = current().ok_or("sim: a restart runs inside its world")?;
-                    sleep_until(&ctx, at).map_err(|e| InterpreterError::from(e).to_string())?;
-                    world.restart(ctx.task, n).map(|_| Value::Unit)
-                },
-            )
-            .map_err(|e| error_text(&e))?;
+            self.restart_later(me, n, ms)?;
         }
         Ok(())
     }

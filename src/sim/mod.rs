@@ -34,16 +34,28 @@
 //!   tree with an interpreter of its own (`node.rs`); `http` between
 //!   nodes is messages on the world's timer queue (`wire.rs`, `http.rs`),
 //!   and what a link does to each one is `net.rs`'s draw.
+//! - **The disk and crashes** (S3, plans/SIM-S3.md): each node has an
+//!   in-memory disk whose files keep what was synced apart from what was
+//!   only written (`disk.rs`); `fs.*` answers from it (`files.rs`), and
+//!   SQLite reaches it through a VFS that can lie about `fsync`, tear
+//!   pages, fill up and slow down (`vfs.rs`, `dbs.rs`). A crash keeps the
+//!   disk as it really was; a node has its own environment, stdin,
+//!   shutdown handlers and exit (`life.rs`).
 
 pub mod cli;
+mod dbs;
+pub mod disk;
+mod files;
 pub mod http;
+mod life;
 pub mod net;
 mod node;
 pub mod sched;
 pub mod surface;
+mod vfs;
 mod wire;
 
-pub use node::{NodeInfo, Plan, Start, run_world};
+pub use node::{CrashPlan, NodeInfo, Plan, Start, run_world};
 pub use wire::{History, NetStats};
 
 use crate::ast::{Expr, Value};
@@ -54,7 +66,7 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 use sched::{End, Pick, Sched, TaskId, Wait, Woke};
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 /// 2026-01-01T00:00:00Z: where a world's clock starts unless told.
@@ -128,6 +140,23 @@ pub struct Report {
     /// Every request a node made over the network, as it went.
     pub history: Vec<History>,
     pub net: NetStats,
+    /// Every fault the world injected (crashes, kills, stops, lying
+    /// syncs, full disks, buggify points that fired), in order: what
+    /// S4's shrinker will minimise.
+    pub faults: Vec<Fault>,
+    /// Each node's disk, as the run left it: (node, what it did).
+    pub disks: Vec<(String, disk::DiskStats)>,
+}
+
+/// A fault the world injected: when, where, what, and the yield point
+/// it fell at (the scheduler's step count).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fault {
+    pub t: u64,
+    pub node: Arc<str>,
+    pub kind: &'static str,
+    pub detail: String,
+    pub step: u64,
 }
 
 impl Report {
@@ -147,6 +176,8 @@ impl Report {
             nodes: Vec::new(),
             history: Vec::new(),
             net: NetStats::default(),
+            faults: Vec::new(),
+            disks: Vec::new(),
         }
     }
 
@@ -182,14 +213,24 @@ struct State {
     failed_tasks: usize,
     /// Each task's node (task 0 is node 0's).
     task_node: Vec<NodeId>,
-    /// Tasks of a crashed node: each unwinds at its next yield point.
-    killed: Vec<bool>,
+    /// Tasks of a node that crashed, was killed or exited: each unwinds
+    /// at its next yield point, with why.
+    killed: Vec<Option<Ended>>,
     nodes: Vec<node::NodeState>,
     net: net::Net,
     wire: wire::Wire,
     /// A node's program (or a client, or a hook) raised: the run fails
     /// with this once the world's coordinator sees it.
     failure: Option<String>,
+    faults: Vec<Fault>,
+    /// `sim.maybe`: which points are on in this world, and the stream
+    /// that decides each time one is reached.
+    maybe_on: BTreeMap<String, bool>,
+    maybe_rng: StdRng,
+    /// Connections opened in this world: owner → (node, the disk's boot).
+    db_owners: BTreeMap<u64, (NodeId, u64)>,
+    /// `db.transaction` in progress: connection → (task, depth).
+    tx: BTreeMap<i64, (TaskId, usize)>,
 }
 
 /// A simulated world. Shared (`Arc`) by every task thread in it.
@@ -207,24 +248,52 @@ pub struct World {
     /// so `w.partition` inside it acts on its own world only.
     spec: u64,
     state: Mutex<State>,
+    /// Each node's disk (and SQLite's memory beside it), apart from the
+    /// state's lock: SQLite reaches it from inside a `db` call
+    /// (`vfs.rs`). The order is always state, then disk.
+    disks: Vec<vfs::Shared>,
+    /// `os.on_shutdown` handlers per node: each with the interpreter
+    /// clone it registered.
+    handlers: Mutex<BTreeMap<NodeId, Vec<(Interpreter, Value)>>>,
 }
 
-/// The task cannot go on: the world has ended, or its node crashed.
+impl Drop for World {
+    fn drop(&mut self) {
+        for d in &self.disks {
+            vfs::unregister(vfs::lock(d).key);
+        }
+    }
+}
+
+/// The task cannot go on: the world has ended, or its node crashed, was
+/// killed, or exited.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ended {
     World,
     Crash,
+    Kill,
+    Exit,
 }
 
 pub const ENDED_MESSAGE: &str = "sim: the world has ended, and this task stops with it";
 pub const CRASHED_MESSAGE: &str = "sim: this node crashed, and its tasks stop with it";
+pub const KILLED_MESSAGE: &str = "sim: this node was killed, and its tasks stop with it";
+pub const EXITED_MESSAGE: &str = "sim: this node's process ended, and its tasks stop with it";
+
+impl Ended {
+    fn message(self) -> &'static str {
+        match self {
+            Ended::World => ENDED_MESSAGE,
+            Ended::Crash => CRASHED_MESSAGE,
+            Ended::Kill => KILLED_MESSAGE,
+            Ended::Exit => EXITED_MESSAGE,
+        }
+    }
+}
 
 impl From<Ended> for InterpreterError {
     fn from(e: Ended) -> Self {
-        InterpreterError::runtime(match e {
-            Ended::World => ENDED_MESSAGE,
-            Ended::Crash => CRASHED_MESSAGE,
-        })
+        InterpreterError::runtime(e.message())
     }
 }
 
@@ -239,7 +308,31 @@ impl World {
         let mut sched = Sched::new(sched::split(cfg.seed, 1));
         sched.deadline = cfg.run_for;
         sched.max_steps = cfg.max_steps;
-        let node_states = (0..nodes.len()).map(|_| node::NodeState::new()).collect();
+        let node_states = nodes.iter().map(node::NodeState::new).collect();
+        let disks = nodes
+            .iter()
+            .enumerate()
+            .map(|(i, info)| {
+                let mut d = disk::Disk::new(info.disk);
+                // every machine has a /tmp (os.temp_dir)
+                d.seed_dir("/tmp");
+                for (path, bytes) in &info.files {
+                    d.seed_file(&disk::normalize(&info.cwd, path), bytes.clone());
+                }
+                let stream = |n: u64| {
+                    StdRng::seed_from_u64(sched::split(sched::split(cfg.seed, n), i as u64))
+                };
+                let crash_p = info.crash.map(|c| c.p).unwrap_or(0.0);
+                let nd = Arc::new(Mutex::new(vfs::NodeDisk::new(
+                    d,
+                    stream(3),
+                    stream(4),
+                    crash_p,
+                )));
+                vfs::register(&nd);
+                nd
+            })
+            .collect();
         World {
             seed: cfg.seed,
             start_ms: cfg.start_ms,
@@ -258,12 +351,19 @@ impl World {
                 cvs: vec![Arc::new(Condvar::new())],
                 failed_tasks: 0,
                 task_node: vec![0],
-                killed: vec![false],
+                killed: vec![None],
                 nodes: node_states,
                 net: net::Net::new(sched::split(cfg.seed, 2), cfg.net),
                 wire: wire::Wire::default(),
                 failure: None,
+                faults: Vec::new(),
+                maybe_on: BTreeMap::new(),
+                maybe_rng: StdRng::seed_from_u64(sched::split(cfg.seed, 5)),
+                db_owners: BTreeMap::new(),
+                tx: BTreeMap::new(),
             }),
+            disks,
+            handlers: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -327,10 +427,51 @@ impl World {
     fn stopped(st: &State, me: TaskId) -> Result<(), Ended> {
         if st.ended.is_some() {
             Err(Ended::World)
-        } else if st.killed.get(me).copied().unwrap_or(false) {
-            Err(Ended::Crash)
+        } else if let Some(why) = st.killed.get(me).copied().flatten() {
+            Err(why)
         } else {
             Ok(())
+        }
+    }
+
+    /// A fault, recorded (and as an event of the node it struck: of the
+    /// task that caused it when that task is the node's own).
+    fn fault(
+        &self,
+        st: &mut State,
+        task: Option<TaskId>,
+        node: NodeId,
+        kind: &'static str,
+        detail: String,
+    ) {
+        let name = self.nodes[node].name.clone();
+        let task = task.filter(|t| st.task_node.get(*t) == Some(&node));
+        st.faults.push(Fault {
+            t: st.sched.now,
+            node: name.clone(),
+            kind,
+            detail: detail.clone(),
+            step: st.sched.steps,
+        });
+        st.events.push(Event {
+            t: st.sched.now,
+            node: name,
+            task,
+            kind,
+            detail,
+        });
+    }
+
+    /// What `node`'s disk did since it was last looked at (SQLite's
+    /// syncs and faults), as events of `task`.
+    fn flush_disk(&self, st: &mut State, task: TaskId, node: NodeId) {
+        let events = std::mem::take(&mut vfs::lock(&self.disks[node]).events);
+        for (kind, detail) in events {
+            if matches!(kind, "fsync_lie" | "disk_full") {
+                self.fault(st, Some(task), node, kind, detail);
+            } else {
+                self.event(st, task, kind, detail);
+            }
         }
     }
 
@@ -429,7 +570,7 @@ impl World {
         st.cvs.push(Arc::new(Condvar::new()));
         st.outcomes.push(None);
         st.task_node.push(node);
-        st.killed.push(false);
+        st.killed.push(None);
         if let Some(global) = global {
             st.tasks_by_global.insert(global, t);
         }
@@ -458,8 +599,13 @@ impl World {
         let killed = st.killed[me];
         match &outcome {
             Ok(v) => self.event(&mut st, me, "end", render(v)),
-            Err(_) if killed && !ended => {
-                self.event(&mut st, me, "stop", "its node crashed".into())
+            Err(_) if killed.is_some() && !ended => {
+                let why = match killed {
+                    Some(Ended::Kill) => "its node was killed",
+                    Some(Ended::Exit) => "its node's process ended",
+                    _ => "its node crashed",
+                };
+                self.event(&mut st, me, "stop", why.into())
             }
             Err(e) if !ended => {
                 st.failed_tasks += 1;
@@ -561,6 +707,14 @@ impl World {
             nodes: self.nodes.iter().map(|n| n.name.to_string()).collect(),
             history: std::mem::take(&mut st.wire.history),
             net: st.wire.stats.clone(),
+            faults: std::mem::take(&mut st.faults),
+            disks: self
+                .nodes
+                .iter()
+                .zip(&self.disks)
+                .filter(|(n, _)| n.kind != node::Kind::Hook)
+                .map(|(n, d)| (n.name.to_string(), vfs::lock(d).disk.stats.clone()))
+                .collect(),
         }
     }
 
@@ -739,6 +893,24 @@ pub fn task_rng() -> Option<Arc<Mutex<StdRng>>> {
     CTX.with(|c| c.borrow().as_ref().map(|ctx| ctx.rng.clone()))
 }
 
+/// The calling node's disk key and working directory, when this thread
+/// is in a world (SQLite resolving a name with no disk in it: `vfs.rs`).
+fn node_disk_here() -> Option<(u64, String)> {
+    let ctx = current()?;
+    let key = vfs::lock(&ctx.world.disks[ctx.node]).key;
+    let cwd = ctx.world.lock().nodes[ctx.node].cwd.clone();
+    Some((key, cwd))
+}
+
+/// `sim.maybe(point)`: false outside a world; inside one, true when the
+/// world's seed turned the point on and this visit fires.
+pub fn maybe(point: &str) -> bool {
+    match current() {
+        Some(ctx) => ctx.world.maybe(ctx.task, point),
+        None => false,
+    }
+}
+
 /// Run `main` as the main program (task 0) of a new world, on this
 /// thread, and report what happened. `main` runs with this thread in
 /// the world; tasks it spawns run on threads of their own, one at a
@@ -829,7 +1001,7 @@ fn render(v: &Value) -> String {
 /// The error a refused effect raises inside a world.
 pub fn refusal(name: &str) -> String {
     let what = match name.split('.').next().unwrap_or(name) {
-        "fs" | "asset" | "testing" => "the filesystem",
+        "fs" | "asset" | "testing" | "ods" => "this part of the filesystem",
         "http" => "the network",
         "db" => "the database",
         "proc" | "pty" => "processes",
@@ -847,8 +1019,9 @@ pub fn refusal(name: &str) -> String {
     };
     format!(
         "sim: {name} is refused inside a world: {what} is not simulated yet (a world \
-         simulates time, randomness, spawn, task, chan, and http between its nodes), and \
-         a world never reaches the real one"
+         simulates time, randomness, spawn, task, chan, http between its nodes, each \
+         node's files and SQLite on its own disk, and its environment, stdin and exit), \
+         and a world never reaches the real one"
     )
 }
 
@@ -890,31 +1063,24 @@ fn simulated(
 ) -> Option<Result<Value, InterpreterError>> {
     let w = &ctx.world;
     let me = ctx.task;
+    // Every effect is a point a node with `#{ crash }` may crash at.
+    if let Err(e) = w.maybe_crash(ctx, name) {
+        return Some(Err(e.into()));
+    }
     if let Some(verb) = name.strip_prefix("http.") {
         return http::call(ctx, verb, args, interpreter);
     }
+    if let Some(verb) = name.strip_prefix("fs.") {
+        return files::call(ctx, verb, args);
+    }
+    if let Some(verb) = name.strip_prefix("db.") {
+        return dbs::call(ctx, verb, args, interpreter);
+    }
+    if let Some(verb) = name.strip_prefix("os.") {
+        return life::call(ctx, verb, args, interpreter);
+    }
     Some(match name {
         "time.now_ms" if args.is_empty() => Ok(Value::Integer(w.wall_ms(ctx.node))),
-        "os.args" if args.is_empty() => Ok(Value::List(Arc::new(
-            w.nodes[ctx.node]
-                .argv
-                .iter()
-                .map(|a| Value::String(Arc::new(a.clone())))
-                .collect(),
-        ))),
-        "os.get_env" => match args {
-            [Value::String(key)] => Ok(match w.nodes[ctx.node].env.get(key.as_str()) {
-                Some(v) => ok(Value::String(Arc::new(v.clone()))),
-                None => err(&format!("Environment variable '{key}' not found")),
-            }),
-            _ => Err(misuse("os.get_env expects the variable's name as a String")),
-        },
-        "os.has_env" => match args {
-            [Value::String(key)] => Ok(Value::Boolean(
-                w.nodes[ctx.node].env.contains_key(key.as_str()),
-            )),
-            _ => Err(misuse("os.has_env expects the variable's name as a String")),
-        },
         "time.monotonic_ms" if args.is_empty() => Ok(Value::Integer(w.now() as i64)),
         "time.monotonic" if args.is_empty() => Ok(Value::Float(w.now() as f64)),
         "time.sleep" => sleep(ctx, args),
@@ -1307,8 +1473,7 @@ mod tests {
     fn refused_effects_never_run() {
         let report = run(Config::default(), || {
             let mut i = Interpreter::new();
-            let answer =
-                intercept("fs.write_file", &[], &mut i).expect("refused, not passed through");
+            let answer = intercept("fs.watch", &[], &mut i).expect("refused, not passed through");
             assert!(
                 answer
                     .unwrap_err()

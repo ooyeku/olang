@@ -178,6 +178,10 @@ impl Drop for ConnState {
 struct ConnEntry {
     state: Mutex<ConnState>,
     control: Arc<Control>,
+    /// 0 for a connection on the real file system; otherwise the
+    /// simulated world's number for it (`crate::sim`), whose VFS it was
+    /// opened through. A world uses only its own.
+    owner: u64,
     /// Cursors dropped while the connection was busy: finalized at its
     /// next use.
     orphans: Mutex<Vec<u64>>,
@@ -1015,6 +1019,7 @@ pub fn detached_cursor(sql: &str) -> Value {
             conn: None,
         }),
         control: Arc::new(Control::default()),
+        owner: 0,
         orphans: Mutex::new(Vec::new()),
     });
     Value::Native(NativeHandle::new(CursorObject {
@@ -1172,11 +1177,59 @@ fn is_plain_file_path(path: &str) -> bool {
     !(path.is_empty() || path == ":memory:" || path.starts_with("file:"))
 }
 
+/// How a simulated world opens a database (`crate::sim`): through its
+/// VFS, by the name its VFS reads, never as a URI.
+pub struct SimOpen<'a> {
+    pub vfs: &'a str,
+    /// The name SQLite is given (it names the node's disk).
+    pub path: String,
+    /// Whether a file is there now (for `create: false`).
+    pub exists: bool,
+    /// The world's number for the connection (never 0).
+    pub owner: u64,
+}
+
+/// The owner of a connection or a cursor: 0 for one on the real file
+/// system, a world's number for one a world opened; `None` for a value
+/// that is neither (or a connection already closed).
+pub fn owner_of(value: &Value) -> Option<u64> {
+    if let Ok(id) = connection_id(value) {
+        return lookup(id).map(|e| e.owner);
+    }
+    if let Value::Native(h) = value
+        && let Some(c) = h.0.as_any().downcast_ref::<CursorObject>()
+    {
+        return Some(c.entry.owner);
+    }
+    None
+}
+
+/// A connection's id, when the value is one.
+pub fn connection_id_of(value: &Value) -> Option<i64> {
+    connection_id(value).ok()
+}
+
 /// db.open(path[, opts]) -> Result<Connection>. `":memory:"` for an
 /// in-memory database; SQLite URI filenames (`file:…?mode=ro`) are read
 /// as URIs. Options: `readonly` (default false) and `create` (default
 /// true, and false when `readonly`).
 fn db_open(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    open_with(args, None)
+}
+
+/// `db.open` inside a simulated world: the same options and answers,
+/// through the world's VFS.
+pub fn open_simulated(
+    args: Vec<Value>,
+    sim: SimOpen<'_>,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    open_with(args, Some(sim))
+}
+
+fn open_with(
+    args: Vec<Value>,
+    sim: Option<SimOpen<'_>>,
+) -> Result<Value, Box<dyn std::error::Error>> {
     let path = match args.first() {
         Some(Value::String(s)) => s.to_string(),
         _ => return Err(misuse_text("db.open: path must be a string")),
@@ -1225,7 +1278,11 @@ fn db_open(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         ));
     }
     let create = create.unwrap_or(!readonly);
-    if !create && is_plain_file_path(&path) && !std::path::Path::new(&path).exists() {
+    let there = match &sim {
+        Some(sim) => sim.exists,
+        None => !is_plain_file_path(&path) || std::path::Path::new(&path).exists(),
+    };
+    if !create && !there {
         let why = if readonly {
             "a read-only open never makes one"
         } else {
@@ -1234,7 +1291,13 @@ fn db_open(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         return Ok(err(format!("db.open: no database at {} ({})", path, why)));
     }
 
-    let mut flags = OpenFlags::SQLITE_OPEN_URI | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    // A world's names are never URIs: a `vfs=` parameter must not take a
+    // connection off the world's disk.
+    let mut flags = if sim.is_some() {
+        OpenFlags::SQLITE_OPEN_NO_MUTEX
+    } else {
+        OpenFlags::SQLITE_OPEN_URI | OpenFlags::SQLITE_OPEN_NO_MUTEX
+    };
     flags |= if readonly {
         OpenFlags::SQLITE_OPEN_READ_ONLY
     } else {
@@ -1243,10 +1306,15 @@ fn db_open(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if create {
         flags |= OpenFlags::SQLITE_OPEN_CREATE;
     }
-    let conn = match Connection::open_with_flags(&path, flags) {
+    let opened = match &sim {
+        Some(sim) => Connection::open_with_flags_and_vfs(&sim.path, flags, sim.vfs),
+        None => Connection::open_with_flags(&path, flags),
+    };
+    let conn = match opened {
         Ok(c) => c,
         Err(e) => return Ok(err(format!("db.open: {}: {}", path, e))),
     };
+    let owner = sim.as_ref().map(|s| s.owner).unwrap_or(0);
 
     let control = Arc::new(Control::default());
     let watch = control.clone();
@@ -1259,6 +1327,7 @@ fn db_open(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             conn: Some(conn),
         }),
         control,
+        owner,
         orphans: Mutex::new(Vec::new()),
     });
 

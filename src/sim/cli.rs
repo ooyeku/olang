@@ -112,6 +112,9 @@ pub fn run_file(path: &Path, cfg: Config) -> Result<Report, String> {
     // is enabled, so every builtin passes the world's dispatch hook.
     let mut interpreter = crate::interpreter::Interpreter::new();
     interpreter.set_current_file(&absolute);
+    if let Some(deps) = super::surface::package_deps(&absolute) {
+        interpreter.set_dependency_map(deps);
+    }
     let argv = vec![path.to_string_lossy().to_string()];
     super::run_main(cfg, super::NodeInfo::main(argv), move || {
         interpreter.eval_program(program)
@@ -125,6 +128,10 @@ pub fn run_builder(path: &Path, seed: u64) -> Result<Report, String> {
     let (_, program, absolute) = read(path)?;
     let mut interpreter = crate::interpreter::Interpreter::new();
     interpreter.set_current_file(&absolute);
+    // its packages, as `olang run` resolves them (fetching nothing)
+    if let Some(deps) = super::surface::package_deps(&absolute) {
+        interpreter.set_dependency_map(deps);
+    }
     super::surface::collect_begin(seed);
     let result = interpreter.eval_program(program);
     let reports = super::surface::collect_end();
@@ -146,10 +153,40 @@ pub fn run_builder(path: &Path, seed: u64) -> Result<Report, String> {
     Ok(report)
 }
 
+/// Does the file at `path`, or a local module it `use`s (`use log_world
+/// { run_store }` naming `log_world.ol` beside it, and so on down), build
+/// worlds?
+pub fn file_builds_worlds(path: &Path) -> bool {
+    fn walk(path: &Path, seen: &mut Vec<std::path::PathBuf>) -> bool {
+        if seen.iter().any(|p| p == path) || seen.len() > 64 {
+            return false;
+        }
+        seen.push(path.to_path_buf());
+        let Ok(source) = std::fs::read_to_string(path) else {
+            return false;
+        };
+        if builds_worlds(&source) {
+            return true;
+        }
+        let dir = path.parent().unwrap_or(Path::new("."));
+        source.lines().any(|line| {
+            let Some(rest) = line.trim_start().strip_prefix("use ") else {
+                return false;
+            };
+            let module: String = rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
+                .collect();
+            let file = dir.join(format!("{}.ol", module.replace('.', "/")));
+            file.is_file() && walk(&file, seen)
+        })
+    }
+    walk(path, &mut Vec::new())
+}
+
 /// `run_file` or `run_builder`, as the file asks.
 fn run_any(path: &Path, cfg: Config) -> Result<Report, String> {
-    let source = std::fs::read_to_string(path).map_err(|e| format!("{}: {}", path.display(), e))?;
-    if builds_worlds(&source) {
+    if file_builds_worlds(path) {
         run_builder(path, cfg.seed)
     } else {
         run_file(path, cfg)
@@ -265,7 +302,7 @@ fn many_seeds(file: &Path, from: u64, n: u64, base: Config) -> i32 {
     let real = started.elapsed().as_secs_f64().max(1e-9);
     let rate = virtual_ms as f64 / 3_600_000.0 / real;
     eprintln!(
-        "olang sim: {} seed(s) · {} passed · {} failed · {:.3} s real · {:.1} virtual hours per real second",
+        "olang sim: {} seed(s) · {} passed · {} failed · {:.3} s real · {:.2} virtual hours per real second",
         n,
         n as usize - failed.len(),
         failed.len(),

@@ -1749,6 +1749,7 @@ a `Bool`, and the path functions `join`, `dirname`, `basename`, and
 | Files | `read_file` `write_file` `append_file` `copy_file` `move_file` `remove_file` `trash` — and `read_bytes` / `write_bytes` for [binary data](#bytes--binary-data) |
 | Directories | `create_dir` `create_dir_all` `list_dir` `walk` `glob` `remove_dir` `remove_dir_all` |
 | Queries | `exists` `is_file` `is_dir` `file_size` `file_info` |
+| Durability | `sync(path)`: a file's bytes (fsync), or a folder's entries, on the disk before it returns |
 | Watching | `watch` `watch_next` `watch_close`: a folder's whole tree followed as it changes |
 | Paths | `join(parts)` `dirname` `basename` `ext`: pure string surgery, answering the string itself. `abs_path` answers a **`Result`** (`Ok(path)`): it resolves against the current directory, which can fail, and normalizes `.`/`..` without requiring the file to exist. `real_path` (a `Result` too) also resolves symbolic links (`/tmp/x` is `/private/tmp/x` on macOS); for a path that does not exist yet it makes the nearest existing folder real and keeps the rest |
 
@@ -1756,6 +1757,12 @@ a `Bool`, and the path functions `join`, `dirname`, `basename`, and
 Move to Trash does (macOS's NSFileManager) — never a permanent delete —
 and answers `Ok(path in the Trash)`; moving it back from there with
 `fs.move_file` puts it back. Elsewhere it is an `Err` that says so.
+
+`fs.sync(path)` makes what was written durable: a file's bytes, or, for
+a folder, the files created, removed or renamed in it. Until then a
+write may sit in the operating system's cache, where a power cut loses
+it; a program that answers "saved" after `fs.sync` has kept its word.
+Inside a `sim` world it is what decides what a crash keeps.
 
 `fs.file_size(path)` answers a file's bytes and `fs.file_info(path)` an
 object — `{ size, is_file, is_dir, readonly, modified_ms }`: `size`, `is_file`, `is_dir`, `readonly`, and `modified_ms`
