@@ -18,7 +18,7 @@
 //!
 //! Nested cargo inside `build.rs` would rebuild the runtime on every
 //! native build and fight the outer build for the target directory; a
-//! task the developer (and `make wasm`, `setup.sh`, CI) runs first is
+//! task the developer (and `make wasm`, `make install`, CI) runs first is
 //! the cleaner shape.
 
 use std::path::{Path, PathBuf};
@@ -41,7 +41,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some(other) => {
-            eprintln!("unknown task '{other}'; tasks: wasm");
+            eprintln!("unknown task '{other}'; tasks: wasm, install");
             ExitCode::FAILURE
         }
     }
@@ -137,11 +137,52 @@ fn install() -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
-    println!("installed olang and otc with the browser runtime embedded");
+    println!(
+        "installed olang and otc with the browser runtime embedded (into Cargo's bin folder, usually ~/.cargo/bin)"
+    );
+    println!("try: olang --version");
     ExitCode::SUCCESS
 }
 
+/// Whether the active toolchain has the wasm target's standard library;
+/// adds it through rustup when it is missing, and says what to do when
+/// that cannot be done — rather than leaving rustc's "can't find crate
+/// for `core`" wall.
+fn wasm_target_ready() -> bool {
+    let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
+    let sysroot = Command::new(&rustc)
+        .args(["--print", "sysroot"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim()));
+    let has = |root: &Option<PathBuf>| {
+        root.as_ref()
+            .is_some_and(|r| r.join("lib/rustlib").join(WASM_TARGET).is_dir())
+    };
+    if has(&sysroot) {
+        return true;
+    }
+    eprintln!("the browser runtime needs Rust's {WASM_TARGET} target; adding it with rustup...");
+    let added = Command::new("rustup")
+        .args(["target", "add", WASM_TARGET])
+        .status()
+        .is_ok_and(|s| s.success());
+    if !added {
+        eprintln!(
+            "could not add the {WASM_TARGET} target.\n\
+             With rustup (https://rustup.rs), run:  rustup target add {WASM_TARGET}\n\
+             then run this command again. Rust installed another way (e.g. Homebrew's) has no\n\
+             wasm target; `cargo install --path .` installs olang without the browser runtime."
+        );
+    }
+    added
+}
+
 fn wasm(jobs: &[String]) -> ExitCode {
+    if !wasm_target_ready() {
+        return ExitCode::FAILURE;
+    }
     let root = repo_root();
     let artifact = root
         .join("target")

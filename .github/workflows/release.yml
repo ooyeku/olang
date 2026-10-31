@@ -166,7 +166,10 @@ jobs:
             for what changed. `SHA256SUMS` covers every attached file; the
             Homebrew formula in `dist/homebrew/` consumes the macOS/Linux
             tarballs. Install with the one-line script in the README, the
-            Homebrew tap, or a tarball below.
+            Homebrew tap, or a tarball below. A tarball downloaded with a
+            web browser is quarantined by macOS: run `xattr -d
+            com.apple.quarantine olang otc` in its folder before the first
+            run (see docs/installation.md).
 
   homebrew:
     name: Update Homebrew tap

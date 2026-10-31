@@ -9,20 +9,23 @@ existing `ooyeku` account is all it takes.
 1. Create a **public** GitHub repo named exactly `homebrew-olang`
    (i.e. `ooyeku/homebrew-olang`). The `homebrew-` prefix is what lets
    `brew tap ooyeku/olang` find it.
-2. Copy `olang.rb` from this directory into `Formula/olang.rb` in that
-   repo. (The repo needs nothing else — no README required, though one
+2. Render `olang.rb.tmpl` from this directory into `Formula/olang.rb`
+   in that repo. (The repo needs nothing else — no README required, though one
    is polite.)
-3. Fill in the real `version` and the three `sha256` values (below),
+3. Fill in the real `version` and the four `sha256` values (below),
    commit, push.
 
 Users then install with:
 
 ```bash
-brew tap ooyeku/olang
-brew install olang        # installs both `olang` and `otc`
+brew install ooyeku/olang/olang     # installs both `olang` and `otc`
 ```
 
-or in one line: `brew install ooyeku/olang/olang`.
+Use the full name: recent Homebrew refuses to load a formula from a tap
+it has not been told to trust, and `brew install <tap>/<formula>` is
+what records that trust (`brew tap ooyeku/olang && brew install olang`
+stops with "Refusing to load formula ... from untrusted tap" until
+`brew trust ooyeku/olang`).
 
 ## Per-release update (automated)
 
@@ -43,11 +46,12 @@ a release is published:
 1. In the tap's `Formula/olang.rb`, set `version` to the new release
    (tag without the leading `v` — e.g. tag `v0.46.0` → `"0.46.0"`).
    The `url` lines derive from `version` and need no editing.
-2. Replace the three `sha256` placeholders/values with the matching
+2. Replace the four `sha256` placeholders/values with the matching
    lines from the release's `SHA256SUMS`:
-   - `olang-<version>-macos-arm64.tar.gz` → the `on_arm` block
-   - `olang-<version>-macos-x64.tar.gz` → the `on_intel` (macOS) block
-   - `olang-<version>-linux-x64.tar.gz` → the `on_linux` block
+   - `olang-<version>-macos-arm64.tar.gz` → `on_macos` / `on_arm`
+   - `olang-<version>-macos-x64.tar.gz` → `on_macos` / `on_intel`
+   - `olang-<version>-linux-arm64.tar.gz` → `on_linux` / `on_arm`
+   - `olang-<version>-linux-x64.tar.gz` → `on_linux` / `on_intel`
 
    ```bash
    curl -LO https://github.com/ooyeku/olang/releases/download/v0.46.0/SHA256SUMS

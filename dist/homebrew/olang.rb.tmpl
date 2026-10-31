@@ -1,9 +1,8 @@
-# Homebrew formula template for olang. The canonical copy lives in the
-# olang repo; the release workflow's `homebrew` job substitutes the
-# @VERSION@ and @SHA_*@ placeholders from the fresh SHA256SUMS and
-# pushes the result to Formula/olang.rb in the ooyeku/homebrew-olang
-# tap. Edit this file — never the tap copy — and the next release
-# propagates it.
+# Homebrew formula for olang, generated from dist/homebrew/olang.rb.tmpl
+# in the olang repo by the release workflow's `homebrew` job (version
+# and checksums from the release's SHA256SUMS), and pushed to
+# Formula/olang.rb in the ooyeku/homebrew-olang tap. Edit the template,
+# never the tap copy; the next release propagates it.
 class Olang < Formula
   desc "Dynamically typed functional language with a tiered interpreter/VM/JIT runtime"
   homepage "https://github.com/ooyeku/olang"
