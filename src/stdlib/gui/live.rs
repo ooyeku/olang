@@ -118,9 +118,28 @@ pub fn shown(name: &str, id: u64) {
 /// window, or its latest unseen for a while. A game draws only then, so
 /// it draws at the display's rate and not at all while it cannot be seen.
 pub fn wanted(name: &str) -> bool {
+    // a frame shared with another process: paced by the window there
+    #[cfg(target_os = "macos")]
+    if let Some(w) = super::shared::wanted(name) {
+        return w;
+    }
     match LIVE.lock().ok().as_ref().and_then(|m| m.as_ref()?.get(name).map(|e| (e.shown, e.at))) {
         None => true,
         Some((shown, at)) => shown || at.elapsed().as_millis() >= UNSEEN_MS,
     }
 }
 
+
+/// The shared picture in an image source, `("shared", id)`: its latest
+/// frame, said seen (macOS; nothing elsewhere). None for any other source.
+pub fn shared_in(src: &Value) -> Option<Option<Arc<Picture>>> {
+    #[cfg(target_os = "macos")]
+    {
+        super::shared::id_in(src).map(super::shared::current)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = src;
+        None
+    }
+}

@@ -3128,6 +3128,7 @@ toad.frame([#{ "swarm": s, "color": "#ff9a3c", "radius": 6.0 }], #{ "size": (128
 | `toad.press(key, down)` | press or let go of a key as a hand would (scripts and tests) |
 | `toad.clear(swarm)` | empty a swarm |
 | `toad.wanted(name)` | whether the live picture wants a new frame (a window drew the last one); `toad.frame` skips one it does not |
+| `toad.shared(name)` | the ID of the live picture's shared frames (drawn with `"share": true`), for another process's image `("shared", id)`: the frame stays on the GPU (macOS) |
 | `toad.scripted(on)` | hear only `toad.press`: the windows' keys and the gamepads are ignored (demos and tests) |
 | `toad.audio()` | the sound output: `Ok(#{ device, rate, channels, voices })` or `Err(why it is silent)` |
 | `toad.sound(spec)` | a sound from a `file` (WAV, Ogg Vorbis) or the synth (`wave`, `freq`, `to`, `attack`, `hold`, `decay`, `volume`, `cutoff`, …, or `layers`) |

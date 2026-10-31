@@ -51,6 +51,7 @@ pub fn create_toad_module() -> Value {
         ("press", 2),
         ("clear", 1),
         ("wanted", 1),
+        ("shared", 1),
         ("scripted", 1),
         ("hold", 1),
         ("audio", 0),
@@ -314,7 +315,7 @@ fn uniforms(p: &Program, world: &Value) -> Result<Vec<f32>, String> {
     Ok(u)
 }
 
-pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(&str) -> Option<Value>) -> R {
+pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(Option<&str>, &str) -> Option<Value>) -> R {
     const UNIT: &Value = &Value::Unit;
     let a = |i: usize| args.get(i).unwrap_or(UNIT);
     match name {
@@ -796,8 +797,16 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(&str) -> 
             Value::String(n) => crate::stdlib::gui::live::wanted(n),
             _ => true,
         })),
+        #[cfg(all(feature = "gui", target_os = "macos"))]
+        "shared" => Ok(match a(0) {
+            Value::String(n) => crate::stdlib::gui::shared::id_of(Some(n)),
+            _ => crate::stdlib::gui::shared::id_of(None),
+        }
+        .map_or(Value::Unit, |id| Value::Integer(id as i64))),
+        #[cfg(all(feature = "gui", not(target_os = "macos")))]
+        "shared" => Ok(Value::Unit),
         #[cfg(not(feature = "gui"))]
-        "gpu" | "frame" | "input" | "press" | "wanted" => Ok(err(format!("toad.{}: this build has no window", name))),
+        "gpu" | "frame" | "input" | "press" | "wanted" | "shared" => Ok(err(format!("toad.{}: this build has no window", name))),
         _ => Err(format!("toad.{} is not a function", name).into()),
     }
 }
@@ -1141,9 +1150,11 @@ fn frame(layers: &Value, view: &Value) -> R {
         }
         let renderer = st.renderer.as_mut().unwrap();
         // `cpu`: the frame's pixels too, published for a window drawn in
-        // software (Studio's canvas runs a game headless)
+        // software; `share`: the frame shared on the GPU with another
+        // process's window (Studio's canvas runs a game in a child)
         let cpu = live.is_some() && matches!(vm.get("cpu"), Some(Value::Boolean(true)));
-        let px = renderer.frame(&view, &parts, want_png || cpu, live.as_deref());
+        let share = live.is_some() && matches!(vm.get("share"), Some(Value::Boolean(true)));
+        let px = renderer.frame(&view, &parts, want_png || cpu, live.as_deref(), share);
         if cpu && let (Some(n), Some(p)) = (&live, &px) {
             crate::stdlib::gui::live::publish_pixels(n, view.size.0, view.size.1, p.clone());
         }

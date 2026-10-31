@@ -70,6 +70,9 @@ gui = [
     "dep:objc2-foundation",
     "dep:block2",
     "dep:objc2",
+    "dep:objc2-metal",
+    "dep:objc2-io-surface",
+    "dep:objc2-core-foundation",
     "dep:skrifa",
     "dep:zune-jpeg",
     "dep:image-webp",
@@ -327,6 +330,11 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 block2 = { version = "0.6", optional = true }
 # A closed window's teardown in an autorelease pool of its own.
 objc2 = { version = "0.6", optional = true }
+# Shared pictures (gui/shared.rs): a frame drawn in one process shown by
+# another's window, on IOSurfaces (Studio's canvas runs a Toad game so).
+objc2-metal = { version = "0.3", default-features = false, features = ["std", "MTLDevice", "MTLTexture", "MTLResource", "MTLAllocation", "MTLPixelFormat", "MTLTypes", "objc2-io-surface"], optional = true }
+objc2-io-surface = { version = "0.3", default-features = false, features = ["std", "IOSurfaceRef", "IOSurfaceTypes", "objc2-core-foundation", "libc"], optional = true }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFBase", "CFDictionary", "CFNumber", "CFString"], optional = true }
 
 # AccessKit's macOS adapter with custom actions published: its nodes
 # answer accessibilityCustomActions with NSAccessibilityCustomAction

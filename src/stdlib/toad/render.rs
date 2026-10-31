@@ -1194,7 +1194,7 @@ impl Renderer {
     /// by `gui` (an image node with the source `("live", name)`), queued
     /// and not waited for; any other is made, waited for, and its pixels
     /// answered when `read`.
-    pub fn frame(&mut self, v: &View, parts: &[Part<'_>], read: bool, live: Option<&str>) -> Option<Vec<u8>> {
+    pub fn frame(&mut self, v: &View, parts: &[Part<'_>], read: bool, live: Option<&str>, share: bool) -> Option<Vec<u8>> {
         let (w, h) = v.size;
         self.frame_no += 1;
         let t = match live {
@@ -1473,7 +1473,17 @@ impl Renderer {
             );
             rb
         });
+        // shared with another process's window (Studio's canvas): the
+        // frame copied on the GPU into the next shared surface
+        #[cfg(target_os = "macos")]
+        let shared = share && live.is_some_and(|n| crate::stdlib::gui::shared::copy_in(n, &self.gpu, &mut enc, &t.out, w, h));
         self.gpu.queue.submit([enc.finish()]);
+        #[cfg(target_os = "macos")]
+        if shared && let Some(n) = live {
+            crate::stdlib::gui::shared::submitted(n, &self.gpu);
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = share;
         if let Some(name) = live {
             crate::stdlib::gui::live::publish(name, ov, w, h);
             self.targets.insert(name.to_string(), t);

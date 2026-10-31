@@ -2913,11 +2913,21 @@ impl WinState {
             let natural = fit == "none";
             let want = if natural { None } else { Some((w, h)) };
             let waiter = if self.headless { None } else { Some(self.id) };
-            if let Some(name) = super::live::name_of(src) {
-                // A live picture (a game's frame): its latest, fitted like a
-                // still, and the next refresh asked for while it shows.
-                if let Some(pic) = super::live::current(&name) {
-                    super::live::shown(&name, pic.id);
+            let live = match super::live::shared_in(src) {
+                Some(pic) => Some(pic),
+                None => super::live::name_of(src).map(|name| {
+                    let pic = super::live::current(&name);
+                    if let Some(p) = &pic {
+                        super::live::shown(&name, p.id);
+                    }
+                    pic
+                }),
+            };
+            if let Some(pic) = live {
+                // A live picture (a game's frame, maybe drawn in another
+                // process): its latest, fitted like a still, and the next
+                // refresh asked for while it shows.
+                if let Some(pic) = pic {
                     let (iw, ih) = (pic.width as f32, pic.height as f32);
                     let (sx, sy) = (w / iw.max(1.0), h / ih.max(1.0));
                     let k = if fit == "cover" { sx.max(sy) } else { sx.min(sy) };

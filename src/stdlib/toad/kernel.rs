@@ -9,8 +9,9 @@
 //! pairs (`(x, y)` or `v2(x, y)`, with `.x` and `.y`), booleans,
 //! arithmetic, comparisons, `&&` `||` `!`, `if`, and the math helpers in
 //! `Lower::call`. A name the kernel does not bind is looked up in the
-//! function's closure, then the caller's scope, and must be a number, a
-//! pair or a boolean: a constant, baked in when the kernel is compiled.
+//! function's closure, then its module file's scope, then the caller's
+//! scope, and must be a number, a pair or a boolean: a constant, baked in
+//! when the kernel is compiled.
 //!
 //! Lowering splits every pair into two scalars, so the program is a list
 //! of scalar operations in SSA order: each [`Op`] reads earlier ones.
@@ -140,7 +141,7 @@ enum V {
 
 struct Lower<'a> {
     f: &'a Function,
-    scope: &'a dyn Fn(&str) -> Option<Value>,
+    scope: &'a dyn Fn(Option<&str>, &str) -> Option<Value>,
     fields: &'a Layout,
     uniforms: &'a Layout,
     p: String,
@@ -215,7 +216,7 @@ impl<'a> Lower<'a> {
             Value::Float(x) => Some(*x as f32),
             _ => None,
         };
-        let found = self.f.closure.get(name).cloned().or_else(|| (self.scope)(name));
+        let found = self.f.closure.get(name).cloned().or_else(|| (self.scope)(self.f.def_file.as_deref(), name));
         match found.as_ref() {
             Some(v) if num(v).is_some() => Ok(V::S(self.k(num(v).unwrap()))),
             Some(Value::Boolean(b)) => Ok(V::Bool(self.k(if *b { 1.0 } else { 0.0 }))),
@@ -555,7 +556,7 @@ pub fn compile(
     f: &Function,
     fields: &Layout,
     uniforms: &Layout,
-    scope: &dyn Fn(&str) -> Option<Value>,
+    scope: &dyn Fn(Option<&str>, &str) -> Option<Value>,
 ) -> Result<Program, String> {
     let name = f.name.clone().unwrap_or_else(|| "(a lambda)".to_string());
     if f.parameters.len() != 2 {

@@ -49,6 +49,8 @@ pub mod render;
 pub mod rich;
 pub mod scene;
 pub mod scroll;
+#[cfg(target_os = "macos")]
+pub mod shared;
 pub mod soft;
 pub mod text;
 pub mod values;

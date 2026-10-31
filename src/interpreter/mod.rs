@@ -440,6 +440,12 @@ impl Interpreter {
     /// A binding as the running code sees it (its scopes, then the
     /// program's top level): `toad.kernel` reads a kernel's constants
     /// through it.
+    /// `name` in the finished scope of the module file `file` (where a
+    /// top-level function of that file resolves what it does not capture).
+    pub(crate) fn module_lookup(&self, file: &str, name: &str) -> Option<Value> {
+        self.module_scopes.get(file).and_then(|s| s.get(name).cloned())
+    }
+
     pub(crate) fn lookup(&self, name: &str) -> Option<Value> {
         self.environment.get(name)
     }

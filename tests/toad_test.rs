@@ -646,3 +646,53 @@ show((same, attempt(() => toad.count(a)) |> show |> str.contains("no such swarm"
 "#;
     assert_eq!(run(src).as_deref(), Ok("(true, true)"));
 }
+
+#[test]
+fn a_kernel_from_a_loaded_module_finds_that_modules_constants() {
+    // a private kernel of a module loaded at run time (Studio's canvas
+    // loads a game so): REACH lives in the module's scope, not here
+    let dir = tempfile::tempdir().expect("dir");
+    let lib = dir.path().join("game.ol");
+    std::fs::write(&lib, "let REACH = 2.5\nfn k(p, w) = #{ \"x\": p.x * REACH }\nshare fn kern() = k\n").expect("write");
+    let src = format!(
+        "fn ok(r) = match r {{ Ok(v) => v, Err(e) => raise(e) }}
+let m = ok(runtime.load_module({:?}))
+let id = ok(toad.kernel(m.kern(), #{{ \"x\": 0.0 }}, #{{}}))
+show(str.contains(toad.wgsl(id), \"2.5\"))",
+        lib.to_string_lossy()
+    );
+    assert_eq!(run(&src).expect("ran"), "true");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_shared_frame_reaches_a_window_on_the_gpu() {
+    // a frame drawn with "share" is named by toad.shared, and the picture
+    // a window would show comes back at the frame's size
+    let src = r##"
+match toad.gpu() {
+    Err(e) => "no gpu",
+    Ok(_) => {
+        let f = toad.frame([#{ "shapes": [#{ "kind": "box", "at": (0.0, 0.0), "size": (40.0, 40.0), "color": "#ffffff" }] }],
+                           #{ "size": (96, 64), "live": "shared_test", "share": true, "force": true })
+        show(toad.shared("shared_test"))
+    }
+}"##;
+    let out = run(src).expect("ran");
+    if out == "no gpu" {
+        return;
+    }
+    let id: u32 = out.parse().unwrap_or_else(|_| panic!("an id: {out}"));
+    let mut pic = None;
+    for _ in 0..200 {
+        // the GPU's work done, the header says the frame
+        let _ = olang::stdlib::gui::live::wanted("shared_test");
+        pic = olang::stdlib::gui::shared::current(id);
+        if pic.is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let pic = pic.expect("the shared frame came");
+    assert_eq!((pic.width, pic.height), (96, 64));
+}

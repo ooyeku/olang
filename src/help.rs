@@ -2243,6 +2243,14 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             &[r##"toad.wanted("game")"##],
         );
         self.doc_ex(
+            "toad.shared",
+            "toad.shared(name = ())",
+            "Int",
+            "toad",
+            "The ID of the live picture `name`'s shared frames, once toad.frame has drawn it with \"share\": true (with no name, the only one shared); () before (or off macOS). Another process's window shows them with an image whose source is (\"shared\", id): the frame never leaves the GPU, and the producer is paced to that window.",
+            &[r##"toad.shared("game")"##],
+        );
+        self.doc_ex(
             "toad.frame",
             "toad.frame(layers, view)",
             "Map",
