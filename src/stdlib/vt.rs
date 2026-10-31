@@ -56,7 +56,6 @@ fn obj(type_name: &str, fields: Vec<(&str, Value)>) -> Value {
         fields: Arc::new(m),
     }
 }
-#[allow(dead_code)]
 fn vmap(fields: Vec<(&str, Value)>) -> Value {
     let mut m = crate::ast::ValueMap::default();
     for (k, v) in fields {
@@ -101,8 +100,7 @@ pub fn create_vt_module() -> Value {
     }
 }
 
-// ── the screen ───────────────────────────────────────────────────────
-
+// ── the screen ──────────────────────────────────────────────────────
 const BOLD: u16 = 1;
 const DIM: u16 = 2;
 const ITALIC: u16 = 4;
@@ -420,8 +418,7 @@ impl Term {
         (0..cols).map(|c| c % 8 == 0 && c > 0).collect()
     }
 
-    // ── lines ──
-
+    // ── lines ───────────────────────────────────────────────────────
     fn screen_base(&self) -> usize {
         self.lines.len() - self.rows
     }
@@ -548,8 +545,7 @@ impl Term {
         }
     }
 
-    // ── characters ──
-
+    // ── characters ──────────────────────────────────────────────────
     fn map_charset(&self, c: char) -> char {
         let set = if self.gl == 0 { self.g0 } else { self.g1 };
         if set != b'0' || !('\u{5f}'..='\u{7e}').contains(&c) {
@@ -651,8 +647,7 @@ impl Term {
         }
     }
 
-    // ── erasing ──
-
+    // ── erasing ─────────────────────────────────────────────────────
     fn erase_cells(&mut self, row: usize, from: usize, to: usize) {
         let a = self.a;
         let cols = self.cols;
@@ -785,8 +780,7 @@ impl Term {
         self.pending = false;
     }
 
-    // ── the cursor ──
-
+    // ── the cursor ──────────────────────────────────────────────────
     fn goto(&mut self, row: i64, col: i64) {
         let (lo, hi) = if self.origin {
             (self.top as i64, self.bottom as i64)
@@ -886,8 +880,7 @@ impl Term {
         self.evicted = ev;
     }
 
-    // ── modes ──
-
+    // ── modes ───────────────────────────────────────────────────────
     fn set_mode(&mut self, on: bool) {
         let params = std::mem::take(&mut self.params);
         for &p in &params {
@@ -974,8 +967,7 @@ impl Term {
         }
     }
 
-    // ── SGR ──
-
+    // ── SGR ─────────────────────────────────────────────────────────
     fn sgr(&mut self) {
         let ps = std::mem::take(&mut self.params);
         let sub = std::mem::take(&mut self.sub);
@@ -1088,8 +1080,7 @@ impl Term {
         }
     }
 
-    // ── the parser ──
-
+    // ── the parser ──────────────────────────────────────────────────
     /// An answer for the child (a report it asked for), kept while what
     /// waits is under `MAX_REPLY`.
     fn answer(&mut self, a: &str) {
@@ -1606,8 +1597,7 @@ impl Term {
         }
     }
 
-    // ── resize ──
-
+    // ── resize ──────────────────────────────────────────────────────
     fn resize(&mut self, rows: usize, cols: usize) {
         let rows = rows.clamp(1, 1000);
         let cols = cols.clamp(1, 2000);
@@ -1844,8 +1834,7 @@ fn percent_decode(t: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-// ── the registry ─────────────────────────────────────────────────────
-
+// ── the registry ────────────────────────────────────────────────────
 static NEXT_ID: AtomicI64 = AtomicI64::new(1);
 
 fn screens() -> &'static Mutex<HashMap<i64, Arc<Mutex<Term>>>> {
@@ -2345,8 +2334,7 @@ fn find(t: &Term, q: &str, case: bool) -> Vec<Value> {
         .collect()
 }
 
-// ── drawing ──────────────────────────────────────────────────────────
-
+// ── drawing ─────────────────────────────────────────────────────────
 /// xterm's 256 colours past the 16 the palette gives.
 fn color256(n: u32) -> (u8, u8, u8) {
     if n >= 232 {

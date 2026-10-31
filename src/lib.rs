@@ -1,13 +1,16 @@
-// InterpreterError is a large enum returned pervasively; boxing it is a
-// worthwhile future refactor (smaller Results are faster), but it touches
-// every eval signature — deferred rather than half-done. Tracked in
-// CHANGELOG's unreleased notes.
-#![allow(clippy::result_large_err)]
-
-//! Olang - A minimal, expressive language with first-class functions and pipelines
+//! olang: the language, its runtime and its tools, as a library.
 //!
-//! This crate provides the core implementation of the Olang programming language,
-//! including parsing, AST construction, interpretation, and REPL functionality.
+//! The `olang` binary is a thin layer over this crate. A program passes
+//! through [`parser`] into the [`ast`], through [`expand`] for its macros,
+//! and into the [`interpreter`]; [`ovm`] compiles its hot functions to
+//! bytecode and native code. [`stdlib`] is the standard library, [`ods`]
+//! the data stack, [`tools`] the developer commands (`check`, `fmt`,
+//! `test`, `lsp` and the rest), and [`pkg`] the package manager.
+
+// InterpreterError is large and returned almost everywhere. Boxing it would
+// make every Result smaller, but it touches every eval signature, so the
+// lint stays off until that change is made in one go.
+#![allow(clippy::result_large_err)]
 
 // First: the crate's print macros, which never panic on a closed stdout
 // or stderr, shadow std's in every module below.
@@ -61,7 +64,6 @@ pub mod resolve;
 pub mod runtime_wasm; // The browser runtime the binary embeds
 pub mod scoping;
 pub mod stdlib;
-pub mod test_framework;
 pub mod tier_stats; // Where each function ran: `--ovm-stats=json`, pins
 pub mod timeline;
 pub mod tools;
@@ -79,8 +81,8 @@ pub use repl::Repl;
 // Make the version constant easily accessible (e.g., crate::VERSION)
 pub use version::VERSION;
 
-/// Result type for Olang operations
+/// Result type for olang operations
 pub type Result<T> = anyhow::Result<T>;
 
-/// Error type for Olang operations
+/// Error type for olang operations
 pub type Error = anyhow::Error;

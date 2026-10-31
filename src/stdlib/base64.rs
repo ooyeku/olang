@@ -270,7 +270,6 @@ fn base64_decode_no_pad(args: Vec<Value>) -> Result<Value, Box<dyn std::error::E
 mod tests {
     use super::*;
 
-    // Helper functions for creating test values
     fn string_val(s: &str) -> Value {
         Value::String(Arc::new(s.to_string()))
     }
@@ -283,7 +282,6 @@ mod tests {
         Value::Boolean(b)
     }
 
-    // Helper function to assert Ok result and extract inner value
     // Unwraps a fallible result, or passes a total (bare) value through.
     // encode operations return bare values now; decode still returns Result.
     fn assert_ok(result: &Value) -> &Value {
@@ -300,7 +298,6 @@ mod tests {
     /// a Rust `Err`; environmental failure still returns `Ok(Value::Err)`.
     /// Tests that only care *that* the call failed use this; tests that
     /// care *which* assert on the specific shape.
-    #[allow(dead_code)]
     fn assert_fails(result: Result<Value, Box<dyn std::error::Error>>) {
         match result {
             Err(_) => {}
@@ -309,18 +306,6 @@ mod tests {
         }
     }
 
-    // Helper function to assert Err result and extract error message
-    #[allow(dead_code)]
-    fn assert_err(result: &Value) -> &Value {
-        match result {
-            Value::Err(inner) => inner,
-            _ => {
-                panic!("Expected Err result, got: {:?}", result)
-            }
-        }
-    }
-
-    // Helper function to extract string from Value
     fn extract_string(value: &Value) -> &str {
         match value {
             Value::String(s) => s,
@@ -330,7 +315,6 @@ mod tests {
         }
     }
 
-    // Helper function to extract boolean from Value
     fn extract_bool(value: &Value) -> bool {
         match value {
             Value::Boolean(b) => *b,
