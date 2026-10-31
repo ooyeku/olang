@@ -371,6 +371,8 @@ pub fn capabilities() -> Value {
         // `wide`): drawn past sRGB on a wide screen by the GPU, their sRGB
         // fallback elsewhere
         ("wide_color", b(mac)),
+        // `gui.fonts`'s `families`: what `"body"` and `"mono"` stand for
+        ("font_families", b(true)),
         // the accessibility tree's places, roles and actions (a11y.rs)
         ("a11y_depth", b(true)),
         // `gui.set`'s `flash`: the repaint rainbow (damage.rs)

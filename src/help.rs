@@ -2094,8 +2094,8 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "gui.fonts(sources, opts?)",
             "Int",
             "gui",
-            "Register fonts (paths or Bytes; TTF, OTF, TTC, optionally brotli-compressed) ahead of the system's; answers the faces added. With #{ \"background\": true } they are decompressed and registered on a thread of their own while the program goes on (text shaped or measured meanwhile waits for them), and it answers the number of sources.",
-            &[r##"gui.fonts(["fonts/Inter.ttf"])"##, r##"gui.fonts(fonts, #{ "background": true })"##],
+            "Register fonts (paths or Bytes; TTF, OTF, TTC, optionally brotli-compressed) ahead of the system's; answers the faces added. With #{ \"background\": true } they are decompressed and registered on a thread of their own while the program goes on (text shaped or measured meanwhile waits for them), and it answers the number of sources. #{ \"families\": #{ \"body\": \"IBM Plex Sans\", \"mono\": \"IBM Plex Mono\" } } makes the families \"body\" and \"mono\" stand for those faces (a theme's type; \"\" the bundled ones again), and every text is shaped again.",
+            &[r##"gui.fonts(["fonts/Inter.ttf"])"##, r##"gui.fonts(fonts, #{ "background": true })"##, r##"gui.fonts([], #{ "families": #{ "body": "Geist", "mono": "Victor Mono" } })"##],
         );
         self.doc_ex(
             "gui.clipboard_read",

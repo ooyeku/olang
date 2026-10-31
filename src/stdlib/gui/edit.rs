@@ -174,6 +174,8 @@ pub struct Editor {
     drag_unit: Option<(u8, usize, usize)>,
     /// The program's last selection applied (`select`'s seq).
     pub select_seq: i64,
+    /// `text::FAMILY_GEN` when the font was last set.
+    family_gen: u64,
 }
 
 /// What an edit did.
@@ -210,13 +212,15 @@ impl Editor {
             dragging: false,
             drag_unit: None,
             select_seq: 0,
+            family_gen: 0,
         };
         e.apply_font(font, color);
         e
     }
 
     pub fn set_font(&mut self, font: &Font, color: Color) {
-        if self.font == *font && self.color == color {
+        let fgen = super::text::FAMILY_GEN.load(std::sync::atomic::Ordering::Relaxed);
+        if self.font == *font && self.color == color && self.family_gen == fgen {
             return;
         }
         self.apply_font(font, color);
@@ -225,12 +229,13 @@ impl Editor {
     fn apply_font(&mut self, font: &Font, color: Color) {
         self.font = font.clone();
         self.color = color;
+        self.family_gen = super::text::FAMILY_GEN.load(std::sync::atomic::Ordering::Relaxed);
         let styles = self.ed.edit_styles();
         for st in font.styles() {
             styles.insert(st);
         }
         styles.insert(StyleProperty::Brush(color));
-        if font.family == "mono" {
+        if font.family == "mono" && super::text::families().1.is_empty() {
             styles.insert(StyleProperty::FontFamily(parley::FontFamily::Single(
                 parley::FontFamilyName::Generic(GenericFamily::Monospace),
             )));

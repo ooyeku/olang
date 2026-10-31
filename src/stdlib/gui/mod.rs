@@ -1371,7 +1371,19 @@ fn gui_fonts(args: Vec<Value>) -> Res<Value> {
     };
     let background = match args.get(1) {
         None | Some(Value::Unit) => false,
-        Some(Value::Map(m)) => matches!(m.get("background"), Some(Value::Boolean(true))),
+        Some(Value::Map(m)) => {
+            // `families`: the faces `"body"` and `"mono"` stand for (a
+            // theme's type), each a CSS family list, "" for the bundled one
+            if let Some(Value::Map(f)) = m.get("families") {
+                let pick = |k: &str| match f.get(k) {
+                    Some(Value::String(s)) => Some(s.to_string()),
+                    Some(Value::Unit) => Some(String::new()),
+                    _ => None,
+                };
+                text::set_families(pick("body"), pick("mono"));
+            }
+            matches!(m.get("background"), Some(Value::Boolean(true)))
+        }
         Some(_) => {
             return Err("gui.fonts: the options are a map (#{ \"background\": true })".into());
         }
