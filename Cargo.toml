@@ -48,6 +48,7 @@ gui = [
     "dep:tiny-skia",
     "dep:softbuffer",
     "dep:parley",
+    "dep:fontique",
     "dep:swash",
     "dep:accesskit",
     "dep:accesskit_winit",
@@ -290,6 +291,13 @@ signal-hook = { version = "0.4", default-features = false }
 # The `tty` module on Windows: console raw mode and the console input
 # records (keys, mouse, resize, focus). On Unix the module decodes the
 # byte stream itself (src/stdlib/tty/decode.rs) — see its header for why.
+# Linux: parley's font lookup (fontique) loads fontconfig when it first
+# looks for system fonts instead of linking it, so the released binary
+# starts on a server or minimal install that has no fontconfig (it then
+# draws with the bundled fonts).
+[target.'cfg(target_os = "linux")'.dependencies]
+fontique = { version = "0.11", features = ["fontconfig-dlopen"], optional = true }
+
 [target.'cfg(windows)'.dependencies]
 crossterm = { version = "0.29", default-features = false, features = ["events", "windows", "bracketed-paste"] }
 

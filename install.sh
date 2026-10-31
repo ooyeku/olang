@@ -257,6 +257,8 @@ install_download() {
                 why_no_download="the ready-made olang needs a newer Linux (glibc 2.39, as in Ubuntu 24.04 or Debian 13); this one has glibc $glibc"
                 build_from_source
                 return ;;
+            *"error while loading shared libraries"*)
+                add_system_libs "$src/olang" "$out" ;;
             *"macOS"*|*"Mac OS X"*|*"dyld"*)
                 fail "the downloaded olang needs a newer macOS than $(sw_vers -productVersion 2>/dev/null)." \
                     "olang runs on macOS 11 (Big Sur) or later on Apple silicon, 10.12 or later on Intel." \
@@ -268,6 +270,67 @@ install_download() {
         esac
     fi
     install_bins "$src"
+}
+
+# add_system_libs BINARY OUTPUT: a Linux without a library the build
+# links (a server or minimal install has no fontconfig, for one): names
+# the package that has it, offers to install it with the system's
+# package manager, and goes on once the binary starts; else stops with
+# the exact command.
+add_system_libs() {
+    libs=$(ldd "$1" 2>/dev/null | awk '/not found/ { print $1 }')
+    [ -n "$libs" ] || libs=$(printf '%s\n' "$2" | sed -n 's/.*shared libraries: \([^:]*\):.*/\1/p')
+    if have apt-get; then pm=apt
+    elif have dnf; then pm=dnf
+    elif have yum; then pm=yum
+    elif have pacman; then pm=pacman
+    elif have zypper; then pm=zypper
+    else pm=""; fi
+    pkgs=""
+    unknown=""
+    for lib in $libs; do
+        case "$pm:$lib" in
+            apt:libfontconfig.so.*)                   pkg=libfontconfig1 ;;
+            dnf:libfontconfig.so.*|yum:libfontconfig.so.*|pacman:libfontconfig.so.*) pkg=fontconfig ;;
+            zypper:libfontconfig.so.*)                pkg=libfontconfig1 ;;
+            apt:libgcc_s.so.*)                        pkg=libgcc-s1 ;;
+            dnf:libgcc_s.so.*|yum:libgcc_s.so.*)      pkg=libgcc ;;
+            pacman:libgcc_s.so.*)                     pkg=gcc-libs ;;
+            zypper:libgcc_s.so.*)                     pkg=libgcc_s1 ;;
+            *)                                        pkg=""; unknown="$unknown $lib" ;;
+        esac
+        [ -n "$pkg" ] && pkgs="$pkgs $pkg"
+    done
+    if [ -z "$pm" ] || [ -n "$unknown" ] || [ -z "$pkgs" ]; then
+        fail "olang needs a system library this computer does not have:${unknown:- $libs}" \
+            "Install the package that provides it with your system's package manager," \
+            "then run the install command again. If you are not sure which one, report it at" \
+            "$GITHUB/$REPO/issues with this message:" "$2"
+    fi
+    case "$pm" in
+        apt)    cmd="apt-get install -y$pkgs" ;;
+        dnf)    cmd="dnf install -y$pkgs" ;;
+        yum)    cmd="yum install -y$pkgs" ;;
+        pacman) cmd="pacman -S --needed --noconfirm$pkgs" ;;
+        zypper) cmd="zypper install -y$pkgs" ;;
+    esac
+    [ "$(id -u)" = 0 ] || cmd="sudo $cmd"
+    say ""
+    say "olang needs a small system package this computer does not have yet:$pkgs"
+    say "(it finds the fonts olang's windows draw with; a server or minimal install leaves it out)"
+    if ask "Install it now? This runs: $cmd"; then
+        # stdin from the terminal when there is one (sudo's password):
+        # under `curl ... | sh` stdin is this script
+        if (: </dev/tty) 2>/dev/null; then sh -c "$cmd" </dev/tty; else sh -c "$cmd" </dev/null; fi ||
+            fail "installing$pkgs did not finish." \
+            "Run this yourself, then run the install command again:" "  $cmd"
+        out=$("$1" --version 2>&1) || fail "olang still would not start after installing$pkgs." \
+            "Please report this at $GITHUB/$REPO/issues with this message:" "$out"
+        ok "installed$pkgs"
+    else
+        fail "olang needs$pkgs, which is not installed." \
+            "Run this, then run the install command again:" "  $cmd"
+    fi
 }
 
 # Stops, with what to do, when INSTALL_DIR cannot be written.
