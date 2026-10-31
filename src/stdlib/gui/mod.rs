@@ -330,6 +330,9 @@ pub struct OpenOpts {
     pub width: f32,
     pub height: f32,
     pub min: Option<(f32, f32)>,
+    /// Where on the screen its content's top left is (points), else
+    /// where the platform puts a new window.
+    pub at: Option<(f32, f32)>,
     pub resizable: bool,
     pub renderer: String,
     pub scale: f32,
@@ -347,6 +350,7 @@ fn open_opts(function: &str, v: Option<&Value>) -> Res<OpenOpts> {
         width: 800.0,
         height: 600.0,
         min: None,
+        at: None,
         resizable: true,
         renderer: std::env::var("LOOM_RENDERER").unwrap_or_else(|_| "gpu".to_string()),
         scale: 1.0,
@@ -364,6 +368,7 @@ fn open_opts(function: &str, v: Option<&Value>) -> Res<OpenOpts> {
         "title",
         "size",
         "min",
+        "at",
         "resizable",
         "renderer",
         "scale",
@@ -392,6 +397,7 @@ fn open_opts(function: &str, v: Option<&Value>) -> Res<OpenOpts> {
         o.height = h.clamp(1.0, MAX_WINDOW_SIDE);
     }
     o.min = get_pair(v, "min", function)?;
+    o.at = get_pair(v, "at", function)?;
     if let Some(b) = get_bool(v, "resizable", function)? {
         o.resizable = b;
     }
@@ -681,6 +687,12 @@ fn gui_read(args: Vec<Value>) -> Res<Value> {
         // whether the window is the key one (its caret and focus shown)
         "key" => Value::Boolean(st.focused_window),
         "title" => opt_str(Some(st.title.as_str())),
+        // where the window's content is on the screen and how big: points
+        // (`()` before the platform says, or where it cannot: Wayland)
+        "place" => match st.origin {
+            Some((x, y)) => Value::Tuple(Arc::new(vec![float(x), float(y), float(st.width), float(st.height)])),
+            None => Value::Unit,
+        },
         "hover" => opt_str(st.scene.hover.as_deref()),
         "size" => Value::Tuple(Arc::new(vec![
             float(st.width),

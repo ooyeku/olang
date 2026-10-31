@@ -42,6 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `toad.drop` and `toad.swarm`'s `seed`, so a game rebuilt from its
   inputs (a rewind, a reload) is exactly the game it was; the mouse in
   `toad.input`.
+- **A window can be placed:** `at` `(x, y)` on `gui.open` and `gui.set`
+  (its frame's top left on the screen), and `gui.read(w, "place")`
+  answers where its content is and how big. Studio opens a Toad game's
+  window beside its own this way.
 - **A notebook cell's printed lines stream while it runs.** `olang repl
   --serve` sends what an `eval` prints as `out` events as it is printed
   (the hello's `stream` feature): batched at most every 50 ms, the first

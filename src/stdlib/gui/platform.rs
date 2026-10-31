@@ -757,6 +757,9 @@ impl App {
         if let Some((w, h)) = opts.min {
             attrs = attrs.with_min_inner_size(winit::dpi::LogicalSize::new(w, h));
         }
+        if let Some((x, y)) = opts.at {
+            attrs = attrs.with_position(winit::dpi::LogicalPosition::new(x, y));
+        }
         #[cfg(target_os = "macos")]
         if let Some(t) = &opts.tabbing {
             use winit::platform::macos::WindowAttributesExtMacOS;
@@ -2067,6 +2070,9 @@ impl App {
                     if let Ok(Some((w, h))) = get_pair(&v, "min", "gui.set") {
                         pw.win
                             .set_min_inner_size(Some(winit::dpi::LogicalSize::new(w, h)));
+                    }
+                    if let Ok(Some((x, y))) = get_pair(&v, "at", "gui.set") {
+                        pw.win.set_outer_position(winit::dpi::LogicalPosition::new(x, y));
                     }
                     if let Ok(Some(b)) = get_bool(&v, "visible", "gui.set") {
                         pw.win.set_visible(b);

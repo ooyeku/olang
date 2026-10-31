@@ -2274,7 +2274,7 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "gui.open(opts?)",
             "Result",
             "gui",
-            "Open a window: Ok(window), or Err when there is no display. opts: title, size (w, h), min (w, h), resizable, renderer (\"gpu\" default, or \"software\"), background. A resize event with the real size and scale follows.",
+            "Open a window: Ok(window), or Err when there is no display. opts: title, size (w, h), min (w, h), at (x, y: where on the screen the window opens: its frame's top left, title bar included, in points), resizable, renderer (\"gpu\" default, or \"software\"), background. A resize event with the real size and scale follows.",
             &[r##"let w = unwrap(gui.open(#{ "title": "Hello", "size": (480, 320) }))"##],
         );
         self.doc_ex(
