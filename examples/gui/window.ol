@@ -1,11 +1,11 @@
-// l0.ol — Loom's engine (`gui`) on its own, before Loom: a window with a
-// text field, a button, and a list, laid out by hand.
+// window.ol — a window with a text field, a button and a list, drawn by
+// olang's own window engine (`gui`, the layer under Loom) and laid out by
+// hand.
 //
-//   olang examples/gui/l0.ol                 a window (a display needed)
-//   olang examples/gui/l0.ol --headless out.png
-//                                            no display: draw the same
-//                                            view and write its pixels
-//   olang examples/gui/l0.ol --quit-after 3000
+//   olang examples/gui/window.ol                     open the window
+//   olang examples/gui/window.ol --headless out.png  no display: draw the
+//                                                    view to a PNG
+//   olang examples/gui/window.ol --quit-after 3000   close after 3 seconds
 //
 // Type a name and press Enter (or click Add); the list takes it. Tab moves
 // between the field, the button, and the list; up and down move in the

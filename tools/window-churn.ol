@@ -1,10 +1,10 @@
-// tools/window_churn.ol — open, drive and close real windows, again and
+// tools/window-churn.ol — open, drive and close real windows, again and
 // again, the way an editor does: accessibility nodes with actions, a title
 // changed, the document marked edited, a frame drawn, the window closed;
 // then the program waits a moment and ends. Run it many times to catch a
-// crash in a window's teardown (tools/window_churn.sh counts them).
+// crash in a window's teardown (tools/window-churn.sh counts them).
 //
-//   olang tools/window_churn.ol [windows] [linger_ms]
+//   olang tools/window-churn.ol [windows] [linger_ms]
 
 let args = skip(os.args(), 1)
 let n = if len(args) > 0 => to_int(args[0]) else => 3

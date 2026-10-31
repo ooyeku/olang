@@ -1,17 +1,15 @@
 # olang examples
 
-Runnable programs demonstrating the language. Every entry below is a real
-program that does real work and prints computed results — nothing is faked,
-and nothing is a stub. Run any of them directly:
+These are complete programs, each doing real work and printing what it
+computed. Run any of them directly:
 
 ```bash
 olang examples/language/metatool/main.ol
 cd examples/tools/survey && olang main.ol summary ../../src
 ```
 
-To run **every** example at once — each standalone script and each package —
-use the self-hosted harness, which launches each program in its own `olang`
-subprocess and reports a pass/fail summary:
+To run all of them at once, use the harness. It starts each program in
+its own `olang` process and prints a pass/fail summary:
 
 ```bash
 cd examples && olang run_all.ol
@@ -31,27 +29,24 @@ The examples are grouped by what they demonstrate:
 - [`tools/`](tools/) — command-line programs: a codebase surveyor, a
   task tracker, a shell, a watcher, a planner
 
-Three of the web examples are servers that block forever by design
-(`app/`, `ledger/`, `webserver/`), so the harness skips them — naming
-each skip rather than passing over it silently — and a Rust integration
-test boots each one instead. Everything else runs, including
-`tools/oshell/`, which notices that its stdin is not a terminal and
-exits cleanly.
+Three of the web examples are servers that run until stopped (`app/`,
+`ledger/`, `webserver/`), so the harness skips them and names each skip;
+a Rust integration test boots each one instead. Everything else runs,
+including `tools/oshell/`, which notices that its stdin is not a terminal
+and exits cleanly.
 
-**Where to start.** [`demo/`](concurrency/demo/) is the guided tour: Harborline is one
-system that reaches for nearly every part of the language at once. To learn one
-feature at a time, [the book](../docs/README.md) teaches each with its own
-runnable snippets. `tests/example_programs_test.rs` pins the flagship —
-every `demo/` module must parse, and a bounded soak run must finish with
-its invariants intact — so a language change that breaks it is a CI
-failure rather than something a reader discovers.
+If you are not sure where to start, try [`demo/`](concurrency/demo/).
+Harborline is one simulated port that uses nearly every part of the
+language at once. To learn one feature at a time, [the book](../docs/README.md)
+teaches each with runnable snippets. `tests/example_programs_test.rs`
+keeps the demo working: every module must parse, and a short soak run
+must finish with its invariants intact.
 
 ## The programs
 
-The first three demonstrate the package manager and the capability model
-(see [docs/packages.md](../docs/packages.md)); the rest are complete
-programs grouped by nothing in particular — read the one whose subject
-you care about.
+The first three show the package manager and the capability model (see
+[docs/packages.md](../docs/packages.md)). The rest are in no particular
+order, so read whichever subject interests you.
 
 - [`packages/geometry/`](language/packages/geometry/) — a library package: shapes,
   areas, and 2D point math, exposing a public API with `share`
@@ -301,23 +296,20 @@ you care about.
 
 ## Also in this directory
 
-- `benchmark.ol` — a standalone timing script: loop, arithmetic, and
-  call-heavy microbenchmarks, run by the harness like any other example
-- `crunch.ol` — the number-crunching gauntlet: five-million-frame tail
-  recursion, ninety thousand ordinary frames, 300! and fib(1000) in
-  `bigint`, an auto-parallel map over a million elements, `par_map` over
-  the Collatz record hunt, a 150k-row trip through the parallel data
-  stack, and a task-scheduling pipeline through all six bundled
-  collections (topo-sort, Dijkstra, heap, table, dsu, bitset) — every
-  stage cross-checked against an answer computed another way
-  (`--heavy` scales it tenfold)
-- `utils/` — three small `share`d modules (`math`, `string`, `validation`)
-  imported by dotted path: `use utils.math { calculate_average }`. It has
-  no `main.ol`, so the harness does not run it
-- `run_all.ol` — the harness itself, written in olang: it discovers targets,
-  runs each in a subprocess with `os.exec`, and exits non-zero on any failure
+- `data-processing/crunch/` is a number-crunching workout: deep tail
+  recursion, 300! and fib(1000) in `bigint`, parallel maps, a trip
+  through the data stack, and a scheduling pipeline across the bundled
+  collections. Every stage is checked against an answer computed another
+  way, and `--heavy` makes it ten times bigger.
+- `language/utils/` holds three small shared modules (`math`, `string`,
+  `validation`) imported by dotted path, as in
+  `use utils.math { calculate_average }`. It has no `main.ol`, so the
+  harness does not run it.
+- `gui/window.ol` opens a window with olang's own window engine, and
+  `tty/` has two small terminal programs (a key echo and a size probe).
+  They need a display or a terminal, so the harness leaves them out.
+- `run_all.ol` is the harness itself, written in olang. It finds every
+  program, runs each with `os.exec`, and exits non-zero if any fails.
 
-## Notes
-
-- The bytecode tier is on by default, so these run fast with no flags. Add
-  `--ovm-stats` to see how many functions were promoted.
+The bytecode tier is on by default, so these run fast with no flags. Add
+`--ovm-stats` to see how many functions were promoted.

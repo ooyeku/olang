@@ -1,4 +1,4 @@
-# Rust build artifacts
+# Rust build output
 /target/
 **/*.rs.bk
 *.pdb
@@ -6,94 +6,56 @@
 # Claude Code session config (machine-local)
 .claude/
 
-# IDE files
+# Editors and operating systems
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-
-# OS generated files
 .DS_Store
-.DS_Store?
 ._*
 .Spotlight-V100
 .Trashes
-ehthumbs.db
 Thumbs.db
 
-# Logs
+# Logs, except an example fixture a program reads by default
 *.log
 logs/
-# ...except committed example fixtures the programs read by default
 !examples/data-processing/loganalyzer/data/app.log
 
-# Runtime data
-pids
-*.pid
-*.seed
-*.pid.lock
+# Local environment and temporary files
+.env
+*.tmp
+*.temp
 
-# Coverage directory used by tools like istanbul
-coverage/
-
-# nyc test coverage
-.nyc_output
-
-# Dependency directories
+# Node (editors/vscode, the playground harnesses)
 node_modules/
-
-# Optional npm cache directory
-.npm
-
-# Optional REPL history
-.node_repl_history
-
-# Output of 'npm pack'
 *.tgz
 
-# Yarn Integrity file
-.yarn-integrity
-
-# dotenv environment variables file
-.env
-
-# Olang specific
+# olang
 .olang_history
 *.rap.bak
 
-# Benchmark results
-benches/results/
-
-# Documentation build
-docs/_build/
-
-# Temporary files
-*.tmp
-*.temp 
-
-otc/target/*
-# Editor toolchain build artifacts (editors/)
+# Editor extension build output (editors/)
 editors/vscode/*.vsix
+editors/vscode/dist/
 editors/zed/target/
 editors/zed/grammars/
 editors/zed/extension.wasm
 
-# Example runtime data: databases, backups, generated charts
+# Example runtime data: databases, backups, generated charts, caches
 examples/**/*.db
 examples/web/app/backups/
 examples/data-processing/statlab/*.svg
+examples/data-processing/meterflow/cache/
 
 # `olang build` output inside examples: a built binary is named after its
-# source directory's entry point, so these collide with nothing but must
-# not be committed.
+# entry point's directory.
 examples/*/*/main
 examples/*/*/ledger
 
-# Local distribution staging (make dist). dist/homebrew (the formula
-# template) and the Linux verification pass stay tracked.
+# Local release staging (make dist). The Homebrew formula template and the
+# Linux verification script stay tracked.
 /dist/*
 !/dist/homebrew/
 !/dist/linux-verify.sh
-editors/vscode/dist/
-examples/data-processing/meterflow/cache/

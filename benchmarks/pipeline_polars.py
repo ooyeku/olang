@@ -1,4 +1,4 @@
-# pipeline_polars.py — the DP4 end-to-end benchmark, Polars edition.
+# pipeline_polars.py — the end-to-end pipeline benchmark, Polars edition.
 #
 # Stage-for-stage identical to benchmarks/pipeline.ol; prints the same
 # `STAGE <name> <ms> <checksum>` lines so the runner can refuse any
