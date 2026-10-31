@@ -6,9 +6,11 @@ Part of [the olang book](README.md) · [A tour of olang](tour.md) ·
 [Architecture and internals](internals.md) ·
 [Stability and compatibility](stability.md)
 
-This chapter is the complete reference for the olang language: every
-construct, its syntax, and its behavior, each with a runnable example. Every
-`olang` block runs as written.
+This chapter is the complete reference for the olang language. It goes
+through every construct in turn, giving its syntax and exactly how it
+behaves, with a runnable example for each. If you are learning olang,
+[A tour of olang](tour.md) is a friendlier place to start; come here
+when you want the precise rules. Every `olang` block runs as written.
 
 ## Table of contents
 

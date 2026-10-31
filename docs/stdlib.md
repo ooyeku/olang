@@ -6,12 +6,16 @@ Part of [the olang book](README.md) · [A tour of olang](tour.md) ·
 [Packages and dependencies](packages.md) ·
 [Stability and compatibility](stability.md)
 
-This chapter documents the standard library: the global builtins, which are
-always in scope, and the modules — those implemented in Rust and those
-written in olang and compiled into the binary. As in the
-[language reference](language.md), every `olang` block is executed by the
-test suite. Blocks marked `no-run` are parse-checked only, because they need
-a file system, a network, or a browser.
+olang comes with a large standard library, so most programs need nothing
+else. This chapter documents all of it: the global functions that are
+always available, and the modules, some written in Rust and some written
+in olang and built into the binary. It is meant for looking things up.
+Each section starts with a short explanation, followed by tables of what
+each function takes and returns.
+
+As in the [language reference](language.md), every `olang` block here is
+run by the test suite. Blocks marked `no-run` are only checked for
+syntax, because they need a file system, a network or a browser.
 
 ## Table of contents
 
