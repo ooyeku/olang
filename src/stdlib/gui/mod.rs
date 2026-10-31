@@ -37,6 +37,7 @@ pub mod damage;
 pub mod edit;
 pub mod flat;
 pub mod gpu;
+pub mod live;
 pub mod holds;
 pub mod motion;
 pub mod picture;
@@ -757,6 +758,22 @@ fn gui_read(args: Vec<Value>) -> Res<Value> {
                 .map_err(|e| format!("gui.read: encoding the frame: {e}"))?;
             crate::stdlib::bytes::to_value(png)
         }
+        // what the GPU drew (the render thread's kept frame): a live
+        // picture shows here, where "pixels" (the software reference) has none
+        "frame" => {
+            drop(st);
+            let (fw, fh, px) = render::kept(id)
+                .ok_or("gui.read: \"frame\": the window is not drawn on the render thread")?;
+            let pm = tiny_skia::Pixmap::from_vec(
+                px,
+                tiny_skia::IntSize::from_wh(fw, fh).ok_or("gui.read: \"frame\": no size")?,
+            )
+            .ok_or("gui.read: \"frame\": its pixels")?;
+            let png = pm
+                .encode_png()
+                .map_err(|e| format!("gui.read: encoding the frame: {e}"))?;
+            crate::stdlib::bytes::to_value(png)
+        }
         "rgba" => {
             let dl = st.display_list();
             drop(st);
@@ -848,7 +865,7 @@ fn gui_read(args: Vec<Value>) -> Res<Value> {
         }
         other => {
             return Err(format!(
-                "gui.read: unknown \"{other}\" (focus, key, hover, size, hit, node, value, selection, keys, a11y, pixels, rgba, prims, caret, ime, settings, animation, next_frame, motion, render)"
+                "gui.read: unknown \"{other}\" (focus, key, hover, size, hit, node, value, selection, keys, a11y, pixels, frame, rgba, prims, caret, ime, settings, animation, next_frame, motion, render)"
             ));
         }
     })

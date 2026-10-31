@@ -4,6 +4,7 @@
 //! the game depends on, and the reference the GPU path is held to.
 
 use super::kernel::{B, Op, Program, U};
+#[cfg(feature = "native")]
 use rayon::prelude::*;
 
 /// Entities per chunk: the ops' scratch for a chunk stays in cache.
@@ -112,8 +113,12 @@ pub fn run(p: &Program, cols: &mut Columns, uniforms: &[f32]) -> Option<Vec<bool
     let nscratch = scratch.iter().filter(|s| s.is_some()).count();
     let src = &cols.data;
     // each chunk's results: (writes' values, dead flags)
-    let results: Vec<(Vec<Vec<f32>>, Vec<bool>)> = (0..chunks)
-        .into_par_iter()
+    // every core natively; one thread in the browser
+    #[cfg(feature = "native")]
+    let chunked = (0..chunks).into_par_iter();
+    #[cfg(not(feature = "native"))]
+    let chunked = (0..chunks).into_iter();
+    let results: Vec<(Vec<Vec<f32>>, Vec<bool>)> = chunked
         .map(|ci| {
             let lo = ci * CHUNK;
             let len = CHUNK.min(n - lo);

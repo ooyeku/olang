@@ -61,6 +61,7 @@ fn every_callable_module_has_help_entries() {
         "ui",
         "viz",
         "dash",
+        "toad",
     ];
     let mut missing = Vec::new();
     for m in modules {

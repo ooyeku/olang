@@ -20,6 +20,9 @@ crate-type = ["cdylib"]
 # default is the browser profile the web SDK and the examples ship.
 default = []
 full = ["olang/regex-module", "olang/rsa-crypto"]
+# `toad`: the game engine's kernels and CPU swarms (its GPU half is the
+# page's WebGPU, driven through the shim).
+toad = ["olang/toad"]
 
 [dependencies]
 olang = { path = "..", default-features = false }

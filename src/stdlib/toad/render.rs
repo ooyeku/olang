@@ -1,32 +1,59 @@
-//! T0's renderer: swarms drawn as glowing points into an HDR target, then
-//! tone mapped to an 8-bit frame. Each swarm is one instanced draw whose
-//! vertex shader reads the swarm's columns straight from its storage
-//! buffer (a show swarm's own; a play swarm's uploaded once a frame), so
-//! drawing 1M points costs one draw call and no copies on the CPU.
+//! The renderer: a frame's parts drawn in order into an HDR target, then
+//! tone mapped to an 8-bit frame.
+//!
+//! - **Swarms** are one instanced draw each, whose vertex shader reads the
+//!   swarm's columns straight from its storage buffer (a show swarm's own;
+//!   a play swarm's uploaded once a frame): glowing points, added.
+//! - **Shapes** are signed distance fields (circle, box, capsule, ring,
+//!   triangle; a line is a capsule), any size, rotated, rounded or
+//!   outlined, antialiased by their distance, in one instanced draw per
+//!   run of shapes; their colour may go past 1.0 to glow.
+//! - **Sprites** are pictures (`gui`'s decoding: PNG, JPEG, WebP, GIF,
+//!   SVG), rotated and tinted, one draw per picture.
+//!
+//! Shapes and sprites cover what is under them (premultiplied "over");
+//! swarms add light. The camera (`center`, `scale`, `rot`) applies to all.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
-const DRAW: &str = r#"
-struct D {
-    size: vec2<f32>, center: vec2<f32>,
-    scale: f32, radius: f32, cap: u32, n: u32,
-    color: vec4<f32>,
-    pos: u32, glow: i32, dead: i32, pad: u32,
-};
+/// The camera, shared by every pass: the target's size in pixels, the
+/// world point at its centre, pixels per world unit, and its turn.
+const VIEW: &str = r#"
+struct V { size: vec2<f32>, center: vec2<f32>, scale: f32, rot: f32, pad0: f32, pad1: f32 };
+fn to_clip(v: V, p: vec2<f32>) -> vec4<f32> {
+    let c = cos(-v.rot); let s = sin(-v.rot);
+    let q = p - v.center;
+    let r = vec2(q.x * c - q.y * s, q.x * s + q.y * c) * v.scale;
+    return vec4(r / (v.size * 0.5), 0.0, 1.0);
+}
+fn turn(p: vec2<f32>, a: f32) -> vec2<f32> {
+    let c = cos(a); let s = sin(a);
+    return vec2(p.x * c - p.y * s, p.x * s + p.y * c);
+}
+fn corner(i: u32) -> vec2<f32> {
+    var c = array<vec2<f32>, 6>(vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(-1.0, 1.0),
+                                vec2(-1.0, 1.0), vec2(1.0, -1.0), vec2(1.0, 1.0));
+    return c[i];
+}
+"#;
+
+const POINTS: &str = r#"
+struct D { cap: u32, n: u32, pos: u32, glow: i32, dead: i32, pad: u32, radius: f32, pad2: f32, color: vec4<f32> };
 @group(0) @binding(0) var<storage, read> s: array<f32>;
-@group(0) @binding(1) var<uniform> d: D;
+@group(0) @binding(1) var<uniform> v: V;
+@group(0) @binding(2) var<uniform> d: D;
 struct O { @builtin(position) at: vec4<f32>, @location(0) q: vec2<f32>, @location(1) k: f32 };
 @vertex
 fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) i: u32) -> O {
     var o: O;
-    let corner = array<vec2<f32>, 6>(vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(-1.0, 1.0),
-                                     vec2(-1.0, 1.0), vec2(1.0, -1.0), vec2(1.0, 1.0))[vi];
+    let corner = corner(vi);
     var k = 1.0;
     if (d.glow >= 0) { k = s[u32(d.glow) * d.cap + i]; }
     if (d.dead >= 0 && s[u32(d.dead) * d.cap + i] > 0.5) { k = 0.0; }
     let p = vec2(s[d.pos * d.cap + i], s[(d.pos + 1u) * d.cap + i]);
-    let px = (p - d.center) * d.scale + corner * d.radius;
-    o.at = vec4(px / (d.size * 0.5) * vec2(1.0, 1.0), 0.0, 1.0);
+    // the point's radius is in pixels, whatever the camera's zoom
+    o.at = to_clip(v, p) + vec4(corner * d.radius / (v.size * 0.5), 0.0, 0.0);
     if (k <= 0.0) { o.at = vec4(2.0, 2.0, 2.0, 1.0); }
     o.q = corner;
     o.k = k;
@@ -41,6 +68,90 @@ fn fs(o: O) -> @location(0) vec4<f32> {
     let halo = exp(-r2 * 4.0) * 0.35;
     let e = (core + halo) * o.k * d.color.a;
     return vec4(d.color.rgb * e, 0.0);
+}
+"#;
+
+/// A shape: centre, half size, turn, kind, rounding, outline, colour
+/// (premultiplied by nothing: straight, with `glow` folded into rgb).
+pub const SHAPE_FLOATS: usize = 12;
+
+const SHAPES: &str = r#"
+struct S { c: vec2<f32>, half: vec2<f32>, rot: f32, kind: f32, round: f32, line: f32, color: vec4<f32> };
+@group(0) @binding(0) var<storage, read> sh: array<S>;
+@group(0) @binding(1) var<uniform> v: V;
+struct O { @builtin(position) at: vec4<f32>, @location(0) q: vec2<f32>, @location(1) @interpolate(flat) i: u32 };
+@vertex
+fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) i: u32) -> O {
+    let s = sh[i];
+    // the quad holds the shape, its outline and a pixel for the edge
+    let pad = s.line * 0.5 + 1.5 / v.scale;
+    let q = corner(vi) * (s.half + vec2(pad));
+    var o: O;
+    o.at = to_clip(v, s.c + turn(q, s.rot));
+    o.q = q;
+    o.i = i;
+    return o;
+}
+fn sd_box(p: vec2<f32>, b: vec2<f32>, r: f32) -> f32 {
+    let q = abs(p) - b + vec2(r);
+    return length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - r;
+}
+fn sd_tri(p0: vec2<f32>, r: f32) -> f32 {
+    // an equilateral triangle, point up, circumradius r
+    let k = sqrt(3.0);
+    var p = vec2(abs(p0.x) - r * 0.866, p0.y + r * 0.5);
+    if (p.x + k * p.y > 0.0) { p = vec2(p.x - k * p.y, -k * p.x - p.y) / 2.0; }
+    p.x -= clamp(p.x, -r * 1.732, 0.0);
+    return -length(p) * sign(p.y);
+}
+@fragment
+fn fs(o: O) -> @location(0) vec4<f32> {
+    let s = sh[o.i];
+    let p = o.q;
+    var d = 0.0;
+    let kind = u32(s.kind + 0.5);
+    if (kind == 0u) { d = length(p) - s.half.x; }                       // circle
+    else if (kind == 1u) { d = sd_box(p, s.half, min(s.round, min(s.half.x, s.half.y))); } // box
+    else if (kind == 2u) {                                               // capsule along x
+        let r = s.half.y;
+        let x = clamp(p.x, -(s.half.x - r), s.half.x - r);
+        d = length(p - vec2(x, 0.0)) - r;
+    }
+    else if (kind == 3u) { d = sd_tri(p, s.half.x); }                    // triangle
+    if (s.line > 0.0) { d = abs(d) - s.line * 0.5; }
+    // coverage from the distance in pixels
+    let cov = clamp(0.5 - d * v.scale, 0.0, 1.0) * s.color.a;
+    if (cov <= 0.0) { discard; }
+    return vec4(s.color.rgb * cov, cov);
+}
+"#;
+
+/// A sprite: centre, half size, turn, alpha, tint (rgba).
+pub const SPRITE_FLOATS: usize = 12;
+
+const SPRITES: &str = r#"
+struct P { c: vec2<f32>, half: vec2<f32>, rot: f32, pad0: f32, pad1: f32, pad2: f32, tint: vec4<f32> };
+@group(0) @binding(0) var<storage, read> sp: array<P>;
+@group(0) @binding(1) var<uniform> v: V;
+@group(0) @binding(2) var pic: texture_2d<f32>;
+@group(0) @binding(3) var smp: sampler;
+struct O { @builtin(position) at: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) @interpolate(flat) i: u32 };
+@vertex
+fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) i: u32) -> O {
+    let s = sp[i];
+    let c = corner(vi);
+    var o: O;
+    o.at = to_clip(v, s.c + turn(c * s.half, s.rot));
+    o.uv = vec2(c.x * 0.5 + 0.5, 0.5 - c.y * 0.5);
+    o.i = i;
+    return o;
+}
+@fragment
+fn fs(o: O) -> @location(0) vec4<f32> {
+    // pictures are premultiplied; the texture is sRGB, so this is linear
+    let t = sp[o.i].tint;
+    let c = textureSample(pic, smp, o.uv);
+    return vec4(c.rgb * t.rgb, c.a) * t.a;
 }
 "#;
 
@@ -75,15 +186,7 @@ fn fs(@builtin(position) at: vec4<f32>) -> @location(0) vec4<f32> {
 }
 "#;
 
-pub struct Renderer {
-    gpu: Arc<crate::stdlib::gui::gpu::Gpu>,
-    draw: wgpu::RenderPipeline,
-    draw_layout: wgpu::BindGroupLayout,
-    tone: wgpu::RenderPipeline,
-    tone_layout: wgpu::BindGroupLayout,
-}
-
-/// One swarm's part of a frame.
+/// A swarm's part of a frame.
 pub struct Layer<'a> {
     pub buf: &'a wgpu::Buffer,
     pub cap: usize,
@@ -95,10 +198,20 @@ pub struct Layer<'a> {
     pub radius: f32,
 }
 
+/// One part of a frame, drawn in order.
+pub enum Part<'a> {
+    Swarm(Layer<'a>),
+    /// `SHAPE_FLOATS` per shape.
+    Shapes(Vec<f32>),
+    /// Runs of one picture: `SPRITE_FLOATS` per sprite.
+    Sprites(Vec<(Arc<crate::stdlib::gui::canvas::Picture>, Vec<f32>)>),
+}
+
 pub struct View {
     pub size: (u32, u32),
     pub center: (f32, f32),
     pub scale: f32,
+    pub rot: f32,
     pub bg: [f32; 3],
     pub exposure: f32,
     pub vignette: f32,
@@ -107,16 +220,56 @@ pub struct View {
 const HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const OUT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
-fn uniform_entry(binding: u32, vis: wgpu::ShaderStages) -> wgpu::BindGroupLayoutEntry {
+/// A live view's HDR target and its output, shown by `gui` as a picture.
+struct Target {
+    size: (u32, u32),
+    hdr: wgpu::Texture,
+    out: wgpu::Texture,
+}
+
+pub struct Renderer {
+    gpu: Arc<crate::stdlib::gui::gpu::Gpu>,
+    points: (wgpu::RenderPipeline, wgpu::BindGroupLayout),
+    shapes: (wgpu::RenderPipeline, wgpu::BindGroupLayout),
+    sprites: (wgpu::RenderPipeline, wgpu::BindGroupLayout),
+    tone: (wgpu::RenderPipeline, wgpu::BindGroupLayout),
+    sampler: wgpu::Sampler,
+    /// A live view's textures by its name, kept while its size holds.
+    targets: HashMap<String, Target>,
+    /// Sprites' textures by picture id.
+    pictures: HashMap<u64, wgpu::TextureView>,
+}
+
+fn entry(binding: u32, vis: wgpu::ShaderStages, ty: wgpu::BindingType) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
         visibility: vis,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Uniform,
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
+        ty,
         count: None,
+    }
+}
+
+fn storage() -> wgpu::BindingType {
+    wgpu::BindingType::Buffer {
+        ty: wgpu::BufferBindingType::Storage { read_only: true },
+        has_dynamic_offset: false,
+        min_binding_size: None,
+    }
+}
+
+fn uniform() -> wgpu::BindingType {
+    wgpu::BindingType::Buffer {
+        ty: wgpu::BufferBindingType::Uniform,
+        has_dynamic_offset: false,
+        min_binding_size: None,
+    }
+}
+
+fn texture() -> wgpu::BindingType {
+    wgpu::BindingType::Texture {
+        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+        view_dimension: wgpu::TextureViewDimension::D2,
+        multisampled: false,
     }
 }
 
@@ -124,50 +277,33 @@ impl Renderer {
     pub fn new() -> Result<Self, String> {
         let gpu = crate::stdlib::gui::gpu::gpu(None, None)?;
         let d = &gpu.device;
-        let vf = wgpu::ShaderStages::VERTEX_FRAGMENT;
-        let draw_layout = d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("toad draw"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                uniform_entry(1, vf),
-            ],
-        });
-        let tone_layout = d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("toad tone"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                uniform_entry(1, wgpu::ShaderStages::FRAGMENT),
-            ],
-        });
-        let pipe = |label: &str, src: &str, layout: &wgpu::BindGroupLayout, format, blend| {
+        let (v, f, vf) = (
+            wgpu::ShaderStages::VERTEX,
+            wgpu::ShaderStages::FRAGMENT,
+            wgpu::ShaderStages::VERTEX_FRAGMENT,
+        );
+        let layout = |label: &str, entries: &[wgpu::BindGroupLayoutEntry]| {
+            d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some(label),
+                entries,
+            })
+        };
+        let pipe = |label: &str,
+                    src: String,
+                    layout: wgpu::BindGroupLayout,
+                    format,
+                    blend|
+         -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
             let module = d.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some(label),
                 source: wgpu::ShaderSource::Wgsl(src.into()),
             });
             let pl = d.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(label),
-                bind_group_layouts: &[Some(layout)],
+                bind_group_layouts: &[Some(&layout)],
                 ..Default::default()
             });
-            d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            let p = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&pl),
                 vertex: wgpu::VertexState {
@@ -191,7 +327,8 @@ impl Renderer {
                 multisample: Default::default(),
                 multiview_mask: None,
                 cache: None,
-            })
+            });
+            (p, layout)
         };
         let add = wgpu::BlendState {
             color: wgpu::BlendComponent {
@@ -199,16 +336,78 @@ impl Renderer {
                 dst_factor: wgpu::BlendFactor::One,
                 operation: wgpu::BlendOperation::Add,
             },
-            alpha: wgpu::BlendComponent::REPLACE,
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::Zero,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
         };
-        let draw = pipe("toad draw", DRAW, &draw_layout, HDR, Some(add));
-        let tone = pipe("toad tone", TONE, &tone_layout, OUT, None);
+        let over = wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING;
+        let points = pipe(
+            "toad points",
+            format!("{VIEW}{POINTS}"),
+            layout("toad points", &[entry(0, v, storage()), entry(1, vf, uniform()), entry(2, vf, uniform())]),
+            HDR,
+            Some(add),
+        );
+        let shapes = pipe(
+            "toad shapes",
+            format!("{VIEW}{SHAPES}"),
+            layout("toad shapes", &[entry(0, vf, storage()), entry(1, vf, uniform())]),
+            HDR,
+            Some(over),
+        );
+        let sprites = pipe(
+            "toad sprites",
+            format!("{VIEW}{SPRITES}"),
+            layout(
+                "toad sprites",
+                &[
+                    entry(0, vf, storage()),
+                    entry(1, vf, uniform()),
+                    entry(2, f, texture()),
+                    entry(3, f, wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)),
+                ],
+            ),
+            HDR,
+            Some(over),
+        );
+        let tone = pipe(
+            "toad tone",
+            TONE.to_string(),
+            layout(
+                "toad tone",
+                &[
+                    entry(
+                        0,
+                        f,
+                        wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                    ),
+                    entry(1, f, uniform()),
+                ],
+            ),
+            OUT,
+            None,
+        );
+        let sampler = d.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("toad sprites"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
         Ok(Renderer {
             gpu,
-            draw,
-            draw_layout,
+            points,
+            shapes,
+            sprites,
             tone,
-            tone_layout,
+            sampler,
+            targets: HashMap::new(),
+            pictures: HashMap::new(),
         })
     }
 
@@ -216,84 +415,227 @@ impl Renderer {
         &self.gpu
     }
 
-    /// Draw a frame and wait for it; answers the frame's pixels when `read`.
-    pub fn frame(&self, v: &View, layers: &[Layer<'_>], read: bool) -> Option<Vec<u8>> {
+    fn buffer(&self, label: &str, bytes: &[u8], usage: wgpu::BufferUsages) -> wgpu::Buffer {
+        wgpu::util::DeviceExt::create_buffer_init(
+            &self.gpu.device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents: bytes,
+                usage,
+            },
+        )
+    }
+
+    /// A sprite's texture, uploaded once per picture (sRGB, premultiplied).
+    fn picture(&mut self, pic: &crate::stdlib::gui::canvas::Picture) -> wgpu::TextureView {
+        if let Some(v) = self.pictures.get(&pic.id) {
+            return v.clone();
+        }
         let d = &self.gpu.device;
+        let size = wgpu::Extent3d {
+            width: pic.width.max(1),
+            height: pic.height.max(1),
+            depth_or_array_layers: 1,
+        };
+        let tex = d.create_texture(&wgpu::TextureDescriptor {
+            label: Some("toad sprite"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        if pic.rgba.len() >= (pic.width * pic.height * 4) as usize {
+            self.gpu.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &tex,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &pic.rgba,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(pic.width * 4),
+                    rows_per_image: Some(pic.height),
+                },
+                size,
+            );
+        }
+        let view = tex.create_view(&Default::default());
+        // a game's sprites are few; a long run of new pictures starts over
+        if self.pictures.len() > 4096 {
+            self.pictures.clear();
+        }
+        self.pictures.insert(pic.id, view.clone());
+        view
+    }
+
+    /// Draw a frame. A `live` one goes to that name's textures and is shown
+    /// by `gui` (an image node with the source `("live", name)`), queued
+    /// and not waited for; any other is made, waited for, and its pixels
+    /// answered when `read`.
+    pub fn frame(&mut self, v: &View, parts: &[Part<'_>], read: bool, live: Option<&str>) -> Option<Vec<u8>> {
         let (w, h) = v.size;
         let ext = wgpu::Extent3d {
             width: w,
             height: h,
             depth_or_array_layers: 1,
         };
-        let tex = |format, usage| {
-            d.create_texture(&wgpu::TextureDescriptor {
-                label: Some("toad frame"),
-                size: ext,
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format,
-                usage,
-                view_formats: &[],
-            })
+        let make = |d: &wgpu::Device| {
+            let tex = |format, usage| {
+                d.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("toad frame"),
+                    size: ext,
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format,
+                    usage,
+                    view_formats: &[],
+                })
+            };
+            (
+                tex(
+                    HDR,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                ),
+                tex(
+                    OUT,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::COPY_SRC
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                ),
+            )
         };
-        let hdr = tex(
-            HDR,
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-        );
-        let out = tex(
-            OUT,
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-        );
+        let (hdr, out) = match live {
+            Some(name) => match self.targets.get(name).filter(|t| t.size == (w, h)) {
+                Some(t) => (t.hdr.clone(), t.out.clone()),
+                None => {
+                    let (hdr, out) = make(&self.gpu.device);
+                    self.targets.insert(
+                        name.to_string(),
+                        Target {
+                            size: (w, h),
+                            hdr: hdr.clone(),
+                            out: out.clone(),
+                        },
+                    );
+                    (hdr, out)
+                }
+            },
+            None => make(&self.gpu.device),
+        };
+        // every sprite's texture first (uploads need `&mut self`)
+        let mut sprite_views = Vec::new();
+        for p in parts {
+            if let Part::Sprites(runs) = p {
+                for (pic, _) in runs {
+                    let view = self.picture(pic);
+                    sprite_views.push(view);
+                }
+            }
+        }
+        let d = &self.gpu.device;
         let hv = hdr.create_view(&Default::default());
         let ov = out.create_view(&Default::default());
+        let vu: [f32; 8] = [w as f32, h as f32, v.center.0, v.center.1, v.scale, v.rot, 0.0, 0.0];
+        let vbuf = self.buffer("toad view", bytemuck::cast_slice(&vu), wgpu::BufferUsages::UNIFORM);
+        // the bind groups, in draw order: (pipeline, bind group, vertices, instances)
+        let mut draws: Vec<(&wgpu::RenderPipeline, wgpu::BindGroup, u32, u32)> = Vec::new();
+        let mut views = sprite_views.into_iter();
+        for p in parts {
+            match p {
+                Part::Swarm(l) => {
+                    let mut u = [0u32; 12];
+                    u[0] = l.cap as u32;
+                    u[1] = l.n as u32;
+                    u[2] = l.pos as u32;
+                    u[3] = l.glow.map(|g| g as i32).unwrap_or(-1) as u32;
+                    u[4] = l.dead.map(|g| g as i32).unwrap_or(-1) as u32;
+                    u[6] = l.radius.to_bits();
+                    for i in 0..4 {
+                        u[8 + i] = l.color[i].to_bits();
+                    }
+                    let ub = self.buffer("toad points", bytemuck::cast_slice(&u), wgpu::BufferUsages::UNIFORM);
+                    let bg = d.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("toad points"),
+                        layout: &self.points.1,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: l.buf.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: vbuf.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: ub.as_entire_binding(),
+                            },
+                        ],
+                    });
+                    draws.push((&self.points.0, bg, 6, l.n as u32));
+                }
+                Part::Shapes(inst) if !inst.is_empty() => {
+                    let sb = self.buffer("toad shapes", bytemuck::cast_slice(inst), wgpu::BufferUsages::STORAGE);
+                    let bg = d.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("toad shapes"),
+                        layout: &self.shapes.1,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: sb.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: vbuf.as_entire_binding(),
+                            },
+                        ],
+                    });
+                    draws.push((&self.shapes.0, bg, 6, (inst.len() / SHAPE_FLOATS) as u32));
+                }
+                Part::Sprites(runs) => {
+                    for (_, inst) in runs {
+                        let view = views.next().expect("a view per run");
+                        if inst.is_empty() {
+                            continue;
+                        }
+                        let sb = self.buffer("toad sprites", bytemuck::cast_slice(inst), wgpu::BufferUsages::STORAGE);
+                        let bg = d.create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: Some("toad sprites"),
+                            layout: &self.sprites.1,
+                            entries: &[
+                                wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: sb.as_entire_binding(),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource: vbuf.as_entire_binding(),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 2,
+                                    resource: wgpu::BindingResource::TextureView(&view),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 3,
+                                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                                },
+                            ],
+                        });
+                        draws.push((&self.sprites.0, bg, 6, (inst.len() / SPRITE_FLOATS) as u32));
+                    }
+                }
+                Part::Shapes(_) => {}
+            }
+        }
         let mut enc = d.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("toad frame"),
         });
-        let binds: Vec<(wgpu::BindGroup, u32)> = layers
-            .iter()
-            .map(|l| {
-                let mut u = [0u32; 16];
-                let f = |x: f32| x.to_bits();
-                u[0] = f(w as f32);
-                u[1] = f(h as f32);
-                u[2] = f(v.center.0);
-                u[3] = f(v.center.1);
-                u[4] = f(v.scale);
-                u[5] = f(l.radius);
-                u[6] = l.cap as u32;
-                u[7] = l.n as u32;
-                for i in 0..4 {
-                    u[8 + i] = f(l.color[i]);
-                }
-                u[12] = l.pos as u32;
-                u[13] = l.glow.map(|g| g as i32).unwrap_or(-1) as u32;
-                u[14] = l.dead.map(|g| g as i32).unwrap_or(-1) as u32;
-                let ub = wgpu::util::DeviceExt::create_buffer_init(
-                    d,
-                    &wgpu::util::BufferInitDescriptor {
-                        label: Some("toad draw"),
-                        contents: bytemuck::cast_slice(&u),
-                        usage: wgpu::BufferUsages::UNIFORM,
-                    },
-                );
-                let bg = d.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("toad draw"),
-                    layout: &self.draw_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: l.buf.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: ub.as_entire_binding(),
-                        },
-                    ],
-                });
-                (bg, l.n as u32)
-            })
-            .collect();
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("toad draw"),
@@ -308,24 +650,17 @@ impl Renderer {
                 })],
                 ..Default::default()
             });
-            pass.set_pipeline(&self.draw);
-            for (bg, n) in &binds {
+            for (pipe, bg, verts, n) in &draws {
+                pass.set_pipeline(pipe);
                 pass.set_bind_group(0, bg, &[]);
-                pass.draw(0..6, 0..*n);
+                pass.draw(0..*verts, 0..*n);
             }
         }
         let tu: [f32; 8] = [v.bg[0], v.bg[1], v.bg[2], 1.0, v.exposure, v.vignette, 0.0, 0.0];
-        let tub = wgpu::util::DeviceExt::create_buffer_init(
-            d,
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("toad tone"),
-                contents: bytemuck::cast_slice(&tu),
-                usage: wgpu::BufferUsages::UNIFORM,
-            },
-        );
+        let tub = self.buffer("toad tone", bytemuck::cast_slice(&tu), wgpu::BufferUsages::UNIFORM);
         let tbg = d.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("toad tone"),
-            layout: &self.tone_layout,
+            layout: &self.tone.1,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -351,7 +686,7 @@ impl Renderer {
                 })],
                 ..Default::default()
             });
-            pass.set_pipeline(&self.tone);
+            pass.set_pipeline(&self.tone.0);
             pass.set_bind_group(0, &tbg, &[]);
             pass.draw(0..3, 0..1);
         }
@@ -383,8 +718,13 @@ impl Renderer {
             rb
         });
         self.gpu.queue.submit([enc.finish()]);
+        if let Some(name) = live {
+            crate::stdlib::gui::live::publish(name, ov, w, h);
+        }
         let Some(rb) = rb else {
-            let _ = d.poll(wgpu::PollType::wait_indefinitely());
+            if live.is_none() {
+                let _ = d.poll(wgpu::PollType::wait_indefinitely());
+            }
             return None;
         };
         let slice = rb.slice(..);

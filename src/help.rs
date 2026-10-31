@@ -1573,6 +1573,7 @@ impl HelpSystem {
         self.add_tty_docs();
         self.add_pty_vt_docs();
         self.add_gui_docs();
+        self.add_toad_docs();
         self.add_time_and_encoding_docs();
         self.add_sim_docs();
         self.add_data_stack_docs();
@@ -2000,6 +2001,64 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
     }
 
     /// The `gui` module: windows drawn by olang (Loom's engine).
+    /// `toad`: the engine under the Toad game framework (src/stdlib/toad/).
+    fn add_toad_docs(&mut self) {
+        let k = r##"fn spark(p, w) = #{ "pos": p.pos + p.vel * w.dt, "life": p.life - w.dt, "dead": p.life <= 0.0 }"##;
+        self.doc_ex(
+            "toad.kernel",
+            "toad.kernel(f, fields, world)",
+            "Result<Int, String>",
+            "toad",
+            "Compile a plain function fn(p, w) = #{ field: new value, … } into a kernel that steps a whole swarm: `fields` maps each field to its default (a number, or a pair for a vector), `world` the values the game hands every step besides `dt`. The body is lets and one map; numbers, pairs, booleans, arithmetic, comparisons, if, and math (sqrt, sin, cos, pow, min, max, clamp, mix, length, normalize, dot, v2…); names from outside are constants. \"dead\": a boolean removes the entity. What a GPU cannot do (strings, lists, maps, loops, effects) is refused, saying where.",
+            &[k, r##"toad.kernel(spark, #{ "pos": (0.0, 0.0), "vel": (0.0, 0.0), "life": 1.0 }, #{})"##],
+        );
+        self.doc_ex(
+            "toad.swarm",
+            "toad.swarm(kernel, max, kind)",
+            "Result<Int, String>",
+            "toad",
+            "A swarm of up to `max` entities the kernel steps: \"play\" on the CPU (every core; deterministic; its dead removed and counted) for what the game depends on, \"show\" on the GPU (a compute shader) for what is only seen.",
+            &[r##"toad.swarm(k, 100000, "show")"##],
+        );
+        self.doc_ex(
+            "toad.spawn",
+            "toad.spawn(swarm, n, fields)",
+            "Int",
+            "toad",
+            "Add `n` entities, each field a value or a generator drawn per entity from the swarm's seeded stream: (\"between\", lo, hi), (\"cone\", dir, spread), (\"disc\", centre, radius), (\"box\", lo, hi); \"seed\" restarts the stream. Answers how many there are. A show swarm that is full overwrites its oldest.",
+            &[r##"toad.spawn(s, 24, #{ "pos": (0.0, 0.0), "vel": ("cone", (0.0, 300.0), 0.4), "life": ("between", 0.3, 0.8) })"##],
+        );
+        self.doc_ex(
+            "toad.step",
+            "toad.step(swarm, world)",
+            "Map",
+            "toad",
+            "Step every entity once: `world` holds dt and the kernel's world values. Answers #{ alive, died } (a show swarm's dead stay in place, unseen).",
+            &[r##"toad.step(s, #{ "dt": 1.0 / 120.0 })"##],
+        );
+        self.doc_ex("toad.sync", "toad.sync(swarm)", "Unit", "toad", "Wait for a show swarm's queued steps (for timing; reads wait on their own).", &["toad.sync(s)"]);
+        self.doc_ex("toad.count", "toad.count(swarm)", "Int", "toad", "How many entities the swarm holds.", &["toad.count(s)"]);
+        self.doc_ex(
+            "toad.read",
+            "toad.read(swarm, field)",
+            "List",
+            "toad",
+            "One field of every entity (numbers, or pairs for a vector), read back from the GPU for a show swarm: for tests and tools, not every frame.",
+            &[r##"toad.read(s, "pos")"##],
+        );
+        self.doc_ex("toad.wgsl", "toad.wgsl(kernel)", "String", "toad", "The WGSL compute shader a kernel runs as on the GPU.", &["toad.wgsl(k)"]);
+        self.doc_ex("toad.ops", "toad.ops(kernel)", "Int", "toad", "How many scalar operations a kernel compiled to (constants folded, shared reads merged).", &["toad.ops(k)"]);
+        self.doc_ex("toad.gpu", "toad.gpu()", "String", "toad", "The GPU Toad draws with, and its backend.", &["toad.gpu()"]);
+        self.doc_ex(
+            "toad.frame",
+            "toad.frame(layers, view)",
+            "Map",
+            "toad",
+            "Draw a frame: layers in order, each a swarm (#{ swarm, color, radius, glow }), shapes (#{ shapes: [#{ kind, at, size, rot, round, outline, color, glow }] }; circle, box, capsule, ring, triangle, line with from, to, width) or sprites (#{ sprites: [#{ src, at, size, rot, tint }] }), into an HDR target, tone mapped. `view`: size, center, scale, rot, bg, exposure, vignette; \"live\": a name shows it in a Loom window (an image whose source is (\"live\", name)), queued and not waited for; \"png\": true answers its pixels. Colours are sRGB, (r, g, b, a) or \"#rrggbb\". Answers #{ ms, png? }.",
+            &[r##"toad.frame([#{ "shapes": [#{ "kind": "circle", "at": (0.0, 0.0), "size": 40.0, "color": "#ffd28a" }] }], #{ "size": (1280, 720), "live": "game" })"##],
+        );
+    }
+
     fn add_gui_docs(&mut self) {
         self.doc_ex(
             "gui.available",
@@ -2070,7 +2129,7 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "gui.read(w, what, arg?)",
             "Value",
             "gui",
-            "Read a window back: focus, hover, size, hit (x, y), node key, value key, selection key, keys (focus order), a11y (the accessibility tree), pixels (a PNG), rgba.",
+            "Read a window back: focus, hover, size, hit (x, y), node key, value key, selection key, keys (focus order), a11y (the accessibility tree), pixels (a PNG, the software reference), frame (a PNG of what the GPU drew; live pictures show there), rgba.",
             &[r##"gui.read(w, "focus")"##],
         );
         self.doc_ex(

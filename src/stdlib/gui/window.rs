@@ -2914,7 +2914,35 @@ impl WinState {
             let natural = fit == "none";
             let want = if natural { None } else { Some((w, h)) };
             let waiter = if self.headless { None } else { Some(self.id) };
-            if let Ok(Some((still, info))) = super::picture::get(src, want, waiter) {
+            if let Some(name) = super::live::name_of(src) {
+                // A live picture (a game's frame): its latest, fitted like a
+                // still, and the next refresh asked for while it shows.
+                if let Some(pic) = super::live::current(&name) {
+                    let (iw, ih) = (pic.width as f32, pic.height as f32);
+                    let (sx, sy) = (w / iw.max(1.0), h / ih.max(1.0));
+                    let k = if fit == "cover" { sx.max(sy) } else { sx.min(sy) };
+                    let (dx, dy, dw, dh) = if fit == "fill" {
+                        (x, y, w, h)
+                    } else {
+                        let (dw, dh) = (iw * k, ih * k);
+                        (x + (w - dw) / 2.0, y + (h - dh) / 2.0, dw, dh)
+                    };
+                    dl.prims.push(Prim::Image {
+                        x: dx,
+                        y: dy,
+                        w: dw,
+                        h: dh,
+                        pic,
+                        clip: inner_clip.intersect(Clip::rect(x, y, x + w, y + h)),
+                        alpha: opacity,
+                    });
+                }
+                let seen = inner_clip.intersect(Clip::rect(x, y, x + w, y + h));
+                if seen.x1 > seen.x0 && seen.y1 > seen.y0 {
+                    let now = self.clock_ms();
+                    self.next_frame = Some(self.next_frame.map_or(now, |d| d.min(now)));
+                }
+            } else if let Ok(Some((still, info))) = super::picture::get(src, want, waiter) {
                 // An animation: the frame its clock says (once its frames
                 // are decoded; its still until then).
                 let mut pic = still;

@@ -99,6 +99,7 @@ pub fn source(p: &Program) -> String {
 }
 
 /// A swarm's columns on the GPU and the pipeline that steps them.
+#[cfg(feature = "gui")]
 pub struct GpuSwarm {
     pub gpu: std::sync::Arc<crate::stdlib::gui::gpu::Gpu>,
     pub buf: wgpu::Buffer,
@@ -110,6 +111,7 @@ pub struct GpuSwarm {
     pub cap: usize,
 }
 
+#[cfg(feature = "gui")]
 impl GpuSwarm {
     pub fn new(p: &Program, cap: usize) -> Result<Self, String> {
         let gpu = crate::stdlib::gui::gpu::gpu(None, None)?;
@@ -197,14 +199,14 @@ impl GpuSwarm {
         })
     }
 
-    /// Upload the CPU columns' first `n` entities (all of them, every column).
-    pub fn upload(&self, cols: &super::cpu::Columns) {
+    /// Upload entities `lo..lo + len` of the CPU columns, every column.
+    pub fn write_span(&self, cols: &super::cpu::Columns, lo: usize, len: usize) {
         for c in 0..cols.width {
-            let at = c * cols.cap;
+            let at = c * cols.cap + lo;
             self.gpu.queue.write_buffer(
                 &self.buf,
                 (at * 4) as u64,
-                bytemuck::cast_slice(&cols.data[at..at + cols.n]),
+                bytemuck::cast_slice(&cols.data[at..at + len]),
             );
         }
     }

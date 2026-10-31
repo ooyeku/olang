@@ -555,6 +555,9 @@ pub struct Gpu {
     atlas: Arc<Mutex<Atlas>>,
     /// A texture per picture, by the picture's id.
     pictures: Mutex<Textures>,
+    /// Live pictures' textures, drawn by another part of the engine
+    /// ([`super::live`]): never evicted, dropped when their owner says.
+    live: Mutex<HashMap<u64, wgpu::TextureView>>,
     /// The bytes of windows' kept frames (their [`Target`]s).
     targets: std::sync::atomic::AtomicUsize,
     /// Vector paths' coverage: its pipelines and textures.
@@ -879,6 +882,7 @@ fn make(
         sampler,
         linear,
         pictures: Mutex::new(Textures::default()),
+        live: Mutex::new(HashMap::new()),
         targets: std::sync::atomic::AtomicUsize::new(0),
         cover: Mutex::new(CoverState::default()),
         blur: Mutex::new(BlurState::default()),
@@ -1469,8 +1473,39 @@ impl Gpu {
         p
     }
 
+    /// Show `view` as the picture `id` (a live picture's frame).
+    pub fn adopt_picture(&self, id: u64, view: wgpu::TextureView) {
+        if let Ok(mut l) = self.live.lock() {
+            l.insert(id, view);
+        }
+    }
+
+    /// Stop showing the live picture `id`.
+    pub fn forget_picture(&self, id: u64) {
+        if let Ok(mut l) = self.live.lock() {
+            l.remove(&id);
+        }
+    }
+
     /// The texture of a picture, uploaded once.
     fn picture_view(&self, pic: &Picture) -> wgpu::TextureView {
+        if let Some(v) = self.live.lock().ok().and_then(|l| l.get(&pic.id).cloned()) {
+            return v;
+        }
+        if pic.rgba.len() < (pic.width * pic.height * 4) as usize {
+            // a live picture already let go of: drawn as nothing
+            let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("gui picture gone"),
+                size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            return tex.create_view(&wgpu::TextureViewDescriptor::default());
+        }
         let mut cache = self.pictures.lock().unwrap_or_else(|e| e.into_inner());
         cache.clock += 1;
         let now = cache.clock;

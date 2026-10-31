@@ -3086,6 +3086,40 @@ accessibility tree as NSAccessibility). Linux is Wayland only: with no
 `WAYLAND_DISPLAY`, `gui.open` answers `Err`. Windows builds but is
 unverified ([Platforms](stability.md#platforms)).
 
+## `toad` — the game engine's kernels, swarms and frames
+
+The engine under the Toad game framework. A game keeps its few things
+(the player, the score) in its model; the many (sparks, bullets,
+fireflies) live in a **swarm**: columns of numbers the engine owns, moved
+by a **kernel**, a plain olang function compiled for the CPU and the GPU.
+
+```olang no-run
+fn spark(p, w) = #{ "pos": p.pos + p.vel * w.dt, "life": p.life - w.dt, "dead": p.life <= 0.0 }
+let k = toad.kernel(spark, #{ "pos": (0.0, 0.0), "vel": (0.0, 0.0), "life": 1.0 }, #{})?
+let s = toad.swarm(k, 100000, "show")?
+toad.spawn(s, 24, #{ "vel": ("cone", (0.0, 300.0), 0.4), "life": ("between", 0.3, 0.8) })
+toad.step(s, #{ "dt": 1.0 / 120.0 })
+toad.frame([#{ "swarm": s, "color": "#ff9a3c", "radius": 6.0 }], #{ "size": (1280, 720), "live": "game" })
+```
+
+| Function | |
+|---|---|
+| `toad.kernel(f, fields, world)` | compile `fn(p, w) = #{ field: new value }`: `fields` and `world` map names to defaults (a number, or a pair); `"dead"` removes an entity; refused, with the reason, where a GPU cannot follow |
+| `toad.swarm(kernel, max, kind)` | `"play"`: on the CPU, every core, deterministic, its dead removed; `"show"`: on the GPU, for what is only seen |
+| `toad.spawn(swarm, n, fields)` | values or generators per entity: `("between", lo, hi)`, `("cone", dir, spread)`, `("disc", centre, r)`, `("box", lo, hi)`; `"seed"` restarts the stream |
+| `toad.step(swarm, world)` | one step of every entity: `#{ alive, died }` |
+| `toad.sync(swarm)` | wait for a show swarm's queued steps |
+| `toad.count(swarm)` | how many entities |
+| `toad.read(swarm, field)` | one field of every entity (read back from the GPU for a show swarm) |
+| `toad.wgsl(kernel)` | the WGSL a kernel runs as |
+| `toad.ops(kernel)` | how many scalar operations it compiled to |
+| `toad.gpu()` | the GPU and its backend |
+| `toad.frame(layers, view)` | draw swarms, shapes (circle, box, capsule, ring, triangle, line) and sprites in order into an HDR target, tone mapped; `"live": name` shows it in a Loom window as the image `("live", name)`; `"png": true` answers its pixels |
+
+Colours are sRGB as written, `(r, g, b, a)` or `"#rrggbb"`; `glow` takes
+a shape past white. Show swarms, `toad.gpu` and `toad.frame` need a GPU
+(the native build with `gui`); kernels and play swarms run anywhere.
+
 ## `http` — HTTP
 
 Both sides of HTTP in one module: a client for calling APIs, and

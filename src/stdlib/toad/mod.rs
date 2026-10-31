@@ -15,6 +15,7 @@
 
 pub mod cpu;
 pub mod kernel;
+#[cfg(feature = "gui")]
 pub mod render;
 pub mod wgsl;
 
@@ -54,10 +55,36 @@ pub fn create_toad_module() -> Value {
     }
 }
 
+/// A show swarm's columns on the GPU (none in a build without one).
+#[cfg(feature = "gui")]
+type Device = wgsl::GpuSwarm;
+#[cfg(not(feature = "gui"))]
+type Device = NoGpu;
+
+/// What a build without a GPU has for one: nothing (no value exists).
+#[cfg(not(feature = "gui"))]
+enum NoGpu {}
+
+#[cfg(not(feature = "gui"))]
+impl NoGpu {
+    fn write_span(&self, _: &cpu::Columns, _: usize, _: usize) {
+        match *self {}
+    }
+    fn step(&self, _: usize, _: &[f32]) {
+        match *self {}
+    }
+    fn sync(&self) {
+        match *self {}
+    }
+    fn read(&self, _: usize) -> Vec<f32> {
+        match *self {}
+    }
+}
+
 struct Swarm {
     program: Arc<Program>,
     cols: cpu::Columns,
-    gpu: Option<wgsl::GpuSwarm>,
+    gpu: Option<Device>,
     /// A show swarm's next slot to spawn into (it wraps, overwriting the oldest).
     head: usize,
     rng: u64,
@@ -68,6 +95,7 @@ struct State {
     kernels: HashMap<i64, Arc<Program>>,
     swarms: HashMap<i64, Swarm>,
     next: i64,
+    #[cfg(feature = "gui")]
     renderer: Option<render::Renderer>,
 }
 
@@ -305,11 +333,16 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(&str) -> 
                 _ => "play".to_string(),
             };
             let p = with(|s| s.kernels.get(&k).cloned()).ok_or("toad: no such kernel")?;
-            let gpu = match kind.as_str() {
+            let gpu: Option<Device> = match kind.as_str() {
+                #[cfg(feature = "gui")]
                 "show" => match wgsl::GpuSwarm::new(&p, cap) {
                     Ok(g) => Some(g),
                     Err(e) => return Ok(err(format!("toad.swarm: no GPU for a show swarm: {}", e))),
                 },
+                #[cfg(not(feature = "gui"))]
+                "show" => {
+                    return Ok(err("toad.swarm: show swarms need a GPU, which this build has not got".to_string()));
+                }
                 "play" => None,
                 other => {
                     return Ok(err(format!(
@@ -391,14 +424,7 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(&str) -> 
                 }
                 if let Some(g) = &sw.gpu {
                     for (lo, len) in spans {
-                        for c in 0..sw.cols.width {
-                            let at = c * cap + lo;
-                            g.gpu.queue.write_buffer(
-                                &g.buf,
-                                (at * 4) as u64,
-                                bytemuck::cast_slice(&sw.cols.data[at..at + len]),
-                            );
-                        }
+                        g.write_span(&sw.cols, lo, len);
                     }
                 }
                 Ok(Value::Integer(sw.cols.n as i64))
@@ -475,6 +501,7 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(&str) -> 
                 Ok(Value::List(Arc::new(list)))
             })
         }
+        #[cfg(feature = "gui")]
         "gpu" => Ok(match crate::stdlib::gui::gpu::gpu(None, None) {
             Ok(g) => {
                 let i = g.adapter.get_info();
@@ -482,108 +509,245 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(&str) -> 
             }
             Err(e) => err(e),
         }),
-        "frame" => {
-            let Value::List(layers) = a(0) else {
-                return Err("toad.frame: the layers are a list".into());
-            };
-            let vm = map_of(a(1), "the frame's view")?;
-            let getp = |k: &str, d: (f32, f32)| vm.get(k).and_then(pair).unwrap_or(d);
-            let getn = |k: &str, d: f32| vm.get(k).and_then(num).unwrap_or(d);
-            let rgb = |v: Option<&Value>, d: [f32; 4]| -> [f32; 4] {
-                match v {
-                    Some(Value::Tuple(t)) if t.len() >= 3 => {
-                        let c: Vec<f32> = t.iter().filter_map(num).collect();
-                        [c[0], c[1], c[2], c.get(3).copied().unwrap_or(d[3])]
-                    }
-                    _ => d,
-                }
-            };
-            let size = getp("size", (1280.0, 720.0));
-            let view = render::View {
-                size: (size.0 as u32, size.1 as u32),
-                center: getp("center", (0.0, 0.0)),
-                scale: getn("scale", 1.0),
-                bg: {
-                    let c = rgb(vm.get("bg"), [0.0, 0.0, 0.0, 1.0]);
-                    [c[0], c[1], c[2]]
-                },
-                exposure: getn("exposure", 1.0),
-                vignette: getn("vignette", 0.0),
-            };
-            let want_png = matches!(vm.get("png"), Some(Value::Boolean(true)));
-            with(|st| -> R {
-                if st.renderer.is_none() {
-                    st.renderer = Some(render::Renderer::new()?);
-                }
-                let t0 = std::time::Instant::now();
-                // play swarms' columns go up once a frame
-                let mut uploads: Vec<(i64, wgpu::Buffer)> = Vec::new();
-                for l in layers.iter() {
-                    let lm = map_of(l, "a frame layer")?;
-                    let sid = id_of(lm.get("swarm"), "swarm")?;
-                    let sw = st.swarms.get(&sid).ok_or("toad.frame: no such swarm")?;
-                    if sw.gpu.is_none() && !uploads.iter().any(|(k, _)| *k == sid) {
-                        let r = st.renderer.as_ref().unwrap();
-                        let b = wgpu::util::DeviceExt::create_buffer_init(
-                            &r.gpu().device,
-                            &wgpu::util::BufferInitDescriptor {
-                                label: Some("toad play columns"),
-                                contents: bytemuck::cast_slice(&sw.cols.data),
-                                usage: wgpu::BufferUsages::STORAGE,
-                            },
-                        );
-                        uploads.push((sid, b));
-                    }
-                }
-                let mut parts = Vec::new();
-                for l in layers.iter() {
-                    let lm = map_of(l, "a frame layer")?;
-                    let sid = id_of(lm.get("swarm"), "swarm")?;
-                    let sw = st.swarms.get(&sid).ok_or("toad.frame: no such swarm")?;
-                    let f = &sw.program.fields;
-                    let pos = f
-                        .get(match lm.get("pos") {
-                            Some(Value::String(s)) => s.as_str(),
-                            _ => "pos",
-                        })
-                        .filter(|s| s.ty == Ty::V2)
-                        .ok_or("toad.frame: the swarm has no pair `pos` to draw at")?
-                        .at;
-                    let glow = match lm.get("glow") {
-                        Some(Value::String(s)) => f.get(s).map(|s| s.at),
-                        _ => None,
-                    };
-                    let (buf, dead) = match &sw.gpu {
-                        Some(g) => (&g.buf, sw.program.dead.map(|_| f.width)),
-                        None => (&uploads.iter().find(|(k, _)| *k == sid).unwrap().1, None),
-                    };
-                    parts.push(render::Layer {
-                        buf,
-                        cap: sw.cols.cap,
-                        n: sw.cols.n,
-                        pos,
-                        glow,
-                        dead,
-                        color: rgb(lm.get("color"), [1.0, 1.0, 1.0, 1.0]),
-                        radius: lm.get("radius").and_then(num).unwrap_or(4.0),
-                    });
-                }
-                let px = st.renderer.as_ref().unwrap().frame(&view, &parts, want_png);
-                let ms = t0.elapsed().as_secs_f64() * 1000.0;
-                let mut out = ValueMap::default();
-                out.insert("ms".into(), Value::Float(ms));
-                if let Some(px) = px {
-                    let pm = tiny_skia::Pixmap::from_vec(
-                        px,
-                        tiny_skia::IntSize::from_wh(view.size.0, view.size.1).ok_or("toad.frame: no size")?,
-                    )
-                    .ok_or("toad.frame: the frame's pixels")?;
-                    let png = pm.encode_png().map_err(|e| format!("toad.frame: {}", e))?;
-                    out.insert("png".into(), crate::stdlib::bytes::to_value(png));
-                }
-                Ok(Value::Map(Arc::new(out)))
-            })
-        }
+        #[cfg(feature = "gui")]
+        "frame" => frame(a(0), a(1)),
+        #[cfg(not(feature = "gui"))]
+        "gpu" | "frame" => Ok(err(format!("toad.{}: this build has no GPU", name))),
         _ => Err(format!("toad.{} is not a function", name).into()),
     }
+}
+
+/// A colour as written, `(r, g, b)` or `(r, g, b, a)` from 0 to 1, or
+/// `"#rrggbb"` / `"#rrggbbaa"`: sRGB, as a person and CSS mean it, made
+/// linear here for the HDR target (alpha stays as it is).
+fn rgba(v: Option<&Value>, d: [f32; 4]) -> [f32; 4] {
+    let lin = |c: f32| {
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let c = match v {
+        Some(Value::Tuple(t)) if t.len() >= 3 => {
+            let c: Vec<f32> = t.iter().filter_map(num).collect();
+            if c.len() < 3 {
+                return d;
+            }
+            [c[0], c[1], c[2], c.get(3).copied().unwrap_or(1.0)]
+        }
+        Some(Value::String(s)) if s.starts_with('#') && (s.len() == 7 || s.len() == 9) => {
+            let h = |i: usize| u8::from_str_radix(&s[i..i + 2], 16).map(|x| x as f32 / 255.0);
+            match (h(1), h(3), h(5)) {
+                (Ok(r), Ok(g), Ok(b)) => [r, g, b, if s.len() == 9 { h(7).unwrap_or(1.0) } else { 1.0 }],
+                _ => return d,
+            }
+        }
+        _ => return d,
+    };
+    [lin(c[0]), lin(c[1]), lin(c[2]), c[3]]
+}
+
+/// A shape map as its instance: `kind` (circle, box, capsule, ring,
+/// triangle, line), `at`, `size` (a radius, or a pair: the whole width
+/// and height), `rot`, `round`, `outline`, `color`, `glow` (multiplies
+/// the colour past 1.0); a line goes `from` `at` `to` with `width`.
+#[cfg(feature = "gui")]
+fn shape_of(v: &Value, out: &mut Vec<f32>) -> Result<(), String> {
+    let m = map_of(v, "a shape")?;
+    let kind = match m.get("kind") {
+        Some(Value::String(k)) => k.to_string(),
+        _ => "circle".to_string(),
+    };
+    let n = |k: &str, d: f32| m.get(k).and_then(num).unwrap_or(d);
+    let p = |k: &str| m.get(k).and_then(pair);
+    let mut c = rgba(m.get("color"), [1.0, 1.0, 1.0, 1.0]);
+    let glow = n("glow", 1.0);
+    for x in c.iter_mut().take(3) {
+        *x *= glow;
+    }
+    let (at, half, rot, k, line) = match kind.as_str() {
+        "line" => {
+            let a = p("from").or(p("at")).ok_or("toad.frame: a line needs `from` and `to`")?;
+            let b = p("to").ok_or("toad.frame: a line needs `to`")?;
+            let wdt = n("width", 2.0);
+            let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+            let len = (dx * dx + dy * dy).sqrt();
+            (
+                ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0),
+                (len / 2.0 + wdt / 2.0, wdt / 2.0),
+                dy.atan2(dx),
+                2.0,
+                0.0,
+            )
+        }
+        other => {
+            let at = p("at").unwrap_or((0.0, 0.0));
+            let half = match m.get("size") {
+                Some(v) => match (num(v), pair(v)) {
+                    (Some(r), _) => (r, r),
+                    (_, Some((w, h))) => (w / 2.0, h / 2.0),
+                    _ => return Err("toad.frame: a shape's `size` is a number or a pair".into()),
+                },
+                None => (8.0, 8.0),
+            };
+            let (k, line) = match other {
+                "circle" => (0.0, n("outline", 0.0)),
+                "ring" => (0.0, n("outline", 2.0)),
+                "box" => (1.0, n("outline", 0.0)),
+                "capsule" => (2.0, n("outline", 0.0)),
+                "triangle" => (3.0, n("outline", 0.0)),
+                _ => {
+                    return Err(format!(
+                        "toad.frame: a shape is a circle, box, capsule, ring, triangle or line, not a {}",
+                        other
+                    ));
+                }
+            };
+            (at, half, n("rot", 0.0), k, line)
+        }
+    };
+    out.extend_from_slice(&[
+        at.0, at.1, half.0, half.1, rot, k, n("round", 0.0), line, c[0], c[1], c[2], c[3],
+    ]);
+    Ok(())
+}
+
+/// `toad.frame(layers, view)`: each layer a swarm (`swarm`, `color`,
+/// `radius`, `glow`), `shapes` (a list of shape maps) or `sprites` (a
+/// list of `#{ src, at, size, rot, tint }`), drawn in order.
+#[cfg(feature = "gui")]
+fn frame(layers: &Value, view: &Value) -> R {
+    let Value::List(layers) = layers else {
+        return Err("toad.frame: the layers are a list".into());
+    };
+    let vm = map_of(view, "the frame's view")?;
+    let getp = |k: &str, d: (f32, f32)| vm.get(k).and_then(pair).unwrap_or(d);
+    let getn = |k: &str, d: f32| vm.get(k).and_then(num).unwrap_or(d);
+    let size = getp("size", (1280.0, 720.0));
+    let bg = rgba(vm.get("bg"), [0.0, 0.0, 0.0, 1.0]);
+    let view = render::View {
+        size: (size.0.max(1.0) as u32, size.1.max(1.0) as u32),
+        center: getp("center", (0.0, 0.0)),
+        scale: getn("scale", 1.0),
+        rot: getn("rot", 0.0),
+        bg: [bg[0], bg[1], bg[2]],
+        exposure: getn("exposure", 1.0),
+        vignette: getn("vignette", 0.0),
+    };
+    let want_png = matches!(vm.get("png"), Some(Value::Boolean(true)));
+    let live = match vm.get("live") {
+        Some(Value::String(n)) => Some(n.to_string()),
+        _ => None,
+    };
+    with(|st| -> R {
+        if st.renderer.is_none() {
+            st.renderer = Some(render::Renderer::new()?);
+        }
+        let t0 = std::time::Instant::now();
+        // play swarms' columns go up once a frame
+        let mut uploads: Vec<(i64, wgpu::Buffer)> = Vec::new();
+        for l in layers.iter() {
+            let lm = map_of(l, "a frame layer")?;
+            let Some(sid) = lm.get("swarm") else { continue };
+            let sid = id_of(Some(sid), "swarm")?;
+            let sw = st.swarms.get(&sid).ok_or("toad.frame: no such swarm")?;
+            if sw.gpu.is_none() && !uploads.iter().any(|(k, _)| *k == sid) {
+                let r = st.renderer.as_ref().unwrap();
+                let b = wgpu::util::DeviceExt::create_buffer_init(
+                    &r.gpu().device,
+                    &wgpu::util::BufferInitDescriptor {
+                        label: Some("toad play columns"),
+                        contents: bytemuck::cast_slice(&sw.cols.data),
+                        usage: wgpu::BufferUsages::STORAGE,
+                    },
+                );
+                uploads.push((sid, b));
+            }
+        }
+        let mut parts = Vec::new();
+        for l in layers.iter() {
+            let lm = map_of(l, "a frame layer")?;
+            if let Some(Value::List(shapes)) = lm.get("shapes") {
+                let mut inst = Vec::with_capacity(shapes.len() * render::SHAPE_FLOATS);
+                for s in shapes.iter() {
+                    shape_of(s, &mut inst)?;
+                }
+                parts.push(render::Part::Shapes(inst));
+                continue;
+            }
+            if let Some(Value::List(sprites)) = lm.get("sprites") {
+                // runs of one picture, in order
+                let mut runs: Vec<(Arc<crate::stdlib::gui::canvas::Picture>, Vec<f32>)> = Vec::new();
+                for s in sprites.iter() {
+                    let sm = map_of(s, "a sprite")?;
+                    let src = sm.get("src").ok_or("toad.frame: a sprite needs a `src`")?;
+                    let (pic, _) = crate::stdlib::gui::picture::get(src, None, None)?
+                        .ok_or("toad.frame: a sprite's picture could not be read")?;
+                    let at = sm.get("at").and_then(pair).unwrap_or((0.0, 0.0));
+                    let (w, h) = match sm.get("size") {
+                        Some(v) => match (num(v), pair(v)) {
+                            (Some(k), _) => (pic.width as f32 * k, pic.height as f32 * k),
+                            (_, Some(p)) => p,
+                            _ => (pic.width as f32, pic.height as f32),
+                        },
+                        None => (pic.width as f32, pic.height as f32),
+                    };
+                    let rot = sm.get("rot").and_then(num).unwrap_or(0.0);
+                    let t = rgba(sm.get("tint"), [1.0, 1.0, 1.0, 1.0]);
+                    let row = [at.0, at.1, w / 2.0, h / 2.0, rot, 0.0, 0.0, 0.0, t[0], t[1], t[2], t[3]];
+                    match runs.last_mut() {
+                        Some((p, v)) if p.id == pic.id => v.extend_from_slice(&row),
+                        _ => runs.push((pic, row.to_vec())),
+                    }
+                }
+                parts.push(render::Part::Sprites(runs));
+                continue;
+            }
+            let sid = id_of(lm.get("swarm"), "swarm")?;
+            let sw = st.swarms.get(&sid).ok_or("toad.frame: no such swarm")?;
+            let f = &sw.program.fields;
+            let pos = f
+                .get(match lm.get("pos") {
+                    Some(Value::String(s)) => s.as_str(),
+                    _ => "pos",
+                })
+                .filter(|s| s.ty == Ty::V2)
+                .ok_or("toad.frame: the swarm has no pair `pos` to draw at")?
+                .at;
+            let glow = match lm.get("glow") {
+                Some(Value::String(s)) => f.get(s).map(|s| s.at),
+                _ => None,
+            };
+            let (buf, dead) = match &sw.gpu {
+                Some(g) => (&g.buf, sw.program.dead.map(|_| f.width)),
+                None => (&uploads.iter().find(|(k, _)| *k == sid).unwrap().1, None),
+            };
+            parts.push(render::Part::Swarm(render::Layer {
+                buf,
+                cap: sw.cols.cap,
+                n: sw.cols.n,
+                pos,
+                glow,
+                dead,
+                color: rgba(lm.get("color"), [1.0, 1.0, 1.0, 1.0]),
+                radius: lm.get("radius").and_then(num).unwrap_or(4.0),
+            }));
+        }
+        let renderer = st.renderer.as_mut().unwrap();
+        let px = renderer.frame(&view, &parts, want_png, live.as_deref());
+        let ms = t0.elapsed().as_secs_f64() * 1000.0;
+        let mut out = ValueMap::default();
+        out.insert("ms".into(), Value::Float(ms));
+        if let Some(px) = px {
+            let pm = tiny_skia::Pixmap::from_vec(
+                px,
+                tiny_skia::IntSize::from_wh(view.size.0, view.size.1).ok_or("toad.frame: no size")?,
+            )
+            .ok_or("toad.frame: the frame's pixels")?;
+            let png = pm.encode_png().map_err(|e| format!("toad.frame: {}", e))?;
+            out.insert("png".into(), crate::stdlib::bytes::to_value(png));
+        }
+        Ok(Value::Map(Arc::new(out)))
+    })
 }
