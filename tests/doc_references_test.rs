@@ -254,13 +254,21 @@ const INTERNAL: &[(&str, &str)] = &[
     ("sim.World.heal", SIM_S2),
     ("sim.World.crash", SIM_S2),
     ("sim.World.restart", SIM_S2),
+    ("sim.World.kill", SIM_S3),
+    ("sim.World.stop", SIM_S3),
+    ("sim.World.slow_disk", SIM_S3),
+    ("sim.World.write_stdin", SIM_S3),
+    ("sim.World.close_stdin", SIM_S3),
     ("sim.world", SIM_S1),
     ("sim.ms", SIM_S1),
     ("sim.seconds", SIM_S1),
     ("sim.minutes", SIM_S1),
     ("sim.hours", SIM_S1),
+    ("sim.disk", SIM_S3),
+    ("sim.maybe", SIM_S3),
 ];
 
+const SIM_S3: &str = "sim S3 is local-only (rc6): documented in plans/SIM-S3.md until its stdlib.md section is written";
 const SIM_S2: &str = "sim S2 is local-only (rc6): documented in plans/SIM-S2.md until its stdlib.md section is written";
 const SIM_S1: &str = "sim S1 is local-only (rc6): documented in plans/SIM-S1.md until its stdlib.md section is written";
 
