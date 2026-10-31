@@ -44,19 +44,20 @@ println(summary)
 
 ## Installation
 
-On a Mac, open Terminal, paste this line and press Return. It needs no
-Rust and no administrator password:
+On a Mac or Linux, open a terminal, paste this line and press Return:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh
+curl -fsSL https://olang.dev/install.sh | sh
 ```
 
-Then open a new Terminal window and run `olang --version`. With
-Homebrew, `brew install ooyeku/olang/olang` works too. Linux binaries are
-an unsupported preview; on Windows, run the installer inside
-[WSL](https://learn.microsoft.com/windows/wsl/install).
-[Installation](docs/installation.md) covers every route, building from
-source, and what to do when something goes wrong. Then:
+On Windows, run `irm https://olang.dev/install.ps1 | iex` in PowerShell.
+The installer picks the right download for your computer, checks that
+it is genuine, and needs no Rust and no administrator password. Then
+open a new terminal window and run `olang --version`. With Homebrew,
+`brew install ooyeku/olang/olang` works too.
+[Installation](docs/installation.md) covers every other way to install,
+the platforms olang runs on, and what to do when something goes wrong.
+Once it is installed:
 
 ```bash
 olang script.ol            # run a program; arguments reach os.args()
