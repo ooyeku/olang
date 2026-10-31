@@ -344,6 +344,10 @@ pub struct OpenOpts {
     pub tabbing: Option<String>,
     /// An open window this one joins as a tab (macOS), by its id.
     pub tab_of: Option<u64>,
+    /// `"unified"`: the content runs under a transparent title bar, the
+    /// title's text hidden and the traffic lights kept (macOS); the inset
+    /// to keep clear comes with `resize` as `titlebar`.
+    pub unified: bool,
 }
 
 fn open_opts(function: &str, v: Option<&Value>) -> Res<OpenOpts> {
@@ -359,6 +363,7 @@ fn open_opts(function: &str, v: Option<&Value>) -> Res<OpenOpts> {
         clear: None,
         tabbing: None,
         tab_of: None,
+        unified: false,
     };
     let Some(v) = v else {
         return Ok(o);
@@ -377,6 +382,7 @@ fn open_opts(function: &str, v: Option<&Value>) -> Res<OpenOpts> {
         "background",
         "tabbing",
         "tab_of",
+        "titlebar",
     ];
     match fields(v) {
         Some(f) => {
@@ -416,6 +422,11 @@ fn open_opts(function: &str, v: Option<&Value>) -> Res<OpenOpts> {
     }
     o.clear = get_color(v, "background", function)?;
     o.tabbing = get_str(v, "tabbing", function)?.map(str::to_string);
+    o.unified = match get_str(v, "titlebar", function)? {
+        None | Some("standard") => false,
+        Some("unified") => true,
+        Some(_) => return Err(format!("{function}: \"titlebar\" is \"standard\" or \"unified\"")),
+    };
     o.tab_of = match get_num(v, "tab_of", function)? {
         Some(n) if n >= 1.0 => Some(n as u64),
         _ => None,
@@ -708,6 +719,16 @@ fn gui_read(args: Vec<Value>) -> Res<Value> {
                 .ok_or("gui.read: \"hit\" needs a point (x, y)")?;
             opt_str(st.scene.hit(p[0], p[1]).as_deref())
         }
+        // whether a press at a point moves the window (a title bar's row)
+        "drags" => {
+            let p = arg
+                .and_then(nums)
+                .filter(|v| v.len() == 2)
+                .ok_or("gui.read: \"drags\" needs a point (x, y)")?;
+            Value::Boolean(st.scene.drags_window_at(p[0], p[1]))
+        }
+        // a unified title bar's `#{ height, left }`, or ()
+        "titlebar" => window::titlebar_value(st.titlebar),
         "node" => {
             let k = key_arg()?;
             match st.scene.node_value(&k) {

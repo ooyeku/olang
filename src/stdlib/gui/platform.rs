@@ -318,6 +318,8 @@ pub fn capabilities() -> Value {
         ("ime", b(true)),
         ("accessibility", b(true)),
         ("window_tabs", b(mac)),
+        // `titlebar: "unified"` and a node's `drag: "window"`
+        ("window_titlebar", b(mac)),
         ("open_documents", b(mac)),
         ("context_menu", b(mac)),
         ("terminal", b(cfg!(unix))),
@@ -446,6 +448,7 @@ fn run_loop(reply: crossbeam_channel::Sender<Result<(), String>>) -> Option<i32>
         #[cfg(target_os = "macos")]
         context: None,
         ctrl_click: false,
+        bar_press: None,
     };
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("gui: the event loop ended: {e}");
@@ -541,6 +544,9 @@ struct PWin {
     /// When an animation in view next changes: the loop draws again then.
     wake: Option<std::time::Instant>,
     state: Shared,
+    /// Its content runs under a transparent title bar (`titlebar:
+    /// "unified"`).
+    unified: bool,
     renderer: Renderer,
     a11y: accesskit_winit::Adapter,
     ime_on: bool,
@@ -723,6 +729,9 @@ struct App {
     /// A left press made a right one (⌃-click on macOS): its release is
     /// the right button's too.
     ctrl_click: bool,
+    /// The last press that moved a window (a unified title bar's row):
+    /// a second one soon after zooms it, as a title bar's double click.
+    bar_press: Option<(u64, std::time::Instant)>,
 }
 
 /// The platform clipboard, as the window's editing sees it.
@@ -764,6 +773,13 @@ impl App {
         if let Some(t) = &opts.tabbing {
             use winit::platform::macos::WindowAttributesExtMacOS;
             attrs = attrs.with_tabbing_identifier(t);
+        }
+        // the content under a transparent title bar: the lights kept, the
+        // title's text hidden (the Window menu and Mission Control keep it)
+        #[cfg(target_os = "macos")]
+        if opts.unified {
+            use winit::platform::macos::WindowAttributesExtMacOS;
+            attrs = attrs.with_titlebar_transparent(true).with_fullsize_content_view(true).with_title_hidden(true);
         }
         let win = Arc::new(
             el.create_window(attrs)
@@ -868,8 +884,10 @@ impl App {
                 last_tick: 0,
                 shown_size: (0, 0),
                 cursor: winit::window::CursorIcon::Default,
+                unified: opts.unified,
             },
         );
+        let bar = self.sync_titlebar(id);
         // The program lays out against the window's real size and scale.
         emit(vec![event(
             "resize",
@@ -878,6 +896,7 @@ impl App {
                 ("width", float(logical.width)),
                 ("height", float(logical.height)),
                 ("scale", float(scale)),
+                ("titlebar", super::window::titlebar_value(bar)),
             ],
         )]);
         // and in the appearance the system asks for
@@ -893,6 +912,17 @@ impl App {
         #[cfg(target_os = "macos")]
         self.report_tabs(id);
         Ok(())
+    }
+
+    /// A unified title bar's inset, read again from AppKit (opened,
+    /// resized: full screen has none) and kept in the window's state.
+    fn sync_titlebar(&mut self, id: u64) -> Option<(f32, f32, f32)> {
+        let pw = self.windows.get(&id)?;
+        let bar = if pw.unified { titlebar_inset(&pw.win) } else { None };
+        if let Ok(mut st) = pw.state.lock() {
+            st.titlebar = bar;
+        }
+        bar
     }
 
     /// The window's content origin on the screen, read again (opened,
@@ -1612,6 +1642,77 @@ fn show_backdrop(
     }
 }
 
+/// A unified title bar's height (the frame's less the content's layout
+/// rectangle) and the traffic lights' right edge, in points; `None` in
+/// full screen (no bar) or off macOS.
+#[cfg(target_os = "macos")]
+fn titlebar_inset(win: &Window) -> Option<(f32, f32, f32)> {
+    use objc2::msg_send;
+    use objc2_foundation::NSRect;
+    let nw = ns_window(win)?;
+    // SAFETY: a live NSWindow; these getters answer rects and a button.
+    unsafe {
+        let frame: NSRect = msg_send![&*nw, frame];
+        let layout: NSRect = msg_send![&*nw, contentLayoutRect];
+        let h = (frame.size.height - layout.size.height) as f32;
+        if h <= 0.5 {
+            return None;
+        }
+        // NSWindowZoomButton: the last of the three lights
+        let zoom: Option<objc2::rc::Retained<objc2::runtime::AnyObject>> = msg_send![&*nw, standardWindowButton: 2usize];
+        let (left, strip) = match zoom {
+            Some(b) => {
+                let r: NSRect = msg_send![&*b, frame];
+                // the lights' own view: the title strip, above any tab bar
+                let sup: Option<objc2::rc::Retained<objc2::runtime::AnyObject>> = msg_send![&*b, superview];
+                let strip = match sup {
+                    Some(v) => {
+                        let f: NSRect = msg_send![&*v, frame];
+                        f.size.height as f32
+                    }
+                    None => h,
+                };
+                ((r.origin.x + r.size.width) as f32, strip.min(h))
+            }
+            None => (70.0, h),
+        };
+        Some((h, left, strip))
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn titlebar_inset(_win: &Window) -> Option<(f32, f32, f32)> {
+    None
+}
+
+/// A double press on a title bar, as the system's setting says
+/// (`AppleActionOnDoubleClick`: zoom, the default, minimize, or nothing).
+#[cfg(target_os = "macos")]
+fn titlebar_double(win: &Window) {
+    use objc2::msg_send;
+    use objc2_foundation::{NSUserDefaults, ns_string};
+    let action = NSUserDefaults::standardUserDefaults()
+        .stringForKey(ns_string!("AppleActionOnDoubleClick"))
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    let Some(nw) = ns_window(win) else { return };
+    // SAFETY: a live NSWindow on the main thread.
+    unsafe {
+        match action.as_str() {
+            "Minimize" => {
+                let _: () = msg_send![&*nw, performMiniaturize: std::ptr::null::<objc2::runtime::AnyObject>()];
+            }
+            "None" => {}
+            _ => {
+                let _: () = msg_send![&*nw, performZoom: std::ptr::null::<objc2::runtime::AnyObject>()];
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn titlebar_double(_win: &Window) {}
+
 #[cfg(target_os = "macos")]
 fn ns_window(win: &Window) -> Option<objc2::rc::Retained<objc2::runtime::AnyObject>> {
     use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -2291,6 +2392,7 @@ impl App {
             WindowEvent::Moved(_) => self.sync_origin(id),
             WindowEvent::Resized(size) => {
                 self.sync_origin(id);
+                self.sync_titlebar(id);
                 let l = size.to_logical::<f32>(scale);
                 self.input(
                     id,
@@ -2423,6 +2525,26 @@ impl App {
                     } else {
                         super::keys::device_release(name);
                     }
+                }
+                // a press on a title bar's row moves the window (a second
+                // soon after zooms it); the program never hears it
+                if button == MouseButton::Left
+                    && state == ElementState::Pressed
+                    && !ctrl_left
+                    && let Some(pw) = self.windows.get(&id)
+                    && pw.state.lock().is_ok_and(|st| st.scene.drags_window_at(x, y))
+                {
+                    let now = std::time::Instant::now();
+                    let double = self.bar_press.is_some_and(|(w, t)| w == id && now.duration_since(t).as_millis() < 400);
+                    if double {
+                        self.bar_press = None;
+                        titlebar_double(&pw.win);
+                    } else {
+                        self.bar_press = Some((id, now));
+                        let _ = pw.win.drag_window();
+                    }
+                    super::keys::device_release("mouse:left");
+                    return;
                 }
                 let button = match button {
                     MouseButton::Left if ctrl_left => "right",
