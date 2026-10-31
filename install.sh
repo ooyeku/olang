@@ -824,11 +824,20 @@ finish() {
     fi
     say ""
     if [ -n "${NEEDS_NEW_SHELL:-}" ]; then
-        say "  ${BOLD}olang is ready.${RESET} Open a new terminal window, then run:"
+        # a terminal reads its startup file once, when it opens: this one
+        # has not seen the new PATH yet, so say how to bring it in
+        say "  ${BOLD}olang is installed.${RESET} This terminal doesn't know where it is yet, so first either:"
+        say ""
+        say "    - quit and reopen your terminal, or"
+        if [ -n "${PATH_CHANGED:-}" ]; then
+            say "    - run this here:  ${BOLD}source $(tilde "$RC")${RESET}"
+        else
+            say "    - run this here:  ${BOLD}$LINE${RESET}"
+        fi
+        say ""
+        say "  Then check it works:"
         say ""
         say "    ${BOLD}olang --version${RESET}"
-        say ""
-        say "  ${DIM}To use it in this window right away, paste: $LINE${RESET}"
     else
         say "  ${BOLD}olang is ready.${RESET} Run:"
         say ""

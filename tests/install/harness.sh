@@ -316,7 +316,7 @@ fetched() { logged "releases/download/v$1/olang-$1-$2.tar.gz"; }
 run mac-arm64 --
 code 0; installed 1.1.0; fetched 1.1.0 macos-arm64; secure
 has "macOS, Apple silicon, 15.1"; has "1.1.0 (the newest)"; has "Installed olang and otc"
-has "Added ~/.olang/bin to your PATH in ~/.zshrc"; has "olang is ready."; has "Open a new terminal window"
+has "Added ~/.olang/bin to your PATH in ~/.zshrc"; has "olang is installed."; has "quit and reopen your terminal"; has "source ~/.zshrc"
 grep -qxF 'export PATH="$HOME/.olang/bin:$PATH"' "$H/.zshrc" && ok_ || bad ".zshrc lacks the PATH line"
 printf '%s\n' "$OUT" | grep -q "$(printf '\033')" && bad "colour codes without a terminal" || ok_
 
@@ -392,6 +392,7 @@ code 1; has "32-bit armv7l"; has "64-bit Raspberry Pi OS"; has "a source build n
 
 run linux-fish FAKE_OS=Linux FAKE_ARCH=x86_64 SHELL=/usr/bin/fish --
 code 0; file "$H/.config/fish/conf.d/olang.fish"; grep -qF 'fish_add_path "$HOME/.olang/bin"' "$H/.config/fish/conf.d/olang.fish" && ok_ || bad "fish line"
+has "source ~/.config/fish/conf.d/olang.fish"
 again linux-fish-uninstall FAKE_OS=Linux FAKE_ARCH=x86_64 SHELL=/usr/bin/fish -- --uninstall
 code 0; nofile "$H/.config/fish/conf.d/olang.fish"; nofile "$H/.olang/bin/olang"
 
@@ -520,7 +521,7 @@ if [ "$(id -u)" != 0 ]; then   # root can write anywhere
 fi
 
 run on-path ON_PATH=1 --
-code 0; nofile "$H/.zshrc"; has "olang is ready. Run:"; lacks "Open a new terminal"
+code 0; nofile "$H/.zshrc"; has "olang is ready. Run:"; lacks "quit and reopen"
 
 run other-olang-first ON_PATH=1 OTHER_OLANG=1 --
 code 0; has "Another olang, at"; has "cargo uninstall olang otc"
