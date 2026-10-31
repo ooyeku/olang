@@ -87,8 +87,7 @@ impl Report {
     }
 }
 
-// ── skip reasons, shared by the report and the docs ───────────────────
-
+// ── skip reasons, shared by the report and the docs ─────────────────
 const SKIP_COMMENT: &str = "a comment would be lost";
 const SKIP_STAGE: &str = "inside a pipeline stage's lambda, whose extent the parser decides";
 const SKIP_CALL_ON_PATH: &str = "a call or an index on the guarded path";
@@ -292,8 +291,7 @@ fn line_of(src: &str, offset: usize) -> usize {
     src.as_bytes()[..at].iter().filter(|b| **b == b'\n').count() + 1
 }
 
-// ── edits and their rendering ─────────────────────────────────────────
-
+// ── edits and their rendering ───────────────────────────────────────
 /// A piece of a replacement: literal text, or a range of the source
 /// rendered with the edits inside it made.
 #[derive(Debug, Clone)]
@@ -354,8 +352,7 @@ impl Renderer<'_> {
     }
 }
 
-// ── the binary-expression tree ────────────────────────────────────────
-
+// ── the binary-expression tree ──────────────────────────────────────
 /// A flat `binary_expr`'s operands and operators as the parser's
 /// precedence climbing builds them (`Parser::climb`), with spans.
 enum Node<'i> {
@@ -470,8 +467,7 @@ fn climb<'i>(
     left
 }
 
-// ── views over the parse tree ─────────────────────────────────────────
-
+// ── views over the parse tree ───────────────────────────────────────
 /// The pair with the wrappers that are only their one child taken off
 /// (`expr` around `binary_expr` around a sign-free `unary_expr` …, and a
 /// one-expression `( … )`).
@@ -782,8 +778,7 @@ fn rebinds(p: &Pair<'_, Rule>, name: &str) -> bool {
     walk(p.clone(), name, false)
 }
 
-// ── what the file binds ───────────────────────────────────────────────
-
+// ── what the file binds ─────────────────────────────────────────────
 /// The code of the text with strings, template text and comments blanked
 /// to spaces (a template's `${…}` kept, the quotes kept), byte for byte,
 /// so a word search finds only code and an offset into it is an offset
@@ -1228,8 +1223,7 @@ fn not_bytes(e: &Pair<'_, Rule>) -> bool {
     }
 }
 
-// ── the analysis ──────────────────────────────────────────────────────
-
+// ── the analysis ────────────────────────────────────────────────────
 #[derive(Clone, Default)]
 struct Ctx {
     /// Something next to this position binds tighter than `??`: a `??`
@@ -2274,8 +2268,7 @@ fn classify_right(
     (None, false, None)
 }
 
-// ── the safety gate: each rewritten form read back as its original ────
-
+// ── the safety gate: each rewritten form read back as its original ───
 fn normalized(program: &crate::ast::Program, target: Target) -> serde_json::Value {
     let mut v = serde_json::to_value(program).unwrap_or_default();
     normalize(&mut v, target);
@@ -2583,8 +2576,7 @@ fn j_units(v: &serde_json::Value) -> Option<serde_json::Value> {
         .then(|| arg.clone())
 }
 
-// ── the command ───────────────────────────────────────────────────────
-
+// ── the command ─────────────────────────────────────────────────────
 /// `olang fix <target>`: every `.ol` file under `paths`, fixed in place —
 /// or, with `check`, reported with a non-zero exit when something would
 /// change, or with `dry_run`, reported (each skip too) with nothing

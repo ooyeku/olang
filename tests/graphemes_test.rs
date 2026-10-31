@@ -30,8 +30,7 @@ fn eval_int(source: &str) -> i64 {
     }
 }
 
-// ── str.reverse keeps clusters whole ──────────────────────────────────
-
+// ── str.reverse keeps clusters whole ────────────────────────────────
 #[test]
 fn reverse_keeps_skin_tone_modifiers_attached() {
     // The observed corruption: 👋🏽 is WAVING HAND + medium skin tone.
@@ -64,8 +63,7 @@ fn reverse_keeps_combining_marks_on_their_base() {
     assert_eq!(eval_str("str.reverse(\"abc\")"), "cba");
 }
 
-// ── str.graphemes is the visible-character view ───────────────────────
-
+// ── str.graphemes is the visible-character view ─────────────────────
 #[test]
 fn graphemes_segments_per_uax29() {
     // Skin-tone emoji, ZWJ family, combining mark, flag, Hangul jamo
@@ -103,8 +101,7 @@ fn graphemes_compose_with_list_operations() {
     );
 }
 
-// ── codepoints stay the documented indexing unit ──────────────────────
-
+// ── codepoints stay the documented indexing unit ────────────────────
 #[test]
 fn codepoint_indexing_is_unchanged() {
     // 👋🏽 is two codepoints, and the indexing functions say so — that is

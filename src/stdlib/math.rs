@@ -152,7 +152,7 @@ fn call_math_function_inner(
     }
 }
 
-/// Get numeric value from Olang Value
+/// Get numeric value from olang Value
 fn get_numeric(value: &Value) -> Result<f64, Box<dyn std::error::Error>> {
     match value {
         Value::Integer(n) => Ok(*n as f64),
@@ -723,7 +723,6 @@ mod tests {
     use std::f64::consts;
     use std::sync::Arc;
 
-    // Helper function to create test values
     fn int_val(n: i64) -> Value {
         Value::Integer(n)
     }
@@ -736,7 +735,6 @@ mod tests {
         Value::String(Arc::new(s.to_string()))
     }
 
-    // Helper function to assert float equality with tolerance
     fn assert_float_eq(actual: &Value, expected: f64, tolerance: f64) {
         match actual {
             Value::Float(f) => {

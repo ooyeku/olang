@@ -1,3 +1,6 @@
+//! The global builtin functions (`len`, `map`, `filter`, `range`, ...),
+//! the ones a program calls without importing a module.
+
 use crate::ast::{BuiltinFunction, Value};
 use crate::interpreter::InterpreterError;
 use crate::parallel::should_parallelize;
@@ -2610,7 +2613,7 @@ impl BuiltinFunctions {
                 range_list(start, end, step)
             }
             _ => Err(InterpreterError::ArityMismatch {
-                expected: 2, // We'll say 2 for the error, but we actually accept 1-3
+                expected: 2, // range takes 1 to 3 arguments; the error names 2
                 got: args.len(),
             }),
         }

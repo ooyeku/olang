@@ -16,13 +16,13 @@ mod commands;
 
 #[derive(Parser)]
 #[command(name = "otc")]
-#[command(about = "olang project tool — scaffolding and local package management")]
+#[command(about = "otc, olang's project tool: new projects, dependencies and the shelf")]
 #[command(version = olang::VERSION)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
 
-    /// Enable verbose output
+    /// Print more about what otc is doing
     #[arg(short, long)]
     verbose: bool,
 }
@@ -40,8 +40,8 @@ enum Commands {
         /// one process, three files (main.ol, lib/pages.ol, client.ol)
         #[arg(long)]
         web: bool,
-        /// The web app with every seam hand-rolled on the raw stdlib —
-        /// for studying what the SDK packages
+        /// The same web app written directly on the stdlib, without the
+        /// SDK, to show what the SDK does for you
         #[arg(long = "web-bare")]
         web_bare: bool,
     },
@@ -105,8 +105,8 @@ enum Commands {
         #[arg(long)]
         profile: bool,
     },
-    /// Audit the installation against the ~/.olang contract; --fix
-    /// applies the safe repairs
+    /// Check the installation and ~/.olang for problems; --fix applies
+    /// the safe repairs
     Doctor {
         /// Apply the safe repairs (legacy files, history migration)
         #[arg(long)]

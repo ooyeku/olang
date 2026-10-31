@@ -1,4 +1,4 @@
-# pipeline_pandas.py — the DP4 end-to-end benchmark, pandas edition.
+# pipeline_pandas.py — the end-to-end pipeline benchmark, pandas edition.
 #
 # Stage-for-stage identical to benchmarks/pipeline.ol; prints the same
 # `STAGE <name> <ms> <checksum>` lines so the runner can refuse any

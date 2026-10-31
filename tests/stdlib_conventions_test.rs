@@ -34,8 +34,7 @@ fn err(source: &str) -> String {
     }
 }
 
-// ── rule 1: infallible operations return their value ──────────────────
-
+// ── rule 1: infallible operations return their value ────────────────
 #[test]
 fn host_introspection_returns_values_not_results() {
     // These cannot fail, so wrapping them in Result was pure noise —
@@ -63,8 +62,7 @@ fn path_predicates_return_bools() {
     assert_eq!(run("fs.is_dir(\"/tmp\")").unwrap(), "true");
 }
 
-// ── rule 2: genuine failure still returns Result ───────────────────────
-
+// ── rule 2: genuine failure still returns Result ────────────────────
 #[test]
 fn operations_that_can_fail_keep_their_result() {
     // An absent environment variable is a condition the caller handles,
@@ -83,8 +81,7 @@ fn operations_that_can_fail_keep_their_result() {
     assert!(out.starts_with("Err("), "{out}");
 }
 
-// ── rule 3: misuse raises ─────────────────────────────────────────────
-
+// ── rule 3: misuse raises ───────────────────────────────────────────
 #[test]
 fn a_wrong_argument_count_raises() {
     for source in [
@@ -125,8 +122,7 @@ fn error_messages_name_the_module_qualified_function() {
     assert!(e.contains("os.arch"), "{e}");
 }
 
-// ── rule 4 (0.68): lookups answer Unit for absence ────────────────────
-
+// ── rule 4 (0.68): lookups answer Unit for absence ──────────────────
 #[test]
 fn lookups_return_unit_for_absence() {
     // One convention for "not there": the value, or Unit. Never -1, never
@@ -151,7 +147,7 @@ fn lookups_return_unit_for_absence() {
 #[test]
 fn unit_equality_is_total() {
     // The presence test must be askable about present values: `x != ()`
-    // answers true for an Int rather than raising. Since W14 equality is
+    // answers true for an Int rather than raising. Equality is
     // total across every kind — values of different types compare
     // unequal — while ordering against Unit still raises.
     assert_eq!(
@@ -193,8 +189,7 @@ fn map_get_or_misuse_raises() {
     assert!(e.contains("must be a map or object"), "{e}");
 }
 
-// ── the seven freed keywords ──────────────────────────────────────────
-
+// ── the seven freed keywords ────────────────────────────────────────
 #[test]
 fn declaration_keywords_work_as_identifiers() {
     // Each of these is a plausible variable in data or statistical code,
@@ -243,8 +238,7 @@ fn a_freed_keyword_and_its_declaration_coexist_in_one_file() {
     assert_eq!(out, "a value / 1");
 }
 
-// ── fs.join ───────────────────────────────────────────────────────────
-
+// ── fs.join ─────────────────────────────────────────────────────────
 #[test]
 fn fs_join_takes_parts_variadically_or_as_a_list() {
     // Variadic for the literal case; a list for the computed one, because

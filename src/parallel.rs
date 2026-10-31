@@ -1,3 +1,6 @@
+//! When builtins run in parallel: the worker pool's size and the list
+//! length below which work stays on one thread.
+
 use parking_lot::RwLock;
 use std::sync::LazyLock;
 

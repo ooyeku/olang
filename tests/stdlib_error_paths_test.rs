@@ -1,9 +1,6 @@
 use olang::{Interpreter, Parser};
 
-// =============================================================================
-// STDLIB ERROR PATHS TESTS
-// =============================================================================
-
+// ── STDLIB ERROR PATHS TESTS ────────────────────────────────────────
 #[test]
 fn test_fs_error_paths() {
     let parser = Parser::new();

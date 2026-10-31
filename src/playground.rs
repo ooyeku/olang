@@ -114,7 +114,7 @@ fn run_source(source: &str) -> (String, Option<String>, Option<String>) {
     }
 }
 
-// ── the dom bridge: olang as a frontend language ───────────────────────
+// ── the dom bridge: olang as a frontend language ────────────────────
 //
 // Elements are opaque handles minted by the page. Strings cross the
 // boundary as (ptr, len) into linear memory; the page returns strings by

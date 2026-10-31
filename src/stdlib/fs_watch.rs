@@ -112,8 +112,7 @@ fn strings_opt(
     }
 }
 
-// ── the filter ───────────────────────────────────────────────────────
-
+// ── the filter ──────────────────────────────────────────────────────
 /// What a watch passes on: folder names never reported (at any depth),
 /// and paths under them reported all the same (`.git/HEAD` under an
 /// ignored `.git`).
@@ -145,8 +144,7 @@ impl Filter {
     }
 }
 
-// ── what the stream queues ───────────────────────────────────────────
-
+// ── what the stream queues ──────────────────────────────────────────
 /// One path the system reported, with what it said of it.
 struct Raw {
     path: String,
@@ -218,8 +216,7 @@ fn rel_under<'a>(root: &str, path: &'a str) -> Option<&'a str> {
     path.strip_prefix(r).and_then(|rest| rest.strip_prefix('/'))
 }
 
-// ── the builtins ─────────────────────────────────────────────────────
-
+// ── the builtins ────────────────────────────────────────────────────
 /// `fs.watch(root, opts)`: `Ok(Watch)` watching `root`'s whole tree.
 pub fn watch(args: Vec<Value>) -> Res {
     if args.is_empty() || args.len() > 2 {
@@ -444,8 +441,7 @@ pub fn watch_close(args: Vec<Value>) -> Res {
     })))
 }
 
-// ── macOS: FSEvents ──────────────────────────────────────────────────
-
+// ── macOS: FSEvents ─────────────────────────────────────────────────
 #[cfg(target_os = "macos")]
 mod imp {
     use super::*;

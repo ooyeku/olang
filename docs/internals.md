@@ -445,7 +445,6 @@ src/
   tools/                  olang test (test_runner.rs), olang fmt (fmt.rs),
                           olang check (check.rs), olang lsp (lsp.rs)
   repl.rs, help.rs        interactive mode
-  test_framework.rs       the `test` block runtime
   clock.rs, output.rs     native/wasm seams (time, print routing)
   log.rs, version.rs      diagnostics routing, build version
 olang-ods/                pure-Rust engine crate behind src/ods/

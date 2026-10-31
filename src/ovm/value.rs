@@ -1288,8 +1288,6 @@ impl OvmValue {
     ) -> Self {
         let builtin_obj = BuiltinObject::new(name, arity, function_ptr);
 
-        // For now, we'll use a placeholder pointer - in a real implementation,
-        // this would be allocated through the GC
         let gc_ptr = Arc::new(builtin_obj);
 
         Self {
@@ -1389,7 +1387,7 @@ impl OvmValue {
         }
     }
 
-    /// Enhanced from_ast conversion with better builtin support
+    /// Convert an interpreter value to a VM value.
     pub fn from_ast(ast_value: Value) -> Self {
         // As deep as the value: nested values convert where the stack can
         // grow, or a million-link list overflowed it at the boundary.
@@ -1476,8 +1474,8 @@ impl OvmValue {
             Value::Function(ref func) => Self::new_ast_function(func.clone()),
 
             Value::Builtin(ref builtin) => {
-                // Create a placeholder builtin function
-                // In a real implementation, this would map to actual builtin functions
+                // A stand-in that raises when called: the VM reaches builtins
+                // through its own table, never through a converted value.
                 Self::new_builtin(builtin.name.clone(), builtin.arity, |_args| {
                     Err(RuntimeError::Generic {
                         message: "Builtin function not implemented in OVM".to_string(),
@@ -1595,7 +1593,7 @@ impl OvmValue {
             }
 
             Value::TypeInfo(ref t) => {
-                // For now, represent types as string names
+                // A type crosses as its name.
                 Self::new_string(t.name.clone())
             }
             // A constructor is a callable; it never actually crosses into the
@@ -1946,7 +1944,7 @@ impl OvmValue {
                 })))
             }
             ValueData::Function(_) => {
-                // Functions return unit for now
+                // A VM-only function value has no interpreter form.
                 Ok(Value::Unit)
             }
             ValueData::Struct(gc_ptr) => {

@@ -262,10 +262,7 @@ pub fn recv_bit(type_name: &str) -> u16 {
     }
 }
 
-// ---------------------------------------------------------------------
-// Parsing the table
-// ---------------------------------------------------------------------
-
+// ── Parsing the table ───────────────────────────────────────────────
 fn parse_lit(text: &'static str) -> Lit {
     let t = text.trim();
     if t == "()" {
@@ -397,10 +394,7 @@ pub fn all() -> impl Iterator<Item = &'static Sig> {
     SIGS.values()
 }
 
-// ---------------------------------------------------------------------
-// Binding
-// ---------------------------------------------------------------------
-
+// ── Binding ─────────────────────────────────────────────────────────
 /// Where one argument of the positional call comes from.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Slot {
@@ -717,10 +711,7 @@ pub fn fill_defaults(full: &str, args: &mut Vec<Value>) {
     }
 }
 
-// ---------------------------------------------------------------------
-// Methods
-// ---------------------------------------------------------------------
-
+// ── Methods ─────────────────────────────────────────────────────────
 /// Modules a native type borrows methods from, after its own.
 fn borrowed_modules(type_name: &str) -> &'static [&'static str] {
     match type_name {
@@ -894,10 +885,7 @@ pub fn no_method(type_name: &str, method: &str) -> String {
     )
 }
 
-// ---------------------------------------------------------------------
-// The table
-// ---------------------------------------------------------------------
-
+// ── The table ───────────────────────────────────────────────────────
 macro_rules! plot_opts {
     () => {
         "**opts{title x_label y_label width height theme paper ink responsive interactive colors vary scale font_size font}"
@@ -908,7 +896,7 @@ macro_rules! plot_opts {
 /// docs/stdlib.md) and the functions' own error messages.
 pub const TABLE: &[(&str, &str)] = &[
     ("ods.version", ""),
-    // ── ods: Series ──
+    // ── ods: Series ──────────────────────────────────────────────────
     ("ods.series", "values -> S"),
     ("ods.try_series", "values"),
     ("ods.date_part", "s:S, unit -> S"),
@@ -954,7 +942,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("ods.any_of", "masks -> S"),
     ("ods.not", "mask:S -> S"),
     ("ods.is_in", "s:S, values -> S"),
-    // ── ods: text (D2) ──
+    // ── ods: text (D2) ───────────────────────────────────────────────
     ("ods.contains", "s:S, text, case = true -> S"),
     ("ods.lower", "s:S -> S"),
     ("ods.upper", "s:S -> S"),
@@ -975,7 +963,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("ods.to_date", "s:S, fmt? -> S"),
     ("ods.to_datetime", "s:S, fmt? -> S"),
     ("ods.format", "s:S, fmt -> S"),
-    // ── ods: dates (D2) ──
+    // ── ods: dates (D2) ──────────────────────────────────────────────
     ("ods.year", "s:S -> S"),
     ("ods.quarter", "s:S -> S"),
     ("ods.month", "s:S -> S"),
@@ -993,7 +981,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("ods.months_between", "a:S, b -> S"),
     ("ods.add_days", "s:S, n -> S"),
     ("ods.add_months", "s:S, n -> S"),
-    // ── ods: categories (D2) ──
+    // ── ods: categories (D2) ─────────────────────────────────────────
     ("ods.to_category", "s:S, levels? -> S"),
     ("ods.levels", "s:S -> S"),
     ("ods.codes", "s:S -> S"),
@@ -1002,7 +990,7 @@ pub const TABLE: &[(&str, &str)] = &[
         "x:SF, columns?, drop_first = true, prefix?, dtype = \"Float\" -> F",
     ),
     ("ods.interact", "a:S, b, sep = \":\" -> S"),
-    // ── ods: column math, nulls and conditionals (D1) ──
+    // ── ods: column math, nulls and conditionals (D1) ────────────────
     ("ods.abs", "s:S -> S"),
     ("ods.exp", "s:S -> S"),
     ("ods.exp2", "s:S -> S"),
@@ -1056,13 +1044,13 @@ pub const TABLE: &[(&str, &str)] = &[
     ("ods.count", "s:SG?"),
     ("ods.first", "s:SG"),
     ("ods.last", "s:SG"),
-    // ── ods: column expressions (D1) ──
+    // ── ods: column expressions (D1) ─────────────────────────────────
     ("ods.col", "name -> S"),
     ("ods.lit", "v -> S"),
     ("ods.alias", "e:S, name -> S"),
     ("ods.over", "agg:S, keys -> S"),
     ("ods.with", "f:F, exprs -> F"),
-    // ── ods: Frame ──
+    // ── ods: Frame ───────────────────────────────────────────────────
     ("ods.frame", "columns -> F"),
     ("ods.read_csv", "text, **opts{sep dates dtypes nulls} -> F"),
     ("ods.read_csv_file", "path, **opts{sep dates dtypes nulls}"),
@@ -1106,13 +1094,13 @@ pub const TABLE: &[(&str, &str)] = &[
     ("ods.describe", "f:F -> F"),
     ("ods.schema", "f:F -> F"),
     ("ods.group_by", "f:F, by, aggs? -> F"),
-    // ── ods: a grouped Frame (D3) ──
+    // ── ods: a grouped Frame (D3) ────────────────────────────────────
     ("ods.agg", "by:G, aggs -> F"),
     ("ods.size", "by:G -> F"),
     ("ods.transform", "by:G, aggs -> S"),
     ("ods.apply", "by:G, fn"),
     ("ods.groups", "by:G"),
-    // ── ods: shape, runs and time (D3) ──
+    // ── ods: shape, runs and time (D3) ───────────────────────────────
     ("ods.slice", "x:SF, start, n? -> ="),
     ("ods.row", "f:F, i"),
     ("ods.lookup", "f:F, key_col, key, value_col"),
@@ -1149,11 +1137,11 @@ pub const TABLE: &[(&str, &str)] = &[
     ),
     ("ods.pivot", "f:F, index, columns, values, agg, fill? -> F"),
     ("ods.unpivot", "f:F, id_columns, value_columns? -> F"),
-    // ── ods: matrices (D4) ──
+    // ── ods: matrices (D4) ───────────────────────────────────────────
     ("ods.matrix", "data:F, cols?, nulls = \"raise\" -> X"),
     ("ods.corr", "data:F, cols?, method = \"pearson\" -> F"),
     ("ods.cov", "data:F, cols? -> F"),
-    // ── mat: a Matrix's functions (D4) ──
+    // ── mat: a Matrix's functions (D4) ───────────────────────────────
     ("mat.of", "rows -> X"),
     ("mat.identity", "n -> X"),
     ("mat.t", "x:X -> X"),
@@ -1201,7 +1189,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("mat.pow", "x:X, exponent -> X"),
     ("mat.round", "x:X, digits = 0 -> X"),
     ("mat.clip", "x:X, lo?, hi? -> X"),
-    // ── stats ──
+    // ── stats ────────────────────────────────────────────────────────
     ("stats.describe", "s:S"),
     ("stats.corr", "a:S, b"),
     ("stats.cov", "a:S, b"),
@@ -1272,7 +1260,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("stats.binom.cdf", "k, trials, p"),
     ("stats.binom.ppf", "q, trials, p"),
     ("stats.binom.sample", "n, trials, p, rng? -> S"),
-    // ── stats.ts ──
+    // ── stats.ts ─────────────────────────────────────────────────────
     ("stats.ts.acf", "s:S, lags?, ci = 0.95 -> F"),
     (
         "stats.ts.pacf",
@@ -1288,7 +1276,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ),
     ("stats.ts.forecast", "model:W, h"),
     ("stats.ts.seasonal_naive", "s:S, season, h, time?"),
-    // ── random: a generator (random.rng) and its methods ──
+    // ── random: a generator (random.rng) and its methods ─────────────
     ("random.rng", "seed? -> N"),
     ("random.Rng.normal", "rng:N, n?, mean = 0.0, std = 1.0"),
     ("random.Rng.uniform", "rng:N, n?, low = 0.0, high = 1.0"),
@@ -1303,10 +1291,10 @@ pub const TABLE: &[(&str, &str)] = &[
     ("random.Rng.shuffle", "rng:N, values"),
     ("random.Rng.permutation", "rng:N, n -> S"),
     ("random.Rng.spawn", "rng:N, k"),
-    // ── str: numbers as text ──
+    // ── str: numbers as text ─────────────────────────────────────────
     ("str.pct", "x, digits = 1"),
     ("str.money", "x, symbol = \"$\", digits = 0"),
-    // ── db: Frames ──
+    // ── db: Frames ───────────────────────────────────────────────────
     (
         "db.query_frame",
         "conn, sql, params?, **opts{timeout_ms} -> F",
@@ -1315,7 +1303,7 @@ pub const TABLE: &[(&str, &str)] = &[
         "db.insert_frame",
         "conn, table, frame, create = true, replace = false",
     ),
-    // ── plot ──
+    // ── plot ─────────────────────────────────────────────────────────
     ("plot.line", concat!("x:S, y, ", plot_opts!())),
     ("plot.scatter", concat!("x:S, y, ", plot_opts!())),
     ("plot.area", concat!("x:S, y, ", plot_opts!())),
@@ -1334,7 +1322,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("plot.describe", "svg"),
     ("plot.gg", "plot"),
     ("plot.gg_scene", "plot"),
-    // ── learn ──
+    // ── learn ────────────────────────────────────────────────────────
     ("learn.split", "data:F, **opts{test stratify shuffle seed}"),
     (
         "learn.kfold",
@@ -1463,7 +1451,7 @@ pub const TABLE: &[(&str, &str)] = &[
         "learn.calibration",
         "y:S, p, **opts{bins strategy pos} -> F",
     ),
-    // ── dates: a Date's methods ──
+    // ── dates: a Date's methods ──────────────────────────────────────
     ("dates.format_date", "d:D, fmt"),
     ("dates.add_days", "d:D, n"),
     ("dates.add_weeks", "d:D, n"),
@@ -1478,7 +1466,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("dates.epoch_day", "d:D"),
     ("dates.start_of_week", "d:D"),
     ("dates.start_of_month", "d:D"),
-    // ── the stdlib's options maps ──
+    // ── the stdlib's options maps ────────────────────────────────────
     ("gui.open", "**opts"),
     ("gui.headless", "**opts"),
     ("gui.measure", "text, style?, **opts"),

@@ -379,7 +379,7 @@ fn capabilities_demo_example_runs_clean() {
     assert!(stdout.contains("demo ok"), "demo self-check did not pass");
 }
 
-// ── C1: enforcement holds on the bytecode tier ────────────────────────
+// ── C1: enforcement holds on the bytecode tier ──────────────────────
 //
 // Capabilities used to step the bytecode tier aside: the gate reads its
 // context off the interpreter it is handed, and the tier reaches builtins
@@ -603,8 +603,7 @@ fn the_data_stack_is_not_a_latent_filesystem_capability() {
     let _ = std::fs::remove_dir_all(&ws);
 }
 
-// ── C3: reading the grant, rather than only being stopped by it ───────
-
+// ── C3: reading the grant, rather than only being stopped by it ─────
 /// A denial still stops the program — that is unchanged and deliberate.
 /// What C3 adds is the other branch: a program that can degrade should be
 /// able to *ask* before attempting the call, rather than being killed by
@@ -745,8 +744,7 @@ fn asking_about_a_capability_needs_no_capability() {
     assert!(text.contains("\"net\": false"), "{text}");
 }
 
-// ── C2: attribution hardening ────────────────────────────────────────
-
+// ── C2: attribution hardening ───────────────────────────────────────
 /// `os.exit` was the hole in the `proc` gate: a dependency denied `proc`
 /// could not spawn a process but could still terminate the host, which is
 /// a larger power than the one it was refused.
@@ -959,7 +957,6 @@ fn a_manifest_does_not_cost_a_worker_its_tier() {
 }
 
 // ── capability-specialized compilation ──────────────────────────────
-
 /// Under a static manifest, `caps.allowed("x")` is a compile-time
 /// constant on the bytecode tier, the branch it guards folds, and the
 /// denied side goes dead — while the denied side still errors when it

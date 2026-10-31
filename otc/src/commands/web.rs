@@ -312,7 +312,7 @@ unwrap(db.execute(conn,
         created_at TEXT NOT NULL
     )"))
 
-// ── static files, read once at startup ──
+// ── static files, read once at startup ──────────────────────────────
 let page_html = unwrap(fs.read_file("static/index.html"))
 let shim_js = unwrap(fs.read_file("static/olang-dom.js"))
 let app_ol = unwrap(fs.read_file("static/app.ol"))
@@ -342,8 +342,7 @@ fn wasm_binary(req, params) = {{
     headers: #{{ "Content-Type": "application/wasm" }}
 }}
 
-// ── the API ──
-
+// ── the API ─────────────────────────────────────────────────────────
 fn notes_list(req, params) =
     json_response(200, {{
         items: unwrap(db.query(conn, "SELECT id, text, created_at FROM notes ORDER BY id DESC"))
@@ -380,8 +379,7 @@ fn health(req, params) = {{
     json_response(200, {{ status: "ok", notes: count }})
 }}
 
-// ── wiring ──
-
+// ── wiring ──────────────────────────────────────────────────────────
 let routes = [
     route("GET", "/", page),
     route("GET", "/olang-dom.js", shim),

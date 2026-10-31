@@ -52,10 +52,7 @@ const REDUCTIONS: &[&str] = &[
     "any", "all", "argmax", "argmin", "quantile",
 ];
 
-// ---------------------------------------------------------------------
-// The GroupBy value
-// ---------------------------------------------------------------------
-
+// ── The GroupBy value ───────────────────────────────────────────────
 /// A Frame grouped by key columns: the group ids, computed once.
 #[derive(Debug)]
 pub struct OdsGroupBy {
@@ -224,10 +221,7 @@ impl OdsGroupBy {
     }
 }
 
-// ---------------------------------------------------------------------
-// Aggregation expressions
-// ---------------------------------------------------------------------
-
+// ── Aggregation expressions ─────────────────────────────────────────
 /// A value per group, or one value for every group.
 pub(crate) enum GVal {
     Col(Series),
@@ -484,10 +478,7 @@ fn aggregate_named(
         .collect()
 }
 
-// ---------------------------------------------------------------------
-// apply: the tiers call the function, this file does the rest
-// ---------------------------------------------------------------------
-
+// ── apply: the tiers call the function, this file does the rest ─────
 /// What `apply` needs after the calls: the grouping's keys per group.
 pub struct ApplyState {
     keys: Vec<(String, Series)>,
@@ -597,10 +588,7 @@ pub fn apply_finish(state: ApplyState, results: Vec<Value>) -> Result<Value, Str
     Ok(Value::List(Arc::new(results)))
 }
 
-// ---------------------------------------------------------------------
-// Argument helpers
-// ---------------------------------------------------------------------
-
+// ── Argument helpers ────────────────────────────────────────────────
 fn arg(args: &[Value], i: usize) -> Option<&Value> {
     args.get(i).filter(|v| !matches!(v, Value::Unit))
 }
@@ -685,10 +673,7 @@ fn ods_frame_of(v: &Value) -> Option<&OdsFrame> {
     }
 }
 
-// ---------------------------------------------------------------------
-// Dispatch
-// ---------------------------------------------------------------------
-
+// ── Dispatch ────────────────────────────────────────────────────────
 /// This file's functions, and the existing names it extends (`group_by`
 /// without aggregations, the reductions of a GroupBy, `count()`,
 /// `rolling` with options, the joins, `pivot` with `fill`, `rename` and

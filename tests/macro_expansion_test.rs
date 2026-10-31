@@ -19,8 +19,7 @@ fn eval(source: &str) -> Result<Value, String> {
         .map_err(|e| e.to_string())
 }
 
-// ── the invocation forms ──────────────────────────────────────────────
-
+// ── the invocation forms ────────────────────────────────────────────
 #[test]
 fn an_expression_macro_expands_at_its_call_site() {
     let out = eval(
@@ -69,8 +68,7 @@ fn stacked_decorators_apply_nearest_first() {
     assert_eq!(out, Value::String("inner".to_string().into()));
 }
 
-// ── composition and termination ───────────────────────────────────────
-
+// ── composition and termination ─────────────────────────────────────
 #[test]
 fn a_macro_may_produce_macro_calls_for_the_next_round() {
     let out = eval(
@@ -105,8 +103,7 @@ fn runaway_expansion_is_stopped_by_fuel_with_the_site_named() {
     );
 }
 
-// ── the laws ──────────────────────────────────────────────────────────
-
+// ── the laws ────────────────────────────────────────────────────────
 #[test]
 fn an_at_sign_inside_a_string_is_data_not_a_macro() {
     let out = eval("let s = \"user@example.com\"\nlen(s)\n").expect("string data");
@@ -186,8 +183,7 @@ fn meta_parse_shows_source_as_written_including_macro_sites() {
     assert_eq!(out, Value::String("macro_call".to_string().into()));
 }
 
-// ── errors name the macro and the site ────────────────────────────────
-
+// ── errors name the macro and the site ──────────────────────────────
 #[test]
 fn an_unknown_macro_names_itself_and_its_line() {
     let err = eval("let x = @nope(1)\n").expect_err("unknown macro");
@@ -227,8 +223,7 @@ fn a_meta_fn_must_return_source_text() {
     assert!(err.contains("must return source text"), "{err}");
 }
 
-// ── the new meta builtins ─────────────────────────────────────────────
-
+// ── the new meta builtins ───────────────────────────────────────────
 #[test]
 fn meta_eval_computes_at_expansion_time_and_meta_lit_splices_it() {
     // @bake in userland: the whole comptime feature in one meta fn.
@@ -269,8 +264,7 @@ fn meta_fresh_yields_distinct_names() {
     assert_eq!(out, Value::Boolean(true));
 }
 
-// ── tiers and tooling ─────────────────────────────────────────────────
-
+// ── tiers and tooling ───────────────────────────────────────────────
 #[test]
 fn the_tiers_agree_on_an_expanded_program() {
     let source = "meta fn twice(e) = `(${e}) + (${e})`\n\
@@ -325,8 +319,7 @@ fn a_macro_free_file_is_untouched_by_expansion() {
     assert_eq!(olang::expand::expand_source(source).expect("no-op"), source);
 }
 
-// ── hardening regressions from the first adversarial probe ────────────
-
+// ── hardening regressions from the first adversarial probe ──────────
 #[test]
 fn unicode_in_a_meta_fn_body_survives_stripping() {
     // Stripping blanks whole spans byte-by-byte; multibyte characters in
@@ -367,8 +360,7 @@ fn multi_line_block_output_splices_into_an_expression() {
     assert_eq!(out, Value::Integer(42));
 }
 
-// ── M1: placement rules ───────────────────────────────────────────────
-
+// ── M1: placement rules ─────────────────────────────────────────────
 #[test]
 fn a_meta_fn_inside_a_block_is_refused() {
     let err = eval("fn outer() = {\n    meta fn inner(x) = `${x}`\n    1\n}\nouter()\n")
@@ -393,8 +385,7 @@ fn share_meta_fn_is_an_error_not_a_silent_export() {
     assert!(eval("share meta fn f(x) = `${x}`\nprintln(to_string(@f(1)))\n").is_err());
 }
 
-// ── M1: determinism ───────────────────────────────────────────────────
-
+// ── M1: determinism ─────────────────────────────────────────────────
 #[test]
 fn expansion_is_deterministic_within_a_process() {
     // meta.fresh resets per expansion, so expanding the same source
@@ -405,8 +396,7 @@ fn expansion_is_deterministic_within_a_process() {
     assert_eq!(a, b, "same source must expand identically every time");
 }
 
-// ── M1: the prefilter is precise ──────────────────────────────────────
-
+// ── M1: the prefilter is precise ────────────────────────────────────
 #[test]
 fn mentioning_meta_or_at_in_data_does_not_trigger_expansion() {
     // "meta" in a comment, "@" in a string: neither is a macro construct.
@@ -425,8 +415,7 @@ fn mentioning_meta_or_at_in_data_does_not_trigger_expansion() {
     assert!(!olang::expand::has_meta_fn_token("metadata fn = 1"));
 }
 
-// ── M2: template escapes ──────────────────────────────────────────────
-
+// ── M2: template escapes ────────────────────────────────────────────
 #[test]
 fn template_escapes_backtick_dollar_backslash() {
     let out = eval("`tick \\` dollar \\${x} back \\\\ raw \\n`").expect("escapes");
@@ -449,8 +438,7 @@ fn a_macro_can_generate_a_template() {
     assert_eq!(out, Value::String("[app] started".to_string().into()));
 }
 
-// ── M2: decorators on fn and let ──────────────────────────────────────
-
+// ── M2: decorators on fn and let ────────────────────────────────────
 #[test]
 fn a_decorator_on_a_fn_can_wrap_it() {
     let out = eval(
@@ -482,8 +470,7 @@ fn a_decorator_on_a_let_receives_the_declaration() {
     assert_eq!(out, Value::Integer(42));
 }
 
-// ── M2: imported macro libraries ──────────────────────────────────────
-
+// ── M2: imported macro libraries ────────────────────────────────────
 #[test]
 fn a_use_import_brings_meta_fns_into_expansion() {
     let dir = std::env::temp_dir().join(format!("olang_macro_lib_{}", std::process::id()));
@@ -526,8 +513,7 @@ fn a_use_import_brings_meta_fns_into_expansion() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-// ── M2: REPL persistence ──────────────────────────────────────────────
-
+// ── M2: REPL persistence ────────────────────────────────────────────
 #[test]
 fn the_repl_keeps_meta_fns_across_inputs() {
     use std::io::Write;
@@ -551,8 +537,7 @@ fn the_repl_keeps_meta_fns_across_inputs() {
     );
 }
 
-// ── M3: expand --diff and error alignment ─────────────────────────────
-
+// ── M3: expand --diff and error alignment ───────────────────────────
 #[test]
 fn expand_diff_shows_only_changed_lines() {
     let dir = std::env::temp_dir().join(format!("olang_expand_diff_{}", std::process::id()));
@@ -602,8 +587,7 @@ fn a_runtime_error_in_generated_code_notes_the_expansion() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-// ── edge shapes ───────────────────────────────────────────────────────
-
+// ── edge shapes ─────────────────────────────────────────────────────
 #[test]
 fn edge_shapes_expand_correctly() {
     // No-argument macro.
@@ -638,8 +622,7 @@ fn edge_shapes_expand_correctly() {
     assert_eq!(out, Value::Integer(4));
 }
 
-// ── source-mapped runtime error spans ─────────────────────────────────
-
+// ── source-mapped runtime error spans ───────────────────────────────
 #[test]
 fn an_error_in_generated_code_points_at_the_call_site() {
     // The error happens inside @boom's output; the rendered error must
@@ -717,8 +700,7 @@ fn the_line_map_tracks_origins_through_rounds() {
     assert_eq!(exp.line_origins[3], LineOrigin::Original(4));
 }
 
-// ── applicative argument expansion (found by the macro fuzzer) ────────
-
+// ── applicative argument expansion (found by the macro fuzzer) ──────
 #[test]
 fn nested_macro_arguments_are_expanded_before_the_macro_runs() {
     // `@bake(@twice(4))`: bake evaluates its argument at expansion time,
@@ -762,8 +744,7 @@ fn a_string_inspecting_macro_receives_macro_free_source() {
     assert_eq!(out, Value::Integer(1));
 }
 
-// ── meta.eval: runtime vs expansion time ──────────────────────────────
-
+// ── meta.eval: runtime vs expansion time ────────────────────────────
 #[test]
 fn meta_eval_at_runtime_allows_effects() {
     // Outside expansion, meta.eval is real evaluation: the child inherits

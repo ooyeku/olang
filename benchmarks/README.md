@@ -5,8 +5,8 @@ group, join, sort, window, write — implemented three times with
 identical semantics: in olang on the ods data stack
 ([pipeline.ol](pipeline.ol)), in pandas
 ([pipeline_pandas.py](pipeline_pandas.py)), and in Polars
-([pipeline_polars.py](pipeline_polars.py)). This is the DP4 benchmark
-from the roadmap; the published results and methodology live in
+([pipeline_polars.py](pipeline_polars.py)). The published results and
+methodology are in
 [docs/performance.md](../docs/performance.md#the-data-stack-against-other-engines).
 
 Every engine prints one `STAGE <name> <ms> <checksum>` line per stage.

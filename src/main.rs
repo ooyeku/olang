@@ -56,34 +56,32 @@ use olang::{
 Run options apply to `olang <file>` and `olang run <file>`. Every command
 also honors the OLANG_DENY environment variable. Full reference: docs/tooling.md")]
 struct Cli {
-    /// Execute in batch mode (no REPL)
+    /// Run without the REPL
     #[arg(short, long, help_heading = "Run options")]
     batch: bool,
 
-    /// Enable verbose output
+    /// Print more about what olang is doing
     #[arg(short, long, help_heading = "Run options")]
     verbose: bool,
 
-    /// Enable tracing for debugging
+    /// Turn on olang's internal trace logging (for debugging olang itself)
     #[arg(long, help_heading = "Run options")]
     trace: bool,
 
-    /// Disable OVM and use the classic interpreter only
+    /// Run on the interpreter alone, with the bytecode tier and JIT off
     #[arg(long, help_heading = "Run options")]
     no_ovm: bool,
 
-    /// Run the whole program on a spawned task instead of the main
-    /// thread — the execution context every http worker and `spawn`
-    /// body has. `olang bench --in-task` uses it to pin a task's speed
-    /// to the main thread's.
+    /// Run the whole program on a spawned task instead of the main thread,
+    /// the way every http worker and `spawn` body runs. `olang bench
+    /// --in-task` uses it to compare a task's speed with the main thread's
     #[arg(long, help_heading = "Run options")]
     in_task: bool,
 
-    /// Show OVM performance statistics. `--ovm-stats=json[:PATH]` keeps
-    /// per-function tier statistics instead (calls and time per tier,
-    /// deopts, refusals, pins) and writes them as JSON at exit, to PATH
-    /// or ovm-stats.json; `OLANG_OVM_STATS=json[:PATH]` does the same
-    /// for any command (`olang test`)
+    /// Print bytecode-tier statistics at exit. With `=json[:PATH]`, write
+    /// per-function statistics as JSON instead (calls and time per tier,
+    /// deopts, refusals, pins), to PATH or ovm-stats.json.
+    /// `OLANG_OVM_STATS=json[:PATH]` does the same for any command
     #[arg(
         long,
         help_heading = "Run options",
@@ -94,19 +92,18 @@ struct Cli {
     )]
     ovm_stats: Option<String>,
 
-    /// Arm a live profile: write the process's vital signs to
-    /// DIR/<pid>.json while it runs, and sample its stacks while the file
-    /// DIR/attach exists (an editor attaches by creating it).
-    /// `OLANG_PROFILE_LIVE=DIR` does the same and reaches the children a
-    /// run starts
+    /// Write live process stats to DIR/<pid>.json while the program runs,
+    /// and sample its stacks while DIR/attach exists (an editor attaches by
+    /// creating that file). `OLANG_PROFILE_LIVE=DIR` does the same and also
+    /// reaches any child processes
     #[arg(long, value_name = "DIR", help_heading = "Run options")]
     profile_live: Option<PathBuf>,
 
-    /// Re-execute a sample of native-tier calls on the bytecode VM and
-    /// compare results bit-for-bit; a divergence aborts with a report.
-    /// RATE is the sampling probability (1 verifies every native call).
-    /// Native code is pure with respect to caller state by construction,
-    /// so re-execution is unobservable beyond the time it costs.
+    /// Re-run a sample of JIT-compiled calls on the bytecode VM and compare
+    /// the results bit for bit; a difference aborts with a report. RATE is
+    /// the share of calls checked, from 0 to 1 (1 checks every call).
+    /// Compiled code never changes its caller's state, so the re-run has no
+    /// visible effect beyond the time it takes
     #[arg(long, value_name = "RATE", help_heading = "Run options")]
     verify_tiers: Option<f64>,
 
@@ -115,27 +112,26 @@ struct Cli {
     #[arg(long, help_heading = "Run options")]
     watch: bool,
 
-    /// Set maximum parallelism for OVM/builtins (threads). Also respects the
-    /// OLANG_PARALLELISM environment variable.
+    /// Use at most N threads for parallel work. OLANG_PARALLELISM sets the
+    /// same
     #[arg(long, value_name = "N", help_heading = "Run options")]
     ovm_parallelism: Option<usize>,
 
-    /// Compile hot functions to OVM bytecode after N calls (default 50 when
-    /// the flag is given without a value). Functions the tier cannot compile
-    /// keep running on the interpreter.
+    /// Compile a function to bytecode after N calls (50 when no value is
+    /// given). Functions the tier cannot compile stay on the interpreter
     #[arg(long, value_name = "N", num_args = 0..=1, require_equals = true, default_missing_value = "50", help_heading = "Run options")]
     ovm_tier: Option<u32>,
 
-    /// Deny capabilities for this run, on top of any manifest: a comma list
-    /// of fs, fs-write, net, proc, db, env (e.g. --deny net,fs-write). Also
-    /// honored from the OLANG_DENY environment variable.
+    /// Withhold capabilities for this run, on top of any manifest: a comma
+    /// list of fs, fs-write, net, proc, db, env (for example --deny
+    /// net,fs-write). OLANG_DENY sets the same
     #[arg(long, value_name = "CAPS", help_heading = "Run options")]
     deny: Option<String>,
 
-    /// A notebook's param (`.olmd`): NAME=VALUE overrides the default its
-    /// front matter gives, VALUE read as an olang literal when it is one
-    /// and as a String otherwise. Repeatable; also after the notebook
-    /// (`olang run x.olmd --param region=west`)
+    /// Set a notebook parameter (`.olmd`) as NAME=VALUE, overriding the
+    /// default in its front matter. VALUE is read as an olang literal when
+    /// it is one, and as a string otherwise. Repeatable, and may also follow
+    /// the notebook (`olang run x.olmd --param region=west`)
     #[arg(
         long = "param",
         value_name = "NAME=VALUE",
@@ -143,10 +139,10 @@ struct Cli {
     )]
     param: Vec<String>,
 
-    /// Run a notebook once for each parameter set: NAME=A,B,C (every value
-    /// of one param or control cell) or a file of sets (.json, .yaml or
-    /// .csv: a set a row). Each run is a child of its own, under a line
-    /// naming its set; the exit is the first failing run's
+    /// Run a notebook once for each parameter set: NAME=A,B,C (each value of
+    /// one parameter or control cell) or a file of sets (.json, .yaml, or
+    /// .csv with one set per row). Each run is its own process, printed
+    /// under a line naming its set; the exit code is the first failure's
     #[arg(
         long = "for",
         value_name = "NAME=A,B,… | SETS",
@@ -159,14 +155,13 @@ struct Cli {
     #[arg(long, value_name = "TRACE.olt", help_heading = "Run options")]
     record: Option<String>,
 
-    /// Report which capabilities the program actually exercised, then print a
-    /// suggested least-privilege [capabilities] manifest. The trace sees
-    /// every effect on every tier.
+    /// Report which capabilities the program used, then print the smallest
+    /// [capabilities] manifest that would let it run
     #[arg(long, help_heading = "Run options")]
     trace_caps: bool,
 
-    /// Maximum call depth before a clean "maximum call depth exceeded"
-    /// error (default 100000). Both execution tiers enforce the same cap.
+    /// The deepest a call stack may grow before the run stops with
+    /// "maximum call depth exceeded" (default 100000, on every tier)
     #[arg(long, value_name = "N", help_heading = "Run options")]
     max_depth: Option<usize>,
 
@@ -219,8 +214,10 @@ enum Commands {
         notebook: Option<PathBuf>,
     },
 
-    /// Audit a project: the manifest, its dependencies, the lock, the
-    /// browser runtime this binary carries, and stale runtime copies
+    /// Check a project for problems
+    ///
+    /// Looks at the manifest, its dependencies, the lock, the browser
+    /// runtime this binary carries, and stale runtime copies.
     Doctor {
         /// The project directory (default: the current directory's project)
         #[arg(value_name = "PATH")]
@@ -256,9 +253,10 @@ enum Commands {
         params: Vec<String>,
     },
 
-    /// Evaluate source text and print its value — a one-liner probe
-    /// with the REPL's semantics, resolving shelf libraries from the
-    /// current directory's project
+    /// Evaluate a line of source and print its value
+    ///
+    /// Works as the REPL would. Shelf libraries resolve from the current
+    /// directory's project.
     Eval {
         /// olang source: the last expression's value is printed
         #[arg(value_name = "SOURCE")]
@@ -270,7 +268,7 @@ enum Commands {
         /// Program to execute
         #[arg(value_name = "FILE")]
         file: PathBuf,
-        /// Sampling interval in microseconds (default 1000 — one per ms)
+        /// Sampling interval in microseconds (default 1000, once a millisecond)
         #[arg(long, value_name = "US", default_value_t = 1000)]
         interval: u64,
         /// How many functions to list (default 20)
@@ -310,7 +308,9 @@ enum Commands {
         check: bool,
     },
 
-    /// Rewrite programs to a newer idiom. `olang fix maps`: `map_get(x, "k")`
+    /// Rewrite programs to a newer idiom
+    ///
+    /// `olang fix maps`: `map_get(x, "k")`
     /// becomes `x.k` and `map_get_or(x, "k", d)` becomes `x.k ?? d`, layout
     /// and comments kept; a default that may have an effect is flagged, not
     /// rewritten. `olang fix guards`: `if x == () => ()
@@ -318,7 +318,7 @@ enum Commands {
     /// `x.f == v`. `olang fix defaults`: `if x == () => d else => x` becomes
     /// `x ?? d`. `olang fix first-last`: a length-guarded `xs[len(xs) - 1]`
     /// or `xs[0]` becomes `last(xs)` or `first(xs)`. `olang fix units`:
-    /// `to_int(math.floor(e))` becomes `math.floor(e)`
+    /// `to_int(math.floor(e))` becomes `math.floor(e)`.
     Fix {
         /// What to fix: `maps`, `guards`, `defaults`, `first-last`,
         /// `units`
@@ -527,7 +527,7 @@ enum Commands {
         args: Vec<String>,
     },
 
-    /// A notebook beyond its run: its page, its pinned outputs, its app
+    /// Export a notebook as a page, pin its outputs, or turn it into an app
     /// (docs/notebooks.md)
     Notebook {
         #[command(subcommand)]
@@ -536,17 +536,15 @@ enum Commands {
 
     /// Start the language server (LSP over stdio)
     Lsp {
-        /// Accepted for editor-client compatibility: vscode-languageclient
-        /// and other LSP clients append `--stdio` by convention. Stdio is
-        /// the only transport, so the flag changes nothing — but rejecting
-        /// it made the server exit before the first protocol byte, which
-        /// is why the extension never worked: clap killed `olang lsp
-        /// --stdio` with "unexpected argument" on every start.
+        /// Accepted and ignored: LSP clients pass `--stdio` by convention,
+        /// and stdio is the only transport
+        // Rejecting it stopped the server before its first message, so no
+        // editor could start it.
         #[arg(long)]
         stdio: bool,
     },
 
-    /// Run a program file — the file-first form `olang <file> [args]`
+    /// Run a program file: the short form `olang <file> [args]`
     #[command(external_subcommand)]
     External(Vec<String>),
 }
@@ -622,10 +620,10 @@ enum NotebookAction {
     },
 }
 
-/// The interpreter recurses on the host stack, and its documented call-depth
-/// limit (1000) needs more than the default 8 MB main-thread stack — without
-/// this, a program recursing ~700 deep aborted the process instead of
-/// reporting "Maximum call depth exceeded".
+/// The interpreter recurses on the host stack, and its call-depth limit
+/// (`--max-depth`, 100,000 by default) needs far more than the default 8 MB
+/// main-thread stack. Without this a deep recursion would abort the process
+/// instead of reporting "maximum call depth exceeded".
 const INTERPRETER_STACK_SIZE: usize = 256 * 1024 * 1024;
 
 fn main() {
@@ -787,10 +785,8 @@ fn run() -> i32 {
         unsafe { std::env::set_var("OLANG_VERIFY_TIERS", format!("{}", rate)) };
     }
 
-    // Initialize logger
     let logger = init_logger();
 
-    // Initialize parallelization early for optimal performance
     let parallelism = cli
         .ovm_parallelism
         .or_else(olang::parallel::parallelism_from_env);
@@ -799,19 +795,16 @@ fn run() -> i32 {
             if cli.verbose {
                 logger.warn(
                     "main",
-                    &format!("Failed to initialize parallel processing: {}", e),
+                    &format!("could not start the parallel worker pool: {}", e),
                 );
             }
         }
         _ => {
             if cli.verbose {
                 logger.info(
-            "main",
-            &format!(
-                "Multi-threading enabled: {} CPU cores detected, using aggressive parallelization",
-                num_cpus::get()
-            ),
-        );
+                    "main",
+                    &format!("{} CPU cores available for parallel work", num_cpus::get()),
+                );
             }
         }
     }
@@ -830,20 +823,18 @@ fn run() -> i32 {
         logger.info(
             "main",
             &format!(
-                "Parallelization enabled for lists of 10,000+ items across {} cores",
+                "lists of 10,000 or more items run in parallel across {} cores",
                 num_cpus::get()
             ),
         );
     }
 
-    // Initialize tracing if requested
     if cli.trace {
         tracing_subscriber::fmt()
             .with_env_filter("olang=trace")
             .init();
     }
 
-    // Initialize error reporting
     olang::stdio::set_panic_hook();
 
     // Dispatch. The file-first form `olang <file> [args]` arrives as
@@ -2146,7 +2137,7 @@ fn watch_argv(dir: &std::path::Path, argv: &[String]) -> i32 {
     }
 }
 
-/// Enhanced error display for file execution
+/// Print an error from running a file.
 fn show_file_parse_error(
     error: &olang::parser::ParseError,
     file_path: &std::path::Path,
@@ -2229,7 +2220,7 @@ fn show_file_parse_error(
     eprintln!();
 }
 
-/// Feature 9: Show classic interpreter errors with enhanced context and suggestions
+/// Print an interpreter error with its context and suggestions.
 fn show_classic_interpreter_error(
     error: &olang::interpreter::InterpreterError,
     file_path: &std::path::Path,
@@ -2306,7 +2297,7 @@ fn byte_offset_of(source: &str, line: usize, column: usize) -> usize {
     offset.min(source.len())
 }
 
-/// Feature 9: Show interpreter errors with enhanced context and suggestions
+/// Print an interpreter error with its context and suggestions.
 fn show_highlighted_snippet(snippet: &str) {
     let lines: Vec<&str> = snippet.lines().collect();
 
@@ -2315,7 +2306,6 @@ fn show_highlighted_snippet(snippet: &str) {
             continue;
         }
 
-        // Check if this line contains a caret pointer
         if line.contains("^") {
             // This is the error pointer line - highlight it specially
             let parts: Vec<&str> = line.split('|').collect();

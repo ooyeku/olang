@@ -2519,7 +2519,6 @@ impl App {
 }
 
 // ── requests from the program's threads ─────────────────────────────
-
 pub fn open(opts: OpenOpts) -> Result<u64, String> {
     crate::boot_trace::mark("a window asked for (gui.open)");
     // while the platform waits for an external quit to finish, its loop
@@ -4019,8 +4018,7 @@ pub mod edit_menu {
         Bool::new(ok.unwrap_or(false))
     }
 
-    // ── the text input client (dictation, Look Up, input methods) ──────
-
+    // ── the text input client (dictation, Look Up, input methods) ───
     /// AppKit's NSRange, NSPoint and NSRect, as passed by value.
     #[repr(C)]
     #[derive(Clone, Copy, Debug)]
@@ -5015,8 +5013,7 @@ pub mod frames {
         }
     }
 
-    // ── input to photon ──
-
+    // ── input to photon ─────────────────────────────────────────────
     /// Inputs a window took, waiting for the program's answer (its next
     /// `gui.apply`): the first since its last answer counts.
     fn waiting() -> &'static Mutex<HashMap<u64, u64>> {
@@ -5047,8 +5044,7 @@ pub mod frames {
         }
     }
 
-    // ── the engine's own answers (a scroll, a hover, a field's typing) ──
-
+    // ── the engine's own answers (a scroll, a hover, a field's typing) ───
     /// When each window last took input.
     fn last_input() -> &'static Mutex<HashMap<u64, u64>> {
         static L: OnceLock<Mutex<HashMap<u64, u64>>> = OnceLock::new();

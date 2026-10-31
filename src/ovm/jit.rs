@@ -2408,7 +2408,7 @@ impl JitCache {
         }
         let _boot = crate::boot_trace::Span::start(crate::boot_trace::Counter::Native);
 
-        // ── plan + global inference fixpoint ──
+        // ── plan + global inference fixpoint ────────────────────────
         let mut plans: Vec<PlanFn> = vec![PlanFn::new(
             entry_id,
             Arc::clone(entry_bytecode),
@@ -2581,7 +2581,7 @@ impl JitCache {
             }
         }
 
-        // ── finalize each member's inference ──
+        // ── finalize each member's inference ────────────────────────
         let mut inferences: Vec<Inference> = Vec::with_capacity(plans.len());
         for plan in &plans {
             match plan.finalize() {
@@ -2656,7 +2656,7 @@ impl JitCache {
             }
         }
 
-        // ── codegen: declare everything, then define everything ──
+        // ── codegen: declare everything, then define everything ─────
         // Snapshot previously compiled call targets before borrowing the
         // module (both live in self).
         // Which builtin natives this group bakes: its own whitelisted
@@ -3372,8 +3372,7 @@ impl JitCache {
     }
 }
 
-// ── prequalification: the syntactic whitelist ──────────────────────────
-
+// ── prequalification: the syntactic whitelist ───────────────────────
 /// Every instruction the JIT knows how to translate, checked without any
 /// type information — cheap enough to run at registration for every
 /// promoted function. CallFn targets are resolved (and arity-checked)
@@ -3660,8 +3659,7 @@ fn has_backward_jump(bytecode: &CompiledBytecode) -> bool {
     })
 }
 
-// ── qualification: register-kind inference ─────────────────────────────
-
+// ── qualification: register-kind inference ──────────────────────────
 // Kinds as a bitmask. A register may be WRITTEN with several kinds over
 // its lifetime (e.g. the dead result slot of an `if` statement that is
 // Unit on one path and Int on the other). What must be single-kinded is
@@ -5836,7 +5834,7 @@ impl PlanFn {
             (k, None)
         };
 
-        // ── the watermark gate ──
+        // ── the watermark gate ──────────────────────────────────────
         //
         // Allocation inside a loop used to refuse wholesale. It is now
         // allowed exactly when the loop can be watermarked: a single
@@ -5985,8 +5983,7 @@ pub(crate) fn instruction_name(inst: &Instruction) -> &'static str {
     }
 }
 
-// ── codegen ────────────────────────────────────────────────────────────
-
+// ── codegen ─────────────────────────────────────────────────────────
 /// The imported host helpers, declared once per group.
 #[derive(Clone, Copy)]
 struct Helpers {

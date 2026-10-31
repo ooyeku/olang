@@ -15,12 +15,11 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 impl Interpreter {
-    /// Feature 8: Enhanced cached module retrieval with smart validation
+    /// A cached module, if its file has not changed since it was loaded.
     pub(crate) fn get_cached_module(
         &mut self,
         module_path: &str,
     ) -> Result<Option<ModuleCacheEntry>, InterpreterError> {
-        // Check if we have a cached entry first (read-only check)
         let has_entry = self.module_cache.contains_key(module_path);
         if !has_entry {
             self.cache_statistics.cache_misses += 1;
@@ -82,7 +81,7 @@ impl Interpreter {
         }
     }
 
-    /// Cache a module for future use with smart caching enhancements
+    /// Cache a loaded module.
     pub(crate) fn cache_module(
         &mut self,
         module_path: String,
@@ -102,7 +101,7 @@ impl Interpreter {
         )
     }
 
-    /// Feature 8: Enhanced cache_module with smart caching options
+    /// Cache a loaded module, recording its hash, size and load time.
     #[allow(clippy::too_many_arguments)] // caching knobs; a config struct is future work
     pub(crate) fn cache_module_with_options(
         &mut self,
@@ -123,7 +122,7 @@ impl Interpreter {
                 let meta = file_path.as_ref().and_then(|p| std::fs::metadata(p).ok());
                 let last_modified = meta.as_ref().and_then(|m| m.modified().ok());
                 let file_len = meta.as_ref().map(|m| m.len());
-                // Feature 8: Calculate content hash for smart invalidation
+                // The content hash tells a changed file from a touched one
                 let content_hash = if let Some(ref path) = file_path {
                     self.calculate_file_hash(path)?
                 } else {
@@ -134,7 +133,6 @@ impl Interpreter {
             }
         };
 
-        // Feature 8: Estimate memory usage
         let memory_size = self.estimate_module_memory_size(&module, &ast_cache, &analysis_cache);
 
         let cache_entry = ModuleCacheEntry {
@@ -143,7 +141,6 @@ impl Interpreter {
             last_modified,
             file_len,
             dependencies,
-            // Feature 8: Smart caching fields
             content_hash,
             compilation_time,
             access_count: 1,
@@ -155,16 +152,12 @@ impl Interpreter {
         self.module_cache.insert(module_path.clone(), cache_entry);
         crate::log::get_logger().debug(
             "interpreter",
-            &format!(
-                "Smart cached module: {} ({}KB)",
-                module_path,
-                memory_size / 1024
-            ),
+            &format!("cached module: {} ({}KB)", module_path, memory_size / 1024),
         );
         Ok(())
     }
 
-    /// Feature 8: Calculate SHA-256 hash of file content for change detection
+    /// SHA-256 of a file's content, for change detection.
     pub(crate) fn calculate_file_hash(
         &self,
         file_path: &std::path::Path,
@@ -208,7 +201,7 @@ impl Interpreter {
         Ok(format!("{:x}", hasher.finalize()))
     }
 
-    /// Feature 8: Calculate hash of string content
+    /// SHA-256 of a string.
     pub(crate) fn calculate_string_hash(&self, content: &str) -> String {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
@@ -216,7 +209,7 @@ impl Interpreter {
         format!("{:x}", hasher.finalize())
     }
 
-    /// Feature 8: Estimate memory usage of cached module data
+    /// A rough estimate of a cached module's memory use.
     fn estimate_module_memory_size(
         &self,
         module: &Value,
@@ -225,7 +218,6 @@ impl Interpreter {
     ) -> usize {
         let mut size = 0;
 
-        // Estimate module value size (simplified)
         match module {
             Value::Struct { fields, .. } => {
                 size += fields.len() * 64; // rough estimate per field
@@ -391,7 +383,7 @@ already binds — an import never replaces a program's own name. Alias the impor
                                     );
                                 }
                                 _ => {
-                                    // Feature 9: Enhanced function not found error with suggestions
+                                    // A missing function, with near-miss suggestions
                                     let mut available_functions = Vec::new();
                                     let current_file = self.current_module_path.clone();
 
@@ -405,7 +397,6 @@ already binds — an import never replaces a program's own name. Alias the impor
                                         .error_formatter
                                         .generate_suggestions(item_name, &available_functions);
 
-                                    // Get the module path from the current context
                                     let module_path = self
                                         .current_module_path
                                         .clone()
@@ -434,15 +425,15 @@ already binds — an import never replaces a program's own name. Alias the impor
         Ok(())
     }
 
-    /// Enhanced module cache clearing.
+    /// Clear the module cache.
     pub fn clear_module_cache(&mut self) {
         self.module_cache.clear();
         self.dependency_tracker = ModuleDependencyTracker::new();
         self.cache_statistics = CacheStatistics::default();
-        crate::log::get_logger().debug("interpreter", "Smart module cache cleared");
+        crate::log::get_logger().debug("interpreter", "module cache cleared");
     }
 
-    /// Feature 8: Calculate total memory usage of cached data
+    /// Estimated memory held by the module cache.
     fn calculate_total_cache_memory(&self) -> usize {
         self.module_cache
             .values()
@@ -450,7 +441,7 @@ already binds — an import never replaces a program's own name. Alias the impor
             .sum()
     }
 
-    /// Feature 8: Intelligent cache cleanup based on usage patterns
+    /// Evict the least valuable entries once the cache passes its limits.
     pub fn perform_intelligent_cache_cleanup(
         &mut self,
     ) -> Result<CacheCleanupStats, InterpreterError> {
@@ -463,7 +454,6 @@ already binds — an import never replaces a program's own name. Alias the impor
         let current_memory = self.calculate_total_cache_memory();
         let current_entries = self.module_cache.len();
 
-        // Check if cleanup is needed
         if current_memory > max_memory_mb * 1024 * 1024 || current_entries > max_entries {
             // Collect entries with their scores for sorting
             let mut entries_with_scores: Vec<_> = self
@@ -499,7 +489,7 @@ already binds — an import never replaces a program's own name. Alias the impor
         Ok(cleanup_stats)
     }
 
-    /// Feature 8: Calculate priority score for cache entry (higher = keep longer)
+    /// How much an entry is worth keeping (higher keeps it longer).
     fn calculate_cache_priority_score(&self, entry: &ModuleCacheEntry) -> f64 {
         let _now = system_now();
         let hours_since_access = entry
@@ -710,7 +700,7 @@ already binds — an import never replaces a program's own name. Alias the impor
             .entry(module_path.to_string())
             .or_insert_with(|| file_path.clone());
 
-        // Feature 7: Check for circular dependency before loading
+        // Refuse an import cycle before loading anything
         if self.module_loading_stack.contains(&file_path_str) {
             // Build cycle path for clear error message
             let cycle_start = self
@@ -755,7 +745,7 @@ already binds — an import never replaces a program's own name. Alias the impor
             }
         }
 
-        // Feature 8: Start timing for compilation metrics
+        // Load time, kept with the cache entry
         let start_time = Instant::now();
         // The start's trace counts the outermost load (its imports in it)
         let _boot = self
@@ -846,11 +836,10 @@ already binds — an import never replaces a program's own name. Alias the impor
             }
         };
 
-        // Create a new environment for the module with builtins
         let mut module_env = Environment::new();
         module_env.variables = self.prelude();
 
-        // Feature 7: Add module to loading stack to track circular dependencies
+        // Mark the module as loading, to catch a cycle
         self.module_loading_stack.push(file_path_str.clone());
         let stack_size_before = self.module_loading_stack.len();
 
@@ -1121,7 +1110,7 @@ already binds — an import never replaces a program's own name. Alias the impor
                 fields: std::sync::Arc::new(exports),
             };
 
-            // Feature 8: Cache the module with smart caching enhancements
+            // Cache the module
             let compilation_time = start_time.elapsed();
             self.cache_module_with_options(
                 file_path_str,
@@ -1146,7 +1135,7 @@ already binds — an import never replaces a program's own name. Alias the impor
         self.pending_top_level = saved_pending;
         self.declared_early = saved_early;
 
-        // Feature 7: Clean up loading stack (ensure we only remove the module we added)
+        // Pop the loading stack, removing only the module this call added
         if self.module_loading_stack.len() >= stack_size_before {
             self.module_loading_stack.truncate(stack_size_before - 1);
         }
@@ -1156,7 +1145,7 @@ already binds — an import never replaces a program's own name. Alias the impor
 
     /// Resolve module path to actual file path using dependency-free discovery
     ///
-    /// Discovery Rules (Feature 4):
+    /// Discovery rules:
     /// 1. Relative to current file - `use sibling_file { function }`
     /// 2. Relative to project root - `use utils.helpers { function }`
     /// 3. Standard library - `use std.io { println }` (built-in)
@@ -1286,7 +1275,7 @@ already binds — an import never replaces a program's own name. Alias the impor
             return Ok(path);
         }
 
-        // Enhanced error with discovery information
+        // The error lists where the module was looked for
         self.create_module_not_found_error(module_path, &debug_config)
     }
 
@@ -1477,11 +1466,9 @@ already binds — an import never replaces a program's own name. Alias the impor
         &self,
         module_path: &str,
     ) -> Result<std::path::PathBuf, InterpreterError> {
-        // Check if this is a stdlib module
         let stdlib = crate::stdlib::get_stdlib();
         if stdlib.contains_key(module_path) {
-            // Return a special path that indicates this is a stdlib module
-            // We'll handle this specially in load_module_from_file
+            // A marker path that load_module_from_file recognises.
             return Ok(std::path::PathBuf::from(format!(
                 "__stdlib__/{}",
                 module_path
@@ -1521,8 +1508,8 @@ already binds — an import never replaces a program's own name. Alias the impor
                 "requirements.txt", // Python project
                 "go.mod",           // Go project
                 ".git",             // Git repository
-                "olang.toml",       // Future Olang project file
-                "main.ol",          // Olang entry point
+                "olang.toml",       // a project manifest
+                "main.ol",          // olang entry point
             ];
 
             for indicator in indicators {
@@ -1566,7 +1553,7 @@ already binds — an import never replaces a program's own name. Alias the impor
             let target_dir = base_dir.join(&dir_path);
             candidates.push(target_dir.join(&file_name));
 
-            // Feature 5: Check for automatic index files in directories
+            // A directory resolves to its index file
             candidates.push(target_dir.join("index.ol"));
             candidates.push(target_dir.join("mod.ol"));
         } else {
@@ -1608,7 +1595,7 @@ already binds — an import never replaces a program's own name. Alias the impor
         })
     }
 
-    /// Feature 9: Enhanced module not found error with detailed context and suggestions
+    /// A module-not-found error, with where it looked and near-miss suggestions.
     fn create_module_not_found_error(
         &self,
         module_path: &str,

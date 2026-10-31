@@ -15,8 +15,7 @@ fn fixture_dir(tag: &str) -> PathBuf {
     dir
 }
 
-// ── olang test ─────────────────────────────────────────────────────────
-
+// ── olang test ──────────────────────────────────────────────────────
 #[test]
 fn test_runner_reports_passes_and_failures_and_exits_nonzero() {
     let dir = fixture_dir("mixed");
@@ -83,8 +82,7 @@ fn test_runner_ignores_files_without_test_blocks() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-// ── olang fmt ──────────────────────────────────────────────────────────
-
+// ── olang fmt ───────────────────────────────────────────────────────
 #[test]
 fn fmt_check_flags_and_write_fixes_idempotently() {
     let dir = fixture_dir("fmt");
@@ -178,8 +176,7 @@ fn test_fails_on_a_file_that_does_not_parse() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-// ── olang bench ────────────────────────────────────────────────────────
-
+// ── olang bench ─────────────────────────────────────────────────────
 #[test]
 fn bench_measures_saves_and_compares_a_baseline() {
     let dir = fixture_dir("bench");

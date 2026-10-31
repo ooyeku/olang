@@ -604,7 +604,6 @@ mod tests {
     use crate::ast::Value;
     use std::sync::Arc;
 
-    // Helper functions to create test values
     fn string_val(s: &str) -> Value {
         Value::String(Arc::new(s.to_string()))
     }
@@ -830,7 +829,6 @@ mod tests {
         if let Value::List(items) = &result {
             assert_eq!(items.len(), 3);
             // All items should be unique (no duplicates in sample without replacement)
-            // Since we can't use HashSet with Value, we'll check for duplicates differently
             for i in 0..items.len() {
                 for j in (i + 1)..items.len() {
                     assert_ne!(items[i], items[j], "Found duplicate items in sample");

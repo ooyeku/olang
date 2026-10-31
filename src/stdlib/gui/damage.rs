@@ -602,7 +602,6 @@ fn rects_of(dirty: &[bool], cols: i32, rows: i32, w: u32, h: u32) -> Damage {
 }
 
 // ── counters, for a HUD and for measuring ───────────────────────────
-
 /// Frames drawn (whole or in part) and presented.
 pub static FRAMES_DRAWN: AtomicU64 = AtomicU64::new(0);
 /// Frames whose pixels were all last frame's: nothing drawn or presented.

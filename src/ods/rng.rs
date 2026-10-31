@@ -129,10 +129,7 @@ fn par(n: usize) -> bool {
     super::series::par(ParClass::Sort, n)
 }
 
-// ---------------------------------------------------------------------
-// random.rng and random.Rng.*
-// ---------------------------------------------------------------------
-
+// ── random.rng and random.Rng.* ─────────────────────────────────────
 /// The methods, with the fewest arguments each takes (the generator
 /// counted).
 pub const METHODS: &[(&str, usize)] = &[

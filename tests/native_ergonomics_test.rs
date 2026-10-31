@@ -58,8 +58,7 @@ fn promoted(code: &str, names: &[&str]) {
     }
 }
 
-// ── L1: names and defaults ─────────────────────────────────────────────
-
+// ── L1: names and defaults ──────────────────────────────────────────
 const KWARGS: &str = r#"
 let s = ods.series([3.0, 1.0, 2.0, 5.0])
 let f = ods.frame([["a", s], ["b", [1, 2, 3, 4]]])
@@ -133,8 +132,7 @@ println(fitted(parts.train).params.x > 1.9)
     );
 }
 
-// ── L2: methods ────────────────────────────────────────────────────────
-
+// ── L2: methods ─────────────────────────────────────────────────────
 const METHODS: &str = r#"
 let s = ods.series([3.0, (), 2.0, 5.0])
 let f = ods.frame([["a", s], ["b", [1, 2, 3, 4]]])
@@ -197,8 +195,7 @@ println(attempt(() => fit.nope()))
     );
 }
 
-// ── L3/L4: the operator hooks ──────────────────────────────────────────
-
+// ── L3/L4: the operator hooks ───────────────────────────────────────
 #[test]
 fn unary_bitwise_and_matmul_reach_the_native_hook() {
     let code = r#"
@@ -236,8 +233,7 @@ println(@twice(x))
     agrees(code, "2\n4");
 }
 
-// ── L5/L6: len, fields ─────────────────────────────────────────────────
-
+// ── L5/L6: len, fields ──────────────────────────────────────────────
 #[test]
 fn len_and_columns_as_fields() {
     let code = r#"
@@ -259,8 +255,7 @@ println(col(f))
     );
 }
 
-// ── D0 × D1: the column functions through names, methods and operators ──
-
+// ── D0 × D1: the column functions through names, methods and operators ───
 const COLUMNS: &str = r#"
 use ods { col }
 let s = ods.series([1.0, (), -3.0, 4.0])

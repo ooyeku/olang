@@ -434,7 +434,7 @@ fn http_request(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     perform(method, url, Some(body), opts)
 }
 
-/// Start an HTTP server (simplified implementation for basic use)
+/// Start an HTTP server.
 /// Usage: http.serve(8080, handler_function) -> Result<Unit, Error>
 fn http_serve(_args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     // The real server needs the interpreter (to call the olang handler), so
@@ -1821,7 +1821,6 @@ mod tests {
 
     use std::sync::Arc;
 
-    // Helper functions to create test values
     fn string_val(s: &str) -> Value {
         Value::String(Arc::new(s.to_string()))
     }
@@ -1859,22 +1858,11 @@ mod tests {
     /// a Rust `Err`; environmental failure still returns `Ok(Value::Err)`.
     /// Tests that only care *that* the call failed use this; tests that
     /// care *which* assert on the specific shape.
-    #[allow(dead_code)]
     fn assert_fails(result: Result<Value, Box<dyn std::error::Error>>) {
         match result {
             Err(_) => {}
             Ok(Value::Err(_)) => {}
             Ok(other) => panic!("expected a failure, got: {:?}", other),
-        }
-    }
-
-    #[allow(dead_code)]
-    fn assert_err(result: &Value) -> &Value {
-        match result {
-            Value::Err(inner) => inner,
-            _ => {
-                panic!("Expected Err result, got: {:?}", result)
-            }
         }
     }
 

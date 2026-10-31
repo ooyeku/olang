@@ -1,3 +1,7 @@
+//! Static analysis over a parsed program: which names resolve, which
+//! variables go unused, code after a return, and whether a match covers
+//! every case.
+
 use crate::ast::{
     Argument, Expr, MatchArm, Pattern, Program, ShareDecl, Statement, TemplatePart, TestDecl,
     UseDecl, Value,
@@ -310,8 +314,7 @@ impl Analyzer {
                 // Types are tracked like constants.
                 self.bind(&type_decl.name, false);
 
-                // Analyze type definition based on its structure
-                // For now, we'll do basic validation that can be extended as needed
+                // Structs and enums are checked for duplicate names.
                 match &type_decl.definition {
                     crate::ast::TypeDefinition::Struct { fields } => {
                         let mut field_names = HashSet::new();
@@ -348,8 +351,7 @@ impl Analyzer {
                             .insert(type_decl.name.clone(), variant_names);
                     }
                     _ => {
-                        // Handle other type definitions (Union, Alias, etc.)
-                        // For now, we don't perform specific validation on these
+                        // Unions and aliases have nothing to check here.
                     }
                 }
 
@@ -519,7 +521,6 @@ impl Analyzer {
                 // Analyze the value expression first
                 self.analyze_expr(value)?;
 
-                // Check if the target variable exists in any scope
                 let mut variable_exists = false;
                 for scope in self.scopes.iter().rev() {
                     if scope.contains(target) {
@@ -529,10 +530,8 @@ impl Analyzer {
                 }
 
                 if !variable_exists {
-                    // Variable doesn't exist - this is an assignment to an undefined variable
-                    // In some languages this would be an error, but in Olang it might be
-                    // allowed to create variables through assignment
-                    // For now, we'll add it to the current scope
+                    // Assignment to an undeclared name. The scoping pass reports
+                    // it; here the name is declared so later reads don't also warn.
                     self.declare_in_scope(target.clone());
 
                     // Also add to variables map for tracking
@@ -776,7 +775,6 @@ impl Analyzer {
     }
 
     fn check_variable_usage(&mut self, name: &str) -> Result<(), AnalysisError> {
-        // Check if variable is defined in any scope
         for scope in self.scopes.iter().rev() {
             if scope.contains(name) {
                 // Update usage count
@@ -1015,7 +1013,6 @@ impl Analyzer {
         let mut overwritten = Vec::new();
         for (name, info) in &self.variables {
             if info.usage_count == 0 && info.scope > 0 {
-                // Check if there's another variable with the same name in outer scope
                 let mut found_outer = false;
                 for scope_idx in 0..info.scope {
                     if let Some(scope) = self.scopes.get(scope_idx)
@@ -1099,16 +1096,13 @@ impl Analyzer {
                 Ok(exhaustive)
             }
             PatternAnalysis::Tuple(_arity) => {
-                // Tuple patterns are exhaustive only if they have comprehensive coverage
-                // A single tuple pattern like (x, y) is not exhaustive because it only covers
-                // one specific pattern, not all possible tuples
-                // For now, we consider them NOT exhaustive unless there's a wildcard
+                // Tuple patterns count as not exhaustive: only a wildcard
+                // (handled above) covers every tuple.
                 Ok(false)
             }
             PatternAnalysis::List => {
-                // List patterns are complex to check exhaustively
-                // For now, we consider them exhaustive if they have comprehensive coverage
-                // A full implementation would check for patterns covering different lengths
+                // An approximation: an empty-list case plus any non-empty or
+                // rest pattern counts as exhaustive. Lengths are not checked.
                 let has_empty_list = patterns.iter().any(
                     |p| matches!(p, Pattern::List { patterns: inner, .. } if inner.is_empty()),
                 );
@@ -1257,8 +1251,7 @@ impl Analyzer {
                     }
                 }
                 _ => {
-                    // Other patterns like Range, Struct, etc.
-                    // For now, consider them as mixed patterns
+                    // Ranges, structs and the rest count as mixed.
                 }
             }
         }
@@ -1422,7 +1415,6 @@ impl Analyzer {
                         self.mark_statement_reachable(statement, reachable);
                     }
 
-                    // Check if this statement makes subsequent statements unreachable
                     if self.is_terminating_statement(statement) {
                         statements_reachable = false;
                     }
@@ -1776,7 +1768,6 @@ impl Analyzer {
 
     /// Analyze test declarations for proper structure and dependencies
     fn analyze_test_decl(&mut self, test_decl: &TestDecl) -> Result<(), AnalysisError> {
-        // Create new scope for test
         self.enter_scope();
 
         // Analyze all statements in test body
@@ -1987,7 +1978,6 @@ impl DeadCodeDetector {
                         self.mark_statement_reachable(statement);
                     }
 
-                    // Check if this statement makes subsequent statements unreachable
                     if self.is_terminating_statement(statement) {
                         statements_reachable = false;
                     }
@@ -2054,11 +2044,8 @@ impl DeadCodeDetector {
                     self.mark_expression_reachable(&field.value);
                 }
             }
-            // Add other expression types as needed
-            _ => {
-                // For now, just mark as reachable without recursing
-                // In a full implementation, we'd handle all expression types
-            }
+            // Other expressions are not walked.
+            _ => {}
         }
     }
 

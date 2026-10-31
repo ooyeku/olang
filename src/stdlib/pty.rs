@@ -47,14 +47,6 @@ fn obj(type_name: &str, fields: Vec<(&str, Value)>) -> Value {
         fields: Arc::new(m),
     }
 }
-#[allow(dead_code)]
-fn vmap(fields: Vec<(&str, Value)>) -> Value {
-    let mut m = crate::ast::ValueMap::default();
-    for (k, v) in fields {
-        m.insert(k.to_string(), v);
-    }
-    Value::Map(Arc::new(m))
-}
 
 pub fn create_pty_module() -> Value {
     let mut module = crate::ast::ValueMap::default();

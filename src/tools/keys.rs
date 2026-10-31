@@ -455,13 +455,6 @@ impl<'p> Analysis<'p> {
                                     given[at] = true;
                                 }
                             }
-                            CallArg::Shape(s) => {
-                                if positional < shapes.len() {
-                                    shapes[positional] = s;
-                                    given[positional] = true;
-                                }
-                                positional += 1;
-                            }
                         }
                     }
                     for (j, p) in info.decl.parameters.iter().enumerate() {
@@ -964,8 +957,6 @@ fn pattern_names(p: &Pattern, out: &mut Vec<String>) {
 enum CallArg<'e> {
     Positional(&'e Expr),
     Named(&'e String, &'e Expr),
-    #[allow(dead_code)]
-    Shape(Shape),
 }
 
 /// Every direct call by name: `f(a, b)`, `a |> f(b)`, `a |> f`.

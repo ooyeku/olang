@@ -38,7 +38,6 @@ const ENDLESS: &str =
 const TEN_MILLION: &str = "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n LIMIT 10000000) SELECT i, 'row ' || i AS label FROM n";
 
 // ── interrupt ───────────────────────────────────────────────────────
-
 #[test]
 fn interrupt_from_another_task_stops_a_running_query_promptly() {
     assert_ok(&format!(
@@ -124,7 +123,6 @@ fn interrupt_is_callable_from_a_rust_thread_while_the_statement_holds_the_connec
 }
 
 // ── timeout_ms ──────────────────────────────────────────────────────
-
 #[test]
 fn timeout_ms_stops_a_statement_and_says_so() {
     assert_ok(&format!(
@@ -153,7 +151,6 @@ unwrap(db.close(c))
 }
 
 // ── cursors ─────────────────────────────────────────────────────────
-
 #[test]
 fn a_cursor_streams_the_first_rows_of_ten_million_without_the_rest() {
     assert_ok(&format!(
@@ -308,7 +305,6 @@ unwrap(db.close(w))
 }
 
 // ── query_rows ──────────────────────────────────────────────────────
-
 #[test]
 fn query_rows_keeps_order_repeats_types_and_blobs() {
     assert_ok(
@@ -363,7 +359,6 @@ unwrap(db.close(c))
 }
 
 // ── open options ────────────────────────────────────────────────────
-
 #[test]
 fn open_readonly_refuses_writes() {
     let path = temp_db("ro");
@@ -425,7 +420,6 @@ assert(is_err(db.open("file:{path}-missing?mode=rw")), "mode=rw does not create"
 }
 
 // ── concurrency ─────────────────────────────────────────────────────
-
 #[test]
 fn two_tasks_with_their_own_connections_to_one_file_run_side_by_side() {
     let path = temp_db("side");

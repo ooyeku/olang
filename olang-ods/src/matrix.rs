@@ -319,10 +319,7 @@ impl Matrix {
         out
     }
 
-    // -----------------------------------------------------------------
-    // Products
-    // -----------------------------------------------------------------
-
+    // ── Products ────────────────────────────────────────────────────
     /// `self @ b` for a vector `b` of length `cols`.
     pub fn matvec(&self, b: &[f64], par: bool) -> Result<Vec<f64>> {
         let (r, c) = self.shape();
@@ -466,10 +463,7 @@ impl Matrix {
             .expect("a matrix chains with its transpose")
     }
 
-    // -----------------------------------------------------------------
-    // Reductions along an axis
-    // -----------------------------------------------------------------
-
+    // ── Reductions along an axis ────────────────────────────────────
     /// Means down the columns (`axis` 0, one per column) or across the
     /// rows (`axis` 1, one per row).
     pub fn mean(&self, axis: usize, par: bool) -> Result<Vec<f64>> {
@@ -655,10 +649,7 @@ pub fn cross(a: &[Arc<Vec<f64>>], b: &[Arc<Vec<f64>>], n: usize, sym: bool, par:
     out
 }
 
-// ---------------------------------------------------------------------
-// k × k routines
-// ---------------------------------------------------------------------
-
+// ── k × k routines ──────────────────────────────────────────────────
 fn square(a: &Matrix, what: &str) -> Result<usize> {
     let (r, c) = a.shape();
     if r != c {
@@ -1043,10 +1034,7 @@ fn sym_eigen(a: &[f64], n: usize) -> (Vec<f64>, Vec<f64>) {
     (d, out)
 }
 
-// ---------------------------------------------------------------------
-// Distances
-// ---------------------------------------------------------------------
-
+// ── Distances ───────────────────────────────────────────────────────
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Metric {
     SqEuclidean,
@@ -1180,10 +1168,7 @@ pub fn cdist(x: &Matrix, c: &Matrix, metric: Metric, par: bool) -> Result<Matrix
     })
 }
 
-// ---------------------------------------------------------------------
-// Correlation and covariance of columns
-// ---------------------------------------------------------------------
-
+// ── Correlation and covariance of columns ───────────────────────────
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CorrMethod {
     Pearson,
