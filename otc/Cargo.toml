@@ -2,6 +2,7 @@
 name = "otc"
 version = "0.77.0"
 edition = "2024"
+rust-version = "1.97"
 authors = ["Olang Team"]
 description = "olang toolchain — scaffolding, package management, and code analysis"
 license = "MIT"

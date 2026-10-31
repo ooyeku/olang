@@ -12,18 +12,16 @@ all: build
 build:
 	cargo build --release
 
-# Install using the setup script
+# Build the browser runtime, then install olang and otc with it embedded
 install:
-	@echo "Installing Olang and OTC using setup script..."
-	./setup.sh
+	cargo xtask install
 
-# Remove installed binaries and directories
+# Remove the binaries `make install` put in Cargo's bin folder. ~/.olang
+# (packages, history, toolchains from `otc update`) is left alone; delete
+# it yourself to remove everything.
 remove:
-	@echo "Removing Olang and OTC..."
 	cargo uninstall olang || true
 	cargo uninstall otc || true
-	rm -rf ~/.olang
-	@echo "Removal complete - all .olang directories and files removed"
 
 # Clean build artifacts
 clean:

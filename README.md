@@ -44,15 +44,19 @@ println(summary)
 
 ## Installation
 
-On macOS (a checksum-verified prebuilt binary; Linux binaries are an
-unsupported preview):
+On a Mac, open Terminal, paste this line and press Return. It needs no
+Rust and no administrator password:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh
 ```
 
-From a clone, `cargo xtask install` builds the browser runtime and installs
-`olang` and `otc` with it embedded. Then:
+Then open a new Terminal window and run `olang --version`. With
+Homebrew, `brew install ooyeku/olang/olang` works too. Linux binaries are
+an unsupported preview; on Windows, run the installer inside
+[WSL](https://learn.microsoft.com/windows/wsl/install).
+[Installation](docs/installation.md) covers every route, building from
+source, and what to do when something goes wrong. Then:
 
 ```bash
 olang script.ol            # run a program; arguments reach os.args()
@@ -61,8 +65,6 @@ olang test                 # run test blocks under the current directory
 olang check                # report provable type violations
 otc new myapp              # scaffold a project
 ```
-
-[Installation](docs/installation.md) covers every route.
 
 ## Documentation
 
