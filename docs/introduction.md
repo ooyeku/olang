@@ -206,11 +206,11 @@ and browser, in olang.
 ## Platforms and stability
 
 olang 1.0 makes its compatibility promise on macOS, where every release
-is tested. Linux and Windows are unsupported previews for now: Linux
-binaries are released and pass their tests, Windows builds but hasn't
-been verified, and the installer runs on Windows inside WSL. The ecosystem of third-party packages is still small,
-so most programs lean on the standard library, which is broad for that
-reason. [Stability and compatibility](stability.md) is the official
+is tested. Linux and Windows are previews for now: Linux binaries are
+released and pass their tests, and Windows has its own installer and
+builds, but hasn't been verified on real machines yet (WSL works today).
+The ecosystem of third-party packages is still small, so most programs
+lean on the standard library, which is broad for that reason. [Stability and compatibility](stability.md) is the official
 statement of what is stable, including the
 [platforms](stability.md#platforms) it covers.
 
