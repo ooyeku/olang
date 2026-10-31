@@ -3114,6 +3114,10 @@ toad.frame([#{ "swarm": s, "color": "#ff9a3c", "radius": 6.0 }], #{ "size": (128
 | `toad.wgsl(kernel)` | the WGSL a kernel runs as |
 | `toad.ops(kernel)` | how many scalar operations it compiled to |
 | `toad.gpu()` | the GPU and its backend |
+| `toad.input()` | the keyboard, mouse and gamepads as switches: `#{ down, pressed, released }` since the last read, the sticks `left` and `right`, the triggers `lt` and `rt`, `pads` connected |
+| `toad.press(key, down)` | press or let go of a key as a hand would (scripts and tests) |
+| `toad.clear(swarm)` | empty a swarm |
+| `toad.wanted(name)` | whether the live picture wants a new frame (a window drew the last one); `toad.frame` skips one it does not |
 | `toad.frame(layers, view)` | draw swarms, shapes (circle, box, capsule, ring, triangle, line) and sprites in order into an HDR target, tone mapped; `"live": name` shows it in a Loom window as the image `("live", name)`; `"png": true` answers its pixels |
 
 Colours are sRGB as written, `(r, g, b, a)` or `"#rrggbb"`; `glow` takes

@@ -15,6 +15,8 @@
 
 pub mod cpu;
 pub mod kernel;
+#[cfg(feature = "gamepad")]
+pub mod pad;
 #[cfg(feature = "gui")]
 pub mod render;
 pub mod wgsl;
@@ -40,6 +42,10 @@ pub fn create_toad_module() -> Value {
         ("read", 2),
         ("gpu", 0),
         ("frame", 2),
+        ("input", 0),
+        ("press", 2),
+        ("clear", 1),
+        ("wanted", 1),
     ] {
         module.insert(
             name.to_string(),
@@ -450,6 +456,16 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(&str) -> 
                 Ok(Value::Map(Arc::new(out)))
             })
         }
+        "clear" => {
+            let sid = id_of(args.first(), "swarm")?;
+            with(|st| {
+                if let Some(sw) = st.swarms.get_mut(&sid) {
+                    sw.cols.n = 0;
+                    sw.head = 0;
+                }
+            });
+            Ok(Value::Unit)
+        }
         "sync" => {
             let sid = id_of(args.first(), "swarm")?;
             with(|st| {
@@ -505,14 +521,52 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(&str) -> 
         "gpu" => Ok(match crate::stdlib::gui::gpu::gpu(None, None) {
             Ok(g) => {
                 let i = g.adapter.get_info();
-                Value::String(Arc::new(format!("{} ({:?})", i.name, i.backend)))
+                ok(Value::String(Arc::new(format!("{} ({:?})", i.name, i.backend))))
             }
             Err(e) => err(e),
         }),
         #[cfg(feature = "gui")]
         "frame" => frame(a(0), a(1)),
+        #[cfg(feature = "gui")]
+        "input" => {
+            #[cfg(feature = "gamepad")]
+            let (ls, rs, lt, rt, pads) = pad::poll();
+            #[cfg(not(feature = "gamepad"))]
+            let (ls, rs, lt, rt, pads) = ((0.0f32, 0.0f32), (0.0f32, 0.0f32), 0.0f32, 0.0f32, 0usize);
+            let (down, pressed, released) = crate::stdlib::gui::keys::read();
+            let list = |v: Vec<String>| Value::List(Arc::new(v.into_iter().map(|k| Value::String(Arc::new(k))).collect()));
+            let mut out = ValueMap::default();
+            out.insert("down".into(), list(down));
+            out.insert("pressed".into(), list(pressed));
+            out.insert("released".into(), list(released));
+            let p = |v: (f32, f32)| Value::Tuple(Arc::new(vec![Value::Float(v.0 as f64), Value::Float(v.1 as f64)]));
+            out.insert("left".into(), p(ls));
+            out.insert("right".into(), p(rs));
+            out.insert("lt".into(), Value::Float(lt as f64));
+            out.insert("rt".into(), Value::Float(rt as f64));
+            out.insert("pads".into(), Value::Integer(pads as i64));
+            Ok(Value::Map(Arc::new(out)))
+        }
+        #[cfg(feature = "gui")]
+        "press" => {
+            // a script's or a test's hand on the keyboard
+            let Value::String(k) = a(0) else {
+                return Err("toad.press: the key is a string".into());
+            };
+            if matches!(a(1), Value::Boolean(false)) {
+                crate::stdlib::gui::keys::release(k);
+            } else {
+                crate::stdlib::gui::keys::press(k);
+            }
+            Ok(Value::Unit)
+        }
+        #[cfg(feature = "gui")]
+        "wanted" => Ok(Value::Boolean(match a(0) {
+            Value::String(n) => crate::stdlib::gui::live::wanted(n),
+            _ => true,
+        })),
         #[cfg(not(feature = "gui"))]
-        "gpu" | "frame" => Ok(err(format!("toad.{}: this build has no GPU", name))),
+        "gpu" | "frame" | "input" | "press" | "wanted" => Ok(err(format!("toad.{}: this build has no window", name))),
         _ => Err(format!("toad.{} is not a function", name).into()),
     }
 }
@@ -640,6 +694,18 @@ fn frame(layers: &Value, view: &Value) -> R {
         Some(Value::String(n)) => Some(n.to_string()),
         _ => None,
     };
+    // a live frame no window is waiting for is not drawn (paced to the
+    // display; nothing while the window is hidden)
+    if let Some(n) = &live
+        && !want_png
+        && !matches!(vm.get("force"), Some(Value::Boolean(true)))
+        && !crate::stdlib::gui::live::wanted(n)
+    {
+        let mut out = ValueMap::default();
+        out.insert("ms".into(), Value::Float(0.0));
+        out.insert("skipped".into(), Value::Boolean(true));
+        return Ok(Value::Map(Arc::new(out)));
+    }
     with(|st| -> R {
         if st.renderer.is_none() {
             st.renderer = Some(render::Renderer::new()?);

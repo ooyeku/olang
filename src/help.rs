@@ -2048,7 +2048,32 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
         );
         self.doc_ex("toad.wgsl", "toad.wgsl(kernel)", "String", "toad", "The WGSL compute shader a kernel runs as on the GPU.", &["toad.wgsl(k)"]);
         self.doc_ex("toad.ops", "toad.ops(kernel)", "Int", "toad", "How many scalar operations a kernel compiled to (constants folded, shared reads merged).", &["toad.ops(k)"]);
-        self.doc_ex("toad.gpu", "toad.gpu()", "String", "toad", "The GPU Toad draws with, and its backend.", &["toad.gpu()"]);
+        self.doc_ex("toad.gpu", "toad.gpu()", "Result<String, String>", "toad", "The GPU Toad draws with, and its backend; Err when there is none.", &["toad.gpu()"]);
+        self.doc_ex(
+            "toad.input",
+            "toad.input()",
+            "Map",
+            "toad",
+            "The keyboard, mouse and gamepads as switches, across the process's windows: #{ down, pressed, released, left, right, lt, rt, pads } — what is held now, what went down and came up since the last read (a tap between two reads counts), the sticks (pairs, dead zone taken out), the triggers (0 to 1), and how many pads are connected. Keys by name (\"w\", \"space\", \"left\"), buttons as \"mouse:left\" and \"pad:a\" (b, x, y, lb, rb, lt, rt, start, select, home, ls, rs, up, down, left, right). A window losing focus lets go of everything.",
+            &["toad.input().down"],
+        );
+        self.doc_ex(
+            "toad.press",
+            "toad.press(key, down)",
+            "Unit",
+            "toad",
+            "Press (down true) or let go of a key, button or pad button as if a hand did: a script's or a test's way to play a game.",
+            &[r##"toad.press("space", true)"##],
+        );
+        self.doc_ex("toad.clear", "toad.clear(swarm)", "Unit", "toad", "Empty a swarm: every entity gone at once, its room kept for the next.", &["toad.clear(s)"]);
+        self.doc_ex(
+            "toad.wanted",
+            "toad.wanted(name)",
+            "Bool",
+            "toad",
+            "Whether the live picture `name` wants a new frame: a window drew the last one (or none came yet, or it has gone unseen a while). toad.frame with \"live\" skips a frame nobody wants, so a game draws at the display's rate and not at all while hidden.",
+            &[r##"toad.wanted("game")"##],
+        );
         self.doc_ex(
             "toad.frame",
             "toad.frame(layers, view)",

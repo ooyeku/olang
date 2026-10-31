@@ -2351,6 +2351,17 @@ impl App {
                 );
             }
             WindowEvent::KeyboardInput { event: ke, .. } => {
+                {
+                    use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+                    let base = ke.key_without_modifiers();
+                    if let Some(name) = key_name(&base).or_else(|| key_name(&ke.logical_key)) {
+                        if ke.state == ElementState::Pressed {
+                            super::keys::press(&name);
+                        } else {
+                            super::keys::release(&name);
+                        }
+                    }
+                }
                 if let Some(i) = key_input(&ke, mods) {
                     self.input(id, i);
                 }
@@ -2393,6 +2404,19 @@ impl App {
                     } else {
                         std::mem::take(&mut self.ctrl_click)
                     };
+                {
+                    let name = match button {
+                        MouseButton::Left => "mouse:left",
+                        MouseButton::Right => "mouse:right",
+                        MouseButton::Middle => "mouse:middle",
+                        _ => "mouse:other",
+                    };
+                    if state == ElementState::Pressed {
+                        super::keys::press(name);
+                    } else {
+                        super::keys::release(name);
+                    }
+                }
                 let button = match button {
                     MouseButton::Left if ctrl_left => "right",
                     MouseButton::Left => "left",
@@ -2472,6 +2496,9 @@ impl App {
                 Ime::Enabled | Ime::Disabled => {}
             },
             WindowEvent::Focused(on) => {
+                if !on {
+                    super::keys::release_all();
+                }
                 self.input(id, Input::Focused(on));
                 // the tabs it is shown among, as they stand now
                 #[cfg(target_os = "macos")]

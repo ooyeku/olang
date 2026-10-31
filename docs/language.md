@@ -1139,6 +1139,22 @@ fn quadrant(p) = match p {
 println(quadrant((2, 5)) + " " + quadrant((0, 0)))
 ```
 
+Tuples of numbers do arithmetic element by element, so a position, a
+velocity or a colour is a plain tuple and the maths reads as written. A
+number scales a tuple on either side of `*`, and on the left of `/` and
+`%`; two tuples combine only when they have as many elements:
+
+```olang
+let pos = (10.0, 4.0)
+let vel = (2.0, -1.0)
+println(show(pos + vel * 0.5))     // (11.0, 3.5)
+println(show((1, 2) + (3, 4)))     // (4, 6)
+println(show((255, 128, 0) / 255.0))
+```
+
+Each element follows the rules of its numbers (`Int` stays `Int`, an
+overflow is an error), on every tier.
+
 ### Maps
 
 `#{ key: value }` builds a hash map. Keys are strings (integers, floats, and

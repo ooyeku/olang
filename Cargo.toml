@@ -17,7 +17,7 @@ members = [".", "otc", "playground", "olang-ods", "xtask"]
 exclude = ["vendor"]
 
 [features]
-default = ["native", "full", "gui", "toad"]
+default = ["native", "full", "gui", "toad", "gamepad"]
 # The whole stdlib. The browser profile the web SDK ships omits these
 # (`cargo build -p olang-playground` without `--features full`): the
 # regex engine and its Unicode tables, and the RSA suite, are a sixth of
@@ -44,6 +44,9 @@ rsa-crypto = ["dep:rsa"]
 # in any build (the browser's too). With `gui` as well, show swarms and
 # frames run on `gui`'s wgpu device.
 toad = []
+# `gamepad`: game controllers for Toad's input (gilrs: the platform's HID
+# gamepads, mapped to one standard layout). Native only.
+gamepad = ["toad", "gui", "dep:gilrs"]
 gui = [
     "native",
     "dep:winit",
@@ -189,7 +192,8 @@ rand_distr = "0.6"  # Random distributions (normal, etc.)
 im = { version = "15.1", features = ["serde"] }  # Persistent/immutable collections for O(1) environment cloning
 
 # Parallelization
-rayon = { version = "1.12", optional = true }  # Data parallelism library
+rayon = { version = "1.12", optional = true }
+gilrs = { version = "0.11.2", optional = true }  # Data parallelism library
 # `fs.scan` / `fs.search`: a tree walked as a checkout is (its .gitignores
 # respected at every level), on worker threads — ripgrep's walker.
 ignore = { version = "0.4", optional = true }

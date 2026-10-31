@@ -11,9 +11,22 @@ use crate::ast::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-/// By name: the latest picture, and the ids still adopted (a window may
-/// be drawing one of the last few while the next is published).
-static LIVE: Mutex<Option<HashMap<String, (Arc<Picture>, Vec<u64>)>>> = Mutex::new(None);
+/// A name's pictures: the latest, the ids still adopted (a window may be
+/// drawing one of the last few while the next is published), whether a
+/// window has drawn the latest, and when it was published.
+struct Entry {
+    pic: Arc<Picture>,
+    ids: Vec<u64>,
+    shown: bool,
+    at: std::time::Instant,
+}
+
+static LIVE: Mutex<Option<HashMap<String, Entry>>> = Mutex::new(None);
+
+/// A frame no window drew for this long is taken as unseen (the window
+/// hidden, minimised, or never made): the next is wanted anyway, now and
+/// then, so a window that comes back finds a recent one.
+const UNSEEN_MS: u128 = 250;
 
 /// How many of a name's pictures stay on the GPU.
 const KEEP: usize = 4;
@@ -31,7 +44,7 @@ pub fn name_of(src: &Value) -> Option<String> {
 
 /// The picture last published as `name`.
 pub fn current(name: &str) -> Option<Arc<Picture>> {
-    LIVE.lock().ok()?.as_ref()?.get(name).map(|e| e.0.clone())
+    LIVE.lock().ok()?.as_ref()?.get(name).map(|e| e.pic.clone())
 }
 
 /// Publish `view` (an RGBA8 texture of `w` × `h`, display-encoded and
@@ -50,14 +63,18 @@ pub fn publish(name: &str, view: wgpu::TextureView, w: u32, h: u32) -> u64 {
     gpu.adopt_picture(id, view);
     let stale: Vec<u64> = match LIVE.lock() {
         Ok(mut m) => {
-            let e = m
-                .get_or_insert_with(HashMap::new)
-                .entry(name.to_string())
-                .or_insert_with(|| (pic.clone(), Vec::new()));
-            e.0 = pic;
-            e.1.push(id);
-            let n = e.1.len().saturating_sub(KEEP);
-            e.1.drain(..n).collect()
+            let e = m.get_or_insert_with(HashMap::new).entry(name.to_string()).or_insert_with(|| Entry {
+                pic: pic.clone(),
+                ids: Vec::new(),
+                shown: false,
+                at: std::time::Instant::now(),
+            });
+            e.pic = pic;
+            e.shown = false;
+            e.at = std::time::Instant::now();
+            e.ids.push(id);
+            let n = e.ids.len().saturating_sub(KEEP);
+            e.ids.drain(..n).collect()
         }
         Err(_) => Vec::new(),
     };
@@ -66,3 +83,24 @@ pub fn publish(name: &str, view: wgpu::TextureView, w: u32, h: u32) -> u64 {
     }
     id
 }
+
+/// A window drew `name`'s picture `id`.
+pub fn shown(name: &str, id: u64) {
+    if let Ok(mut m) = LIVE.lock()
+        && let Some(e) = m.as_mut().and_then(|m| m.get_mut(name))
+        && e.pic.id == id
+    {
+        e.shown = true;
+    }
+}
+
+/// Whether `name` wants a new frame: none yet, its latest drawn by a
+/// window, or its latest unseen for a while. A game draws only then, so
+/// it draws at the display's rate and not at all while it cannot be seen.
+pub fn wanted(name: &str) -> bool {
+    match LIVE.lock().ok().as_ref().and_then(|m| m.as_ref()?.get(name).map(|e| (e.shown, e.at))) {
+        None => true,
+        Some((shown, at)) => shown || at.elapsed().as_millis() >= UNSEEN_MS,
+    }
+}
+

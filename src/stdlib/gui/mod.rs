@@ -37,6 +37,7 @@ pub mod damage;
 pub mod edit;
 pub mod flat;
 pub mod gpu;
+pub mod keys;
 pub mod live;
 pub mod holds;
 pub mod motion;

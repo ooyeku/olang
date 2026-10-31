@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Tuples do arithmetic element by element.** `(1, 2) + (3, 4)` is
+  `(4, 6)`, and a number scales a tuple (`pos + vel * dt`), on the
+  interpreter and the bytecode tier alike; tuples of different lengths
+  are refused. Toad's game code and kernels write vector maths this way.
+- **`toad`, the game engine's module** (feature `toad`): kernels compiled
+  from plain olang functions for the CPU and the GPU, swarms, frames of
+  swarms, shapes and sprites, live in a Loom window; and `gui` live
+  pictures (an image whose source is `("live", name)`), held keys for
+  games, and `gui.read(w, "frame")`.
 - **A notebook cell's printed lines stream while it runs.** `olang repl
   --serve` sends what an `eval` prints as `out` events as it is printed
   (the hello's `stream` feature): batched at most every 50 ms, the first

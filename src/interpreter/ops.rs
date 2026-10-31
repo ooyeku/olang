@@ -391,6 +391,10 @@ impl Interpreter {
             (l, BinaryOp::NotEqual, r) if l.type_name() != r.type_name() => {
                 Ok(Value::Boolean(true))
             }
+            (l, op, r) if tuple_arith(&l, &op, &r, &mut |_, _| Ok(Value::Unit)).is_some() => {
+                tuple_arith(&l, &op, &r, &mut |x, y| self.eval_binary_op(x, op.clone(), y))
+                    .expect("a tuple case")
+            }
             (l, op, r) => Err(InterpreterError::TypeError {
                 message: format!(
                     "Invalid binary operation: cannot apply '{}' to {} and {}",
@@ -485,6 +489,55 @@ impl Interpreter {
 /// The map kinds a value may be compared as: a `#{}` map, a parsed JSON
 /// object, or an anonymous `{ ... }` record. A declared struct is not one:
 /// its name is part of its identity.
+/// Arithmetic on tuples, element by element: `(1, 2) + (3, 4)` is
+/// `(4, 6)`, and a tuple scales by a number on either side of `*` and on
+/// the left of `/` and `%`: `(2.0, 4.0) * 0.5` is `(1.0, 2.0)`. So a
+/// position, a velocity or a colour is a plain tuple with the arithmetic
+/// written as maths (`pos + vel * dt`). Each element goes through `each`,
+/// the tier's own number arithmetic, so an element behaves exactly as the
+/// number would (Int stays Int, overflow is an error). `None` when the
+/// operands are not a tuple case.
+pub fn tuple_arith(
+    left: &Value,
+    op: &BinaryOp,
+    right: &Value,
+    each: &mut dyn FnMut(Value, Value) -> Result<Value, InterpreterError>,
+) -> Option<Result<Value, InterpreterError>> {
+    let arith = matches!(
+        op,
+        BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide | BinaryOp::Modulo
+    );
+    if !arith {
+        return None;
+    }
+    let number = |v: &Value| matches!(v, Value::Integer(_) | Value::Float(_));
+    let out = |items: Result<Vec<Value>, InterpreterError>| {
+        items.map(|v| Value::Tuple(std::sync::Arc::new(v)))
+    };
+    match (left, right) {
+        (Value::Tuple(a), Value::Tuple(b)) => {
+            if a.len() != b.len() {
+                return Some(Err(InterpreterError::TypeError {
+                    message: format!(
+                        "cannot apply '{}' to tuples of {} and {} elements",
+                        op.symbol(),
+                        a.len(),
+                        b.len()
+                    ),
+                }));
+            }
+            Some(out(a.iter().zip(b.iter()).map(|(x, y)| each(x.clone(), y.clone())).collect()))
+        }
+        (Value::Tuple(a), n) if number(n) && matches!(op, BinaryOp::Multiply | BinaryOp::Divide | BinaryOp::Modulo) => {
+            Some(out(a.iter().map(|x| each(x.clone(), n.clone())).collect()))
+        }
+        (n, Value::Tuple(b)) if number(n) && matches!(op, BinaryOp::Multiply) => {
+            Some(out(b.iter().map(|y| each(n.clone(), y.clone())).collect()))
+        }
+        _ => None,
+    }
+}
+
 fn map_like(v: &Value) -> Option<&crate::ast::ValueMap> {
     match v {
         Value::Map(m) => Some(m),

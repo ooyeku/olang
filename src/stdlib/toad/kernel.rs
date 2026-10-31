@@ -645,13 +645,55 @@ pub fn compile(
             (Ty::V2, _) => return l.err(format!("`{}` is a pair and is set to something else", k)),
         }
     }
+    let (ops, writes, dead) = prune(l.ops, writes, dead);
     Ok(Program {
         name,
         fields: fields.clone(),
         uniforms: uniforms.clone(),
-        ops: l.ops,
+        ops,
         writes,
         dead,
         defaults: vec![0.0; fields.width],
     })
+}
+
+/// Only the ops the writes and the dead flag need, renumbered in order
+/// (a constant folded away, a `let` never used, leave nothing behind).
+fn prune(
+    ops: Vec<Op>,
+    writes: Vec<(usize, usize)>,
+    dead: Option<usize>,
+) -> (Vec<Op>, Vec<(usize, usize)>, Option<usize>) {
+    let mut live = vec![false; ops.len()];
+    let mut stack: Vec<usize> = writes.iter().map(|w| w.1).chain(dead).collect();
+    while let Some(i) = stack.pop() {
+        if live[i] {
+            continue;
+        }
+        live[i] = true;
+        match ops[i] {
+            Op::Bin(_, a, b) => stack.extend([a, b]),
+            Op::Un(_, a) => stack.push(a),
+            Op::Sel(c, a, b) => stack.extend([c, a, b]),
+            _ => {}
+        }
+    }
+    let mut at = vec![usize::MAX; ops.len()];
+    let mut out = Vec::new();
+    for (i, op) in ops.into_iter().enumerate() {
+        if !live[i] {
+            continue;
+        }
+        let m = |j: usize| at[j];
+        let op = match op {
+            Op::Bin(b, x, y) => Op::Bin(b, m(x), m(y)),
+            Op::Un(u, x) => Op::Un(u, m(x)),
+            Op::Sel(c, x, y) => Op::Sel(m(c), m(x), m(y)),
+            other => other,
+        };
+        at[i] = out.len();
+        out.push(op);
+    }
+    let writes = writes.into_iter().map(|(c, j)| (c, at[j])).collect();
+    (out, writes, dead.map(|j| at[j]))
 }
