@@ -187,8 +187,7 @@ pub fn toolchain(cmd: ToolchainCommand) -> Result<()> {
             std::fs::create_dir_all(&dir)?;
             let link = dir.join("olang");
             let _ = std::fs::remove_file(&link);
-            std::os::unix::fs::symlink(&bin, &link)
-                .with_context(|| format!("linking {}", link.display()))?;
+            link_file(&bin, &link).with_context(|| format!("linking {}", link.display()))?;
             println!("toolchain {} is {}.", v, bin.display());
             Ok(())
         }
@@ -242,12 +241,24 @@ fn set_default(version: &str) -> Result<()> {
         let shim = bins.join(name);
         let staged = bins.join(format!(".{}.new", name));
         let _ = std::fs::remove_file(&staged);
-        std::os::unix::fs::symlink(&target, &staged)
-            .with_context(|| format!("linking {}", shim.display()))?;
+        link_file(&target, &staged).with_context(|| format!("linking {}", shim.display()))?;
         std::fs::rename(&staged, &shim)?;
     }
     println!("default toolchain is now {}.", version);
     Ok(())
+}
+
+/// A symlink on Unix. Windows lets only administrators and developer
+/// mode make symlinks, so there the file is copied instead.
+fn link_file(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::copy(target, link).map(|_| ())
+    }
 }
 
 fn print_path_hint() -> Result<()> {
@@ -284,11 +295,20 @@ fn latest_version() -> Result<String> {
 }
 
 fn platform() -> Result<&'static str> {
+    // A static musl build updates to the static build, as the installer
+    // chose it for a reason (Alpine, or a Linux older than glibc 2.28).
+    let musl = cfg!(target_env = "musl");
     Ok(match (std::env::consts::OS, std::env::consts::ARCH) {
         ("macos", "aarch64") => "macos-arm64",
         ("macos", "x86_64") => "macos-x64",
+        ("linux", "x86_64") if musl => "linux-x64-musl",
+        ("linux", "aarch64") if musl => "linux-arm64-musl",
         ("linux", "x86_64") => "linux-x64",
         ("linux", "aarch64") => "linux-arm64",
+        ("windows", _) => bail!(
+            "otc update does not update a Windows install yet; run the installer again: \
+             irm https://olang.dev/install.ps1 | iex"
+        ),
         (os, arch) => bail!(
             "no prebuilt release for {}/{}; build from source (see docs/installation.md)",
             os,
