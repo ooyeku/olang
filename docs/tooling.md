@@ -1916,6 +1916,7 @@ olang sim world.ol --seeds 500 --jobs 8   # the same search in eight worker proc
 olang sim world.ol --seed 6 --shrink      # make seed 6's failure as small as it can be
 olang sim --replay .sim/6.simplan         # replay a shrunk failure bit for bit
 olang sim shrink .sim/6.simplan           # shrink a saved plan further
+olang sim view .sim/6.simplan             # draw a run as a timeline in the browser
 ```
 
 The file is either a program to run as a world's main program, or a
@@ -1930,12 +1931,16 @@ they do for `olang run`, without fetching anything or writing a lock.
 | `--seed S` | the seed to run (default 1); with `--seeds`, the first of them |
 | `--seeds N` | run N seeds in turn, keep the programs' output quiet, and report each one that fails |
 | `--for DURATION` | stop when this much virtual time has passed: `6h`, `30m`, `10s`, `250ms` |
-| `--events` | print every event of the run (with `--seed`) |
+| `--events` | print every event of the run; needs `--seed`, not `--seeds` |
 | `--max-steps N` | the yield points a run may take before it is called a livelock |
 | `--jobs J` | run seeds in J worker processes; the results, and the digest, are the same for any J |
 | `--shrink` | minimise the failing seed's faults, nodes and schedule, and save it as `.sim/<seed>.simplan` |
 | `--shrink-budget N` | the runs the shrinker may spend (default 300) |
 | `--replay PLAN` | replay a saved plan and check it reproduced exactly |
+
+Worlds run on the bytecode tier, as programs do outside one, with the
+same results seed for seed; `olang --no-ovm sim` (or
+`OLANG_SIM_TIER=interp`) keeps them on the interpreter.
 
 A single seed prints the program's output and then a summary line. On
 a failure it prints the error and the last twenty events. A search
@@ -1945,9 +1950,22 @@ that reproduces the first failure. A seed fails when its program
 raises, deadlocks, runs out of steps or breaks a property; running out
 of virtual time is not a failure.
 
+The report (failing seeds, the summary, the digest, the line that
+reproduces a failure, a shrink, a replay) goes to standard output, and
+errors and progress to standard error, as with `olang test`.
+
 The exit status is 0 when every seed passed, 1 when one failed, 2 when
 the file cannot be found, and 3 when `--replay` finds the run no longer
 matches its plan (the program changed since it was saved).
+
+`olang sim view` draws one run as a timeline: a lane for each node,
+messages as arrows between lanes, faults marked, and a playhead to move
+through time ([Seeing a run](sim.md#seeing-a-run)). Give it a saved
+plan, which it replays and checks, or a file and `--seed S` (with
+`--for` and `--max-steps` as above). It writes `.sim/<seed>.html` and
+opens it; `--html FILE` writes the page elsewhere and opens nothing,
+`--no-open` skips opening, and `--json FILE` writes the timeline as
+data. The page is one file that fetches nothing.
 
 `olang test` runs a `test` block that builds worlds over three seeds,
 or `--seeds N` of them, and names the first seed that fails ([Simulation

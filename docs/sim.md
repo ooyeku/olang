@@ -906,16 +906,67 @@ looks unrelated.
 
 ## Seeing a run
 
-<!--
-  PLACEHOLDER (sim S5): this section is filled by the coordinator once
-  `olang sim view` and `run.events()` as an ods Frame land. Keep the
-  heading; replace this comment and the paragraph below.
--->
+A failing seed is a story told in events: who sent what to whom, which
+answer never arrived, when the power went. `--events` prints that story
+as text, which is fine for twenty lines and hopeless for twenty
+thousand. There are two better ways to read a long one.
 
-For now, a run's events are text: `--events` prints all of them, a
-failing `--seed` prints the last twenty, and inside a program
-`run.events` is the same list as maps with `t`, `node`, `task`, `kind`
-and `detail`.
+The first is to treat the run as data. `run.events()` gives every event
+as a table (an `ods` Frame), one row per event in the order they
+happened, so the questions you would ask of a log take a line each.
+Add these lines to the end of `counter_world.ol`:
+
+```olang no-run
+let f = run.events()
+println(f.group_by("kind").agg(#{ "n": ods.count() }))   // what happened, and how often
+println(ods.filter(f, f["fault"]))                       // every fault the world caused
+let arrivals = ods.filter(f, f["kind"] == "deliver")
+println(ods.filter(arrivals, arrivals["t"] - arrivals["sent"] > 190))   // the slow messages
+```
+
+On seed 2, the faults are the six partitions, one every five minutes:
+
+```text
+┌───────┬─────────┬────────┬──────┬───────────┬─────────────────┬───
+│   seq │       t │ node   │ task │ kind      │ detail          │ …
+├───────┼─────────┼────────┼──────┼───────────┼─────────────────┼───
+│  4559 │  300000 │ hook-1 │    5 │ partition │ [counter] | [a] │ …
+│  8967 │  600000 │ hook-1 │    5 │ partition │ [counter] | [c] │ …
+│ 13467 │  900000 │ hook-1 │    5 │ partition │ [counter] | [a] │ …
+…
+```
+
+Each row has the event's time `t` in virtual milliseconds, its `node`
+and `task`, its `kind` and `detail`. A message's arrival also carries
+who sent it (`peer`) and when (`sent`), so a message's latency is a
+subtraction rather than a parsing job. `fault` marks what the world did
+on purpose. (`run.events`, without the call, is the same events as a
+list of maps.)
+
+The second way is to look at it. `olang sim view` draws a run as a
+timeline in your browser, with one lane per node:
+
+```bash
+olang sim view counter_world.ol --seed 2         # run seed 2 and draw it
+olang sim counter_check.ol --seed 8 --shrink     # saves .sim/8.simplan
+olang sim view .sim/8.simplan                    # the shrunk run, exactly as it failed
+```
+
+Messages are arrows from the sender's lane to the receiver's, and a
+lost one ends in a cross. Faults are red marks. A node that is down is
+a band across its lane, and a partition shades the lanes it cut for as
+long as it lasted. Drag along the time axis, or the strip at the
+bottom, to move the playhead: everything after it fades, so what you
+see is the world at that instant. Click an event to see it in full,
+with what its node did just before and after. `⇧→` jumps to the next
+fault, `F` fits the whole run on screen, and `/` filters.
+
+The page is a single file that fetches nothing, so you can attach it to
+a bug report, or have CI write one for each failing seed with
+`--html FILE`. `--json FILE` writes the same timeline as data, for your
+own tools. Because a saved plan replays bit for bit, the picture is the
+run that failed, not one like it; if the program has changed since the
+plan was saved, `olang sim view` says so.
 
 ## Buggify points
 

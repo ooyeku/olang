@@ -3759,8 +3759,13 @@ main program's), `now` (the virtual time it ended), `steps`, `tasks`,
 carried), `faults` (each fault the world injected), `disks` (each
 disk's counts), `violation` (`#{ property, kind, t, step, detail }`),
 `preemptions`, `histories` and `seed`. Its methods are in `sim.Run`:
-`history(name)` answers a recorded history, and `check(props)` is
-`sim.check(run, props)`.
+`history(name)` answers a recorded history, `check(props)` is
+`sim.check(run, props)`, and `events()` answers every event as an `ods`
+Frame, one row per event in order: `seq`, `t` (virtual ms), `node`,
+`task` (`()` for what the network did on its own), `kind`, `detail`,
+`peer` and `sent` (a message's other end, and when it was sent),
+`inbound` (an arrival rather than a loss as it left) and `fault` (the
+world caused it).
 
 ### Properties
 
