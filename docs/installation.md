@@ -189,6 +189,13 @@ command again. A Rust from Homebrew updates with `brew upgrade rust`.
 **`` version `GLIBC_2.39' not found ``** (Linux). The released Linux
 binaries need a newer Linux; build from source instead (`... | OLANG_FROM_SOURCE=1 sh`).
 
+**`libfontconfig.so.1: cannot open shared object file`** (Linux). A
+server or minimal install leaves out fontconfig, which olang 1.0.0-rc.5's
+Linux build links. The installer offers to install it; by hand it is
+`sudo apt install libfontconfig1` (Debian, Ubuntu) or
+`sudo dnf install fontconfig` (Fedora). Later releases load it only when
+a window looks for system fonts.
+
 The installer stops with a sentence that names the problem and the next
 step. When one does not help, report it at
 [github.com/ooyeku/olang/issues](https://github.com/ooyeku/olang/issues)
