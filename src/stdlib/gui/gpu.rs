@@ -735,6 +735,29 @@ fn window_instance(display: winit::event_loop::OwnedDisplayHandle) -> wgpu::Inst
     ))
 }
 
+/// The device's limits: WebGL2's, the least any adapter gives, unless
+/// `toad` is built in and the adapter does compute (Metal does): then the
+/// standard ones, with the adapter's own buffer sizes so a swarm of a
+/// million entities is one buffer.
+fn limits(adapter: &wgpu::Adapter) -> wgpu::Limits {
+    let have = adapter.limits();
+    let base = wgpu::Limits::downlevel_webgl2_defaults().using_resolution(have.clone());
+    #[cfg(feature = "toad")]
+    {
+        let std = wgpu::Limits::default();
+        if have.max_storage_buffers_per_shader_stage >= std.max_storage_buffers_per_shader_stage
+            && have.max_compute_workgroups_per_dimension >= std.max_compute_workgroups_per_dimension
+        {
+            return wgpu::Limits {
+                max_storage_buffer_binding_size: have.max_storage_buffer_binding_size,
+                max_buffer_size: have.max_buffer_size,
+                ..std.using_resolution(have)
+            };
+        }
+    }
+    base
+}
+
 fn make(
     compatible: Option<&wgpu::Surface<'_>>,
     instance: Option<wgpu::Instance>,
@@ -749,8 +772,7 @@ fn make(
     .map_err(|e| format!("no usable GPU adapter ({e})"))?;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("gui"),
-        required_limits:
-            wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
+        required_limits: limits(&adapter),
         ..Default::default()
     }))
     .map_err(|e| format!("the GPU refused a device ({e})"))?;

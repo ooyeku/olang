@@ -26,6 +26,8 @@ pub mod fs_scan;
 pub mod fs_watch;
 #[cfg(feature = "gui")]
 pub mod gui;
+#[cfg(feature = "toad")]
+pub mod toad;
 #[cfg(feature = "native")]
 pub mod http;
 pub mod json;
@@ -137,6 +139,8 @@ pub fn get_stdlib() -> crate::ast::ValueMap {
     stdlib.insert("tty".to_string(), tty::create_tty_module());
     #[cfg(feature = "gui")]
     stdlib.insert("gui".to_string(), gui::create_gui_module());
+    #[cfg(feature = "toad")]
+    stdlib.insert("toad".to_string(), toad::create_toad_module());
     stdlib.insert("dom".to_string(), dom::create_dom_module());
     // `peg`'s native matching core: internal, `peg.ol` its only caller
     stdlib.insert("__peg".to_string(), peg::create_module());

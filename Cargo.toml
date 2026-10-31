@@ -17,7 +17,7 @@ members = [".", "otc", "playground", "olang-ods", "xtask"]
 exclude = ["vendor"]
 
 [features]
-default = ["native", "full", "gui"]
+default = ["native", "full", "gui", "toad"]
 # The whole stdlib. The browser profile the web SDK ships omits these
 # (`cargo build -p olang-playground` without `--features full`): the
 # regex engine and its Unicode tables, and the RSA suite, are a sixth of
@@ -39,6 +39,10 @@ rsa-crypto = ["dep:rsa"]
 # software renderer and reference (tiny-skia), text (parley), the
 # platform accessibility APIs (AccessKit), the clipboard, dialogs, and on
 # macOS the menu bar. Native only; on in the released binaries.
+# `toad`: the engine under the Toad game framework (src/stdlib/toad/):
+# kernels compiled from olang functions, swarms stepped on the CPU and
+# the GPU. Rides on `gui`'s wgpu device.
+toad = ["gui"]
 gui = [
     "native",
     "dep:winit",

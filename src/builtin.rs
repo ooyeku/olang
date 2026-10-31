@@ -1024,6 +1024,14 @@ impl BuiltinFunctions {
                 .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 
+        // Handle toad functions (the game engine's kernels and swarms)
+        #[cfg(feature = "toad")]
+        if let Some(toad_function) = name.strip_prefix("toad.") {
+            let scope = |n: &str| interpreter.lookup(n);
+            return crate::stdlib::toad::call_toad_function(toad_function, arguments, &scope)
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
+        }
+
         // Handle proc functions (child processes + pipelines)
         #[cfg(feature = "native")]
         if let Some(proc_function) = name.strip_prefix("proc.") {

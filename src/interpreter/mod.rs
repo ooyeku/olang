@@ -434,6 +434,13 @@ pub enum ArgSlot {
 }
 
 impl Interpreter {
+    /// A binding as the running code sees it (its scopes, then the
+    /// program's top level): `toad.kernel` reads a kernel's constants
+    /// through it.
+    pub(crate) fn lookup(&self, name: &str) -> Option<Value> {
+        self.environment.get(name)
+    }
+
     pub fn new() -> Self {
         // Feature 8: Initialize smart caching
         let smart_cache_config = SmartCacheConfig::default();
