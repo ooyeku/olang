@@ -214,8 +214,10 @@ enum Commands {
         notebook: Option<PathBuf>,
     },
 
-    /// Audit a project: the manifest, its dependencies, the lock, the
-    /// browser runtime this binary carries, and stale runtime copies
+    /// Check a project for problems
+    ///
+    /// Looks at the manifest, its dependencies, the lock, the browser
+    /// runtime this binary carries, and stale runtime copies.
     Doctor {
         /// The project directory (default: the current directory's project)
         #[arg(value_name = "PATH")]
@@ -251,8 +253,10 @@ enum Commands {
         params: Vec<String>,
     },
 
-    /// Evaluate a line of source and print its value, as the REPL would.
-    /// Shelf libraries resolve from the current directory's project
+    /// Evaluate a line of source and print its value
+    ///
+    /// Works as the REPL would. Shelf libraries resolve from the current
+    /// directory's project.
     Eval {
         /// olang source: the last expression's value is printed
         #[arg(value_name = "SOURCE")]
@@ -304,7 +308,9 @@ enum Commands {
         check: bool,
     },
 
-    /// Rewrite programs to a newer idiom. `olang fix maps`: `map_get(x, "k")`
+    /// Rewrite programs to a newer idiom
+    ///
+    /// `olang fix maps`: `map_get(x, "k")`
     /// becomes `x.k` and `map_get_or(x, "k", d)` becomes `x.k ?? d`, layout
     /// and comments kept; a default that may have an effect is flagged, not
     /// rewritten. `olang fix guards`: `if x == () => ()
@@ -312,7 +318,7 @@ enum Commands {
     /// `x.f == v`. `olang fix defaults`: `if x == () => d else => x` becomes
     /// `x ?? d`. `olang fix first-last`: a length-guarded `xs[len(xs) - 1]`
     /// or `xs[0]` becomes `last(xs)` or `first(xs)`. `olang fix units`:
-    /// `to_int(math.floor(e))` becomes `math.floor(e)`
+    /// `to_int(math.floor(e))` becomes `math.floor(e)`.
     Fix {
         /// What to fix: `maps`, `guards`, `defaults`, `first-last`,
         /// `units`
