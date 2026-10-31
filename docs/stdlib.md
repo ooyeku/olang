@@ -61,6 +61,7 @@ syntax, because they need a file system, a network or a browser.
 - [`db` — SQLite](#db--sqlite)
 - [`dom` — the browser](#dom--the-browser)
 - [`testing` — assertions](#testing--assertions)
+- [`sim` — simulated worlds](#sim--simulated-worlds)
 - [`ods` — Series and Frames](#ods--series-and-frames)
 - [`mat` — matrices](#mat--matrices)
 - [`stats` — statistical inference](#stats--statistical-inference)
@@ -1160,6 +1161,12 @@ The engine peg had before — the grammar written out as olang functions
 and compiled with `meta.eval` — is still there for testing peg itself
 (`peg.grammar(text, actions, #{ "engine": "olang" })`): it gives the
 same trees and errors, 9 to 25 times slower.
+
+A grammar is an immutable value, so tasks can share one (through a
+closure, a channel or `par_map`) and parse with it at the same time.
+A parse whose rules nest more than 100,000 deep raises `peg: the input
+nests too deeply to parse` instead of overflowing the stack; in the
+browser, whose stack cannot grow, the limit is 1,000.
 
 ### Three grammars
 
@@ -3687,6 +3694,117 @@ println("assertions passed")
 For ordinary tests, prefer `test` blocks and the language-level
 assertions — [`olang test`](tooling.md#olang-test) discovers and runs
 them with reporting built in.
+
+## `sim` — simulated worlds
+
+`sim` runs programs inside a simulated world: a virtual clock, a
+scheduler and a network driven by a seed, and an in-memory disk for
+each node. The same seed always gives the same run, so a failure found
+by one seed can be replayed exactly. [Simulating whole systems](sim.md)
+teaches it with worked examples, and [`olang sim`](tooling.md#olang-sim)
+is the command that searches seeds, shrinks failures and replays them.
+Nothing inside a world reaches the real machine: its effects are
+simulated or refused (the last section of [the chapter](sim.md#what-a-world-simulates-and-what-it-refuses)
+lists which).
+
+```olang
+let w = sim.world(#{ "seed": 7 })
+let run = w.run_fn(() => {
+    let start = time.now_ms()
+    time.sleep(sim.hours(2))
+    time.now_ms() - start
+})
+println(run.outcome)   // done
+println(run.value)     // 7200000
+```
+
+### Worlds
+
+| Function | Description |
+|---|---|
+| `sim.world(opts)` | a new world, a value that can be run as often as asked (each run starts afresh). `opts`: `seed` (an Int; under `olang sim` and `olang test` the command line's seed wins), `start` (the clock's start in epoch ms, 2026-01-01 by default), `max_steps` (yield points before a run is called a livelock, 10,000,000 by default), and `net` (`latency`, a range of ms as `(lo, hi)`; `loss` and `dup`, probabilities) |
+| `sim.disk(opts)` | a disk's misbehaviour, for a node's `disk` option: `fsync_lies` (the chance a sync keeps nothing), `torn_writes` (a crash may keep part of an unsynced write), `full_at` (the bytes at which writes fail) and `slow` (how many times slower syncs are) |
+| `sim.ms(n)` · `sim.seconds(n)` · `sim.minutes(n)` · `sim.hours(n)` | a duration in virtual milliseconds: `sim.minutes(3)` is `180000` |
+| `sim.maybe(point)` | a buggify point: `false` outside a world; inside one the seed turns the named point on or off for the run, and one that is on answers `true` a quarter of the times it is reached (each a fault) |
+| `sim.seed()` | the seed being run, inside a world or while `olang sim` or `olang test` decides it; `()` otherwise |
+| `sim.record(name, op)` | adds `op` to the history `name` (nothing outside a world). An op is `#{ type, f, value }`: `type` is `"invoke"`, `"ok"`, `"fail"` or `"info"` (no answer; it may have happened), `f` names the operation, and `value` is its argument on an invoke and its result on an ok. The world adds `process`, `node`, `t` and `index` |
+
+A world's methods are in `sim.World`; on a world `w`:
+
+| Method | Description |
+|---|---|
+| `run_fn(f, opts)` | runs `f()` as the world's main program and answers the run. `opts`: `for` (virtual ms to stop after) and `props` (properties, below) |
+| `run(opts)` | runs the world's nodes and answers the run; `opts` is a duration or `#{ for, props }`. The run is `done` when every client has finished (with no clients, every program) |
+| `node(name, argv, opts)` | adds an olang program as a node: `argv` is `["olang", "file.ol", args...]`, the file relative to the one building the world. `name` is also its host name. `opts`: `env` (a map), `skew` (ms added to its wall clock), `deny` (capabilities, as `"fs,proc"`), `disk` (`sim.disk(...)`), `files` (path to contents, durable from the start), `cwd`, `stdin`, `crash` (`#{ p, restart_after }`: at each of its effects, a crash with chance `p`) and `optional` (the shrinker may leave it out) |
+| `client(name, f, opts)` | adds a node that runs `f()` on a copy of the interpreter that built the world; the options are `node`'s |
+| `at(t, f)` · `every(dt, f)` | runs `f` once at virtual time `t`, or every `dt` ms, on a node of its own (a hook: `hook-1`, `hook-2`, … in the events) |
+| `link(a, b, opts)` | sets the network between two nodes: `latency`, `loss`, `dup` |
+| `partition(group_a, group_b)` · `heal()` | cuts every link between two lists of nodes, until `heal`; a message in flight when the cut starts is lost |
+| `crash(n, opts)` · `kill(n, opts)` · `stop(n, opts)` | stops a node as a power cut (only synced data survives), SIGKILL (every write survives) or SIGTERM (its `os.on_shutdown` handlers run first); `opts` is `#{ restart_after }` in ms. Stopping a node that is already down raises |
+| `restart(n)` | starts a stopped node again: a fresh interpreter on the disk the stop left |
+| `write_stdin(n, text)` · `close_stdin(n)` | adds to a node's standard input, or ends it |
+| `slow_disk(n, factor)` | makes a node's syncs `factor` times slower from now on |
+
+Before a run, `link`, `partition` and `heal` set how the network starts;
+inside a running world (from a client or a hook) they and the stopping
+methods act at that moment.
+
+### Runs
+
+A run is a map: `outcome` (`"done"`, `"failed"`, `"deadline"`,
+`"deadlock"`, `"step_limit"` or `"violated"`), `value` and `error` (the
+main program's), `now` (the virtual time it ended), `steps`, `tasks`,
+`failed_tasks`, `events` (each `#{ t, node, task, kind, detail }`),
+`nodes`, `net` (message counts), `history` (each request the network
+carried), `faults` (each fault the world injected), `disks` (each
+disk's counts), `violation` (`#{ property, kind, t, step, detail }`),
+`preemptions`, `histories` and `seed`. Its methods are in `sim.Run`:
+`history(name)` answers a recorded history, and `check(props)` is
+`sim.check(run, props)`.
+
+### Properties
+
+| Function | Description |
+|---|---|
+| `sim.always(name, pred)` | `pred(s)` is true at every check |
+| `sim.never(name, pred)` | `pred(s)` is false at every check |
+| `sim.eventually(name, within, pred)` | `pred(s)` is never false for more than `within` ms at a stretch |
+| `sim.linearizable(name, history, model)` | the named history (or a list of names) is linearizable for `model`; checked once, when the run ends |
+| `sim.check(run, props)` | checks properties after a run made without them, running the same seed again watched; raises naming the property, the time and the step at which it broke |
+| `sim.linearize(history, model, opts)` | the checker on its own, inside a world or not: `#{ ok, verdict, reason }`, `verdict` being `"linearizable"`, `"violation"` or `"unknown"` (past `max_steps` in `opts`, 2,000,000 by default; `ok` is then `()`) |
+| `sim.register(init)` | a model of one value: `write v`, `read` answering `v`, `cas [old, new]` (a result of `false` says it did not swap) |
+| `sim.kv()` | a model of a key-value store: `put [k, v]`, `get [k]`, `add [k, by]` answering the total, `cas [k, old, new]`; its history is checked key by key |
+
+A model of your own is `#{ init, step }`, with `step(state, op)`
+answering `Ok(next)` or `Err(why)` for `op` = `#{ f, value, output,
+known, process }`.
+
+A property is checked at every instant at which anything ran, and once
+more at the end. Its predicate gets the world's state `s` (methods in
+`sim.State`): `s.now`, `s.time` (the wall clock), `s.step`, `s.nodes`,
+`history(name)`, `up(node)`, and `disk(node)`, the node's disk as a
+power cut now would leave it. That disk's methods are in `sim.Disk`:
+
+| Method | Description |
+|---|---|
+| `read(path)` · `read_bytes(path)` | the synced contents, or `()` when the name itself was never synced |
+| `exists(path)` · `list(dir)` | the names a power cut would keep |
+| `current(path)` | what the node reads now, synced or not |
+| `query(db, sql, params)` | `Ok(rows)` from the synced image of a SQLite database, recovered as SQLite would after the crash, or `Err` |
+
+A predicate cannot change the world: a call with an effect in it
+(`time.now_ms`, `fs`, `http`, `spawn`) breaks the property, naming the
+call.
+
+```olang
+let history = [
+    #{ "process": "p1", "type": "invoke", "f": "write", "value": 1 },
+    #{ "process": "p1", "type": "ok" },
+    #{ "process": "p2", "type": "invoke", "f": "read" },
+    #{ "process": "p2", "type": "ok", "value": 0 }
+]
+println(sim.linearize(history, sim.register(0)).verdict)   // violation
+```
 
 ## `ods` — Series and Frames
 
