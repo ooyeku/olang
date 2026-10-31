@@ -206,12 +206,13 @@ function Install-Olang {
         return
     }
 
-    Say ''; Say '  Installing olang'; Say ''
+    $heading = if (Test-Path (Join-Path $bin 'olang.exe')) { '  Checking your olang' } else { '  Installing olang' }
+    Say ''; Say $heading; Say ''
 
     $arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
     switch ($arch) {
-        'AMD64' { $nice = 'Windows, x64' }
-        'ARM64' { $nice = 'Windows, ARM64 (olang runs as x64 under emulation)' }
+        'AMD64' { $nice = 'Windows (x64)' }
+        'ARM64' { $nice = 'Windows (ARM64; olang runs as x64 under emulation)' }
         default {
             Stop-Install "olang's Windows download is for 64-bit Windows, and this is $arch." @(
                 'On 32-bit Windows, use olang inside WSL instead: see https://learn.microsoft.com/windows/wsl/install')
@@ -234,7 +235,7 @@ function Install-Olang {
         try { $previous = ((& $olangExe --version 2>$null) -replace '^olang ', '').Trim() } catch { }
     }
     if ($previous -eq $plain -and -not $Force) {
-        Done "olang $plain is already installed here"
+        Done "olang $plain is already installed here, so there is nothing to update"
     } else {
         $tmp = Join-Path ([IO.Path]::GetTempPath()) ('olang-install-' + [Guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $tmp | Out-Null
@@ -304,7 +305,7 @@ function Install-Olang {
             }
             if ($previous -eq $plain) { Done "Reinstalled olang $plain" }
             elseif ($previous) { Done "Updated olang and otc from $previous to $plain" }
-            else { Done 'Installed olang and otc' }
+            else { Done 'Installed olang and otc, its package and toolchain manager' }
         } finally {
             Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
         }
@@ -336,6 +337,7 @@ function Install-Olang {
 }
 
 if ($Help) {
+    $trust = if ($SigningKey) { "the release's signed checksums" } else { 'the checksums published with the release' }
     Write-Host @"
 The olang installer for Windows
 
@@ -349,7 +351,7 @@ OLANG_UNINSTALL=1.
 
 The installer writes to the install folder (%USERPROFILE%\.olang\bin) and
 your user PATH, downloads only over HTTPS, and checks each download
-against the release's signed checksums.
+against $trust.
 
 More: $HelpUrl
 "@

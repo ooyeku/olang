@@ -99,6 +99,8 @@ ask() {
 }
 
 usage() {
+    if [ -n "$SIGNING_KEY" ]; then trust="the release's signed checksums"
+    else trust="the checksums published with the release"; fi
     cat <<EOF
 The olang installer
 
@@ -125,7 +127,7 @@ OLANG_FORCE=1, OLANG_YES=1, OLANG_QUIET=1.
 The installer writes to the install folder, adds one line to your
 shell's startup file (~/.zshrc, ~/.bashrc, ...), and deletes its
 temporary files when it ends. It downloads only over HTTPS and checks
-each download against the release's signed checksums.
+each download against $trust.
 
 More: $HELP_URL
 EOF
@@ -335,12 +337,12 @@ detect_platform() {
                 ARCH=arm64
             fi
             case "$ARCH" in
-                arm64)  PLATFORM="macos-arm64"; NICE_OS="macOS, Apple silicon" ;;
-                x86_64) PLATFORM="macos-x64";   NICE_OS="macOS, Intel" ;;
-                *)      NICE_OS="macOS on $ARCH"; WHY_NO_DOWNLOAD="there is no ready-made olang for $ARCH Macs" ;;
+                arm64)  PLATFORM="macos-arm64"; chip="Apple silicon" ;;
+                x86_64) PLATFORM="macos-x64";   chip="Intel" ;;
+                *)      chip="$ARCH"; WHY_NO_DOWNLOAD="there is no ready-made olang for $ARCH Macs" ;;
             esac
             mac_version=$(sw_vers -productVersion 2>/dev/null)
-            NICE_OS="$NICE_OS${mac_version:+, $mac_version}" ;;
+            NICE_OS="macOS${mac_version:+ $mac_version} ($chip)" ;;
         Linux)
             case "$ARCH" in
                 x86_64|amd64)  a=x64 ;;
@@ -429,7 +431,7 @@ main() {
     fi
 
     say ""
-    say "  ${BOLD}Installing olang${RESET}"
+    if [ -x "$INSTALL_DIR/olang" ]; then say "  ${BOLD}Checking your olang${RESET}"; else say "  ${BOLD}Installing olang${RESET}"; fi
     say ""
 
     pick_downloader
@@ -460,7 +462,7 @@ main() {
     # an install of this same version: nothing to download
     current=$("$INSTALL_DIR/olang" --version 2>/dev/null | sed -n 's/^olang \([^ ]*\).*/\1/p')
     if [ "$current" = "${VERSION#v}" ] && [ "${OLANG_FORCE:-}" != 1 ] && [ "${OLANG_FROM_SOURCE:-}" != 1 ]; then
-        done_ "olang ${VERSION#v} is already installed here"
+        done_ "olang ${VERSION#v} is already installed here, so there is nothing to update"
         put_on_path
         finish
         return
@@ -686,7 +688,7 @@ install_bins() {
     elif [ -n "${PREVIOUS:-}" ]; then
         done_ "Updated olang and otc from $PREVIOUS to ${VERSION#v}"
     else
-        done_ "Installed olang and otc"
+        done_ "Installed olang and otc, its package and toolchain manager"
     fi
     case "${GUI_NOTE:-}" in
         musl) note "This is olang's static Linux build, which runs on musl systems such as Alpine." \
@@ -826,7 +828,7 @@ finish() {
     if [ -n "${NEEDS_NEW_SHELL:-}" ]; then
         # a terminal reads its startup file once, when it opens: this one
         # has not seen the new PATH yet, so say how to bring it in
-        say "  ${BOLD}olang is installed.${RESET} This terminal doesn't know where it is yet, so first either:"
+        say "  ${BOLD}olang is installed.${RESET} Before you can use it in this terminal, either:"
         say ""
         say "    - quit and reopen your terminal, or"
         if [ -n "${PATH_CHANGED:-}" ]; then
@@ -845,7 +847,9 @@ finish() {
     fi
     say ""
     say "  Start with the tour at https://olang.dev/book/tour/"
-    say "  ${DIM}To remove olang later: curl -fsSL $INSTALL_URL | sh -s -- --uninstall${RESET}"
+    say ""
+    say "  ${DIM}To remove olang later:${RESET}"
+    say "  ${DIM}  curl -fsSL $INSTALL_URL | sh -s -- --uninstall${RESET}"
     say ""
 }
 

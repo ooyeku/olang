@@ -36,7 +36,7 @@ irm https://raw.githubusercontent.com/ooyeku/olang/main/install.ps1 | iex
 ```
 
 The installer works out what kind of computer you have, downloads the
-matching olang, checks that the download is genuine, and puts `olang`
+matching olang, checks it against the release's published checksums, and puts `olang`
 and `otc` in a folder in your home directory (`~/.olang/bin`). It adds
 that folder to your `PATH`, the list of places your terminal looks for
 programs. It needs no administrator password and no Rust.
@@ -260,20 +260,22 @@ Every download goes over HTTPS, and the installer refuses to fall back
 to plain HTTP. Each release lists a checksum, a fingerprint of the file,
 for every download in `SHA256SUMS`, and the installer compares the file
 it downloaded against it. A checksum proves the file arrived intact, but
-not who made it, since it comes from the same place. So the release
-workflow also signs `SHA256SUMS` with olang's release key, and the
-installer checks that signature with the public key written into the
-installer itself, using `openssl` on macOS and Linux and .NET on Windows.
-A file changed on the download server fails that check, and nothing is
-installed.
+not who made it, since it comes from the same place. So releases are
+also being set up to carry a signature: once release signing is
+switched on, the release workflow signs `SHA256SUMS` with olang's
+release key, and the installer checks that signature with the public
+key written into the installer itself, using `openssl` on macOS and
+Linux and .NET on Windows. A file changed on the download server then
+fails that check, and nothing is installed. Until then, the installer
+checks the checksum only.
 
 On a Linux without `openssl` the installer still checks the checksum,
 and says that it could not check the signature. Set
 `OLANG_REQUIRE_SIGNATURE=1` to make that an error instead.
 
-Every release also carries a GitHub build attestation for each file, a
-signed record of the workflow run that built it, which `gh attestation
-verify` checks. Homebrew pins each file's checksum in the formula, and
+Releases built by the current release workflow also carry a GitHub
+build attestation for each file, a signed record of the workflow run
+that built it, which `gh attestation verify` checks. Homebrew pins each file's checksum in the formula, and
 `cargo install --locked` builds exactly the dependencies in olang's
 `Cargo.lock`.
 

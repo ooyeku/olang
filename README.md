@@ -118,8 +118,9 @@ curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh
 ```
 
 On Windows, run `irm https://raw.githubusercontent.com/ooyeku/olang/main/install.ps1 | iex` in PowerShell.
-The installer picks the right download for your computer, checks that
-it is genuine, and needs no Rust and no administrator password. Then
+The installer picks the right download for your computer, checks it
+against the release's checksums, and needs no Rust and no administrator
+password. Then
 quit and reopen your terminal (or run `source ~/.zshrc`, or whichever
 file the installer names) and run `olang --version`. With Homebrew,
 `brew install ooyeku/olang/olang` works too.
