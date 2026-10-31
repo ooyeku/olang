@@ -605,7 +605,9 @@ fn rgba(v: Option<&Value>, d: [f32; 4]) -> [f32; 4] {
 /// A shape map as its instance: `kind` (circle, box, capsule, ring,
 /// triangle, line), `at`, `size` (a radius, or a pair: the whole width
 /// and height), `rot`, `round`, `outline`, `color`, `glow` (multiplies
-/// the colour past 1.0); a line goes `from` `at` `to` with `width`.
+/// the colour past 1.0), `emit` (light of its own: its colour times
+/// this), `cast` (true: it blocks light); a line goes `from` `at` `to`
+/// with `width`.
 #[cfg(feature = "gui")]
 fn shape_of(v: &Value, out: &mut Vec<f32>) -> Result<(), String> {
     let m = map_of(v, "a shape")?;
@@ -661,8 +663,10 @@ fn shape_of(v: &Value, out: &mut Vec<f32>) -> Result<(), String> {
             (at, half, n("rot", 0.0), k, line)
         }
     };
+    let cast = if matches!(m.get("cast"), Some(Value::Boolean(true))) { 1.0 } else { 0.0 };
     out.extend_from_slice(&[
-        at.0, at.1, half.0, half.1, rot, k, n("round", 0.0), line, c[0], c[1], c[2], c[3],
+        at.0, at.1, half.0, half.1, rot, k, n("round", 0.0), line, c[0], c[1], c[2], c[3], n("emit", 0.0), cast, 0.0,
+        0.0,
     ]);
     Ok(())
 }
@@ -680,6 +684,8 @@ fn frame(layers: &Value, view: &Value) -> R {
     let getn = |k: &str, d: f32| vm.get(k).and_then(num).unwrap_or(d);
     let size = getp("size", (1280.0, 720.0));
     let bg = rgba(vm.get("bg"), [0.0, 0.0, 0.0, 1.0]);
+    let ambient = rgba(vm.get("ambient"), [0.0, 0.0, 0.0, 1.0]);
+    let tint = rgba(vm.get("tint"), [1.0, 1.0, 1.0, 1.0]);
     let view = render::View {
         size: (size.0.max(1.0) as u32, size.1.max(1.0) as u32),
         center: getp("center", (0.0, 0.0)),
@@ -688,8 +694,21 @@ fn frame(layers: &Value, view: &Value) -> R {
         bg: [bg[0], bg[1], bg[2]],
         exposure: getn("exposure", 1.0),
         vignette: getn("vignette", 0.0),
+        gi: getn("gi", 0.0),
+        ambient: [ambient[0], ambient[1], ambient[2]],
+        bloom: getn("bloom", 0.0),
+        contrast: getn("contrast", 1.0),
+        saturation: getn("saturation", 1.0),
+        tint: [tint[0], tint[1], tint[2]],
+        grain: getn("grain", 0.0),
+        seed: 0.0,
+        gi_down: (getn("gi_res", 4.0).round() as u32).clamp(1, 8),
     };
-    let want_png = matches!(vm.get("png"), Some(Value::Boolean(true)));
+    let probes: Vec<(u32, u32)> = match vm.get("probe") {
+        Some(Value::List(ps)) => ps.iter().filter_map(pair).map(|(x, y)| (x.max(0.0) as u32, y.max(0.0) as u32)).collect(),
+        _ => Vec::new(),
+    };
+    let want_png = matches!(vm.get("png"), Some(Value::Boolean(true))) || !probes.is_empty();
     let live = match vm.get("live") {
         Some(Value::String(n)) => Some(n.to_string()),
         _ => None,
@@ -798,6 +817,8 @@ fn frame(layers: &Value, view: &Value) -> R {
                 dead,
                 color: rgba(lm.get("color"), [1.0, 1.0, 1.0, 1.0]),
                 radius: lm.get("radius").and_then(num).unwrap_or(4.0),
+                light: lm.get("light").and_then(num).unwrap_or(0.0),
+                reach: lm.get("reach").and_then(num).unwrap_or(120.0),
             }));
         }
         let renderer = st.renderer.as_mut().unwrap();
@@ -805,7 +826,16 @@ fn frame(layers: &Value, view: &Value) -> R {
         let ms = t0.elapsed().as_secs_f64() * 1000.0;
         let mut out = ValueMap::default();
         out.insert("ms".into(), Value::Float(ms));
-        if let Some(px) = px {
+        if let Some(px) = px.as_ref().filter(|_| !probes.is_empty()) {
+            // the colours at the probed pixels, 0–255 (for tests)
+            let (w, h) = view.size;
+            let at = |x: u32, y: u32| {
+                let i = ((y.min(h - 1) * w + x.min(w - 1)) * 4) as usize;
+                Value::Tuple(Arc::new((0..3).map(|c| Value::Integer(px[i + c] as i64)).collect()))
+            };
+            out.insert("probe".into(), Value::List(Arc::new(probes.iter().map(|&(x, y)| at(x, y)).collect())));
+        }
+        if let Some(px) = px.filter(|_| matches!(vm.get("png"), Some(Value::Boolean(true)))) {
             let pm = tiny_skia::Pixmap::from_vec(
                 px,
                 tiny_skia::IntSize::from_wh(view.size.0, view.size.1).ok_or("toad.frame: no size")?,

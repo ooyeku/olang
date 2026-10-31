@@ -3118,10 +3118,20 @@ toad.frame([#{ "swarm": s, "color": "#ff9a3c", "radius": 6.0 }], #{ "size": (128
 | `toad.press(key, down)` | press or let go of a key as a hand would (scripts and tests) |
 | `toad.clear(swarm)` | empty a swarm |
 | `toad.wanted(name)` | whether the live picture wants a new frame (a window drew the last one); `toad.frame` skips one it does not |
-| `toad.frame(layers, view)` | draw swarms, shapes (circle, box, capsule, ring, triangle, line) and sprites in order into an HDR target, tone mapped; `"live": name` shows it in a Loom window as the image `("live", name)`; `"png": true` answers its pixels |
+| `toad.frame(layers, view)` | draw swarms, shapes (circle, box, capsule, ring, triangle, line) and sprites in order into an HDR target, lit, bloomed, graded and tone mapped; `"live": name` shows it in a Loom window as the image `("live", name)`; `"png": true` answers its pixels, `"probe": [(x, y)]` the colours there |
 
 Colours are sRGB as written, `(r, g, b, a)` or `"#rrggbb"`; `glow` takes
-a shape past white. Show swarms, `toad.gpu` and `toad.frame` need a GPU
+a shape past white.
+
+**Light.** A view with `gi` above zero is lit: 2D global illumination
+by radiance cascades, at `gi_res` (4: a quarter of the frame). A shape
+with `emit: k` gives light, one with `cast: true` blocks it (a soft
+shadow behind, its faces lit by what shines on them), and every other
+shape is a surface, its colour times the light that reaches it plus
+`ambient`. A swarm layer with `light` pools that much light `reach`
+world units around each point (no shadow). The finish: `bloom`,
+`exposure`, `contrast`, `saturation`, `tint`, `grain`, `vignette`, then
+AgX. Show swarms, `toad.gpu` and `toad.frame` need a GPU
 (the native build with `gui`); kernels and play swarms run anywhere.
 
 ## `http` — HTTP

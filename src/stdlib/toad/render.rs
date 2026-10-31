@@ -1,26 +1,43 @@
-//! The renderer: a frame's parts drawn in order into an HDR target, then
-//! tone mapped to an 8-bit frame.
+//! The renderer: a frame's parts drawn in order into an HDR target, lit,
+//! bloomed, graded and tone mapped to an 8-bit frame.
 //!
 //! - **Swarms** are one instanced draw each, whose vertex shader reads the
-//!   swarm's columns straight from its storage buffer (a show swarm's own;
-//!   a play swarm's uploaded once a frame): glowing points, added.
+//!   swarm's columns straight from its storage buffer: glowing points,
+//!   added. They give light.
 //! - **Shapes** are signed distance fields (circle, box, capsule, ring,
 //!   triangle; a line is a capsule), any size, rotated, rounded or
-//!   outlined, antialiased by their distance, in one instanced draw per
-//!   run of shapes; their colour may go past 1.0 to glow.
-//! - **Sprites** are pictures (`gui`'s decoding: PNG, JPEG, WebP, GIF,
-//!   SVG), rotated and tinted, one draw per picture.
+//!   outlined, antialiased by their distance. A shape is a surface (its
+//!   colour times the light where it is), may `emit` light of its own,
+//!   and may `cast` (block light: a shadow).
+//! - **Sprites** are pictures `gui` decodes, rotated and tinted, lit as
+//!   surfaces.
 //!
-//! Shapes and sprites cover what is under them (premultiplied "over");
-//! swarms add light. The camera (`center`, `scale`, `rot`) applies to all.
+//! **Light** (when the look asks for it: `gi` above zero) is 2D global
+//! illumination by radiance cascades, at a quarter of the frame's size:
+//! 1. the light scene: what emits (emitting shapes, swarms) and what
+//!    casts, drawn small;
+//! 2. its distance field, by jump flooding, so rays step over empty space;
+//! 3. the cascades, far to near: cascade n has probes every 2^n texels and
+//!    4^(n+1) directions, each ray marching its own stretch of distance
+//!    (4^n long) and, where it reaches the end unblocked, taking the
+//!    light the next cascade found further on. Cascade 0 is the light
+//!    arriving at every texel, soft shadows and colour bleeding included.
+//!
+//! **The finish**: bloom (a chain of halvings and a tent filter back up),
+//! then exposure, contrast, saturation, a tint, vignette and grain, then
+//! AgX tone mapping.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// The camera, shared by every pass: the target's size in pixels, the
-/// world point at its centre, pixels per world unit, and its turn.
+/// The camera and how the pass draws, shared by every pass that draws the
+/// scene: the target's size in pixels, the world point at its centre,
+/// pixels per world unit, its turn, the mode (0 the frame, 1 the light
+/// scene), the point radius scale, the ambient light, the light's gain,
+/// and whether surfaces are lit.
 const VIEW: &str = r#"
-struct V { size: vec2<f32>, center: vec2<f32>, scale: f32, rot: f32, pad0: f32, pad1: f32 };
+struct V { size: vec2<f32>, center: vec2<f32>, scale: f32, rot: f32, mode: f32, pxk: f32,
+           ambient: vec4<f32>, gi: f32, lit: f32, pad0: f32, pad1: f32 };
 fn to_clip(v: V, p: vec2<f32>) -> vec4<f32> {
     let c = cos(-v.rot); let s = sin(-v.rot);
     let q = p - v.center;
@@ -38,8 +55,25 @@ fn corner(i: u32) -> vec2<f32> {
 }
 "#;
 
+/// The light arriving at a pixel of the frame (white when unlit).
+const LIGHT: &str = r#"
+@group(1) @binding(0) var light_tex: texture_2d<f32>;
+@group(1) @binding(1) var light_smp: sampler;
+fn light_at(v: V, at: vec4<f32>) -> vec3<f32> {
+    return light_off(v, at, vec2(0.0));
+}
+/// The light `off` world units away from the pixel `at` (a blocker's face
+/// takes the light just outside it: inside, none arrives).
+fn light_off(v: V, at: vec4<f32>, off: vec2<f32>) -> vec3<f32> {
+    if (v.lit < 0.5) { return vec3(1.0); }
+    let o = turn(off, -v.rot) * v.scale;
+    let l = textureSampleLevel(light_tex, light_smp, (at.xy + vec2(o.x, -o.y)) / v.size, 0.0).rgb;
+    return v.ambient.rgb + l * v.gi;
+}
+"#;
+
 const POINTS: &str = r#"
-struct D { cap: u32, n: u32, pos: u32, glow: i32, dead: i32, pad: u32, radius: f32, pad2: f32, color: vec4<f32> };
+struct D { cap: u32, n: u32, pos: u32, glow: i32, dead: i32, pad: u32, radius: f32, light: f32, color: vec4<f32>, reach: f32, pad3: f32, pad4: f32, pad5: f32 };
 @group(0) @binding(0) var<storage, read> s: array<f32>;
 @group(0) @binding(1) var<uniform> v: V;
 @group(0) @binding(2) var<uniform> d: D;
@@ -47,15 +81,19 @@ struct O { @builtin(position) at: vec4<f32>, @location(0) q: vec2<f32>, @locatio
 @vertex
 fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) i: u32) -> O {
     var o: O;
-    let corner = corner(vi);
+    let c = corner(vi);
     var k = 1.0;
     if (d.glow >= 0) { k = s[u32(d.glow) * d.cap + i]; }
     if (d.dead >= 0 && s[u32(d.dead) * d.cap + i] > 0.5) { k = 0.0; }
     let p = vec2(s[d.pos * d.cap + i], s[(d.pos + 1u) * d.cap + i]);
-    // the point's radius is in pixels, whatever the camera's zoom
-    o.at = to_clip(v, p) + vec4(corner * d.radius / (v.size * 0.5), 0.0, 0.0);
-    if (k <= 0.0) { o.at = vec4(2.0, 2.0, 2.0, 1.0); }
-    o.q = corner;
+    // the radius is in the frame's pixels, whatever the zoom; a pool of
+    // light (mode 2) reaches `reach` world units
+    var r = d.radius * v.pxk;
+    if (v.mode > 1.5) { r = d.reach * v.scale; }
+    o.at = to_clip(v, p) + vec4(c * max(r, 1.0) / (v.size * 0.5), 0.0, 0.0);
+    // swarms are not in the light scene (mode 1): their light is pooled
+    if (k <= 0.0 || (v.mode > 0.5 && v.mode < 1.5)) { o.at = vec4(2.0, 2.0, 2.0, 1.0); }
+    o.q = c;
     o.k = k;
     return o;
 }
@@ -66,17 +104,20 @@ fn fs(o: O) -> @location(0) vec4<f32> {
     // a hot core and a soft halo
     let core = exp(-r2 * 18.0);
     let halo = exp(-r2 * 4.0) * 0.35;
-    let e = (core + halo) * o.k * d.color.a;
+    var e = (core + halo) * o.k * d.color.a;
+    // a pool of its light on what is near: smooth to nothing at its reach
+    if (v.mode > 1.5) { let f = 1.0 - r2; e = f * f * o.k * d.color.a * d.light; }
     return vec4(d.color.rgb * e, 0.0);
 }
 "#;
 
 /// A shape: centre, half size, turn, kind, rounding, outline, colour
-/// (premultiplied by nothing: straight, with `glow` folded into rgb).
-pub const SHAPE_FLOATS: usize = 12;
+/// (straight, linear), emission, whether it casts, and room.
+pub const SHAPE_FLOATS: usize = 16;
 
 const SHAPES: &str = r#"
-struct S { c: vec2<f32>, half: vec2<f32>, rot: f32, kind: f32, round: f32, line: f32, color: vec4<f32> };
+struct S { c: vec2<f32>, half: vec2<f32>, rot: f32, kind: f32, round: f32, line: f32,
+           color: vec4<f32>, emit: f32, blocks: f32, pad0: f32, pad1: f32 };
 @group(0) @binding(0) var<storage, read> sh: array<S>;
 @group(0) @binding(1) var<uniform> v: V;
 struct O { @builtin(position) at: vec4<f32>, @location(0) q: vec2<f32>, @location(1) @interpolate(flat) i: u32 };
@@ -88,6 +129,8 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) i: u32) -> O {
     let q = corner(vi) * (s.half + vec2(pad));
     var o: O;
     o.at = to_clip(v, s.c + turn(q, s.rot));
+    // the light scene draws only what emits or casts
+    if (v.mode > 0.5 && s.emit <= 0.0 && s.blocks <= 0.0) { o.at = vec4(2.0, 2.0, 2.0, 1.0); }
     o.q = q;
     o.i = i;
     return o;
@@ -104,10 +147,7 @@ fn sd_tri(p0: vec2<f32>, r: f32) -> f32 {
     p.x -= clamp(p.x, -r * 1.732, 0.0);
     return -length(p) * sign(p.y);
 }
-@fragment
-fn fs(o: O) -> @location(0) vec4<f32> {
-    let s = sh[o.i];
-    let p = o.q;
+fn sdf(s: S, p: vec2<f32>) -> f32 {
     var d = 0.0;
     let kind = u32(s.kind + 0.5);
     if (kind == 0u) { d = length(p) - s.half.x; }                       // circle
@@ -119,10 +159,33 @@ fn fs(o: O) -> @location(0) vec4<f32> {
     }
     else if (kind == 3u) { d = sd_tri(p, s.half.x); }                    // triangle
     if (s.line > 0.0) { d = abs(d) - s.line * 0.5; }
-    // coverage from the distance in pixels
-    let cov = clamp(0.5 - d * v.scale, 0.0, 1.0) * s.color.a;
+    return d;
+}
+@fragment
+fn fs(o: O) -> @location(0) vec4<f32> {
+    let s = sh[o.i];
+    let p = o.q;
+    let d = sdf(s, p);
+    let cov = clamp(0.5 - d * v.scale, 0.0, 1.0);
     if (cov <= 0.0) { discard; }
-    return vec4(s.color.rgb * cov, cov);
+    let e = s.color.rgb * s.emit * cov;
+    if (v.mode > 0.5) {
+        // the light scene: its light, and whether it blocks
+        return vec4(e, cov * s.blocks);
+    }
+    let a = cov * s.color.a;
+    var l = vec3(1.0);
+    if (s.blocks > 0.5 && v.lit > 0.5) {
+        // a blocker: the light just outside its nearest edge
+        let k = 0.5;
+        let g = vec2(sdf(s, p + vec2(k, 0.0)) - sdf(s, p - vec2(k, 0.0)),
+                     sdf(s, p + vec2(0.0, k)) - sdf(s, p - vec2(0.0, k)));
+        let n = turn(normalize(g + vec2(1e-6)), s.rot);
+        l = light_off(v, o.at, n * (max(-d, 0.0) + 6.0 / v.scale));
+    } else {
+        l = light_at(v, o.at);
+    }
+    return vec4(s.color.rgb * l * a + e, a);
 }
 "#;
 
@@ -151,19 +214,210 @@ fn fs(o: O) -> @location(0) vec4<f32> {
     // pictures are premultiplied; the texture is sRGB, so this is linear
     let t = sp[o.i].tint;
     let c = textureSample(pic, smp, o.uv);
-    return vec4(c.rgb * t.rgb, c.a) * t.a;
+    return vec4(c.rgb * t.rgb * light_at(v, o.at), c.a) * t.a;
 }
 "#;
 
-const TONE: &str = r#"
-struct T { bg: vec4<f32>, exposure: f32, vignette: f32, pad0: f32, pad1: f32 };
-@group(0) @binding(0) var hdr: texture_2d<f32>;
-@group(0) @binding(1) var<uniform> t: T;
+/// A pass over the whole target.
+const FULL: &str = r#"
 @vertex
 fn vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
     let p = array<vec2<f32>, 3>(vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0))[vi];
     return vec4(p, 0.0, 1.0);
 }
+"#;
+
+/// Jump flooding: each texel's nearest light or blocker. The seed pass
+/// marks them; each step looks `step` texels away in eight directions.
+const JFA: &str = r#"
+struct J { step: f32, seed: f32, pad0: f32, pad1: f32 };
+@group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(1) var<uniform> j: J;
+@fragment
+fn fs(@builtin(position) at: vec4<f32>) -> @location(0) vec4<f32> {
+    let p = vec2<i32>(at.xy);
+    let dim = vec2<i32>(textureDimensions(src));
+    if (j.seed > 0.5) {
+        let c = textureLoad(src, p, 0);
+        if (c.a > 0.1 || max(c.r, max(c.g, c.b)) > 0.001) { return vec4(at.xy, 0.0, 1.0); }
+        return vec4(-1.0, -1.0, 0.0, 0.0);
+    }
+    var best = vec4(-1.0, -1.0, 0.0, 0.0);
+    var bd = 1e9;
+    let st = i32(j.step);
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let q = p + vec2(x, y) * st;
+            if (q.x < 0 || q.y < 0 || q.x >= dim.x || q.y >= dim.y) { continue; }
+            let s = textureLoad(src, q, 0);
+            if (s.x < 0.0) { continue; }
+            let d = distance(at.xy, s.xy);
+            if (d < bd) { bd = d; best = s; }
+        }
+    }
+    return best;
+}
+"#;
+
+/// The distance to the nearest light or blocker, in texels.
+const DIST: &str = r#"
+@group(0) @binding(0) var seeds: texture_2d<f32>;
+@fragment
+fn fs(@builtin(position) at: vec4<f32>) -> @location(0) vec4<f32> {
+    let s = textureLoad(seeds, vec2<i32>(at.xy), 0);
+    if (s.x < 0.0) { return vec4(1e4); }
+    return vec4(distance(at.xy, s.xy));
+}
+"#;
+
+/// One cascade. Texel (block, probe): `probe` the probe's place in its
+/// grid, `block` which four of the cascade's directions it holds; the
+/// texel answers those four rays' mean, each merged with the cascade
+/// above where it ran out unblocked.
+const CASCADE: &str = r#"
+struct C { n: f32, count: f32, interval: f32, pad: f32 };
+@group(0) @binding(0) var dist: texture_2d<f32>;
+@group(0) @binding(1) var scene: texture_2d<f32>;
+@group(0) @binding(2) var upper: texture_2d<f32>;
+@group(0) @binding(3) var<uniform> c: C;
+const TAU: f32 = 6.28318530718;
+
+fn march(o: vec2<f32>, dir: vec2<f32>, start: f32, len: f32, dim: vec2<f32>) -> vec4<f32> {
+    var t = start;
+    let end = start + len;
+    var seen = vec3(0.0);
+    for (var i = 0; i < 32; i++) {
+        let p = o + dir * t;
+        if (p.x < 0.0 || p.y < 0.0 || p.x >= dim.x || p.y >= dim.y) { return vec4(seen, 1.0); }
+        let d = textureLoad(dist, vec2<i32>(p), 0).r;
+        if (d < 0.75) {
+            let s = textureLoad(scene, vec2<i32>(p), 0);
+            // a blocker ends the ray, seeing its own light (often none)
+            if (s.a > 0.5) { return vec4(seen + s.rgb, 0.0); }
+            // a light that blocks nothing (a firefly: no shadow of it) is
+            // seen once and passed: the ray steps over it
+            seen += s.rgb;
+            t += 4.0;
+        } else {
+            t += max(d - 0.5, 0.75);
+        }
+        if (t >= end) { break; }
+    }
+    return vec4(seen, 1.0);
+}
+
+@fragment
+fn fs(@builtin(position) at: vec4<f32>) -> @location(0) vec4<f32> {
+    let dim = vec2<f32>(textureDimensions(scene));
+    let dimu = vec2<u32>(textureDimensions(scene));
+    let n = u32(c.n);
+    let spacing = 1u << n;
+    let size = max(dimu / spacing, vec2(1u));
+    let coord = vec2<u32>(at.xy);
+    let block = coord / size;
+    if (block.x >= spacing || block.y >= spacing) { return vec4(0.0); }
+    let probe = coord % size;
+    let rays = f32(spacing * spacing * 4u);
+    let base = 4u * (block.x + spacing * block.y);
+    let center = (vec2<f32>(probe) + 0.5) * f32(spacing);
+    let pw = pow(4.0, f32(n));
+    let start = c.interval * (pw - 1.0) / 3.0;
+    let len = c.interval * pw;
+    let up_spacing = spacing * 2u;
+    let up_size = max(dimu / up_spacing, vec2(1u));
+    var total = vec4(0.0);
+    for (var i = 0u; i < 4u; i++) {
+        let index = base + i;
+        let a = (f32(index) + 0.5) * TAU / rays;
+        let dir = vec2(cos(a), sin(a));
+        if (f32(n) + 1.0 >= c.count) {
+            total += march(center, dir, start, len, dim);
+            continue;
+        }
+        // the bilinear fix: a ray to each of the four probes above, from
+        // where this interval starts to where theirs does, merged with
+        // what that probe saw further on, the four weighted by nearness
+        let ub = vec2(index % up_spacing, index / up_spacing);
+        let pos = center / f32(up_spacing) - 0.5;
+        let p0 = floor(pos);
+        let f = pos - p0;
+        let a0 = center + dir * start;
+        var acc = vec4(0.0);
+        for (var k = 0u; k < 4u; k++) {
+            let o = vec2(f32(k & 1u), f32(k >> 1u));
+            let q = clamp(vec2<i32>(p0 + o), vec2<i32>(0), vec2<i32>(up_size) - vec2<i32>(1));
+            let w = select(1.0 - f.x, f.x, o.x > 0.5) * select(1.0 - f.y, f.y, o.y > 0.5);
+            let to = (vec2<f32>(q) + 0.5) * f32(up_spacing) + dir * (start + len);
+            let seg = to - a0;
+            let l = max(length(seg), 0.001);
+            var r = march(a0, seg / l, 0.0, l, dim);
+            if (r.a > 0.5) {
+                let u = textureLoad(upper, vec2<i32>(ub * up_size) + q, 0);
+                r = vec4(r.rgb + u.rgb, u.a);
+            }
+            acc += r * w;
+        }
+        total += acc;
+    }
+    return total * 0.25;
+}
+"#;
+
+/// Bloom: a halving with a 13-tap filter, and a tent back up added in.
+const BLOOM_DOWN: &str = r#"
+@group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(1) var smp: sampler;
+@fragment
+fn fs(@builtin(position) at: vec4<f32>) -> @location(0) vec4<f32> {
+    let px = 1.0 / vec2<f32>(textureDimensions(src));
+    let uv = at.xy * 2.0 * px;
+    var c = textureSampleLevel(src, smp, uv, 0.0).rgb * 0.125;
+    c += (textureSampleLevel(src, smp, uv + px * vec2(-1.0, -1.0), 0.0).rgb
+        + textureSampleLevel(src, smp, uv + px * vec2(1.0, -1.0), 0.0).rgb
+        + textureSampleLevel(src, smp, uv + px * vec2(-1.0, 1.0), 0.0).rgb
+        + textureSampleLevel(src, smp, uv + px * vec2(1.0, 1.0), 0.0).rgb) * 0.125;
+    c += (textureSampleLevel(src, smp, uv + px * vec2(-2.0, -2.0), 0.0).rgb
+        + textureSampleLevel(src, smp, uv + px * vec2(2.0, -2.0), 0.0).rgb
+        + textureSampleLevel(src, smp, uv + px * vec2(-2.0, 2.0), 0.0).rgb
+        + textureSampleLevel(src, smp, uv + px * vec2(2.0, 2.0), 0.0).rgb) * 0.03125;
+    c += (textureSampleLevel(src, smp, uv + px * vec2(-2.0, 0.0), 0.0).rgb
+        + textureSampleLevel(src, smp, uv + px * vec2(2.0, 0.0), 0.0).rgb
+        + textureSampleLevel(src, smp, uv + px * vec2(0.0, -2.0), 0.0).rgb
+        + textureSampleLevel(src, smp, uv + px * vec2(0.0, 2.0), 0.0).rgb) * 0.0625;
+    // keep it finite and bounded: one hot texel is not a sun
+    return vec4(min(c, vec3(64.0)), 1.0);
+}
+"#;
+
+const BLOOM_UP: &str = r#"
+@group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(1) var smp: sampler;
+@fragment
+fn fs(@builtin(position) at: vec4<f32>) -> @location(0) vec4<f32> {
+    let dst = vec2<f32>(textureDimensions(src)) * 2.0;
+    let uv = at.xy / dst;
+    let px = 1.0 / vec2<f32>(textureDimensions(src));
+    var c = textureSampleLevel(src, smp, uv, 0.0).rgb * 4.0;
+    c += (textureSampleLevel(src, smp, uv + px * vec2(-1.0, 0.0), 0.0).rgb
+        + textureSampleLevel(src, smp, uv + px * vec2(1.0, 0.0), 0.0).rgb
+        + textureSampleLevel(src, smp, uv + px * vec2(0.0, -1.0), 0.0).rgb
+        + textureSampleLevel(src, smp, uv + px * vec2(0.0, 1.0), 0.0).rgb) * 2.0;
+    c += textureSampleLevel(src, smp, uv + px * vec2(-1.0, -1.0), 0.0).rgb
+        + textureSampleLevel(src, smp, uv + px * vec2(1.0, -1.0), 0.0).rgb
+        + textureSampleLevel(src, smp, uv + px * vec2(-1.0, 1.0), 0.0).rgb
+        + textureSampleLevel(src, smp, uv + px * vec2(1.0, 1.0), 0.0).rgb;
+    // each wider level counts for less: a glow, not a fog
+    return vec4(c / 16.0 * 0.6, 1.0);
+}
+"#;
+
+const TONE: &str = r#"
+struct T { bg: vec4<f32>, tint: vec4<f32>, exposure: f32, vignette: f32, bloom: f32, contrast: f32,
+           saturation: f32, grain: f32, seed: f32, pad: f32 };
+@group(0) @binding(0) var hdr: texture_2d<f32>;
+@group(0) @binding(1) var<uniform> t: T;
+@group(0) @binding(2) var bloom: texture_2d<f32>;
+@group(0) @binding(3) var smp: sampler;
 // AgX-style: a log encoding and a fitted sigmoid, so bright colours
 // desaturate toward white instead of clipping into flat hues.
 fn agx(c: vec3<f32>) -> vec3<f32> {
@@ -175,14 +429,25 @@ fn agx(c: vec3<f32>) -> vec3<f32> {
     let mi = mat3x3<f32>(vec3(1.197, -0.0528, -0.0529), vec3(-0.0980, 1.152, -0.0980), vec3(-0.0990, -0.0990, 1.152));
     return clamp(mi * y, vec3(0.0), vec3(1.0));
 }
+fn hash(p: vec2<f32>) -> f32 {
+    return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+}
 @fragment
 fn fs(@builtin(position) at: vec4<f32>) -> @location(0) vec4<f32> {
     let dim = vec2<f32>(textureDimensions(hdr));
-    let c = textureLoad(hdr, vec2<i32>(at.xy), 0).rgb * t.exposure + t.bg.rgb;
+    var c = textureLoad(hdr, vec2<i32>(at.xy), 0).rgb + t.bg.rgb;
+    c += textureSampleLevel(bloom, smp, at.xy / dim, 0.0).rgb * t.bloom;
+    c *= t.exposure * t.tint.rgb;
+    // contrast about middle grey, in log space; saturation about luminance
+    let grey = 0.18;
+    c = grey * pow(max(c, vec3(0.0)) / grey, vec3(t.contrast));
+    let lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    c = max(mix(vec3(lum), c, t.saturation), vec3(0.0));
     let uv = at.xy / dim - 0.5;
-    let v = 1.0 - t.vignette * dot(uv, uv) * 1.6;
+    var o = agx(c) * (1.0 - t.vignette * dot(uv, uv) * 1.6);
+    o += (hash(at.xy + t.seed) - 0.5) * t.grain;
     // AgX's output is display-encoded already
-    return vec4(agx(c) * v, 1.0);
+    return vec4(clamp(o, vec3(0.0), vec3(1.0)), 1.0);
 }
 "#;
 
@@ -196,6 +461,10 @@ pub struct Layer<'a> {
     pub dead: Option<usize>,
     pub color: [f32; 4],
     pub radius: f32,
+    /// How much light each point gives in a lit look,
+    pub light: f32,
+    /// and how far it reaches (world units).
+    pub reach: f32,
 }
 
 /// One part of a frame, drawn in order.
@@ -207,6 +476,7 @@ pub enum Part<'a> {
     Sprites(Vec<(Arc<crate::stdlib::gui::canvas::Picture>, Vec<f32>)>),
 }
 
+/// The camera and the finish.
 pub struct View {
     pub size: (u32, u32),
     pub center: (f32, f32),
@@ -215,29 +485,66 @@ pub struct View {
     pub bg: [f32; 3],
     pub exposure: f32,
     pub vignette: f32,
+    /// The light's gain (0: no light pass; surfaces show their colour).
+    pub gi: f32,
+    /// Light everywhere, linear.
+    pub ambient: [f32; 3],
+    pub bloom: f32,
+    pub contrast: f32,
+    pub saturation: f32,
+    pub tint: [f32; 3],
+    pub grain: f32,
+    pub seed: f32,
+    /// The light pass's size: the frame's over this (2: half, 4: quarter).
+    pub gi_down: u32,
 }
 
 const HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const OUT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+const SEEDS: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 
-/// A live view's HDR target and its output, shown by `gui` as a picture.
-struct Target {
+/// Cascades: enough that the last reaches across the light scene.
+const CASCADES: u32 = 6;
+/// Bloom's halvings.
+const BLOOM_LEVELS: usize = 6;
+
+/// Every texture a frame of one size draws through: the HDR target and
+/// the output, the light scene and its distance field and cascades, and
+/// bloom's chain. A live view keeps its set while its size holds.
+struct Targets {
     size: (u32, u32),
+    gi_down: u32,
     hdr: wgpu::Texture,
     out: wgpu::Texture,
+    gi_scene: wgpu::Texture,
+    seeds: [wgpu::Texture; 2],
+    dist: wgpu::Texture,
+    cascades: [wgpu::Texture; 2],
+    bloom: Vec<wgpu::Texture>,
 }
+
+type Pipe = (wgpu::RenderPipeline, wgpu::BindGroupLayout);
 
 pub struct Renderer {
     gpu: Arc<crate::stdlib::gui::gpu::Gpu>,
-    points: (wgpu::RenderPipeline, wgpu::BindGroupLayout),
-    shapes: (wgpu::RenderPipeline, wgpu::BindGroupLayout),
-    sprites: (wgpu::RenderPipeline, wgpu::BindGroupLayout),
-    tone: (wgpu::RenderPipeline, wgpu::BindGroupLayout),
+    points: Pipe,
+    shapes: Pipe,
+    sprites: Pipe,
+    light_layout: wgpu::BindGroupLayout,
+    jfa: Pipe,
+    dist: Pipe,
+    cascade: Pipe,
+    bloom_down: Pipe,
+    bloom_up: Pipe,
+    tone: Pipe,
     sampler: wgpu::Sampler,
-    /// A live view's textures by its name, kept while its size holds.
-    targets: HashMap<String, Target>,
+    /// A 1×1 white light, for a frame without the light pass.
+    white: wgpu::TextureView,
+    /// A live view's textures by its name.
+    targets: HashMap<String, Targets>,
     /// Sprites' textures by picture id.
     pictures: HashMap<u64, wgpu::TextureView>,
+    frame_no: u64,
 }
 
 fn entry(binding: u32, vis: wgpu::ShaderStages, ty: wgpu::BindingType) -> wgpu::BindGroupLayoutEntry {
@@ -265,18 +572,25 @@ fn uniform() -> wgpu::BindingType {
     }
 }
 
-fn texture() -> wgpu::BindingType {
+fn texture(filterable: bool) -> wgpu::BindingType {
     wgpu::BindingType::Texture {
-        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+        sample_type: wgpu::TextureSampleType::Float { filterable },
         view_dimension: wgpu::TextureViewDimension::D2,
         multisampled: false,
     }
+}
+
+fn sampler() -> wgpu::BindingType {
+    wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)
 }
 
 impl Renderer {
     pub fn new() -> Result<Self, String> {
         let gpu = crate::stdlib::gui::gpu::gpu(None, None)?;
         let d = &gpu.device;
+        // a shader that does not compile is an error here, not a frame of
+        // nothing and a line in the log
+        let scope = d.push_error_scope(wgpu::ErrorFilter::Validation);
         let (v, f, vf) = (
             wgpu::ShaderStages::VERTEX,
             wgpu::ShaderStages::FRAGMENT,
@@ -288,22 +602,24 @@ impl Renderer {
                 entries,
             })
         };
+        let light_layout = layout("toad light", &[entry(0, f, texture(true)), entry(1, f, sampler())]);
         let pipe = |label: &str,
                     src: String,
-                    layout: wgpu::BindGroupLayout,
+                    layouts: &[&wgpu::BindGroupLayout],
                     format,
                     blend|
-         -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
+         -> wgpu::RenderPipeline {
             let module = d.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some(label),
                 source: wgpu::ShaderSource::Wgsl(src.into()),
             });
+            let ls: Vec<Option<&wgpu::BindGroupLayout>> = layouts.iter().map(|l| Some(*l)).collect();
             let pl = d.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(label),
-                bind_group_layouts: &[Some(&layout)],
+                bind_group_layouts: &ls,
                 ..Default::default()
             });
-            let p = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&pl),
                 vertex: wgpu::VertexState {
@@ -327,8 +643,7 @@ impl Renderer {
                 multisample: Default::default(),
                 multiview_mask: None,
                 cache: None,
-            });
-            (p, layout)
+            })
         };
         let add = wgpu::BlendState {
             color: wgpu::BlendComponent {
@@ -343,71 +658,83 @@ impl Renderer {
             },
         };
         let over = wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING;
-        let points = pipe(
-            "toad points",
-            format!("{VIEW}{POINTS}"),
-            layout("toad points", &[entry(0, v, storage()), entry(1, vf, uniform()), entry(2, vf, uniform())]),
-            HDR,
-            Some(add),
+        let pl = layout("toad points", &[entry(0, v, storage()), entry(1, vf, uniform()), entry(2, vf, uniform())]);
+        let points = (pipe("toad points", format!("{VIEW}{POINTS}"), &[&pl, &light_layout], HDR, Some(add)), pl);
+        let sl = layout("toad shapes", &[entry(0, vf, storage()), entry(1, vf, uniform())]);
+        let shapes = (
+            pipe("toad shapes", format!("{VIEW}{LIGHT}{SHAPES}"), &[&sl, &light_layout], HDR, Some(over)),
+            sl,
         );
-        let shapes = pipe(
-            "toad shapes",
-            format!("{VIEW}{SHAPES}"),
-            layout("toad shapes", &[entry(0, vf, storage()), entry(1, vf, uniform())]),
-            HDR,
-            Some(over),
-        );
-        let sprites = pipe(
+        let pl2 = layout(
             "toad sprites",
-            format!("{VIEW}{SPRITES}"),
-            layout(
-                "toad sprites",
-                &[
-                    entry(0, vf, storage()),
-                    entry(1, vf, uniform()),
-                    entry(2, f, texture()),
-                    entry(3, f, wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)),
-                ],
-            ),
-            HDR,
-            Some(over),
+            &[entry(0, vf, storage()), entry(1, vf, uniform()), entry(2, f, texture(true)), entry(3, f, sampler())],
         );
-        let tone = pipe(
+        let sprites = (
+            pipe("toad sprites", format!("{VIEW}{LIGHT}{SPRITES}"), &[&pl2, &light_layout], HDR, Some(over)),
+            pl2,
+        );
+        let jl = layout("toad jfa", &[entry(0, f, texture(false)), entry(1, f, uniform())]);
+        let jfa = (pipe("toad jfa", format!("{FULL}{JFA}"), &[&jl], SEEDS, None), jl);
+        let dl = layout("toad dist", &[entry(0, f, texture(false))]);
+        let dist = (pipe("toad dist", format!("{FULL}{DIST}"), &[&dl], HDR, None), dl);
+        let cl = layout(
+            "toad cascade",
+            &[entry(0, f, texture(true)), entry(1, f, texture(true)), entry(2, f, texture(true)), entry(3, f, uniform())],
+        );
+        let cascade = (pipe("toad cascade", format!("{FULL}{CASCADE}"), &[&cl], HDR, None), cl);
+        let bl = layout("toad bloom", &[entry(0, f, texture(true)), entry(1, f, sampler())]);
+        let bloom_down = (
+            pipe("toad bloom down", format!("{FULL}{BLOOM_DOWN}"), &[&bl], HDR, None),
+            bl,
+        );
+        let bl2 = layout("toad bloom up", &[entry(0, f, texture(true)), entry(1, f, sampler())]);
+        let bloom_up = (pipe("toad bloom up", format!("{FULL}{BLOOM_UP}"), &[&bl2], HDR, Some(add)), bl2);
+        let tl = layout(
             "toad tone",
-            TONE.to_string(),
-            layout(
-                "toad tone",
-                &[
-                    entry(
-                        0,
-                        f,
-                        wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                    ),
-                    entry(1, f, uniform()),
-                ],
-            ),
-            OUT,
-            None,
+            &[entry(0, f, texture(false)), entry(1, f, uniform()), entry(2, f, texture(true)), entry(3, f, sampler())],
         );
+        let tone = (pipe("toad tone", format!("{FULL}{TONE}"), &[&tl], OUT, None), tl);
         let sampler = d.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("toad sprites"),
+            label: Some("toad"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
             ..Default::default()
         });
+        let white = {
+            let t = d.create_texture(&wgpu::TextureDescriptor {
+                label: Some("toad white"),
+                size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: HDR,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            t.create_view(&Default::default())
+        };
+        if let Some(e) = pollster::block_on(scope.pop()) {
+            return Err(format!("toad: the renderer's shaders: {e}"));
+        }
         Ok(Renderer {
             gpu,
             points,
             shapes,
             sprites,
+            light_layout,
+            jfa,
+            dist,
+            cascade,
+            bloom_down,
+            bloom_up,
             tone,
             sampler,
+            white,
             targets: HashMap::new(),
             pictures: HashMap::new(),
+            frame_no: 0,
         })
     }
 
@@ -424,6 +751,10 @@ impl Renderer {
                 usage,
             },
         )
+    }
+
+    fn uniform(&self, label: &str, words: &[f32]) -> wgpu::Buffer {
+        self.buffer(label, bytemuck::cast_slice(words), wgpu::BufferUsages::UNIFORM)
     }
 
     /// A sprite's texture, uploaded once per picture (sRGB, premultiplied).
@@ -473,60 +804,187 @@ impl Renderer {
         view
     }
 
+    fn make_targets(&self, w: u32, h: u32, down: u32) -> Targets {
+        let d = &self.gpu.device;
+        let tex = |label: &str, w: u32, h: u32, format, usage| {
+            d.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: w.max(1),
+                    height: h.max(1),
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage,
+                view_formats: &[],
+            })
+        };
+        let rt = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
+        let (gw, gh) = (w.div_ceil(down), h.div_ceil(down));
+        let mut bloom = Vec::new();
+        let (mut bw, mut bh) = (w, h);
+        for _ in 0..BLOOM_LEVELS {
+            bw = (bw / 2).max(1);
+            bh = (bh / 2).max(1);
+            bloom.push(tex("toad bloom", bw, bh, HDR, rt));
+        }
+        Targets {
+            size: (w, h),
+            gi_down: down,
+            hdr: tex("toad frame", w, h, HDR, rt),
+            out: tex("toad out", w, h, OUT, rt | wgpu::TextureUsages::COPY_SRC),
+            gi_scene: tex("toad light scene", gw, gh, HDR, rt),
+            seeds: [tex("toad seeds", gw, gh, SEEDS, rt), tex("toad seeds", gw, gh, SEEDS, rt)],
+            dist: tex("toad dist", gw, gh, HDR, rt),
+            cascades: [tex("toad cascade", gw, gh, HDR, rt), tex("toad cascade", gw, gh, HDR, rt)],
+            bloom,
+        }
+    }
+
+    /// The draws of the parts for one target: (pipeline, bind group,
+    /// vertices, instances), the view uniform in `vbuf`.
+    #[allow(clippy::type_complexity)]
+    fn draws<'s>(
+        &'s self,
+        parts: &[Part<'_>],
+        vbuf: &wgpu::Buffer,
+        views: &[wgpu::TextureView],
+        light: bool,
+    ) -> Vec<(&'s wgpu::RenderPipeline, wgpu::BindGroup, u32, u32)> {
+        let d = &self.gpu.device;
+        let mut out = Vec::new();
+        let mut views = views.iter();
+        for p in parts {
+            match p {
+                Part::Swarm(l) => {
+                    let mut u = [0u32; 16];
+                    u[12] = l.reach.to_bits();
+                    u[0] = l.cap as u32;
+                    u[1] = l.n as u32;
+                    u[2] = l.pos as u32;
+                    u[3] = l.glow.map(|g| g as i32).unwrap_or(-1) as u32;
+                    u[4] = l.dead.map(|g| g as i32).unwrap_or(-1) as u32;
+                    u[6] = l.radius.to_bits();
+                    u[7] = l.light.to_bits();
+                    for i in 0..4 {
+                        u[8 + i] = l.color[i].to_bits();
+                    }
+                    let ub = self.buffer("toad points", bytemuck::cast_slice(&u), wgpu::BufferUsages::UNIFORM);
+                    let bg = d.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("toad points"),
+                        layout: &self.points.1,
+                        entries: &[
+                            wgpu::BindGroupEntry { binding: 0, resource: l.buf.as_entire_binding() },
+                            wgpu::BindGroupEntry { binding: 1, resource: vbuf.as_entire_binding() },
+                            wgpu::BindGroupEntry { binding: 2, resource: ub.as_entire_binding() },
+                        ],
+                    });
+                    out.push((&self.points.0, bg, 6, l.n as u32));
+                }
+                Part::Shapes(inst) if !inst.is_empty() => {
+                    let sb = self.buffer("toad shapes", bytemuck::cast_slice(inst), wgpu::BufferUsages::STORAGE);
+                    let bg = d.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("toad shapes"),
+                        layout: &self.shapes.1,
+                        entries: &[
+                            wgpu::BindGroupEntry { binding: 0, resource: sb.as_entire_binding() },
+                            wgpu::BindGroupEntry { binding: 1, resource: vbuf.as_entire_binding() },
+                        ],
+                    });
+                    out.push((&self.shapes.0, bg, 6, (inst.len() / SHAPE_FLOATS) as u32));
+                }
+                Part::Sprites(runs) => {
+                    for (_, inst) in runs {
+                        let view = views.next().expect("a view per run");
+                        // sprites neither give light nor block it
+                        if inst.is_empty() || light {
+                            continue;
+                        }
+                        let sb = self.buffer("toad sprites", bytemuck::cast_slice(inst), wgpu::BufferUsages::STORAGE);
+                        let bg = d.create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: Some("toad sprites"),
+                            layout: &self.sprites.1,
+                            entries: &[
+                                wgpu::BindGroupEntry { binding: 0, resource: sb.as_entire_binding() },
+                                wgpu::BindGroupEntry { binding: 1, resource: vbuf.as_entire_binding() },
+                                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(view) },
+                                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                            ],
+                        });
+                        out.push((&self.sprites.0, bg, 6, (inst.len() / SPRITE_FLOATS) as u32));
+                    }
+                }
+                Part::Shapes(_) => {}
+            }
+        }
+        out
+    }
+
+    fn light_group(&self, view: &wgpu::TextureView) -> wgpu::BindGroup {
+        self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("toad light"),
+            layout: &self.light_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+            ],
+        })
+    }
+
+    /// A pass over a whole target with `pipe` and these bindings.
+    fn full_pass(
+        &self,
+        enc: &mut wgpu::CommandEncoder,
+        label: &str,
+        pipe: &Pipe,
+        target: &wgpu::TextureView,
+        bindings: &[wgpu::BindingResource<'_>],
+        load: wgpu::LoadOp<wgpu::Color>,
+    ) {
+        let entries: Vec<wgpu::BindGroupEntry<'_>> = bindings
+            .iter()
+            .enumerate()
+            .map(|(i, r)| wgpu::BindGroupEntry { binding: i as u32, resource: r.clone() })
+            .collect();
+        let bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(label),
+            layout: &pipe.1,
+            entries: &entries,
+        });
+        let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some(label),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
+            })],
+            ..Default::default()
+        });
+        pass.set_pipeline(&pipe.0);
+        pass.set_bind_group(0, &bg, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
     /// Draw a frame. A `live` one goes to that name's textures and is shown
     /// by `gui` (an image node with the source `("live", name)`), queued
     /// and not waited for; any other is made, waited for, and its pixels
     /// answered when `read`.
     pub fn frame(&mut self, v: &View, parts: &[Part<'_>], read: bool, live: Option<&str>) -> Option<Vec<u8>> {
         let (w, h) = v.size;
-        let ext = wgpu::Extent3d {
-            width: w,
-            height: h,
-            depth_or_array_layers: 1,
-        };
-        let make = |d: &wgpu::Device| {
-            let tex = |format, usage| {
-                d.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("toad frame"),
-                    size: ext,
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format,
-                    usage,
-                    view_formats: &[],
-                })
-            };
-            (
-                tex(
-                    HDR,
-                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-                ),
-                tex(
-                    OUT,
-                    wgpu::TextureUsages::RENDER_ATTACHMENT
-                        | wgpu::TextureUsages::COPY_SRC
-                        | wgpu::TextureUsages::TEXTURE_BINDING,
-                ),
-            )
-        };
-        let (hdr, out) = match live {
-            Some(name) => match self.targets.get(name).filter(|t| t.size == (w, h)) {
-                Some(t) => (t.hdr.clone(), t.out.clone()),
-                None => {
-                    let (hdr, out) = make(&self.gpu.device);
-                    self.targets.insert(
-                        name.to_string(),
-                        Target {
-                            size: (w, h),
-                            hdr: hdr.clone(),
-                            out: out.clone(),
-                        },
-                    );
-                    (hdr, out)
+        self.frame_no += 1;
+        let t = match live {
+            Some(name) => {
+                if self.targets.get(name).is_none_or(|t| t.size != (w, h) || t.gi_down != v.gi_down) {
+                    let t = self.make_targets(w, h, v.gi_down);
+                    self.targets.insert(name.to_string(), t);
                 }
-            },
-            None => make(&self.gpu.device),
+                self.targets.remove(name).expect("made")
+            }
+            None => self.make_targets(w, h, v.gi_down),
         };
         // every sprite's texture first (uploads need `&mut self`)
         let mut sprite_views = Vec::new();
@@ -538,104 +996,135 @@ impl Renderer {
                 }
             }
         }
-        let d = &self.gpu.device;
-        let hv = hdr.create_view(&Default::default());
-        let ov = out.create_view(&Default::default());
-        let vu: [f32; 8] = [w as f32, h as f32, v.center.0, v.center.1, v.scale, v.rot, 0.0, 0.0];
-        let vbuf = self.buffer("toad view", bytemuck::cast_slice(&vu), wgpu::BufferUsages::UNIFORM);
-        // the bind groups, in draw order: (pipeline, bind group, vertices, instances)
-        let mut draws: Vec<(&wgpu::RenderPipeline, wgpu::BindGroup, u32, u32)> = Vec::new();
-        let mut views = sprite_views.into_iter();
-        for p in parts {
-            match p {
-                Part::Swarm(l) => {
-                    let mut u = [0u32; 12];
-                    u[0] = l.cap as u32;
-                    u[1] = l.n as u32;
-                    u[2] = l.pos as u32;
-                    u[3] = l.glow.map(|g| g as i32).unwrap_or(-1) as u32;
-                    u[4] = l.dead.map(|g| g as i32).unwrap_or(-1) as u32;
-                    u[6] = l.radius.to_bits();
-                    for i in 0..4 {
-                        u[8 + i] = l.color[i].to_bits();
-                    }
-                    let ub = self.buffer("toad points", bytemuck::cast_slice(&u), wgpu::BufferUsages::UNIFORM);
-                    let bg = d.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("toad points"),
-                        layout: &self.points.1,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: l.buf.as_entire_binding(),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: vbuf.as_entire_binding(),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 2,
-                                resource: ub.as_entire_binding(),
-                            },
-                        ],
-                    });
-                    draws.push((&self.points.0, bg, 6, l.n as u32));
-                }
-                Part::Shapes(inst) if !inst.is_empty() => {
-                    let sb = self.buffer("toad shapes", bytemuck::cast_slice(inst), wgpu::BufferUsages::STORAGE);
-                    let bg = d.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("toad shapes"),
-                        layout: &self.shapes.1,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: sb.as_entire_binding(),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: vbuf.as_entire_binding(),
-                            },
-                        ],
-                    });
-                    draws.push((&self.shapes.0, bg, 6, (inst.len() / SHAPE_FLOATS) as u32));
-                }
-                Part::Sprites(runs) => {
-                    for (_, inst) in runs {
-                        let view = views.next().expect("a view per run");
-                        if inst.is_empty() {
-                            continue;
-                        }
-                        let sb = self.buffer("toad sprites", bytemuck::cast_slice(inst), wgpu::BufferUsages::STORAGE);
-                        let bg = d.create_bind_group(&wgpu::BindGroupDescriptor {
-                            label: Some("toad sprites"),
-                            layout: &self.sprites.1,
-                            entries: &[
-                                wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: sb.as_entire_binding(),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 1,
-                                    resource: vbuf.as_entire_binding(),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 2,
-                                    resource: wgpu::BindingResource::TextureView(&view),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 3,
-                                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                                },
-                            ],
-                        });
-                        draws.push((&self.sprites.0, bg, 6, (inst.len() / SPRITE_FLOATS) as u32));
-                    }
-                }
-                Part::Shapes(_) => {}
-            }
-        }
-        let mut enc = d.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let lit = v.gi > 0.0;
+        let tv = |t: &wgpu::Texture| t.create_view(&Default::default());
+        let view_words = |size: (u32, u32), scale: f32, mode: f32, pxk: f32| -> [f32; 16] {
+            [
+                size.0 as f32, size.1 as f32, v.center.0, v.center.1, scale, v.rot, mode, pxk,
+                v.ambient[0], v.ambient[1], v.ambient[2], 0.0, v.gi, if lit { 1.0 } else { 0.0 }, 0.0, 0.0,
+            ]
+        };
+        let mut enc = self.gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("toad frame"),
         });
+        let clear = wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT);
+        // 1–3. the light: its scene, its distance field, the cascades
+        let light_view = if lit {
+            let down = v.gi_down as f32;
+            let gsize = (w.div_ceil(v.gi_down), h.div_ceil(v.gi_down));
+            let gv = self.uniform("toad light view", &view_words(gsize, v.scale / down, 1.0, 1.0 / down));
+            let gdraws = self.draws(parts, &gv, &sprite_views, true);
+            let white = self.light_group(&self.white);
+            {
+                let scene_v = tv(&t.gi_scene);
+                let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("toad light scene"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &scene_v,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations { load: clear, store: wgpu::StoreOp::Store },
+                    })],
+                    ..Default::default()
+                });
+                for (pipe, bg, verts, n) in &gdraws {
+                    pass.set_pipeline(pipe);
+                    pass.set_bind_group(0, bg, &[]);
+                    pass.set_bind_group(1, &white, &[]);
+                    pass.draw(0..*verts, 0..*n);
+                }
+            }
+            // jump flooding: seed, then halving steps
+            let scene_v = tv(&t.gi_scene);
+            let seeds = [tv(&t.seeds[0]), tv(&t.seeds[1])];
+            let u = self.uniform("toad jfa", &[0.0, 1.0, 0.0, 0.0]);
+            self.full_pass(
+                &mut enc,
+                "toad jfa seed",
+                &self.jfa,
+                &seeds[0],
+                &[wgpu::BindingResource::TextureView(&scene_v), u.as_entire_binding()],
+                clear,
+            );
+            let mut at = 0;
+            let mut step = (gsize.0.max(gsize.1) / 2).next_power_of_two() as f32;
+            while step >= 1.0 {
+                let u = self.uniform("toad jfa", &[step, 0.0, 0.0, 0.0]);
+                self.full_pass(
+                    &mut enc,
+                    "toad jfa",
+                    &self.jfa,
+                    &seeds[1 - at],
+                    &[wgpu::BindingResource::TextureView(&seeds[at]), u.as_entire_binding()],
+                    clear,
+                );
+                at = 1 - at;
+                step /= 2.0;
+            }
+            let dist_v = tv(&t.dist);
+            self.full_pass(
+                &mut enc,
+                "toad dist",
+                &self.dist,
+                &dist_v,
+                &[wgpu::BindingResource::TextureView(&seeds[at])],
+                clear,
+            );
+            // the cascades, far to near, each over the one above
+            let cas = [tv(&t.cascades[0]), tv(&t.cascades[1])];
+            let mut upper = 1;
+            for n in (0..CASCADES).rev() {
+                let target = 1 - upper;
+                let u = self.uniform("toad cascade", &[n as f32, CASCADES as f32, 1.0, 0.0]);
+                self.full_pass(
+                    &mut enc,
+                    "toad cascade",
+                    &self.cascade,
+                    &cas[target],
+                    &[
+                        wgpu::BindingResource::TextureView(&dist_v),
+                        wgpu::BindingResource::TextureView(&scene_v),
+                        wgpu::BindingResource::TextureView(&cas[upper]),
+                        u.as_entire_binding(),
+                    ],
+                    clear,
+                );
+                upper = target;
+            }
+            // swarms' light: a pool around each point, added (no shadow)
+            let pv = self.uniform("toad pools", &view_words(gsize, v.scale / down, 2.0, 1.0 / down));
+            let pools: Vec<_> = self
+                .draws(parts, &pv, &sprite_views, true)
+                .into_iter()
+                .filter(|d| std::ptr::eq(d.0, &self.points.0))
+                .collect();
+            if !pools.is_empty() {
+                let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("toad pools"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &cas[upper],
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                    })],
+                    ..Default::default()
+                });
+                for (pipe, bg, verts, n) in &pools {
+                    pass.set_pipeline(pipe);
+                    pass.set_bind_group(0, bg, &[]);
+                    pass.set_bind_group(1, &white, &[]);
+                    pass.draw(0..*verts, 0..*n);
+                }
+            }
+            cas[upper].clone()
+        } else {
+            self.white.clone()
+        };
+        // 4. the frame, lit
+        let hv = tv(&t.hdr);
+        let vbuf = self.uniform("toad view", &view_words((w, h), v.scale, 0.0, 1.0));
+        let draws = self.draws(parts, &vbuf, &sprite_views, false);
+        let light = self.light_group(&light_view);
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("toad draw"),
@@ -643,54 +1132,69 @@ impl Renderer {
                     view: &hv,
                     depth_slice: None,
                     resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
-                    },
+                    ops: wgpu::Operations { load: clear, store: wgpu::StoreOp::Store },
                 })],
                 ..Default::default()
             });
             for (pipe, bg, verts, n) in &draws {
                 pass.set_pipeline(pipe);
                 pass.set_bind_group(0, bg, &[]);
+                pass.set_bind_group(1, &light, &[]);
                 pass.draw(0..*verts, 0..*n);
             }
         }
-        let tu: [f32; 8] = [v.bg[0], v.bg[1], v.bg[2], 1.0, v.exposure, v.vignette, 0.0, 0.0];
-        let tub = self.buffer("toad tone", bytemuck::cast_slice(&tu), wgpu::BufferUsages::UNIFORM);
-        let tbg = d.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("toad tone"),
-            layout: &self.tone.1,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&hv),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: tub.as_entire_binding(),
-                },
-            ],
-        });
-        {
-            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("toad tone"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &ov,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                ..Default::default()
-            });
-            pass.set_pipeline(&self.tone.0);
-            pass.set_bind_group(0, &tbg, &[]);
-            pass.draw(0..3, 0..1);
+        // 5. bloom: halvings down, a tent back up into each larger
+        let blooms: Vec<wgpu::TextureView> = t.bloom.iter().map(tv).collect();
+        if v.bloom > 0.0 && !blooms.is_empty() {
+            let smp = wgpu::BindingResource::Sampler(&self.sampler);
+            for i in 0..blooms.len() {
+                let src = if i == 0 { &hv } else { &blooms[i - 1] };
+                self.full_pass(
+                    &mut enc,
+                    "toad bloom down",
+                    &self.bloom_down,
+                    &blooms[i],
+                    &[wgpu::BindingResource::TextureView(src), smp.clone()],
+                    clear,
+                );
+            }
+            for i in (1..blooms.len()).rev() {
+                self.full_pass(
+                    &mut enc,
+                    "toad bloom up",
+                    &self.bloom_up,
+                    &blooms[i - 1],
+                    &[wgpu::BindingResource::TextureView(&blooms[i]), smp.clone()],
+                    wgpu::LoadOp::Load,
+                );
+            }
         }
+        // 6. the finish
+        let ov = tv(&t.out);
+        let tu = self.uniform(
+            "toad tone",
+            &[
+                v.bg[0], v.bg[1], v.bg[2], 1.0, v.tint[0], v.tint[1], v.tint[2], 1.0, v.exposure, v.vignette,
+                if blooms.is_empty() { 0.0 } else { v.bloom }, v.contrast, v.saturation, v.grain,
+                (self.frame_no % 997) as f32, 0.0,
+            ],
+        );
+        let bloom_src = blooms.first().cloned().unwrap_or_else(|| self.white.clone());
+        self.full_pass(
+            &mut enc,
+            "toad tone",
+            &self.tone,
+            &ov,
+            &[
+                wgpu::BindingResource::TextureView(&hv),
+                tu.as_entire_binding(),
+                wgpu::BindingResource::TextureView(&bloom_src),
+                wgpu::BindingResource::Sampler(&self.sampler),
+            ],
+            wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+        );
         let row = (w * 4).div_ceil(256) * 256;
+        let d = &self.gpu.device;
         let rb = read.then(|| {
             let rb = d.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("toad frame read"),
@@ -700,7 +1204,7 @@ impl Renderer {
             });
             enc.copy_texture_to_buffer(
                 wgpu::TexelCopyTextureInfo {
-                    texture: &out,
+                    texture: &t.out,
                     mip_level: 0,
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
@@ -713,13 +1217,14 @@ impl Renderer {
                         rows_per_image: Some(h),
                     },
                 },
-                ext,
+                wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
             );
             rb
         });
         self.gpu.queue.submit([enc.finish()]);
         if let Some(name) = live {
             crate::stdlib::gui::live::publish(name, ov, w, h);
+            self.targets.insert(name.to_string(), t);
         }
         let Some(rb) = rb else {
             if live.is_none() {

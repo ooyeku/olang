@@ -167,3 +167,48 @@ match toad.gpu() {
     let out = run(src).expect("ran");
     assert!(out == "true" || out == "no gpu", "{out}");
 }
+
+#[test]
+fn light_falls_off_and_a_blocker_casts_a_shadow() {
+    // a light at the centre; a blocker to its right; probe the floor at
+    // the same distance left (open) and right (behind the blocker), and
+    // far away
+    let src = r##"
+match toad.gpu() {
+    Err(e) => "no gpu",
+    Ok(_) => {
+        let floor = #{ "kind": "box", "at": (0.0, 0.0), "size": (2000.0, 2000.0), "color": "#808080" }
+        let lamp = #{ "kind": "circle", "at": (0.0, 0.0), "size": 8.0, "color": "#ffffff", "emit": 20.0 }
+        let wall = #{ "kind": "box", "at": (60.0, 0.0), "size": (16.0, 120.0), "color": "#808080", "cast": true }
+        let f = toad.frame([#{ "shapes": [floor, lamp, wall] }],
+            #{ "size": (512, 512), "scale": 1.0, "gi": 1.0, "probe": [(256 - 120, 256), (256 + 120, 256), (500, 500)] })
+        let lum = (c) => c[0] + c[1] + c[2]
+        let open = lum(f.probe[0])
+        let behind = lum(f.probe[1])
+        let far = lum(f.probe[2])
+        show(open > behind + 30 && open > far) + " " + show(open) + " " + show(behind) + " " + show(far)
+    }
+}"##;
+    let out = run(src).expect("ran");
+    assert!(out.starts_with("true") || out == "no gpu", "{out}");
+}
+
+#[test]
+fn an_unlit_frame_shows_colours_as_written() {
+    let src = r##"
+match toad.gpu() {
+    Err(e) => "no gpu",
+    Ok(_) => {
+        let f = toad.frame([#{ "shapes": [#{ "kind": "box", "at": (0.0, 0.0), "size": (100.0, 100.0), "color": "#3080c0" }] }],
+            #{ "size": (64, 64), "probe": [(32, 32)] })
+        show(f.probe[0])
+    }
+}"##;
+    let out = run(src).expect("ran");
+    // AgX moves a colour a little; the hue and order of channels stay
+    if out != "no gpu" {
+        let nums: Vec<i64> = out.trim_matches(|c| c == '(' || c == ')').split(", ").map(|n| n.parse().unwrap()).collect();
+        assert!(nums[2] > nums[1] && nums[1] > nums[0], "{out}");
+    }
+}
+
