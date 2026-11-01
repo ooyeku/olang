@@ -1175,6 +1175,25 @@ fn forced_call(
     }
 }
 
+/// A crash, kill or stop aimed at a node that is down already (crashed
+/// and not back yet, or ended) does nothing, as pulling the plug of a
+/// machine that is off does nothing: the call is an event (`ignored`),
+/// not a fault, and it visits no fault site, so a plan neither records
+/// nor needs it. A hook that crashes a server every few minutes can
+/// fall while the last crash's restart is still pending.
+fn already_down(ctx: &super::Ctx, n: NodeId, what: &str) -> bool {
+    if n == 0 || ctx.world.node_up(n) {
+        return false;
+    }
+    let name = ctx.world.nodes[n].name.clone();
+    ctx.world.note(
+        ctx.task,
+        "ignored",
+        format!("{what}({name}): {name} is down already"),
+    );
+    true
+}
+
 /// `w.crash(n, #{ restart_after })` / `w.kill(n, ...)`, inside the
 /// running world.
 fn halt(
@@ -1198,6 +1217,9 @@ fn halt(
         super::node::Halt::Crash => Site::Crash,
         _ => Site::Kill,
     };
+    if already_down(&ctx, n, what) {
+        return Ok(Value::Unit);
+    }
     let Some(key) = forced_call(&ctx, site, n, after, what) else {
         return Ok(Value::Unit);
     };
@@ -1220,6 +1242,9 @@ fn stop(w: &WorldObject, args: Vec<Value>) -> Result<Value, InterpreterError> {
     let name = node_name(args.first().unwrap_or(&Value::Unit), what)?;
     let n = resolve(&ctx, &name, what)?;
     let after = restart_after(args.get(1), what)?;
+    if already_down(&ctx, n, what) {
+        return Ok(Value::Unit);
+    }
     let Some(key) = forced_call(&ctx, Site::Stop, n, after, what) else {
         return Ok(Value::Unit);
     };

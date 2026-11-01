@@ -585,9 +585,12 @@ its own log back must cope with a broken last line. `full_at` is the
 size at which writes start failing, and `slow` makes syncs that many
 times slower. The `crash` option crashes the node at random: at every
 effect it makes there is a chance `p` that the power goes right there,
-between an append and its sync, say. Since crashes can then happen at
-any time, a hook that also calls `w.crash` should wrap it in
-`attempt`, because crashing a node that is already down is an error.
+between an append and its sync, say. Crashing a node that is already
+down does nothing, as pulling the plug of a machine that is off does
+nothing: `w.crash`, `w.kill` and `w.stop` on a node that crashed and
+has not come back yet (or whose program ended) leave an `ignored`
+event and are not faults. So a hook that crashes the server every few
+minutes needs no check, even when a random crash got there first.
 
 A node can also be stopped more gently. These are the ways, and what
 each keeps:

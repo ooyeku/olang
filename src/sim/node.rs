@@ -571,6 +571,12 @@ impl World {
         lost
     }
 
+    /// Whether node `n`'s process is running (a node that is stopping
+    /// still is, until its handlers end).
+    pub(super) fn node_up(&self, n: NodeId) -> bool {
+        self.lock().nodes[n].up
+    }
+
     /// `w.crash(n)` / `w.kill(n)`: node `n` stops where it stands, and
     /// with `restart_after` comes back that many ms later.
     pub(super) fn halt(

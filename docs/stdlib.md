@@ -3748,7 +3748,7 @@ A world's methods are in `sim.World`; on a world `w`:
 | `at(t, f)` · `every(dt, f)` | runs `f` once at virtual time `t`, or every `dt` ms, on a node of its own (a hook: `hook-1`, `hook-2`, … in the events) |
 | `link(a, b, opts)` | sets the network between two nodes: `latency`, `loss`, `dup` |
 | `partition(group_a, group_b)` · `heal()` | cuts every link between two lists of nodes, until `heal`; a message in flight when the cut starts is lost |
-| `crash(n, opts)` · `kill(n, opts)` · `stop(n, opts)` | stops a node as a power cut (only synced data survives), SIGKILL (every write survives) or SIGTERM (its `os.on_shutdown` handlers run first); `opts` is `#{ restart_after }` in ms. Stopping a node that is already down raises |
+| `crash(n, opts)` · `kill(n, opts)` · `stop(n, opts)` | stops a node as a power cut (only synced data survives), SIGKILL (every write survives) or SIGTERM (its `os.on_shutdown` handlers run first); `opts` is `#{ restart_after }` in ms. Stopping a node that is already down does nothing (an `ignored` event, not a fault) |
 | `restart(n)` | starts a stopped node again: a fresh interpreter on the disk the stop left |
 | `write_stdin(n, text)` · `close_stdin(n)` | adds to a node's standard input, or ends it |
 | `slow_disk(n, factor)` | makes a node's syncs `factor` times slower from now on |

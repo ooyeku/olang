@@ -1986,6 +1986,39 @@ fn scratch(name: &str) -> PathBuf {
 }
 
 #[test]
+fn the_shrinker_sets_aside_a_failure_message_that_varies() {
+    // The writer's error names lists that change with every fault removed
+    // (the lost version, and each put that went unanswered). The failure
+    // is the same bug at the same site, so the shrinker keeps going down
+    // to the one power cut; matched by its text, it stopped at 6 or 7.
+    let dir = scratch("shrink-list");
+    let file = fixture("log_noisy_list.ol");
+    let (code, out) = sim_in(
+        &dir,
+        &[
+            file.to_str().unwrap(),
+            "--seed",
+            "1",
+            "--shrink",
+            "--jobs",
+            "2",
+        ],
+    );
+    assert_eq!(code, 1, "{out}");
+    let line = out
+        .lines()
+        .find(|l| l.starts_with("shrunk: "))
+        .unwrap_or_else(|| panic!("no shrink line:\n{out}"));
+    assert!(line.contains("→ 1 ·"), "{line}");
+    assert!(
+        out.contains("crash      store"),
+        "the cut that matters:\n{out}"
+    );
+    assert!(out.contains("unanswered: ["), "{out}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn shrinking_under_partitions_keeps_only_the_cuts_of_the_client_that_failed() {
     // A partition removed no longer shifts every later message's
     // latency (the network's draws are keyed by link and instant), so
@@ -2042,6 +2075,50 @@ fn shrinking_under_partitions_keeps_only_the_cuts_of_the_client_that_failed() {
 }
 
 #[test]
+fn crashing_a_node_that_is_down_already_is_an_event_not_an_error() {
+    let run = eval_here(
+        r#"
+let w = sim.world(#{ "seed": 3 })
+w.node("kv", "kv_server.ol")
+w.client("c1", () => { time.sleep(sim.seconds(30)); "done" })
+w.at(sim.seconds(10), () => w.crash("kv", #{ "restart_after": sim.seconds(5) }))
+w.at(sim.seconds(12), () => w.crash("kv", #{ "restart_after": sim.seconds(1) }))
+w.at(sim.seconds(13), () => w.kill("kv"))
+w.at(sim.seconds(14), () => w.stop("kv"))
+w.run(sim.minutes(1))
+"#,
+    );
+    assert_eq!(s(&field(&run, "outcome")), "done", "{run}");
+    let events = list(&field(&run, "events"));
+    let ignored: Vec<String> = events
+        .iter()
+        .filter(|e| s(&field(e, "kind")) == "ignored")
+        .map(|e| s(&field(e, "detail")))
+        .collect();
+    assert_eq!(
+        ignored,
+        [
+            "w.crash(kv): kv is down already",
+            "w.kill(kv): kv is down already",
+            "w.stop(kv): kv is down already"
+        ],
+        "{run}"
+    );
+    let k = kinds(&run);
+    assert_eq!(k.iter().filter(|x| *x == "crash").count(), 1, "one crash");
+    assert_eq!(
+        k.iter().filter(|x| *x == "restart").count(),
+        1,
+        "one restart, the first crash's"
+    );
+    assert_eq!(
+        list(&field(&run, "faults")).len(),
+        1,
+        "an ignored call is no fault"
+    );
+}
+
+#[test]
 fn a_buggify_point_fires_about_a_quarter_of_the_time_in_a_quarter_of_the_runs_and_alone() {
     let v = eval(
         r#"
@@ -2073,37 +2150,4 @@ let same = all(range(1, 41), (s) => answers(s, true) == answers(s, false))
         "true",
         "another point's visits move no answer of b's"
     );
-}
-
-#[test]
-fn the_shrinker_sets_aside_a_failure_message_that_varies() {
-    // The writer's error names lists that change with every fault removed
-    // (the lost version, and each put that went unanswered). The failure
-    // is the same bug at the same site, so the shrinker keeps going down
-    // to the one power cut; matched by its text, it stopped at 6 or 7.
-    let dir = scratch("shrink-list");
-    let file = fixture("log_noisy_list.ol");
-    let (code, out) = sim_in(
-        &dir,
-        &[
-            file.to_str().unwrap(),
-            "--seed",
-            "1",
-            "--shrink",
-            "--jobs",
-            "2",
-        ],
-    );
-    assert_eq!(code, 1, "{out}");
-    let line = out
-        .lines()
-        .find(|l| l.starts_with("shrunk: "))
-        .unwrap_or_else(|| panic!("no shrink line:\n{out}"));
-    assert!(line.contains("→ 1 ·"), "{line}");
-    assert!(
-        out.contains("crash      store"),
-        "the cut that matters:\n{out}"
-    );
-    assert!(out.contains("unanswered: ["), "{out}");
-    let _ = std::fs::remove_dir_all(&dir);
 }
