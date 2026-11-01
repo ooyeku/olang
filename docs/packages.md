@@ -513,15 +513,15 @@ manage it:
 
 ## Updating and toolchains
 
-`otc update` downloads the latest release for the platform, verifies
-it against the release's `SHA256SUMS`, installs it under
+`otc update` downloads the latest release for the platform, verifies it
+against the release's `SHA256SUMS`, installs it under
 `~/.olang/toolchains/<version>/`, and atomically repoints the shims in
 `~/.olang/bin` — the running binaries are never overwritten in place.
 `otc update --check` reports the current and latest versions without
 installing anything. Nothing contacts the network except these two
-invocations, explicitly. Release builds target macOS, the supported
-platform; Linux builds are an unsupported preview
-([Stability](stability.md#platforms)).
+invocations, explicitly. olang 1.0 is built, tested and supported on
+macOS; the installer also runs on Linux and Windows, where olang is an
+unsupported preview ([Stability](stability.md#platforms)).
 
 Multiple releases install side by side:
 

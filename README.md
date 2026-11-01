@@ -111,7 +111,10 @@ a one-word change: `map` becomes `par_map`.
 
 ## Installation
 
-On a Mac or Linux, open a terminal, paste this line and press Return:
+olang 1.0 is built, tested and supported on macOS; the installer also
+runs on Linux and Windows, where olang is an unsupported preview.
+
+On a Mac (or Linux), open a terminal, paste this line and press Return:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh

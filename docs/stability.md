@@ -42,12 +42,15 @@ rules](#versioning) say what could ever change them.
 
 ## Platforms
 
-1.0 promises **macOS**: it is the platform every release is tested and
-verified on (Apple silicon; the Intel build is made from the same
-source), and every guarantee in this chapter is made for it. Linux and
-Windows are **unsupported previews**: Linux binaries are released and
-its headless tests pass, Windows compiles and is unverified, and a
-program may run on either, but no behaviour there is promised. The
+olang 1.0 is built, tested and supported on macOS; the installer also
+runs on Linux and Windows, where olang is an unsupported preview.
+
+macOS is the platform every release is tested and verified on (Apple
+silicon; the Intel build is made from the same source), and every
+guarantee in this chapter is made for it. On Linux and Windows a
+program may run, but no behaviour there is promised: Linux binaries are
+released and its headless tests pass, and Windows compiles and is
+unverified. The
 desktop engine's windows on Windows and Wayland, the terminal layer on
 Windows, and the capabilities `gui.platform()` reports false are untried
 or incomplete. A difference between macOS and a preview platform is not

@@ -22,8 +22,13 @@ Part of [the olang book](README.md).
 
 ## Install olang
 
-On a Mac or on Linux, open a terminal (on a Mac, the Terminal app is in
-Applications, then Utilities), paste this line and press Return:
+olang 1.0 is built, tested and supported on macOS; the installer also
+runs on Linux and Windows, where olang is an unsupported preview. See
+[Platforms](#platforms) for the details.
+
+On a Mac, open a terminal (the Terminal app is in Applications, then
+Utilities), paste this line and press Return. The same line works on
+Linux:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh
@@ -224,9 +229,10 @@ includes the browser runtime.
 
 ## Platforms
 
-olang is developed and tested on macOS, and runs on Linux and Windows
-too. [Stability and compatibility](stability.md#platforms) says what is
-promised on each.
+olang 1.0 is built, tested and supported on macOS; the installer also
+runs on Linux and Windows, where olang is an unsupported preview.
+[Stability and compatibility](stability.md#platforms) says what that
+means.
 
 | Computer | Download | Notes |
 |---|---|---|
