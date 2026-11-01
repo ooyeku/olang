@@ -2410,7 +2410,7 @@ impl Surface {
             // a BGRA kept frame (the swapchain's order) read as RGBA
             wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb => {
                 let mut px = self.target.rgba();
-                for p in px.chunks_exact_mut(4) {
+                for p in px.as_chunks_mut::<4>().0 {
                     p.swap(0, 2);
                 }
                 px

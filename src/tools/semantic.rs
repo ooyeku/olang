@@ -574,8 +574,8 @@ pub fn tokens(text: &str, is_builtin: &dyn Fn(&str) -> bool, modules: &[&str]) -
         }
         let prev = (k > 0).then(|| &lx[k - 1]);
         let next = lx.get(k + 1);
-        let pw = prev.map(&word).unwrap_or("");
-        let nw = next.map(&word).unwrap_or("");
+        let pw = prev.map(word).unwrap_or("");
+        let nw = next.map(word).unwrap_or("");
         let after_error_kw = pw == "error" && prev.is_some_and(|p| out_was_keyword(&out, p));
         let mut push = |kind: u32, mods: u32| {
             out.push(Token {

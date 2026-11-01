@@ -154,6 +154,8 @@ fn retain() {
 
 fn release() {
     let r = registry();
+    // try_update (its new name) needs a newer Rust than olang's floor
+    #[allow(deprecated)]
     let before = r
         .users
         .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {

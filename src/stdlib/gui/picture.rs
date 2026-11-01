@@ -413,7 +413,7 @@ fn gif_frames_at_least(b: &[u8], n: usize) -> bool {
 }
 
 fn premultiply(rgba: &mut [u8]) {
-    for px in rgba.chunks_exact_mut(4) {
+    for px in rgba.as_chunks_mut::<4>().0 {
         let a = px[3] as u32;
         if a < 255 {
             px[0] = ((px[0] as u32 * a + 127) / 255) as u8;
@@ -492,7 +492,7 @@ fn decode_raster(b: &[u8], info: Info) -> Res<Pixmap> {
                 buf
             } else {
                 let mut out = Vec::with_capacity((w * h * 4) as usize);
-                for p in buf.chunks_exact(3) {
+                for p in buf.as_chunks::<3>().0 {
                     out.extend_from_slice(&[p[0], p[1], p[2], 255]);
                 }
                 out
@@ -849,7 +849,12 @@ pub fn decode_anim(b: &[u8], info: Info, bucket: u32) -> Res<Option<Anim>> {
                 let canvas: &[u8] = if alpha {
                     &buf
                 } else {
-                    for (o, p) in rgba.chunks_exact_mut(4).zip(buf.chunks_exact(3)) {
+                    for (o, p) in rgba
+                        .as_chunks_mut::<4>()
+                        .0
+                        .iter_mut()
+                        .zip(buf.as_chunks::<3>().0)
+                    {
                         o.copy_from_slice(&[p[0], p[1], p[2], 255]);
                     }
                     &rgba

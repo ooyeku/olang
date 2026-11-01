@@ -682,7 +682,8 @@ mod tests {
         let mut tester = InterpreterStressTester::new();
 
         // Test with minimal pipeline depth to avoid timeouts
-        for depth in [3] {
+        {
+            let depth = 3;
             match tester.test_complex_pipelines(depth) {
                 Ok(duration) => {
                     assert!(
