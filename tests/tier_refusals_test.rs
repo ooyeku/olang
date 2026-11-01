@@ -357,7 +357,17 @@ fn memory_names_its_tasks_and_the_embedded_runtime_costs_no_heap() {
          println(to_string(unwrap(task.join(t))))\n\
          println(to_string(len(map_get(runtime.memory(), \"tasks\"))))\n",
     );
-    let (out, err, code) = olang(&ws, &["main.ol"]);
+    // `heap` is the whole process's: with the real home's compile cache the
+    // read-ahead thread decodes a pack while the program measures (once
+    // 1.2 MB inside the window), so the run gets a home of its own and no
+    // compile cache, and the only thing between the two reads is the call
+    let home = ws.join("home");
+    let home = home.to_str().unwrap();
+    let (out, err, code) = olang_env(
+        &ws,
+        &["main.ol"],
+        &[("OLANG_HOME", home), ("OLANG_COMPILE_CACHE", "0")],
+    );
     assert_eq!(code, 0, "{err}");
     assert_eq!(out, "true\n1\nolang-spawn-1\ntrue\n50000\n0\n", "{err}");
 }
