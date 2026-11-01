@@ -608,11 +608,31 @@ fn run_fn_with(
     let kept = (!super::bytecode_tier())
         .then(|| interpreter.suspend_bytecode_tier())
         .flatten();
-    let template = (!props.is_empty()).then(|| interpreter.thread_safe_clone());
     let f = f.clone();
-    let report = super::run_main_with(cfg, NodeInfo::main(Vec::new()), props, template, || {
-        interpreter.call_function(f, Vec::new())
-    });
+    let spec = world.spec().clone();
+    let report = if spec.nodes.is_empty() {
+        let template = (!props.is_empty()).then(|| interpreter.thread_safe_clone());
+        super::run_main_with(cfg, NodeInfo::main(Vec::new()), props, template, || {
+            interpreter.call_function(f, Vec::new())
+        })
+    } else {
+        // The world's nodes (and hooks) start first, then `f` runs as
+        // node 0's program; the run ends when `f` does.
+        let mut nodes = vec![(NodeInfo::main(Vec::new()), Start::Main)];
+        nodes.extend(spec.nodes.iter().cloned());
+        match plan_of(&spec, &nodes, "w.run_fn") {
+            Err(e) => {
+                interpreter.resume_bytecode_tier(kept);
+                return Err(e);
+            }
+            Ok(plan) => {
+                let template = interpreter.thread_safe_clone();
+                super::run_world_main(cfg, nodes, plan, template, world.id, props, || {
+                    interpreter.call_function(f, Vec::new())
+                })
+            }
+        }
+    };
     interpreter.resume_bytecode_tier(kept);
     let mut report = report.map_err(misuse)?;
     report.run_index = index;
@@ -1304,12 +1324,30 @@ fn run_nodes(
         ));
     }
     let mut nodes = vec![(NodeInfo::world(), Start::Main)];
-    nodes.extend(spec.nodes);
+    nodes.extend(spec.nodes.iter().cloned());
+    let plan = plan_of(&spec, &nodes, what)?;
+    let (index, forced) = next_run();
+    cfg.forced = forced;
+    let kept = (!super::bytecode_tier())
+        .then(|| interpreter.suspend_bytecode_tier())
+        .flatten();
+    let template = interpreter.thread_safe_clone();
+    let report = super::run_world(cfg, nodes, plan, template, w.id, props);
+    interpreter.resume_bytecode_tier(kept);
+    let mut report = report.map_err(misuse)?;
+    report.run_index = index;
+    Ok(report)
+}
+
+/// The network a run starts with: the spec's links and cuts by node id
+/// (node 0 is the world, or `run_fn`'s main program).
+fn plan_of(spec: &Spec, nodes: &[(NodeInfo, Start)], what: &str) -> Result<Plan, InterpreterError> {
     let id = |name: &str| {
         nodes
             .iter()
             .position(|(n, _)| &*n.name == name && n.kind != Kind::Hook)
-            .filter(|i| *i > 0)
+            // `run_fn`'s main program is the node `main`; the world is no node
+            .filter(|i| *i > 0 || name == "main")
             .ok_or_else(|| misuse(format!("{what}: the world has no node `{name}`")))
     };
     let mut plan = Plan::default();
@@ -1322,17 +1360,7 @@ fn run_nodes(
             r.iter().map(|n| id(n)).collect::<Result<_, _>>()?,
         ));
     }
-    let (index, forced) = next_run();
-    cfg.forced = forced;
-    let kept = (!super::bytecode_tier())
-        .then(|| interpreter.suspend_bytecode_tier())
-        .flatten();
-    let template = interpreter.thread_safe_clone();
-    let report = super::run_world(cfg, nodes, plan, template, w.id, props);
-    interpreter.resume_bytecode_tier(kept);
-    let mut report = report.map_err(misuse)?;
-    report.run_index = index;
-    Ok(report)
+    Ok(plan)
 }
 
 /// A report as olang data.

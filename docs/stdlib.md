@@ -959,6 +959,10 @@ a tree. A grammar is a parsing expression grammar (PEG): ordered choice,
 no ambiguity, left recursion allowed, and a precedence table for
 operators.
 
+`peg` is [Experimental](stability.md#experimental--may-change-in-a-minor-release):
+the grammar notation, the tree's shape and an error's fields may still
+change in a minor release.
+
 ```olang
 use peg
 let g = unwrap(peg.grammar(`
@@ -3707,6 +3711,10 @@ Nothing inside a world reaches the real machine: its effects are
 simulated or refused (the last section of [the chapter](sim.md#what-a-world-simulates-and-what-it-refuses)
 lists which).
 
+`sim` is [Experimental](stability.md#experimental--may-change-in-a-minor-release):
+a seed always gives the same run, but the options, a run's fields and
+what a world simulates may still change in a minor release.
+
 ```olang
 let w = sim.world(#{ "seed": 7 })
 let run = w.run_fn(() => {
@@ -3733,7 +3741,7 @@ A world's methods are in `sim.World`; on a world `w`:
 
 | Method | Description |
 |---|---|
-| `run_fn(f, opts)` | runs `f()` as the world's main program and answers the run. `opts`: `for` (virtual ms to stop after) and `props` (properties, below) |
+| `run_fn(f, opts)` | starts the world's nodes and hooks, then runs `f()` as the world's main program (the node `main`, which `partition` and `link` can name) and answers the run when `f` returns. `opts`: `for` (virtual ms to stop after) and `props` (properties, below) |
 | `run(opts)` | runs the world's nodes and answers the run; `opts` is a duration or `#{ for, props }`. The run is `done` when every client has finished (with no clients, every program) |
 | `node(name, argv, opts)` | adds an olang program as a node: `argv` is `["olang", "file.ol", args...]`, the file relative to the one building the world. `name` is also its host name. `opts`: `env` (a map), `skew` (ms added to its wall clock), `deny` (capabilities, as `"fs,proc"`), `disk` (`sim.disk(...)`), `files` (path to contents, durable from the start), `cwd`, `stdin`, `crash` (`#{ p, restart_after }`: at each of its effects, a crash with chance `p`) and `optional` (the shrinker may leave it out) |
 | `client(name, f, opts)` | adds a node that runs `f()` on a copy of the interpreter that built the world; the options are `node`'s |

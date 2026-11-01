@@ -60,7 +60,7 @@ mod vfs;
 pub mod view;
 mod wire;
 
-pub use node::{CrashPlan, NodeInfo, Plan, Start, run_world};
+pub use node::{CrashPlan, NodeInfo, Plan, Start, run_world, run_world_main};
 pub use wire::{History, NetStats};
 
 use crate::ast::{Expr, Value};

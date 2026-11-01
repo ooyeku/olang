@@ -1939,3 +1939,25 @@ fn olang_sim_reports_on_stdout_and_refuses_events_over_many_seeds() {
         "{v}"
     );
 }
+
+#[test]
+fn run_fn_starts_the_worlds_nodes_first() {
+    // A client added with w.client answers the main program's request, a
+    // partition made before the run holds, and the run ends with the main
+    // program even though the server never returns.
+    let v = eval(
+        r#"
+let w = sim.world(#{ "seed": 3 })
+w.client("echo", () => http.serve(8080, (req) => http.response(200, "hi")))
+w.client("far", () => http.serve(8080, (req) => http.response(200, "far")))
+w.partition(["main"], ["far"])
+w.run_fn(() => {
+    let near = unwrap(http.get("http://echo:8080/")).body
+    let cut = is_err(http.get("http://far:8080/", #{ "timeout_ms": 500 }))
+    [near, cut]
+})
+"#,
+    );
+    assert_eq!(s(&field(&v, "outcome")), "done", "{v:?}");
+    assert_eq!(s(&field(&v, "value")), "[\"hi\", true]");
+}

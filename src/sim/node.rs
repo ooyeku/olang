@@ -253,10 +253,38 @@ pub fn run_world(
     super::run_in(world, coordinate)
 }
 
-/// Task 0 of a world of nodes.
-fn coordinate() -> Result<Value, InterpreterError> {
-    let ctx = current().ok_or_else(|| misuse("sim: the coordinator runs inside its world"))?;
-    let w = &ctx.world;
+/// `run_world` with `main` as node 0's program (`w.run_fn` in a world
+/// that has nodes): the nodes start first, then `main` runs, and the run
+/// ends when it does.
+pub fn run_world_main(
+    cfg: Config,
+    nodes: Vec<(NodeInfo, Start)>,
+    plan: Plan,
+    template: Interpreter,
+    spec: u64,
+    props: Vec<super::props::Property>,
+    main: impl FnOnce() -> Result<Value, InterpreterError>,
+) -> Result<Report, String> {
+    let (infos, starts): (Vec<NodeInfo>, Vec<Start>) = nodes.into_iter().unzip();
+    let world = Arc::new(World::new(&cfg, infos, starts, Some(template), spec, props));
+    {
+        let mut st = world.lock();
+        for (a, b, link) in &plan.links {
+            st.net.set_link(*a, *b, *link);
+        }
+        for (left, right) in &plan.cuts {
+            st.net.partition(left, right);
+        }
+    }
+    super::run_in(world, move || {
+        let ctx = current().ok_or_else(|| misuse("sim: the main program runs inside its world"))?;
+        start_nodes(&ctx.world)?;
+        main()
+    })
+}
+
+/// Start every node but node 0, or mark it left out by the plan.
+fn start_nodes(w: &Arc<World>) -> Result<(), InterpreterError> {
     for n in 1..w.nodes.len() {
         if w.dropped[n] {
             // left out by the plan: a node that never starts
@@ -269,6 +297,14 @@ fn coordinate() -> Result<Value, InterpreterError> {
         }
         start_node(w, 0, n)?;
     }
+    Ok(())
+}
+
+/// Task 0 of a world of nodes.
+fn coordinate() -> Result<Value, InterpreterError> {
+    let ctx = current().ok_or_else(|| misuse("sim: the coordinator runs inside its world"))?;
+    let w = &ctx.world;
+    start_nodes(w)?;
     let watched: Vec<NodeId> = {
         let live = |n: &NodeId| !w.dropped[*n];
         let clients: Vec<NodeId> = (1..w.nodes.len())
