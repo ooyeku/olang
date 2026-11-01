@@ -10,7 +10,7 @@ are the exception: each carries a class name, listed
 The wording of a message is not part of olang's compatibility promise
 and may be improved in any release ([Stability](stability.md)); the
 kinds and the `olang check` classes are stable. The messages below are
-those of olang 1.0.0-rc.6.
+those of olang 1.0.0-rc.7.
 
 Part of [the olang book](README.md) · [Common pitfalls](pitfalls.md) ·
 [olang for LLMs](llms.md).

@@ -216,7 +216,7 @@ reproduced at HEAD is not added.
 ## After 1.0
 
 Planned work that waits until 1.0.0 has shipped. Nothing here lands
-before then; 1.0.0-rc.6 to 1.0.0 carries bug fixes only.
+before then; 1.0.0-rc.7 to 1.0.0 carries bug fixes only.
 
 | Item | Where it stands |
 |---|---|
