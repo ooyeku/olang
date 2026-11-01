@@ -201,6 +201,11 @@ pub struct WinState {
     /// carries no `sx`/`sy` — a drag stays in its own window rather than
     /// landing in another by a guess.
     pub origin: Option<(f32, f32)>,
+    /// A unified title bar's inset (macOS): its height (the native tab
+    /// bar's under it included), how far the traffic lights reach from the
+    /// left, and the title strip's own height, in points. `None` for a
+    /// standard title bar.
+    pub titlebar: Option<(f32, f32, f32)>,
     /// The last pointer event's place on the screen, when the origin is
     /// known.
     screen_pointer: Option<(f32, f32)>,
@@ -398,6 +403,7 @@ impl WinState {
             // places it; a real one waits for the platform
             origin: if headless { Some((0.0, 0.0)) } else { None },
             screen_pointer: None,
+            titlebar: None,
             settings: super::context::Settings::default(),
             see_through: false,
             wide: None,
@@ -1086,12 +1092,14 @@ impl WinState {
                 self.scale = scale;
                 self.dirty = true;
                 self.a11y_dirty = true;
+                let bar = titlebar_value(self.titlebar);
                 out.push(self.ev(
                     "resize",
                     vec![
                         ("width", float(width)),
                         ("height", float(height)),
                         ("scale", float(scale)),
+                        ("titlebar", bar),
                     ],
                 ));
             }
@@ -5388,7 +5396,11 @@ impl Clip {
         let y0 = self.y0.max(o.y0);
         let x1 = self.x1.min(o.x1).max(x0);
         let y1 = self.y1.min(o.y1).max(y0);
-        let same = |c: &Clip| c.x0 == x0 && c.y0 == y0 && c.x1 == x1 && c.y1 == y1;
+        // the same box within a pixel: one edge snapped to the pixel grid
+        // and the other not (a picture at a fractional place inside a
+        // rounded frame) keeps the frame's corners
+        let near = |a: f32, b: f32| (a - b).abs() < 1.0;
+        let same = |c: &Clip| near(c.x0, x0) && near(c.y0, y0) && near(c.x1, x1) && near(c.y1, y1);
         let (radii, continuous) = if same(&o) && o.is_rounded() {
             (o.radii, o.continuous)
         } else if same(&self) {
@@ -5655,4 +5667,14 @@ fn hover_left(key: &str) -> Vec<(&'static str, Value)> {
         ("line", Value::Unit),
         ("column", Value::Unit),
     ]
+}
+
+/// A unified title bar's inset as the program hears it, `#{ height,
+/// left, strip }` (points: `strip` the title's own row, `height` with the
+/// native tab bar under it), or `()`.
+pub fn titlebar_value(bar: Option<(f32, f32, f32)>) -> Value {
+    match bar {
+        Some((h, l, st)) => map(vec![("height", float(h)), ("left", float(l)), ("strip", float(st))]),
+        None => Value::Unit,
+    }
 }

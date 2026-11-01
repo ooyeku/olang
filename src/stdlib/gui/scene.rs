@@ -440,6 +440,10 @@ pub struct Node {
     /// beneath it (a dragged item's image following the pointer, a drop
     /// target's outline).
     pub inert: bool,
+    /// `drag: "window"`: a press here moves the window and a double press
+    /// zooms it, as a title bar does (a unified title bar's own row). A
+    /// control inside it keeps its press.
+    pub drags_window: bool,
     /// Assistive actions of the node's own, by label ("Move right"): the
     /// platform lists them beside its standard actions, and choosing one
     /// sends an `a11y` event with `action: "custom"` and its index.
@@ -609,6 +613,7 @@ const NODE_KEYS: &[&str] = &[
     "grab",
     "decorative",
     "inert",
+    "drag",
     "actions",
     "draw",
     "wheel",
@@ -940,6 +945,11 @@ impl Scene {
             grab: get_bool(op, "grab", what)?.unwrap_or(false),
             decorative: get_bool(op, "decorative", what)?.unwrap_or(false),
             inert: get_bool(op, "inert", what)?.unwrap_or(false),
+            drags_window: match get_str(op, "drag", what)? {
+                None => false,
+                Some("window") => true,
+                Some(other) => return Err(format!("{what}: \"drag\" is \"window\", got \"{other}\"")),
+            },
             actions: match get(op, "actions") {
                 None | Some(Value::Unit) => Vec::new(),
                 Some(Value::List(l)) => l
@@ -1209,6 +1219,30 @@ impl Scene {
         }
         let root = self.root.as_ref()?;
         self.hit_in(root, 0.0, 0.0, x, y)
+    }
+
+    /// Whether a press at a point moves the window: the node under it is
+    /// in a `drag: "window"` node, with nothing that takes a press (a
+    /// control, a field, a canvas that hears the pointer) between them.
+    pub fn drags_window_at(&self, x: f32, y: f32) -> bool {
+        let Some(mut at) = self.hit(x, y) else {
+            return false;
+        };
+        loop {
+            let Some(n) = self.nodes.get(&at) else {
+                return false;
+            };
+            if n.drags_window {
+                return true;
+            }
+            if n.focusable || n.edit.is_some() || n.wheel || n.draw.is_some() || n.scrollable || n.modal {
+                return false;
+            }
+            match &n.parent {
+                Some(p) => at = p.clone(),
+                None => return false,
+            }
+        }
     }
 
     /// The topmost modal layer: the last modal node in tree order.
