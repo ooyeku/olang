@@ -805,8 +805,15 @@ fn gui_read(args: Vec<Value>) -> Res<Value> {
         // picture shows here, where "pixels" (the software reference) has none
         "frame" => {
             drop(st);
-            let (fw, fh, px) = render::kept(id)
-                .ok_or("gui.read: \"frame\": the window is not drawn on the render thread")?;
+            #[cfg(target_os = "macos")]
+            let kept = render::kept(id);
+            #[cfg(not(target_os = "macos"))]
+            let kept: Option<(u32, u32, Vec<u8>)> = {
+                let _ = id;
+                None
+            };
+            let (fw, fh, px) =
+                kept.ok_or("gui.read: \"frame\": the window is not drawn on the render thread")?;
             let pm = tiny_skia::Pixmap::from_vec(
                 px,
                 tiny_skia::IntSize::from_wh(fw, fh).ok_or("gui.read: \"frame\": no size")?,
