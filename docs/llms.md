@@ -23,6 +23,7 @@ Part of [the olang book](README.md) · [Common pitfalls](pitfalls.md) ·
 - [Values, bindings and functions](#values-bindings-and-functions)
 - [Decisions and loops](#decisions-and-loops)
 - [Lists](#lists)
+- [Strings and tuples](#strings-and-tuples)
 - [Maps](#maps)
 - [Structs, enums and methods](#structs-enums-and-methods)
 - [Errors](#errors)
@@ -158,6 +159,35 @@ for (i, x) in enumerate(["a", "b"]) { println(`${i}: ${x}`) }
 `average`, `head` and `tail` raise on one, so check `len` first.
 `col.sort_by(xs, f)` sorts by a key, and `reverse`, `join`, `range(a,
 b)` and `zip` are there as you would expect.
+
+## Strings and tuples
+
+String functions live in `str` and take the string first. Indexes count
+characters from 0, and a search that finds nothing answers `()`.
+
+```olang
+let s = "  Hello, World  "
+let t = str.trim(s)
+println(t)                                // Hello, World
+println(str.to_upper(t))                  // HELLO, WORLD
+println(str.to_lower(t))                  // hello, world
+println(str.split(t, ", "))               // ["Hello", "World"]
+println(str.contains(t, "World"))         // true
+println(str.starts_with(t, "Hell"))       // true
+println(str.ends_with(t, "!"))            // false
+println(str.replace(t, "World", "olang")) // Hello, olang
+println(str.substring(t, 0, 5))           // Hello
+println(str.index_of(t, "W"))             // 7
+println(str.index_of(t, "z"))             // ()
+println(len(t))                           // 12
+println(str.fmt("{} + {} = {}", 1, 2, 3)) // 1 + 2 = 3
+let (word, n) = ("tea", 3)
+println(`${word} x${n}`)                  // tea x3
+```
+
+Double-quoted strings take escapes (`"\n"`, `"\t"`); backtick templates
+take none. A tuple is a fixed group, read with `t[0]` or taken apart
+with `let (a, b) = t`, in a `for`, or in a `match` arm.
 
 ## Maps
 
