@@ -22,8 +22,13 @@ Part of [the olang book](README.md).
 
 ## Install olang
 
-On a Mac or on Linux, open a terminal (on a Mac, the Terminal app is in
-Applications, then Utilities), paste this line and press Return:
+olang 1.0 is built, tested and supported on macOS; the installer also
+runs on Linux and Windows, where olang is an unsupported preview. See
+[Platforms](#platforms) for the details.
+
+On a Mac, open a terminal (the Terminal app is in Applications, then
+Utilities), paste this line and press Return. The same line works on
+Linux:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh
@@ -63,12 +68,12 @@ at `https://raw.githubusercontent.com/ooyeku/olang/main/install.sh` (and
 The installer takes a few options. Put them after `sh -s --`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh -s -- --version v1.0.0
+curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh -s -- --version v1.0.0-rc.5
 ```
 
 | Option | Environment variable | Effect |
 |---|---|---|
-| `--version v1.0.0` | `OLANG_VERSION` | install that release instead of the newest |
+| `--version TAG` | `OLANG_VERSION` | install that release instead of the newest |
 | `--dir DIR` | `OLANG_INSTALL_DIR` | install into `DIR` instead of `~/.olang/bin` |
 | `--no-modify-path` | `OLANG_NO_MODIFY_PATH=1` | leave your shell's startup files alone and print the line to add |
 | `--from-source` | `OLANG_FROM_SOURCE=1` | build from source even where a download exists |
@@ -78,8 +83,14 @@ curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh -
 | `--uninstall` | | remove olang (see [Uninstalling](#uninstalling)) |
 | `--help` | | list the options |
 
+`TAG` is a release's tag exactly as the [releases
+page](https://github.com/ooyeku/olang/releases) lists it: a `v`, then
+the version, such as `v1.0.0-rc.5`. A tag that is not on that page is
+refused with the list's address, so check there for the release you
+want.
+
 On Windows, set the environment variable first, for example
-`$env:OLANG_VERSION = 'v1.0.0'; irm https://raw.githubusercontent.com/ooyeku/olang/main/install.ps1 | iex`.
+`$env:OLANG_VERSION = 'v1.0.0-rc.5'; irm https://raw.githubusercontent.com/ooyeku/olang/main/install.ps1 | iex`.
 
 In CI, a typical line is:
 
@@ -224,9 +235,10 @@ includes the browser runtime.
 
 ## Platforms
 
-olang is developed and tested on macOS, and runs on Linux and Windows
-too. [Stability and compatibility](stability.md#platforms) says what is
-promised on each.
+olang 1.0 is built, tested and supported on macOS; the installer also
+runs on Linux and Windows, where olang is an unsupported preview.
+[Stability and compatibility](stability.md#platforms) says what that
+means.
 
 | Computer | Download | Notes |
 |---|---|---|

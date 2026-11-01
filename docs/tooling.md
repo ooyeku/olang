@@ -1641,7 +1641,7 @@ deserializes the AST, and runs it with the full process argv, so a
 bundled tool's own flags and arguments behave exactly as they would
 under `olang program.ol`. Embedding the parsed form means a built tool
 never re-parses at startup: deserializing is roughly 20× faster than the
-parser, which trims cold-start latency for a large program (the original
+parser on an Apple-silicon Mac, which trims cold-start latency for a large program (the original
 source rides along too, so runtime error messages still show a code
 snippet). The program is parse-checked as it is built, so a broken
 program never produces a binary.
@@ -1807,7 +1807,8 @@ save landing mid-run queues an immediate rerun. Ctrl+C stops both.
 A bug that depends on a random number, the time of day or a network
 reply is hard to catch, because the next run is different. The Open
 Timeline is olang's answer: record a run once, and you can replay it
-exactly, as many times as you like, anywhere.
+exactly, as many times as you like. The guarantee holds on macOS, for
+the same olang version that made the recording.
 
 ```bash
 olang record program.ol             # run, logging every nondeterministic input;
@@ -1849,7 +1850,12 @@ digit.
 
 The `.olt` trace carries the program's source inside it, so it is
 self-contained. It replays from a folder where the program doesn't
-exist, on another machine, or months later. A run that crashes is
+exist, on another Mac, or months later. A replay is guaranteed exact on
+macOS, by the same olang version that made the recording. A later olang
+reads an earlier trace (the format is stable), but the guarantee is not
+carried across versions or onto the preview platforms: there, a replay
+that no longer matches stops at the first difference, as described
+below, rather than quietly doing something else. A run that crashes is
 recorded too, because the trace is written as the run fails, so you can
 re-examine the failure as often as you need.
 

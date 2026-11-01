@@ -62,7 +62,7 @@ let total = sum_values(values, n)
 ```
 
 Moving the repository's n-body benchmark loop from the top level into a
-function makes it 24× faster, because the loop nest becomes an
+function makes it 24× faster on an Apple-silicon Mac, because the loop nest becomes an
 on-stack-replacement region compiled as a whole. When a script has one hot section, wrap that section in a
 function and call it once.
 
@@ -224,7 +224,9 @@ Every way sums the same; the best of five runs on an Apple-silicon Mac:
 | no network branch at all | 725 |
 
 The sandboxed function runs 1.6× faster than with the check left to
-run time, and within 4% of the function written without the branch.
+run time, and within 4% of the function written without the branch
+(3M calls under `olang --deny net`, the best of five runs on an
+Apple-silicon Mac).
 
 ## Bulk data belongs in ods
 

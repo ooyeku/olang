@@ -208,19 +208,41 @@ fixes land. `sim` and `peg` ship as Experimental (docs/stability.md).
 
 ## [1.0.0-rc.5] - 2026-10-27
 
-Release candidate 5: rc.4 with Linux building again. rc.4's tag never
-made a release, since its Linux builds failed.
+rc.5 is rc.4 with a fix to the Linux build and a script for crates.io.
+rc.4 was tagged but never released, because its Linux builds failed, so
+rc.5 is the first published release to carry everything listed under
+rc.4 below. The language, the standard
+library and the tools behave exactly as in rc.4.
 
 ### Fixed
 
-- **Linux builds again.** The macOS gate meant for the AppKit window and
-  string helpers sat on `utf16_to_chars`, which the text input uses on
-  every platform, so Linux had the AppKit calls and lacked the helper.
+- **Linux builds again.** In the `gui` engine's platform layer
+  (`src/stdlib/gui/platform.rs`), the `#[cfg(target_os = "macos")]`
+  gate meant for the AppKit helpers had slipped onto the wrong
+  function. `ns_window` (a window's NSWindow) and `ns_text` (an
+  NSString's text) went ungated, and `utf16_to_chars`, which every
+  platform's text input uses to turn UTF-16 offsets into character
+  offsets, was gated to macOS. A Linux build so compiled AppKit calls
+  it cannot make and lacked a helper it needs, and failed. The gate now sits on `ns_window` and
+  `ns_text`, the two macOS-only helpers; macOS builds are unchanged.
+
+### Added
+
+- **A script to publish olang on crates.io.** `tools/publish-crates.sh`
+  publishes olang there as `olangc`, with its numerical engine as
+  `olangc-ods`, because the name `olang` on crates.io belongs to another
+  project. It packages a renamed copy of the committed tree
+  (`tools/crates_package.py`) and leaves the repository's own manifests
+  as `olang` and `olang-ods`; the command it installs is still `olang`.
+  `--dry-run` checks the package without uploading it.
 
 ### Changed
 
 - **The book's parts are named plainly** (Getting started, The language,
-  …, Going deeper); pitfalls and stability are in Getting started.
+  The standard library, Tools, The browser, Going deeper) instead of
+  "Part I" to "Part VI". The change was committed on the rc.4 tag after
+  rc.4's notes were written, so it is listed here, with the first
+  release that shipped it.
 
 ## [1.0.0-rc.4] - 2026-10-26
 

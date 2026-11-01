@@ -30,7 +30,10 @@ reference](language.md) has the full rules.
 17. [`os.args()` includes the program path](#osargs-includes-the-program-path)
 18. [Template strings take no escape sequences and do not nest](#template-strings-take-no-escape-sequences-and-do-not-nest)
 19. [A bare `use` can shadow an earlier named import](#a-bare-use-can-shadow-an-earlier-named-import)
-20. [Small syntax reminders](#small-syntax-reminders)
+20. [Methods come only from a trait](#methods-come-only-from-a-trait)
+21. [A map is walked with `entries(m)`](#a-map-is-walked-with-entriesm)
+22. [Lists and strings have no methods](#lists-and-strings-have-no-methods)
+23. [Small syntax reminders](#small-syntax-reminders)
 
 ## Missing map keys return Unit, not a Result
 
@@ -454,6 +457,80 @@ it can resolve the module and see the collision. The fix that keeps
 both names is an alias — `use lib.x { name as other }` — or referring
 to the wildcard module's members qualified (`module.name`).
 
+## Methods come only from a trait
+
+A method is declared in a `trait` and supplied by an `impl Trait for
+Type`. A bare `impl Type { ... }`, the Rust way of giving a type
+methods, is not part of olang, and olang refuses it. When a type needs
+methods that nothing else shares, declare a trait for that one type:
+
+```olang
+type Point = struct { x: Int, y: Int }
+
+trait Geometry {
+    fn moved(self, dx, dy) -> Point
+    fn describe(self) -> String
+}
+
+impl Geometry for Point {
+    fn moved(self, dx, dy) = Point { x: self.x + dx, y: self.y + dy }
+    fn describe(self) = `(${self.x}, ${self.y})`
+}
+
+println(Point { x: 1, y: 2 }.moved(3, 4).describe())   // (4, 6)
+```
+
+Inside a method, `self` is the value it was called on, and its fields
+are read with `self.x`. A method cannot change `self`; one that
+"updates" the value returns a new one, as `moved` does. A plain
+function, `fn describe(p) = ...`, is just as good when you have no use
+for dispatch.
+
+## A map is walked with `entries(m)`
+
+`for (k, v) in m` does not work. A map is not something a loop can walk
+on its own, and the program stops with this error:
+
+```text
+Type error: cannot iterate over a Map — iterate its pairs with `for (k, v)
+in entries(m)`
+```
+
+`entries(m)` gives the `(key, value)` pairs, and `map_keys(m)` and
+`map_values(m)` give the keys and the values. All three follow the
+order in which the keys were first set:
+
+```olang
+let stock = #{ "apples": 3, "pears": 0, "plums": 7 }
+for (fruit, n) in entries(stock) {
+    if n > 0 => println(`${fruit}: ${n}`)
+}
+for fruit in map_keys(stock) { print(fruit + " ") }
+println("")
+```
+
+The same holds for an object (`{ name: "ada" }`) and a parsed JSON
+object.
+
+## Lists and strings have no methods
+
+Methods belong to the types a program declares (and to the data
+stack's Series and Frames). A list, a string or a map has none, so
+`xs.len()`, `s.split(",")` and `xs.push(4)` stop with `Cannot access
+field 'len' on non-struct value`. Call the function instead, with the
+value as its first argument, or pipe the value into it:
+
+```olang
+let xs = [3, 1, 2]
+let s = "a,b,c"
+println(len(xs))                   // 3
+println(str.split(s, ","))         // ["a", "b", "c"]
+println(xs |> sort |> first)       // 1
+```
+
+Lists never grow in place either: `xs + [4]` is a new list, and
+`xs = xs + [4]` points a `let mut` name at it.
+
 ## Small syntax reminders
 
 A few things that are easy to forget rather than truly surprising:
@@ -478,6 +555,15 @@ A few things that are easy to forget rather than truly surprising:
   ```
 
 - **No compound assignment.** `x += 1` does not parse; write `x = x + 1`.
+- **An `if` takes `=>`, not braces around its condition's body.**
+  `if x > 0 { ... }` is a parse error; write `if x > 0 => ...`, and
+  `if x > 0 => { ... }` for several statements. There is no `? :`,
+  and the logical operators are `&&`, `||` and `!`, not `and`, `or`
+  and `not`.
+- **A function's body follows `=`.** `fn f(x) { ... }` is a parse
+  error; write `fn f(x) = { ... }`.
+- **There is no `null`, `None` or `nil`.** Absence is `()`, compared
+  with `x == ()`.
 - **Escapes work in string literals** — `\n`, `\t`, `\"`, `\\`, and
   `\x1b` for control characters (handy for terminal color) — but **not in
   character literals**: `'\n'` is a parse error, use `"\n"`.

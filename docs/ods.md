@@ -57,8 +57,8 @@ so a calculation written with column operations never interprets
 anything row by row, and on large columns it also runs in parallel.
 [`examples/data-processing/dataproc/`](../examples/data-processing/dataproc/)
 holds the same job written as a fold over a list of maps (`records.ol`)
-and as Frame operations (`main.ol`); on 200,000 generated rows the
-second is about eighty times faster.
+and as Frame operations (`main.ol`); on 200,000 generated rows, on an
+Apple-silicon Mac, the second is about eighty times faster.
 
 Two rules follow from that, and the rest of the chapter builds on them:
 

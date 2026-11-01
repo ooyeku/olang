@@ -86,13 +86,16 @@ rolled [5, 2, 6], total 13
 olang replay: clean — 3 recorded event(s) reproduced
 ```
 
-The trace carries the program's source inside it, so it replays on
-another machine, next month, with the original file gone. A run that
-crashes is recorded too, which means a colleague can send you the trace
-of a failure and you can watch it fail as many times as you need. If the
-program has changed so that it no longer asks for the same things in the
-same order, replay stops at that point and tells you, instead of quietly
-producing a different run. [Record and
+The trace carries the program's source inside it, so it replays next
+month, on another Mac, with the original file gone. A replay is
+guaranteed exact on macOS, by the same olang version that made the
+recording; a later olang still reads the trace, and if anything about
+the run has changed it stops at the first difference and says so. A run
+that crashes is recorded too, which means a colleague can send you the
+trace of a failure and you can watch it fail as many times as you need.
+If the program has changed so that it no longer asks for the same things
+in the same order, replay stops at that point and tells you, instead of
+quietly producing a different run. [Record and
 replay](tooling.md#olang-record-and-olang-replay--the-open-timeline) has
 the details.
 
@@ -210,14 +213,14 @@ and browser, in olang.
 
 ## Platforms and stability
 
-olang 1.0 makes its compatibility promise on macOS, where every release
-is tested. Linux and Windows are previews for now: Linux binaries are
-released and pass their tests, and Windows has its own installer and
-builds, but hasn't been verified on real machines yet (WSL works today).
-The ecosystem of third-party packages is still small, so most programs
-lean on the standard library, which is broad for that reason. [Stability and compatibility](stability.md) is the official
-statement of what is stable, including the
-[platforms](stability.md#platforms) it covers.
+olang 1.0 is built, tested and supported on macOS; the installer also
+runs on Linux and Windows, where olang is an unsupported preview. Linux
+binaries are released and pass their headless tests, and Windows builds
+but hasn't been verified on real machines yet. The ecosystem of
+third-party packages is still small, so most programs lean on the
+standard library, which is broad for that reason. [Stability and
+compatibility](stability.md) is the official statement of what is
+stable, including the [platforms](stability.md#platforms) it covers.
 
 ## How to read this book
 

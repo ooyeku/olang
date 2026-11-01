@@ -46,8 +46,10 @@ You can replay any run. A program that rolls dice gives a different
 answer each time, which is exactly what makes a bug in it hard to chase.
 `olang record` saves everything the run took in from the outside world
 (the random numbers, the clock, files, network replies) into one small
-trace file. `olang replay` plays the run back exactly, as often as you
-like, even on another machine where the program itself is gone:
+trace file. `olang replay` plays the run back as often as you like,
+even from a folder where the program itself is gone. A replay is
+guaranteed exact on macOS, by the same olang version that made the
+recording:
 
 ```bash
 $ olang record dice.ol
@@ -111,7 +113,10 @@ a one-word change: `map` becomes `par_map`.
 
 ## Installation
 
-On a Mac or Linux, open a terminal, paste this line and press Return:
+olang 1.0 is built, tested and supported on macOS; the installer also
+runs on Linux and Windows, where olang is an unsupported preview.
+
+On a Mac (or Linux), open a terminal, paste this line and press Return:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh
