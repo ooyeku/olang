@@ -3859,8 +3859,8 @@ same values, same order, same first error, nothing for record/replay to
 see. Anything the proof cannot vouch for stays sequential, so effects
 always happen in element order; `set_parallel(false)` disables the
 fan-out entirely, and `OLANG_DEBUG_AUTOPAR=1` explains any decision.
-Measured on 18 cores: a 3M-element pure map runs ~3.7× faster with no
-change to the program.
+Measured on an Apple-silicon Mac (an M5 Pro, 18 cores): a 3M-element
+pure map runs ~3.7× faster with no change to the program.
 
 The data stack fans out the same way. `ods.read_csv` splits large text
 at record boundaries (quote-aware, so embedded newlines never split a
@@ -3870,8 +3870,9 @@ sequential scan would; `ods.sort_by`, joins, and `ods.group_by` sort,
 probe, gather, and aggregate across cores above ~100k rows. Every
 fan-out joins in a fixed order, so results are cell-identical to the
 sequential run (a grouped float `sum` may differ in the last ULPs), and `set_parallel(false)` turns all of it
-off. Measured at 1M rows: JSONL parse 4.3× faster, CSV parse 2.7×,
-sort_by ~1.9×.
+off. Measured at 1M rows on the same Mac, against
+`set_parallel(false)`: JSONL parse 4.3× faster, CSV parse 2.7×, sort_by
+~1.9×.
 
 ### Series verbs
 

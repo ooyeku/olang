@@ -1641,7 +1641,7 @@ deserializes the AST, and runs it with the full process argv, so a
 bundled tool's own flags and arguments behave exactly as they would
 under `olang program.ol`. Embedding the parsed form means a built tool
 never re-parses at startup: deserializing is roughly 20× faster than the
-parser, which trims cold-start latency for a large program (the original
+parser on an Apple-silicon Mac, which trims cold-start latency for a large program (the original
 source rides along too, so runtime error messages still show a code
 snippet). The program is parse-checked as it is built, so a broken
 program never produces a binary.
