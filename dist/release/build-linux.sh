@@ -41,7 +41,10 @@ case "$NAME" in
         cargo build --release --locked -p olang -p otc \
             --no-default-features --features olang/native,olang/full ;;
     *)
-        cargo build --release --locked -p olang -p otc ;;
+        # no gamepad or audio: gilrs needs libudev and cpal needs ALSA,
+        # which the manylinux image does not carry (Linux is a preview)
+        cargo build --release --locked -p olang -p otc \
+            --no-default-features --features olang/native,olang/full,olang/gui,olang/toad ;;
 esac
 
 rm -rf "$STAGE"
