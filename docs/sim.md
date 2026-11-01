@@ -21,6 +21,11 @@ Nothing in a world touches the real machine. Its files, sockets and
 clock are all simulated, which is why a world can crash a server over
 and over without hurting anything.
 
+`sim` is new in this release and
+[Experimental](stability.md#experimental--may-change-in-a-minor-release):
+the same seed will always give the same run, but the options and a
+run's fields may still change in a minor release.
+
 Part of [the olang book](README.md) ·
 [Command-line tooling](tooling.md#olang-sim) ·
 [Standard library](stdlib.md#sim--simulated-worlds)

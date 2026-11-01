@@ -63,7 +63,7 @@ from the frozen core outward:
 |---|---|---|
 | **Stable** | Syntax and behavior are frozen. A documented program keeps parsing and keeps giving the same result, under the semver contract above. | the core language, macros, the listed stdlib modules, `cell`, `testing` |
 | **Stable in behavior, evolving in scope** | Every documented function behaves as written, permanently. The *set* of functions grows additively; nothing existing changes. | concurrency, the execution tiers, the data stack, gradual typing, `runtime`, `asset`, `collections` |
-| **Experimental** | The model is settled and tested, but the surface may still change: a minor release may change or remove an Experimental function, option or field, with a CHANGELOG note saying what to change ([Versioning](#versioning)). Build on it knowing that. | capabilities and `caps`, `http.serve`, `dom`, `gui`, `tty`, `pty`, `vt` |
+| **Experimental** | The model is settled and tested, but the surface may still change: a minor release may change or remove an Experimental function, option or field, with a CHANGELOG note saying what to change ([Versioning](#versioning)). Build on it knowing that. | capabilities and `caps`, `http.serve`, `dom`, `gui`, `tty`, `pty`, `vt`, `sim`, `peg` |
 | **Reserved** | Not accepted at all. Writing one is a parse error, and if it ever gains meaning that will be purely additive. | intersection annotations (`A & B`) |
 
 Every module stdlib.md documents sits in exactly one tier. A name the
@@ -264,6 +264,15 @@ entry saying so; nothing graduates silently.
   Their surface still grows, so a node's fields, an event's payload or an
   option may change in a minor release. A program usually meets them
   through a library built on them, which absorbs those changes.
+- **`sim`** — simulated worlds. A seed decides every run, and the same
+  seed on the same olang is the same run; that promise holds. The
+  surface around it (a world's and a node's options, a run's fields,
+  the properties and models, which effects a world simulates and which
+  it refuses) is new and may still change. A saved `.simplan` replays
+  only on the olang that wrote it.
+- **`peg`** — grammars for structured text. The grammar notation, the
+  tree's shape and an error's fields may still change; a parse that
+  succeeds keeps matching what it matched.
 
 ### Reserved — not accepted, and additive if they ever are
 
@@ -295,6 +304,7 @@ have a contract too, tiered as the language is:
 | `.olt` traces | Stable | The trace format is versioned: a later olang reads an earlier trace, and refuses a newer one by name. |
 | Public environment variables ([the table](tooling.md#environment-variables)) | Stable | The variables marked public keep their names and meanings. |
 | `olang fmt`'s output | Stable within a minor | The formatter's output changes only in a minor release, and each change is recorded in the CHANGELOG, so `olang fmt --check` in CI changes verdict only when olang's minor version does. |
+| `olang sim` and `olang sim view`: their flags, report and exit codes; `.sim/*.simplan` plans; the timeline's `--json` | Experimental | May change in a minor release, recorded in the CHANGELOG. A plan replays only on the olang that saved it. |
 | The bundle format of `olang build`, the registry protocol, `olang profile`'s internals beyond its documented fields | Experimental | May change in a minor release, recorded in the CHANGELOG. |
 | `~/.olang/state` (parse and compile caches, warm profiles), `meta.encode` images, diagnostic and error text, the internal environment variables | Not contract | May change in any release; a cache from another version is ignored, never misread. |
 
