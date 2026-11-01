@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0-rc.6] - 2026-11-01
+
+The last candidate with new features: from here to 1.0.0 only bug
+fixes land. `sim` and `peg` ship as Experimental (docs/stability.md).
+
 ### Added
 
 - **Tuples do arithmetic element by element.** `(1, 2) + (3, 4)` is
@@ -57,12 +62,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `-X`; every `ods` math function, `clip`, `pow` and `round` over a
   Matrix (`ods.tanh(X)`, `X.clip(lo: 0.0)`); `mat.sum(x, axis)`.
 
-## Unreleased: rc.6 (local)
-
-1.0.0-rc.6 lives on the local `rc6` branch until `sim` is polished; the
-remote stays on rc.5.
-
-### Added
 
 - **`sim`, deterministic simulation: the clock and the scheduler (S1).**
   `sim.world(#{ seed, start })` makes a world; `w.run_fn(f, #{ for })`
@@ -182,6 +181,20 @@ remote stays on rc.5.
   Design: plans/SIM-S4.md.
 
 ### Fixed
+
+- **Shrinking keeps the failure it started with.** A failure without a
+  property is matched by its outcome, the place it was raised
+  (`Report.site`) and the shape of its message, so a message naming a
+  list that varies no longer loses it; the world's random choices are
+  keyed by where and when they are made, so a fault the shrinker
+  removes no longer moves every later decision (a shrink under
+  partitions keeps only the failing client's cuts).
+- **`w.crash`, `w.kill` and `w.stop` on a node that is down already do
+  nothing** (an ignored event, not a fault); they raised.
+- **A simulated sync replays the writes since the last one** instead of
+  copying the whole file: a SQLite world runs in about half the time.
+- **`olang sim view`** starts the lanes at the top, and zoomed out draws
+  busy stretches as activity instead of a grey wall.
 
 - **`dates.stamp` and `dates.stamp_ms` are recorded** by `olang record`,
   as the other wall-clock reads are; a replay used to read the clock

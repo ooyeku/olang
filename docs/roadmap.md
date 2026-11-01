@@ -43,6 +43,7 @@ since 2026-10-07); those rows are kept together under
 - [Platforms (parked)](#platforms-parked)
 - [Stdlib naming audit](#stdlib-naming-audit)
 - [Process](#process)
+- [After 1.0](#after-10)
 
 ## Before 1.0
 
@@ -211,3 +212,17 @@ what was observed, in which program, and the measurement. Their own
 FINDINGS files hold only what they find in themselves and their
 frameworks. Nothing enters on speculation, and a row that cannot be
 reproduced at HEAD is not added.
+
+## After 1.0
+
+Planned work that waits until 1.0.0 has shipped. Nothing here lands
+before then; 1.0.0-rc.6 to 1.0.0 carries bug fixes only.
+
+| Item | Where it stands |
+|---|---|
+| `[stdlib]` MCP, agents, `ai` and Draft | built on branches now kept as the tags `archive/ag-ai`, `archive/ag-check`, `archive/ag-core`, `archive/ag-draft`, `archive/ag-sandbox`, `archive/ag-trust` and `archive/integrate`; ship as Experimental after 1.0 |
+| `[stdlib]` `sim`: what S6 left | Loom apps in a world (`gui.platform()` answered there, so the headless driver can load); `w.client` reaching module cells; `http.serve` waiting for in-flight handlers at a drain inside a world; a stopped node refusing connections; tasks as coroutines rather than threads for speed (plans/SIM-S6-ENGINE.md) |
+| `[olang]` The bytecode tier recompiles a lambda whose captures change | `db.transaction`'s callback is compiled again at every call (`hof_function_id` in src/ovm/bytecode.rs) |
+| `[gui]` Full screen from `gui.set` | `"fullscreen": "toggle"` through NSWindow's own toggle |
+| `[stdlib]` Toad's web export | skipped for 1.0 |
+
