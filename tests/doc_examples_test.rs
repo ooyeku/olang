@@ -198,3 +198,8 @@ fn packages_chapter_examples_work() {
 fn tooling_chapter_examples_work() {
     run_doc_file("docs/tooling.md", include_str!("../docs/tooling.md"));
 }
+
+#[test]
+fn llms_chapter_examples_work() {
+    run_doc_file("docs/llms.md", include_str!("../docs/llms.md"));
+}

@@ -93,9 +93,11 @@ it is read. The usual causes:
 - `None`, `null` or `nil`, which olang does not have. Absence is `()`.
 - A Python or Rust builtin that olang spells differently: `int(x)` is
   `to_int(x)`, `sqrt(x)` is `math.sqrt(x)`, `set(xs)` is `col.unique(xs)`.
-- `Undefined variable: impl` comes from a bare `impl Type { ... }`
-  block. Methods come only from a trait: declare `trait T { ... }` and
-  write `impl T for Type { ... }` ([Methods come only from a
+- A bare `impl Type { ... }` block used to fail here as `Undefined
+  variable: impl`. It is now refused before the program runs, at the
+  `impl`: `olang has no inherent impl blocks: methods come from a trait,
+  so declare one (trait Name { fn method(self) }) and write impl Name
+  for Type { ... }` ([Methods come only from a
   trait](pitfalls.md#methods-come-only-from-a-trait)).
 
 ## Type errors
