@@ -39,7 +39,7 @@ Core Functions (79):
   zip
   (use :env --full for detailed descriptions)
 
-User Environment (46):
+User Environment (47):
     asset : struct = Module { ... }
     base64 : struct = Module { ... }
     bigint : struct = Module { ... }
@@ -79,6 +79,7 @@ User Environment (46):
     task : struct = Module { ... }
     testing : struct = Module { ... }
     time : struct = Module { ... }
+    toad : struct = Module { ... }
     toml : struct = Module { ... }
     tty : struct = Module { ... }
     twice : function = <function: twice>
@@ -90,7 +91,7 @@ User Environment (46):
 
 === Memory ===
   Values are reference-counted and reclaimed deterministically.
-  User bindings: 46
+  User bindings: 47
 Current configuration:
   prompt: olang> 
   show_types: false
