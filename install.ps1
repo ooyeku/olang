@@ -9,14 +9,14 @@
 # %USERPROFILE%\.olang\bin, and adds that folder to your PATH.
 #
 # Options, as environment variables set before the line above:
-#   $env:OLANG_VERSION = 'v1.0.0'     install this release (default: the newest)
+#   $env:OLANG_VERSION = 'v1.0.0-rc.6' install this release (default: the newest)
 #   $env:OLANG_INSTALL_DIR = 'D:\bin' install there instead
 #   $env:OLANG_NO_MODIFY_PATH = '1'   leave PATH alone
 #   $env:OLANG_FORCE = '1'            reinstall the same version
 #   $env:OLANG_QUIET = '1'            print nothing but errors
 #   $env:OLANG_UNINSTALL = '1'        remove olang instead
 # or as parameters when the script is saved first:
-#   .\install.ps1 -Version v1.0.0 -Dir D:\bin -NoModifyPath -Force -Quiet -Uninstall
+#   .\install.ps1 -Version v1.0.0-rc.6 -Dir D:\bin -NoModifyPath -Force -Quiet -Uninstall
 #
 # It writes only to the install folder and your user PATH, and deletes
 # its temporary files when it ends. It never asks for administrator
@@ -142,7 +142,7 @@ function Resolve-Version {
     if ($Version) {
         $v = 'v' + $Version.TrimStart('v')
         if ($v -notmatch '^v\d+\.\d+\.\d+') {
-            Stop-Install "'$Version' is not a version number." @("Use the form v1.0.0 (see $GitHub/$Repo/releases), or leave it out to get the newest.")
+            Stop-Install "'$Version' is not a version number." @("Use a release tag, e.g. v1.0.0-rc.6 (see $GitHub/$Repo/releases), or leave it out to get the newest.")
         }
         if (-not (Get-Url "$GitHubApi/repos/$Repo/releases/tags/$v")) {
             Stop-Install "there is no olang release called $v." @("See the list of releases at $GitHub/$Repo/releases.")
@@ -343,7 +343,7 @@ The olang installer for Windows
 
 Usage:
   irm https://raw.githubusercontent.com/ooyeku/olang/main/install.ps1 | iex
-  .\install.ps1 [-Version v1.0.0] [-Dir FOLDER] [-NoModifyPath] [-Force] [-Quiet] [-Uninstall]
+  .\install.ps1 [-Version TAG] [-Dir FOLDER] [-NoModifyPath] [-Force] [-Quiet] [-Uninstall]
 
 Each option also has an environment variable: OLANG_VERSION,
 OLANG_INSTALL_DIR, OLANG_NO_MODIFY_PATH=1, OLANG_FORCE=1, OLANG_QUIET=1,
