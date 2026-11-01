@@ -356,6 +356,7 @@ fn the_human_output_is_unchanged() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn paths_are_said_as_they_were_given() {
     // a project reached through a symlink: the events name its files by
