@@ -23,6 +23,7 @@ examples do what the text says they do.
 | [Installation](installation.md) | Getting olang onto your machine, running your first program, and the interactive prompt. |
 | [A tour of olang](tour.md) | Learn the language by building one program, from a few lines of text to a small statistical report. |
 | [Common pitfalls](pitfalls.md) | The things that tend to catch people out, and what to write instead. |
+| [olang for LLMs](llms.md) | The rules that differ from Rust, Go and Python, the usual mistakes, and a working program for each everyday task, for a model or a person writing olang from the docs alone. |
 | [Stability and compatibility](stability.md) | What 1.0 promises: which parts are stable, which are still experimental, which platforms are covered, and what a version number means. |
 
 ### The language
@@ -32,6 +33,7 @@ examples do what the text says they do.
 | [Language reference](language.md) | The precise rules for every part of the language, from values and operators to pattern matching, types, errors, concurrency and modules. |
 | [Types and gradual typing](types.md) | Adding types when you want them: how annotations are checked as the program runs, and how `olang check` catches mistakes before it does. |
 | [Macros](macros.md) | Writing olang code that writes olang code: `meta fn`, `@` calls, decorators, and the rules they follow. |
+| [Error messages](errors.md) | The errors olang reports, what usually causes each one, and what to write instead. |
 
 ### The standard library
 
@@ -66,6 +68,10 @@ examples do what the text says they do.
 | [The execution model: OVM and JIT](ovm.md) | The bytecode VM and the JIT in depth: what each one compiles, how each stays faithful to the interpreter, and what they cost and gain. |
 
 ## Reading paths
+
+If you are a language model writing olang, or want the short version,
+read [olang for LLMs](llms.md) and keep [Error messages](errors.md) at
+hand.
 
 If you want to learn the language, read the [Introduction](introduction.md)
 and [Installation](installation.md), work through [A tour of
