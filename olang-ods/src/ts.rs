@@ -242,19 +242,14 @@ fn autocov_direct(x: &[f64], mean: f64, lags: usize, par: bool) -> Vec<f64> {
     let lag = |k: usize| -> f64 {
         let (a, b) = (&d[..n - k], &d[k..]);
         let mut acc = [0.0f64; 4];
-        let mut ca = a.chunks_exact(4);
-        let mut cb = b.chunks_exact(4);
-        for (p, q) in (&mut ca).zip(&mut cb) {
+        let (ca, ra) = a.as_chunks::<4>();
+        let (cb, rb) = b.as_chunks::<4>();
+        for (p, q) in ca.iter().zip(cb) {
             for j in 0..4 {
                 acc[j] += p[j] * q[j];
             }
         }
-        let tail: f64 = ca
-            .remainder()
-            .iter()
-            .zip(cb.remainder())
-            .map(|(p, q)| p * q)
-            .sum();
+        let tail: f64 = ra.iter().zip(rb).map(|(p, q)| p * q).sum();
         (acc[0] + acc[1] + acc[2] + acc[3] + tail) / n as f64
     };
     tabulate(lags + 1, par && n * (lags + 1) >= 1 << 18, lag)

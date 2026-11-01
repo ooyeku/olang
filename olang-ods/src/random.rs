@@ -197,13 +197,13 @@ pub fn uniform(rng: &mut Pcg64, n: usize, lo: f64, hi: f64, par: bool) -> Vec<f6
 /// pairs: two steps every two values, a lone last value two steps too.
 pub fn normal(rng: &mut Pcg64, n: usize, mu: f64, sd: f64, par: bool) -> Vec<f64> {
     blocks(rng, n, 1, par, |r, out: &mut [f64]| {
-        let mut chunks = out.chunks_exact_mut(2);
-        for pair in &mut chunks {
+        let (pairs, rest) = out.as_chunks_mut::<2>();
+        for pair in pairs {
             let (a, b) = r.normal_pair();
             pair[0] = mu + sd * a;
             pair[1] = mu + sd * b;
         }
-        if let [last] = chunks.into_remainder() {
+        if let [last] = rest {
             *last = mu + sd * r.normal_pair().0;
         }
     })
