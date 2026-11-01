@@ -205,7 +205,7 @@ pub struct WinState {
     /// bar's under it included), how far the traffic lights reach from the
     /// left, and the title strip's own height, in points. `None` for a
     /// standard title bar.
-    pub titlebar: Option<(f32, f32, f32)>,
+    pub titlebar: Option<(f32, f32, f32, bool)>,
     /// The last pointer event's place on the screen, when the origin is
     /// known.
     screen_pointer: Option<(f32, f32)>,
@@ -5676,12 +5676,13 @@ fn hover_left(key: &str) -> Vec<(&'static str, Value)> {
 /// A unified title bar's inset as the program hears it, `#{ height,
 /// left, strip }` (points: `strip` the title's own row, `height` with the
 /// native tab bar under it), or `()`.
-pub fn titlebar_value(bar: Option<(f32, f32, f32)>) -> Value {
+pub fn titlebar_value(bar: Option<(f32, f32, f32, bool)>) -> Value {
     match bar {
-        Some((h, l, st)) => map(vec![
+        Some((h, l, st, full)) => map(vec![
             ("height", float(h)),
             ("left", float(l)),
             ("strip", float(st)),
+            ("full", Value::Boolean(full)),
         ]),
         None => Value::Unit,
     }

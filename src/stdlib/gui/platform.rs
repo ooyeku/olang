@@ -918,8 +918,10 @@ impl App {
     }
 
     /// A unified title bar's inset, read again from AppKit (opened,
-    /// resized: full screen has none) and kept in the window's state.
-    fn sync_titlebar(&mut self, id: u64) -> Option<(f32, f32, f32)> {
+    /// resized, and after every turn of the loop: a tab bar shown or
+    /// hidden, or full screen entered or left, resizes nothing) and kept
+    /// in the window's state.
+    fn sync_titlebar(&mut self, id: u64) -> Option<(f32, f32, f32, bool)> {
         let pw = self.windows.get(&id)?;
         let bar = if pw.unified {
             titlebar_inset(&pw.win)
@@ -930,6 +932,38 @@ impl App {
             st.titlebar = bar;
         }
         bar
+    }
+
+    /// Every unified window's title bar read again: one that changed with
+    /// no resize (a tab bar shown or hidden, full screen settled) is said
+    /// as a resize, so the program lays out against it.
+    fn titlebars_changed(&mut self) {
+        let ids: Vec<u64> = self
+            .windows
+            .iter()
+            .filter(|(_, pw)| pw.unified)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            let Some(pw) = self.windows.get(&id) else {
+                continue;
+            };
+            let was = pw.state.lock().ok().and_then(|st| st.titlebar);
+            if titlebar_inset(&pw.win) == was {
+                continue;
+            }
+            let scale = pw.win.scale_factor();
+            let l = pw.win.inner_size().to_logical::<f32>(scale);
+            self.sync_titlebar(id);
+            self.input(
+                id,
+                Input::Resize {
+                    width: l.width,
+                    height: l.height,
+                    scale: scale as f32,
+                },
+            );
+        }
     }
 
     /// The window's content origin on the screen, read again (opened,
@@ -1650,10 +1684,13 @@ fn show_backdrop(
 }
 
 /// A unified title bar's height (the frame's less the content's layout
-/// rectangle) and the traffic lights' right edge, in points; `None` in
-/// full screen (no bar) or off macOS.
+/// rectangle), the traffic lights' right edge, the title strip's height
+/// (above any tab bar), in points, and whether the window is in full
+/// screen: there the lights and the strip are gone (`0`), and the height
+/// is the tab bar's that the system keeps at the top (`0` without one).
+/// `None` off macOS.
 #[cfg(target_os = "macos")]
-fn titlebar_inset(win: &Window) -> Option<(f32, f32, f32)> {
+fn titlebar_inset(win: &Window) -> Option<(f32, f32, f32, bool)> {
     use objc2::msg_send;
     use objc2_foundation::NSRect;
     let nw = ns_window(win)?;
@@ -1661,7 +1698,12 @@ fn titlebar_inset(win: &Window) -> Option<(f32, f32, f32)> {
     unsafe {
         let frame: NSRect = msg_send![&*nw, frame];
         let layout: NSRect = msg_send![&*nw, contentLayoutRect];
-        let h = (frame.size.height - layout.size.height) as f32;
+        let h = ((frame.size.height - layout.size.height) as f32).max(0.0);
+        // NSWindowStyleMaskFullScreen
+        let mask: usize = msg_send![&*nw, styleMask];
+        if mask & (1 << 14) != 0 {
+            return Some((h.round(), 0.0, 0.0, true));
+        }
         if h <= 0.5 {
             return None;
         }
@@ -1671,13 +1713,18 @@ fn titlebar_inset(win: &Window) -> Option<(f32, f32, f32)> {
         let (left, strip) = match zoom {
             Some(b) => {
                 let r: NSRect = msg_send![&*b, frame];
-                // the lights' own view: the title strip, above any tab bar
+                // the title strip, above any tab bar: the lights sit in its
+                // middle, so it is twice their centre's depth from the top
+                // of their view (which holds the tab bar too)
                 let sup: Option<objc2::rc::Retained<objc2::runtime::AnyObject>> =
                     msg_send![&*b, superview];
                 let strip = match sup {
                     Some(v) => {
                         let f: NSRect = msg_send![&*v, frame];
-                        f.size.height as f32
+                        let flipped: bool = msg_send![&*v, isFlipped];
+                        let mid = r.origin.y + r.size.height / 2.0;
+                        let depth = if flipped { mid } else { f.size.height - mid };
+                        ((depth * 2.0) as f32).round()
                     }
                     None => h,
                 };
@@ -1685,12 +1732,12 @@ fn titlebar_inset(win: &Window) -> Option<(f32, f32, f32)> {
             }
             None => (70.0, h),
         };
-        Some((h, left, strip))
+        Some((h, left, strip, false))
     }
 }
 
 #[cfg(not(target_os = "macos"))]
-fn titlebar_inset(_win: &Window) -> Option<(f32, f32, f32)> {
+fn titlebar_inset(_win: &Window) -> Option<(f32, f32, f32, bool)> {
     None
 }
 
@@ -2087,6 +2134,7 @@ impl App {
         if !self.files.is_empty() {
             self.flush_files();
         }
+        self.titlebars_changed();
         if !self.closing.is_empty() {
             self.closing.retain(|c| !c.gone());
         }
@@ -2238,6 +2286,18 @@ impl App {
                                 }
                                 _ => {}
                             }
+                        }
+                    }
+                    // full screen, in its own space, as the green button
+                    // and View › Enter Full Screen take it: "toggle"
+                    #[cfg(target_os = "macos")]
+                    if let Ok(Some("toggle")) = get_str(&v, "fullscreen", "gui.set")
+                        && let Some(w) = ns_window(&pw.win)
+                    {
+                        let none: *const objc2::runtime::AnyObject = std::ptr::null();
+                        // SAFETY: a live NSWindow and its standard action.
+                        unsafe {
+                            let _: () = objc2::msg_send![&*w, toggleFullScreen: none];
                         }
                     }
                     // a document's unsaved edits: the dot in the close
