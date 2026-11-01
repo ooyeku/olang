@@ -193,8 +193,60 @@ fixes land. `sim` and `peg` ship as Experimental (docs/stability.md).
   what they keep (olang-track 7.9 s → 7.0 s a simulated 10 minutes).
   Design: plans/SIM-S4.md.
 
+- **`peg`, grammars from text** (Experimental): a grammar written as
+  text becomes a parser that answers trees with spans; left recursion,
+  precedence tables, actions, recovery, and errors that say what was
+  expected under a caret; `peg.check` and `peg.examples` for testing a
+  grammar.
+- **`sim`: seeing a run (S5).** `run.events()` is every event of a run
+  as an `ods` Frame; `olang sim view PLAN` or `olang sim view FILE
+  --seed S` replays a run and draws it as a timeline in one
+  self-contained page (`--html`, `--json`, `--no-open`). Worlds run on
+  the bytecode tier, with the same results as the interpreter
+  (`olang --no-ovm sim` keeps the interpreter alone).
+- **A unified title bar.** `titlebar: "unified"` runs a window's
+  content under a transparent title bar with the traffic lights kept; a
+  node with `drag: "window"` moves the window.
+- **Shared and live pictures.** A Toad frame drawn with `share` is shown
+  by another process's image (`("shared", id)`), and a frame drawn with
+  `cpu` is published as a live picture, which is how Studio's canvas
+  shows a running game.
+- **`gui.fonts` takes families** (`#{ "body": …, "mono": … }`), so a
+  theme can name its own faces.
+- **`--trace` shows where a run's start goes:** each module a `use`
+  found and where, timed landmarks, and the modules loaded.
+- **Two new chapters in the book.** *olang for LLMs* puts the rules
+  that differ from Rust, Go and Python in one place, with five complete
+  programs; *Error messages* lists each kind of error with its usual
+  cause and fix. Every standard-library function has a stable anchor
+  (`#str-split`, `#len`).
+
+### Changed
+
+- **The installer.** One friendly installer for macOS, Linux and
+  Windows that verifies signatures, handles more machines, names a
+  missing system library and offers to install it, tells you how to
+  bring olang into the terminal you installed from, and uninstalls.
+  Releases are built for old Linux (glibc 2.28), Alpine and Windows,
+  and signed. The install commands use GitHub's address.
+- **The book reads for newcomers.** The README, introduction, tour and
+  each chapter's opening were rewritten in plain language. One
+  statement about platforms is used everywhere: olang 1.0 is built,
+  tested and supported on macOS; the installer also runs on Linux and
+  Windows, where olang is an unsupported preview. Record and replay
+  says where an exact replay is guaranteed (macOS, the same olang
+  version), and speed claims name their hardware and method.
+- **`olang sim` prints its report on stdout** and diagnostics on
+  stderr, as `olang test` does; `--events` with `--seeds` is refused;
+  `:help` covers every `sim` and `peg` member. `olang --help` gives
+  `doctor`, `eval` and `fix` a one-line summary.
+- **`otc` builds on Windows.**
+
 ### Fixed
 
+- **`w.run_fn` starts the world's nodes and hooks** before its function,
+  which runs as the node `main` (so `partition` and `link` can name it);
+  it ran the function alone, and a node it named was not found.
 - **Shrinking keeps the failure it started with.** A failure without a
   property is matched by its outcome, the place it was raised
   (`Report.site`) and the shape of its message, so a message naming a
