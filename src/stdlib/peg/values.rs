@@ -144,11 +144,7 @@ impl<'t, 'a> Tree<'t, 'a> {
         (line, a - ls + 1)
     }
 
-    pub fn value(
-        &mut self,
-        id: u32,
-        interp: &mut Interpreter,
-    ) -> Result<Value, InterpreterError> {
+    pub fn value(&mut self, id: u32, interp: &mut Interpreter) -> Result<Value, InterpreterError> {
         self.depth += 1;
         let out = if self.depth % 64 == 0 {
             crate::interpreter::with_stack_headroom(|| self.value_inner(id, interp))
@@ -321,7 +317,11 @@ pub(crate) fn error_data(
             None
         } else {
             let a = oks[b as usize];
-            if b - a > 24 { None } else { Some(input.slice(a, b)) }
+            if b - a > 24 {
+                None
+            } else {
+                Some(input.slice(a, b))
+            }
         }
     };
     let saw = match found {

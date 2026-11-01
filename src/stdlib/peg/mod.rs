@@ -92,12 +92,12 @@ fn err(message: impl Into<String>) -> InterpreterError {
 
 fn grammar_of(v: &Value) -> Result<Arc<Grammar>, InterpreterError> {
     match v {
-        Value::Native(h) => h
-            .0
-            .as_any()
-            .downcast_ref::<PegGrammar>()
-            .map(|g| g.0.clone())
-            .ok_or_else(|| err("__peg: expected a grammar handle")),
+        Value::Native(h) => {
+            h.0.as_any()
+                .downcast_ref::<PegGrammar>()
+                .map(|g| g.0.clone())
+                .ok_or_else(|| err("__peg: expected a grammar handle"))
+        }
         _ => Err(err("__peg: expected a grammar handle")),
     }
 }
@@ -202,14 +202,12 @@ fn compile(args: &[Value]) -> Result<Value, InterpreterError> {
             .filter(|(_, v)| !matches!(v, Value::Unit))
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect(),
-        Value::Struct { fields, .. } => fields
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect(),
+        Value::Struct { fields, .. } => {
+            fields.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        }
         _ => Vec::new(),
     };
-    let g = grammar::build(rules, &strings(&args[1]), &strings(&args[2]), &actions)
-        .map_err(err)?;
+    let g = grammar::build(rules, &strings(&args[1]), &strings(&args[2]), &actions).map_err(err)?;
     Ok(Value::Native(NativeHandle::new(PegGrammar(Arc::new(g)))))
 }
 

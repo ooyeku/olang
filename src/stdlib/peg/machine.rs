@@ -35,7 +35,11 @@ pub(crate) enum Extra {
     None,
     /// Index into `Machine::fields`.
     Fields(u32),
-    Prec { op_start: i64, op_end: i64, fix: Fix },
+    Prec {
+        op_start: i64,
+        op_end: i64,
+        fix: Fix,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -277,8 +281,10 @@ impl<'a> Machine<'a> {
     /// A node whose labelled children become its fields (`pg_lnode`).
     fn lnode(&mut self, kind: u32, start: i64, end: i64, base: usize, lists: &[u32]) -> u32 {
         let kids = self.store.len() as u32;
-        let mut fields: Vec<(u32, Field)> =
-            lists.iter().map(|&l| (l, Field::Many(Vec::new()))).collect();
+        let mut fields: Vec<(u32, Field)> = lists
+            .iter()
+            .map(|&l| (l, Field::Many(Vec::new())))
+            .collect();
         for (i, k) in (base..self.stack.len()).enumerate() {
             let c = self.stack[k];
             self.store.push(Child {
@@ -561,7 +567,11 @@ impl<'a> Machine<'a> {
                 let mut q = x as usize;
                 for &c in codes.iter() {
                     let have = self.cs[q];
-                    let have = if *ci { super::grammar::lower(have) } else { have };
+                    let have = if *ci {
+                        super::grammar::lower(have)
+                    } else {
+                        have
+                    };
                     if have != c {
                         ok = false;
                         break;
@@ -570,7 +580,11 @@ impl<'a> Machine<'a> {
                 }
                 if ok {
                     let end = x + codes.len() as i64;
-                    if T && !cx.inner { self.okk(x, end) } else { end }
+                    if T && !cx.inner {
+                        self.okk(x, end)
+                    } else {
+                        end
+                    }
                 } else {
                     if T {
                         self.fail_cx(cx, x, *desc);
@@ -581,7 +595,11 @@ impl<'a> Machine<'a> {
             Expr::Class { set, desc } => {
                 let x = self.at_pos(cx, p, skd);
                 if set.has(self.at(x)) {
-                    if T && !cx.inner { self.okk(x, x + 1) } else { x + 1 }
+                    if T && !cx.inner {
+                        self.okk(x, x + 1)
+                    } else {
+                        x + 1
+                    }
                 } else {
                     if T {
                         self.fail_cx(cx, x, *desc);
@@ -592,7 +610,11 @@ impl<'a> Machine<'a> {
             Expr::Any => {
                 let x = self.at_pos(cx, p, skd);
                 if self.at(x) >= 0 {
-                    if T && !cx.inner { self.okk(x, x + 1) } else { x + 1 }
+                    if T && !cx.inner {
+                        self.okk(x, x + 1)
+                    } else {
+                        x + 1
+                    }
                 } else {
                     if T {
                         let i = g.any_desc;
@@ -707,7 +729,11 @@ impl<'a> Machine<'a> {
             }
             Expr::Plus(x) => {
                 let f = self.ev::<B, T>(*x, p, skd, cx);
-                if f < 0 { -1 } else { self.star::<B, T>(*x, f, cx) }
+                if f < 0 {
+                    -1
+                } else {
+                    self.star::<B, T>(*x, f, cx)
+                }
             }
             Expr::Opt(x) => {
                 let r = self.ev::<B, T>(*x, p, skd, cx);
@@ -873,7 +899,11 @@ impl<'a> Machine<'a> {
                     if ml <= op.lev {
                         let r = self.ev::<false, false>(op.e, x, true, cx);
                         if r >= 0 {
-                            let next = if op.fix == Fix::Left { op.lev + 1 } else { op.lev };
+                            let next = if op.fix == Fix::Left {
+                                op.lev + 1
+                            } else {
+                                op.lev
+                            };
                             let from = self.sk(cx, r);
                             let o = self.prec_b(pi, from, next, cx);
                             if o >= 0 {
@@ -960,7 +990,11 @@ impl<'a> Machine<'a> {
                     if ml <= op.lev {
                         let r = self.ev::<false, T>(op.e, x, true, cx);
                         if r >= 0 {
-                            let next = if op.fix == Fix::Left { op.lev + 1 } else { op.lev };
+                            let next = if op.fix == Fix::Left {
+                                op.lev + 1
+                            } else {
+                                op.lev
+                            };
                             let from = self.sk(cx, r);
                             let o = self.prec_k::<T>(pi, from, next, cx);
                             if o >= 0 {
@@ -981,7 +1015,11 @@ impl<'a> Machine<'a> {
 
     /// Past `skip` from `p`, where the grammar has one.
     pub fn skip_at(&mut self, p: i64) -> i64 {
-        if self.g.skip.is_some() { self.skip(p) } else { p }
+        if self.g.skip.is_some() {
+            self.skip(p)
+        } else {
+            p
+        }
     }
 
     /// The start rule's node over the whole input (skip around it), or

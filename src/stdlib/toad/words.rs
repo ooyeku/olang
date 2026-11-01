@@ -41,7 +41,14 @@ pub fn step_px(px: f32) -> f32 {
 
 /// `text` set in `family` at `px` pixels (white, premultiplied, with a
 /// margin of a quarter of the size), and the margin.
-pub fn picture(text: &str, family: &str, weight: f32, italic: bool, px: f32, align: Align) -> Option<(Arc<Picture>, f32)> {
+pub fn picture(
+    text: &str,
+    family: &str,
+    weight: f32,
+    italic: bool,
+    px: f32,
+    align: Align,
+) -> Option<(Arc<Picture>, f32)> {
     let key = Key {
         text: text.to_string(),
         family: family.to_string(),
@@ -84,7 +91,13 @@ pub fn picture(text: &str, family: &str, weight: f32, italic: bool, px: f32, ali
         see_through: false,
         wide: None,
     };
-    push_glyphs(&shaped, pad, pad, Clip::rect(0.0, 0.0, w as f32, h as f32), &mut dl);
+    push_glyphs(
+        &shaped,
+        pad,
+        pad,
+        Clip::rect(0.0, 0.0, w as f32, h as f32),
+        &mut dl,
+    );
     let pm = soft::render(&dl);
     let pic = Arc::new(Picture {
         id: next_picture_id(),

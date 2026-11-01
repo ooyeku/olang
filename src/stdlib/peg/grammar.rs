@@ -51,7 +51,11 @@ impl CharSet {
         }
         CharSet {
             ascii,
-            wide: ranges.iter().copied().filter(|&(_, hi)| hi >= 128).collect(),
+            wide: ranges
+                .iter()
+                .copied()
+                .filter(|&(_, hi)| hi >= 128)
+                .collect(),
             wide_neg: neg,
         }
     }
@@ -117,7 +121,11 @@ impl First {
         }
         Some(CharSet {
             ascii,
-            wide: if self.w { vec![(128, 1_114_111)] } else { vec![] },
+            wide: if self.w {
+                vec![(128, 1_114_111)]
+            } else {
+                vec![]
+            },
             wide_neg: false,
         })
     }
@@ -126,8 +134,16 @@ impl First {
 /// An expression as read from the olang side.
 #[derive(Clone, Debug)]
 pub(crate) enum E {
-    Lit { codes: Vec<i32>, s: String, ci: bool },
-    Class { ranges: Vec<(i32, i32)>, neg: bool, src: String },
+    Lit {
+        codes: Vec<i32>,
+        s: String,
+        ci: bool,
+    },
+    Class {
+        ranges: Vec<(i32, i32)>,
+        neg: bool,
+        src: String,
+    },
     Any,
     Ref(String),
     Seq(Vec<E>),
@@ -138,7 +154,10 @@ pub(crate) enum E {
     And(Box<E>),
     Not(Box<E>),
     Label(String, Box<E>),
-    Prec { atom: Box<E>, levels: Vec<(String, Vec<E>)> },
+    Prec {
+        atom: Box<E>,
+        levels: Vec<(String, Vec<E>)>,
+    },
 }
 
 impl E {
@@ -342,7 +361,10 @@ pub(crate) fn read_expr(v: &Value) -> Result<E, String> {
     let items = || -> Result<Vec<E>, String> { list(v, "items")?.iter().map(read_expr).collect() };
     Ok(match t.as_str() {
         "lit" => E::Lit {
-            codes: list(v, "codes")?.iter().map(int).collect::<Result<_, _>>()?,
+            codes: list(v, "codes")?
+                .iter()
+                .map(int)
+                .collect::<Result<_, _>>()?,
             s: string(v, "s")?,
             ci: boolean(v, "ci"),
         },
@@ -536,8 +558,8 @@ impl<'a> Analysis<'a> {
     fn label_scan(&self, e: &E, rep: bool, seen: &mut Vec<String>, out: &mut Vec<(String, bool)>) {
         match e {
             E::Label(name, inner) => {
-                let many = rep
-                    || (matches!(**inner, E::Star(_) | E::Plus(_)) && self.label_wraps(inner));
+                let many =
+                    rep || (matches!(**inner, E::Star(_) | E::Plus(_)) && self.label_wraps(inner));
                 out.push((name.clone(), many));
             }
             E::Star(x) | E::Plus(x) => self.label_scan(x, true, seen, out),
@@ -683,8 +705,7 @@ impl<'a> Builder<'a> {
                     .an
                     .index
                     .get(n.as_str())
-                    .ok_or_else(|| format!("peg: no rule is named `{n}`"))?
-                    as Id,
+                    .ok_or_else(|| format!("peg: no rule is named `{n}`"))? as Id,
             ),
             E::Seq(xs) => {
                 let ids = xs
@@ -722,9 +743,7 @@ impl<'a> Builder<'a> {
                     desc: self.desc(src),
                 },
                 E::Alt(items)
-                    if self.in_token
-                        && items.len() > 1
-                        && matches!(items[0], E::Class { .. }) =>
+                    if self.in_token && items.len() > 1 && matches!(items[0], E::Class { .. }) =>
                 {
                     let E::Class { ranges, neg, .. } = &items[0] else {
                         unreachable!("matched above")

@@ -2938,7 +2938,11 @@ impl WinState {
                 if let Some(pic) = pic {
                     let (iw, ih) = (pic.width as f32, pic.height as f32);
                     let (sx, sy) = (w / iw.max(1.0), h / ih.max(1.0));
-                    let k = if fit == "cover" { sx.max(sy) } else { sx.min(sy) };
+                    let k = if fit == "cover" {
+                        sx.max(sy)
+                    } else {
+                        sx.min(sy)
+                    };
                     let (dx, dy, dw, dh) = if fit == "fill" {
                         (x, y, w, h)
                     } else {
@@ -5674,7 +5678,11 @@ fn hover_left(key: &str) -> Vec<(&'static str, Value)> {
 /// native tab bar under it), or `()`.
 pub fn titlebar_value(bar: Option<(f32, f32, f32)>) -> Value {
     match bar {
-        Some((h, l, st)) => map(vec![("height", float(h)), ("left", float(l)), ("strip", float(st))]),
+        Some((h, l, st)) => map(vec![
+            ("height", float(h)),
+            ("left", float(l)),
+            ("strip", float(st)),
+        ]),
         None => Value::Unit,
     }
 }

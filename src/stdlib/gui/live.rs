@@ -63,12 +63,15 @@ pub fn publish(name: &str, view: wgpu::TextureView, w: u32, h: u32) -> u64 {
     gpu.adopt_picture(id, view);
     let stale: Vec<u64> = match LIVE.lock() {
         Ok(mut m) => {
-            let e = m.get_or_insert_with(HashMap::new).entry(name.to_string()).or_insert_with(|| Entry {
-                pic: pic.clone(),
-                ids: Vec::new(),
-                shown: false,
-                at: std::time::Instant::now(),
-            });
+            let e = m
+                .get_or_insert_with(HashMap::new)
+                .entry(name.to_string())
+                .or_insert_with(|| Entry {
+                    pic: pic.clone(),
+                    ids: Vec::new(),
+                    shown: false,
+                    at: std::time::Instant::now(),
+                });
             e.pic = pic;
             e.shown = false;
             e.at = std::time::Instant::now();
@@ -89,14 +92,22 @@ pub fn publish(name: &str, view: wgpu::TextureView, w: u32, h: u32) -> u64 {
 /// Studio's canvas), which draws pixels, not textures. Answers its id.
 pub fn publish_pixels(name: &str, w: u32, h: u32, rgba: Vec<u8>) -> u64 {
     let id = super::canvas::next_picture_id();
-    let pic = Arc::new(Picture { id, width: w, height: h, rgba });
+    let pic = Arc::new(Picture {
+        id,
+        width: w,
+        height: h,
+        rgba,
+    });
     if let Ok(mut m) = LIVE.lock() {
-        let e = m.get_or_insert_with(HashMap::new).entry(name.to_string()).or_insert_with(|| Entry {
-            pic: pic.clone(),
-            ids: Vec::new(),
-            shown: false,
-            at: std::time::Instant::now(),
-        });
+        let e = m
+            .get_or_insert_with(HashMap::new)
+            .entry(name.to_string())
+            .or_insert_with(|| Entry {
+                pic: pic.clone(),
+                ids: Vec::new(),
+                shown: false,
+                at: std::time::Instant::now(),
+            });
         e.pic = pic;
         e.shown = false;
         e.at = std::time::Instant::now();
@@ -123,12 +134,16 @@ pub fn wanted(name: &str) -> bool {
     if let Some(w) = super::shared::wanted(name) {
         return w;
     }
-    match LIVE.lock().ok().as_ref().and_then(|m| m.as_ref()?.get(name).map(|e| (e.shown, e.at))) {
+    match LIVE
+        .lock()
+        .ok()
+        .as_ref()
+        .and_then(|m| m.as_ref()?.get(name).map(|e| (e.shown, e.at)))
+    {
         None => true,
         Some((shown, at)) => shown || at.elapsed().as_millis() >= UNSEEN_MS,
     }
 }
-
 
 /// The shared picture in an image source, `("shared", id)`: its latest
 /// frame, said seen (macOS; nothing elsewhere). None for any other source.

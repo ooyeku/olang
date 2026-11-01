@@ -118,7 +118,13 @@ impl Mixer {
                 // linear between this frame and the next
                 let t = (v.pos - i as f64) as f32;
                 let (l0, r0) = v.sound.frame(i);
-                let (l1, r1) = v.sound.frame(if i + 1 < n { i + 1 } else if v.looped { 0 } else { i });
+                let (l1, r1) = v.sound.frame(if i + 1 < n {
+                    i + 1
+                } else if v.looped {
+                    0
+                } else {
+                    i
+                });
                 let l = l0 + (l1 - l0) * t;
                 let r = r0 + (r1 - r0) * t;
                 let g = v.gain * bus;
@@ -137,7 +143,11 @@ impl Mixer {
         for x in out.iter_mut() {
             // a soft limit: quiet sums pass, loud ones round off
             let y = *x * master;
-            *x = if y.abs() < 0.6 { y } else { y.signum() * (0.6 + 0.4 * ((y.abs() - 0.6) / 0.4).tanh()) };
+            *x = if y.abs() < 0.6 {
+                y
+            } else {
+                y.signum() * (0.6 + 0.4 * ((y.abs() - 0.6) / 0.4).tanh())
+            };
         }
     }
 }
@@ -187,21 +197,23 @@ fn open() -> Audio {
     }
     let (tx, rx) = std::sync::mpsc::channel();
     let m = mixer.clone();
-    let spawned = std::thread::Builder::new().name("toad audio".into()).spawn(move || {
-        match start(m) {
-            Ok((stream, info)) => {
-                let _ = tx.send(Ok(info));
-                // the stream plays while this thread holds it
-                let _keep = stream;
-                loop {
-                    std::thread::park();
+    let spawned = std::thread::Builder::new()
+        .name("toad audio".into())
+        .spawn(move || {
+            match start(m) {
+                Ok((stream, info)) => {
+                    let _ = tx.send(Ok(info));
+                    // the stream plays while this thread holds it
+                    let _keep = stream;
+                    loop {
+                        std::thread::park();
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(e));
                 }
             }
-            Err(e) => {
-                let _ = tx.send(Err(e));
-            }
-        }
-    });
+        });
     let device = match spawned {
         Ok(_) => rx
             .recv_timeout(std::time::Duration::from_secs(5))
@@ -219,27 +231,34 @@ fn open() -> Audio {
 fn start(mixer: Arc<Mutex<Mixer>>) -> Result<(cpal::Stream, (String, u32, u16)), String> {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     let host = cpal::default_host();
-    let device = host.default_output_device().ok_or("no audio output device")?;
-    let name = device.id().map(|d| d.to_string()).unwrap_or_else(|_| "output".into());
-    let config = device.default_output_config().map_err(|e| format!("the audio output: {e}"))?;
+    let device = host
+        .default_output_device()
+        .ok_or("no audio output device")?;
+    let name = device
+        .id()
+        .map(|d| d.to_string())
+        .unwrap_or_else(|_| "output".into());
+    let config = device
+        .default_output_config()
+        .map_err(|e| format!("the audio output: {e}"))?;
     let format = config.sample_format();
     let cfg: cpal::StreamConfig = config.into();
     let (rate, channels) = (cfg.sample_rate, cfg.channels);
     let err = |e: cpal::Error| eprintln!("toad audio: {e}");
     let stream = match format {
         cpal::SampleFormat::F32 => device.build_output_stream(
-                cfg,
-                move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                    // never wait on the program: when it holds the mixer,
-                    // play silence for this buffer
-                    match mixer.try_lock() {
-                        Ok(mut m) => m.mix(data, channels as usize),
-                        Err(_) => data.fill(0.0),
-                    }
-                },
-                err,
-                None,
-            ),
+            cfg,
+            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                // never wait on the program: when it holds the mixer,
+                // play silence for this buffer
+                match mixer.try_lock() {
+                    Ok(mut m) => m.mix(data, channels as usize),
+                    Err(_) => data.fill(0.0),
+                }
+            },
+            err,
+            None,
+        ),
         cpal::SampleFormat::I16 => {
             let mut buf: Vec<f32> = Vec::new();
             device.build_output_stream(
@@ -258,10 +277,16 @@ fn start(mixer: Arc<Mutex<Mixer>>) -> Result<(cpal::Stream, (String, u32, u16)),
                 None,
             )
         }
-        other => return Err(format!("the audio output's samples are {other}, not f32 or i16")),
+        other => {
+            return Err(format!(
+                "the audio output's samples are {other}, not f32 or i16"
+            ));
+        }
     }
     .map_err(|e| format!("the audio output: {e}"))?;
-    stream.play().map_err(|e| format!("the audio output: {e}"))?;
+    stream
+        .play()
+        .map_err(|e| format!("the audio output: {e}"))?;
     Ok((stream, (name, rate, channels)))
 }
 
@@ -289,7 +314,9 @@ fn synth_into(m: &ValueMap, out: &mut Vec<f32>, at: usize) -> Result<(), String>
         Some(_) => return Err("toad.sound: `wave` is a name".into()),
     };
     if !["sine", "square", "saw", "triangle", "noise"].contains(&wave.as_str()) {
-        return Err(format!("toad.sound: a wave is sine, square, saw, triangle or noise, not {wave}"));
+        return Err(format!(
+            "toad.sound: a wave is sine, square, saw, triangle or noise, not {wave}"
+        ));
     }
     let attack = n("attack", 0.005).max(0.0);
     let hold = n("hold", 0.0).max(0.0);
@@ -369,7 +396,12 @@ fn make(spec: &Value) -> Result<Sound, String> {
         Some(Value::List(ls)) => {
             for l in ls.iter() {
                 let lm = map_of(l, "a sound's layer")?;
-                let at = (lm.get("delay").and_then(num).unwrap_or(0.0).clamp(0.0, LONGEST) * SYNTH_RATE as f32) as usize;
+                let at = (lm
+                    .get("delay")
+                    .and_then(num)
+                    .unwrap_or(0.0)
+                    .clamp(0.0, LONGEST)
+                    * SYNTH_RATE as f32) as usize;
                 synth_into(lm, &mut out, at)?;
             }
         }
@@ -392,7 +424,9 @@ fn read(path: &str) -> Result<Sound, String> {
             hound::SampleFormat::Float => r.samples::<f32>().collect::<Result<_, _>>(),
             hound::SampleFormat::Int => {
                 let scale = (1i64 << (spec.bits_per_sample - 1)) as f32;
-                r.samples::<i32>().map(|s| s.map(|x| x as f32 / scale)).collect::<Result<_, _>>()
+                r.samples::<i32>()
+                    .map(|s| s.map(|x| x as f32 / scale))
+                    .collect::<Result<_, _>>()
             }
         }
         .map_err(|e| format!("toad.sound: {path}: {e}"))?;
@@ -405,7 +439,10 @@ fn read(path: &str) -> Result<Sound, String> {
         let channels = r.ident_hdr.audio_channels as usize;
         let rate = r.ident_hdr.audio_sample_rate;
         let mut data = Vec::new();
-        while let Some(p) = r.read_dec_packet_itl().map_err(|e| format!("toad.sound: {path}: {e}"))? {
+        while let Some(p) = r
+            .read_dec_packet_itl()
+            .map_err(|e| format!("toad.sound: {path}: {e}"))?
+        {
             data.extend(p.into_iter().map(|x| x as f32 / 32768.0));
             if data.len() > (LONGEST * rate as f32) as usize * channels {
                 return Err(format!("toad.sound: {path} is longer than {LONGEST} s"));
@@ -419,7 +456,11 @@ fn read(path: &str) -> Result<Sound, String> {
 /// Mono and stereo kept; more channels folded to their first two.
 fn fit(data: Vec<f32>, channels: usize, rate: u32, path: &str) -> Result<Sound, String> {
     match channels {
-        1 | 2 => Ok(Sound { data, channels, rate }),
+        1 | 2 => Ok(Sound {
+            data,
+            channels,
+            rate,
+        }),
         0 => Err(format!("toad.sound: {path} has no channels")),
         c => Ok(Sound {
             data: data.chunks(c).flat_map(|f| [f[0], f[1]]).collect(),
@@ -433,10 +474,16 @@ fn fit(data: Vec<f32>, channels: usize, rate: u32, path: &str) -> Result<Sound, 
 
 fn info(s: &Sound) -> Value {
     let mut m = ValueMap::default();
-    m.insert("seconds".into(), Value::Float(s.frames() as f64 / s.rate as f64));
+    m.insert(
+        "seconds".into(),
+        Value::Float(s.frames() as f64 / s.rate as f64),
+    );
     m.insert("channels".into(), Value::Integer(s.channels as i64));
     m.insert("rate".into(), Value::Integer(s.rate as i64));
-    m.insert("peak".into(), Value::Float(s.data.iter().fold(0.0f32, |a, x| a.max(x.abs())) as f64));
+    m.insert(
+        "peak".into(),
+        Value::Float(s.data.iter().fold(0.0f32, |a, x| a.max(x.abs())) as f64),
+    );
     Value::Map(Arc::new(m))
 }
 
@@ -453,7 +500,12 @@ pub fn sound(spec: &Value) -> Result<Value, String> {
 
 /// `toad.sound_info(sound)`: `#{ seconds, channels, rate, peak }`.
 pub fn sound_info(id: i64) -> Result<Value, String> {
-    with(|st| st.sounds.get(&id).map(|s| info(s)).ok_or_else(|| format!("toad: no sound {id}")))
+    with(|st| {
+        st.sounds
+            .get(&id)
+            .map(|s| info(s))
+            .ok_or_else(|| format!("toad: no sound {id}"))
+    })
 }
 
 /// `toad.play(sound, opts)`: a voice's number. `opts`: `volume`, `pan`
@@ -468,7 +520,11 @@ pub fn play(id: i64, opts: &Value) -> Result<Value, String> {
     let n = |k: &str, d: f32| m.get(k).and_then(num).unwrap_or(d);
     let flag = |k: &str| matches!(m.get(k), Some(Value::Boolean(true)));
     with(|st| {
-        let s = st.sounds.get(&id).cloned().ok_or_else(|| format!("toad: no sound {id}"))?;
+        let s = st
+            .sounds
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| format!("toad: no sound {id}"))?;
         let vid = st.next;
         st.next += 1;
         let a = audio(st);
@@ -552,7 +608,11 @@ pub fn volume(bus: &str, v: f32) -> Result<(), String> {
             "master" => mx.master = v.max(0.0),
             "fx" => mx.fx = v.max(0.0),
             "music" => mx.music = v.max(0.0),
-            other => return Err(format!("toad.volume: a bus is master, fx or music, not {other}")),
+            other => {
+                return Err(format!(
+                    "toad.volume: a bus is master, fx or music, not {other}"
+                ));
+            }
         }
         Ok(())
     })

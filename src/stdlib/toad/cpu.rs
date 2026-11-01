@@ -173,7 +173,11 @@ pub fn run(p: &Program, cols: &mut Columns, uniforms: &[f32]) -> Option<Vec<bool
                             Arg::C(v) => v[k],
                         };
                         for k in 0..len {
-                            out[k] = if at(&c, k) > 0.5 { at(&x, k) } else { at(&y, k) };
+                            out[k] = if at(&c, k) > 0.5 {
+                                at(&x, k)
+                            } else {
+                                at(&y, k)
+                            };
                         }
                     }
                     _ => {}

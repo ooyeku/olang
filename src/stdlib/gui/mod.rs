@@ -37,9 +37,9 @@ pub mod damage;
 pub mod edit;
 pub mod flat;
 pub mod gpu;
+pub mod holds;
 pub mod keys;
 pub mod live;
-pub mod holds;
 pub mod motion;
 pub mod picture;
 pub mod platform;
@@ -425,7 +425,11 @@ fn open_opts(function: &str, v: Option<&Value>) -> Res<OpenOpts> {
     o.unified = match get_str(v, "titlebar", function)? {
         None | Some("standard") => false,
         Some("unified") => true,
-        Some(_) => return Err(format!("{function}: \"titlebar\" is \"standard\" or \"unified\"")),
+        Some(_) => {
+            return Err(format!(
+                "{function}: \"titlebar\" is \"standard\" or \"unified\""
+            ));
+        }
     };
     o.tab_of = match get_num(v, "tab_of", function)? {
         Some(n) if n >= 1.0 => Some(n as u64),
@@ -703,7 +707,12 @@ fn gui_read(args: Vec<Value>) -> Res<Value> {
         // where the window's content is on the screen and how big: points
         // (`()` before the platform says, or where it cannot: Wayland)
         "place" => match st.origin {
-            Some((x, y)) => Value::Tuple(Arc::new(vec![float(x), float(y), float(st.width), float(st.height)])),
+            Some((x, y)) => Value::Tuple(Arc::new(vec![
+                float(x),
+                float(y),
+                float(st.width),
+                float(st.height),
+            ])),
             None => Value::Unit,
         },
         "hover" => opt_str(st.scene.hover.as_deref()),
@@ -1308,7 +1317,14 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
     let input = input_of(&args[1])?;
     // the pointer and its buttons as a platform's would be held: a game
     // run headless (Studio's canvas) reads them as it reads the mouse
-    if let Input::Pointer { action, x, y, button, .. } = &input {
+    if let Input::Pointer {
+        action,
+        x,
+        y,
+        button,
+        ..
+    } = &input
+    {
         keys::device_pointer(*x, *y);
         match action {
             PointerAction::Down => keys::device_press(&format!("mouse:{button}")),

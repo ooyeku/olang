@@ -518,7 +518,10 @@ fn a_module_that_fails_to_load_leaves_the_host_its_names() {
     // the module raises while it loads; the host's own names (its imports,
     // its lets) are still its own afterwards
     let ws = workspace("fail_keeps");
-    write(&ws.join("plug/bad.ol"), "share fn ok() = 1\nlet boom = missing_function()\n");
+    write(
+        &ws.join("plug/bad.ol"),
+        "share fn ok() = 1\nlet boom = missing_function()\n",
+    );
     let out = run(
         &ws,
         "let MINE = 42\nlet r = runtime.load_module(\"plug/bad.ol\", #{})\nlet failed = match r { Ok(_) => false, Err(_) => true }\nprintln(show(failed) + \" \" + to_string(MINE))\n",
@@ -531,13 +534,19 @@ fn a_module_from_another_project_finds_that_projects_packages() {
     // the host's project knows no `shapes`; the app's project depends on
     // it by path, and so does the app's module when the host loads it
     let ws = workspace("other_project");
-    write(&ws.join("shapes/olang.toml"), "[package]\nname = \"shapes\"\nversion = \"0.1.0\"\nlock = \"never\"\nauthors = []\n");
+    write(
+        &ws.join("shapes/olang.toml"),
+        "[package]\nname = \"shapes\"\nversion = \"0.1.0\"\nlock = \"never\"\nauthors = []\n",
+    );
     write(&ws.join("shapes/index.ol"), "share fn sides() = 6\n");
     write(
         &ws.join("app/olang.toml"),
         "[package]\nname = \"app\"\nversion = \"0.1.0\"\nlock = \"never\"\nauthors = []\n\n[dependencies.shapes]\npath = \"../shapes\"\n",
     );
-    write(&ws.join("app/main.ol"), "use shapes { sides }\nshare fn hex() = sides()\n");
+    write(
+        &ws.join("app/main.ol"),
+        "use shapes { sides }\nshare fn hex() = sides()\n",
+    );
     let out = run(
         &ws,
         "let m = unwrap(runtime.load_module(\"app/main.ol\", #{}))\nprintln(to_string(m.hex()))\n",

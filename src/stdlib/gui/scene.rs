@@ -948,7 +948,9 @@ impl Scene {
             drags_window: match get_str(op, "drag", what)? {
                 None => false,
                 Some("window") => true,
-                Some(other) => return Err(format!("{what}: \"drag\" is \"window\", got \"{other}\"")),
+                Some(other) => {
+                    return Err(format!("{what}: \"drag\" is \"window\", got \"{other}\""));
+                }
             },
             actions: match get(op, "actions") {
                 None | Some(Value::Unit) => Vec::new(),
@@ -1235,7 +1237,13 @@ impl Scene {
             if n.drags_window {
                 return true;
             }
-            if n.focusable || n.edit.is_some() || n.wheel || n.draw.is_some() || n.scrollable || n.modal {
+            if n.focusable
+                || n.edit.is_some()
+                || n.wheel
+                || n.draw.is_some()
+                || n.scrollable
+                || n.modal
+            {
                 return false;
             }
             match &n.parent {

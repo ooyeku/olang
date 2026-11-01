@@ -23,10 +23,10 @@ use super::cpu::Columns;
 use super::kernel::{Program, Ty};
 use super::{map_of, num, pair};
 use crate::ast::{Value, ValueMap};
-#[cfg(feature = "native")]
-use rayon::prelude::*;
 use rapier2d::control::{CharacterAutostep, CharacterLength, KinematicCharacterController};
 use rapier2d::prelude::*;
+#[cfg(feature = "native")]
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -54,7 +54,9 @@ fn v(p: (f32, f32), k: f32) -> Vector {
 }
 
 fn tup(xs: &[f32]) -> Value {
-    Value::Tuple(Arc::new(xs.iter().map(|x| Value::Float(*x as f64)).collect()))
+    Value::Tuple(Arc::new(
+        xs.iter().map(|x| Value::Float(*x as f64)).collect(),
+    ))
 }
 
 fn map(entries: Vec<(&str, Value)>) -> Value {
@@ -102,7 +104,10 @@ impl World {
     }
 
     fn handle(&self, id: i64) -> Result<RigidBodyHandle, String> {
-        self.bodies.get(&id).copied().ok_or_else(|| format!("toad: no body {id} in this world"))
+        self.bodies
+            .get(&id)
+            .copied()
+            .ok_or_else(|| format!("toad: no body {id} in this world"))
     }
 
     fn id_of_collider(&self, h: ColliderHandle) -> Option<i64> {
@@ -138,7 +143,9 @@ impl World {
                 Some(Value::List(ps)) => {
                     let pts: Vec<Vector> = ps.iter().filter_map(pair).map(|p| v(p, k)).collect();
                     if pts.len() < 2 || pts.len() != ps.len() {
-                        return Err(format!("toad.body: a {what}'s `points` are two or more pairs"));
+                        return Err(format!(
+                            "toad.body: a {what}'s `points` are two or more pairs"
+                        ));
                     }
                     Ok(pts)
                 }
@@ -168,7 +175,9 @@ impl World {
                 }
             }
             other => {
-                return Err(format!("toad.body: a shape is a circle, box, capsule, poly or chain, not a {other}"));
+                return Err(format!(
+                    "toad.body: a shape is a circle, box, capsule, poly or chain, not a {other}"
+                ));
             }
         };
         let groups = match m.get("groups").and_then(pair) {
@@ -221,7 +230,11 @@ impl World {
                 "dynamic" => RigidBodyBuilder::dynamic(),
                 "static" => RigidBodyBuilder::fixed(),
                 "kinematic" => RigidBodyBuilder::kinematic_position_based(),
-                other => return Err(format!("toad.body: a body is dynamic, static or kinematic, not {other}")),
+                other => {
+                    return Err(format!(
+                        "toad.body: a body is dynamic, static or kinematic, not {other}"
+                    ));
+                }
             },
             Some(_) => return Err("toad.body: `kind` is a name".into()),
         };
@@ -253,11 +266,16 @@ impl World {
                 vec![one]
             }
         };
-        let colliders: Vec<(ColliderBuilder, Option<Vector>)> =
-            parts.iter().map(|p| self.collider(p, id)).collect::<Result<_, _>>()?;
+        let colliders: Vec<(ColliderBuilder, Option<Vector>)> = parts
+            .iter()
+            .map(|p| self.collider(p, id))
+            .collect::<Result<_, _>>()?;
         let h = self.w.bodies.insert(b);
         for (c, one_way) in colliders {
-            let ch = self.w.colliders.insert_with_parent(c, h, &mut self.w.bodies);
+            let ch = self
+                .w
+                .colliders
+                .insert_with_parent(c, h, &mut self.w.bodies);
             if let Some(n) = one_way {
                 self.one_way.insert(ch, n);
             }
@@ -346,7 +364,10 @@ impl World {
         let joint: GenericJoint = match m.get("kind") {
             Some(Value::String(s)) => match s.as_str() {
                 "pin" => {
-                    let mut j = RevoluteJointBuilder::new().local_anchor1(p1).local_anchor2(p2).contacts_enabled(collide);
+                    let mut j = RevoluteJointBuilder::new()
+                        .local_anchor1(p1)
+                        .local_anchor2(p2)
+                        .contacts_enabled(collide);
                     if let Some(sp) = motor {
                         j = j.motor_velocity(sp, 1.0);
                     }
@@ -355,11 +376,18 @@ impl World {
                     }
                     j.into()
                 }
-                "weld" => FixedJointBuilder::new().local_anchor1(p1).local_anchor2(p2).contacts_enabled(collide).into(),
+                "weld" => FixedJointBuilder::new()
+                    .local_anchor1(p1)
+                    .local_anchor2(p2)
+                    .contacts_enabled(collide)
+                    .into(),
                 "slide" => {
                     let ax = m.get("axis").and_then(pair).unwrap_or((1.0, 0.0));
                     let ax = Vector::new(ax.0, ax.1).normalize_or_zero();
-                    let mut j = PrismaticJointBuilder::new(ax).local_anchor1(p1).local_anchor2(p2).contacts_enabled(collide);
+                    let mut j = PrismaticJointBuilder::new(ax)
+                        .local_anchor1(p1)
+                        .local_anchor2(p2)
+                        .contacts_enabled(collide);
                     if let Some(l) = m.get("limits").and_then(pair) {
                         j = j.limits([l.0 * k, l.1 * k]);
                     }
@@ -369,11 +397,21 @@ impl World {
                     j.into()
                 }
                 "rope" => {
-                    let len = m.get("length").and_then(num).ok_or("toad.joint: a rope needs a `length`")?;
-                    RopeJointBuilder::new(len * k).local_anchor1(p1).local_anchor2(p2).contacts_enabled(collide).into()
+                    let len = m
+                        .get("length")
+                        .and_then(num)
+                        .ok_or("toad.joint: a rope needs a `length`")?;
+                    RopeJointBuilder::new(len * k)
+                        .local_anchor1(p1)
+                        .local_anchor2(p2)
+                        .contacts_enabled(collide)
+                        .into()
                 }
                 "spring" => {
-                    let len = m.get("length").and_then(num).ok_or("toad.joint: a spring needs a `length`")?;
+                    let len = m
+                        .get("length")
+                        .and_then(num)
+                        .ok_or("toad.joint: a spring needs a `length`")?;
                     SpringJointBuilder::new(
                         len * k,
                         m.get("stiffness").and_then(num).unwrap_or(40.0),
@@ -385,10 +423,16 @@ impl World {
                     .into()
                 }
                 other => {
-                    return Err(format!("toad.joint: a joint is a pin, weld, slide, rope or spring, not a {other}"));
+                    return Err(format!(
+                        "toad.joint: a joint is a pin, weld, slide, rope or spring, not a {other}"
+                    ));
                 }
             },
-            _ => return Err("toad.joint: a joint needs a `kind` (pin, weld, slide, rope, spring)".into()),
+            _ => {
+                return Err(
+                    "toad.joint: a joint needs a `kind` (pin, weld, slide, rope, spring)".into(),
+                );
+            }
         };
         let h = self.w.insert_impulse_joint(ha, hb, joint);
         let id = self.next;
@@ -414,12 +458,15 @@ impl World {
                 && !b.is_fixed()
             {
                 let t = b.translation();
-                self.prev.insert(*id, ([t.x / k, t.y / k], b.rotation().angle()));
+                self.prev
+                    .insert(*id, ([t.x / k, t.y / k], b.rotation().angle()));
             }
         }
         self.w.integration_parameters.dt = dt.max(1e-6);
         let ev = Events::default();
-        let hooks = Hooks { one_way: &self.one_way };
+        let hooks = Hooks {
+            one_way: &self.one_way,
+        };
         self.w.step_with_events(&hooks, &ev);
         let mut raw = std::mem::take(&mut self.pending);
         raw.extend(ev.0.into_inner().unwrap_or_else(|e| e.into_inner()));
@@ -451,12 +498,15 @@ impl World {
         // and nothing moved (rapier keeps a zero-length step still; its
         // collision pipeline alone would leave pairs the solver refuses)
         let ev = Events::default();
-        let hooks = Hooks { one_way: &self.one_way };
+        let hooks = Hooks {
+            one_way: &self.one_way,
+        };
         let dt = self.w.integration_parameters.dt;
         self.w.integration_parameters.dt = 0.0;
         self.w.step_with_events(&hooks, &ev);
         self.w.integration_parameters.dt = dt;
-        self.pending.extend(ev.0.into_inner().unwrap_or_else(|e| e.into_inner()));
+        self.pending
+            .extend(ev.0.into_inner().unwrap_or_else(|e| e.into_inner()));
     }
 
     /// Walk a kinematic body by `delta` (world units) as a character does:
@@ -464,7 +514,13 @@ impl World {
     /// `step` high, snapped down to the ground within `snap`, up through
     /// one-way platforms and onto them. It gets there by the end of the
     /// next step. Answers `#{ moved, grounded, sliding }`.
-    pub fn walk(&mut self, id: i64, delta: (f32, f32), opts: &Value, dt: f32) -> Result<Value, String> {
+    pub fn walk(
+        &mut self,
+        id: i64,
+        delta: (f32, f32),
+        opts: &Value,
+        dt: f32,
+    ) -> Result<Value, String> {
         let h = self.handle(id)?;
         let k = self.k;
         let empty = ValueMap::default();
@@ -476,8 +532,15 @@ impl World {
         if !b.is_kinematic() {
             return Err("toad.walk: a walking body is kinematic (`kind: \"kinematic\"`)".into());
         }
-        let ch = *b.colliders().first().ok_or("toad.walk: the body has no shape")?;
-        let co = self.w.colliders.get(ch).ok_or("toad: the body's shape is gone")?;
+        let ch = *b
+            .colliders()
+            .first()
+            .ok_or("toad.walk: the body has no shape")?;
+        let co = self
+            .w
+            .colliders
+            .get(ch)
+            .ok_or("toad: the body's shape is gone")?;
         let shape = co.shared_shape().clone();
         let pos = *co.position();
         let bottom = co.compute_aabb().mins.y;
@@ -508,12 +571,18 @@ impl World {
             match one_way.get(&c) {
                 None => true,
                 Some(_) => {
-                    let top = colliders.get(c).map(|p| p.compute_aabb().maxs.y).unwrap_or(f32::MIN);
+                    let top = colliders
+                        .get(c)
+                        .map(|p| p.compute_aabb().maxs.y)
+                        .unwrap_or(f32::MIN);
                     !up && bottom >= top - 0.02
                 }
             }
         };
-        let filter = QueryFilter::default().exclude_sensors().exclude_rigid_body(h).predicate(&pass);
+        let filter = QueryFilter::default()
+            .exclude_sensors()
+            .exclude_rigid_body(h)
+            .predicate(&pass);
         let q = self.w.query_pipeline_with_filter(filter);
         let mv = ctl.move_shape(dt.max(1e-6), &q, &*shape, &pos, v(delta, k), |_| {});
         let b = self.w.bodies.get_mut(h).ok_or("toad: the body is gone")?;
@@ -612,7 +681,9 @@ impl World {
             .collect();
         ids.sort_unstable();
         ids.dedup();
-        Ok(Value::List(Arc::new(ids.into_iter().map(Value::Integer).collect())))
+        Ok(Value::List(Arc::new(
+            ids.into_iter().map(Value::Integer).collect(),
+        )))
     }
 
     /// The solid colliders as the GPU tests them, in world units: 8
@@ -642,10 +713,21 @@ impl World {
                 let h = b.inner_shape.half_extents;
                 push(c.x, c.y, rot, 1.0, h.x + r, h.y + r, r);
             } else if let Some(cap) = sh.as_capsule() {
-                let (a, b) = (pose.transform_point(cap.segment.a), pose.transform_point(cap.segment.b));
+                let (a, b) = (
+                    pose.transform_point(cap.segment.a),
+                    pose.transform_point(cap.segment.b),
+                );
                 let d = b - a;
                 let m = (a + b) * 0.5;
-                push(m.x, m.y, d.y.atan2(d.x), 2.0, d.length() * 0.5, cap.radius, cap.radius);
+                push(
+                    m.x,
+                    m.y,
+                    d.y.atan2(d.x),
+                    2.0,
+                    d.length() * 0.5,
+                    cap.radius,
+                    cap.radius,
+                );
             } else if let Some(pl) = sh.as_polyline() {
                 for seg in pl.segments() {
                     let (a, b) = (pose.transform_point(seg.a), pose.transform_point(seg.b));
@@ -759,10 +841,21 @@ fn f_slot(p: &Program, name: &str, ty: Ty, what: &str) -> Result<usize, String> 
         .get(name)
         .filter(|s| s.ty == ty)
         .map(|s| s.at)
-        .ok_or_else(|| format!("{what}: the swarm has no {} `{name}`", if ty == Ty::V2 { "pair" } else { "number" }))
+        .ok_or_else(|| {
+            format!(
+                "{what}: the swarm has no {} `{name}`",
+                if ty == Ty::V2 { "pair" } else { "number" }
+            )
+        })
 }
 
-fn opt_field(p: &Program, m: &ValueMap, key: &str, ty: Ty, what: &str) -> Result<Option<usize>, String> {
+fn opt_field(
+    p: &Program,
+    m: &ValueMap,
+    key: &str,
+    ty: Ty,
+    what: &str,
+) -> Result<Option<usize>, String> {
     match m.get(key) {
         Some(Value::String(f)) => f_slot(p, f, ty, what).map(Some),
         _ => Ok(None),
@@ -803,7 +896,9 @@ fn read_ents(cols: &Columns, c: &Cols, r: f32) -> Vec<Ent> {
     (0..cols.n)
         .map(|i| Ent {
             p: [d[c.pos * cap + i], d[(c.pos + 1) * cap + i]],
-            v: c.vel.map(|vc| [d[vc * cap + i], d[(vc + 1) * cap + i]]).unwrap_or([0.0, 0.0]),
+            v: c.vel
+                .map(|vc| [d[vc * cap + i], d[(vc + 1) * cap + i]])
+                .unwrap_or([0.0, 0.0]),
             r: c.radius.map(|rc| d[rc * cap + i]).unwrap_or(r),
             hit: false,
             body: NONE,
@@ -841,7 +936,10 @@ impl Grid {
         }
     }
     fn key(&self, x: f32, y: f32) -> (i32, i32) {
-        ((x / self.cell).floor() as i32, (y / self.cell).floor() as i32)
+        (
+            (x / self.cell).floor() as i32,
+            (y / self.cell).floor() as i32,
+        )
     }
     fn insert_box(&mut self, lo: [f32; 2], hi: [f32; 2], item: u32) {
         let (a, b) = (self.key(lo[0], lo[1]), self.key(hi[0], hi[1]));
@@ -858,7 +956,10 @@ impl Grid {
         }
     }
     fn at(&self, x: f32, y: f32) -> &[u32] {
-        self.cells.get(&self.key(x, y)).map(|v| v.as_slice()).unwrap_or(&[])
+        self.cells
+            .get(&self.key(x, y))
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 }
 
@@ -881,13 +982,22 @@ fn each_chunk(ents: &mut [Ent], f: impl Fn(&mut [Ent]) + Sync + Send) {
 /// rest; `push`: each entity's mass, pushing dynamic bodies it hits;
 /// `sensors`: whether sensors count (as touches, never as walls).
 /// Answers `(per body: (id, entities that touched it), dead flags)`.
-pub fn collide(w: &mut World, p: &Program, cols: &mut Columns, opts: &Value) -> Result<(Vec<(i64, i64)>, Vec<bool>), String> {
+pub fn collide(
+    w: &mut World,
+    p: &Program,
+    cols: &mut Columns,
+    opts: &Value,
+) -> Result<(Vec<(i64, i64)>, Vec<bool>), String> {
     let m = map_of(opts, "the collision's options")?;
     let what = "toad.collide";
     let c = Cols::of(p, m, what, "mark")?;
     let r0 = m.get("radius").and_then(num).unwrap_or(4.0);
     let bounce = m.get("bounce").and_then(num).unwrap_or(0.5).clamp(0.0, 1.0);
-    let friction = m.get("friction").and_then(num).unwrap_or(0.0).clamp(0.0, 1.0);
+    let friction = m
+        .get("friction")
+        .and_then(num)
+        .unwrap_or(0.0)
+        .clamp(0.0, 1.0);
     let die = flag(m, "die", false);
     let push = m.get("push").and_then(num).unwrap_or(0.0);
     let rest = m.get("rest").and_then(num).unwrap_or(20.0).max(0.0);
@@ -930,19 +1040,37 @@ pub fn collide(w: &mut World, p: &Program, cols: &mut Columns, opts: &Value) -> 
                 }
                 // the way out: from the surface (the boundary's nearest point,
                 // inside or out) toward the entity, or (inside) the other way
-                let mut n = if dist > 1e-6 { [to[0] / dist, to[1] / dist] } else { [0.0, 1.0] };
+                let mut n = if dist > 1e-6 {
+                    [to[0] / dist, to[1] / dist]
+                } else {
+                    [0.0, 1.0]
+                };
                 if proj.is_inside {
                     n = [-n[0], -n[1]];
                 }
-                let depth = if proj.is_inside { e.r + dist } else { e.r - dist };
+                let depth = if proj.is_inside {
+                    e.r + dist
+                } else {
+                    e.r - dist
+                };
                 e.p = [e.p[0] + n[0] * depth, e.p[1] + n[1] * depth];
                 let vn = e.v[0] * n[0] + e.v[1] * n[1];
                 if vn < 0.0 {
                     let vt = [e.v[0] - n[0] * vn, e.v[1] - n[1] * vn];
                     // a bounce slower than `rest` is none: what lands settles
-                    let back = if -vn * bounce < rest { 0.0 } else { -vn * bounce };
-                    e.v = [vt[0] * (1.0 - friction) + n[0] * back, vt[1] * (1.0 - friction) + n[1] * back];
-                    e.push = [e.push[0] + n[0] * vn * push * (1.0 + bounce), e.push[1] + n[1] * vn * push * (1.0 + bounce)];
+                    let back = if -vn * bounce < rest {
+                        0.0
+                    } else {
+                        -vn * bounce
+                    };
+                    e.v = [
+                        vt[0] * (1.0 - friction) + n[0] * back,
+                        vt[1] * (1.0 - friction) + n[1] * back,
+                    ];
+                    e.push = [
+                        e.push[0] + n[0] * vn * push * (1.0 + bounce),
+                        e.push[1] + n[1] * vn * push * (1.0 + bounce),
+                    ];
                 }
             }
         }
@@ -977,7 +1105,11 @@ pub fn collide(w: &mut World, p: &Program, cols: &mut Columns, opts: &Value) -> 
     }
     per_body.sort_unstable();
     write_ents(cols, &c, &ents);
-    let dead = if die { ents.iter().map(|e| e.hit).collect() } else { Vec::new() };
+    let dead = if die {
+        ents.iter().map(|e| e.hit).collect()
+    } else {
+        Vec::new()
+    };
     Ok((per_body, dead))
 }
 
@@ -1034,7 +1166,9 @@ pub fn meet(
             let mut best = (f32::MAX, NONE);
             for dx in -1..=1 {
                 for dy in -1..=1 {
-                    let Some(items) = grid.cells.get(&(cx + dx, cy + dy)) else { continue };
+                    let Some(items) = grid.cells.get(&(cx + dx, cy + dy)) else {
+                        continue;
+                    };
                     for &j in items {
                         let o = &eb[j as usize];
                         let d = (o.p[0] - e.p[0]).powi(2) + (o.p[1] - e.p[1]).powi(2);
@@ -1074,7 +1208,15 @@ pub fn meet(
     // a non-exclusive meeting marks every b that any a touched
     write_ents(a, &ca, &ea);
     write_ents(b, &cb, &eb);
-    let dead_a = if kill == "a" || kill == "both" { ea.iter().map(|e| e.hit).collect() } else { Vec::new() };
-    let dead_b = if kill == "b" || kill == "both" { eb.iter().map(|e| e.hit).collect() } else { Vec::new() };
+    let dead_a = if kill == "a" || kill == "both" {
+        ea.iter().map(|e| e.hit).collect()
+    } else {
+        Vec::new()
+    };
+    let dead_b = if kill == "b" || kill == "both" {
+        eb.iter().map(|e| e.hit).collect()
+    } else {
+        Vec::new()
+    };
     Ok((met, dead_a, dead_b))
 }

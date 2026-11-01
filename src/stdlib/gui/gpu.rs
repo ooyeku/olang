@@ -1496,7 +1496,11 @@ impl Gpu {
             // a live picture already let go of: drawn as nothing
             let tex = self.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("gui picture gone"),
-                size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,

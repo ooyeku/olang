@@ -1031,7 +1031,10 @@ impl BuiltinFunctions {
         #[cfg(feature = "toad")]
         if let Some(toad_function) = name.strip_prefix("toad.") {
             // a kernel's outside names: its own module file's, else here
-            let scope = |file: Option<&str>, n: &str| file.and_then(|f| interpreter.module_lookup(f, n)).or_else(|| interpreter.lookup(n));
+            let scope = |file: Option<&str>, n: &str| {
+                file.and_then(|f| interpreter.module_lookup(f, n))
+                    .or_else(|| interpreter.lookup(n))
+            };
             return crate::stdlib::toad::call_toad_function(toad_function, arguments, &scope)
                 .map_err(|e| InterpreterError::runtime(e.to_string()));
         }

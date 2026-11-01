@@ -68,15 +68,32 @@ match toad.kernel(k, FIELDS, WORLD) {{ Ok(_) => \"compiled\", Err(e) => e }}"
 #[test]
 fn what_a_gpu_cannot_do_is_refused_with_the_reason() {
     assert!(refusal(r#"fn k(p, w) = #{ "pos": p.pos, "x": "s" }"#).contains("a string"));
-    assert!(refusal(r#"fn k(p, w) = #{ "pos": p.pos + p.speed }"#).contains("has no `speed` (it has pos, vel)"));
+    assert!(
+        refusal(r#"fn k(p, w) = #{ "pos": p.pos + p.speed }"#)
+            .contains("has no `speed` (it has pos, vel)")
+    );
     assert!(refusal(r#"fn k(p, w) = #{ "pos": [1, 2] }"#).contains("a list"));
-    assert!(refusal(r#"fn k(p, w) = #{ "vel": range(0, 2) |> fold((0.0, 0.0), (a, b) => a) }"#).contains("pipeline"));
+    assert!(
+        refusal(r#"fn k(p, w) = #{ "vel": range(0, 2) |> fold((0.0, 0.0), (a, b) => a) }"#)
+            .contains("pipeline")
+    );
     assert!(refusal(r#"fn k(p) = #{ "pos": p.pos }"#).contains("takes 1 parameter"));
     assert!(refusal(r#"fn k(p, w) = #{ "pos": p.pos, "glow": 1.0 }"#).contains("does not have"));
-    assert!(refusal(r#"fn k(p, w) = #{ "pos": p.vel.x }"#).contains("a pair and is set to something else"));
-    assert!(refusal(r#"let NAME = "x"
-fn k(p, w) = #{ "pos": p.pos * NAME }"#).contains("`NAME` is String"));
-    assert!(refusal(r#"fn k(p, w) = #{ "pos": if p.pos.x > 0.0 => p.pos }"#).contains("without an `else`"));
+    assert!(
+        refusal(r#"fn k(p, w) = #{ "pos": p.vel.x }"#)
+            .contains("a pair and is set to something else")
+    );
+    assert!(
+        refusal(
+            r#"let NAME = "x"
+fn k(p, w) = #{ "pos": p.pos * NAME }"#
+        )
+        .contains("`NAME` is String")
+    );
+    assert!(
+        refusal(r#"fn k(p, w) = #{ "pos": if p.pos.x > 0.0 => p.pos }"#)
+            .contains("without an `else`")
+    );
 }
 
 #[test]
@@ -207,11 +224,14 @@ match toad.gpu() {
     let out = run(src).expect("ran");
     // AgX moves a colour a little; the hue and order of channels stay
     if out != "no gpu" {
-        let nums: Vec<i64> = out.trim_matches(|c| c == '(' || c == ')').split(", ").map(|n| n.parse().unwrap()).collect();
+        let nums: Vec<i64> = out
+            .trim_matches(|c| c == '(' || c == ')')
+            .split(", ")
+            .map(|n| n.parse().unwrap())
+            .collect();
         assert!(nums[2] > nums[1] && nums[1] > nums[0], "{out}");
     }
 }
-
 
 #[test]
 fn a_material_is_shaded_from_where_the_light_is() {
@@ -245,7 +265,10 @@ match toad.gpu() {
     }
 }"##)
     .expect("ran");
-    assert!(refused.contains("pattern") && refused.contains("one of"), "{refused}");
+    assert!(
+        refused.contains("pattern") && refused.contains("one of"),
+        "{refused}"
+    );
     // a checker material, and the same with its pattern taken away: the
     // second shows one colour
     let src = r##"
@@ -309,7 +332,10 @@ show(abs(at[1] - 25.0) < 0.5) + \" \" + show((first.a, first.b, first.start)) + 
     let out = run(&src).expect("ran");
     // the ball rests on the floor's top (0) by its radius; the first touch
     // is the two of them starting, the normal up from the ball's side
-    assert!(out.starts_with("true (2, 1, true)") || out.starts_with("true (1, 2, true)"), "{out}");
+    assert!(
+        out.starts_with("true (2, 1, true)") || out.starts_with("true (1, 2, true)"),
+        "{out}"
+    );
 }
 
 #[test]
@@ -400,7 +426,10 @@ let r = toad.meet(shots, foes, #{ "radius_a": 2.0, "radius_b": 2.0, "kill": "bot
 show((r.met, r.died_a, r.died_b, toad.count(shots), toad.count(foes), toad.read(shots, "pos") |> map((p) => p[0])))
 "#;
     // the first shot in order takes the foe; the other two pass
-    assert_eq!(run(src).as_deref(), Ok("(1, 1, 1, 3, 1, [1.0, 2.0, 100.0])"));
+    assert_eq!(
+        run(src).as_deref(),
+        Ok("(1, 1, 1, 3, 1, [1.0, 2.0, 100.0])")
+    );
 }
 
 #[test]
@@ -412,11 +441,22 @@ match attempt(() => {body}) {{ Ok(_) => \"built\", Err(e) => show(e) }}"
         ))
         .expect("ran")
     };
-    assert!(refused(r#"toad.body(w, #{ "shape": "blob" })"#).contains("circle, box, capsule, poly or chain"));
-    assert!(refused(r#"toad.body(w, #{ "kind": "floaty" })"#).contains("dynamic, static or kinematic"));
+    assert!(
+        refused(r#"toad.body(w, #{ "shape": "blob" })"#)
+            .contains("circle, box, capsule, poly or chain")
+    );
+    assert!(
+        refused(r#"toad.body(w, #{ "kind": "floaty" })"#).contains("dynamic, static or kinematic")
+    );
     assert!(refused(r#"toad.body(w, #{ "shape": "poly" })"#).contains("needs `points`"));
-    assert!(refused(r#"toad.joint(w, toad.body(w, #{}), toad.body(w, #{}), #{ "kind": "glue" })"#).contains("pin, weld, slide, rope or spring"));
-    assert!(refused(r#"toad.joint(w, toad.body(w, #{}), toad.body(w, #{}), #{ "kind": "rope" })"#).contains("needs a `length`"));
+    assert!(
+        refused(r#"toad.joint(w, toad.body(w, #{}), toad.body(w, #{}), #{ "kind": "glue" })"#)
+            .contains("pin, weld, slide, rope or spring")
+    );
+    assert!(
+        refused(r#"toad.joint(w, toad.body(w, #{}), toad.body(w, #{}), #{ "kind": "rope" })"#)
+            .contains("needs a `length`")
+    );
     assert!(refused(r#"toad.push(w, 99, #{})"#).contains("no body 99"));
 }
 
@@ -499,7 +539,10 @@ show((math.round(i.seconds * 10.0), i.channels, i.rate, math.round(i.peak * 100.
     ));
     let _ = std::fs::remove_dir_all(&dir);
     assert!(out.starts_with("(1, 2, 22050, 24)"), "{out}");
-    assert!(out.contains("sine, square, saw, triangle or noise"), "{out}");
+    assert!(
+        out.contains("sine, square, saw, triangle or noise"),
+        "{out}"
+    );
     assert!(out.contains(".wav or .ogg"), "{out}");
     assert!(out.contains("master, fx or music"), "{out}");
 }
@@ -572,7 +615,10 @@ match toad.gpu() {
 }"##;
     let out = run(src).expect("ran");
     // the camera does not move it, the light and the finish do not change it
-    assert!(out == "[(48, 128, 192), (0, 0, 0)]" || out == "no gpu", "{out}");
+    assert!(
+        out == "[(48, 128, 192), (0, 0, 0)]" || out == "no gpu",
+        "{out}"
+    );
 }
 
 #[test]
@@ -653,7 +699,11 @@ fn a_kernel_from_a_loaded_module_finds_that_modules_constants() {
     // loads a game so): REACH lives in the module's scope, not here
     let dir = tempfile::tempdir().expect("dir");
     let lib = dir.path().join("game.ol");
-    std::fs::write(&lib, "let REACH = 2.5\nfn k(p, w) = #{ \"x\": p.x * REACH }\nshare fn kern() = k\n").expect("write");
+    std::fs::write(
+        &lib,
+        "let REACH = 2.5\nfn k(p, w) = #{ \"x\": p.x * REACH }\nshare fn kern() = k\n",
+    )
+    .expect("write");
     let src = format!(
         "fn ok(r) = match r {{ Ok(v) => v, Err(e) => raise(e) }}
 let m = ok(runtime.load_module({:?}))

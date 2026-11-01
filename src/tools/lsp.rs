@@ -100,7 +100,9 @@ const MODULES: &[&str] = &[
     "bigint",
     "collections",
 ];
-const USE_MODULES: &[&str] = &["cli", "term", "ui", "viz", "dash", "colx", "mathx", "ml", "peg"];
+const USE_MODULES: &[&str] = &[
+    "cli", "term", "ui", "viz", "dash", "colx", "mathx", "ml", "peg",
+];
 
 #[path = "lsp_notebook.rs"]
 mod notebook;

@@ -1252,7 +1252,11 @@ let effect = w.run_fn(() => work(2, 10), #{{ "props": [sim.always("peeks", (s) =
     let always = &out[2];
     assert_eq!(s(&field(always, "property")), "fewer than 3 writes");
     assert_eq!(s(&field(always, "kind")), "always");
-    assert_eq!(int(&field(always, "t")), 500, "the third write's completion, at 500 ms");
+    assert_eq!(
+        int(&field(always, "t")),
+        500,
+        "the third write's completion, at 500 ms"
+    );
     assert!(int(&field(always, "step")) > 0);
     let never = &out[3];
     assert_eq!(s(&field(never, "property")), "a third write");
@@ -1264,8 +1268,16 @@ let effect = w.run_fn(() => work(2, 10), #{{ "props": [sim.always("peeks", (s) =
         151,
         "reported at the stretch's deadline, though nothing happens then"
     );
-    assert!(s(&out[5]).contains("its predicate raised"), "{}", s(&out[5]));
-    assert!(s(&out[6]).contains("cannot call time.now_ms"), "{}", s(&out[6]));
+    assert!(
+        s(&out[5]).contains("its predicate raised"),
+        "{}",
+        s(&out[5])
+    );
+    assert!(
+        s(&out[6]).contains("cannot call time.now_ms"),
+        "{}",
+        s(&out[6])
+    );
 }
 
 #[test]
@@ -1281,9 +1293,17 @@ let fine = sim.check(run_store("sync_then_ack", 1), [acked_puts_are_durable()])
 "#,
     );
     let out = list(&v);
-    assert_eq!(s(&out[0]), "failed", "unwatched, the writer's own check fails it later");
+    assert_eq!(
+        s(&out[0]),
+        "failed",
+        "unwatched, the writer's own check fails it later"
+    );
     assert_eq!(out[1], Value::Boolean(true));
-    assert_eq!(out[2], Value::Boolean(true), "run.history(name) answers the history");
+    assert_eq!(
+        out[2],
+        Value::Boolean(true),
+        "run.history(name) answers the history"
+    );
     let found = s(&out[3]);
     assert!(
         found.contains("sim.check: property")
@@ -1318,7 +1338,10 @@ let run = w.run(#{ "props": [sim.always("snapshot", (s) => {
     );
     let out = list(&v);
     let t = int(&out[0]);
-    assert!((1..=3).contains(&t), "the instant the sync (1–3 ms) returns: {t}");
+    assert!(
+        (1..=3).contains(&t),
+        "the instant the sync (1–3 ms) returns: {t}"
+    );
     let detail = s(&out[1]);
     assert!(
         detail.contains(r#"["synced", "pending", (), false, "never synced", true]"#),
@@ -1431,14 +1454,25 @@ fn the_kv_partition_bug_is_a_linearizability_violation() {
 
 #[test]
 fn the_log_bug_is_a_durability_violation_and_the_safe_store_holds() {
-    let (code, _, err) = sim(&[fixture("log_durable_bug.ol").to_str().unwrap(), "--seeds", "4"]);
+    let (code, _, err) = sim(&[
+        fixture("log_durable_bug.ol").to_str().unwrap(),
+        "--seeds",
+        "4",
+    ]);
     assert_eq!(code, 1, "{err}");
     assert_eq!(
-        err.matches("\"an acknowledged put is on the store's disk\" broke at").count(),
+        err.matches("\"an acknowledged put is on the store's disk\" broke at")
+            .count(),
         4,
         "{err}"
     );
-    let (code, _, err) = sim(&[fixture("log_durable_safe.ol").to_str().unwrap(), "--seeds", "4", "--jobs", "2"]);
+    let (code, _, err) = sim(&[
+        fixture("log_durable_safe.ol").to_str().unwrap(),
+        "--seeds",
+        "4",
+        "--jobs",
+        "2",
+    ]);
     assert_eq!(code, 0, "{err}");
     assert!(err.contains("4 passed"), "{err}");
 }
@@ -1452,7 +1486,11 @@ fn digest_of(err: &str) -> String {
 
 #[test]
 fn one_job_and_four_jobs_give_the_same_results() {
-    for (file, seeds) in [("kv_linear.ol", "8"), ("log_bug.ol", "8"), ("sqlite_lies.ol", "4")] {
+    for (file, seeds) in [
+        ("kv_linear.ol", "8"),
+        ("log_bug.ol", "8"),
+        ("sqlite_lies.ol", "4"),
+    ] {
         let path = fixture(file);
         let path = path.to_str().unwrap();
         let (c1, _, e1) = sim(&[path, "--seeds", seeds, "--jobs", "1"]);
@@ -1460,7 +1498,10 @@ fn one_job_and_four_jobs_give_the_same_results() {
         assert_eq!(c1, c4, "{file}");
         assert_eq!(digest_of(&e1), digest_of(&e4), "{file}:\n{e1}\n{e4}");
         let failures = |e: &str| -> Vec<String> {
-            e.lines().filter(|l| l.starts_with("seed ")).map(String::from).collect()
+            e.lines()
+                .filter(|l| l.starts_with("seed "))
+                .map(String::from)
+                .collect()
         };
         assert_eq!(failures(&e1), failures(&e4), "{file}");
         assert!(e4.contains("4 job(s)"), "{e4}");
@@ -1471,8 +1512,7 @@ fn one_job_and_four_jobs_give_the_same_results() {
 fn a_recorded_run_comes_back_exactly_from_its_plan() {
     for file in ["log_bug.ol", "kv_partition_bug.ol", "sqlite_lies.ol"] {
         let path = fixture(file);
-        let (first, plans) =
-            olang::sim::cli::run_builder_forced(&path, 5, None).expect("runs");
+        let (first, plans) = olang::sim::cli::run_builder_forced(&path, 5, None).expect("runs");
         assert!(first.plannable_faults() > 0, "{file}: no faults");
         let (again, _) =
             olang::sim::cli::run_builder_forced(&path, 5, Some(plans.clone())).expect("runs");
@@ -1509,7 +1549,14 @@ fn the_shrinker_takes_a_noisy_world_down_to_its_one_fault_and_it_replays() {
                 .to_string(),
         )
     };
-    let (code, err) = run(&[file.to_str().unwrap(), "--seed", "1", "--shrink", "--jobs", "2"]);
+    let (code, err) = run(&[
+        file.to_str().unwrap(),
+        "--seed",
+        "1",
+        "--shrink",
+        "--jobs",
+        "2",
+    ]);
     assert_eq!(code, 1, "{err}");
     let line = err
         .lines()
@@ -1523,14 +1570,20 @@ fn the_shrinker_takes_a_noisy_world_down_to_its_one_fault_and_it_replays() {
     assert!(before >= 20, "a noisy world: {line}");
     assert!(line.contains("→ 1 ·"), "{line}");
     assert!(line.contains("left out: spare"), "{line}");
-    assert!(err.contains("crash      store"), "the fault left is the store's power cut:\n{err}");
+    assert!(
+        err.contains("crash      store"),
+        "the fault left is the store's power cut:\n{err}"
+    );
     let plan = dir.join(".sim/1.simplan");
     assert!(plan.is_file(), "{err}");
     // the plan replays bit for bit, every time
     for _ in 0..2 {
         let (code, err) = run(&["--replay", plan.to_str().unwrap()]);
         assert_eq!(code, 1, "{err}");
-        assert!(err.contains("replayed") && err.contains("bit for bit"), "{err}");
+        assert!(
+            err.contains("replayed") && err.contains("bit for bit"),
+            "{err}"
+        );
         assert!(err.contains("lost an acknowledged write"), "{err}");
     }
     // a shrunk plan shrinks no further
@@ -1548,7 +1601,8 @@ fn olang_test_runs_sim_blocks_over_a_few_seeds() {
         .arg(&file)
         .output()
         .expect("run olang test");
-    let text = String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
+    let text =
+        String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(0), "{text}");
     assert!(text.contains("3 passed, 0 failed"), "{text}");
     // a block that fails on one seed names it; --seeds widens the search
@@ -1561,10 +1615,16 @@ fn olang_test_runs_sim_blocks_over_a_few_seeds() {
     )
     .unwrap();
     let run = |extra: &[&str]| {
-        let out = Command::new(olang()).arg("test").arg(&t).args(extra).output().unwrap();
+        let out = Command::new(olang())
+            .arg("test")
+            .arg(&t)
+            .args(extra)
+            .output()
+            .unwrap();
         (
             out.status.code(),
-            String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr),
+            String::from_utf8_lossy(&out.stdout).to_string()
+                + &String::from_utf8_lossy(&out.stderr),
         )
     };
     let (code, text) = run(&[]);

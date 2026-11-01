@@ -29,8 +29,6 @@ pub mod fs_scan;
 pub mod fs_watch;
 #[cfg(feature = "gui")]
 pub mod gui;
-#[cfg(feature = "toad")]
-pub mod toad;
 #[cfg(feature = "native")]
 pub mod http;
 pub mod json;
@@ -38,9 +36,9 @@ pub mod lexers;
 pub mod math;
 pub mod md;
 pub mod meta;
-pub mod peg;
 #[cfg(feature = "native")]
 pub mod os;
+pub mod peg;
 #[cfg(feature = "native")]
 pub mod proc;
 #[cfg(feature = "native")]
@@ -54,6 +52,8 @@ pub mod string;
 pub mod task;
 pub mod testing;
 pub mod time;
+#[cfg(feature = "toad")]
+pub mod toad;
 pub mod tokens;
 pub mod toml_mod;
 #[cfg(feature = "native")]

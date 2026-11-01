@@ -26,7 +26,9 @@ fn r(n: &str) -> E {
     E::Ref(n.to_string())
 }
 fn rule(name: &str, e: E) -> RuleIn {
-    let token = name.trim_start_matches('_').starts_with(|c: char| c.is_ascii_uppercase());
+    let token = name
+        .trim_start_matches('_')
+        .starts_with(|c: char| c.is_ascii_uppercase());
     RuleIn {
         name: name.to_string(),
         desc: None,
@@ -188,7 +190,14 @@ fn precedence_climbs() {
     let root = m.build(0, 0).expect("parses");
     let top = m.nodes[root as usize];
     // 1 + (2*3)
-    assert!(matches!(top.extra, Extra::Prec { op_start: 1, op_end: 2, .. }));
+    assert!(matches!(
+        top.extra,
+        Extra::Prec {
+            op_start: 1,
+            op_end: 2,
+            ..
+        }
+    ));
     let right = m.nodes[m.store[top.kids as usize + 1].node as usize];
     assert!(matches!(right.extra, Extra::Prec { op_start: 3, .. }));
 }
@@ -251,7 +260,10 @@ fn a_rule_tried_twice_at_one_place_is_cached() {
             ),
             rule(
                 "t",
-                E::Alt(vec![E::Seq(vec![lit("("), r("e"), lit(")")]), class('0', '9')]),
+                E::Alt(vec![
+                    E::Seq(vec![lit("("), r("e"), lit(")")]),
+                    class('0', '9'),
+                ]),
             ),
         ],
         &["t"],

@@ -25,10 +25,12 @@ use objc2::runtime::ProtocolObject;
 use objc2_core_foundation::{CFBoolean, CFDictionary, CFNumber, CFRetained, CFString, CFType};
 #[allow(deprecated)]
 use objc2_io_surface::{
-    IOSurfaceLockOptions, IOSurfaceRef, kIOSurfaceBytesPerElement, kIOSurfaceHeight, kIOSurfaceIsGlobal,
-    kIOSurfacePixelFormat, kIOSurfaceWidth,
+    IOSurfaceLockOptions, IOSurfaceRef, kIOSurfaceBytesPerElement, kIOSurfaceHeight,
+    kIOSurfaceIsGlobal, kIOSurfacePixelFormat, kIOSurfaceWidth,
 };
-use objc2_metal::{MTLDevice, MTLPixelFormat, MTLTexture, MTLTextureDescriptor, MTLTextureType, MTLTextureUsage};
+use objc2_metal::{
+    MTLDevice, MTLPixelFormat, MTLTexture, MTLTextureDescriptor, MTLTextureType, MTLTextureUsage,
+};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -86,7 +88,8 @@ impl Mem {
 impl Drop for Mem {
     fn drop(&mut self) {
         unsafe {
-            self.surface.unlock(IOSurfaceLockOptions::AvoidSync, std::ptr::null_mut());
+            self.surface
+                .unlock(IOSurfaceLockOptions::AvoidSync, std::ptr::null_mut());
         }
     }
 }
@@ -94,12 +97,27 @@ impl Drop for Mem {
 #[allow(deprecated)]
 fn surface(w: u32, h: u32, bpe: i32, format: Option<i32>) -> Option<CFRetained<IOSurfaceRef>> {
     let (kw, kh, kb, kp, kg) = unsafe {
-        (kIOSurfaceWidth, kIOSurfaceHeight, kIOSurfaceBytesPerElement, kIOSurfacePixelFormat, kIOSurfaceIsGlobal)
+        (
+            kIOSurfaceWidth,
+            kIOSurfaceHeight,
+            kIOSurfaceBytesPerElement,
+            kIOSurfacePixelFormat,
+            kIOSurfaceIsGlobal,
+        )
     };
-    let (nw, nh, nb) = (CFNumber::new_i32(w as i32), CFNumber::new_i32(h as i32), CFNumber::new_i32(bpe));
+    let (nw, nh, nb) = (
+        CFNumber::new_i32(w as i32),
+        CFNumber::new_i32(h as i32),
+        CFNumber::new_i32(bpe),
+    );
     let np = CFNumber::new_i32(format.unwrap_or(0));
     let mut keys: Vec<&CFString> = vec![kw, kh, kb, kg];
-    let mut vals: Vec<&CFType> = vec![nw.as_ref(), nh.as_ref(), nb.as_ref(), CFBoolean::new(true).as_ref()];
+    let mut vals: Vec<&CFType> = vec![
+        nw.as_ref(),
+        nh.as_ref(),
+        nb.as_ref(),
+        CFBoolean::new(true).as_ref(),
+    ];
     if format.is_some() {
         keys.push(kp);
         vals.push(np.as_ref());
@@ -109,7 +127,13 @@ fn surface(w: u32, h: u32, bpe: i32, format: Option<i32>) -> Option<CFRetained<I
 }
 
 /// A Metal texture on `surface`, as a wgpu texture of this device.
-fn texture_on(gpu: &Gpu, surface: &IOSurfaceRef, w: u32, h: u32, label: &'static str) -> Option<wgpu::Texture> {
+fn texture_on(
+    gpu: &Gpu,
+    surface: &IOSurfaceRef,
+    w: u32,
+    h: u32,
+    label: &'static str,
+) -> Option<wgpu::Texture> {
     use wgpu::hal::api::Metal;
     let raw: Retained<ProtocolObject<dyn MTLTexture>> = unsafe {
         let dev = gpu.device.as_hal::<Metal>()?;
@@ -120,7 +144,8 @@ fn texture_on(gpu: &Gpu, surface: &IOSurfaceRef, w: u32, h: u32, label: &'static
             false,
         );
         d.setUsage(MTLTextureUsage::ShaderRead | MTLTextureUsage::RenderTarget);
-        dev.raw_device().newTextureWithDescriptor_iosurface_plane(&d, surface, 0)?
+        dev.raw_device()
+            .newTextureWithDescriptor_iosurface_plane(&d, surface, 0)?
     };
     let hal = unsafe {
         wgpu::hal::metal::Device::texture_from_raw(
@@ -129,21 +154,34 @@ fn texture_on(gpu: &Gpu, surface: &IOSurfaceRef, w: u32, h: u32, label: &'static
             MTLTextureType::Type2D,
             1,
             1,
-            wgpu::hal::CopyExtent { width: w, height: h, depth: 1 },
+            wgpu::hal::CopyExtent {
+                width: w,
+                height: h,
+                depth: 1,
+            },
             None,
         )
     };
     let desc = wgpu::TextureDescriptor {
         label: Some(label),
-        size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_DST
+            | wgpu::TextureUsages::RENDER_ATTACHMENT,
         view_formats: &[],
     };
-    Some(unsafe { gpu.device.create_texture_from_hal::<Metal>(hal, &desc, wgpu::TextureUses::UNINITIALIZED) })
+    Some(unsafe {
+        gpu.device
+            .create_texture_from_hal::<Metal>(hal, &desc, wgpu::TextureUses::UNINITIALIZED)
+    })
 }
 
 // ── the producer: a game's frames ─────────────────────────────────────
@@ -171,7 +209,14 @@ fn producers<T>(f: impl FnOnce(&mut HashMap<String, Producer>) -> T) -> T {
 /// Copy `src` (Rgba8Unorm, `w` × `h`) into the next of `name`'s shared
 /// surfaces, in `enc`. The header says it once [`submitted`]'s work is
 /// done. False when it cannot be shared (no surfaces, or not Metal).
-pub fn copy_in(name: &str, gpu: &Gpu, enc: &mut wgpu::CommandEncoder, src: &wgpu::Texture, w: u32, h: u32) -> bool {
+pub fn copy_in(
+    name: &str,
+    gpu: &Gpu,
+    enc: &mut wgpu::CommandEncoder,
+    src: &wgpu::Texture,
+    w: u32,
+    h: u32,
+) -> bool {
     producers(|ps| {
         if !ps.contains_key(name) {
             let Some(head) = surface(256, 1, 1, None).and_then(Mem::new) else {
@@ -211,7 +256,11 @@ pub fn copy_in(name: &str, gpu: &Gpu, enc: &mut wgpu::CommandEncoder, src: &wgpu
         enc.copy_texture_to_texture(
             src.as_image_copy(),
             p.slots[next].1.as_image_copy(),
-            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
         );
         p.sent += 1;
         p.next = next;
@@ -290,7 +339,9 @@ static SHOWN: Mutex<Option<HashMap<u32, Shown>>> = Mutex::new(None);
 pub fn id_in(src: &Value) -> Option<u32> {
     match src {
         Value::Tuple(t) if t.len() == 2 => match (&t[0], &t[1]) {
-            (Value::String(k), Value::Integer(n)) if k.as_str() == "shared" && *n > 0 => Some(*n as u32),
+            (Value::String(k), Value::Integer(n)) if k.as_str() == "shared" && *n > 0 => {
+                Some(*n as u32)
+            }
             _ => None,
         },
         _ => None,
@@ -309,7 +360,16 @@ pub fn current(id: u32) -> Option<Arc<Picture>> {
         if head.header().magic.load(Ordering::Acquire) != MAGIC {
             return None;
         }
-        all.insert(id, Shown { head, views: HashMap::new(), seq: 0, pic: None, ids: Vec::new() });
+        all.insert(
+            id,
+            Shown {
+                head,
+                views: HashMap::new(),
+                seq: 0,
+                pic: None,
+                ids: Vec::new(),
+            },
+        );
     }
     let s = all.get_mut(&id).expect("made");
     let hd = s.head.header();
@@ -324,7 +384,8 @@ pub fn current(id: u32) -> Option<Arc<Picture>> {
         if !s.views.contains_key(&sid) {
             let surf = IOSurfaceRef::lookup(sid)?;
             let t = texture_on(&gpu, &surf, w, h, "shared picture shown")?;
-            s.views.insert(sid, t.create_view(&wgpu::TextureViewDescriptor::default()));
+            s.views
+                .insert(sid, t.create_view(&wgpu::TextureViewDescriptor::default()));
         }
         let pid = super::canvas::next_picture_id();
         gpu.adopt_picture(pid, s.views[&sid].clone());
@@ -333,7 +394,12 @@ pub fn current(id: u32) -> Option<Arc<Picture>> {
         for old in s.ids.drain(..n) {
             gpu.forget_picture(old);
         }
-        s.pic = Some(Arc::new(Picture { id: pid, width: w, height: h, rgba: Vec::new() }));
+        s.pic = Some(Arc::new(Picture {
+            id: pid,
+            width: w,
+            height: h,
+            rgba: Vec::new(),
+        }));
         s.seq = seq;
     }
     hd.seen.store(s.seq, Ordering::Release);

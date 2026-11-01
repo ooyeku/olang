@@ -225,7 +225,9 @@ impl GpuSwarm {
         let mut enc = self
             .gpu
             .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("toad step") });
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("toad step"),
+            });
         {
             let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("toad step"),
@@ -255,7 +257,9 @@ impl GpuSwarm {
         let mut enc = self
             .gpu
             .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("toad read") });
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("toad read"),
+            });
         enc.copy_buffer_to_buffer(&self.buf, 0, &rb, 0, bytes.max(16));
         self.gpu.queue.submit([enc.finish()]);
         let slice = rb.slice(..);
@@ -336,12 +340,17 @@ fn main(@builtin(global_invocation_id) g: vec3<u32>) {
 
 #[cfg(feature = "gui")]
 fn collide_pipeline(d: &wgpu::Device) -> &'static (wgpu::ComputePipeline, wgpu::BindGroupLayout) {
-    static P: std::sync::OnceLock<(wgpu::ComputePipeline, wgpu::BindGroupLayout)> = std::sync::OnceLock::new();
+    static P: std::sync::OnceLock<(wgpu::ComputePipeline, wgpu::BindGroupLayout)> =
+        std::sync::OnceLock::new();
     P.get_or_init(|| {
         let buf = |binding, ty| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: false, min_binding_size: None },
+            ty: wgpu::BindingType::Buffer {
+                ty,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
             count: None,
         };
         let layout = d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -430,14 +439,28 @@ impl GpuSwarm {
             label: Some("toad collide"),
             layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: self.buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: ub.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: sb.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: ub.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: sb.as_entire_binding(),
+                },
             ],
         });
-        let mut enc = d.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("toad collide") });
+        let mut enc = d.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("toad collide"),
+        });
         {
-            let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("toad collide"), timestamp_writes: None });
+            let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("toad collide"),
+                timestamp_writes: None,
+            });
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &bind, &[]);
             pass.dispatch_workgroups((n as u32).div_ceil(256), 1, 1);

@@ -2040,8 +2040,22 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "Step every entity once: `world` holds dt and the kernel's world values. Answers #{ alive, died } (a show swarm's dead stay in place, unseen).",
             &[r##"toad.step(s, #{ "dt": 1.0 / 120.0 })"##],
         );
-        self.doc_ex("toad.sync", "toad.sync(swarm)", "Unit", "toad", "Wait for a show swarm's queued steps (for timing; reads wait on their own).", &["toad.sync(s)"]);
-        self.doc_ex("toad.count", "toad.count(swarm)", "Int", "toad", "How many entities the swarm holds.", &["toad.count(s)"]);
+        self.doc_ex(
+            "toad.sync",
+            "toad.sync(swarm)",
+            "Unit",
+            "toad",
+            "Wait for a show swarm's queued steps (for timing; reads wait on their own).",
+            &["toad.sync(s)"],
+        );
+        self.doc_ex(
+            "toad.count",
+            "toad.count(swarm)",
+            "Int",
+            "toad",
+            "How many entities the swarm holds.",
+            &["toad.count(s)"],
+        );
         self.doc_ex(
             "toad.read",
             "toad.read(swarm, field)",
@@ -2050,9 +2064,23 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "One field of every entity (numbers, or pairs for a vector), read back from the GPU for a show swarm: for tests and tools, not every frame.",
             &[r##"toad.read(s, "pos")"##],
         );
-        self.doc_ex("toad.wgsl", "toad.wgsl(kernel)", "String", "toad", "The WGSL compute shader a kernel runs as on the GPU.", &["toad.wgsl(k)"]);
+        self.doc_ex(
+            "toad.wgsl",
+            "toad.wgsl(kernel)",
+            "String",
+            "toad",
+            "The WGSL compute shader a kernel runs as on the GPU.",
+            &["toad.wgsl(k)"],
+        );
         self.doc_ex("toad.ops", "toad.ops(kernel)", "Int", "toad", "How many scalar operations a kernel compiled to (constants folded, shared reads merged).", &["toad.ops(k)"]);
-        self.doc_ex("toad.gpu", "toad.gpu()", "Result<String, String>", "toad", "The GPU Toad draws with, and its backend; Err when there is none.", &["toad.gpu()"]);
+        self.doc_ex(
+            "toad.gpu",
+            "toad.gpu()",
+            "Result<String, String>",
+            "toad",
+            "The GPU Toad draws with, and its backend; Err when there is none.",
+            &["toad.gpu()"],
+        );
         self.doc_ex(
             "toad.input",
             "toad.input()",
@@ -2069,7 +2097,14 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "Press (down true) or let go of a key, button or pad button as if a hand did: a script's or a test's way to play a game.",
             &[r##"toad.press("space", true)"##],
         );
-        self.doc_ex("toad.clear", "toad.clear(swarm)", "Unit", "toad", "Empty a swarm: every entity gone at once, its room kept for the next.", &["toad.clear(s)"]);
+        self.doc_ex(
+            "toad.clear",
+            "toad.clear(swarm)",
+            "Unit",
+            "toad",
+            "Empty a swarm: every entity gone at once, its room kept for the next.",
+            &["toad.clear(s)"],
+        );
         self.doc_ex(
             "toad.scripted",
             "toad.scripted(on)",
@@ -2094,7 +2129,14 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "Make a sound: a file (WAV or Ogg Vorbis), or the synth: wave (sine, square, saw, triangle, noise), freq, to (an exponential slide), attack, hold, decay (seconds), volume, duty, vibrato, vibrato_rate, cutoff and cutoff_to (a low-pass), seed; or layers, a list of synth specs each from its delay. Answers its number.",
             &[r##"toad.sound(#{ "wave": "square", "freq": 520.0, "to": 1300.0, "decay": 0.09 })"##],
         );
-        self.doc_ex("toad.sound_info", "toad.sound_info(sound)", "Map", "toad", "A sound's #{ seconds, channels, rate, peak }.", &["toad.sound_info(s).seconds"]);
+        self.doc_ex(
+            "toad.sound_info",
+            "toad.sound_info(sound)",
+            "Map",
+            "toad",
+            "A sound's #{ seconds, channels, rate, peak }.",
+            &["toad.sound_info(s).seconds"],
+        );
         self.doc_ex(
             "toad.play",
             "toad.play(sound, opts)",
@@ -2103,7 +2145,14 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "Play a sound: volume, pan (-1 left to 1 right), pitch (a rate: 2 is an octave up), loop, music (the music bus), fade (seconds in). Answers the voice's number; past 64 voices the oldest effect gives way.",
             &[r##"toad.play(s, #{ "volume": 0.8, "pan": -0.3 })"##],
         );
-        self.doc_ex("toad.stop", "toad.stop(voice, fade)", "Unit", "toad", "Fade a voice out over fade seconds and let it go: no click.", &["toad.stop(v, 0.2)"]);
+        self.doc_ex(
+            "toad.stop",
+            "toad.stop(voice, fade)",
+            "Unit",
+            "toad",
+            "Fade a voice out over fade seconds and let it go: no click.",
+            &["toad.stop(v, 0.2)"],
+        );
         self.doc_ex(
             "toad.tune",
             "toad.tune(voice, opts)",
@@ -2112,7 +2161,14 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "Change a playing voice: volume (reached over fade seconds), pan, pitch. A looping engine's pitch follows its speed this way.",
             &[r##"toad.tune(v, #{ "pitch": 1.4 })"##],
         );
-        self.doc_ex("toad.volume", "toad.volume(bus, v)", "Unit", "toad", "Set a bus's volume: master, fx or music.", &[r##"toad.volume("music", 0.5)"##]);
+        self.doc_ex(
+            "toad.volume",
+            "toad.volume(bus, v)",
+            "Unit",
+            "toad",
+            "Set a bus's volume: master, fx or music.",
+            &[r##"toad.volume("music", 0.5)"##],
+        );
         self.doc_ex(
             "toad.listen",
             "toad.listen(sound, seconds)",
@@ -2169,7 +2225,14 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "A rigid body: kind (dynamic, static, kinematic), shape (circle, box, capsule, poly, chain) with size, round or points, at, rot, vel, spin, density, friction, bounce, sensor, one_way (things land on its top and pass up through it), damping, spin_damping, fixed_rot, bullet, gravity (a scale), groups ((member, collides_with) bit masks); or parts, a list of shapes each with its own at and rot. Answers its number.",
             &[r##"toad.body(w, #{ "shape": "box", "size": (40.0, 40.0), "at": (0.0, 200.0) })"##],
         );
-        self.doc_ex("toad.unbody", "toad.unbody(world, body)", "Unit", "toad", "Remove a body, its colliders and its joints.", &["toad.unbody(w, b)"]);
+        self.doc_ex(
+            "toad.unbody",
+            "toad.unbody(world, body)",
+            "Unit",
+            "toad",
+            "Remove a body, its colliders and its joints.",
+            &["toad.unbody(w, b)"],
+        );
         self.doc_ex(
             "toad.push",
             "toad.push(world, body, props)",
@@ -2186,7 +2249,14 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "Join two bodies: kind pin (turning about a point; motor, limits), weld, slide (along axis, within limits; motor), rope (no further than length) or spring (length, stiffness, damping); at_a and at_b anchor it on each, collide lets the two still touch. Answers its number.",
             &[r##"toad.joint(w, a, b, #{ "kind": "rope", "length": 120.0 })"##],
         );
-        self.doc_ex("toad.unjoint", "toad.unjoint(world, joint)", "Unit", "toad", "Remove a joint; the bodies it held go their own way.", &["toad.unjoint(w, j)"]);
+        self.doc_ex(
+            "toad.unjoint",
+            "toad.unjoint(world, joint)",
+            "Unit",
+            "toad",
+            "Remove a joint; the bodies it held go their own way.",
+            &["toad.unjoint(w, j)"],
+        );
         self.doc_ex(
             "toad.simulate",
             "toad.simulate(world, dt)",

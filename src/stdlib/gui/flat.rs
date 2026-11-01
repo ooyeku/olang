@@ -1595,7 +1595,10 @@ fn group_op(
     // `move_window`: a unified title bar's row moves the window (the
     // scene's `drag: "window"`)
     if is_true(mget(p, "move_window")) {
-        op.insert("drag".into(), Value::String(std::sync::Arc::new("window".to_string())));
+        op.insert(
+            "drag".into(),
+            Value::String(std::sync::Arc::new("window".to_string())),
+        );
     }
     // a group presented as a tab, a radio, a switch or a button says its
     // state as a leaf does: chosen, checked, its value, unavailable (the

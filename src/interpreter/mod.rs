@@ -443,7 +443,9 @@ impl Interpreter {
     /// `name` in the finished scope of the module file `file` (where a
     /// top-level function of that file resolves what it does not capture).
     pub(crate) fn module_lookup(&self, file: &str, name: &str) -> Option<Value> {
-        self.module_scopes.get(file).and_then(|s| s.get(name).cloned())
+        self.module_scopes
+            .get(file)
+            .and_then(|s| s.get(name).cloned())
     }
 
     pub(crate) fn lookup(&self, name: &str) -> Option<Value> {
@@ -6169,7 +6171,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             if worlds {
                 let budget = crate::sim::test_seeds();
                 let (_, failed_at_one) = crate::stdlib::testing::tally_snapshot();
-                let mut failed_seed = (error.is_some() || failed_at_one > failed_before).then_some(1);
+                let mut failed_seed =
+                    (error.is_some() || failed_at_one > failed_before).then_some(1);
                 let mut seed = 2;
                 while failed_seed.is_none() && seed <= budget {
                     crate::sim::surface::collect_begin(seed);
@@ -6182,7 +6185,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     seed += 1;
                 }
                 if let Some(s) = failed_seed {
-                    let why = error.take().unwrap_or_else(|| "assertions failed".to_string());
+                    let why = error
+                        .take()
+                        .unwrap_or_else(|| "assertions failed".to_string());
                     error = Some(format!(
                         "sim seed {s}: {why} (reproduce: its worlds with seed {s}; olang test \
                          --seeds N widens the search)"

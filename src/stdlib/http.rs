@@ -160,7 +160,10 @@ pub(crate) struct RequestOpts {
     pub(crate) bytes: bool,
 }
 
-pub(crate) fn parse_opts(v: &Value, fname: &str) -> Result<RequestOpts, Box<dyn std::error::Error>> {
+pub(crate) fn parse_opts(
+    v: &Value,
+    fname: &str,
+) -> Result<RequestOpts, Box<dyn std::error::Error>> {
     let entries = match v {
         Value::Map(entries) => entries,
         other => {

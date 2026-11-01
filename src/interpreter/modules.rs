@@ -1304,12 +1304,16 @@ already binds — an import never replaces a program's own name. Alias the impor
             return;
         };
         let opts = crate::pkg::InstallOptions {
-            registry: std::env::var("OLANG_REGISTRY").ok().map(std::path::PathBuf::from),
+            registry: std::env::var("OLANG_REGISTRY")
+                .ok()
+                .map(std::path::PathBuf::from),
             ..Default::default()
         };
         let (map, _missing) = crate::pkg::install_lenient(&root, &opts);
-        let fresh: HashMap<String, std::path::PathBuf> =
-            map.into_iter().filter(|(k, _)| !self.dependency_map.contains_key(k)).collect();
+        let fresh: HashMap<String, std::path::PathBuf> = map
+            .into_iter()
+            .filter(|(k, _)| !self.dependency_map.contains_key(k))
+            .collect();
         if !fresh.is_empty() {
             self.add_to_dependency_map(fresh);
         }

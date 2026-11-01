@@ -93,8 +93,14 @@ impl Font {
     pub fn family_source(&self) -> String {
         let own = families();
         match self.family.as_str() {
-            "body" | "" if !own.0.is_empty() => format!("{}, Inter Variable, Inter, Noto Color Emoji, system-ui, sans-serif", own.0),
-            "mono" if !own.1.is_empty() => format!("{}, JetBrains Mono, SF Mono, Menlo, Noto Color Emoji, ui-monospace, monospace", own.1),
+            "body" | "" if !own.0.is_empty() => format!(
+                "{}, Inter Variable, Inter, Noto Color Emoji, system-ui, sans-serif",
+                own.0
+            ),
+            "mono" if !own.1.is_empty() => format!(
+                "{}, JetBrains Mono, SF Mono, Menlo, Noto Color Emoji, ui-monospace, monospace",
+                own.1
+            ),
             _ => self.family_source_bundled(),
         }
     }
@@ -141,7 +147,8 @@ impl Font {
 /// The families `"body"` and `"mono"` stand for when a program names its
 /// own (`gui.fonts(sources, #{ "families": #{ "body": .., "mono": .. } })`),
 /// empty for the bundled ones.
-static FAMILIES: std::sync::RwLock<(String, String)> = std::sync::RwLock::new((String::new(), String::new()));
+static FAMILIES: std::sync::RwLock<(String, String)> =
+    std::sync::RwLock::new((String::new(), String::new()));
 
 /// The program's own families for `"body"` and `"mono"`.
 pub fn families() -> (String, String) {
@@ -153,8 +160,13 @@ pub fn families() -> (String, String) {
 /// changed; when they did, every shaped text is shaped again.
 pub fn set_families(body: Option<String>, mono: Option<String>) -> bool {
     let changed = {
-        let Ok(mut f) = FAMILIES.write() else { return false };
-        let next = (body.unwrap_or_else(|| f.0.clone()), mono.unwrap_or_else(|| f.1.clone()));
+        let Ok(mut f) = FAMILIES.write() else {
+            return false;
+        };
+        let next = (
+            body.unwrap_or_else(|| f.0.clone()),
+            mono.unwrap_or_else(|| f.1.clone()),
+        );
         let changed = *f != next;
         *f = next;
         changed

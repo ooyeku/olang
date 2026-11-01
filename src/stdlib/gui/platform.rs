@@ -779,7 +779,10 @@ impl App {
         #[cfg(target_os = "macos")]
         if opts.unified {
             use winit::platform::macos::WindowAttributesExtMacOS;
-            attrs = attrs.with_titlebar_transparent(true).with_fullsize_content_view(true).with_title_hidden(true);
+            attrs = attrs
+                .with_titlebar_transparent(true)
+                .with_fullsize_content_view(true)
+                .with_title_hidden(true);
         }
         let win = Arc::new(
             el.create_window(attrs)
@@ -918,7 +921,11 @@ impl App {
     /// resized: full screen has none) and kept in the window's state.
     fn sync_titlebar(&mut self, id: u64) -> Option<(f32, f32, f32)> {
         let pw = self.windows.get(&id)?;
-        let bar = if pw.unified { titlebar_inset(&pw.win) } else { None };
+        let bar = if pw.unified {
+            titlebar_inset(&pw.win)
+        } else {
+            None
+        };
         if let Ok(mut st) = pw.state.lock() {
             st.titlebar = bar;
         }
@@ -1659,12 +1666,14 @@ fn titlebar_inset(win: &Window) -> Option<(f32, f32, f32)> {
             return None;
         }
         // NSWindowZoomButton: the last of the three lights
-        let zoom: Option<objc2::rc::Retained<objc2::runtime::AnyObject>> = msg_send![&*nw, standardWindowButton: 2usize];
+        let zoom: Option<objc2::rc::Retained<objc2::runtime::AnyObject>> =
+            msg_send![&*nw, standardWindowButton: 2usize];
         let (left, strip) = match zoom {
             Some(b) => {
                 let r: NSRect = msg_send![&*b, frame];
                 // the lights' own view: the title strip, above any tab bar
-                let sup: Option<objc2::rc::Retained<objc2::runtime::AnyObject>> = msg_send![&*b, superview];
+                let sup: Option<objc2::rc::Retained<objc2::runtime::AnyObject>> =
+                    msg_send![&*b, superview];
                 let strip = match sup {
                     Some(v) => {
                         let f: NSRect = msg_send![&*v, frame];
@@ -1704,7 +1713,8 @@ fn titlebar_double(win: &Window) {
             }
             "None" => {}
             _ => {
-                let _: () = msg_send![&*nw, performZoom: std::ptr::null::<objc2::runtime::AnyObject>()];
+                let _: () =
+                    msg_send![&*nw, performZoom: std::ptr::null::<objc2::runtime::AnyObject>()];
             }
         }
     }
@@ -2173,7 +2183,8 @@ impl App {
                             .set_min_inner_size(Some(winit::dpi::LogicalSize::new(w, h)));
                     }
                     if let Ok(Some((x, y))) = get_pair(&v, "at", "gui.set") {
-                        pw.win.set_outer_position(winit::dpi::LogicalPosition::new(x, y));
+                        pw.win
+                            .set_outer_position(winit::dpi::LogicalPosition::new(x, y));
                     }
                     if let Ok(Some(b)) = get_bool(&v, "visible", "gui.set") {
                         pw.win.set_visible(b);
@@ -2532,10 +2543,15 @@ impl App {
                     && state == ElementState::Pressed
                     && !ctrl_left
                     && let Some(pw) = self.windows.get(&id)
-                    && pw.state.lock().is_ok_and(|st| st.scene.drags_window_at(x, y))
+                    && pw
+                        .state
+                        .lock()
+                        .is_ok_and(|st| st.scene.drags_window_at(x, y))
                 {
                     let now = std::time::Instant::now();
-                    let double = self.bar_press.is_some_and(|(w, t)| w == id && now.duration_since(t).as_millis() < 400);
+                    let double = self
+                        .bar_press
+                        .is_some_and(|(w, t)| w == id && now.duration_since(t).as_millis() < 400);
                     if double {
                         self.bar_press = None;
                         titlebar_double(&pw.win);

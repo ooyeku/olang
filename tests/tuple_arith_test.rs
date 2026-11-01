@@ -29,9 +29,7 @@ fn eval(source: &str, tier: bool) -> Result<String, String> {
 
 /// `expr` inside a function called often enough to be promoted, shown.
 fn both(expr: &str) -> (Result<String, String>, Result<String, String>) {
-    let src = format!(
-        "fn f(k) = {expr}\nlet r = range(0, 20) |> map((k) => f(k))\nshow(r[19])"
-    );
+    let src = format!("fn f(k) = {expr}\nlet r = range(0, 20) |> map((k) => f(k))\nshow(r[19])");
     (eval(&src, false), eval(&src, true))
 }
 
@@ -82,5 +80,8 @@ fn what_is_not_arithmetic_is_refused() {
 
 #[test]
 fn a_position_steps_as_written() {
-    agree("{ let p = (0.0, 0.0)\n let v = (1.0, 2.0)\n p + v * 0.5 }", "(0.5, 1.0)");
+    agree(
+        "{ let p = (0.0, 0.0)\n let v = (1.0, 2.0)\n p + v * 0.5 }",
+        "(0.5, 1.0)",
+    );
 }

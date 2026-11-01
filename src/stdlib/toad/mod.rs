@@ -13,13 +13,13 @@
 //! toad.step(s, #{ "dt": 1.0 / 120.0 })
 //! ```
 
+#[cfg(feature = "audio")]
+pub mod audio;
 pub mod cpu;
 pub mod kernel;
 #[cfg(feature = "gamepad")]
 pub mod pad;
 pub mod physics;
-#[cfg(feature = "audio")]
-pub mod audio;
 #[cfg(feature = "gui")]
 pub mod render;
 pub mod wgsl;
@@ -163,7 +163,11 @@ fn map_of<'a>(v: &'a Value, what: &str) -> Result<&'a ValueMap, String> {
     match v {
         Value::Map(m) => Ok(m),
         Value::Struct { fields, .. } => Ok(fields),
-        other => Err(format!("toad: {} is {}, expected a map", what, other.type_name())),
+        other => Err(format!(
+            "toad: {} is {}, expected a map",
+            what,
+            other.type_name()
+        )),
     }
 }
 
@@ -303,10 +307,13 @@ fn uniforms(p: &Program, world: &Value) -> Result<Vec<f32>, String> {
     for s in &p.uniforms.slots {
         let Some(v) = m.get(&s.name) else { continue };
         match s.ty {
-            Ty::F => u[s.at] = num(v).ok_or_else(|| format!("toad: the world's `{}` is not a number", s.name))?,
+            Ty::F => {
+                u[s.at] = num(v)
+                    .ok_or_else(|| format!("toad: the world's `{}` is not a number", s.name))?
+            }
             Ty::V2 => {
-                let (x, y) =
-                    pair(v).ok_or_else(|| format!("toad: the world's `{}` is not a pair", s.name))?;
+                let (x, y) = pair(v)
+                    .ok_or_else(|| format!("toad: the world's `{}` is not a pair", s.name))?;
                 u[s.at] = x;
                 u[s.at + 1] = y;
             }
@@ -315,7 +322,11 @@ fn uniforms(p: &Program, world: &Value) -> Result<Vec<f32>, String> {
     Ok(u)
 }
 
-pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(Option<&str>, &str) -> Option<Value>) -> R {
+pub fn call_toad_function(
+    name: &str,
+    args: Vec<Value>,
+    scope: &dyn Fn(Option<&str>, &str) -> Option<Value>,
+) -> R {
     const UNIT: &Value = &Value::Unit;
     let a = |i: usize| args.get(i).unwrap_or(UNIT);
     match name {
@@ -379,11 +390,16 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(Option<&s
                 #[cfg(feature = "gui")]
                 "show" => match wgsl::GpuSwarm::new(&p, cap) {
                     Ok(g) => Some(g),
-                    Err(e) => return Ok(err(format!("toad.swarm: no GPU for a show swarm: {}", e))),
+                    Err(e) => {
+                        return Ok(err(format!("toad.swarm: no GPU for a show swarm: {}", e)));
+                    }
                 },
                 #[cfg(not(feature = "gui"))]
                 "show" => {
-                    return Ok(err("toad.swarm: show swarms need a GPU, which this build has not got".to_string()));
+                    return Ok(err(
+                        "toad.swarm: show swarms need a GPU, which this build has not got"
+                            .to_string(),
+                    ));
                 }
                 "play" => None,
                 other => {
@@ -521,7 +537,10 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(Option<&s
             Ok(Value::Unit)
         }
         #[cfg(feature = "audio")]
-        "listen" => Ok(audio::listen(id_of(args.first(), "sound")?, num(a(1)).unwrap_or(1.0))?),
+        "listen" => Ok(audio::listen(
+            id_of(args.first(), "sound")?,
+            num(a(1)).unwrap_or(1.0),
+        )?),
         #[cfg(not(feature = "audio"))]
         "audio" | "sound" | "sound_info" | "play" | "stop" | "tune" | "volume" | "listen" => {
             Err(format!("toad.{name}: sound needs the native build (feature `audio`)").into())
@@ -543,10 +562,14 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(Option<&s
             st.worlds.insert(id, w);
             Ok(Value::Integer(id))
         }),
-        "body" | "unbody" | "push" | "joint" | "unjoint" | "simulate" | "pose" | "ray" | "overlap" | "warm" | "walk" => {
+        "body" | "unbody" | "push" | "joint" | "unjoint" | "simulate" | "pose" | "ray"
+        | "overlap" | "warm" | "walk" => {
             let wid = id_of(args.first(), "physics")?;
             with(|st| -> R {
-                let w = st.worlds.get_mut(&wid).ok_or("toad: no such physics world")?;
+                let w = st
+                    .worlds
+                    .get_mut(&wid)
+                    .ok_or("toad: no such physics world")?;
                 let n = |i: usize, what: &str| -> Result<i64, String> { id_of(args.get(i), what) };
                 let pt = |i: usize, what: &str| -> Result<(f32, f32), String> {
                     pair(a(i)).ok_or_else(|| format!("toad.{name}: {what} is a pair"))
@@ -580,7 +603,11 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(Option<&s
                         };
                         w.walk(n(1, "body")?, pt(2, "the step")?, a(3), dt)?
                     }
-                    _ => w.overlap(pt(1, "at")?, num(a(2)).ok_or("toad.overlap: the radius is a number")?, a(3))?,
+                    _ => w.overlap(
+                        pt(1, "at")?,
+                        num(a(2)).ok_or("toad.overlap: the radius is a number")?,
+                        a(3),
+                    )?,
                 })
             })
         }
@@ -588,7 +615,10 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(Option<&s
             let sid = id_of(args.first(), "swarm")?;
             let wid = id_of(args.get(1), "physics")?;
             with(|st| -> R {
-                let w = st.worlds.get_mut(&wid).ok_or("toad: no such physics world")?;
+                let w = st
+                    .worlds
+                    .get_mut(&wid)
+                    .ok_or("toad: no such physics world")?;
                 let sw = st.swarms.get_mut(&sid).ok_or("toad: no such swarm")?;
                 #[cfg(feature = "gui")]
                 if let Some(g) = &sw.gpu {
@@ -602,13 +632,21 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(Option<&s
                         }
                     };
                     let c = wgsl::GpuCollide {
-                        pos: f.get("pos").filter(|s| s.ty == Ty::V2).map(|s| s.at).ok_or("toad.collide: the swarm has no pair `pos`")?,
+                        pos: f
+                            .get("pos")
+                            .filter(|s| s.ty == Ty::V2)
+                            .map(|s| s.at)
+                            .ok_or("toad.collide: the swarm has no pair `pos`")?,
                         vel: f.get("vel").filter(|s| s.ty == Ty::V2).map(|s| s.at),
                         mark: slot("mark", Ty::F),
                         die: matches!(m.get("die"), Some(Value::Boolean(true))),
                         radius: m.get("radius").and_then(num).unwrap_or(4.0),
                         bounce: m.get("bounce").and_then(num).unwrap_or(0.5).clamp(0.0, 1.0),
-                        friction: m.get("friction").and_then(num).unwrap_or(0.0).clamp(0.0, 1.0),
+                        friction: m
+                            .get("friction")
+                            .and_then(num)
+                            .unwrap_or(0.0)
+                            .clamp(0.0, 1.0),
                         rest: m.get("rest").and_then(num).unwrap_or(20.0).max(0.0),
                     };
                     g.collide(sw.cols.n, &w.gpu_shapes(), &c);
@@ -621,10 +659,16 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(Option<&s
                     return Err("toad.collide: a show swarm needs the GPU build to collide".into());
                 }
                 let (hits, dead) = physics::collide(w, &sw.program, &mut sw.cols, a(2))?;
-                let died = if dead.is_empty() { 0 } else { cpu::compact(&mut sw.cols, &dead) };
+                let died = if dead.is_empty() {
+                    0
+                } else {
+                    cpu::compact(&mut sw.cols, &dead)
+                };
                 let hits = hits
                     .into_iter()
-                    .map(|(b, k)| Value::Tuple(Arc::new(vec![Value::Integer(b), Value::Integer(k)])))
+                    .map(|(b, k)| {
+                        Value::Tuple(Arc::new(vec![Value::Integer(b), Value::Integer(k)]))
+                    })
                     .collect();
                 let mut out = ValueMap::default();
                 out.insert("hits".into(), Value::List(Arc::new(hits)));
@@ -643,12 +687,27 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(Option<&s
                 let r = (|| -> R {
                     let b_sw = st.swarms.get_mut(&sb).ok_or("toad: no such swarm")?;
                     if a_sw.gpu.is_some() || b_sw.gpu.is_some() {
-                        return Err("toad.meet: show swarms live on the GPU; play swarms meet".into());
+                        return Err(
+                            "toad.meet: show swarms live on the GPU; play swarms meet".into()
+                        );
                     }
-                    let (met, da, db) =
-                        physics::meet(&a_sw.program, &mut a_sw.cols, &b_sw.program, &mut b_sw.cols, a(2))?;
-                    let died_a = if da.is_empty() { 0 } else { cpu::compact(&mut a_sw.cols, &da) };
-                    let died_b = if db.is_empty() { 0 } else { cpu::compact(&mut b_sw.cols, &db) };
+                    let (met, da, db) = physics::meet(
+                        &a_sw.program,
+                        &mut a_sw.cols,
+                        &b_sw.program,
+                        &mut b_sw.cols,
+                        a(2),
+                    )?;
+                    let died_a = if da.is_empty() {
+                        0
+                    } else {
+                        cpu::compact(&mut a_sw.cols, &da)
+                    };
+                    let died_b = if db.is_empty() {
+                        0
+                    } else {
+                        cpu::compact(&mut b_sw.cols, &db)
+                    };
                     let mut out = ValueMap::default();
                     out.insert("met".into(), Value::Integer(met));
                     out.insert("died_a".into(), Value::Integer(died_a as i64));
@@ -694,7 +753,9 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(Option<&s
                 let n = sw.cols.n;
                 let data: Vec<f32> = match &sw.gpu {
                     Some(g) => g.read(n),
-                    None => (0..sw.cols.width).flat_map(|c| sw.cols.col(c).to_vec()).collect(),
+                    None => (0..sw.cols.width)
+                        .flat_map(|c| sw.cols.col(c).to_vec())
+                        .collect(),
                 };
                 let (at, ty) = if field == "dead" && sw.gpu.is_some() {
                     (sw.program.fields.width, Ty::F)
@@ -713,7 +774,10 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(Option<&s
                         .iter()
                         .zip(col(at + 1))
                         .map(|(x, y)| {
-                            Value::Tuple(Arc::new(vec![Value::Float(*x as f64), Value::Float(*y as f64)]))
+                            Value::Tuple(Arc::new(vec![
+                                Value::Float(*x as f64),
+                                Value::Float(*y as f64),
+                            ]))
                         })
                         .collect(),
                 };
@@ -724,7 +788,10 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(Option<&s
         "gpu" => Ok(match crate::stdlib::gui::gpu::gpu(None, None) {
             Ok(g) => {
                 let i = g.adapter.get_info();
-                ok(Value::String(Arc::new(format!("{} ({:?})", i.name, i.backend))))
+                ok(Value::String(Arc::new(format!(
+                    "{} ({:?})",
+                    i.name, i.backend
+                ))))
             }
             Err(e) => err(e),
         }),
@@ -736,12 +803,21 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(Option<&s
             let (ls, rs, lt, rt, pads) = {
                 let p = pad::poll();
                 // a scripted run's sticks are still
-                if crate::stdlib::gui::keys::is_scripted() { ((0.0, 0.0), (0.0, 0.0), 0.0, 0.0, p.4) } else { p }
+                if crate::stdlib::gui::keys::is_scripted() {
+                    ((0.0, 0.0), (0.0, 0.0), 0.0, 0.0, p.4)
+                } else {
+                    p
+                }
             };
             #[cfg(not(feature = "gamepad"))]
-            let (ls, rs, lt, rt, pads) = ((0.0f32, 0.0f32), (0.0f32, 0.0f32), 0.0f32, 0.0f32, 0usize);
+            let (ls, rs, lt, rt, pads) =
+                ((0.0f32, 0.0f32), (0.0f32, 0.0f32), 0.0f32, 0.0f32, 0usize);
             let (down, pressed, released) = crate::stdlib::gui::keys::read();
-            let list = |v: Vec<String>| Value::List(Arc::new(v.into_iter().map(|k| Value::String(Arc::new(k))).collect()));
+            let list = |v: Vec<String>| {
+                Value::List(Arc::new(
+                    v.into_iter().map(|k| Value::String(Arc::new(k))).collect(),
+                ))
+            };
             let mut out = ValueMap::default();
             out.insert("down".into(), list(down));
             out.insert("pressed".into(), list(pressed));
@@ -750,11 +826,19 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(Option<&s
             out.insert(
                 "mouse".into(),
                 match crate::stdlib::gui::keys::pointer() {
-                    Some((x, y)) => Value::Tuple(Arc::new(vec![Value::Float(x as f64), Value::Float(y as f64)])),
+                    Some((x, y)) => Value::Tuple(Arc::new(vec![
+                        Value::Float(x as f64),
+                        Value::Float(y as f64),
+                    ])),
                     None => Value::Unit,
                 },
             );
-            let p = |v: (f32, f32)| Value::Tuple(Arc::new(vec![Value::Float(v.0 as f64), Value::Float(v.1 as f64)]));
+            let p = |v: (f32, f32)| {
+                Value::Tuple(Arc::new(vec![
+                    Value::Float(v.0 as f64),
+                    Value::Float(v.1 as f64),
+                ]))
+            };
             out.insert("left".into(), p(ls));
             out.insert("right".into(), p(rs));
             out.insert("lt".into(), Value::Float(lt as f64));
@@ -775,7 +859,16 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(Option<&s
             let Value::List(ks) = a(0) else {
                 return Err("toad.hold: the keys are a list of names".into());
             };
-            let names: Vec<String> = ks.iter().filter_map(|k| if let Value::String(s) = k { Some(s.to_string()) } else { None }).collect();
+            let names: Vec<String> = ks
+                .iter()
+                .filter_map(|k| {
+                    if let Value::String(s) = k {
+                        Some(s.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
             crate::stdlib::gui::keys::hold(&names);
             Ok(Value::Unit)
         }
@@ -806,7 +899,9 @@ pub fn call_toad_function(name: &str, args: Vec<Value>, scope: &dyn Fn(Option<&s
         #[cfg(all(feature = "gui", not(target_os = "macos")))]
         "shared" => Ok(Value::Unit),
         #[cfg(not(feature = "gui"))]
-        "gpu" | "frame" | "input" | "press" | "wanted" | "shared" => Ok(err(format!("toad.{}: this build has no window", name))),
+        "gpu" | "frame" | "input" | "press" | "wanted" | "shared" => {
+            Ok(err(format!("toad.{}: this build has no window", name)))
+        }
         _ => Err(format!("toad.{} is not a function", name).into()),
     }
 }
@@ -834,7 +929,16 @@ fn rgba(v: Option<&Value>, d: [f32; 4]) -> [f32; 4] {
         Some(Value::String(s)) if s.starts_with('#') && (s.len() == 7 || s.len() == 9) => {
             let h = |i: usize| u8::from_str_radix(&s[i..i + 2], 16).map(|x| x as f32 / 255.0);
             match (h(1), h(3), h(5)) {
-                (Ok(r), Ok(g), Ok(b)) => [r, g, b, if s.len() == 9 { h(7).unwrap_or(1.0) } else { 1.0 }],
+                (Ok(r), Ok(g), Ok(b)) => [
+                    r,
+                    g,
+                    b,
+                    if s.len() == 9 {
+                        h(7).unwrap_or(1.0)
+                    } else {
+                        1.0
+                    },
+                ],
                 _ => return d,
             }
         }
@@ -860,7 +964,9 @@ fn shape_of(v: &Value, out: &mut Vec<f32>) -> Result<(), String> {
     let mat = match m.get("material") {
         Some(Value::Map(mm)) => Some(mm.clone()),
         Some(Value::Unit) | None => None,
-        Some(_) => return Err("toad.frame: a shape's `material` is a map (from `material`)".into()),
+        Some(_) => {
+            return Err("toad.frame: a shape's `material` is a map (from `material`)".into());
+        }
     };
     // the shape's own, `()` included (none of it), else the material's
     let get = |k: &str| m.get(k).or_else(|| mat.as_ref().and_then(|mm| mm.get(k)));
@@ -878,7 +984,9 @@ fn shape_of(v: &Value, out: &mut Vec<f32>) -> Result<(), String> {
     }
     let (at, half, rot, k, line) = match kind.as_str() {
         "line" => {
-            let a = p("from").or(p("at")).ok_or("toad.frame: a line needs `from` and `to`")?;
+            let a = p("from")
+                .or(p("at"))
+                .ok_or("toad.frame: a line needs `from` and `to`")?;
             let b = p("to").ok_or("toad.frame: a line needs `to`")?;
             let wdt = n("width", 2.0);
             let (dx, dy) = (b.0 - a.0, b.1 - a.1);
@@ -924,16 +1032,51 @@ fn shape_of(v: &Value, out: &mut Vec<f32>) -> Result<(), String> {
     let cast = if flag("cast", false) { 1.0 } else { 0.0 };
     let pattern = match get("pattern") {
         None | Some(Value::Unit) => 0.0,
-        Some(Value::String(name)) => render::PATTERNS.iter().position(|p| *p == name.as_str()).ok_or_else(|| {
-            format!("toad.frame: a pattern is one of {}, not {}", render::PATTERNS.join(", "), name)
-        })? as f32,
+        Some(Value::String(name)) => render::PATTERNS
+            .iter()
+            .position(|p| *p == name.as_str())
+            .ok_or_else(|| {
+                format!(
+                    "toad.frame: a pattern is one of {}, not {}",
+                    render::PATTERNS.join(", "),
+                    name
+                )
+            })? as f32,
         Some(_) => return Err("toad.frame: a shape's `pattern` is a name".into()),
     };
     out.extend_from_slice(&[
-        at.0, at.1, half.0, half.1, rot, k, n("round", 0.0), line, c[0], c[1], c[2], c[3], n("emit", 0.0), cast,
-        n("relief", 0.0).max(0.0), n("gloss", 0.0).clamp(0.0, 1.0), c2[0], c2[1], c2[2], c2[3], pattern,
-        n("scale", 24.0), n("speed", 0.0), n("seed", 0.0).max(0.0), n("angle", 0.0),
-        if flag("lit", true) { 0.0 } else { 1.0 }, n("bump", 0.0).max(0.0), 0.0, 0.0, 0.0, 0.0, 0.0,
+        at.0,
+        at.1,
+        half.0,
+        half.1,
+        rot,
+        k,
+        n("round", 0.0),
+        line,
+        c[0],
+        c[1],
+        c[2],
+        c[3],
+        n("emit", 0.0),
+        cast,
+        n("relief", 0.0).max(0.0),
+        n("gloss", 0.0).clamp(0.0, 1.0),
+        c2[0],
+        c2[1],
+        c2[2],
+        c2[3],
+        pattern,
+        n("scale", 24.0),
+        n("speed", 0.0),
+        n("seed", 0.0).max(0.0),
+        n("angle", 0.0),
+        if flag("lit", true) { 0.0 } else { 1.0 },
+        n("bump", 0.0).max(0.0),
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
     ]);
     Ok(())
 }
@@ -974,7 +1117,11 @@ fn frame(layers: &Value, view: &Value) -> R {
         ui_scale: getn("ui_scale", 1.0),
     };
     let probes: Vec<(u32, u32)> = match vm.get("probe") {
-        Some(Value::List(ps)) => ps.iter().filter_map(pair).map(|(x, y)| (x.max(0.0) as u32, y.max(0.0) as u32)).collect(),
+        Some(Value::List(ps)) => ps
+            .iter()
+            .filter_map(pair)
+            .map(|(x, y)| (x.max(0.0) as u32, y.max(0.0) as u32))
+            .collect(),
         _ => Vec::new(),
     };
     let want_png = matches!(vm.get("png"), Some(Value::Boolean(true))) || !probes.is_empty();
@@ -1042,7 +1189,8 @@ fn frame(layers: &Value, view: &Value) -> R {
             }
             if let Some(Value::List(sprites)) = lm.get("sprites") {
                 // runs of one picture, in order
-                let mut runs: Vec<(Arc<crate::stdlib::gui::canvas::Picture>, Vec<f32>)> = Vec::new();
+                let mut runs: Vec<(Arc<crate::stdlib::gui::canvas::Picture>, Vec<f32>)> =
+                    Vec::new();
                 for s in sprites.iter() {
                     let sm = map_of(s, "a sprite")?;
                     let at = sm.get("at").and_then(pair).unwrap_or((0.0, 0.0));
@@ -1075,7 +1223,9 @@ fn frame(layers: &Value, view: &Value) -> R {
                         let t = rgba(sm.get("color"), [1.0, 1.0, 1.0, 1.0]);
                         (pic, w, h, t, !lit_flag(false))
                     } else {
-                        let src = sm.get("src").ok_or("toad.frame: a sprite needs a `src` (or a `text`)")?;
+                        let src = sm
+                            .get("src")
+                            .ok_or("toad.frame: a sprite needs a `src` (or a `text`)")?;
                         let (pic, _) = crate::stdlib::gui::picture::get(src, None, None)?
                             .ok_or("toad.frame: a sprite's picture could not be read")?;
                         let (w, h) = match sm.get("size") {
@@ -1097,8 +1247,18 @@ fn frame(layers: &Value, view: &Value) -> R {
                     let emit = sm.get("emit").and_then(num).unwrap_or(0.0).max(0.0);
                     let cast = matches!(sm.get("cast"), Some(Value::Boolean(true)));
                     let row = [
-                        at.0, at.1, w / 2.0, h / 2.0, rot, if unlit { 1.0 } else { 0.0 }, emit,
-                        if cast { 1.0 } else { 0.0 }, t[0] * glow, t[1] * glow, t[2] * glow, t[3],
+                        at.0,
+                        at.1,
+                        w / 2.0,
+                        h / 2.0,
+                        rot,
+                        if unlit { 1.0 } else { 0.0 },
+                        emit,
+                        if cast { 1.0 } else { 0.0 },
+                        t[0] * glow,
+                        t[1] * glow,
+                        t[2] * glow,
+                        t[3],
                     ];
                     match runs.last_mut() {
                         Some((p, v)) if p.id == pic.id => v.extend_from_slice(&row),
@@ -1166,14 +1326,20 @@ fn frame(layers: &Value, view: &Value) -> R {
             let (w, h) = view.size;
             let at = |x: u32, y: u32| {
                 let i = ((y.min(h - 1) * w + x.min(w - 1)) * 4) as usize;
-                Value::Tuple(Arc::new((0..3).map(|c| Value::Integer(px[i + c] as i64)).collect()))
+                Value::Tuple(Arc::new(
+                    (0..3).map(|c| Value::Integer(px[i + c] as i64)).collect(),
+                ))
             };
-            out.insert("probe".into(), Value::List(Arc::new(probes.iter().map(|&(x, y)| at(x, y)).collect())));
+            out.insert(
+                "probe".into(),
+                Value::List(Arc::new(probes.iter().map(|&(x, y)| at(x, y)).collect())),
+            );
         }
         if let Some(px) = px.filter(|_| matches!(vm.get("png"), Some(Value::Boolean(true)))) {
             let pm = tiny_skia::Pixmap::from_vec(
                 px,
-                tiny_skia::IntSize::from_wh(view.size.0, view.size.1).ok_or("toad.frame: no size")?,
+                tiny_skia::IntSize::from_wh(view.size.0, view.size.1)
+                    .ok_or("toad.frame: no size")?,
             )
             .ok_or("toad.frame: the frame's pixels")?;
             let png = pm.encode_png().map_err(|e| format!("toad.frame: {}", e))?;

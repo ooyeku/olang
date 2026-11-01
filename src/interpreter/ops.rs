@@ -392,8 +392,10 @@ impl Interpreter {
                 Ok(Value::Boolean(true))
             }
             (l, op, r) if tuple_arith(&l, &op, &r, &mut |_, _| Ok(Value::Unit)).is_some() => {
-                tuple_arith(&l, &op, &r, &mut |x, y| self.eval_binary_op(x, op.clone(), y))
-                    .expect("a tuple case")
+                tuple_arith(&l, &op, &r, &mut |x, y| {
+                    self.eval_binary_op(x, op.clone(), y)
+                })
+                .expect("a tuple case")
             }
             (l, op, r) => Err(InterpreterError::TypeError {
                 message: format!(
@@ -505,7 +507,11 @@ pub fn tuple_arith(
 ) -> Option<Result<Value, InterpreterError>> {
     let arith = matches!(
         op,
-        BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide | BinaryOp::Modulo
+        BinaryOp::Add
+            | BinaryOp::Subtract
+            | BinaryOp::Multiply
+            | BinaryOp::Divide
+            | BinaryOp::Modulo
     );
     if !arith {
         return None;
@@ -526,9 +532,16 @@ pub fn tuple_arith(
                     ),
                 }));
             }
-            Some(out(a.iter().zip(b.iter()).map(|(x, y)| each(x.clone(), y.clone())).collect()))
+            Some(out(a
+                .iter()
+                .zip(b.iter())
+                .map(|(x, y)| each(x.clone(), y.clone()))
+                .collect()))
         }
-        (Value::Tuple(a), n) if number(n) && matches!(op, BinaryOp::Multiply | BinaryOp::Divide | BinaryOp::Modulo) => {
+        (Value::Tuple(a), n)
+            if number(n)
+                && matches!(op, BinaryOp::Multiply | BinaryOp::Divide | BinaryOp::Modulo) =>
+        {
             Some(out(a.iter().map(|x| each(x.clone(), n.clone())).collect()))
         }
         (n, Value::Tuple(b)) if number(n) && matches!(op, BinaryOp::Multiply) => {

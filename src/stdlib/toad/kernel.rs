@@ -216,7 +216,12 @@ impl<'a> Lower<'a> {
             Value::Float(x) => Some(*x as f32),
             _ => None,
         };
-        let found = self.f.closure.get(name).cloned().or_else(|| (self.scope)(self.f.def_file.as_deref(), name));
+        let found = self
+            .f
+            .closure
+            .get(name)
+            .cloned()
+            .or_else(|| (self.scope)(self.f.def_file.as_deref(), name));
         match found.as_ref() {
             Some(v) if num(v).is_some() => Ok(V::S(self.k(num(v).unwrap()))),
             Some(Value::Boolean(b)) => Ok(V::Bool(self.k(if *b { 1.0 } else { 0.0 }))),
@@ -286,11 +291,18 @@ impl<'a> Lower<'a> {
 
     fn bin(&mut self, b: B, x: V, y: V) -> R<V> {
         use V::*;
-        let arith = matches!(b, B::Add | B::Sub | B::Mul | B::Div | B::Rem | B::Min | B::Max | B::Pow);
+        let arith = matches!(
+            b,
+            B::Add | B::Sub | B::Mul | B::Div | B::Rem | B::Min | B::Max | B::Pow
+        );
         Ok(match (x, y) {
             (S(a), S(c)) => {
                 let r = self.op(Op::Bin(b, a, c));
-                if arith || b == B::Atan2 { S(r) } else { Bool(r) }
+                if arith || b == B::Atan2 {
+                    S(r)
+                } else {
+                    Bool(r)
+                }
             }
             (P(ax, ay), P(cx, cy)) if arith => {
                 let rx = self.op(Op::Bin(b, ax, cx));
@@ -642,7 +654,9 @@ pub fn compile(
                 writes.push((s.at, x));
                 writes.push((s.at + 1, y));
             }
-            (Ty::F, _) => return l.err(format!("`{}` is a number and is set to something else", k)),
+            (Ty::F, _) => {
+                return l.err(format!("`{}` is a number and is set to something else", k));
+            }
             (Ty::V2, _) => return l.err(format!("`{}` is a pair and is set to something else", k)),
         }
     }
