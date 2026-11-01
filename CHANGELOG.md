@@ -199,6 +199,9 @@ fixes land. `sim` and `peg` ship as Experimental (docs/stability.md).
 - **`dates.stamp` and `dates.stamp_ms` are recorded** by `olang record`,
   as the other wall-clock reads are; a replay used to read the clock
   live there.
+- **`runtime.features("browser")` and `runtime.features("full")` no
+  longer list `toad`** when the native binary answers: the game engine
+  is native-only, and the browser runtime never had it.
 
 ## [1.0.0-rc.5] - 2026-10-27
 
