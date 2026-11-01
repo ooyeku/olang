@@ -1,8 +1,7 @@
 # The olang book
 
-This book is the guide to olang, a programming language for small
-tools, data work and web apps that you can trust after they are written.
-It starts with what olang is and why it exists, teaches the language
+This book is the guide to olang. olang is a programming language for
+small tools, data work and web apps. It starts with what olang is and why it exists, teaches the language
 through one worked example, and then goes as deep as you like: the full
 language, the standard library, the tools, olang in the browser, and how
 the engines underneath work.
