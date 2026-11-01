@@ -86,13 +86,16 @@ rolled [5, 2, 6], total 13
 olang replay: clean — 3 recorded event(s) reproduced
 ```
 
-The trace carries the program's source inside it, so it replays on
-another machine, next month, with the original file gone. A run that
-crashes is recorded too, which means a colleague can send you the trace
-of a failure and you can watch it fail as many times as you need. If the
-program has changed so that it no longer asks for the same things in the
-same order, replay stops at that point and tells you, instead of quietly
-producing a different run. [Record and
+The trace carries the program's source inside it, so it replays next
+month, on another Mac, with the original file gone. A replay is
+guaranteed exact on macOS, by the same olang version that made the
+recording; a later olang still reads the trace, and if anything about
+the run has changed it stops at the first difference and says so. A run
+that crashes is recorded too, which means a colleague can send you the
+trace of a failure and you can watch it fail as many times as you need.
+If the program has changed so that it no longer asks for the same things
+in the same order, replay stops at that point and tells you, instead of
+quietly producing a different run. [Record and
 replay](tooling.md#olang-record-and-olang-replay--the-open-timeline) has
 the details.
 

@@ -47,10 +47,9 @@ runs on Linux and Windows, where olang is an unsupported preview.
 
 macOS is the platform every release is tested and verified on (Apple
 silicon; the Intel build is made from the same source), and every
-guarantee in this chapter is made for it. On Linux and Windows a
-program may run, but no behaviour there is promised: Linux binaries are
-released and its headless tests pass, and Windows compiles and is
-unverified. The
+guarantee in this chapter is made for it. On Linux and Windows a program
+may run, but no behaviour there is promised: Linux binaries are released
+and its headless tests pass, and Windows compiles and is unverified. The
 desktop engine's windows on Windows and Wayland, the terminal layer on
 Windows, and the capabilities `gui.platform()` reports false are untried
 or incomplete. A difference between macOS and a preview platform is not
@@ -304,7 +303,7 @@ have a contract too, tiered as the language is:
 | `repl --serve`'s protocol | Stable, additive | Its `protocol` number changes only when a request or reply changes shape; new requests, fields and `features` are added under it. |
 | `olang.toml` and `olang.lock` | Stable | The documented keys keep their meanings. The lock's `version` changes only when its meaning does, and an olang refuses a newer one by name. `[check] promote`'s class names are contract; `all` is every class the running olang knows. |
 | `shelf.toml` | Stable | Its `version` is checked as the lock's is. |
-| `.olt` traces | Stable | The trace format is versioned: a later olang reads an earlier trace, and refuses a newer one by name. |
+| `.olt` traces | Stable | The trace format is versioned: a later olang reads an earlier trace, and refuses a newer one by name. A replay is guaranteed exact on macOS, by the same olang version that made the recording; under another version a replay that diverges stops at the first difference and says so. |
 | Public environment variables ([the table](tooling.md#environment-variables)) | Stable | The variables marked public keep their names and meanings. |
 | `olang fmt`'s output | Stable within a minor | The formatter's output changes only in a minor release, and each change is recorded in the CHANGELOG, so `olang fmt --check` in CI changes verdict only when olang's minor version does. |
 | `olang sim` and `olang sim view`: their flags, report and exit codes; `.sim/*.simplan` plans; the timeline's `--json` | Experimental | May change in a minor release, recorded in the CHANGELOG. A plan replays only on the olang that saved it. |
