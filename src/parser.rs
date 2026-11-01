@@ -1102,6 +1102,7 @@ impl Parser {
             Some(statements) => statements,
             None => self.parse_statements(input, input)?,
         };
+        self.check_inherent_impl(&statements, input)?;
         self.check_bare_share(&statements, input)?;
         Ok(Program { statements })
     }
@@ -1179,6 +1180,53 @@ impl Parser {
             }
         }
         Ok(statements)
+    }
+
+    fn check_inherent_impl(&self, statements: &[Statement], input: &str) -> Result<(), ParseError> {
+        // A bare `impl Type { ... }` is no declaration (methods come only
+        // from `impl Trait for Type`), and since `impl` is not reserved it
+        // parsed as three statements, the name `impl`, the name `Type` and
+        // a block, and failed at run time as "Undefined variable: impl".
+        // A statement `impl` followed on its line by a name is that form
+        // (checked before a bare `share`, so `share impl Type {` says this).
+        for pair in statements.windows(2) {
+            if let [
+                Statement::Located { stmt, line, column },
+                Statement::Located {
+                    stmt: next,
+                    line: next_line,
+                    ..
+                },
+            ] = pair
+                && let Statement::Expression(Expr::Identifier(name)) = stmt.as_ref()
+                && name == "impl"
+                && let Statement::Expression(Expr::Identifier(ty)) = next.as_ref()
+                && next_line == line
+            {
+                let source_line = input
+                    .lines()
+                    .nth((*line as usize).saturating_sub(1))
+                    .unwrap_or("");
+                return Err(ParseError::InvalidSyntaxWithPosition {
+                    message: format!(
+                        "olang has no inherent impl blocks: methods come from a trait, so \
+                         declare one (`trait Name {{ fn method(self) }}`) and write \
+                         `impl Name for {ty} {{ ... }}`"
+                    ),
+                    line: *line as usize,
+                    column: *column as usize,
+                    snippet: format!(
+                        "{:4} | {}\n{:4} | {}^",
+                        line,
+                        sanitize_snippet(source_line),
+                        "",
+                        " ".repeat((*column as usize).saturating_sub(1))
+                    )
+                    .into(),
+                });
+            }
+        }
+        Ok(())
     }
 
     fn check_bare_share(&self, statements: &[Statement], input: &str) -> Result<(), ParseError> {
@@ -5360,6 +5408,12 @@ impl ErrorSuggestionEngine {
         } else {
             ""
         };
+
+        // The bare-impl error names its own fix; the line heuristics below
+        // read `impl Counter {` as unmatched brackets
+        if message.starts_with("olang has no inherent impl blocks") {
+            return suggestions;
+        }
 
         Self::suggest_let_mut_typo(line_content, &mut suggestions);
         Self::suggest_unclosed_opener(line, column, input, &mut suggestions);

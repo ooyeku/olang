@@ -159,3 +159,52 @@ Dog {}.greet()
 "#;
     assert_eq!(s(eval(src)), "woof");
 }
+
+#[test]
+fn a_bare_impl_block_is_a_parse_error_that_names_the_trait_form() {
+    // olang has methods only through `impl Trait for Type`: a bare
+    // `impl Type { ... }` used to parse as three statements and fail at run
+    // time as "Undefined variable: impl".
+    let src =
+        "type Counter = struct { n: Int }\n\nimpl Counter {\n    fn bump(self) = self.n + 1\n}\n";
+    let err = eval_res(src).unwrap_err();
+    assert!(err.contains("line 3, column 1"), "{err}");
+    assert!(err.contains("no inherent impl blocks"), "{err}");
+    assert!(err.contains("impl Name for Counter { ... }"), "{err}");
+    // `share impl Counter {` names the same fix, not `share`'s
+    let err = eval_res(&src.replace("impl Counter", "share impl Counter")).unwrap_err();
+    assert!(err.contains("no inherent impl blocks"), "{err}");
+    // `impl` is still a name
+    assert_eq!(
+        eval_res("let impl = 3\nimpl + 1").unwrap(),
+        Value::Integer(4)
+    );
+
+    // `olang run` and `olang check` (text and JSON) say the same
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("counter.ol");
+    std::fs::write(&file, src).unwrap();
+    let olang = |args: &[&str]| {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_olang"))
+            .args(args)
+            .arg(&file)
+            .output()
+            .unwrap();
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (out.status.success(), text)
+    };
+    for args in [
+        &["run"][..],
+        &["check"][..],
+        &["check", "--format", "json"][..],
+    ] {
+        let (ok, text) = olang(args);
+        assert!(!ok, "{args:?}: {text}");
+        assert!(text.contains("no inherent impl blocks"), "{args:?}: {text}");
+        assert!(!text.contains("Undefined variable"), "{args:?}: {text}");
+    }
+}

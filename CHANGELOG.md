@@ -202,6 +202,9 @@ fixes land. `sim` and `peg` ship as Experimental (docs/stability.md).
 - **`runtime.features("browser")` and `runtime.features("full")` no
   longer list `toad`** when the native binary answers: the game engine
   is native-only, and the browser runtime never had it.
+- **A bare `impl Type { ... }` is a parse error that names the trait
+  form** (`impl Name for Type { ... }`), in `olang run`, `olang check`
+  and the editor; it failed at run time as "Undefined variable: impl".
 
 ## [1.0.0-rc.5] - 2026-10-27
 
