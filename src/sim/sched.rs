@@ -10,17 +10,19 @@
 //!   when none is, the clock jumps to the earliest timer and every timer
 //!   due then fires, in the order they were set.
 //! - **The seed picks who runs next.** At every yield point the runnable
-//!   tasks are taken in id order and one is drawn from the scheduler's
-//!   own stream (split from the world's seed). The same seed and the same
-//!   program make the same draws, so the same interleaving.
+//!   tasks are taken in id order and one is drawn. The same seed and the
+//!   same program make the same draws, so the same interleaving. A draw
+//!   is keyed by the instant and its number within it ([`Keyed`]), not
+//!   taken from one long stream: a run that differs early (a fault the
+//!   shrinker removed) makes the same draws again at every later instant
+//!   it reaches in the same state, instead of drawing everything after
+//!   the change afresh.
 //! - **The end is decided here too:** a deadline passed (the next timer
 //!   lies past it), every task blocked with no timer left (a deadlock,
 //!   with each task's site), or the step budget spent (a livelock guard).
 
-use rand::SeedableRng;
 use rand::prelude::*;
-use rand::rngs::StdRng;
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 
 /// A task in a world: 0 is the world's main program, then each `spawn`
 /// in the order it happened.
@@ -127,7 +129,8 @@ pub struct Sched {
     timer_seq: u64,
     /// Deliveries whose time has come, not yet handed to the world.
     due: VecDeque<u64>,
-    rng: StdRng,
+    /// Picks, keyed by the instant and their number within it.
+    draws: Keyed,
     /// S4: properties are checked before the clock moves on (`Pick::Check`).
     pub checking: bool,
     checked_steps: u64,
@@ -137,7 +140,7 @@ pub struct Sched {
     /// The chance a task that yields and could go on keeps the baton (a
     /// plan's simpler schedule; 0 draws as S1 did).
     stick: f64,
-    stick_rng: StdRng,
+    stick_draws: Keyed,
 }
 
 impl Sched {
@@ -154,13 +157,13 @@ impl Sched {
             timers: BTreeSet::new(),
             timer_seq: 0,
             due: VecDeque::new(),
-            rng: StdRng::seed_from_u64(seed),
+            draws: Keyed::new(seed),
             checking: false,
             checked_steps: 0,
             check_forced: false,
             preemptions: 0,
             stick: 0.0,
-            stick_rng: StdRng::seed_from_u64(seed ^ 0x5717_c4),
+            stick_draws: Keyed::new(seed ^ 0x5717_c4),
         }
     }
 
@@ -168,7 +171,7 @@ impl Sched {
     /// baton with chance `p` (1: until it blocks), from its own stream.
     pub fn set_stick(&mut self, p: f64, seed: u64) {
         self.stick = p.clamp(0.0, 1.0);
-        self.stick_rng = StdRng::seed_from_u64(seed);
+        self.stick_draws = Keyed::new(seed);
     }
 
     pub fn stick(&self) -> f64 {
@@ -349,27 +352,36 @@ impl Sched {
             if let Some(id) = self.due.pop_front() {
                 return Ok(Pick::Deliver(id));
             }
-            let runnable: Vec<TaskId> = (0..self.status.len())
-                .filter(|t| self.is_runnable(*t))
-                .collect();
-            if !runnable.is_empty() {
+            let mut count = 0;
+            let mut only = 0;
+            for t in 0..self.status.len() {
+                if self.is_runnable(t) {
+                    count += 1;
+                    only = t;
+                }
+            }
+            if count > 0 {
+                if count == 1 {
+                    return Ok(Pick::Run(only));
+                }
                 let prev_runs = self.is_runnable(prev);
+                let now = self.now;
                 if prev_runs
                     && self.stick > 0.0
-                    && runnable.len() > 1
-                    && (self.stick >= 1.0 || self.stick_rng.random::<f64>() < self.stick)
+                    && (self.stick >= 1.0
+                        || self.stick_draws.at(0, now).random::<f64>() < self.stick)
                 {
                     return Ok(Pick::Run(prev));
                 }
-                let i = if runnable.len() == 1 {
-                    0
-                } else {
-                    self.rng.random_range(0..runnable.len())
-                };
-                if prev_runs && runnable[i] != prev {
+                let i = self.draws.at(0, now).random_range(0..count);
+                let chosen = (0..self.status.len())
+                    .filter(|t| self.is_runnable(*t))
+                    .nth(i)
+                    .expect("a runnable task");
+                if prev_runs && chosen != prev {
                     self.preemptions += 1;
                 }
-                return Ok(Pick::Run(runnable[i]));
+                return Ok(Pick::Run(chosen));
             }
             if self.check_due() {
                 return Ok(Pick::Check);
@@ -411,6 +423,68 @@ pub enum Pick {
     /// Nothing can run at this instant and the clock is about to move (or
     /// the run to end): the world checks its properties first.
     Check,
+}
+
+/// A small generator for one keyed draw (splitmix64 over its key): a
+/// few numbers, cheap to make, as uniform as the world needs.
+#[derive(Debug)]
+pub struct Mix(u64);
+
+impl Mix {
+    pub fn new(key: u64) -> Mix {
+        Mix(key)
+    }
+}
+
+impl rand::TryRng for Mix {
+    type Error = std::convert::Infallible;
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        Ok((self.try_next_u64()? >> 32) as u32)
+    }
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        Ok(split(self.0, 0))
+    }
+    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
+        for chunk in dst.chunks_mut(8) {
+            let v = self.try_next_u64()?.to_le_bytes();
+            chunk.copy_from_slice(&v[..chunk.len()]);
+        }
+        Ok(())
+    }
+}
+
+/// Draws keyed by where and when they are made: the k-th draw at
+/// `place` in virtual millisecond `t` is the same number in every run of
+/// a seed that makes it, however many draws other places (or earlier
+/// instants) made. This is what lets the shrinker remove one fault
+/// without moving every later decision: a partition that is gone no
+/// longer shifts the latency of every message after it, only what
+/// happens at the instants the change actually reaches.
+#[derive(Debug, Default)]
+pub struct Keyed {
+    seed: u64,
+    counts: HashMap<u64, (u64, u64)>,
+}
+
+impl Keyed {
+    pub fn new(seed: u64) -> Keyed {
+        Keyed {
+            seed,
+            counts: HashMap::new(),
+        }
+    }
+
+    /// The generator for the next draw at `place`, at instant `t`.
+    pub fn at(&mut self, place: u64, t: u64) -> Mix {
+        let c = self.counts.entry(place).or_insert((t, 0));
+        if c.0 != t {
+            *c = (t, 0);
+        }
+        let k = c.1;
+        c.1 += 1;
+        Mix(split(split(split(self.seed, place), t), k))
+    }
 }
 
 /// splitmix64: one well-mixed 64-bit value from another. Seeds for the

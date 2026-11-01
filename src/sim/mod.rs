@@ -364,7 +364,7 @@ struct State {
     /// `sim.maybe`: which points are on in this world, and the stream
     /// that decides each time one is reached.
     maybe_on: BTreeMap<String, bool>,
-    maybe_rng: StdRng,
+    maybe_draws: sched::Keyed,
     /// Connections opened in this world: owner → (node, the disk's boot).
     db_owners: BTreeMap<u64, (NodeId, u64)>,
     /// `db.transaction` in progress: connection → (task, depth).
@@ -526,11 +526,9 @@ impl World {
                 for (path, bytes) in &info.files {
                     d.seed_file(&disk::normalize(&info.cwd, path), bytes.clone());
                 }
-                let stream = |n: u64| {
-                    StdRng::seed_from_u64(sched::split(sched::split(cfg.seed, n), i as u64))
-                };
                 let crash_p = info.crash.map(|c| c.p).unwrap_or(0.0);
-                let mut node_disk = vfs::NodeDisk::new(d, stream(3), stream(4), crash_p);
+                let seed = sched::split(sched::split(cfg.seed, 3), i as u64);
+                let mut node_disk = vfs::NodeDisk::new(d, seed, crash_p);
                 node_disk.place = i as u64;
                 node_disk.restart_after = info.crash.and_then(|c| c.restart_after);
                 node_disk.sites = sites_for(Some(i));
@@ -565,7 +563,7 @@ impl World {
                 failure: None,
                 faults: Vec::new(),
                 maybe_on: BTreeMap::new(),
-                maybe_rng: StdRng::seed_from_u64(sched::split(cfg.seed, 5)),
+                maybe_draws: sched::Keyed::new(sched::split(cfg.seed, 5)),
                 db_owners: BTreeMap::new(),
                 tx: BTreeMap::new(),
                 sites: sites_for(None),

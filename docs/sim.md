@@ -905,9 +905,15 @@ acknowledged put(s)"`, it took them down to two. A property's name
 never changes, which is one more reason to use properties.
 
 Shrinking works on faults, nodes, restart delays and how often the
-schedule switches tasks, not on single messages. When removing a fault
-changes the timing of everything after it, that fault stays even if it
-looks unrelated.
+schedule switches tasks, not on single messages. The seed's choices are
+tied to where and when they are made, not drawn one after another: a
+message's latency and loss come from its link and the millisecond it
+was sent, a scheduling choice from its instant. So removing a fault
+moves nothing else at instants it never reached, and a partition that
+cut another client does not stay just because removing it reshuffled
+every later message. A fault that really does change the timing of
+what follows (an earlier cut that delays the failing client's next
+request) stays, because without it the failure does not happen.
 
 ## Seeing a run
 
@@ -981,7 +987,12 @@ takes them: an answer slow enough to time out, a retry, a cache miss.
 `false`, so it costs nothing in production. Inside one, the seed turns
 each named point on or off for the whole run (about a quarter are on),
 and a point that is on answers `true` about a quarter of the times it
-is reached.
+is reached. Across many seeds, a point reached once answers `true` in
+about one run in sixteen, and a point reached three times in about one
+run in seven: most runs never take the rare path, and the ones that do
+take it often. Each point (on each node) draws on its own, so adding a
+point, or reaching another one more often, changes no other point's
+answers.
 
 Here is the first counter with one line added to its `/add` handler,
 before it answers:
@@ -1056,7 +1067,7 @@ either answered by the world or refused:
 | What | Inside a world |
 |---|---|
 | Time: `time.now_ms`, `time.sleep`, `dates.now` and the rest | a virtual clock that starts at 2026-01-01 (or `start`); local time is UTC; a node's `skew` shifts its wall clock |
-| Randomness: `random`, `crypto.random_bytes` | streams split from the seed, one per task |
+| Randomness: `random`, `crypto.random_bytes` | streams split from the seed, one per task (the world's own choices, of latency, loss, scheduling and disk faults, are tied to where and when they are made) |
 | Tasks: `spawn`, `task`, `chan` | one task at a time, chosen by the seed; `par_map` runs in order |
 | Network: `http` | messages between the world's nodes, with latency, loss, duplication and partitions |
 | Files and SQLite: `fs`, `db` | each node's own disk, in memory |

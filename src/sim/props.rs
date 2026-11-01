@@ -661,12 +661,7 @@ impl DiskObject {
                 self.name
             )))));
         };
-        let nd = Arc::new(Mutex::new(vfs::NodeDisk::new(
-            image,
-            StdRng::seed_from_u64(0),
-            StdRng::seed_from_u64(0),
-            0.0,
-        )));
+        let nd = Arc::new(Mutex::new(vfs::NodeDisk::new(image, 0, 0.0)));
         let key = vfs::register(&nd);
         let rows = durable_rows(key, &path, sql, params);
         vfs::unregister(key);

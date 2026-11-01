@@ -41,7 +41,6 @@
 
 use super::disk::{self, Disk};
 use rand::RngExt;
-use rand::rngs::StdRng;
 use rusqlite::ffi;
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -57,10 +56,11 @@ pub const VFS_NAME: &str = "olang-sim";
 /// on it since the world last collected them.
 pub struct NodeDisk {
     pub disk: Disk,
-    /// Lies, sync latencies, torn writes.
-    pub rng: StdRng,
-    /// Crash points (`#{ crash: #{ p } }` on the node).
-    pub crash_rng: StdRng,
+    /// Lies, sync latencies, crash points (`#{ crash: #{ p } }` on the
+    /// node) and what a crash tears: each its own place, every draw keyed
+    /// by the instant it is made in (`sched::Keyed`), so a fault removed
+    /// earlier in a run moves no later draw.
+    pub draws: super::sched::Keyed,
     pub crash_p: f64,
     pub mem: Mem,
     /// What happened (kind, detail, the fault's visit), for the world's
@@ -82,12 +82,17 @@ pub struct NodeDisk {
 
 pub type Shared = Arc<Mutex<NodeDisk>>;
 
+// A disk's draw places (`NodeDisk::draws`).
+const DRAW_LIE: u64 = 1;
+const DRAW_LATENCY: u64 = 2;
+const DRAW_CRASH: u64 = 3;
+const DRAW_TEAR: u64 = 4;
+
 impl NodeDisk {
-    pub fn new(disk: Disk, rng: StdRng, crash_rng: StdRng, crash_p: f64) -> NodeDisk {
+    pub fn new(disk: Disk, seed: u64, crash_p: f64) -> NodeDisk {
         NodeDisk {
             disk,
-            rng,
-            crash_rng,
+            draws: super::sched::Keyed::new(seed),
             crash_p,
             mem: Mem::default(),
             events: Vec::new(),
@@ -104,14 +109,20 @@ impl NodeDisk {
         self.clock.load(Ordering::Relaxed)
     }
 
+    /// What a power cut at this instant tears and loses.
+    pub fn tear_draws(&mut self) -> super::sched::Mix {
+        let now = self.now();
+        self.draws.at(DRAW_TEAR, now)
+    }
+
     /// Does this sync lie? The visit's key when it does.
     pub fn draw_lie(&mut self) -> Option<super::plan::Key> {
         let p = self.disk.opts.fsync_lies;
         if p <= 0.0 {
             return None;
         }
-        let drawn = self.rng.random::<f64>() < p;
         let now = self.now();
+        let drawn = self.draws.at(DRAW_LIE, now).random::<f64>() < p;
         let d = self
             .sites
             .visit(super::plan::Site::FsyncLie, self.place, now, drawn, None);
@@ -120,7 +131,8 @@ impl NodeDisk {
 
     /// How long a sync takes, in µs of virtual time.
     pub fn sync_latency_us(&mut self) -> u64 {
-        let base: u64 = self.rng.random_range(1_000..=3_000);
+        let now = self.now();
+        let base: u64 = self.draws.at(DRAW_LATENCY, now).random_range(1_000..=3_000);
         (base as f64 * self.disk.opts.slow).round() as u64
     }
 
@@ -130,8 +142,8 @@ impl NodeDisk {
         if self.crash_p <= 0.0 {
             return None;
         }
-        let drawn = self.crash_rng.random::<f64>() < self.crash_p;
         let now = self.now();
+        let drawn = self.draws.at(DRAW_CRASH, now).random::<f64>() < self.crash_p;
         let d = self.sites.visit(
             super::plan::Site::CrashPoint,
             self.place,
@@ -1100,15 +1112,11 @@ pub fn registered() -> Result<&'static str, String> {
 mod tests {
     use super::*;
     use rand::SeedableRng;
+    use rand::rngs::StdRng;
     use rusqlite::{Connection, OpenFlags};
 
     fn node_disk(opts: disk::DiskOpts) -> Shared {
-        let nd = Arc::new(Mutex::new(NodeDisk::new(
-            Disk::new(opts),
-            StdRng::seed_from_u64(1),
-            StdRng::seed_from_u64(2),
-            0.0,
-        )));
+        let nd = Arc::new(Mutex::new(NodeDisk::new(Disk::new(opts), 1, 0.0)));
         register(&nd);
         nd
     }

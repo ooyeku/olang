@@ -242,9 +242,14 @@ impl World {
             ));
             r.random::<f64>() < MAYBE_ON
         });
-        let drawn = on && st.maybe_rng.random::<f64>() < MAYBE_FIRES;
         let node = st.task_node.get(me).copied().unwrap_or(0);
         let now = st.sched.now;
+        // Each point's draws are its own (per node), keyed by the instant,
+        // and made whether the point is on or not: one point turned on,
+        // or one visit more, moves no other point's answers.
+        let place = super::sched::split(fnv(point), node as u64);
+        let fires = st.maybe_draws.at(place, now).random::<f64>() < MAYBE_FIRES;
+        let drawn = on && fires;
         let d = st
             .sites
             .visit(super::plan::Site::Maybe, node as u64, now, drawn, None);

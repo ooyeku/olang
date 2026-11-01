@@ -515,11 +515,8 @@ impl World {
             let mut d = vfs::lock(&self.disks[n]);
             let lost = match how {
                 Halt::Crash => {
-                    let mut rng =
-                        std::mem::replace(&mut d.rng, rand::SeedableRng::seed_from_u64(0));
-                    let lost = d.disk.crash(&mut rng);
-                    d.rng = rng;
-                    lost
+                    let mut tear = d.tear_draws();
+                    d.disk.crash(&mut tear)
                 }
                 Halt::Kill | Halt::Exit => {
                     d.disk.kill();

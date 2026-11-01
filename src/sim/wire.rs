@@ -200,13 +200,15 @@ impl World {
         let place = super::plan::link_place(from, to);
         let mut keys = (None, None);
         let sites = &mut st.sites;
-        let sent = st.net.transmit_with(from, to, &mut |_link, lost, dup| {
-            let l = sites.visit(super::plan::Site::Loss, place, now, lost, None);
-            keys.0 = l.fire.then_some(l.key);
-            let d = sites.visit(super::plan::Site::Dup, place, now, dup, None);
-            keys.1 = (d.fire && !l.fire).then_some(d.key);
-            (l.fire, d.fire)
-        });
+        let sent = st
+            .net
+            .transmit_with(from, to, now, &mut |_link, lost, dup| {
+                let l = sites.visit(super::plan::Site::Loss, place, now, lost, None);
+                keys.0 = l.fire.then_some(l.key);
+                let d = sites.visit(super::plan::Site::Dup, place, now, dup, None);
+                keys.1 = (d.fire && !l.fire).then_some(d.key);
+                (l.fire, d.fire)
+            });
         let route = || format!("{what} {} → {}", self.node_name(from), self.node_name(to));
         if let Some(key) = keys.0 {
             self.record_fault(st, from, "loss", route(), Some(key));

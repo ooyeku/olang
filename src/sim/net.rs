@@ -12,14 +12,19 @@
 //!   so a partition that begins while a message is in flight drops it:
 //!   the request that reached the server and the reply that never came
 //!   back, the case a retry must be ready for.
-//! - **Draws** come from the network's own stream (split from the seed,
-//!   apart from the scheduler's and every task's), and every message
-//!   sent over a link takes the same four draws whatever happens to it,
-//!   so one more lost message never shifts another's latency.
+//! - **Draws** are the network's own (split from the seed, apart from the
+//!   scheduler's and every task's) and keyed by the message: its link
+//!   (sender and receiver), the virtual millisecond it is sent in, and
+//!   its number among that link's messages in that millisecond
+//!   (`sched::Keyed`). Every message takes the same four draws whatever
+//!   happens to it, a message a partition cuts included. So one more
+//!   lost message never shifts another's latency, and a fault the
+//!   shrinker removes (a partition, a loss) changes the draws of no
+//!   message on another link, nor of any message sent at an instant the
+//!   change has not reached.
 
-use rand::SeedableRng;
+use super::sched::{Keyed, Mix};
 use rand::prelude::*;
-use rand::rngs::StdRng;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A node of the world: 0 is the world itself (its coordinator and its
@@ -98,7 +103,7 @@ pub struct Net {
     pub default: Link,
     links: BTreeMap<(NodeId, NodeId), Link>,
     cut: BTreeSet<(NodeId, NodeId)>,
-    rng: StdRng,
+    draws: Keyed,
 }
 
 fn pair(a: NodeId, b: NodeId) -> (NodeId, NodeId) {
@@ -113,7 +118,7 @@ impl Net {
             default,
             links: BTreeMap::new(),
             cut: BTreeSet::new(),
-            rng: StdRng::seed_from_u64(seed),
+            draws: Keyed::new(seed),
         }
     }
 
@@ -152,33 +157,37 @@ impl Net {
         a == b || !self.cut.contains(&pair(a, b))
     }
 
-    /// One message from `a` to `b`: what happens to it. A loopback takes
-    /// no draws; a cut link takes none either (nothing crosses it).
-    pub fn transmit(&mut self, a: NodeId, b: NodeId) -> Transmit {
-        self.transmit_with(a, b, &mut |_, lost, dup| (lost, dup))
+    /// One message from `a` to `b`, sent at virtual ms `now`: what happens
+    /// to it. A loopback takes no draws.
+    pub fn transmit(&mut self, a: NodeId, b: NodeId, now: u64) -> Transmit {
+        self.transmit_with(a, b, now, &mut |_, lost, dup| (lost, dup))
     }
 
     /// `transmit`, with what the link drew (lost, duplicated) handed to
     /// `decide`, which answers what happens (a plan's forced decisions:
-    /// `plan.rs`). The draws are the same either way.
+    /// `plan.rs`). The draws are the same either way, and a cut link
+    /// makes them too (and `decide` is not asked: nothing crosses it).
     pub fn transmit_with(
         &mut self,
         a: NodeId,
         b: NodeId,
+        now: u64,
         decide: &mut dyn FnMut(Link, bool, bool) -> (bool, bool),
     ) -> Transmit {
         if a == b {
             return Transmit::Deliver(vec![0]);
         }
+        let link = self.link(a, b);
+        // Always the same four draws, in the same order, from this
+        // message's own key.
+        let mut r = self.draws.at(super::plan::link_place(a, b), now);
+        let lost = r.random::<f64>() < link.loss;
+        let first = latency(&mut r, link);
+        let dup = r.random::<f64>() < link.dup;
+        let second = latency(&mut r, link);
         if !self.connected(a, b) {
             return Transmit::Dropped(Drop::Partition);
         }
-        let link = self.link(a, b);
-        // Always the same four draws, in the same order.
-        let lost = self.rng.random::<f64>() < link.loss;
-        let first = self.latency(link);
-        let dup = self.rng.random::<f64>() < link.dup;
-        let second = self.latency(link);
         let (lost, dup) = decide(link, lost, dup);
         if lost {
             return Transmit::Dropped(Drop::Loss);
@@ -189,16 +198,16 @@ impl Net {
             Transmit::Deliver(vec![first])
         }
     }
+}
 
-    fn latency(&mut self, link: Link) -> u64 {
-        let (lo, hi) = link.latency;
-        if lo == hi {
-            // still a draw: the stream advances the same either way
-            let _ = self.rng.random::<u64>();
-            lo
-        } else {
-            self.rng.random_range(lo..=hi)
-        }
+fn latency(r: &mut Mix, link: Link) -> u64 {
+    let (lo, hi) = link.latency;
+    if lo == hi {
+        // still a draw: the generator advances the same either way
+        let _ = r.random::<u64>();
+        lo
+    } else {
+        r.random_range(lo..=hi)
     }
 }
 
@@ -218,7 +227,7 @@ mod tests {
     fn a_quiet_link_delivers_everything_within_its_latency() {
         let mut net = Net::new(1, Link::default());
         for _ in 0..1000 {
-            match net.transmit(1, 2) {
+            match net.transmit(1, 2, 0) {
                 Transmit::Deliver(d) => {
                     assert_eq!(d.len(), 1);
                     assert!((1..=10).contains(&d[0]), "{d:?}");
@@ -233,7 +242,7 @@ mod tests {
         let mut net = Net::new(7, lossy(0.1, 0.05));
         let (mut lost, mut doubled) = (0, 0);
         for _ in 0..10_000 {
-            match net.transmit(1, 2) {
+            match net.transmit(1, 2, 0) {
                 Transmit::Dropped(Drop::Loss) => lost += 1,
                 Transmit::Deliver(d) if d.len() == 2 => doubled += 1,
                 Transmit::Deliver(_) => {}
@@ -248,7 +257,9 @@ mod tests {
     fn one_seed_one_network() {
         let run = |seed| {
             let mut net = Net::new(seed, lossy(0.2, 0.2));
-            (0..200).map(|_| net.transmit(1, 2)).collect::<Vec<_>>()
+            (0..200)
+                .map(|i| net.transmit(1, 2, i / 3))
+                .collect::<Vec<_>>()
         };
         assert_eq!(run(3), run(3));
         assert_ne!(run(3), run(4));
@@ -258,21 +269,21 @@ mod tests {
     fn a_partition_cuts_across_and_heal_restores() {
         let mut net = Net::new(1, Link::default());
         net.partition(&[1], &[2, 3]);
-        assert_eq!(net.transmit(1, 2), Transmit::Dropped(Drop::Partition));
-        assert_eq!(net.transmit(3, 1), Transmit::Dropped(Drop::Partition));
+        assert_eq!(net.transmit(1, 2, 0), Transmit::Dropped(Drop::Partition));
+        assert_eq!(net.transmit(3, 1, 0), Transmit::Dropped(Drop::Partition));
         assert!(net.connected(2, 3), "the same side still talks");
-        assert!(matches!(net.transmit(2, 3), Transmit::Deliver(_)));
+        assert!(matches!(net.transmit(2, 3, 0), Transmit::Deliver(_)));
         assert!(net.connected(1, 1));
         net.heal();
         assert!(!net.is_partitioned());
-        assert!(matches!(net.transmit(1, 2), Transmit::Deliver(_)));
+        assert!(matches!(net.transmit(1, 2, 0), Transmit::Deliver(_)));
     }
 
     #[test]
     fn a_loopback_is_instant_and_never_lost() {
         let mut net = Net::new(1, lossy(1.0, 0.0));
         net.partition(&[1], &[2]);
-        assert_eq!(net.transmit(1, 1), Transmit::Deliver(vec![0]));
+        assert_eq!(net.transmit(1, 1, 0), Transmit::Deliver(vec![0]));
     }
 
     #[test]
@@ -287,8 +298,8 @@ mod tests {
                 dup: 0.0,
             },
         );
-        assert_eq!(net.transmit(1, 3), Transmit::Deliver(vec![100]));
-        assert_eq!(net.transmit(3, 1), Transmit::Deliver(vec![100]));
+        assert_eq!(net.transmit(1, 3, 0), Transmit::Deliver(vec![100]));
+        assert_eq!(net.transmit(3, 1, 0), Transmit::Deliver(vec![100]));
         assert_eq!(net.link(1, 2), Link::default());
     }
 
@@ -301,9 +312,51 @@ mod tests {
         let mut b = Net::new(9, Link::default());
         a.set_link(1, 2, lossy(1.0, 0.0));
         b.set_link(1, 2, lossy(0.0, 0.0));
-        assert_eq!(a.transmit(1, 2), Transmit::Dropped(Drop::Loss));
-        assert!(matches!(b.transmit(1, 2), Transmit::Deliver(_)));
-        assert_eq!(a.transmit(1, 3), b.transmit(1, 3));
+        assert_eq!(a.transmit(1, 2, 0), Transmit::Dropped(Drop::Loss));
+        assert!(matches!(b.transmit(1, 2, 0), Transmit::Deliver(_)));
+        assert_eq!(a.transmit(1, 3, 0), b.transmit(1, 3, 0));
+    }
+
+    #[test]
+    fn a_partition_removed_moves_no_other_message() {
+        // One seed, two runs: in one a partition cuts 1–2 for a while.
+        // Every message on another link, and every message on 1–2 sent
+        // outside the cut, comes out the same in both.
+        let link = Link {
+            latency: (5, 500),
+            loss: 0.2,
+            dup: 0.1,
+        };
+        let mut cut = Net::new(4, link);
+        let mut whole = Net::new(4, link);
+        for t in 0..300u64 {
+            if t == 100 {
+                cut.partition(&[1], &[2]);
+            }
+            if t == 150 {
+                cut.heal();
+            }
+            for (a, b) in [(1, 2), (2, 1), (1, 3), (3, 2)] {
+                let x = cut.transmit(a, b, t);
+                let y = whole.transmit(a, b, t);
+                let in_cut = (100..150).contains(&t) && (a, b) != (1, 3) && (a, b) != (3, 2);
+                if in_cut {
+                    assert_eq!(x, Transmit::Dropped(Drop::Partition));
+                } else {
+                    assert_eq!(x, y, "{a}→{b} at {t}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_message_draws_by_its_instant_not_by_how_many_came_before() {
+        let mut busy = Net::new(5, lossy(0.3, 0.3));
+        let mut quiet = Net::new(5, lossy(0.3, 0.3));
+        for _ in 0..50 {
+            busy.transmit(1, 2, 7);
+        }
+        assert_eq!(busy.transmit(1, 2, 8), quiet.transmit(1, 2, 8));
     }
 
     #[test]

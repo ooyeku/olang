@@ -1694,7 +1694,7 @@ fn olang_sim_view_draws_a_run_from_a_file_and_seed_and_from_a_saved_plan() {
         "view",
         fixture("kv_partition_bug.ol").to_str().unwrap(),
         "--seed",
-        "5",
+        "9",
         "--html",
         html.to_str().unwrap(),
         "--json",
@@ -1703,7 +1703,7 @@ fn olang_sim_view_draws_a_run_from_a_file_and_seed_and_from_a_saved_plan() {
     assert_eq!(code, 0, "{err}");
     let page = std::fs::read_to_string(&html).unwrap();
     assert!(page.starts_with("<!doctype html>"), "a page");
-    assert!(page.contains("<title>kv_partition_bug.ol · seed 5</title>"));
+    assert!(page.contains("<title>kv_partition_bug.ol · seed 9</title>"));
     // one file: nothing is fetched from anywhere (the run's own data, in
     // between, may name URLs: the requests it made)
     let head = page.split("const DATA = ").next().unwrap();
@@ -1717,14 +1717,14 @@ fn olang_sim_view_draws_a_run_from_a_file_and_seed_and_from_a_saved_plan() {
     assert!(!page.contains("__DATA__") && !page.contains("__TITLE__"));
     let model: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&json).unwrap()).unwrap();
-    assert_eq!(model["seed"], 5);
+    assert_eq!(model["seed"], 9);
     assert_eq!(model["failed"], true);
     assert_eq!(
         model["lanes"],
         serde_json::json!(["world", "kv", "c1", "c2", "c3", "c4", "hook-1"])
     );
-    // the same run as `olang sim --seed 5` reports
-    let report = builder_report("kv_partition_bug.ol", 5);
+    // the same run as `olang sim --seed 9` reports
+    let report = builder_report("kv_partition_bug.ol", 9);
     assert_eq!(model["digest"], format!("{:016x}", report.digest()));
     // the page holds the model as it is
     assert!(page.contains(&format!("\"digest\":\"{:016x}\"", report.digest())));
@@ -1960,4 +1960,117 @@ w.run_fn(() => {
     );
     assert_eq!(s(&field(&v, "outcome")), "done", "{v:?}");
     assert_eq!(s(&field(&v, "value")), "[\"hi\", true]");
+}
+
+// ─── S6: the engine in practice ──────────────────────────────────────
+
+/// `olang sim ARGS` run in `dir`: (exit code, stdout and stderr).
+fn sim_in(dir: &std::path::Path, args: &[&str]) -> (i32, String) {
+    let out = Command::new(olang())
+        .arg("sim")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("run olang sim");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr),
+    )
+}
+
+fn scratch(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("olang-sim-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[test]
+fn shrinking_under_partitions_keeps_only_the_cuts_of_the_client_that_failed() {
+    // A partition removed no longer shifts every later message's
+    // latency (the network's draws are keyed by link and instant), so
+    // the cuts left are the failing client's own, not others that only
+    // happened to keep the randomness where it was.
+    let dir = scratch("shrink-cut");
+    let file = fixture("kv_partition_bug.ol");
+    let (_, out) = sim_in(
+        &dir,
+        &[file.to_str().unwrap(), "--seeds", "12", "--jobs", "4"],
+    );
+    let seeds: Vec<String> = out
+        .lines()
+        .filter_map(|l| l.strip_prefix("seed "))
+        .filter_map(|l| l.split(':').next().map(str::to_string))
+        .take(2)
+        .collect();
+    assert_eq!(seeds.len(), 2, "two failing seeds among twelve:\n{out}");
+    for seed in &seeds {
+        let (code, out) = sim_in(
+            &dir,
+            &[
+                file.to_str().unwrap(),
+                "--seed",
+                seed,
+                "--shrink",
+                "--jobs",
+                "4",
+            ],
+        );
+        assert_eq!(code, 1, "{out}");
+        let then = out
+            .lines()
+            .find(|l| l.trim_start().starts_with("then:"))
+            .expect("then");
+        let victim = then
+            .split("client ")
+            .nth(1)
+            .and_then(|r| r.split(':').next())
+            .expect("the client");
+        let cuts: Vec<&str> = out
+            .lines()
+            .filter(|l| l.contains("  partition  "))
+            .collect();
+        assert!(!cuts.is_empty(), "{out}");
+        for cut in cuts {
+            assert!(
+                cut.contains(&format!("[{victim}]")),
+                "seed {seed}: a cut of another client kept: {cut}\n{out}"
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_buggify_point_fires_about_a_quarter_of_the_time_in_a_quarter_of_the_runs_and_alone() {
+    let v = eval(
+        r#"
+fn answers(seed, both) = sim.world(#{ "seed": seed }).run_fn(() =>
+    map(range(0, 200), (i) => {
+        if both => { let a = sim.maybe("a") } else => ()
+        sim.maybe("b")
+    })).value
+let runs = map(range(1, 401), (s) => answers(s, false))
+let on = filter(runs, (r) => len(filter(r, (x) => x)) > 0)
+let fired = fold(on, 0, (acc, r) => acc + len(filter(r, (x) => x)))
+let same = all(range(1, 41), (s) => answers(s, true) == answers(s, false))
+[len(on), fired, same]
+"#,
+    );
+    let parts = list(&v);
+    let on = int(&parts[0]);
+    let fired = int(&parts[1]) as f64 / (on as f64 * 200.0);
+    assert!(
+        (70..=130).contains(&on),
+        "about a quarter of 400 runs turn the point on: {on}"
+    );
+    assert!(
+        (0.21..=0.29).contains(&fired),
+        "an on point fires about a quarter of the time: {fired}"
+    );
+    assert_eq!(
+        parts[2].to_string(),
+        "true",
+        "another point's visits move no answer of b's"
+    );
 }
