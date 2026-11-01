@@ -150,7 +150,8 @@ pub fn run_file_forced(
     }
     let argv = vec![path.to_string_lossy().to_string()];
     let report = super::run_main(cfg, super::NodeInfo::main(argv), move || {
-        interpreter.eval_program(program)
+        let r = interpreter.eval_program(program);
+        super::sited(&mut interpreter, r)
     })?;
     let plans = vec![report.plan.clone()];
     Ok((report, plans))
@@ -196,6 +197,7 @@ pub fn run_builder_forced(
     {
         report.outcome = "failed";
         report.error = Some(super::error_text(&e));
+        report.site = super::error_site(&mut interpreter);
     }
     Ok((report, recorded))
 }

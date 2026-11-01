@@ -895,14 +895,16 @@ status 3, as in `the replay diverged from .sim/8.simplan: digest
 .sim/6.simplan` shrinks a saved plan further, with a fresh budget.
 
 "Fails the same way" means the same property broke or, without
-properties, the same error, compared as text with its numbers ignored.
-That makes the wording of an assertion matter. The writers in
-`store_world.ol` end with `key + " lost acknowledged puts " +
-to_string(lost)`, and the list in it has a different length in almost
-every run, so the shrinker could drop none of seed 4's seven crashes.
-With a message of fixed shape, `"lost " + to_string(len(lost)) + "
-acknowledged put(s)"`, it took them down to two. A property's name
-never changes, which is one more reason to use properties.
+properties, the same error raised at the same place in the code (file,
+line and column), with the values in its message set aside: numbers,
+text in double quotes, and whatever a pair of brackets holds. The
+writers in `store_world.ol` end with `key + " lost acknowledged puts "
++ to_string(lost)`, and the list in it has a different length in
+almost every run; to the shrinker these are all `w# lost acknowledged
+puts […]` at one line, one failure however many puts a run lost. A value written without quotes or brackets
+(`"answer was " + word`) still counts as part of the wording, so put
+values that vary in brackets, or use a property, whose name never
+changes.
 
 Shrinking works on faults, nodes, restart delays and how often the
 schedule switches tasks, not on single messages. The seed's choices are

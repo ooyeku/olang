@@ -1938,6 +1938,11 @@ they do for `olang run`, without fetching anything or writing a lock.
 | `--shrink-budget N` | the runs the shrinker may spend (default 300) |
 | `--replay PLAN` | replay a saved plan and check it reproduced exactly |
 
+The shrinker keeps a change when the run still fails the same way: the
+same property broke, or the same error was raised at the same line,
+with the numbers, quoted text and bracketed values in its message set
+aside.
+
 Worlds run on the bytecode tier, as programs do outside one, with the
 same results seed for seed; `olang --no-ovm sim` (or
 `OLANG_SIM_TIER=interp`) keeps them on the interpreter.

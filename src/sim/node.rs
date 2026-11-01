@@ -378,16 +378,14 @@ pub(super) fn start_node(
             let program = crate::parser::Parser::new()
                 .parse(&source)
                 .map_err(|e| format!("{}: {e}", path.display()))?;
-            interpreter
-                .eval_program(program)
-                .map_err(|e| error_text(&e))
+            let r = interpreter.eval_program(program);
+            super::sited(&mut interpreter, r).map_err(|e| error_text(&e))
         }),
         Start::Function(f) => {
             let mut interpreter = template_clone(w)?;
             Box::new(move || {
-                interpreter
-                    .call_function(f, Vec::new())
-                    .map_err(|e| error_text(&e))
+                let r = interpreter.call_function(f, Vec::new());
+                super::sited(&mut interpreter, r).map_err(|e| error_text(&e))
             })
         }
         Start::Hook { at, every, f } => {
@@ -397,9 +395,8 @@ pub(super) fn start_node(
                 sleep_until(&ctx, at).map_err(|e| InterpreterError::from(e).to_string())?;
                 let mut tick = at;
                 loop {
-                    interpreter
-                        .call_function(f.clone(), Vec::new())
-                        .map_err(|e| error_text(&e))?;
+                    let r = interpreter.call_function(f.clone(), Vec::new());
+                    super::sited(&mut interpreter, r).map_err(|e| error_text(&e))?;
                     let Some(dt) = every else {
                         return Ok(Value::Unit);
                     };
@@ -480,6 +477,7 @@ impl World {
                     };
                     if st.failure.is_none() {
                         st.failure = Some(format!("{what} {}: {e}", self.nodes[n].name));
+                        st.failure_site = st.error_sites.get(&me).cloned();
                     }
                 }
                 // A program's process ends with its program: what it

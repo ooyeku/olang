@@ -188,6 +188,9 @@ pub struct Report {
     /// Which world run of its file this is (0 first): a plan file forces
     /// each run of a file by its number.
     pub run_index: usize,
+    /// Where the failure was raised (`file:line:col`, or `line:col` in
+    /// the entry file), when it was an error the interpreter located.
+    pub site: Option<String>,
 }
 
 /// A fault the world injected: when, where, what, and the yield point
@@ -229,6 +232,7 @@ impl Report {
             histories: BTreeMap::new(),
             optional: Vec::new(),
             run_index: 0,
+            site: None,
         }
     }
 
@@ -247,30 +251,24 @@ impl Report {
         self.faults.iter().filter(|f| f.key.is_some()).count()
     }
 
-    /// What kind of failure this is, the same however the run got there:
-    /// the property's name when one broke, else the outcome and the error
-    /// with its numbers taken out (`client w# : ... version #`). The
-    /// shrinker keeps a change only when the failure keeps its signature.
+    /// What kind of failure this is, the same however the run got there,
+    /// for the shrinker, which keeps a change only when the failure keeps
+    /// its signature. A broken property is its name. Anything else is the
+    /// outcome, the place the error was raised (`at file:line:col`, when
+    /// the interpreter located it), and the shape of the error's first
+    /// line ([`shape`]): numbers, quoted text and bracketed values set
+    /// aside, since they vary from run to run of one bug (a list of keys,
+    /// a count, an id), while the words around them and the site do not.
     pub fn signature(&self) -> String {
         if let Some(v) = &self.violation {
             return format!("property {}", v.property);
         }
         let text = self.error.as_deref().unwrap_or("");
-        let first = text.lines().next().unwrap_or("");
-        let mut out = String::with_capacity(first.len());
-        let mut digits = false;
-        for c in first.chars() {
-            if c.is_ascii_digit() {
-                if !digits {
-                    out.push('#');
-                }
-                digits = true;
-            } else {
-                digits = false;
-                out.push(c);
-            }
+        let first = shape(text.lines().next().unwrap_or(""));
+        match &self.site {
+            Some(site) => format!("{} at {site}: {first}", self.outcome),
+            None => format!("{}: {first}", self.outcome),
         }
-        format!("{}: {out}", self.outcome)
     }
 
     /// A hash of everything the run did (events, faults, outcome, time,
@@ -303,6 +301,106 @@ impl Report {
         }
         h.0
     }
+}
+
+/// An error message with what varies taken out: a run of digits is `#`,
+/// text in double quotes is `"…"`, and what a balanced `(...)`, `[...]`
+/// or `{...}` holds is `…` (the brackets stay). `client c3: expected
+/// [1, 4] for "k-17"` and `client c1: expected [2] for "k-9"` have one
+/// shape, `client c#: expected […] for "…"`.
+pub fn shape(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c.is_ascii_digit() {
+            out.push('#');
+            while i < chars.len() && chars[i].is_ascii_digit() {
+                i += 1;
+            }
+            continue;
+        }
+        let close = match c {
+            '"' => Some('"'),
+            '(' => Some(')'),
+            '[' => Some(']'),
+            '{' => Some('}'),
+            _ => None,
+        };
+        if let Some(close) = close
+            && let Some(end) = matching(&chars, i, close)
+        {
+            out.push(c);
+            if end > i + 1 {
+                out.push('…');
+            }
+            out.push(close);
+            i = end + 1;
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
+/// Where the bracket (or quote) at `open` closes, nesting counted.
+fn matching(chars: &[char], open: usize, close: char) -> Option<usize> {
+    let first = chars[open];
+    if first == '"' {
+        return (open + 1..chars.len()).find(|&j| chars[j] == '"');
+    }
+    let mut depth = 0usize;
+    let mut quoted = false;
+    for (j, &c) in chars.iter().enumerate().skip(open) {
+        if c == '"' {
+            quoted = !quoted;
+        } else if quoted {
+        } else if c == first {
+            depth += 1;
+        } else if c == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(j);
+            }
+        }
+    }
+    None
+}
+
+/// `r`, with the place its error was raised kept for the failure's
+/// signature (`Report::site`), when `interpreter` located it.
+pub(crate) fn sited<T>(
+    interpreter: &mut Interpreter,
+    r: Result<T, InterpreterError>,
+) -> Result<T, InterpreterError> {
+    if r.is_err()
+        && let Some(site) = error_site(interpreter)
+        && let Some(ctx) = current()
+    {
+        ctx.world.lock().error_sites.insert(ctx.task, site);
+    }
+    r
+}
+
+/// Where `interpreter`'s last error was raised: `file:line:col` (the
+/// file's name alone), or `line:col` in its entry file.
+pub(crate) fn error_site(interpreter: &mut Interpreter) -> Option<String> {
+    let loc = interpreter.take_error_location()?;
+    if loc.line == 0 {
+        return None;
+    }
+    Some(match loc.file.as_deref() {
+        Some(f) => {
+            let name = std::path::Path::new(f)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| f.to_string());
+            format!("{name}:{}:{}", loc.line, loc.column)
+        }
+        None => format!("{}:{}", loc.line, loc.column),
+    })
 }
 
 /// FNV-1a, 64 bits: a digest that is the same everywhere.
@@ -384,6 +482,10 @@ struct State {
     node_tasks: Vec<u64>,
     /// Connections `db.open` made in this world (each one's `id`).
     db_opens: u64,
+    /// Where each task's last error was raised (`note_error_site`), and
+    /// where the error that failed the run was.
+    error_sites: HashMap<TaskId, String>,
+    failure_site: Option<String>,
 }
 
 /// A simulated world. Shared (`Arc`) by every task thread in it.
@@ -572,6 +674,8 @@ impl World {
                 violation: None,
                 node_tasks: vec![0; nodes_len],
                 db_opens: 0,
+                error_sites: HashMap::new(),
+                failure_site: None,
             }),
             disks,
             handlers: Mutex::new(BTreeMap::new()),
@@ -1015,6 +1119,14 @@ impl World {
             ),
         };
         let plan = self.recorded_plan(&st);
+        let site = match outcome {
+            "failed" => st
+                .failure
+                .as_ref()
+                .map(|_| st.failure_site.clone())
+                .unwrap_or_else(|| st.error_sites.get(&0).cloned()),
+            _ => None,
+        };
         Report {
             seed: self.seed,
             outcome,
@@ -1048,6 +1160,7 @@ impl World {
                 .map(|n| n.name.to_string())
                 .collect(),
             run_index: 0,
+            site,
         }
     }
 
@@ -1926,6 +2039,49 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failure_shape_sets_aside_what_varies() {
+        assert_eq!(
+            shape("client c3: expected [1, 4] for \"k-17\" (2 tries)"),
+            "client c#: expected […] for \"…\" (…)"
+        );
+        assert_eq!(
+            shape("Assertion failed: List([Integer(2), Integer(9)]) != List([])"),
+            "Assertion failed: List(…) != List(…)"
+        );
+        assert_eq!(
+            shape("Assertion failed: List([Integer(4)]) != List([])"),
+            "Assertion failed: List(…) != List(…)"
+        );
+        assert_eq!(
+            shape("unbalanced [ and \" stay"),
+            "unbalanced [ and \" stay"
+        );
+        assert_eq!(shape("a map {\"a\": [1, {2}]} here"), "a map {…} here");
+    }
+
+    #[test]
+    fn a_signature_is_the_site_and_the_shape() {
+        let mut a = Report::empty(1);
+        a.outcome = "failed";
+        a.error = Some("client c1: unexpected keys [a, b] in #{\"k\": [a, b]}".into());
+        a.site = Some("kv.ol:12:5".into());
+        let mut b = a.clone();
+        b.error = Some("client c4: unexpected keys [c] in #{\"k\": [c]}".into());
+        assert_eq!(a.signature(), b.signature());
+        assert_eq!(
+            a.signature(),
+            "failed at kv.ol:12:5: client c#: unexpected keys […] in #{…}"
+        );
+        let mut elsewhere = b.clone();
+        elsewhere.site = Some("kv.ol:30:5".into());
+        assert_ne!(
+            a.signature(),
+            elsewhere.signature(),
+            "another site, another failure"
+        );
+    }
 
     fn sleep_ms(ms: i64) -> Result<Value, InterpreterError> {
         let mut i = Interpreter::new();

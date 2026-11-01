@@ -2074,3 +2074,36 @@ let same = all(range(1, 41), (s) => answers(s, true) == answers(s, false))
         "another point's visits move no answer of b's"
     );
 }
+
+#[test]
+fn the_shrinker_sets_aside_a_failure_message_that_varies() {
+    // The writer's error names lists that change with every fault removed
+    // (the lost version, and each put that went unanswered). The failure
+    // is the same bug at the same site, so the shrinker keeps going down
+    // to the one power cut; matched by its text, it stopped at 6 or 7.
+    let dir = scratch("shrink-list");
+    let file = fixture("log_noisy_list.ol");
+    let (code, out) = sim_in(
+        &dir,
+        &[
+            file.to_str().unwrap(),
+            "--seed",
+            "1",
+            "--shrink",
+            "--jobs",
+            "2",
+        ],
+    );
+    assert_eq!(code, 1, "{out}");
+    let line = out
+        .lines()
+        .find(|l| l.starts_with("shrunk: "))
+        .unwrap_or_else(|| panic!("no shrink line:\n{out}"));
+    assert!(line.contains("→ 1 ·"), "{line}");
+    assert!(
+        out.contains("crash      store"),
+        "the cut that matters:\n{out}"
+    );
+    assert!(out.contains("unanswered: ["), "{out}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

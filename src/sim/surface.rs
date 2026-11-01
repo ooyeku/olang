@@ -613,7 +613,8 @@ fn run_fn_with(
     let report = if spec.nodes.is_empty() {
         let template = (!props.is_empty()).then(|| interpreter.thread_safe_clone());
         super::run_main_with(cfg, NodeInfo::main(Vec::new()), props, template, || {
-            interpreter.call_function(f, Vec::new())
+            let r = interpreter.call_function(f, Vec::new());
+            super::sited(interpreter, r)
         })
     } else {
         // The world's nodes (and hooks) start first, then `f` runs as
@@ -628,7 +629,8 @@ fn run_fn_with(
             Ok(plan) => {
                 let template = interpreter.thread_safe_clone();
                 super::run_world_main(cfg, nodes, plan, template, world.id, props, || {
-                    interpreter.call_function(f, Vec::new())
+                    let r = interpreter.call_function(f, Vec::new());
+                    super::sited(interpreter, r)
                 })
             }
         }

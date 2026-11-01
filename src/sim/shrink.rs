@@ -6,8 +6,9 @@
 //! slow disk, keyed by the visit it fired on. Forced by that plan the run
 //! comes back exactly; forced by less of it, it is another run of the
 //! same world, and the question is only whether it still fails *the same
-//! way* (`Report::signature`: the same property, or the same outcome and
-//! error once its numbers are set aside).
+//! way* (`Report::signature`: the same property, or the same outcome,
+//! raised at the same site, with an error of the same shape once its
+//! numbers, quoted text and bracketed values are set aside).
 //!
 //! In order, each step keeping a change only when the failure keeps its
 //! signature:
