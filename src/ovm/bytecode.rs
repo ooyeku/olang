@@ -6780,32 +6780,29 @@ impl BytecodeVm {
         // Tuples' arithmetic, element by element (the interpreter's one
         // rule, `ops::tuple_arith`), each element through this tier's own
         // number arithmetic.
-        if matches!(left.data, ValueData::Tuple(_)) || matches!(right.data, ValueData::Tuple(_)) {
-            if let (Ok(l), Ok(r)) = (left.to_ast(), right.to_ast()) {
-                let mut each =
-                    |x: Value, y: Value| -> Result<Value, crate::interpreter::InterpreterError> {
-                        let v = self
-                            .execute_binary_op(
-                                &OvmValue::from_ast(x),
-                                &OvmValue::from_ast(y),
-                                op.clone(),
-                            )
-                            .map_err(|e| crate::interpreter::InterpreterError::TypeError {
-                                message: e.to_string(),
-                            })?;
-                        v.to_ast()
-                            .map_err(|e| crate::interpreter::InterpreterError::RuntimeError {
-                                message: e.to_string(),
-                            })
-                    };
-                if let Some(r) = crate::interpreter::ops::tuple_arith(&l, &op, &r, &mut each) {
-                    return r.map(OvmValue::from_ast).map_err(|e| match e {
-                        crate::interpreter::InterpreterError::TypeError { message } => {
-                            BytecodeError::TypeError(message)
-                        }
-                        other => BytecodeError::RuntimeError(other.to_string()),
-                    });
-                }
+        if (matches!(left.data, ValueData::Tuple(_)) || matches!(right.data, ValueData::Tuple(_)))
+            && let (Ok(l), Ok(r)) = (left.to_ast(), right.to_ast())
+        {
+            let mut each = |x: Value,
+                            y: Value|
+             -> Result<Value, crate::interpreter::InterpreterError> {
+                let v = self
+                    .execute_binary_op(&OvmValue::from_ast(x), &OvmValue::from_ast(y), op.clone())
+                    .map_err(|e| crate::interpreter::InterpreterError::TypeError {
+                        message: e.to_string(),
+                    })?;
+                v.to_ast()
+                    .map_err(|e| crate::interpreter::InterpreterError::RuntimeError {
+                        message: e.to_string(),
+                    })
+            };
+            if let Some(r) = crate::interpreter::ops::tuple_arith(&l, &op, &r, &mut each) {
+                return r.map(OvmValue::from_ast).map_err(|e| match e {
+                    crate::interpreter::InterpreterError::TypeError { message } => {
+                        BytecodeError::TypeError(message)
+                    }
+                    other => BytecodeError::RuntimeError(other.to_string()),
+                });
             }
         }
 

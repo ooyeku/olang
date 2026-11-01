@@ -469,16 +469,16 @@ impl<'a> Lower<'a> {
                 Ok(V::P(x, y))
             }
             Expr::FieldAccess { object, field } => {
-                if let Expr::Identifier(n) | Expr::LocalRef { name: n, .. } = object.as_ref() {
-                    if self.lookup(n).is_none() {
-                        if *n == self.p {
-                            let l = self.fields;
-                            return self.slot(l, field, true, "the swarm");
-                        }
-                        if *n == self.w {
-                            let l = self.uniforms;
-                            return self.slot(l, field, false, "the world");
-                        }
+                if let Expr::Identifier(n) | Expr::LocalRef { name: n, .. } = object.as_ref()
+                    && self.lookup(n).is_none()
+                {
+                    if *n == self.p {
+                        let l = self.fields;
+                        return self.slot(l, field, true, "the swarm");
+                    }
+                    if *n == self.w {
+                        let l = self.uniforms;
+                        return self.slot(l, field, false, "the world");
                     }
                 }
                 match (self.expr(object)?, field.as_str()) {
@@ -546,7 +546,7 @@ impl<'a> Lower<'a> {
             }
             Expr::List(_) => self.err("a list (a kernel works on one entity's numbers)"),
             Expr::Match { .. } => self.err("`match` (not yet; use `if`)"),
-            other => self.err(format!("{}", describe(other))),
+            other => self.err(describe(other).to_string()),
         }
     }
 }

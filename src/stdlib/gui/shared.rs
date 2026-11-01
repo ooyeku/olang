@@ -355,21 +355,18 @@ pub fn current(id: u32) -> Option<Arc<Picture>> {
     let gpu = super::gpu::current()?;
     let mut g = SHOWN.lock().unwrap_or_else(|e| e.into_inner());
     let all = g.get_or_insert_with(HashMap::new);
-    if !all.contains_key(&id) {
+    if let std::collections::hash_map::Entry::Vacant(slot) = all.entry(id) {
         let head = Mem::new(IOSurfaceRef::lookup(id)?)?;
         if head.header().magic.load(Ordering::Acquire) != MAGIC {
             return None;
         }
-        all.insert(
-            id,
-            Shown {
-                head,
-                views: HashMap::new(),
-                seq: 0,
-                pic: None,
-                ids: Vec::new(),
-            },
-        );
+        slot.insert(Shown {
+            head,
+            views: HashMap::new(),
+            seq: 0,
+            pic: None,
+            ids: Vec::new(),
+        });
     }
     let s = all.get_mut(&id).expect("made");
     let hd = s.head.header();
@@ -381,11 +378,10 @@ pub fn current(id: u32) -> Option<Arc<Picture>> {
         // surfaces of an older size are let go
         let live: Vec<u32> = hd.ids.iter().map(|i| i.load(Ordering::Acquire)).collect();
         s.views.retain(|k, _| live.contains(k));
-        if !s.views.contains_key(&sid) {
+        if let std::collections::hash_map::Entry::Vacant(view) = s.views.entry(sid) {
             let surf = IOSurfaceRef::lookup(sid)?;
             let t = texture_on(&gpu, &surf, w, h, "shared picture shown")?;
-            s.views
-                .insert(sid, t.create_view(&wgpu::TextureViewDescriptor::default()));
+            view.insert(t.create_view(&wgpu::TextureViewDescriptor::default()));
         }
         let pid = super::canvas::next_picture_id();
         gpu.adopt_picture(pid, s.views[&sid].clone());

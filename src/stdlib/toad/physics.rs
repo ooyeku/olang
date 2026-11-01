@@ -84,7 +84,7 @@ impl World {
             o => map_of(o, "the physics options")?,
         };
         let scale = m.get("scale").and_then(num).unwrap_or(50.0);
-        if !(scale > 0.0) {
+        if scale.is_nan() || scale <= 0.0 {
             return Err("toad.physics: `scale` (world units to a metre) is above zero".into());
         }
         let k = 1.0 / scale;
@@ -967,9 +967,9 @@ impl Grid {
 /// cores; the same result either way.
 fn each_chunk(ents: &mut [Ent], f: impl Fn(&mut [Ent]) + Sync + Send) {
     #[cfg(feature = "native")]
-    ents.par_chunks_mut(1024).for_each(|c| f(c));
+    ents.par_chunks_mut(1024).for_each(f);
     #[cfg(not(feature = "native"))]
-    ents.chunks_mut(1024).for_each(|c| f(c));
+    ents.chunks_mut(1024).for_each(f);
 }
 
 /// A play swarm against the world's bodies: each entity (its `pos`, a
@@ -981,13 +981,16 @@ fn each_chunk(ents: &mut [Ent], f: impl Fn(&mut [Ent]) + Sync + Send) {
 /// `mark`: a field set to 1 for those that touched this step, 0 for the
 /// rest; `push`: each entity's mass, pushing dynamic bodies it hits;
 /// `sensors`: whether sensors count (as touches, never as walls).
+/// Per body: (id, entities that touched it); then the dead flags.
+pub type Collisions = (Vec<(i64, i64)>, Vec<bool>);
+
 /// Answers `(per body: (id, entities that touched it), dead flags)`.
 pub fn collide(
     w: &mut World,
     p: &Program,
     cols: &mut Columns,
     opts: &Value,
-) -> Result<(Vec<(i64, i64)>, Vec<bool>), String> {
+) -> Result<Collisions, String> {
     let m = map_of(opts, "the collision's options")?;
     let what = "toad.collide";
     let c = Cols::of(p, m, what, "mark")?;

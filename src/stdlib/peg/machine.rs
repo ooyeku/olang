@@ -358,7 +358,7 @@ impl<'a> Machine<'a> {
             self.depth -= 1;
             return -1;
         }
-        let out = if self.depth % 64 == 0 {
+        let out = if self.depth.is_multiple_of(64) {
             crate::interpreter::with_stack_headroom(|| self.rule_k_wrapped::<T>(r, p))
         } else {
             self.rule_k_wrapped::<T>(r, p)
@@ -461,7 +461,7 @@ impl<'a> Machine<'a> {
             self.depth -= 1;
             return -1;
         }
-        let out = if self.depth % 64 == 0 {
+        let out = if self.depth.is_multiple_of(64) {
             crate::interpreter::with_stack_headroom(|| self.rule_b_wrapped(r, p))
         } else {
             self.rule_b_wrapped(r, p)
@@ -564,8 +564,7 @@ impl<'a> Machine<'a> {
             Expr::Lit { codes, ci, desc } => {
                 let x = self.at_pos(cx, p, skd);
                 let mut ok = true;
-                let mut q = x as usize;
-                for &c in codes.iter() {
+                for (q, &c) in (x as usize..).zip(codes.iter()) {
                     let have = self.cs[q];
                     let have = if *ci {
                         super::grammar::lower(have)
@@ -576,7 +575,6 @@ impl<'a> Machine<'a> {
                         ok = false;
                         break;
                     }
-                    q += 1;
                 }
                 if ok {
                     let end = x + codes.len() as i64;

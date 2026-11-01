@@ -565,10 +565,7 @@ pub fn run_all(
                 cmd.stdin(std::process::Stdio::piped())
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::null());
-                let mut child = match cmd.spawn() {
-                    Ok(c) => Some(c),
-                    Err(_) => None,
-                };
+                let mut child = cmd.spawn().ok();
                 let mut io = child.as_mut().and_then(|c| {
                     Some((c.stdin.take()?, std::io::BufReader::new(c.stdout.take()?)))
                 });

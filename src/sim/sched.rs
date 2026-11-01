@@ -163,7 +163,7 @@ impl Sched {
             check_forced: false,
             preemptions: 0,
             stick: 0.0,
-            stick_draws: Keyed::new(seed ^ 0x5717_c4),
+            stick_draws: Keyed::new(seed ^ 0x0057_17c4),
         }
     }
 

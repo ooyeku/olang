@@ -146,7 +146,7 @@ impl<'t, 'a> Tree<'t, 'a> {
 
     pub fn value(&mut self, id: u32, interp: &mut Interpreter) -> Result<Value, InterpreterError> {
         self.depth += 1;
-        let out = if self.depth % 64 == 0 {
+        let out = if self.depth.is_multiple_of(64) {
             crate::interpreter::with_stack_headroom(|| self.value_inner(id, interp))
         } else {
             self.value_inner(id, interp)

@@ -172,8 +172,8 @@ pub fn run(p: &Program, cols: &mut Columns, uniforms: &[f32]) -> Option<Vec<bool
                             Arg::S(s) => *s,
                             Arg::C(v) => v[k],
                         };
-                        for k in 0..len {
-                            out[k] = if at(&c, k) > 0.5 {
+                        for (k, o) in out.iter_mut().enumerate().take(len) {
+                            *o = if at(&c, k) > 0.5 {
                                 at(&x, k)
                             } else {
                                 at(&y, k)
@@ -220,8 +220,8 @@ pub fn run(p: &Program, cols: &mut Columns, uniforms: &[f32]) -> Option<Vec<bool
 pub fn compact(cols: &mut Columns, dead: &[bool]) -> usize {
     let n = cols.n;
     let mut keep = 0;
-    for i in 0..n {
-        if !dead[i] {
+    for (i, &gone) in dead.iter().enumerate().take(n) {
+        if !gone {
             if keep != i {
                 for c in 0..cols.width {
                     cols.data[c * cols.cap + keep] = cols.data[c * cols.cap + i];

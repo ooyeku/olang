@@ -411,10 +411,7 @@ impl Model for OlangModel<'_> {
                 "a model's step answers Ok(next) or Err(why), got {}",
                 other.type_name()
             )),
-            Err(e) => Err(format!(
-                "the model's step raised: {}",
-                super::error_text(&e)
-            )),
+            Err(e) => Err(format!("the model's step raised: {}", super::error_text(e))),
         }
     }
 }

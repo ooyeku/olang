@@ -149,8 +149,10 @@ pub struct Decision {
     pub key: Key,
 }
 
-/// A queue of forced entries for one (site, place): (t, k, delay).
-type Queue = VecDeque<(u64, u64, Option<u64>)>;
+/// A forced entry for one (site, place): (t, k, delay).
+type Forced = (u64, u64, Option<u64>);
+/// A queue of forced entries for one (site, place).
+type Queue = VecDeque<Forced>;
 
 /// Visit counts for every (site, place), and, when the run is forced,
 /// the entries still to fire.
@@ -168,7 +170,7 @@ impl Sites {
 
     /// Sites forced by `entries`, each already resolved to its place.
     pub fn forced(entries: impl IntoIterator<Item = (Site, u64, u64, u64, Option<u64>)>) -> Sites {
-        let mut queues: HashMap<(Site, u64), Vec<(u64, u64, Option<u64>)>> = HashMap::new();
+        let mut queues: HashMap<(Site, u64), Vec<Forced>> = HashMap::new();
         for (site, place, t, k, delay) in entries {
             queues.entry((site, place)).or_default().push((t, k, delay));
         }
