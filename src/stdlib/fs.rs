@@ -1259,6 +1259,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn walk_and_glob_do_not_follow_a_link_into_a_folder() {
         let dir = tempfile::tempdir().unwrap();
         let d = dir.path().join("d");

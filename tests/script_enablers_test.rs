@@ -200,6 +200,7 @@ fn abs_path_and_home_dir_resolve() {
 }
 
 #[test]
+#[cfg(unix)]
 fn real_path_resolves_links_and_a_path_not_there_yet() {
     let base = std::env::temp_dir().join(format!("olang-real-path-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
