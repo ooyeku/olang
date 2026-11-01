@@ -14,8 +14,22 @@ fn otc() -> &'static str {
 }
 
 fn run(home: &Path, args: &[&str]) -> (bool, String) {
+    // `doctor` audits every olang/otc on PATH and migrates a legacy
+    // `$HOME/.olang_history`: the run sees only the otc under test on its
+    // PATH and a HOME inside the fake one, so an older installed otc is no
+    // finding here and `--fix` never moves the user's history.
+    let path = home.join("test-path");
+    std::fs::create_dir_all(&path).expect("mkdir");
+    if !path.join("otc").exists() {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(otc(), path.join("otc")).expect("link otc");
+        #[cfg(not(unix))]
+        std::fs::copy(otc(), path.join("otc")).expect("copy otc");
+    }
     let out = Command::new(otc())
         .args(args)
+        .env("PATH", &path)
+        .env("HOME", home)
         .env("OLANG_HOME", home)
         // Shelf resolution honors OLANG_SHELF first; point it into the
         // fake home so the test never reads the user's shelf.
