@@ -17,6 +17,13 @@ As in the [language reference](language.md), every `olang` block here is
 run by the test suite. Blocks marked `no-run` are only checked for
 syntax, because they need a file system, a network or a browser.
 
+Every function has a stable anchor, so a link can point straight at it.
+A module's function is `#module-name`, with the dots of a longer path
+also written as dashes: `stdlib.md#str-split`, `stdlib.md#fs-read_file`,
+`stdlib.md#collections-heap-push`. A global builtin is its bare name:
+`stdlib.md#len`, `stdlib.md#map_keys`. The anchor sits on the row or
+the sentence that documents the function in its module's section.
+
 ## Table of contents
 
 - [Conventions](#conventions)
@@ -200,21 +207,21 @@ helpers are aliases of the same function, never a second definition.
 
 | Function | Description |
 |---|---|
-| `print(v)` | write without newline |
-| `println(...)` | write with newline; several arguments print space-separated |
-| `eprint(v)` / `eprintln(...)` | the same, to standard error: diagnostics stay out of `prog > out.csv` (in the browser they join the output) |
+| <a id="print"></a>`print(v)` | write without newline |
+| <a id="println"></a>`println(...)` | write with newline; several arguments print space-separated |
+| <a id="eprint"></a><a id="eprintln"></a>`eprint(v)` / `eprintln(...)` | the same, to standard error: diagnostics stay out of `prog > out.csv` (in the browser they join the output) |
 
 ### Introspection and conversion
 
 | Function | Description |
 |---|---|
-| `typeof(v)` | runtime type name as a string |
-| `show(v)` | the value as olang source writes it ([How values print](language.md#how-values-print)); a String is its text |
-| `to_string(v)` | the same text as `show` (a String is its text) |
-| `to_int(v)` | string/float → Int (floats truncate toward zero); a string that is not a number raises (`str.parse_int` is the `Result` form), and so does a Float outside the Int range (`to_int(1e30)`) or not finite |
-| `to_float(v)` | string/int → Float; a string that is not a number raises (`str.parse_float` is the `Result` form) |
-| `len(v)` | length of a list, a string (in characters), a tuple, or `Bytes`; a map raises, and its entry count is `map_len` |
-| `implements(v, "Trait")` | does the value's type implement the trait? |
+| <a id="typeof"></a>`typeof(v)` | runtime type name as a string |
+| <a id="show"></a>`show(v)` | the value as olang source writes it ([How values print](language.md#how-values-print)); a String is its text |
+| <a id="to_string"></a>`to_string(v)` | the same text as `show` (a String is its text) |
+| <a id="to_int"></a>`to_int(v)` | string/float → Int (floats truncate toward zero); a string that is not a number raises (`str.parse_int` is the `Result` form), and so does a Float outside the Int range (`to_int(1e30)`) or not finite |
+| <a id="to_float"></a>`to_float(v)` | string/int → Float; a string that is not a number raises (`str.parse_float` is the `Result` form) |
+| <a id="len"></a>`len(v)` | length of a list, a string (in characters), a tuple, or `Bytes`; a map raises, and its entry count is `map_len` |
+| <a id="implements"></a>`implements(v, "Trait")` | does the value's type implement the trait? |
 
 `to_string` and `show` render the same text: a string is returned as
 itself (`to_string("hi")` is `hi`, never `"hi"`), and every other value
@@ -232,19 +239,19 @@ println(show(len([1, 2, 3])) + " " + show(len("abcd")))
 
 | Function | Description |
 |---|---|
-| `range(n)` / `range(a, b)` / `range(a, b, step)` | list of integers from `a` (default 0) up to, excluding, `b`, by `step` (default 1) |
-| `head(xs)` / `tail(xs)` | first element / all but the first |
-| `first(xs)` / `last(xs)` | the first / last element, or `()` when the list is empty (also of a tuple, and the first / last character of a string) |
-| `take(xs, n)` / `skip(xs, n)` | first `n` / all but the first `n` (`drop` is `skip` under the name most languages pair with `take`) |
-| `reverse(xs)` / `sort(xs)` | reversed / ascending copy (numbers, strings, or tuples, which order lexicographically); the sort is stable: elements that compare equal keep their order |
-| `contains(xs, v)` | membership test |
-| `concat(a, b)` | join two lists (or use `a + b`) |
-| `cons(v, xs)` | prepend an element |
-| `chunk(xs, n)` | split into sublists of size `n` |
-| `flatten(xss)` | flatten one level of nesting |
-| `enumerate(xs)` | pair each element with its index: a list of `(i, v)` tuples |
-| `zip(a, b)` | pair elements: list of tuples, shortest wins |
-| `group_by(xs, f)` | list of `(key, [members])` tuples |
+| <a id="range"></a>`range(n)` / `range(a, b)` / `range(a, b, step)` | list of integers from `a` (default 0) up to, excluding, `b`, by `step` (default 1) |
+| <a id="head"></a><a id="tail"></a>`head(xs)` / `tail(xs)` | first element / all but the first |
+| <a id="first"></a><a id="last"></a>`first(xs)` / `last(xs)` | the first / last element, or `()` when the list is empty (also of a tuple, and the first / last character of a string) |
+| <a id="take"></a><a id="skip"></a><a id="drop"></a>`take(xs, n)` / `skip(xs, n)` | first `n` / all but the first `n` (`drop` is `skip` under the name most languages pair with `take`) |
+| <a id="reverse"></a><a id="sort"></a>`reverse(xs)` / `sort(xs)` | reversed / ascending copy (numbers, strings, or tuples, which order lexicographically); the sort is stable: elements that compare equal keep their order |
+| <a id="contains"></a>`contains(xs, v)` | membership test |
+| <a id="concat"></a>`concat(a, b)` | join two lists (or use `a + b`) |
+| <a id="cons"></a>`cons(v, xs)` | prepend an element |
+| <a id="chunk"></a>`chunk(xs, n)` | split into sublists of size `n` |
+| <a id="flatten"></a>`flatten(xss)` | flatten one level of nesting |
+| <a id="enumerate"></a>`enumerate(xs)` | pair each element with its index: a list of `(i, v)` tuples |
+| <a id="zip"></a>`zip(a, b)` | pair elements: list of tuples, shortest wins |
+| <a id="group_by"></a>`group_by(xs, f)` | list of `(key, [members])` tuples |
 
 ```olang
 println(to_string(range(1, 5)))
@@ -272,10 +279,10 @@ println(`${col.index_of(xs, 30)} ${col.slice(xs, 1, 3)} ${drop(xs, 3)}`)
 
 | Function | Description |
 |---|---|
-| `sum(xs)` / `min(xs)` / `max(xs)` | numeric aggregates over a list — `min` and `max` also take two or more scalars (`max(0, n - 1)`, the clamp idiom) |
-| `average(xs)` | mean of a numeric list |
-| `clamp(v, lo, hi)` | bound a number to a range |
-| `abs(x)` | absolute value, an Int for an Int (`math.abs`) |
+| <a id="sum"></a><a id="min"></a><a id="max"></a>`sum(xs)` / `min(xs)` / `max(xs)` | numeric aggregates over a list — `min` and `max` also take two or more scalars (`max(0, n - 1)`, the clamp idiom) |
+| <a id="average"></a>`average(xs)` | mean of a numeric list |
+| <a id="clamp"></a>`clamp(v, lo, hi)` | bound a number to a range |
+| <a id="abs"></a>`abs(x)` | absolute value, an Int for an Int (`math.abs`) |
 
 ```olang
 let xs = [4, 1, 7]
@@ -288,15 +295,15 @@ println(`${abs(-3)} ${abs(2.5)}`)   // 3 2.5
 
 | Function | Description |
 |---|---|
-| `map(xs, f)` | transform each element |
-| `filter(xs, pred)` | keep matching elements |
-| `par_map(xs, f)` | `map` fanned out across OS threads |
-| `par_filter(xs, pred)` | `filter` fanned out across OS threads |
-| `fold(xs, init, f)` | combine left to right from the accumulator `init`: `f(acc, x)` for each element |
-| `reduce(xs, f)` | `fold` from the first element, with no initial value: `reduce([3, 9, 4], max_of)` is `max_of(max_of(3, 9), 4)`; a one-element list answers its element, an empty one `()` |
-| `find(xs, pred)` | the first element `pred` accepts, or `()` when none does |
-| `all(xs, pred)` / `any(xs, pred)` | does every / some element match? Stops at the first that settles it (`col.all` / `col.any`) |
-| `map_filtered(xs, pred, f)` | fused filter-then-map in one pass |
+| <a id="map"></a>`map(xs, f)` | transform each element |
+| <a id="filter"></a>`filter(xs, pred)` | keep matching elements |
+| <a id="par_map"></a>`par_map(xs, f)` | `map` fanned out across OS threads |
+| <a id="par_filter"></a>`par_filter(xs, pred)` | `filter` fanned out across OS threads |
+| <a id="fold"></a>`fold(xs, init, f)` | combine left to right from the accumulator `init`: `f(acc, x)` for each element |
+| <a id="reduce"></a>`reduce(xs, f)` | `fold` from the first element, with no initial value: `reduce([3, 9, 4], max_of)` is `max_of(max_of(3, 9), 4)`; a one-element list answers its element, an empty one `()` |
+| <a id="find"></a>`find(xs, pred)` | the first element `pred` accepts, or `()` when none does |
+| <a id="all"></a><a id="any"></a>`all(xs, pred)` / `any(xs, pred)` | does every / some element match? Stops at the first that settles it (`col.all` / `col.any`) |
+| <a id="map_filtered"></a>`map_filtered(xs, pred, f)` | fused filter-then-map in one pass |
 
 All take the list first, so they chain with `|>`:
 
@@ -342,9 +349,9 @@ println(to_string(par_filter(1..10, (x) => x % 3 == 0)))
 
 | Function | Description |
 |---|---|
-| `split(s, sep)` | string → list |
-| `join(xs, sep)` | list → string (string elements render bare) |
-| `starts_with(s, p)` / `ends_with(s, p)` | prefix/suffix test |
+| <a id="split"></a>`split(s, sep)` | string → list |
+| <a id="join"></a>`join(xs, sep)` | list → string (string elements render bare) |
+| <a id="starts_with"></a><a id="ends_with"></a>`starts_with(s, p)` / `ends_with(s, p)` | prefix/suffix test |
 
 ```olang
 println(join(split("a,b,c", ","), " | "))
@@ -370,19 +377,19 @@ any key as `m[k]` (exactly `map_get(m, k)`).
 
 | Function | Description |
 |---|---|
-| `map_get(m, k)` | value, or `Unit` when absent (and `Unit` when `m` is `()`, as `().k` is) |
-| `map_get_or(m, k, default)` | value, or `default` when absent (or stored Unit) |
-| `map_get_in(m, [k1, k2, …])` | a nested read in one call — the value at the end of the key path, or Unit at the first missing hop; every hop reads like `map_get` |
-| `map_set_in(m, [k1, k2, …], v)` | new value with the end of the key path set — each level a new value of its own kind, a missing level a new map |
-| `map_update(m, k, f)` | new value with `k` set to `f(m.k)` (`f` is given `()` for an absent key) |
-| `map_has_key(m, k)` | presence test (distinguishes absent from null) |
-| `map_keys(m)` / `map_values(m)` | key/value lists, in the map's order (each key where it was first set; the order `entries` uses) |
-| `entries(m)` | `(key, value)` tuples, in the map's order — for `for (k, v) in` |
-| `map_len(m)` | entry count (an object's or a JSON object's fields) |
-| `map_set(m, k, v)` | new value of the same kind with `k` set |
-| `map_remove(m, k)` | new value of the same kind without `k` |
-| `map_merge(a, b)` | new value of `a`'s kind, `b`'s entries winning (`b` any of the kinds); `#{ ...a, ...b }` is the literal form |
-| `map_clear(m)` | an empty value of the same kind |
+| <a id="map_get"></a>`map_get(m, k)` | value, or `Unit` when absent (and `Unit` when `m` is `()`, as `().k` is) |
+| <a id="map_get_or"></a>`map_get_or(m, k, default)` | value, or `default` when absent (or stored Unit) |
+| <a id="map_get_in"></a>`map_get_in(m, [k1, k2, …])` | a nested read in one call — the value at the end of the key path, or Unit at the first missing hop; every hop reads like `map_get` |
+| <a id="map_set_in"></a>`map_set_in(m, [k1, k2, …], v)` | new value with the end of the key path set — each level a new value of its own kind, a missing level a new map |
+| <a id="map_update"></a>`map_update(m, k, f)` | new value with `k` set to `f(m.k)` (`f` is given `()` for an absent key) |
+| <a id="map_has_key"></a>`map_has_key(m, k)` | presence test (distinguishes absent from null) |
+| <a id="map_keys"></a><a id="map_values"></a>`map_keys(m)` / `map_values(m)` | key/value lists, in the map's order (each key where it was first set; the order `entries` uses) |
+| <a id="entries"></a>`entries(m)` | `(key, value)` tuples, in the map's order — for `for (k, v) in` |
+| <a id="map_len"></a>`map_len(m)` | entry count (an object's or a JSON object's fields) |
+| <a id="map_set"></a>`map_set(m, k, v)` | new value of the same kind with `k` set |
+| <a id="map_remove"></a>`map_remove(m, k)` | new value of the same kind without `k` |
+| <a id="map_merge"></a>`map_merge(a, b)` | new value of `a`'s kind, `b`'s entries winning (`b` any of the kinds); `#{ ...a, ...b }` is the literal form |
+| <a id="map_clear"></a>`map_clear(m)` | an empty value of the same kind |
 
 ```olang
 let m = #{ "a": 1, "b": 2 }
@@ -404,14 +411,14 @@ println("")
 
 | Function | Description |
 |---|---|
-| `unwrap(r)` | value of `Ok`; raises on `Err` (a runtime error, which `attempt` catches) |
-| `unwrap_or(r, default)` | value or default |
-| `unwrap_or_else(r, f)` | value or `f(error)` |
-| `is_ok(r)` / `is_err(r)` | tests |
-| `result_map(r, f)` | transform the `Ok` value |
-| `result_map_err(r, f)` | transform the `Err` value |
-| `attempt(f)` | call `f()`: `Ok(value)`, or `Err(message)` when a runtime error ended it |
-| `raise(message)` | stop with a runtime error whose message is `message`, word for word (a value other than a String as `show` writes it) |
+| <a id="unwrap"></a>`unwrap(r)` | value of `Ok`; raises on `Err` (a runtime error, which `attempt` catches) |
+| <a id="unwrap_or"></a>`unwrap_or(r, default)` | value or default |
+| <a id="unwrap_or_else"></a>`unwrap_or_else(r, f)` | value or `f(error)` |
+| <a id="is_ok"></a><a id="is_err"></a>`is_ok(r)` / `is_err(r)` | tests |
+| <a id="result_map"></a>`result_map(r, f)` | transform the `Ok` value |
+| <a id="result_map_err"></a>`result_map_err(r, f)` | transform the `Err` value |
+| <a id="attempt"></a>`attempt(f)` | call `f()`: `Ok(value)`, or `Err(message)` when a runtime error ended it |
+| <a id="raise"></a>`raise(message)` | stop with a runtime error whose message is `message`, word for word (a value other than a String as `show` writes it) |
 
 ```olang
 let r = Ok(10)
@@ -424,13 +431,13 @@ println(show(attempt(() => raise("widget: no kind dial"))))   // Err("widget: no
 
 | Function | Description |
 |---|---|
-| `assert(cond[, msg])` · `assert_eq(a, b[, msg])` · `assert_ne(a, b[, msg])` · `assert_true(x[, msg])` · `assert_false(x[, msg])` · `assert_close(actual, expected, tolerance[, msg])` | language-level assertions: each raises on failure, which is what fails a [`test` block](language.md#testing); the [`testing`](#testing--assertions) module holds the `Result`-returning forms |
+| <a id="assert"></a><a id="assert_eq"></a><a id="assert_ne"></a><a id="assert_true"></a><a id="assert_false"></a><a id="assert_close"></a>`assert(cond[, msg])` · `assert_eq(a, b[, msg])` · `assert_ne(a, b[, msg])` · `assert_true(x[, msg])` · `assert_false(x[, msg])` · `assert_close(actual, expected, tolerance[, msg])` | language-level assertions: each raises on failure, which is what fails a [`test` block](language.md#testing); the [`testing`](#testing--assertions) module holds the `Result`-returning forms |
 
 ### Evaluation helpers
 
 | Function | Description |
 |---|---|
-| `set_parallel(on)` | `true` or `false`: enable or disable the parallel machinery — explicit (`par_map`) and automatic alike (how many threads: `OLANG_PARALLELISM`) |
+| <a id="set_parallel"></a>`set_parallel(on)` | `true` or `false`: enable or disable the parallel machinery — explicit (`par_map`) and automatic alike (how many threads: `OLANG_PARALLELISM`) |
 
 ## `str` — strings
 
@@ -445,36 +452,36 @@ every function returns a new string.
 
 | Function | Description |
 |---|---|
-| `str.length(s)` | character count |
-| `str.char_at(s, i)` | 1-char string, `()` past the end; a negative `i` raises |
-| `str.char_code(s)` | the Unicode code point of the first character, `()` for `""` |
-| `str.from_char_code(n)` | the character of code point `n`, or the string of a list of them (`[27, 91, 72]` is ESC `[` `H`); a number that is no character raises |
-| `str.chars(s)` | list of characters (codepoints) |
-| `str.graphemes(s)` | list of visible characters (UAX #29 clusters) |
-| `str.width(s)` | display width in terminal cells (see below) |
-| `str.cell_width(g)` | the cells one grapheme occupies: 0, 1 or 2; more than one grapheme raises |
-| `str.substring(s, from, to)` | half-open slice by the slices' one rule: a position past the end stops at the end, `to` at or before `from` is `""`, a negative position raises (`col.slice` and `bytes.slice` alike) |
-| `str.index_of(s, sub)` / `str.last_index_of` | position, or `()` when absent |
-| `str.contains(s, sub)` / `str.count(s, sub)` | search |
-| `str.fuzzy_score(query, text)` | a fuzzy finder's score (every query character in order; runs, word starts, the last path segment count more), or `()` |
-| `str.starts_with` / `str.ends_with` | affix tests |
-| `str.split(s, sep)` / `str.join(xs, sep)` | list conversion |
-| `str.lines(s)` / `str.words(s)` | split on newlines / whitespace |
-| `str.trim` / `str.trim_start` / `str.trim_end` | strip whitespace |
-| `str.pad_start(s, n, fill)` / `str.pad_end` | pad to width |
-| `str.repeat(s, n)` | repetition |
-| `str.replace(s, from, to)` / `str.replace_first` | substitution |
-| `str.to_upper` / `str.to_lower` / `str.capitalize` | case |
-| `str.reverse(s)` | reversed by visible character — clusters stay whole |
-| `str.is_empty(s)` | `""` test |
-| `str.is_ascii(s)` | every character ASCII? (true for `""`) — one pass over the bytes |
-| `str.parse_int(s)` / `str.parse_float(s)` | `Result` parses |
-| `str.fmt(template, ...)` | fill `{}` placeholders, display form; `{{`/`}}` escape |
-| `str.fixed(x, digits)` | exactly `digits` decimals, never exponent form, never `-0.00` — the column form `to_string` is not |
-| `str.thousands(x, digits)` | `str.fixed` with thousands separators: `1,234,567.89` |
+| <a id="str-length"></a>`str.length(s)` | character count |
+| <a id="str-char_at"></a>`str.char_at(s, i)` | 1-char string, `()` past the end; a negative `i` raises |
+| <a id="str-char_code"></a>`str.char_code(s)` | the Unicode code point of the first character, `()` for `""` |
+| <a id="str-from_char_code"></a>`str.from_char_code(n)` | the character of code point `n`, or the string of a list of them (`[27, 91, 72]` is ESC `[` `H`); a number that is no character raises |
+| <a id="str-chars"></a>`str.chars(s)` | list of characters (codepoints) |
+| <a id="str-graphemes"></a>`str.graphemes(s)` | list of visible characters (UAX #29 clusters) |
+| <a id="str-width"></a>`str.width(s)` | display width in terminal cells (see below) |
+| <a id="str-cell_width"></a>`str.cell_width(g)` | the cells one grapheme occupies: 0, 1 or 2; more than one grapheme raises |
+| <a id="str-substring"></a>`str.substring(s, from, to)` | half-open slice by the slices' one rule: a position past the end stops at the end, `to` at or before `from` is `""`, a negative position raises (`col.slice` and `bytes.slice` alike) |
+| <a id="str-index_of"></a><a id="str-last_index_of"></a>`str.index_of(s, sub)` / `str.last_index_of` | position, or `()` when absent |
+| <a id="str-contains"></a><a id="str-count"></a>`str.contains(s, sub)` / `str.count(s, sub)` | search |
+| <a id="str-fuzzy_score"></a>`str.fuzzy_score(query, text)` | a fuzzy finder's score (every query character in order; runs, word starts, the last path segment count more), or `()` |
+| <a id="str-starts_with"></a><a id="str-ends_with"></a>`str.starts_with` / `str.ends_with` | affix tests |
+| <a id="str-split"></a><a id="str-join"></a>`str.split(s, sep)` / `str.join(xs, sep)` | list conversion |
+| <a id="str-lines"></a><a id="str-words"></a>`str.lines(s)` / `str.words(s)` | split on newlines / whitespace |
+| <a id="str-trim"></a><a id="str-trim_start"></a><a id="str-trim_end"></a>`str.trim` / `str.trim_start` / `str.trim_end` | strip whitespace |
+| <a id="str-pad_start"></a><a id="str-pad_end"></a>`str.pad_start(s, n, fill)` / `str.pad_end` | pad to width |
+| <a id="str-repeat"></a>`str.repeat(s, n)` | repetition |
+| <a id="str-replace"></a><a id="str-replace_first"></a>`str.replace(s, from, to)` / `str.replace_first` | substitution |
+| <a id="str-to_upper"></a><a id="str-to_lower"></a><a id="str-capitalize"></a>`str.to_upper` / `str.to_lower` / `str.capitalize` | case |
+| <a id="str-reverse"></a>`str.reverse(s)` | reversed by visible character — clusters stay whole |
+| <a id="str-is_empty"></a>`str.is_empty(s)` | `""` test |
+| <a id="str-is_ascii"></a>`str.is_ascii(s)` | every character ASCII? (true for `""`) — one pass over the bytes |
+| <a id="str-parse_int"></a><a id="str-parse_float"></a>`str.parse_int(s)` / `str.parse_float(s)` | `Result` parses |
+| <a id="str-fmt"></a>`str.fmt(template, ...)` | fill `{}` placeholders, display form; `{{`/`}}` escape |
+| <a id="str-fixed"></a>`str.fixed(x, digits)` | exactly `digits` decimals, never exponent form, never `-0.00` — the column form `to_string` is not |
+| <a id="str-thousands"></a>`str.thousands(x, digits)` | `str.fixed` with thousands separators: `1,234,567.89` |
 | `str.fmt(x, spec)` | a number by a format spec, Python's mini-language: `".2f"` (`3.14`), `",.0f"` (`1,234,568`), `".1%"` (`12.3%`), `"$,.0f"` (`-$1,234`), `"e"`, `"g"`, `"n"`, `"d"`, `"x"` `"o"` `"b"` (`"X"` `"E"` `"F"` `"G"` upper case), with `[[fill]align][sign][z][#][0][width][,\|_]`: `">8.1f"`, `"02d"` (`05`: the `0` flag pads with zeros after the sign, `"+05d"` `+0005`, grouped too: `"08,d"` `0,001,234`), `"=+8.1f"`, `"#x"` (`0xff`), `"_d"`; `$` before the digits is ours. A Series of numbers gives a String Series (`ods.format`). In a template, `{:.2f}` formats its argument by the spec |
-| `str.pct(x, digits = 1)` | a fraction as a percentage: `str.pct(0.1234)` is `"12.3%"` |
-| `str.money(x, symbol = "$", digits = 0)` | an amount with separators: `str.money(-1234.5, digits: 2)` is `"-$1,234.50"` |
+| <a id="str-pct"></a>`str.pct(x, digits = 1)` | a fraction as a percentage: `str.pct(0.1234)` is `"12.3%"` |
+| <a id="str-money"></a>`str.money(x, symbol = "$", digits = 0)` | an amount with separators: `str.money(-1234.5, digits: 2)` is `"-$1,234.50"` |
 
 ```olang
 println(str.pad_start("7", 3, "0"))                 // 007
@@ -525,30 +532,30 @@ println(str.cell_width("🇯🇵"))      // 2
 global builtins. The builtins cover what nearly every program touches (`map`, `filter`, `fold`,
 `sort`); `col` holds the rest — quantifiers, partitions, key-function
 variants. `colx` (`use colx`) implements the higher-order core of `col`
-in olang, embedded in the binary: `all`, `any`, `count_by`,
-`drop_while`, `flat_map`, `frequencies`, `last`, `max_by`, `min_by`,
-`partition`, `sort_by`, `sum_by`, `take_while`, `unique`, `window`, and
-`zip_with`, each tested against its native twin.
+<a id="colx-all"></a><a id="colx-any"></a><a id="colx-count_by"></a>in olang, embedded in the binary: `all`, `any`, `count_by`,
+<a id="colx-drop_while"></a><a id="colx-flat_map"></a><a id="colx-frequencies"></a><a id="colx-last"></a><a id="colx-min_by"></a><a id="colx-max_by"></a>`drop_while`, `flat_map`, `frequencies`, `last`, `max_by`, `min_by`,
+<a id="colx-unique"></a><a id="colx-partition"></a><a id="colx-sum_by"></a><a id="colx-take_while"></a><a id="colx-sort_by"></a><a id="colx-window"></a>`partition`, `sort_by`, `sum_by`, `take_while`, `unique`, `window`, and
+<a id="colx-zip_with"></a>`zip_with`, each tested against its native twin.
 
 | Function | Description |
 |---|---|
-| `col.all(xs, p)` / `col.any(xs, p)` | quantifiers (short-circuit) |
-| `col.index_of(xs, v)` / `col.slice(xs, from, to)` | position of a value (or Unit) / a half-open sub-list, by `str.substring`'s rule |
-| `col.splice(xs, at, n, items)` | the `n` elements from `at` replaced by `items`, in one copy |
-| `col.map` `col.filter` `col.fold` `col.sort` `col.contains` `col.reverse` `col.flatten` `col.zip` `col.take` `col.drop` `col.skip` `col.head` `col.tail` `col.sum` `col.min` `col.max` | the global list helpers of the same names, mirrored here: each behaves exactly as its global ([Lists](#lists), [Aggregates](#aggregates), [Higher-order functions](#higher-order-functions)) |
-| `col.set(xs, i, v)` / `col.swap(xs, i, j)` | the list with element `i` replaced / elements `i` and `j` exchanged; `xs = col.set(xs, i, v)` on a list nothing else holds writes in place; an index outside the list, a negative one included, raises |
-| `col.filled(n, v)` | a list of `n` copies of `v`, the preallocation primitive |
-| `col.unique(xs)` | dedupe, first-seen order |
-| `col.partition(xs, p)` | `([matching], [rest])` |
-| `col.sum_by(xs, f)` | total of a projection |
-| `col.count_by(xs, f)` / `col.frequencies(xs)` | maps of counts |
-| `col.min_by(xs, f)` / `col.max_by(xs, f)` | extremes by key function |
-| `col.sort_by(xs, f)` | ascending by key function, stable: elements with equal keys keep their order |
-| `col.take_while(xs, p)` / `col.drop_while(xs, p)` | prefix operations |
-| `col.flat_map(xs, f)` | map then flatten one level |
-| `col.window(xs, n)` | sliding windows |
-| `col.zip_with(a, b, f)` | combine pairwise |
-| `col.last(xs)` | final element |
+| <a id="col-all"></a><a id="col-any"></a>`col.all(xs, p)` / `col.any(xs, p)` | quantifiers (short-circuit) |
+| <a id="col-index_of"></a><a id="col-slice"></a>`col.index_of(xs, v)` / `col.slice(xs, from, to)` | position of a value (or Unit) / a half-open sub-list, by `str.substring`'s rule |
+| <a id="col-splice"></a>`col.splice(xs, at, n, items)` | the `n` elements from `at` replaced by `items`, in one copy |
+| <a id="col-take"></a><a id="col-skip"></a><a id="col-drop"></a><a id="col-contains"></a><a id="col-filter"></a><a id="col-map"></a><a id="col-fold"></a><a id="col-reverse"></a><a id="col-sort"></a><a id="col-sum"></a><a id="col-min"></a><a id="col-max"></a><a id="col-head"></a><a id="col-tail"></a><a id="col-zip"></a><a id="col-flatten"></a>`col.map` `col.filter` `col.fold` `col.sort` `col.contains` `col.reverse` `col.flatten` `col.zip` `col.take` `col.drop` `col.skip` `col.head` `col.tail` `col.sum` `col.min` `col.max` | the global list helpers of the same names, mirrored here: each behaves exactly as its global ([Lists](#lists), [Aggregates](#aggregates), [Higher-order functions](#higher-order-functions)) |
+| <a id="col-set"></a><a id="col-swap"></a>`col.set(xs, i, v)` / `col.swap(xs, i, j)` | the list with element `i` replaced / elements `i` and `j` exchanged; `xs = col.set(xs, i, v)` on a list nothing else holds writes in place; an index outside the list, a negative one included, raises |
+| <a id="col-filled"></a>`col.filled(n, v)` | a list of `n` copies of `v`, the preallocation primitive |
+| <a id="col-unique"></a>`col.unique(xs)` | dedupe, first-seen order |
+| <a id="col-partition"></a>`col.partition(xs, p)` | `([matching], [rest])` |
+| <a id="col-sum_by"></a>`col.sum_by(xs, f)` | total of a projection |
+| <a id="col-count_by"></a><a id="col-frequencies"></a>`col.count_by(xs, f)` / `col.frequencies(xs)` | maps of counts |
+| <a id="col-min_by"></a><a id="col-max_by"></a>`col.min_by(xs, f)` / `col.max_by(xs, f)` | extremes by key function |
+| <a id="col-sort_by"></a>`col.sort_by(xs, f)` | ascending by key function, stable: elements with equal keys keep their order |
+| <a id="col-take_while"></a><a id="col-drop_while"></a>`col.take_while(xs, p)` / `col.drop_while(xs, p)` | prefix operations |
+| <a id="col-flat_map"></a>`col.flat_map(xs, f)` | map then flatten one level |
+| <a id="col-window"></a>`col.window(xs, n)` | sliding windows |
+| <a id="col-zip_with"></a>`col.zip_with(a, b, f)` | combine pairwise |
+| <a id="col-last"></a>`col.last(xs)` | final element |
 
 ```olang
 println(to_string(col.unique([3, 1, 3, 2, 1])))
@@ -582,14 +589,14 @@ all the way to native code (see [the OVM chapter](ovm.md#the-jit)).
 
 | Group | Functions |
 |---|---|
-| Basics | `abs` `sign` `min` `max` `pow` `sqrt` `cbrt` |
+| <a id="math-sqrt"></a><a id="math-cbrt"></a><a id="mathx-sqrt"></a>Basics | `abs` `sign` `min` `max` `pow` `sqrt` `cbrt` |
 | Rounding | `floor` `ceil` `round` `trunc` `fract` |
-| Integers | `gcd` `lcm` `factorial` |
-| Exp/log | `exp` `exp2` `ln` `log` `log2` `log10` |
-| Trig | `sin` `cos` `tan` `asin` `acos` `atan` `atan2` |
-| Hyperbolic | `sinh` `cosh` `tanh` |
-| Angles | `radians` `degrees` |
-| Constants | `math.PI` `math.E` `math.TAU` `math.SQRT_2` `math.SQRT_3` `math.LN_2` `math.LN_10` `math.LOG2_E` `math.LOG10_E` |
+| <a id="math-gcd"></a><a id="math-lcm"></a><a id="math-factorial"></a><a id="mathx-gcd"></a><a id="mathx-lcm"></a><a id="mathx-factorial"></a>Integers | `gcd` `lcm` `factorial` |
+| <a id="math-exp"></a><a id="math-exp2"></a><a id="math-ln"></a><a id="math-log"></a><a id="math-log2"></a><a id="math-log10"></a>Exp/log | `exp` `exp2` `ln` `log` `log2` `log10` |
+| <a id="math-sin"></a><a id="math-cos"></a><a id="math-tan"></a><a id="math-asin"></a><a id="math-acos"></a><a id="math-atan"></a><a id="math-atan2"></a>Trig | `sin` `cos` `tan` `asin` `acos` `atan` `atan2` |
+| <a id="math-sinh"></a><a id="math-cosh"></a><a id="math-tanh"></a>Hyperbolic | `sinh` `cosh` `tanh` |
+| <a id="math-degrees"></a><a id="math-radians"></a><a id="mathx-radians"></a><a id="mathx-degrees"></a>Angles | `radians` `degrees` |
+| <a id="math-PI"></a><a id="math-E"></a><a id="math-TAU"></a><a id="math-SQRT_2"></a><a id="math-SQRT_3"></a><a id="math-LN_2"></a><a id="math-LN_10"></a><a id="math-LOG2_E"></a><a id="math-LOG10_E"></a>Constants | `math.PI` `math.E` `math.TAU` `math.SQRT_2` `math.SQRT_3` `math.LN_2` `math.LN_10` `math.LOG2_E` `math.LOG10_E` |
 
 ```olang
 println(`${math.pow(2, 10)} ${math.sqrt(2.25)}`)
@@ -602,26 +609,26 @@ What a function answers:
 
 | Function | Answers |
 |---|---|
-| `floor` `ceil` `round` `trunc` | an Int: an Int argument is itself, a Float is rounded (a Float outside the Int range, or NaN, raises) |
-| `round` | a half away from zero: `math.round(2.5)` is 3, `math.round(-2.5)` is -3. `str.fixed` rounds a half to even (`str.fixed(2.5, 0)` is `"2"`), the way printed decimals usually are |
-| `pow` | an Int for two Ints (an overflow raises, as `*` does; a negative exponent raises — pass a Float), else a Float |
-| `sign` | an Int, -1, 0 or 1, for an Int or a Float |
-| `abs` | the kind it is given |
-| `min` `max` | as the global `min` and `max`, for numbers: two or more numbers or one list, the first of equal values (`math.min(1, 2.5)` is 1) |
-| `fract` and the rest | a Float |
+| <a id="math-floor"></a><a id="math-ceil"></a><a id="math-trunc"></a><a id="mathx-trunc"></a><a id="mathx-floor"></a><a id="mathx-ceil"></a><a id="mathx-round"></a>`floor` `ceil` `round` `trunc` | an Int: an Int argument is itself, a Float is rounded (a Float outside the Int range, or NaN, raises) |
+| <a id="math-round"></a>`round` | a half away from zero: `math.round(2.5)` is 3, `math.round(-2.5)` is -3. `str.fixed` rounds a half to even (`str.fixed(2.5, 0)` is `"2"`), the way printed decimals usually are |
+| <a id="math-pow"></a>`pow` | an Int for two Ints (an overflow raises, as `*` does; a negative exponent raises — pass a Float), else a Float |
+| <a id="math-sign"></a><a id="mathx-sign"></a>`sign` | an Int, -1, 0 or 1, for an Int or a Float |
+| <a id="math-abs"></a><a id="mathx-abs"></a>`abs` | the kind it is given |
+| <a id="math-min"></a><a id="math-max"></a><a id="mathx-min"></a><a id="mathx-max"></a>`min` `max` | as the global `min` and `max`, for numbers: two or more numbers or one list, the first of equal values (`math.min(1, 2.5)` is 1) |
+| <a id="math-fract"></a><a id="mathx-fract"></a>`fract` and the rest | a Float |
 
 `mathx` (`use mathx`) is an olang-source module covering the integer and
 rounding core (its rounding answers an Int, and its `min` and `max`
 take two numbers): `abs`, `sign`, `min`, `max`, `sqrt`, `floor`, `ceil`,
 `round`, `trunc`, `fract`, `gcd`, `lcm`, `factorial`, `radians`,
-`degrees`, and the constants `PI`, `E`, and `TAU`. It is smaller in
+<a id="mathx-PI"></a><a id="mathx-E"></a><a id="mathx-TAU"></a>`degrees`, and the constants `PI`, `E`, and `TAU`. It is smaller in
 scope than `math`, and differential-tested against it.
 
 ## `vec` — vectors over lists
 
 `vec` does the arithmetic you would otherwise write as index loops over
-lists of Int or Float: `vec.dot(a, b)`, `vec.add(a, b)`, `vec.sub(a, b)`,
-`vec.scale(a, k)`, `vec.sum(a)`, `vec.norm(a)`, `vec.mean(a)`. Results
+<a id="vec-dot"></a><a id="vec-add"></a><a id="vec-sub"></a>lists of Int or Float: `vec.dot(a, b)`, `vec.add(a, b)`, `vec.sub(a, b)`,
+<a id="vec-scale"></a><a id="vec-sum"></a><a id="vec-norm"></a><a id="vec-mean"></a>`vec.scale(a, k)`, `vec.sum(a)`, `vec.norm(a)`, `vec.mean(a)`. Results
 are Float (or Float lists), but `vec.sum` of a list of Ints is an Int
 (0 for an empty list), as the global `sum` is; lengths must agree; a non-finite result
 raises like any float overflow. `ods.to_matrix(frame, names)` hands a
@@ -637,7 +644,7 @@ println(to_string(vec.norm([3.0, 4.0])))              // 5.0
 
 ## `bigint` — arbitrary precision
 
-A BigInt is an integer with no upper limit. `bigint.of` takes an Int or a string of
+<a id="bigint-of"></a>A BigInt is an integer with no upper limit. `bigint.of` takes an Int or a string of
 decimal digits; the value then uses the ordinary operators — `+ - * / %`
 and the comparisons — and a plain Int operand promotes to BigInt on
 contact. The arithmetic follows the Int rules exactly (division
@@ -649,13 +656,13 @@ points here.
 | Function | Description |
 |---|---|
 | `of(x)` | Int or digit-string → BigInt; raises on a malformed string |
-| `parse(s)` | the `Result`-returning twin of `of`, for data you don't control |
-| `to_int(b)` | back to a 64-bit Int, as a `Result` — the value may not fit |
+| <a id="bigint-parse"></a>`parse(s)` | the `Result`-returning twin of `of`, for data you don't control |
+| <a id="bigint-to_int"></a>`to_int(b)` | back to a 64-bit Int, as a `Result` — the value may not fit |
 | `to_float(b)` | to a Float, rounding to 53 bits — the only door to Float |
-| `abs(b)` `neg(b)` | absolute value; negation (unary `-` does not apply to BigInt) |
-| `pow(b, n)` | `b` to a non-negative Int power |
-| `mod_pow(b, e, m)` | `bᵉ mod m` without materializing `bᵉ` |
-| `gcd(a, b)` | greatest common divisor, always non-negative |
+| <a id="bigint-abs"></a><a id="bigint-neg"></a>`abs(b)` `neg(b)` | absolute value; negation (unary `-` does not apply to BigInt) |
+| <a id="bigint-pow"></a>`pow(b, n)` | `b` to a non-negative Int power |
+| <a id="bigint-mod_pow"></a>`mod_pow(b, e, m)` | `bᵉ mod m` without materializing `bᵉ` |
+| <a id="bigint-gcd"></a>`gcd(a, b)` | greatest common divisor, always non-negative |
 
 ```olang
 let f = fold(range(1, 51), bigint.of(1), (acc, i) => acc * i)
@@ -666,7 +673,7 @@ println(bigint.mod_pow(bigint.of(7), bigint.of(560), bigint.of(561)))
 
 Floats never mix implicitly: a Float has 53 bits of mantissa, so
 `big * 0.5` would silently round the very digits BigInt exists to keep.
-The operator refuses with a pointer to `bigint.to_float`, the one
+<a id="bigint-to_float"></a>The operator refuses with a pointer to `bigint.to_float`, the one
 sanctioned, explicitly lossy conversion.
 
 ## `asset` — a package's files
@@ -679,9 +686,9 @@ A path stays inside its package.
 
 | Function | Description |
 |---|---|
-| `asset.read(package, path)` | `Ok(Bytes)`, or `Err` naming the package or file it could not find |
-| `asset.exists(package, path)` | whether the package carries the file |
-| `asset.path(package, path)` | where the file is (the application's own copy has the path it was built from) |
+| <a id="asset-read"></a>`asset.read(package, path)` | `Ok(Bytes)`, or `Err` naming the package or file it could not find |
+| <a id="asset-exists"></a>`asset.exists(package, path)` | whether the package carries the file |
+| <a id="asset-path"></a>`asset.path(package, path)` | where the file is (the application's own copy has the path it was built from) |
 
 ```olang no-run
 let font = unwrap(asset.read("loom", "fonts/Inter.ttf.br"))
@@ -691,7 +698,7 @@ let font = unwrap(asset.read("loom", "fonts/Inter.ttf.br"))
 
 `collections` is one module with six submodules, written entirely in
 olang and compiled into the binary. It is available without a `use`:
-the name loads the first time you touch it, so `collections.heap.push(...)` works in a
+<a id="collections-heap-push"></a>the name loads the first time you touch it, so `collections.heap.push(...)` works in a
 bare script with no `use`, one name is all the library claims on the
 global surface, and a program that never reaches for it never pays for
 it. (A binding of your own named `collections` always wins.)
@@ -726,8 +733,8 @@ h = heap.pop(h)
 
 The rebind is load-bearing: it lets the runtime pass the handle *by
 move* and write in place, so pushes, puts, and unions are O(1)–O(log n)
-memory operations, not copies. Reads (`heap.size`, `table.get`,
-`dsu.connected`, ...) take the handle without rebinding. Holding an
+<a id="collections-heap-size"></a><a id="collections-table-get"></a>memory operations, not copies. Reads (`heap.size`, `table.get`,
+<a id="collections-dsu-connected"></a>`dsu.connected`, ...) take the handle without rebinding. Holding an
 older handle is always legal and always safe — it is a snapshot, and
 the next write through either handle pays a one-time copy; the
 language's aliasing guarantee is never suspended, only the speed
@@ -738,17 +745,17 @@ rebound; a read answers a value.
 
 | Submodule | Functions |
 |---|---|
-| `heap` | `new()` · `size(h)` · `is_empty(h)` · `top_prio(h)` / `top_item(h)` — the smallest priority and its item · `push(h, prio, item)` · `pop(h)` — without its smallest pair · `from_lists(prios, items)` — built in O(n) from parallel lists |
-| `deque` | `new()` · `size(q)` · `is_empty(q)` · `front(q)` / `back(q)` · `push_back(q, x)` / `push_front(q, x)` · `pop_front(q)` / `pop_back(q)` · `to_list(q)` — front to back |
-| `table` | `new()` · `size(t)` · `has(t, k)` · `get(t, k)` — the value or `()` (a stored `()` reads as absent; `has` answers presence) · `get_or(t, k, fallback)` · `put(t, k, v)` · `remove(t, k)` — a no-op when absent · `keys(t)` / `values(t)` — in slot order, stable between writes |
-| `dsu` | `new(n)` — `n` elements, each its own group · `size(d)` — the element count · `find(d, x)` — the group's representative · `connected(d, a, b)` · `union(d, a, b)` · `groups(d)` — the number of groups |
-| `bitset` | `new(n)` — members `0..n-1` · `capacity(b)` · `has(b, i)` · `add(b, i)` · `remove(b, i)` · `count(b)` · `union(a, b)` / `intersect(a, b)` / `difference(a, b)` — of equal capacity · `to_list(b)` — ascending; a position outside the capacity raises |
-| `alg` | `sort(xs)` — stable merge sort · `sort_by_key(xs, key_fn)` · `lower_bound(xs, x)` / `upper_bound(xs, x)` — insertion points in a sorted list · `bin_search(xs, x)` — the index or `()` · `select_kth(xs, k)` — the k-th smallest, 0-based · `graph(n, edges)` from `[[u, v], …]` and `wgraph(n, edges)` from `[[u, v, w], …]` — flat adjacency handles · `bfs(g, src)` — hop distances, -1 unreachable · `topo_sort(g)` — `Ok(order)` or `Err("cycle")` · `dijkstra(g, src)` — distances over a `wgraph`, -1 unreachable |
+| <a id="collections-heap-new"></a><a id="collections-heap-is_empty"></a><a id="collections-heap-from_lists"></a><a id="collections-deque-new"></a><a id="collections-deque-size"></a><a id="collections-deque-is_empty"></a><a id="collections-bitset-new"></a><a id="collections-dsu-new"></a><a id="collections-dsu-size"></a><a id="collections-table-new"></a><a id="collections-table-size"></a>`heap` | `new()` · `size(h)` · `is_empty(h)` · `top_prio(h)` / `top_item(h)` — the smallest priority and its item · `push(h, prio, item)` · `pop(h)` — without its smallest pair · `from_lists(prios, items)` — built in O(n) from parallel lists |
+| <a id="collections-deque-push_back"></a><a id="collections-deque-push_front"></a><a id="collections-deque-to_list"></a><a id="collections-bitset-to_list"></a>`deque` | `new()` · `size(q)` · `is_empty(q)` · `front(q)` / `back(q)` · `push_back(q, x)` / `push_front(q, x)` · `pop_front(q)` / `pop_back(q)` · `to_list(q)` — front to back |
+| <a id="collections-bitset-has"></a><a id="collections-bitset-remove"></a><a id="collections-table-has"></a><a id="collections-table-get_or"></a><a id="collections-table-put"></a><a id="collections-table-remove"></a><a id="collections-table-keys"></a><a id="collections-table-values"></a>`table` | `new()` · `size(t)` · `has(t, k)` · `get(t, k)` — the value or `()` (a stored `()` reads as absent; `has` answers presence) · `get_or(t, k, fallback)` · `put(t, k, v)` · `remove(t, k)` — a no-op when absent · `keys(t)` / `values(t)` — in slot order, stable between writes |
+| <a id="collections-bitset-union"></a><a id="collections-dsu-find"></a><a id="collections-dsu-union"></a><a id="collections-dsu-groups"></a>`dsu` | `new(n)` — `n` elements, each its own group · `size(d)` — the element count · `find(d, x)` — the group's representative · `connected(d, a, b)` · `union(d, a, b)` · `groups(d)` — the number of groups |
+| <a id="collections-bitset-capacity"></a><a id="collections-bitset-add"></a><a id="collections-bitset-count"></a><a id="collections-bitset-intersect"></a><a id="collections-bitset-difference"></a>`bitset` | `new(n)` — members `0..n-1` · `capacity(b)` · `has(b, i)` · `add(b, i)` · `remove(b, i)` · `count(b)` · `union(a, b)` / `intersect(a, b)` / `difference(a, b)` — of equal capacity · `to_list(b)` — ascending; a position outside the capacity raises |
+| <a id="collections-alg-lower_bound"></a><a id="collections-alg-upper_bound"></a><a id="collections-alg-bin_search"></a><a id="collections-alg-select_kth"></a><a id="collections-alg-graph"></a><a id="collections-alg-wgraph"></a><a id="collections-alg-bfs"></a><a id="collections-alg-topo_sort"></a>`alg` | `sort(xs)` — stable merge sort · `sort_by_key(xs, key_fn)` · `lower_bound(xs, x)` / `upper_bound(xs, x)` — insertion points in a sorted list · `bin_search(xs, x)` — the index or `()` · `select_kth(xs, k)` — the k-th smallest, 0-based · `graph(n, edges)` from `[[u, v], …]` and `wgraph(n, edges)` from `[[u, v, w], …]` — flat adjacency handles · `bfs(g, src)` — hop distances, -1 unreachable · `topo_sort(g)` — `Ok(order)` or `Err("cycle")` · `dijkstra(g, src)` — distances over a `wgraph`, -1 unreachable |
 
 **Empty structures.** A read of an element that is not there answers
-`()`: `heap.top_prio`, `heap.top_item`, `deque.front` and `deque.back`
-on an empty structure. A removal from an empty structure (`heap.pop`,
-`deque.pop_front`, `deque.pop_back`) answers the handle unchanged, so a
+<a id="collections-heap-top_prio"></a><a id="collections-heap-top_item"></a><a id="collections-deque-front"></a><a id="collections-deque-back"></a>`()`: `heap.top_prio`, `heap.top_item`, `deque.front` and `deque.back`
+<a id="collections-heap-pop"></a>on an empty structure. A removal from an empty structure (`heap.pop`,
+<a id="collections-deque-pop_front"></a><a id="collections-deque-pop_back"></a>`deque.pop_front`, `deque.pop_back`) answers the handle unchanged, so a
 drain loop may test `is_empty` or the read, whichever it holds.
 
 **The representation discipline.** A handle is to be used only through
@@ -761,9 +768,9 @@ targets — so operations are index arithmetic over contiguous memory.
 Each module's source documents its own layout; they read as worked
 examples of writing fast olang.
 
-`alg` prefers **keys to comparators**: `alg.sort_by_key(xs, key_fn)`
+<a id="collections-alg-sort_by_key"></a>`alg` prefers **keys to comparators**: `alg.sort_by_key(xs, key_fn)`
 calls `key_fn` once per element and sorts on the extracted keys with
-native comparisons. `alg.dijkstra` is the composed showcase — `heap`
+<a id="collections-alg-dijkstra"></a>native comparisons. `alg.dijkstra` is the composed showcase — `heap`
 over a flat weighted graph, entirely in olang.
 
 The primitives underneath — `col.set`, `col.swap`, `col.filled`, and
@@ -777,7 +784,7 @@ map through the same loop (5.8s against 269s — flat probing against
 per-write structural copies); `dsu` unions cost ~6µs each; `heap`
 push-and-pop ~36µs a pair. Two limits apply. For *plain* sorting of a
 list, the native `sort` builtin remains hundreds of times faster than
-`alg.sort`; reach for `alg` when you need stability, keys, the bisect
+<a id="collections-alg-sort"></a>`alg.sort`; reach for `alg` when you need stability, keys, the bisect
 family, or selection. And structure operations run on the interpreter
 by design (the tier boundary would convert a whole handle
 per call), so they are memory-fused microsecond operations, not
@@ -793,16 +800,16 @@ do not.
 
 | Function | Description |
 |---|---|
-| `json.parse(s)` | `Result` of the parsed value |
-| `json.stringify(v)` | `Result` of compact JSON text; an object's keys in its order (a map's as they were first set) |
-| `json.stringify_pairs(pairs)` | `Result` of one JSON object whose keys are in the order of `pairs`, a list of `(key, value)`, a key repeated written twice (each value as `stringify` writes it) |
-| `json.prettify(s)` / `json.minify(s)` | reformat JSON text |
-| `json.is_valid(s)` | is the text valid JSON? |
-| `json.get(s, key)` / `json.set(s, key, v)` | read or replace one top-level key of JSON text: `Result` of the value / of the new text |
-| `json.has_key(s, k)` / `json.remove(s, k)` | text-level operations |
-| `json.get_keys` `json.get_values` `json.get_type` | text-level inspection |
-| `json.array_get` `json.array_length` `json.array_push` | text-level arrays |
-| `json.merge(a, b)` / `json.deep_clone(s)` | combine / copy |
+| <a id="json-parse"></a>`json.parse(s)` | `Result` of the parsed value |
+| <a id="json-stringify"></a>`json.stringify(v)` | `Result` of compact JSON text; an object's keys in its order (a map's as they were first set) |
+| <a id="json-stringify_pairs"></a>`json.stringify_pairs(pairs)` | `Result` of one JSON object whose keys are in the order of `pairs`, a list of `(key, value)`, a key repeated written twice (each value as `stringify` writes it) |
+| <a id="json-prettify"></a><a id="json-minify"></a>`json.prettify(s)` / `json.minify(s)` | reformat JSON text |
+| <a id="json-is_valid"></a>`json.is_valid(s)` | is the text valid JSON? |
+| <a id="json-get"></a><a id="json-set"></a>`json.get(s, key)` / `json.set(s, key, v)` | read or replace one top-level key of JSON text: `Result` of the value / of the new text |
+| <a id="json-has_key"></a><a id="json-remove"></a>`json.has_key(s, k)` / `json.remove(s, k)` | text-level operations |
+| <a id="json-get_type"></a><a id="json-get_keys"></a><a id="json-get_values"></a>`json.get_keys` `json.get_values` `json.get_type` | text-level inspection |
+| <a id="json-array_get"></a><a id="json-array_length"></a><a id="json-array_push"></a>`json.array_get` `json.array_length` `json.array_push` | text-level arrays |
+| <a id="json-merge"></a><a id="json-deep_clone"></a>`json.merge(a, b)` / `json.deep_clone(s)` | combine / copy |
 
 ```olang
 let doc = unwrap(json.parse("{\"name\": \"ada\", \"tags\": [\"x\", \"y\"], \"age\": 36}"))
@@ -818,7 +825,7 @@ println(row)                                     // {"id":7,"name":"ada","tags":
 ## `toml` — TOML
 
 TOML is the config format olang's own `olang.toml` files use. The
-module has the same core functions as `json`: `parse`, `stringify`, `is_valid`. Both modules bridge
+<a id="toml-parse"></a><a id="toml-stringify"></a><a id="toml-is_valid"></a>module has the same core functions as `json`: `parse`, `stringify`, `is_valid`. Both modules bridge
 values through the same conversions, so a table parses to the same Map
 shapes JSON objects do — tables become Maps, arrays become Lists,
 datetimes become their string rendering. A TOML document is a table at
@@ -844,16 +851,16 @@ are strings — convert explicitly).
 
 | Function | Description |
 |---|---|
-| `csv.parse(s)` | rows as lists of strings |
-| `csv.parse_with_headers(s)` | rows as maps keyed by the header |
-| `csv.stringify(rows)` / `csv.stringify_with_headers` | write CSV text |
-| `csv.get_headers(s)` / `csv.set_headers` | header row |
-| `csv.row_count(rows)` / `csv.column_count(rows)` | dimensions |
-| `csv.read_row` `csv.read_column` `csv.read_cell` `csv.set_cell` | access |
-| `csv.add_row` `csv.add_column` | build tables |
-| `csv.filter_rows` `csv.sort_by_column` | table operations |
-| `csv.to_json(rows, with_headers)` | parsed rows → JSON text (`with_headers`: treat row 0 as column names) |
-| `csv.from_json(json, headers)` | JSON text + header list → CSV rows (headers first) |
+| <a id="csv-parse"></a>`csv.parse(s)` | rows as lists of strings |
+| <a id="csv-parse_with_headers"></a>`csv.parse_with_headers(s)` | rows as maps keyed by the header |
+| <a id="csv-stringify"></a><a id="csv-stringify_with_headers"></a>`csv.stringify(rows)` / `csv.stringify_with_headers` | write CSV text |
+| <a id="csv-get_headers"></a><a id="csv-set_headers"></a>`csv.get_headers(s)` / `csv.set_headers` | header row |
+| <a id="csv-row_count"></a><a id="csv-column_count"></a>`csv.row_count(rows)` / `csv.column_count(rows)` | dimensions |
+| <a id="csv-read_row"></a><a id="csv-read_column"></a><a id="csv-read_cell"></a><a id="csv-set_cell"></a>`csv.read_row` `csv.read_column` `csv.read_cell` `csv.set_cell` | access |
+| <a id="csv-add_row"></a><a id="csv-add_column"></a>`csv.add_row` `csv.add_column` | build tables |
+| <a id="csv-filter_rows"></a><a id="csv-sort_by_column"></a>`csv.filter_rows` `csv.sort_by_column` | table operations |
+| <a id="csv-to_json"></a>`csv.to_json(rows, with_headers)` | parsed rows → JSON text (`with_headers`: treat row 0 as column names) |
+| <a id="csv-from_json"></a>`csv.from_json(json, headers)` | JSON text + header list → CSV rows (headers first) |
 
 ```olang
 let raw = "name,score\nada,99\nbob,82"
@@ -873,11 +880,11 @@ and every build includes it, the browser's too.
 
 | Function | Result |
 |---|---|
-| `md.render(src, opts?)` | `#{ "html", "headings", "title" }`: the HTML; the outline, `[#{ "level", "text", "slug", "html" }]` in order (`text` plain, `html` the heading's inner HTML); and the first level-one heading's text (`""` when none). Every heading carries `id="slug"`, GitHub's anchor, a repeat on the page numbered `-1`, `-2` as GitHub numbers it. Footnotes are gathered at the end in a `<section class="footnotes">`. A front-matter block is skipped (`md.front` reads it) |
-| `md.headings(src)` | the outline alone, as `render` answers it |
-| `md.slug(text)` | the anchor GitHub gives a heading whose text is `text`: lower-cased; letters, digits, `-` and `_` kept; a space a `-`; the rest dropped |
-| `md.front(src)` | `Ok(#{ "data", "body", "format" })`: the front matter as a Map, the text after it, and `"yaml"` (a `---` block), `"toml"` (`+++`) or `""` when there is none (`data` is then `#{}`). `Err(message)` naming the line of a block that does not parse |
-| `md.text(src)` | the document's plain text, a block a line: what a search index or a page description reads |
+| <a id="md-render"></a>`md.render(src, opts?)` | `#{ "html", "headings", "title" }`: the HTML; the outline, `[#{ "level", "text", "slug", "html" }]` in order (`text` plain, `html` the heading's inner HTML); and the first level-one heading's text (`""` when none). Every heading carries `id="slug"`, GitHub's anchor, a repeat on the page numbered `-1`, `-2` as GitHub numbers it. Footnotes are gathered at the end in a `<section class="footnotes">`. A front-matter block is skipped (`md.front` reads it) |
+| <a id="md-headings"></a>`md.headings(src)` | the outline alone, as `render` answers it |
+| <a id="md-slug"></a>`md.slug(text)` | the anchor GitHub gives a heading whose text is `text`: lower-cased; letters, digits, `-` and `_` kept; a space a `-`; the rest dropped |
+| <a id="md-front"></a>`md.front(src)` | `Ok(#{ "data", "body", "format" })`: the front matter as a Map, the text after it, and `"yaml"` (a `---` block), `"toml"` (`+++`) or `""` when there is none (`data` is then `#{}`). `Err(message)` naming the line of a block that does not parse |
+| <a id="md-text"></a>`md.text(src)` | the document's plain text, a block a line: what a search index or a page description reads |
 
 `render`'s options, every one optional:
 
@@ -932,15 +939,15 @@ that calls `re.*` hears so. The full profile, `runtime.wasm("full")`
 
 | Function | Description |
 |---|---|
-| `re.is_match(pat, s)` | boolean test |
-| `re.find(pat, s)` | first match text, `Ok(())` when nothing matches |
-| `re.find_all(pat, s)` | all match texts |
-| `re.find_spans(pat, s)` | where every match is: `(start, end)` character offsets |
-| `re.captures(pat, s)` | full match + capture groups (`()` for a group that took no part), `Ok(())` when nothing matches |
-| `re.replace(pat, s, rep)` | every match replaced, as `str.replace` replaces every occurrence; `$1` and `${name}` in `rep` name a capture |
-| `re.replace_first(pat, s, rep)` | the first match replaced |
-| `re.split(pat, s)` | split by pattern |
-| `re.is_valid(pat)` | is the pattern itself well-formed? |
+| <a id="re-is_match"></a>`re.is_match(pat, s)` | boolean test |
+| <a id="re-find"></a>`re.find(pat, s)` | first match text, `Ok(())` when nothing matches |
+| <a id="re-find_all"></a>`re.find_all(pat, s)` | all match texts |
+| <a id="re-find_spans"></a>`re.find_spans(pat, s)` | where every match is: `(start, end)` character offsets |
+| <a id="re-captures"></a>`re.captures(pat, s)` | full match + capture groups (`()` for a group that took no part), `Ok(())` when nothing matches |
+| <a id="re-replace"></a>`re.replace(pat, s, rep)` | every match replaced, as `str.replace` replaces every occurrence; `$1` and `${name}` in `rep` name a capture |
+| <a id="re-replace_first"></a>`re.replace_first(pat, s, rep)` | the first match replaced |
+| <a id="re-split"></a>`re.split(pat, s)` | split by pattern |
+| <a id="re-is_valid"></a>`re.is_valid(pat)` | is the pattern itself well-formed? |
 
 ```olang
 println(to_string(unwrap(re.find_all("\\d+", "a1 b22 c333"))))
@@ -983,13 +990,13 @@ match g.parse("width = wide") {
 
 | Function | Description |
 |---|---|
-| `peg.grammar(text, actions, options)` | `Ok(grammar)` or `Err(error)`; `actions` (optional) maps a rule or label to a function from its node to a value; `options` (optional): `start` (the rule a parse begins with, else the first), `recover` (sync strings, below), `memo` (`"auto"`, `"all"` or `"none"`), `engine` (for testing peg itself, under How fast) |
+| <a id="peg-grammar"></a>`peg.grammar(text, actions, options)` | `Ok(grammar)` or `Err(error)`; `actions` (optional) maps a rule or label to a function from its node to a value; `options` (optional): `start` (the rule a parse begins with, else the first), `recover` (sync strings, below), `memo` (`"auto"`, `"all"` or `"none"`), `engine` (for testing peg itself, under How fast) |
 | `g.parse(input)` | `Ok(tree)` — or the start rule's value, with actions — or `Err(error)`; the whole input must match, `skip` allowed around it |
-| `g.parse_with(input, opts)` · `peg.parse(g, input, opts)` | the same, with `start` or `recover` for this parse only |
+| <a id="peg-parse"></a>`g.parse_with(input, opts)` · `peg.parse(g, input, opts)` | the same, with `start` or `recover` for this parse only |
 | `g.accepts(input)` | whether the whole input matches, without building a tree |
-| `peg.check(g)` · `g.check()` | problems in a grammar: `[#{ "kind", "rule", "message" }]`, empty when there are none |
-| `peg.examples(g, n, seed)` · `g.examples(n, seed)` | up to `n` different texts the grammar accepts, generated from its rules — the same texts for the same seed |
-| `peg.dump(tree)` | a tree as indented text, one node a line, for tests and for looking |
+| <a id="peg-check"></a>`peg.check(g)` · `g.check()` | problems in a grammar: `[#{ "kind", "rule", "message" }]`, empty when there are none |
+| <a id="peg-examples"></a>`peg.examples(g, n, seed)` · `g.examples(n, seed)` | up to `n` different texts the grammar accepts, generated from its rules — the same texts for the same seed |
+| <a id="peg-dump"></a>`peg.dump(tree)` | a tree as indented text, one node a line, for tests and for looking |
 
 `peg.check` and `peg.examples` also take a grammar's text. A grammar's
 `rules`, `start` and `source` (the program it was compiled to, one rule
@@ -1293,23 +1300,23 @@ The rule for kinds: **what reads the clock answers text** (`now`,
 `from_epoch_day` — each inside a `Result`, since `date(2026, 2, 30)`,
 `parse("soon")` and a day past the calendar's range are no day; and
 `epoch_day`'s Int likewise, for text that names no day), and a function that takes a day takes either and
-answers in kind. `dates.parse` answers the day a text names, as written:
+<a id="dates-parse"></a>answers in kind. `dates.parse` answers the day a text names, as written:
 a time in it is dropped (`dates.parse("2026-01-02T23:30:00-05:00")` is
 2026-01-02); keep the text, or `timestamp` it, when the time matters.
 
 | Group | Functions |
 |---|---|
-| Now | `now` `utc_now` `today` · `stamp` — the storage form: UTC, second precision, `Z` suffix (`2026-08-31T23:40:06Z`), sortable as text · `stamp_ms` — the same at millisecond precision (`…06.503Z`), the one to key a row's version on: two edits inside one second are identical under `stamp` |
-| Build | `date(y, m, d)` → `Result` of a `Date` · `datetime(y, m, d, h, mi, s)` → a UTC moment's text · `time(h, mi, s)` |
-| Parse/format | `parse(s)` → `Result` of a `Date` · `parse_date` `parse_datetime` `parse_time` · `format_date(d, fmt)` `format_datetime(dt, fmt)` `format_time(t, fmt)` — `fmt` in strftime's `%` form (`"%B %d, %Y"`); a specifier it does not know, a trailing `%`, or a field the value lacks (`%H` of a date) is an `Err` |
-| Fields | `year` `month` `day` `hour` `minute` `second` (a moment's own, in its offset) · `weekday` — 0 Sunday, 1 Monday, … 6 Saturday · `iso_weekday` — 1 Monday … 7 Sunday, what a Date column's `weekday()` answers |
-| Arithmetic | `add_days` `add_weeks` `add_months` `add_years` · `diff_days(a, b)` — `a` minus `b` in days, positive when `a` is later (`d2 - d1` the same) |
-| Calendar | `start_of_week(d)` — the Monday on or before `d` · `start_of_month(d)` — its first day |
-| Day numbers | `epoch_day(d)` → `Result` of the Int days since 1970-01-01 (a stamp's day is the one it is written in; `Err` for text that is no day) · `from_epoch_day(n)` → `Result` of a `Date` (`Err` past the calendar's range) |
-| Epoch | `timestamp(dt)` — Unix milliseconds, the unit of every other clock (`time.now_ms`, `modified_ms`); an offset is honoured, a bare day is its midnight UTC · `timestamp_s(dt)` — Unix seconds · `from_timestamp(ms)` / `from_timestamp_s(s)` → the UTC moment's text |
-| Facts | `is_leap_year(y)` `days_in_month(y, m)` |
+| <a id="dates-utc_now"></a><a id="dates-stamp"></a><a id="dates-stamp_ms"></a><a id="dates-today"></a>Now | `now` `utc_now` `today` · `stamp` — the storage form: UTC, second precision, `Z` suffix (`2026-08-31T23:40:06Z`), sortable as text · `stamp_ms` — the same at millisecond precision (`…06.503Z`), the one to key a row's version on: two edits inside one second are identical under `stamp` |
+| <a id="dates-datetime"></a><a id="dates-time"></a>Build | `date(y, m, d)` → `Result` of a `Date` · `datetime(y, m, d, h, mi, s)` → a UTC moment's text · `time(h, mi, s)` |
+| <a id="dates-parse_date"></a><a id="dates-parse_datetime"></a><a id="dates-parse_time"></a><a id="dates-format_date"></a><a id="dates-format_datetime"></a><a id="dates-format_time"></a>Parse/format | `parse(s)` → `Result` of a `Date` · `parse_date` `parse_datetime` `parse_time` · `format_date(d, fmt)` `format_datetime(dt, fmt)` `format_time(t, fmt)` — `fmt` in strftime's `%` form (`"%B %d, %Y"`); a specifier it does not know, a trailing `%`, or a field the value lacks (`%H` of a date) is an `Err` |
+| <a id="dates-year"></a><a id="dates-month"></a><a id="dates-day"></a><a id="dates-hour"></a><a id="dates-minute"></a><a id="dates-second"></a><a id="dates-weekday"></a><a id="dates-iso_weekday"></a>Fields | `year` `month` `day` `hour` `minute` `second` (a moment's own, in its offset) · `weekday` — 0 Sunday, 1 Monday, … 6 Saturday · `iso_weekday` — 1 Monday … 7 Sunday, what a Date column's `weekday()` answers |
+| <a id="dates-add_days"></a><a id="dates-add_weeks"></a><a id="dates-add_months"></a><a id="dates-add_years"></a><a id="dates-diff_days"></a>Arithmetic | `add_days` `add_weeks` `add_months` `add_years` · `diff_days(a, b)` — `a` minus `b` in days, positive when `a` is later (`d2 - d1` the same) |
+| <a id="dates-start_of_week"></a><a id="dates-start_of_month"></a>Calendar | `start_of_week(d)` — the Monday on or before `d` · `start_of_month(d)` — its first day |
+| <a id="dates-epoch_day"></a><a id="dates-from_epoch_day"></a>Day numbers | `epoch_day(d)` → `Result` of the Int days since 1970-01-01 (a stamp's day is the one it is written in; `Err` for text that is no day) · `from_epoch_day(n)` → `Result` of a `Date` (`Err` past the calendar's range) |
+| <a id="dates-timestamp_s"></a><a id="dates-from_timestamp"></a><a id="dates-from_timestamp_s"></a>Epoch | `timestamp(dt)` — Unix milliseconds, the unit of every other clock (`time.now_ms`, `modified_ms`); an offset is honoured, a bare day is its midnight UTC · `timestamp_s(dt)` — Unix seconds · `from_timestamp(ms)` / `from_timestamp_s(s)` → the UTC moment's text |
+| <a id="dates-is_leap_year"></a><a id="dates-days_in_month"></a>Facts | `is_leap_year(y)` `days_in_month(y, m)` |
 
-A day is a **`Date` value**: `dates.date(y, m, d)` and `dates.parse(s)`
+<a id="dates-date"></a>A day is a **`Date` value**: `dates.date(y, m, d)` and `dates.parse(s)`
 build one, `typeof` says `Date`, it displays as ISO (`2026-08-07`),
 comparisons order chronologically, `d2 - d1` is the day difference, and
 `d + n` / `d - n` shift by days. Every date-taking function accepts a
@@ -1330,7 +1337,7 @@ let s = unwrap(dates.add_days("2026-08-07", 30))   // strings still work
 println(s)
 ```
 
-`unwrap(dates.timestamp(dates.now()))` is "milliseconds since the
+<a id="dates-now"></a><a id="dates-timestamp"></a>`unwrap(dates.timestamp(dates.now()))` is "milliseconds since the
 epoch, now" (`timestamp` parses its argument, so it returns a
 `Result`; for a plain millisecond clock, `time.now_ms()` is simpler).
 A stamp's offset is part of it: `…T16:30:00+02:00` and `…T14:30:00Z`
@@ -1355,10 +1362,10 @@ things take and for pacing a program.
 
 | Function | Description |
 |---|---|
-| `time.now_ms()` | milliseconds since the Unix epoch |
-| `time.monotonic_ms()` | monotonic milliseconds (never goes backwards) — the clock for durations. Natively it reads from the process's start (as the kernel recorded it), so a program can time its own start |
-| `time.monotonic()` | the same clock as a Float with its fraction, for a duration under a millisecond; in the browser both read the page's `performance.now()`, so a reading and a stamp the page made (a `dom.request` reply's timings) are one clock |
-| `time.sleep(ms)` | block for `ms` milliseconds |
+| <a id="time-now_ms"></a>`time.now_ms()` | milliseconds since the Unix epoch |
+| <a id="time-monotonic_ms"></a>`time.monotonic_ms()` | monotonic milliseconds (never goes backwards) — the clock for durations. Natively it reads from the process's start (as the kernel recorded it), so a program can time its own start |
+| <a id="time-monotonic"></a>`time.monotonic()` | the same clock as a Float with its fraction, for a duration under a millisecond; in the browser both read the page's `performance.now()`, so a reading and a stamp the page made (a `dom.request` reply's timings) are one clock |
+| <a id="time-sleep"></a>`time.sleep(ms)` | block for `ms` milliseconds |
 
 ```olang
 let t0 = time.monotonic_ms()
@@ -1375,11 +1382,11 @@ The model is covered in
 
 | Function | Returns |
 |---|---|
-| `task.join(t)` | `Ok(value)` when the task returned (a value that is itself an `Err` included), `Err(message)` when it raised — blocks until it finishes |
-| `task.join_timeout(t, ms)` / `task.join_timeout(t, #{ timeout_ms })` | `Ok` of what `task.join` answers (`Ok(Ok(v))`, `Ok(Err(e))`) if it finished within `ms`, else `Err("timed out")` |
-| `task.watch(t, c)` | the channel dies with the task: when `t` ends, however it ends, `c` is closed, so a `chan.recv` on it returns `Err` instead of waiting forever. Ownership is declared here, not inferred — any task may hold either end of a channel |
-| `task.list()` | every task a live handle still watches: `#{ id, state, elapsed_ms }` |
-| `task.parked()` | threads blocked on unbounded waits: `#{ thread, on, waited_ms }` |
+| <a id="task-join"></a>`task.join(t)` | `Ok(value)` when the task returned (a value that is itself an `Err` included), `Err(message)` when it raised — blocks until it finishes |
+| <a id="task-join_timeout"></a>`task.join_timeout(t, ms)` / `task.join_timeout(t, #{ timeout_ms })` | `Ok` of what `task.join` answers (`Ok(Ok(v))`, `Ok(Err(e))`) if it finished within `ms`, else `Err("timed out")` |
+| <a id="task-watch"></a>`task.watch(t, c)` | the channel dies with the task: when `t` ends, however it ends, `c` is closed, so a `chan.recv` on it returns `Err` instead of waiting forever. Ownership is declared here, not inferred — any task may hold either end of a channel |
+| <a id="task-list"></a>`task.list()` | every task a live handle still watches: `#{ id, state, elapsed_ms }` |
+| <a id="task-parked"></a>`task.parked()` | threads blocked on unbounded waits: `#{ thread, on, waited_ms }` |
 
 `task.join` always answers a `Result`, so a task that raised
 (`Err(message)`) is told from one that returned an `Err` (`Ok(Err(…))`),
@@ -1422,11 +1429,11 @@ the model; this is the API.
 
 | Function | Returns |
 |---|---|
-| `cell(v)` / `cell.new(v)` | a new cell holding `v` (the module is callable, so both spellings are the same function) |
-| `cell.get(c)` | the current value |
-| `cell.set(c, v)` | `()` — replaces the contents |
-| `cell.update(c, f)` | the new value, after applying `f` to the current one and storing the result |
-| `cell.take(c)` | the value, moved out: the cell holds `()` until set again. Nothing else holds what it answers, so extending it is in place — `cell.set(c, map_set(cell.take(c), k, v))` grows a table in time proportional to its size, where `map_set(cell.get(c), k, v)` copies it on every insert |
+| <a id="cell-new"></a>`cell(v)` / `cell.new(v)` | a new cell holding `v` (the module is callable, so both spellings are the same function) |
+| <a id="cell-get"></a>`cell.get(c)` | the current value |
+| <a id="cell-set"></a>`cell.set(c, v)` | `()` — replaces the contents |
+| <a id="cell-update"></a>`cell.update(c, f)` | the new value, after applying `f` to the current one and storing the result |
+| <a id="cell-take"></a>`cell.take(c)` | the value, moved out: the cell holds `()` until set again. Nothing else holds what it answers, so extending it is in place — `cell.set(c, map_set(cell.take(c), k, v))` grows a table in time proportional to its size, where `map_set(cell.get(c), k, v)` copies it on every insert |
 
 None of these return `Result`: there is no expected failure to report.
 They raise on misuse — reading a cell from a thread that does not own
@@ -1473,15 +1480,15 @@ boundary like anything else.
 
 | Function | Returns |
 |---|---|
-| `chan.new()` | a channel |
-| `chan.bounded(n)` | a channel holding at most `n` messages |
-| `chan.send(c, v)` | `Ok(())`, or `Err` when the channel is closed |
-| `chan.recv(c)` | blocks; `Ok(value)`, or `Err` when closed and drained |
-| `chan.try_recv(c)` | `Ok(value)`; `Ok(())` when nothing is waiting; `Err("channel is closed")` once closed and drained. A channel that carries `()` cannot tell it from empty this way: use `chan.recv_timeout` |
-| `chan.recv_timeout(c, ms)` / `chan.recv_timeout(c, #{ timeout_ms })` | like `recv`, plus `Err("timed out")` once `ms` pass — receivers on one channel wait side by side, so the bound is this wait's own, never another waiter's |
-| `chan.ask(service, request)` | the reply pattern in one call: sends `#{ "req": request, "reply": r }` on a fresh reply channel and answers `Ok(reply)` — spinning briefly before it parks, so a service that answers in microseconds costs no thread wake-up |
-| `chan.stat(c)` | a snapshot map: `id`, `queued`, `closed`, `recv_waiting`, `send_waiting` |
-| `chan.close(c)` | closes the sending side (idempotent) |
+| <a id="chan-new"></a>`chan.new()` | a channel |
+| <a id="chan-bounded"></a>`chan.bounded(n)` | a channel holding at most `n` messages |
+| <a id="chan-send"></a>`chan.send(c, v)` | `Ok(())`, or `Err` when the channel is closed |
+| <a id="chan-recv"></a>`chan.recv(c)` | blocks; `Ok(value)`, or `Err` when closed and drained |
+| <a id="chan-try_recv"></a>`chan.try_recv(c)` | `Ok(value)`; `Ok(())` when nothing is waiting; `Err("channel is closed")` once closed and drained. A channel that carries `()` cannot tell it from empty this way: use `chan.recv_timeout` |
+| <a id="chan-recv_timeout"></a>`chan.recv_timeout(c, ms)` / `chan.recv_timeout(c, #{ timeout_ms })` | like `recv`, plus `Err("timed out")` once `ms` pass — receivers on one channel wait side by side, so the bound is this wait's own, never another waiter's |
+| <a id="chan-ask"></a>`chan.ask(service, request)` | the reply pattern in one call: sends `#{ "req": request, "reply": r }` on a fresh reply channel and answers `Ok(reply)` — spinning briefly before it parks, so a service that answers in microseconds costs no thread wake-up |
+| <a id="chan-stat"></a>`chan.stat(c)` | a snapshot map: `id`, `queued`, `closed`, `recv_waiting`, `send_waiting` |
+| <a id="chan-close"></a>`chan.close(c)` | closes the sending side (idempotent) |
 
 Closing is cooperative and drains: after `chan.close(c)` new sends
 fail, but messages already queued are still received before `recv`
@@ -1551,15 +1558,15 @@ testable.
 
 | Function | Description |
 |---|---|
-| `random.seed(n)` | make subsequent draws deterministic |
-| `random.random()` | float in `[0, 1)` |
-| `random.uniform(a, b)` / `random.gauss(mu, sigma)` | distributions |
-| `random.randint(a, b)` | integer in `[a, b]` |
-| `random.randbool()` | coin flip |
-| `random.choice(xs)` / `random.choices(xs, k)` / `random.sample(xs, k)` | pick from a list |
-| `random.shuffle(xs)` | new shuffled list |
-| `random.randstr(n)` | a random string of `n` letters and digits |
-| `random.randstr_alpha(n)` / `random.randstr_alnum(n)` / `random.randstr_numeric(n)` | a random string of `n` letters / letters and digits / digits |
+| <a id="random-seed"></a>`random.seed(n)` | make subsequent draws deterministic |
+| <a id="random-random"></a>`random.random()` | float in `[0, 1)` |
+| <a id="random-uniform"></a><a id="random-gauss"></a>`random.uniform(a, b)` / `random.gauss(mu, sigma)` | distributions |
+| <a id="random-randint"></a>`random.randint(a, b)` | integer in `[a, b]` |
+| <a id="random-randbool"></a>`random.randbool()` | coin flip |
+| <a id="random-choice"></a><a id="random-choices"></a><a id="random-sample"></a>`random.choice(xs)` / `random.choices(xs, k)` / `random.sample(xs, k)` | pick from a list |
+| <a id="random-shuffle"></a>`random.shuffle(xs)` | new shuffled list |
+| <a id="random-randstr"></a>`random.randstr(n)` | a random string of `n` letters and digits |
+| <a id="random-randstr_alpha"></a><a id="random-randstr_numeric"></a><a id="random-randstr_alnum"></a>`random.randstr_alpha(n)` / `random.randstr_alnum(n)` / `random.randstr_numeric(n)` | a random string of `n` letters / letters and digits / digits |
 
 ```olang
 random.seed(7)
@@ -1575,28 +1582,28 @@ println(to_string(str.length(random.randstr_alpha(8))))
 
 ### Generators: `random.rng`
 
-`random.rng(seed)` is a generator of its own (PCG64), independent of the
+<a id="random-rng"></a>`random.rng(seed)` is a generator of its own (PCG64), independent of the
 global stream: drawing from it never moves `random.random()`, and the
 global `random.seed` never moves it. Its draws with a count are Series,
 made in one native pass (in parallel blocks past a million values, the
 values the same on any number of threads); without a count, one value.
 `random.rng()` with no seed takes one from the global stream.
 
-Its methods are the functions of `random.Rng`: `g.normal(100)` is
-`random.Rng.normal(g, 100)`.
+<a id="random-Rng"></a>Its methods are the functions of `random.Rng`: `g.normal(100)` is
+<a id="random-Rng-normal"></a>`random.Rng.normal(g, 100)`.
 
 | Method of a generator `g` | Description |
 |---|---|
 | `normal(n?, mean = 0.0, std = 1.0)` | normals |
-| `uniform(n?, low = 0.0, high = 1.0)` | uniforms in `[low, high)` |
-| `integers(n?, low, high)` | integers in `[low, high)` (`high` excluded, as `range`) |
-| `poisson(n?, lam = 1.0)` | Poisson counts |
-| `lognormal(n?, mean = 0.0, sigma = 1.0)` | `exp` of normals with this mean and sd |
-| `binomial(n?, trials, p)` | binomial counts |
-| `choice(values, n?, weights?, replace = true)` | picks from a List or Series, by `weights` when given; `replace: false` draws distinct positions (by weight, Efraimidis–Spirakis). A Series back when `values` is one or a list a Series can hold |
-| `shuffle(values)` | the values in a random order (a List stays a List) |
-| `permutation(n)` | `0..n` in a random order, an Int Series |
-| `spawn(k)` | `k` independent child generators, on streams of their own: hand one to each `par_map` task and the results are the same on every run |
+| <a id="random-Rng-uniform"></a>`uniform(n?, low = 0.0, high = 1.0)` | uniforms in `[low, high)` |
+| <a id="random-Rng-integers"></a>`integers(n?, low, high)` | integers in `[low, high)` (`high` excluded, as `range`) |
+| <a id="random-Rng-poisson"></a>`poisson(n?, lam = 1.0)` | Poisson counts |
+| <a id="random-Rng-lognormal"></a>`lognormal(n?, mean = 0.0, sigma = 1.0)` | `exp` of normals with this mean and sd |
+| <a id="random-Rng-binomial"></a>`binomial(n?, trials, p)` | binomial counts |
+| <a id="random-Rng-choice"></a>`choice(values, n?, weights?, replace = true)` | picks from a List or Series, by `weights` when given; `replace: false` draws distinct positions (by weight, Efraimidis–Spirakis). A Series back when `values` is one or a list a Series can hold |
+| <a id="random-Rng-shuffle"></a>`shuffle(values)` | the values in a random order (a List stays a List) |
+| <a id="random-Rng-permutation"></a>`permutation(n)` | `0..n` in a random order, an Int Series |
+| <a id="random-Rng-spawn"></a>`spawn(k)` | `k` independent child generators, on streams of their own: hand one to each `par_map` task and the results are the same on every run |
 
 The data stack's random verbs take a generator where they take a seed:
 `ods.sample(f, n, rng: g)`, `learn.split(f, test: 0.25, rng: g)`,
@@ -1626,20 +1633,20 @@ secrets, because `==` can leak information through its timing.
 
 | Group | Functions |
 |---|---|
-| Digests | `md5` `sha1` `sha256` `sha512` |
-| MACs | `hmac_sha256` `hmac_sha512` |
-| Passwords | `hash_password` `verify_password` `derive_key` |
+| <a id="crypto-md5"></a><a id="crypto-sha1"></a><a id="crypto-sha256"></a><a id="crypto-sha512"></a>Digests | `md5` `sha1` `sha256` `sha512` |
+| <a id="crypto-hmac_sha512"></a>MACs | `hmac_sha256` `hmac_sha512` |
+| <a id="crypto-hash_password"></a><a id="crypto-verify_password"></a><a id="crypto-derive_key"></a>Passwords | `hash_password` `verify_password` `derive_key` |
 | Symmetric | `encrypt_aes` `decrypt_aes` |
-| Asymmetric | `generate_key_pair` `encrypt_rsa` `decrypt_rsa` `sign_data` `verify_signature` `export_public_key` `import_public_key` — not in the browser runtime the web SDK ships, which says so when one is called |
-| Utilities | `random_bytes` `random_hex` `hex_encode` `hex_decode` `secure_compare` |
+| <a id="crypto-encrypt_rsa"></a><a id="crypto-decrypt_rsa"></a><a id="crypto-generate_key_pair"></a><a id="crypto-export_public_key"></a><a id="crypto-import_public_key"></a><a id="crypto-sign_data"></a><a id="crypto-verify_signature"></a>Asymmetric | `generate_key_pair` `encrypt_rsa` `decrypt_rsa` `sign_data` `verify_signature` `export_public_key` `import_public_key` — not in the browser runtime the web SDK ships, which says so when one is called |
+| <a id="crypto-hex_encode"></a><a id="crypto-hex_decode"></a><a id="crypto-secure_compare"></a>Utilities | `random_bytes` `random_hex` `hex_encode` `hex_decode` `secure_compare` |
 
 ```olang
 println(str.substring(crypto.sha256("olang"), 0, 16))
 println(to_string(crypto.secure_compare("abc", "abc")))
 ```
 
-`crypto.random_hex(n)` answers `n` random bytes as `2n` hexadecimal
-characters (at most 1,024 bytes a call), and `crypto.random_bytes(n)` the
+<a id="crypto-random_hex"></a>`crypto.random_hex(n)` answers `n` random bytes as `2n` hexadecimal
+<a id="crypto-random_bytes"></a>characters (at most 1,024 bytes a call), and `crypto.random_bytes(n)` the
 same bytes as `Bytes`. Both draw from a cryptographically
 secure generator — ChaCha12, seeded from the operating system's entropy
 source and reseeded from it periodically; in the browser the seed comes
@@ -1647,7 +1654,7 @@ from the page's `getRandomValues` — so they are the functions to mint a
 session secret, a share token, or a nonce. `random`, the module, is the
 seedable generator for simulations and is not.
 
-`crypto.hmac_sha256(key, message)` answers the HMAC as a hexadecimal
+<a id="crypto-hmac_sha256"></a>`crypto.hmac_sha256(key, message)` answers the HMAC as a hexadecimal
 string; compare a received MAC against it with `secure_compare`, never
 `==`.
 
@@ -1657,14 +1664,14 @@ let mac = crypto.hmac_sha256(secret, payload)
 let genuine = crypto.secure_compare(mac, received_mac)
 ```
 
-`crypto.encrypt_aes(plaintext, key)` is AES-256-GCM. The key is 32 bytes
+<a id="crypto-encrypt_aes"></a>`crypto.encrypt_aes(plaintext, key)` is AES-256-GCM. The key is 32 bytes
 written as 64 hexadecimal characters (`crypto.random_hex(32)` makes one;
 `derive_key` makes one from a password). The answer is `Ok` of one
 hexadecimal string: the 12-byte nonce (24 characters), then the
 ciphertext, then the 16-byte authentication tag — so a ciphertext is 56
 hexadecimal characters longer than twice its plaintext's bytes, and a
 fresh random nonce makes every encryption of the same text different.
-`crypto.decrypt_aes(data, key)` takes that string whole, or `(ciphertext,
+<a id="crypto-decrypt_aes"></a>`crypto.decrypt_aes(data, key)` takes that string whole, or `(ciphertext,
 key, nonce)` with the nonce apart (both hexadecimal); a wrong key or a
 changed byte is an `Err`, never a wrong plaintext. The plaintext is text
 (UTF-8) both ways.
@@ -1681,13 +1688,13 @@ preview. `fs.read_bytes`/`fs.write_bytes` move it to and from disk;
 
 | Function | Description |
 |---|---|
-| `bytes.from_list(ints)` / `bytes.to_list(b)` | to and from a list of Ints 0..=255 |
-| `bytes.from_string(s)` | a string's UTF-8 bytes |
-| `bytes.to_string(b)` | decode as UTF-8 — `Result`, since bytes may not be text |
-| `bytes.len(b)` | byte count (the global `len` works too) |
-| `bytes.slice(b, from, to)` | half-open, by `str.substring`'s rule: past the end stops at the end, a negative position raises |
-| `bytes.concat(a, b)` | concatenation |
-| `bytes.to_hex(b)` / `bytes.from_hex(s)` | lowercase hex, two digits a byte; `from_hex` reads either case and answers a `Result` (an odd count or a character that is not a digit is `Err`) |
+| <a id="bytes-from_list"></a><a id="bytes-to_list"></a>`bytes.from_list(ints)` / `bytes.to_list(b)` | to and from a list of Ints 0..=255 |
+| <a id="bytes-from_string"></a>`bytes.from_string(s)` | a string's UTF-8 bytes |
+| <a id="bytes-to_string"></a>`bytes.to_string(b)` | decode as UTF-8 — `Result`, since bytes may not be text |
+| <a id="bytes-len"></a>`bytes.len(b)` | byte count (the global `len` works too) |
+| <a id="bytes-slice"></a>`bytes.slice(b, from, to)` | half-open, by `str.substring`'s rule: past the end stops at the end, a negative position raises |
+| <a id="bytes-concat"></a>`bytes.concat(a, b)` | concatenation |
+| <a id="bytes-to_hex"></a><a id="bytes-from_hex"></a>`bytes.to_hex(b)` / `bytes.from_hex(s)` | lowercase hex, two digits a byte; `from_hex` reads either case and answers a `Result` (an odd count or a character that is not a digit is `Err`) |
 
 ```olang
 let b = bytes.from_list([104, 105, 33])
@@ -1710,12 +1717,12 @@ return `Result`, since arbitrary input may not be compressed data.
 
 | Function | Description |
 |---|---|
-| `compress.gzip(data)` | gzip at the default level (6) |
-| `compress.gzip_level(data, n)` | gzip at level `n`, 0..=9 |
-| `compress.brotli(data)` | brotli at quality 5 — what `Content-Encoding: br` carries; a quarter of the bytes for a wasm |
-| `compress.brotli_level(data, q)` | brotli at quality `q`, 0..=11: 11 is the smallest output, for a file compressed once and served many times |
-| `compress.gunzip(b)` / `compress.unbrotli(b)` | `Ok(Bytes)` or `Err(message)` |
-| `compress.deflate(data)` / `compress.inflate(b)` | raw deflate, no gzip header, and its inverse |
+| <a id="compress-gzip"></a>`compress.gzip(data)` | gzip at the default level (6) |
+| <a id="compress-gzip_level"></a>`compress.gzip_level(data, n)` | gzip at level `n`, 0..=9 |
+| <a id="compress-brotli"></a>`compress.brotli(data)` | brotli at quality 5 — what `Content-Encoding: br` carries; a quarter of the bytes for a wasm |
+| <a id="compress-brotli_level"></a>`compress.brotli_level(data, q)` | brotli at quality `q`, 0..=11: 11 is the smallest output, for a file compressed once and served many times |
+| <a id="compress-gunzip"></a><a id="compress-unbrotli"></a>`compress.gunzip(b)` / `compress.unbrotli(b)` | `Ok(Bytes)` or `Err(message)` |
+| <a id="compress-deflate"></a><a id="compress-inflate"></a>`compress.deflate(data)` / `compress.inflate(b)` | raw deflate, no gzip header, and its inverse |
 
 An `http.serve` handler that compresses a large JSON body sets
 `Content-Encoding` itself; the web SDK's `serve` does this for every
@@ -1740,11 +1747,11 @@ arbitrary text may not be valid base64 — `decode` yields text,
 
 | Function | Description |
 |---|---|
-| `base64.encode(s)` / `base64.decode(s)` | standard alphabet (decode returns `Result`) |
-| `base64.decode_bytes(s)` | decode to `Bytes` for non-text payloads |
-| `base64.encode_url_safe` / `decode_url_safe` | URL-safe alphabet |
-| `base64.encode_no_pad` / `decode_no_pad` | without `=` padding |
-| `base64.is_valid(s)` | checks |
+| <a id="base64-encode"></a><a id="base64-decode"></a>`base64.encode(s)` / `base64.decode(s)` | standard alphabet (decode returns `Result`) |
+| <a id="base64-decode_bytes"></a>`base64.decode_bytes(s)` | decode to `Bytes` for non-text payloads |
+| <a id="base64-encode_url_safe"></a><a id="base64-decode_url_safe"></a>`base64.encode_url_safe` / `decode_url_safe` | URL-safe alphabet |
+| <a id="base64-encode_no_pad"></a><a id="base64-decode_no_pad"></a>`base64.encode_no_pad` / `decode_no_pad` | without `=` padding |
+| <a id="base64-is_valid"></a>`base64.is_valid(s)` | checks |
 
 ```olang
 let enc = base64.encode("olang")
@@ -1766,36 +1773,36 @@ a `Bool`, and the path functions `join`, `dirname`, `basename`, and
 
 | Group | Functions |
 |---|---|
-| Files | `read_file` `write_file` `append_file` `copy_file` `move_file` `remove_file` `trash` — and `read_bytes` / `write_bytes` for [binary data](#bytes--binary-data) |
-| Directories | `create_dir` `create_dir_all` `list_dir` `walk` `glob` `remove_dir` `remove_dir_all` |
-| Queries | `exists` `is_file` `is_dir` `file_size` `file_info` |
+| <a id="fs-read_file"></a><a id="fs-write_file"></a><a id="fs-read_bytes"></a><a id="fs-write_bytes"></a><a id="fs-append_file"></a><a id="fs-remove_file"></a><a id="fs-copy_file"></a>Files | `read_file` `write_file` `append_file` `copy_file` `move_file` `remove_file` `trash` — and `read_bytes` / `write_bytes` for [binary data](#bytes--binary-data) |
+| <a id="fs-list_dir"></a><a id="fs-create_dir"></a><a id="fs-create_dir_all"></a><a id="fs-remove_dir"></a><a id="fs-remove_dir_all"></a>Directories | `create_dir` `create_dir_all` `list_dir` `walk` `glob` `remove_dir` `remove_dir_all` |
+| <a id="fs-exists"></a><a id="fs-is_file"></a><a id="fs-is_dir"></a>Queries | `exists` `is_file` `is_dir` `file_size` `file_info` |
 | Durability | `sync(path)`: a file's bytes (fsync), or a folder's entries, on the disk before it returns |
 | Watching | `watch` `watch_next` `watch_close`: a folder's whole tree followed as it changes |
-| Paths | `join(parts)` `dirname` `basename` `ext`: pure string surgery, answering the string itself. `abs_path` answers a **`Result`** (`Ok(path)`): it resolves against the current directory, which can fail, and normalizes `.`/`..` without requiring the file to exist. `real_path` (a `Result` too) also resolves symbolic links (`/tmp/x` is `/private/tmp/x` on macOS); for a path that does not exist yet it makes the nearest existing folder real and keeps the rest |
+| <a id="fs-abs_path"></a><a id="fs-real_path"></a>Paths | `join(parts)` `dirname` `basename` `ext`: pure string surgery, answering the string itself. `abs_path` answers a **`Result`** (`Ok(path)`): it resolves against the current directory, which can fail, and normalizes `.`/`..` without requiring the file to exist. `real_path` (a `Result` too) also resolves symbolic links (`/tmp/x` is `/private/tmp/x` on macOS); for a path that does not exist yet it makes the nearest existing folder real and keeps the rest |
 
-`fs.trash(path)` moves a file or a folder to the Trash as the Finder's
+<a id="fs-trash"></a>`fs.trash(path)` moves a file or a folder to the Trash as the Finder's
 Move to Trash does (macOS's NSFileManager) — never a permanent delete —
 and answers `Ok(path in the Trash)`; moving it back from there with
-`fs.move_file` puts it back. Elsewhere it is an `Err` that says so.
+<a id="fs-move_file"></a>`fs.move_file` puts it back. Elsewhere it is an `Err` that says so.
 
-`fs.sync(path)` makes what was written durable: a file's bytes, or, for
+<a id="fs-sync"></a>`fs.sync(path)` makes what was written durable: a file's bytes, or, for
 a folder, the files created, removed or renamed in it. Until then a
 write may sit in the operating system's cache, where a power cut loses
 it; a program that answers "saved" after `fs.sync` has kept its word.
 Inside a `sim` world it is what decides what a crash keeps.
 
-`fs.file_size(path)` answers a file's bytes and `fs.file_info(path)` an
+<a id="fs-file_size"></a><a id="fs-file_info"></a>`fs.file_size(path)` answers a file's bytes and `fs.file_info(path)` an
 object — `{ size, is_file, is_dir, readonly, modified_ms }`: `size`, `is_file`, `is_dir`, `readonly`, and `modified_ms`
 (when the file last changed, in epoch milliseconds, the clock
 `time.now_ms()` reads) — both from the file's metadata, without reading
 it: what a cache or a change check asks.
 
-`fs.join(["logs", name + ".txt"])` joins segments with the platform
+<a id="fs-join"></a>`fs.join(["logs", name + ".txt"])` joins segments with the platform
 separator (an absolute segment restarts the path, standard join
-semantics); `fs.dirname`/`fs.basename`/`fs.ext` decompose without
-touching the disk. `fs.walk(dir)` lists every file below a directory
+<a id="fs-dirname"></a><a id="fs-basename"></a><a id="fs-ext"></a>semantics); `fs.dirname`/`fs.basename`/`fs.ext` decompose without
+<a id="fs-walk"></a>touching the disk. `fs.walk(dir)` lists every file below a directory
 (recursive, sorted);
-`fs.glob(pattern)` filters by a pattern where `*` matches within a path
+<a id="fs-glob"></a>`fs.glob(pattern)` filters by a pattern where `*` matches within a path
 segment, `?` one character, and `**` any number of segments. `fs.scan(root, opts)` lists a
 checkout's files as a person sees them — every `.gitignore` respected
 at every level, hidden entries and the folders named in `skip` left
@@ -1811,7 +1818,7 @@ says `with`, what it becomes — a regular expression's groups expanded
 (`$1`, `${name}`, `$$` a dollar) — for a replace across files to
 preview and apply. An option either function does not know raises.
 
-| `fs.scan` option | Meaning (default) |
+| <a id="fs-scan"></a>`fs.scan` option | Meaning (default) |
 |---|---|
 | `skip` | folder names left out wherever they are (`[]`) |
 | `exts` | the extensions kept, without the dot (every file) |
@@ -1823,7 +1830,7 @@ preview and apply. An option either function does not know raises.
 | `own` | only these folders' own files, as `within` (`""` the root's) |
 | `empty_dirs` | `true` answers the empty folders instead of the files: those the walk enters holding nothing it visits (a hidden or ignored entry does not count; with `max_depth`, none at the limit); `"also"` answers both from one walk, `Ok(#{ files, empty_dirs })` |
 
-| `fs.search` option | Meaning (default) |
+| <a id="fs-search"></a>`fs.search` option | Meaning (default) |
 |---|---|
 | `regex` | the query is a regular expression (`false`: a literal) |
 | `case` | match case (`false`) |
@@ -1849,19 +1856,19 @@ created), `dir` whether it is a folder, `path` absolute and spelled as
 `root` was. When the system dropped notices, or a batch would hold more
 than `max` paths, `events` is empty and `rescan` names the folders to
 read again. `Ok(())` when nothing changed in time; `Err` once closed.
-`fs.watch_close(w)` stops it (a `watch_next` waiting answers `Err`). A
+<a id="fs-watch_close"></a>`fs.watch_close(w)` stops it (a `watch_next` waiting answers `Err`). A
 path under a folder named in `ignore` never leaves the watching thread,
 so a build writing into `target/` costs nothing downstream; `keep` lets
 chosen paths under an ignored folder through (a repository's
 `.git/HEAD`, `.git/index`, `.git/refs`, at any depth).
 
-| `fs.watch` option | Meaning (default) |
+| <a id="fs-watch"></a>`fs.watch` option | Meaning (default) |
 |---|---|
 | `ignore` | folder names whose contents are never said, wherever they are (`[]`) |
 | `keep` | paths from an ignored folder's name down said all the same: `.git/HEAD` (`[]`) |
 | `latency_ms` | how long the system gathers notices before handing them over (50) |
 
-| `fs.watch_next` option | Meaning (default) |
+| <a id="fs-watch_next"></a>`fs.watch_next` option | Meaning (default) |
 |---|---|
 | `timeout_ms` | how long to wait for the first change (1,000) |
 | `settle_ms` | a burst ends after this long with nothing new (50) |
@@ -1899,15 +1906,15 @@ over these nodes, beside the type checker
 
 | Function | Result |
 |---|---|
-| `meta.parse(source)` | `Ok(list of node maps)` \| `Err(message)` — a syntax error is a normal `Err`, never a crash |
-| `meta.rename(source, names)` | `Ok(text)`: `source` with each name that is a key of the map `names` renamed to its value wherever it binds or refers to a value — declarations, parameters, pattern binders, uses, template interpolations — and kept where it names something else: a field after `.`, an object's, struct literal's or named argument's key, a struct pattern's field, a type, a variant, a trait's or impl's method, an import. Comments and strings are untouched; `Err` when the source does not parse |
-| `meta.eval(source, options?)` | evaluate source; `options` bounds untrusted code — `#{ "max_steps": n }` (loop iterations and calls, deterministic) and `#{ "timeout_ms": ms }` (wall clock) — returning `Err("budget exceeded …")` instead of a hung thread |
-| `meta.expand(source)` | `Ok(text)` \| `Err(message)` — the program after macro expansion, as source: every `meta fn` removed and every `@` site replaced by what it generated (what `olang expand FILE` prints) |
-| `meta.encode(source, options?)` | `Ok(bytes)` \| `Err(message)` — the parsed program (macros expanded) as a program image: bytes the runtime loads without parsing, behind a header naming the olang version that wrote it, which is the only version that loads it. `#{ "hot": [names] }` names the functions the loading runtime compiles at declaration rather than at their first call. What the web SDK's `serve` hands the browser in place of the source bundle |
-| `meta.unresolved(source)` | `Ok(list)` of every name the program uses that nothing in it defines or imports and the language does not provide, in order of first use; `Err` when the source does not parse. How the web SDK's bundler warns of a module that uses a name it does not import, undefined in the browser as natively |
-| `meta.tokens(source, lang?)` | the source as tokens that cover it exactly — their `text`s joined are `source` — `[#{ "kind", "text", "start", "end", "line" }]`, `start` and `end` in characters, `line` from 1. `kind` is one of `keyword` `constant` (`true`, `Ok`, an ALL-CAPS name) `ident` `function` (a call's or a definition's name) `type` `module` `property` `string` (a template's text pieces; a string a line) `interpolation` (`${` and its `}`) `number` `comment` `operator` `punct` `macro` (`@name`) `space`. Any text lexes, finished or not: the language server's lexer. `lang` names another language, with the same kinds and the same guarantee: `"python"` (`py`), `"rust"` (`rs`), `"js"` (`javascript`, `ts`), `"shell"` (`sh`, `bash`, `console`), `"toml"`, `"json"` or `"markdown"` (`md`); a name it does not know raises |
-| `meta.highlight(source, lang?)` | the source as HTML for inside a `<code>`: each token but a space a `<span class="ol-KIND">`, its text escaped; `lang` as `meta.tokens` takes it. The same in the browser runtime, so a page's build and its playground colour alike |
-| `meta.exports(path)` | at expansion time, `Ok(map)` of the literal values the module the expanding file imports as `path` binds at its top level (`let`/`share let` of a number, string, list, map, or tuple literal), by name; `Err` for a path the file does not import, and at runtime |
+| <a id="meta-parse"></a>`meta.parse(source)` | `Ok(list of node maps)` \| `Err(message)` — a syntax error is a normal `Err`, never a crash |
+| <a id="meta-rename"></a>`meta.rename(source, names)` | `Ok(text)`: `source` with each name that is a key of the map `names` renamed to its value wherever it binds or refers to a value — declarations, parameters, pattern binders, uses, template interpolations — and kept where it names something else: a field after `.`, an object's, struct literal's or named argument's key, a struct pattern's field, a type, a variant, a trait's or impl's method, an import. Comments and strings are untouched; `Err` when the source does not parse |
+| <a id="meta-eval"></a>`meta.eval(source, options?)` | evaluate source; `options` bounds untrusted code — `#{ "max_steps": n }` (loop iterations and calls, deterministic) and `#{ "timeout_ms": ms }` (wall clock) — returning `Err("budget exceeded …")` instead of a hung thread |
+| <a id="meta-expand"></a>`meta.expand(source)` | `Ok(text)` \| `Err(message)` — the program after macro expansion, as source: every `meta fn` removed and every `@` site replaced by what it generated (what `olang expand FILE` prints) |
+| <a id="meta-encode"></a>`meta.encode(source, options?)` | `Ok(bytes)` \| `Err(message)` — the parsed program (macros expanded) as a program image: bytes the runtime loads without parsing, behind a header naming the olang version that wrote it, which is the only version that loads it. `#{ "hot": [names] }` names the functions the loading runtime compiles at declaration rather than at their first call. What the web SDK's `serve` hands the browser in place of the source bundle |
+| <a id="meta-unresolved"></a>`meta.unresolved(source)` | `Ok(list)` of every name the program uses that nothing in it defines or imports and the language does not provide, in order of first use; `Err` when the source does not parse. How the web SDK's bundler warns of a module that uses a name it does not import, undefined in the browser as natively |
+| <a id="meta-tokens"></a>`meta.tokens(source, lang?)` | the source as tokens that cover it exactly — their `text`s joined are `source` — `[#{ "kind", "text", "start", "end", "line" }]`, `start` and `end` in characters, `line` from 1. `kind` is one of `keyword` `constant` (`true`, `Ok`, an ALL-CAPS name) `ident` `function` (a call's or a definition's name) `type` `module` `property` `string` (a template's text pieces; a string a line) `interpolation` (`${` and its `}`) `number` `comment` `operator` `punct` `macro` (`@name`) `space`. Any text lexes, finished or not: the language server's lexer. `lang` names another language, with the same kinds and the same guarantee: `"python"` (`py`), `"rust"` (`rs`), `"js"` (`javascript`, `ts`), `"shell"` (`sh`, `bash`, `console`), `"toml"`, `"json"` or `"markdown"` (`md`); a name it does not know raises |
+| <a id="meta-highlight"></a>`meta.highlight(source, lang?)` | the source as HTML for inside a `<code>`: each token but a space a `<span class="ol-KIND">`, its text escaped; `lang` as `meta.tokens` takes it. The same in the browser runtime, so a page's build and its playground colour alike |
+| <a id="meta-exports"></a>`meta.exports(path)` | at expansion time, `Ok(map)` of the literal values the module the expanding file imports as `path` binds at its top level (`let`/`share let` of a number, string, list, map, or tuple literal), by name; `Err` for a path the file does not import, and at runtime |
 
 Nodes are discriminated-union maps. Top-level statements carry `line` and
 `column`; expressions nest (a `call`'s `callee` and `args` are themselves
@@ -2054,9 +2061,9 @@ meta fn the same call runs in the pure expansion sandbox (no
 filesystem, network, processes, clock, or randomness), keeping macro
 expansion deterministic. It takes source text, not `meta.parse` nodes —
 nodes summarize patterns and types and cannot be turned back into a
-program. `meta.lit(value)` renders a
+<a id="meta-lit"></a>program. `meta.lit(value)` renders a
 value as source text that evaluates back to it, with strings escaped and
-map keys in the map's order, so the literal makes the same map; and `meta.fresh(prefix)`
+<a id="meta-fresh"></a>map keys in the map's order, so the literal makes the same map; and `meta.fresh(prefix)`
 yields a name no program writes by hand, for generated temporaries: the
 form is `prefix__m<N>`, numbered per expansion, and the expander refuses
 a macro-using program that spells a name of that form, so a generated
@@ -2093,23 +2100,23 @@ that serves its own routes reads the same bytes.
 
 | Function | Result |
 |---|---|
-| `runtime.wasm()` | `Ok(#{ "bytes", "hash", "gzip", "br", "version", "profile" })` — the browser runtime's bytes, the first sixteen hex digits of their SHA-256 (the name in `/olang.<hash>.wasm` and the ETag), the gzip and brotli forms, the olang version it is, and `"browser"`. Every form and the hash are made when the binary is built and are slices of its own image: the call computes nothing, copies nothing to the heap, and may be made per request; `Err(message)` naming how to build a binary that carries one |
+| <a id="runtime-wasm"></a>`runtime.wasm()` | `Ok(#{ "bytes", "hash", "gzip", "br", "version", "profile" })` — the browser runtime's bytes, the first sixteen hex digits of their SHA-256 (the name in `/olang.<hash>.wasm` and the ETag), the gzip and brotli forms, the olang version it is, and `"browser"`. Every form and the hash are made when the binary is built and are slices of its own image: the call computes nothing, copies nothing to the heap, and may be made per request; `Err(message)` naming how to build a binary that carries one |
 | `runtime.wasm("full")` | the same for the full profile, the whole standard library (`re` and RSA too), for a playground that runs any program: its gzip and brotli forms are slices of the binary; its `bytes` are the brotli form decoded, once per process, on first ask |
-| `runtime.features()` / `runtime.features(profile)` | what a runtime has: `#{ "profile", "modules", "threads", "fs", "net", "processes", "db", "gui", "dom", "jit", "needs" }` — its name, the modules a program can call there (sorted), and whether it can start threads (`spawn`, `task`, `par_map` workers), reach files, the network, processes, SQLite, windows, a page's DOM, and native code. `needs` maps each function of those modules that reaches a power the profile lacks to that power — `#{ "ods.open_csv": "fs", "gg.save": "fs", "spawn": "threads", … }` (`spawn` is the form) — and is empty natively. With no argument, this runtime; any runtime, the browser's included, also answers for `"native"`, `"browser"` and `"full"` |
-| `runtime.version()` | the olang version string |
-| `runtime.memory()` | `#{ "heap", "program", "values", "embedded", "tasks" }`, in bytes — where the process's memory is (below) |
-| `runtime.profile_start()` / `runtime.profile_start(interval_us)` | begin sampling this process with the profiler behind `olang profile` (every 1,000 µs by default): `Ok(())`, or `Err` when a profile is already running |
-| `runtime.profile_stop()` | end it: `Ok(#{ "interval_us", "ticks", "idle", "blocked", "samples", "rows" })`, where `rows` is `[#{ "function", "tier", "samples", "share" }]`, most first — the functions that were running when the sampler looked, the tier each ran on (`interp`, `vm`, `native`, `builtin`), and its share of the samples that landed in code. `blocked` counts thread-ticks spent parked — a receive, a sleep, a server waiting for a connection, an idle http worker — which are charged to no function. `Err` when no profile is running |
-| `runtime.profile_live_start(dir)` `runtime.profile_live_start(dir, #{ "every_ms", "interval_us", "label" })` | a live profile of this process from now — what `olang profile --format json --live DIR` makes of a program it runs: stacks sampled by tier every `interval_us` (1,000), and a snapshot of the profile and the vital signs written to `DIR/<pid>.json` every `every_ms` (500, at least 50) in that format ([`olang profile`](tooling.md#olang-profile)), cumulative and replaced atomically. `Ok(())`, or `Err` when a profile already runs (`--profile-live`, `olang profile`, `runtime.profile_start`, an earlier call). Nothing is paid until it is called: an app that draws its own profile turns it on and off |
-| `runtime.profile_live_stop()` | end it: sampling stops, the final snapshot (`"done": true`) is written. `Ok(())`, or `Err` when none runs |
-| `runtime.build()` | what this binary is: `#{ "version", "commit", "branch", "dirty", "date", "profile", "target", "rustc", "features", "crates", "exe" }` — the git commit it was built from (empty outside a checkout) and whether tracked files had changes then (`dirty`, `()` when git could not say), when its build script last ran (UTC: the last change to the sources, the lock or the commit), `release` or `debug`, the target triple, `rustc -V`, the Cargo features, the gui engine's and the stdlib's key crates from Cargo.lock as `[#{ "name", "version", "vendored" }]` (`vendored`: a patched copy under vendor/, accesskit_macos), and the binary's path |
-| `runtime.load_module(path, grant)` | the olang file at `path` loaded into this program as a module, read afresh (its folder's cached modules forgotten), everything under its folder held to `grant` — `#{ name, fs: false \| "read" \| true, fs_roots: [folders], proc: false \| true \| [programs], net, db, env }`, a key left out denied, never the host's builtins (`gui`, `tty`, loading code, the profiler). `Ok(module)`, or `Err(message)` with the grant before it kept ([Modules loaded at run time](packages.md#modules-loaded-at-run-time)) |
-| `runtime.unload_module(path)` · `runtime.module_grant(path)` · `runtime.module_permits(path, builtin, args)` | unload a module: its grant becomes a tombstone, so its code still running (a closure kept, a thread it started) is refused every capability — "module <dir> was unloaded" — never given the host's, until a `load_module` of the folder grants it again (true when a loaded module was there); the grant as it holds (`()` when none); whether its code would be allowed `builtin(args…)` — `Ok(())` or `Err(why)`, the same gate |
-| `runtime.call_budget(f, args, ms)` | `f(args…)` stopped past `ms` (an interrupt on this thread only) and its failure caught: `#{ ok, value, error, frames, over, us }` |
-| `runtime.last_error()` | the error a boundary on this thread caught last (`attempt`, `call_budget`, `load_module`) with its frames, `#{ message, frames: [#{ path, line, function }] }`, innermost first (line 0: an expression body); `()` when none |
-| `runtime.shape(value)` | a value's shape as text — kind, a map's sorted keys with theirs, a list's first item's — what a host compares to keep a reloaded module's state |
-| `runtime.bind(node, value)` | a control a host binds (what `ui.slider` and its kin answer): `value` with no host; in a notebook's kernel the value the editor set for the evaluating cell's control while it still fits. Also in the browser build, where `runtime` has this, `preset` and `features` |
-| `runtime.preset(value, name)` | the next control the program binds with no host answers `value`, held to the control's kind and range or options (an error naming `name` when it does not fit): what `olang run x.olmd --param region=west` sets for a notebook's control cell |
+| <a id="runtime-features"></a>`runtime.features()` / `runtime.features(profile)` | what a runtime has: `#{ "profile", "modules", "threads", "fs", "net", "processes", "db", "gui", "dom", "jit", "needs" }` — its name, the modules a program can call there (sorted), and whether it can start threads (`spawn`, `task`, `par_map` workers), reach files, the network, processes, SQLite, windows, a page's DOM, and native code. `needs` maps each function of those modules that reaches a power the profile lacks to that power — `#{ "ods.open_csv": "fs", "gg.save": "fs", "spawn": "threads", … }` (`spawn` is the form) — and is empty natively. With no argument, this runtime; any runtime, the browser's included, also answers for `"native"`, `"browser"` and `"full"` |
+| <a id="runtime-version"></a>`runtime.version()` | the olang version string |
+| <a id="runtime-memory"></a>`runtime.memory()` | `#{ "heap", "program", "values", "embedded", "tasks" }`, in bytes — where the process's memory is (below) |
+| <a id="runtime-profile_start"></a>`runtime.profile_start()` / `runtime.profile_start(interval_us)` | begin sampling this process with the profiler behind `olang profile` (every 1,000 µs by default): `Ok(())`, or `Err` when a profile is already running |
+| <a id="runtime-profile_stop"></a>`runtime.profile_stop()` | end it: `Ok(#{ "interval_us", "ticks", "idle", "blocked", "samples", "rows" })`, where `rows` is `[#{ "function", "tier", "samples", "share" }]`, most first — the functions that were running when the sampler looked, the tier each ran on (`interp`, `vm`, `native`, `builtin`), and its share of the samples that landed in code. `blocked` counts thread-ticks spent parked — a receive, a sleep, a server waiting for a connection, an idle http worker — which are charged to no function. `Err` when no profile is running |
+| <a id="runtime-profile_live_start"></a>`runtime.profile_live_start(dir)` `runtime.profile_live_start(dir, #{ "every_ms", "interval_us", "label" })` | a live profile of this process from now — what `olang profile --format json --live DIR` makes of a program it runs: stacks sampled by tier every `interval_us` (1,000), and a snapshot of the profile and the vital signs written to `DIR/<pid>.json` every `every_ms` (500, at least 50) in that format ([`olang profile`](tooling.md#olang-profile)), cumulative and replaced atomically. `Ok(())`, or `Err` when a profile already runs (`--profile-live`, `olang profile`, `runtime.profile_start`, an earlier call). Nothing is paid until it is called: an app that draws its own profile turns it on and off |
+| <a id="runtime-profile_live_stop"></a>`runtime.profile_live_stop()` | end it: sampling stops, the final snapshot (`"done": true`) is written. `Ok(())`, or `Err` when none runs |
+| <a id="runtime-build"></a>`runtime.build()` | what this binary is: `#{ "version", "commit", "branch", "dirty", "date", "profile", "target", "rustc", "features", "crates", "exe" }` — the git commit it was built from (empty outside a checkout) and whether tracked files had changes then (`dirty`, `()` when git could not say), when its build script last ran (UTC: the last change to the sources, the lock or the commit), `release` or `debug`, the target triple, `rustc -V`, the Cargo features, the gui engine's and the stdlib's key crates from Cargo.lock as `[#{ "name", "version", "vendored" }]` (`vendored`: a patched copy under vendor/, accesskit_macos), and the binary's path |
+| <a id="runtime-load_module"></a>`runtime.load_module(path, grant)` | the olang file at `path` loaded into this program as a module, read afresh (its folder's cached modules forgotten), everything under its folder held to `grant` — `#{ name, fs: false \| "read" \| true, fs_roots: [folders], proc: false \| true \| [programs], net, db, env }`, a key left out denied, never the host's builtins (`gui`, `tty`, loading code, the profiler). `Ok(module)`, or `Err(message)` with the grant before it kept ([Modules loaded at run time](packages.md#modules-loaded-at-run-time)) |
+| <a id="runtime-unload_module"></a><a id="runtime-module_grant"></a><a id="runtime-module_permits"></a>`runtime.unload_module(path)` · `runtime.module_grant(path)` · `runtime.module_permits(path, builtin, args)` | unload a module: its grant becomes a tombstone, so its code still running (a closure kept, a thread it started) is refused every capability — "module <dir> was unloaded" — never given the host's, until a `load_module` of the folder grants it again (true when a loaded module was there); the grant as it holds (`()` when none); whether its code would be allowed `builtin(args…)` — `Ok(())` or `Err(why)`, the same gate |
+| <a id="runtime-call_budget"></a>`runtime.call_budget(f, args, ms)` | `f(args…)` stopped past `ms` (an interrupt on this thread only) and its failure caught: `#{ ok, value, error, frames, over, us }` |
+| <a id="runtime-last_error"></a>`runtime.last_error()` | the error a boundary on this thread caught last (`attempt`, `call_budget`, `load_module`) with its frames, `#{ message, frames: [#{ path, line, function }] }`, innermost first (line 0: an expression body); `()` when none |
+| <a id="runtime-shape"></a>`runtime.shape(value)` | a value's shape as text — kind, a map's sorted keys with theirs, a list's first item's — what a host compares to keep a reloaded module's state |
+| <a id="runtime-bind"></a>`runtime.bind(node, value)` | a control a host binds (what `ui.slider` and its kin answer): `value` with no host; in a notebook's kernel the value the editor set for the evaluating cell's control while it still fits. Also in the browser build, where `runtime` has this, `preset` and `features` |
+| <a id="runtime-preset"></a>`runtime.preset(value, name)` | the next control the program binds with no host answers `value`, held to the control's kind and range or options (an error naming `name` when it does not fit): what `olang run x.olmd --param region=west` sets for a notebook's control cell |
 
 ```olang no-run
 let rt = unwrap(runtime.wasm())
@@ -2181,9 +2188,9 @@ dependency was given. None of the three functions is itself gated
 
 | Function | Description |
 |---|---|
-| `caps.allowed(name)` | whether the capability is held: `"fs"` (at read level or above), `"net"`, `"proc"`, `"db"`, `"env"`; another name raises |
-| `caps.level(name)` | the grant's own word for it, as a manifest writes it: `false`, `"read"` or `true` for `"fs"`; `false` or `true` for the others |
-| `caps.granted()` | the whole grant as a map, in the same words: `fs` `false`, `"read"` or `true`, the others a Bool |
+| <a id="caps-allowed"></a>`caps.allowed(name)` | whether the capability is held: `"fs"` (at read level or above), `"net"`, `"proc"`, `"db"`, `"env"`; another name raises |
+| <a id="caps-level"></a>`caps.level(name)` | the grant's own word for it, as a manifest writes it: `false`, `"read"` or `true` for `"fs"`; `false` or `true` for the others |
+| <a id="caps-granted"></a>`caps.granted()` | the whole grant as a map, in the same words: `fs` `false`, `"read"` or `true`, the others a Bool |
 
 ```olang
 let plan = if caps.allowed("fs") => "cache to disk" else => "in memory"
@@ -2202,15 +2209,15 @@ else.
 
 | Group | Functions |
 |---|---|
-| Process | `args` `exit(code)` `pid` `exe_path` `exec(argv)` |
-| Terminal | `is_tty()` — is stdout a terminal? (`Bool`); `stdin_is_tty()` — is stdin? (`Bool`: `false` reading a pipe or a file); `color_enabled()` — will ANSI styling render? (`CLICOLOR_FORCE` set, or a terminal with `NO_COLOR` unset; decided once, re-decided after the program's own `set_env`/`remove_env`); `flush()` — flush buffered stdout, for progress bars |
-| Input | `read_line()` — one line from stdin as `Ok(line)`, `Err("eof")` at end; `stdin()` — everything to end-of-file as one string; `stdin_lines()` — everything as a list of lines, endings stripped. The stdin pair is what makes olang pipe-friendly: `cat access.log \| olang analyze.ol` |
-| Environment | `get_env` (`Err` when unset) `env` (the value or `()`) `set_env` `remove_env` `has_env`; `list_env()` — every variable as a map, `#{ "PATH": "…", … }` |
-| Directories | `cwd` `chdir` `home_dir` `temp_dir` |
-| System | `hostname` `username` `os_type` `arch` `family` `path_separator` |
-| Signals | `on_interrupt()` — trap Ctrl-C (SIGINT) instead of terminating (`Result`: installing the handler can fail); `interrupted()` — has it been pressed? (`Bool`); `reset_interrupt()` — clear the flag; `on_shutdown(handler)` — run `handler("shutdown")` on SIGINT or SIGTERM (below) |
+| <a id="os-pid"></a><a id="os-exe_path"></a><a id="os-exit"></a>Process | `args` `exit(code)` `pid` `exe_path` `exec(argv)` |
+| <a id="os-set_env"></a><a id="os-remove_env"></a><a id="os-is_tty"></a><a id="os-stdin_is_tty"></a><a id="os-color_enabled"></a><a id="os-flush"></a>Terminal | `is_tty()` — is stdout a terminal? (`Bool`); `stdin_is_tty()` — is stdin? (`Bool`: `false` reading a pipe or a file); `color_enabled()` — will ANSI styling render? (`CLICOLOR_FORCE` set, or a terminal with `NO_COLOR` unset; decided once, re-decided after the program's own `set_env`/`remove_env`); `flush()` — flush buffered stdout, for progress bars |
+| <a id="os-stdin"></a><a id="os-stdin_lines"></a><a id="os-read_line"></a>Input | `read_line()` — one line from stdin as `Ok(line)`, `Err("eof")` at end; `stdin()` — everything to end-of-file as one string; `stdin_lines()` — everything as a list of lines, endings stripped. The stdin pair is what makes olang pipe-friendly: `cat access.log \| olang analyze.ol` |
+| <a id="os-get_env"></a><a id="os-env"></a><a id="os-list_env"></a><a id="os-has_env"></a>Environment | `get_env` (`Err` when unset) `env` (the value or `()`) `set_env` `remove_env` `has_env`; `list_env()` — every variable as a map, `#{ "PATH": "…", … }` |
+| <a id="os-cwd"></a><a id="os-chdir"></a><a id="os-home_dir"></a><a id="os-temp_dir"></a>Directories | `cwd` `chdir` `home_dir` `temp_dir` |
+| <a id="os-hostname"></a><a id="os-username"></a><a id="os-os_type"></a><a id="os-arch"></a><a id="os-family"></a><a id="os-path_separator"></a>System | `hostname` `username` `os_type` `arch` `family` `path_separator` |
+| <a id="os-interrupted"></a><a id="os-reset_interrupt"></a>Signals | `on_interrupt()` — trap Ctrl-C (SIGINT) instead of terminating (`Result`: installing the handler can fail); `interrupted()` — has it been pressed? (`Bool`); `reset_interrupt()` — clear the flag; `on_shutdown(handler)` — run `handler("shutdown")` on SIGINT or SIGTERM (below) |
 
-`os.exec(argv)` runs an external program to completion — `argv` is
+<a id="os-exec"></a>`os.exec(argv)` runs an external program to completion — `argv` is
 the program and its arguments as one list, `["git", "status"]`, as
 `proc.spawn` and `pty.spawn` take it — and returns
 `Ok({ code, signal, stdout, stderr, timed_out })` — or `Err` if it could not be
@@ -2232,7 +2239,7 @@ unbounded and `timed_out` is `false`. `stdout` and `stderr` are text,
 any bytes in them that are not UTF-8 replaced by U+FFFD; with `"bytes":
 true` among the options they are `Bytes`, exactly as the program wrote
 them.
-`os.args()` is the program's argv (`[script, arg1, ...]`).
+<a id="os-args"></a>`os.args()` is the program's argv (`[script, arg1, ...]`).
 
 Most of `os` cannot fail, and returns its value directly: `args`, `arch`,
 `os_type`, `family`, `pid`, `path_separator`, `temp_dir`, `username`,
@@ -2253,7 +2260,7 @@ else => println("git failed: " + r.stderr)
 ```
 
 A server that should finish its work when told to stop registers a
-shutdown handler: `os.on_shutdown(handler)` runs `handler("shutdown")`
+<a id="os-on_shutdown"></a>shutdown handler: `os.on_shutdown(handler)` runs `handler("shutdown")`
 on SIGINT or SIGTERM, on its own thread against a thread-safe copy of
 the program, and `http.shutdown()` from inside it asks every running
 `http.serve` to drain — no new connections, in-flight requests finish,
@@ -2278,7 +2285,7 @@ fn handle(req) = if req.path == "/wait" => {
 } else => "quick"
 ```
 
-For a long-running loop or server, `os.on_interrupt()` traps Ctrl-C so it
+<a id="os-on_interrupt"></a>For a long-running loop or server, `os.on_interrupt()` traps Ctrl-C so it
 sets a flag instead of killing the process; poll it to shut down cleanly:
 
 ```olang no-run
@@ -2301,10 +2308,10 @@ deadlocks against a caller reading only one stream. Native-only.
 
 | Group | Functions |
 |---|---|
-| Spawn | `spawn(argv)` / `spawn(argv, #{ cwd, env, clear_env, group, framing, bytes })` → `Ok(Process)` (`argv` the program and its arguments as one list, as `pty.spawn` and a pipeline stage take them; an `env` name given `()` is removed); a `cwd` that names no directory is an `Err` saying so. Output is text, bytes that are not UTF-8 read as U+FFFD; `bytes: true` makes `read_all` and `stderr` answer `Bytes` as written (and `read_line`, which reads text, raise) |
-| Input | `write(p, s)` · `write_line(p, s)` · `write_frame(p, s)` (one `Content-Length`-framed message) · `close_stdin(p)` (signals EOF) |
+| <a id="proc-spawn"></a><a id="proc-read_line"></a><a id="proc-read_all"></a><a id="proc-stderr"></a>Spawn | `spawn(argv)` / `spawn(argv, #{ cwd, env, clear_env, group, framing, bytes })` → `Ok(Process)` (`argv` the program and its arguments as one list, as `pty.spawn` and a pipeline stage take them; an `env` name given `()` is removed); a `cwd` that names no directory is an `Err` saying so. Output is text, bytes that are not UTF-8 read as U+FFFD; `bytes: true` makes `read_all` and `stderr` answer `Bytes` as written (and `read_line`, which reads text, raise) |
+| <a id="proc-write"></a><a id="proc-write_line"></a><a id="proc-write_frame"></a><a id="proc-close_stdin"></a>Input | `write(p, s)` · `write_line(p, s)` · `write_frame(p, s)` (one `Content-Length`-framed message) · `close_stdin(p)` (signals EOF) |
 | Output | `read_line(p)` → `Ok(line)` \| `Err("eof")`; `read_all(p)` → the rest of stdout; `stderr(p)` → all stderr (complete after exit) |
-| Lifecycle | `wait(p)` → `Ok({ code, signal })` (the exit code and `()`, or `()` and the signal that ended it) · `kill(p)` (SIGKILL) / `kill(p, signal)` (`"TERM"`, `"INT"`, `"HUP"`, …, or a number: a process asked to end) / `kill(p, #{ tree: true, signal })` · `pid(p)` |
+| <a id="proc-wait"></a><a id="proc-pid"></a>Lifecycle | `wait(p)` → `Ok({ code, signal })` (the exit code and `()`, or `()` and the signal that ended it) · `kill(p)` (SIGKILL) / `kill(p, signal)` (`"TERM"`, `"INT"`, `"HUP"`, …, or a number: a process asked to end) / `kill(p, #{ tree: true, signal })` · `pid(p)` |
 | Pipeline | `pipeline(stages)` / `pipeline(stages, #{ cwd, env, clear_env, stdin, bytes })` — `bytes: true` answers `stdout` and `stderr` as `Bytes` |
 
 ```olang no-run
@@ -2328,7 +2335,7 @@ unwrap(proc.write_frame(p, unwrap(json.stringify(#{ "jsonrpc": "2.0", "id": 1, "
 println(unwrap(proc.read_line(p)))     // the initialize result, whole
 ```
 
-`proc.kill(p)` ends the child alone (SIGKILL); a shell's children
+<a id="proc-kill"></a>`proc.kill(p)` ends the child alone (SIGKILL); a shell's children
 outlive it. To end everything a child started, spawn it with
 `#{ "group": true }` — it leads a process group of its own — and kill
 it with `proc.kill(p, #{ "tree": true })`, which kills the whole group
@@ -2342,7 +2349,7 @@ let p = unwrap(proc.spawn(["sh", "-c", "make test"], #{ "group": true }))
 unwrap(proc.kill(p, #{ "tree": true }))   // make, and everything it ran
 ```
 
-`proc.pipeline` chains commands the way the shell's `a | b | c` does —
+<a id="proc-pipeline"></a>`proc.pipeline` chains commands the way the shell's `a | b | c` does —
 each stage is a list `[program, ...args]`, and each one's stdout is wired
 to the next one's stdin. It returns `Ok({ code, stdout, stderr, codes })`:
 the last stage's stdout, all stderr concatenated, the final exit code, and
@@ -2373,16 +2380,16 @@ elsewhere: `pty.available()`); capability-gated as `proc`.
 
 | Function | Description |
 |---|---|
-| `pty.spawn(argv, opts?)` | start `argv[0]` → `Ok(Pty)`. `opts`: `cwd`, `env` (a map: a String sets a variable, `()` removes one), `clear_env`, `rows`, `cols` (24 × 80). The child's signals are at their defaults (SIGPIPE too) |
-| `pty.read(p, opts?)` | what it wrote → `Ok(Bytes)`, `Ok(())` when nothing came within `timeout_ms` (1000), `Err("eof")` once its side closed. Having read something it reads on while more arrives within `settle_ms` (2), up to `max` bytes (1 MiB): a burst is one value. For a reader task of its own |
-| `pty.write(p, data)` | a String or Bytes (the keys typed), queued for a writer thread (a large paste never blocks) |
-| `pty.resize(p, rows, cols)` | TIOCSWINSZ: the foreground job hears SIGWINCH |
-| `pty.kill(p, sig?)` | `"HUP"` (the default), `"INT"`, `"TERM"`, `"KILL"`, `"QUIT"`, `"CONT"`, `"STOP"` or a number, to the shell's process group and the foreground job's |
-| `pty.wait(p, ms?)` / `pty.wait(p, #{ timeout_ms })` | `Ok({ code, signal })` once it ended (waiting up to `ms`, 0), `Ok(())` while it runs |
-| `pty.foreground(p)` | the terminal's foreground job `{ pid, name, shell }` (`shell` while the shell is at its prompt), or `()` once it ended — ask before closing a terminal a program runs in |
-| `pty.cwd(p)` | the foreground job's working directory (the shell's at its prompt), or `()` |
-| `pty.pid(p)` · `pty.shell()` · `pty.available()` | the child's pid; the user's login shell (`$SHELL`, the user database's, `/bin/zsh`); whether ptys exist here |
-| `pty.close(p)` | hang up: SIGHUP to its groups, what it writes as it ends read and dropped, the child reaped (SIGKILL after 500 ms), the master closed. At once; the handle is gone |
+| <a id="pty-spawn"></a>`pty.spawn(argv, opts?)` | start `argv[0]` → `Ok(Pty)`. `opts`: `cwd`, `env` (a map: a String sets a variable, `()` removes one), `clear_env`, `rows`, `cols` (24 × 80). The child's signals are at their defaults (SIGPIPE too) |
+| <a id="pty-read"></a>`pty.read(p, opts?)` | what it wrote → `Ok(Bytes)`, `Ok(())` when nothing came within `timeout_ms` (1000), `Err("eof")` once its side closed. Having read something it reads on while more arrives within `settle_ms` (2), up to `max` bytes (1 MiB): a burst is one value. For a reader task of its own |
+| <a id="pty-write"></a>`pty.write(p, data)` | a String or Bytes (the keys typed), queued for a writer thread (a large paste never blocks) |
+| <a id="pty-resize"></a>`pty.resize(p, rows, cols)` | TIOCSWINSZ: the foreground job hears SIGWINCH |
+| <a id="pty-kill"></a>`pty.kill(p, sig?)` | `"HUP"` (the default), `"INT"`, `"TERM"`, `"KILL"`, `"QUIT"`, `"CONT"`, `"STOP"` or a number, to the shell's process group and the foreground job's |
+| <a id="pty-wait"></a>`pty.wait(p, ms?)` / `pty.wait(p, #{ timeout_ms })` | `Ok({ code, signal })` once it ended (waiting up to `ms`, 0), `Ok(())` while it runs |
+| <a id="pty-foreground"></a>`pty.foreground(p)` | the terminal's foreground job `{ pid, name, shell }` (`shell` while the shell is at its prompt), or `()` once it ended — ask before closing a terminal a program runs in |
+| <a id="pty-cwd"></a>`pty.cwd(p)` | the foreground job's working directory (the shell's at its prompt), or `()` |
+| <a id="pty-pid"></a><a id="pty-shell"></a><a id="pty-available"></a>`pty.pid(p)` · `pty.shell()` · `pty.available()` | the child's pid; the user's login shell (`$SHELL`, the user database's, `/bin/zsh`); whether ptys exist here |
+| <a id="pty-close"></a>`pty.close(p)` | hang up: SIGHUP to its groups, what it writes as it ends read and dropped, the child reaped (SIGKILL after 500 ms), the master closed. At once; the handle is gone |
 
 A terminal that closes waits for what it wrote to be read (macOS): keep
 reading until `eof`, then `wait`.
@@ -2421,14 +2428,14 @@ rewraps the main screen.
 
 | Function | Description |
 |---|---|
-| `vt.new(rows, cols, opts?)` | a screen. `opts`: `scrollback`, `fg`, `bg` (what OSC 10/11 answer) |
-| `vt.feed(t, data)` | read a String or Bytes → what the terminal answers the program (a cursor report), often `""` |
-| `vt.resize(t, rows, cols)` · `vt.clear(t)` · `vt.reset(t)` | the size (rewrapped); ⌘K's clear (the cursor's line kept as the first); RIS |
-| `vt.info(t)` | `{ rows, cols, title, cwd, alt, cursor (line, col), cursor_row, cursor_visible, cursor_style, cursor_blink, app_cursor, app_keypad, bracketed_paste, mouse, mouse_sgr, focus_events, bell, rev, first, screen, last }` |
-| `vt.claim(t)` | true once after each `vt.info`: a reader says "changed" once until the window looks (a burst is a frame) |
-| `vt.render(t, opts)` | canvas operations: backgrounds, text runs (bold, italic), underlines, strikes, the cursor (block, bar, underline; hollow; the input method's text). `opts`: `cell_w`, `cell_h`, `size`, `font`, `pad_x`, `pad_y`, `text_dy`, `rows`, `top`, `palette` (16), `fg`, `bg`, `cursor_color`, `cursor_text`, `selection_color`, `find_color`, `find_current_color`, `link_color`, `selection` `(l0, c0, l1, c1)`, `matches` and `match`, `hover`, `cursor`, `hollow`, `cursor_style`, `preedit` |
-| `vt.text(t, l0, c0, l1, c1)` · `vt.line(t, l)` · `vt.word_at(t, l, c)` · `vt.link_at(t, l, c)` · `vt.find(t, q, opts?)` | a selection's text; a line's text and each character's column; a double click's word; an OSC 8 link; every match `(line, col, cells)` — a line that wrapped read as one (a match's `cells` may run onto the next row), the newest 2,000 |
-| `vt.set_colors(t, #{ fg, bg })` · `vt.free(t)` | replace the colours OSC 10/11 answer, as `vt.new`'s `fg` and `bg` set them; release the screen (a later call on it does nothing) |
+| <a id="vt-new"></a>`vt.new(rows, cols, opts?)` | a screen. `opts`: `scrollback`, `fg`, `bg` (what OSC 10/11 answer) |
+| <a id="vt-feed"></a>`vt.feed(t, data)` | read a String or Bytes → what the terminal answers the program (a cursor report), often `""` |
+| <a id="vt-resize"></a><a id="vt-clear"></a><a id="vt-reset"></a>`vt.resize(t, rows, cols)` · `vt.clear(t)` · `vt.reset(t)` | the size (rewrapped); ⌘K's clear (the cursor's line kept as the first); RIS |
+| <a id="vt-info"></a>`vt.info(t)` | `{ rows, cols, title, cwd, alt, cursor (line, col), cursor_row, cursor_visible, cursor_style, cursor_blink, app_cursor, app_keypad, bracketed_paste, mouse, mouse_sgr, focus_events, bell, rev, first, screen, last }` |
+| <a id="vt-claim"></a>`vt.claim(t)` | true once after each `vt.info`: a reader says "changed" once until the window looks (a burst is a frame) |
+| <a id="vt-render"></a>`vt.render(t, opts)` | canvas operations: backgrounds, text runs (bold, italic), underlines, strikes, the cursor (block, bar, underline; hollow; the input method's text). `opts`: `cell_w`, `cell_h`, `size`, `font`, `pad_x`, `pad_y`, `text_dy`, `rows`, `top`, `palette` (16), `fg`, `bg`, `cursor_color`, `cursor_text`, `selection_color`, `find_color`, `find_current_color`, `link_color`, `selection` `(l0, c0, l1, c1)`, `matches` and `match`, `hover`, `cursor`, `hollow`, `cursor_style`, `preedit` |
+| <a id="vt-text"></a><a id="vt-line"></a><a id="vt-word_at"></a><a id="vt-link_at"></a><a id="vt-find"></a>`vt.text(t, l0, c0, l1, c1)` · `vt.line(t, l)` · `vt.word_at(t, l, c)` · `vt.link_at(t, l, c)` · `vt.find(t, q, opts?)` | a selection's text; a line's text and each character's column; a double click's word; an OSC 8 link; every match `(line, col, cells)` — a line that wrapped read as one (a match's `cells` may run onto the next row), the newest 2,000 |
+| <a id="vt-set_colors"></a><a id="vt-free"></a>`vt.set_colors(t, #{ fg, bg })` · `vt.free(t)` | replace the colours OSC 10/11 answer, as `vt.new`'s `fg` and `bg` set them; release the screen (a later call on it does nothing) |
 
 ## `cli` — command-line argument parsing
 
@@ -2444,9 +2451,9 @@ already dropped.
 
 | Function | Description |
 |---|---|
-| `cli.parse(spec, argv)` | parse an argv list; `Ok(values)` or `Err(diagnostic)` |
-| `cli.help(spec)` | the usage/help text as a string |
-| `cli.args()` | the program's own arguments (program path removed) |
+| <a id="cli-parse"></a>`cli.parse(spec, argv)` | parse an argv list; `Ok(values)` or `Err(diagnostic)` |
+| <a id="cli-help"></a>`cli.help(spec)` | the usage/help text as a string |
+| <a id="cli-args"></a>`cli.args()` | the program's own arguments (program path removed) |
 
 A spec's `flags` each carry a `name` (the long form and result key), an
 optional `short`, a `type` (`"bool"`, `"int"`, `"float"`, or the
@@ -2499,13 +2506,13 @@ with no extra logic.
 
 | Group | Functions |
 |---|---|
-| Color | `red` `green` `yellow` `blue` `magenta` `cyan` `white` `black` `gray` — each wraps a string |
-| Attributes | `bold` `dim` `italic` `underline` |
-| General | `style(s, opts)` — `opts` is `#{ "fg": ..., "bg": ..., "bold": ..., "dim": ..., "italic": ..., "underline": ... }`; `color()` — is styling active (a TTY without `NO_COLOR`, or `CLICOLOR_FORCE`; decided once, re-decided after the program's own `os.set_env`/`os.remove_env`) |
-| Structure | `rule(width)` — a horizontal line; `table(headers, rows)` — columns aligned to their widest plain cell, header bold |
-| Measure | `visible_len(s)` — the width of `s` on screen, its styling escapes not counted (`visible_len(term.red("hi"))` is 2) |
-| Progress | `bar(fraction, width)` — a `[████░░░░]  50%` bar string; print it with a leading `\r` and `os.flush()` to redraw in place |
-| Input | `prompt(question)` — a line from stdin; `confirm(question)` — yes/no → bool; `select(question, options)` — a numbered menu → `Ok(chosen)` \| `Err` |
+| <a id="term-black"></a><a id="term-green"></a><a id="term-yellow"></a><a id="term-blue"></a><a id="term-magenta"></a><a id="term-cyan"></a><a id="term-white"></a><a id="term-gray"></a>Color | `red` `green` `yellow` `blue` `magenta` `cyan` `white` `black` `gray` — each wraps a string |
+| <a id="term-bold"></a><a id="term-dim"></a><a id="term-italic"></a><a id="term-underline"></a>Attributes | `bold` `dim` `italic` `underline` |
+| <a id="term-color"></a><a id="term-style"></a>General | `style(s, opts)` — `opts` is `#{ "fg": ..., "bg": ..., "bold": ..., "dim": ..., "italic": ..., "underline": ... }`; `color()` — is styling active (a TTY without `NO_COLOR`, or `CLICOLOR_FORCE`; decided once, re-decided after the program's own `os.set_env`/`os.remove_env`) |
+| <a id="term-rule"></a>Structure | `rule(width)` — a horizontal line; `table(headers, rows)` — columns aligned to their widest plain cell, header bold |
+| <a id="term-red"></a><a id="term-visible_len"></a>Measure | `visible_len(s)` — the width of `s` on screen, its styling escapes not counted (`visible_len(term.red("hi"))` is 2) |
+| <a id="term-bar"></a>Progress | `bar(fraction, width)` — a `[████░░░░]  50%` bar string; print it with a leading `\r` and `os.flush()` to redraw in place |
+| <a id="term-prompt"></a><a id="term-confirm"></a><a id="term-select"></a>Input | `prompt(question)` — a line from stdin; `confirm(question)` — yes/no → bool; `select(question, options)` — a numbered menu → `Ok(chosen)` \| `Err` |
 
 Because color falls back to plain automatically, the same program is
 correct piped or interactive:
@@ -2527,7 +2534,7 @@ if term.confirm("deploy now?") => run_deploy()
 ```
 
 The [`taskcli` example](../examples/tools/taskcli/) uses it for a colored
-summary and a `term.table` breakdown — both of which print plain when
+<a id="term-table"></a>summary and a `term.table` breakdown — both of which print plain when
 its output is piped (which is why the examples harness still sees clean
 text).
 
@@ -2539,24 +2546,24 @@ with `dom` ([olang in the browser](wasm.md)).
 
 | Function | Description |
 |---|---|
-| `ui.h(tag, attrs, children)` | a node: a map of `tag`, `attrs` and `children` (a String child is a text node) |
-| `ui.hk(key, tag, attrs, children)` | a node with a reconciliation key |
-| `ui.esc(s)` | `s` (a non-String is first written with `to_string`) with `&`, `<`, `>` and `"` escaped for HTML |
-| `ui.html(node)` | a tree rendered to an HTML string, its text escaped |
-| `ui.render(el, children)` | a keyed list mounted in `el`, diffed against what it rendered last ([wasm.md](wasm.md)) |
-| `ui.control(kind, value, spec)` | a control as a node: `html` renders a real HTML control (`input` range, date, text or checkbox; a `select` and its options; a brush's `div`), and the node says its `control` kind and its `spec` (`min`, `max`, `step`, `options`, `chart`) |
-| `ui.slider(value, min, max, step = ())` | a number in [min, max] a host binds (an Int slider when the value and the bounds are Ints) |
-| `ui.select(value, options)` | one of `options` a host binds |
-| `ui.date(value)` · `ui.text(value)` · `ui.toggle(value)` | a `"YYYY-MM-DD"` String, a String, a Bool a host binds |
-| `ui.brush(chart, value = ())` | a range of a chart's x a host binds: `()` for none, or `[x0, x1]` (Floats); `chart` a `plot` chart's SVG or a [`gg`](#gg--a-grammar-of-graphics) plot (the range along the dragged panel's horizontal axis, in data units: a log10, sqrt or reversed scale undone) |
-| `viz.check(spec)` | `Ok(spec)` when a chart spec will render, or `Err` naming an unknown key or the absence of points to draw |
-| `viz.chart(spec)` | a spec compiled to SVG text ([the `viz` grammar](ods.md#the-viz-grammar)) |
-| `viz.draw(canvas, spec)` | the same spec drawn on a canvas, in the browser |
-| `viz.tooltip(el)` / `viz.on_mark(el, event, handler)` / `viz.brush(el, handler)` | a chart's hover tip, mark events, and a dragged range |
-| `dash.kpi(label, value, note)` / `dash.stat(label, value, note, accent)` | a number tile (`note` `""` for none; `accent` a color for the value) |
-| `dash.card(title, inner)` / `dash.half(title, inner)` / `dash.wide(title, inner)` | a titled panel one, two, or every column wide; `inner` is HTML and is not escaped |
-| `dash.grid(cards, columns)` | the tiles and cards in a grid of `columns` columns |
-| `dash.styles()` | the kit's stylesheet, a `<style>` element to prepend once |
+| <a id="ui-h"></a>`ui.h(tag, attrs, children)` | a node: a map of `tag`, `attrs` and `children` (a String child is a text node) |
+| <a id="ui-hk"></a>`ui.hk(key, tag, attrs, children)` | a node with a reconciliation key |
+| <a id="ui-esc"></a>`ui.esc(s)` | `s` (a non-String is first written with `to_string`) with `&`, `<`, `>` and `"` escaped for HTML |
+| <a id="ui-html"></a>`ui.html(node)` | a tree rendered to an HTML string, its text escaped |
+| <a id="ui-render"></a>`ui.render(el, children)` | a keyed list mounted in `el`, diffed against what it rendered last ([wasm.md](wasm.md)) |
+| <a id="ui-control"></a>`ui.control(kind, value, spec)` | a control as a node: `html` renders a real HTML control (`input` range, date, text or checkbox; a `select` and its options; a brush's `div`), and the node says its `control` kind and its `spec` (`min`, `max`, `step`, `options`, `chart`) |
+| <a id="ui-slider"></a>`ui.slider(value, min, max, step = ())` | a number in [min, max] a host binds (an Int slider when the value and the bounds are Ints) |
+| <a id="ui-select"></a>`ui.select(value, options)` | one of `options` a host binds |
+| <a id="ui-date"></a><a id="ui-text"></a><a id="ui-toggle"></a>`ui.date(value)` · `ui.text(value)` · `ui.toggle(value)` | a `"YYYY-MM-DD"` String, a String, a Bool a host binds |
+| <a id="ui-brush"></a>`ui.brush(chart, value = ())` | a range of a chart's x a host binds: `()` for none, or `[x0, x1]` (Floats); `chart` a `plot` chart's SVG or a [`gg`](#gg--a-grammar-of-graphics) plot (the range along the dragged panel's horizontal axis, in data units: a log10, sqrt or reversed scale undone) |
+| <a id="viz-check"></a>`viz.check(spec)` | `Ok(spec)` when a chart spec will render, or `Err` naming an unknown key or the absence of points to draw |
+| <a id="viz-chart"></a>`viz.chart(spec)` | a spec compiled to SVG text ([the `viz` grammar](ods.md#the-viz-grammar)) |
+| <a id="viz-draw"></a>`viz.draw(canvas, spec)` | the same spec drawn on a canvas, in the browser |
+| <a id="viz-tooltip"></a><a id="viz-on_mark"></a><a id="viz-brush"></a>`viz.tooltip(el)` / `viz.on_mark(el, event, handler)` / `viz.brush(el, handler)` | a chart's hover tip, mark events, and a dragged range |
+| <a id="dash-kpi"></a><a id="dash-stat"></a>`dash.kpi(label, value, note)` / `dash.stat(label, value, note, accent)` | a number tile (`note` `""` for none; `accent` a color for the value) |
+| <a id="dash-card"></a><a id="dash-half"></a><a id="dash-wide"></a>`dash.card(title, inner)` / `dash.half(title, inner)` / `dash.wide(title, inner)` | a titled panel one, two, or every column wide; `inner` is HTML and is not escaped |
+| <a id="dash-grid"></a>`dash.grid(cards, columns)` | the tiles and cards in a grid of `columns` columns |
+| <a id="dash-styles"></a>`dash.styles()` | the kit's stylesheet, a `<style>` element to prepend once |
 
 **Controls.** `ui.slider` and its kin check their value (a slider's
 within its range, a select's one of its options, each its type) and
@@ -2588,14 +2595,14 @@ Native-only.
 
 | Function | Description |
 |---|---|
-| `tty.enter(opts)` | take the terminal → `Ok(handle)`; `Err` when stdin or stdout is not a terminal, or a handle is already entered (one at a time). `opts` below |
-| `tty.leave(h)` | give it back: cooked mode, the main screen, the cursor shown, reporting off, the events channel closed. Idempotent; returns `()` and never fails |
-| `tty.events(h)` | the channel of decoded events (below) |
-| `tty.size()` | `Ok((cols, rows))`, or `Err` when stdout is not a terminal. Needs no `enter` |
-| `tty.write(h, s)` | write a String or Bytes now — after anything `print` left buffered, without waiting for a newline → `Ok(())` / `Err` |
-| `tty.query(h, seq, ms)` / `tty.query(h, seq, #{ timeout_ms })` | write a query (`"\u{1b}]11;?\u{1b}\\"` for the background colour, `"\u{1b}[c"` for DA1, `"\u{1b}[?u"` for the kitty flags) → `Ok(reply)` — the reply's raw bytes — or `Err("timeout")` |
-| `tty.is_tty()` | stdin and stdout are both terminals — what `enter` needs |
-| `tty.suspend(h)` | ctrl+z done right: restore, stop, and on `fg` re-enter and deliver `signal` `cont` and a `resize` |
+| <a id="tty-enter"></a>`tty.enter(opts)` | take the terminal → `Ok(handle)`; `Err` when stdin or stdout is not a terminal, or a handle is already entered (one at a time). `opts` below |
+| <a id="tty-leave"></a>`tty.leave(h)` | give it back: cooked mode, the main screen, the cursor shown, reporting off, the events channel closed. Idempotent; returns `()` and never fails |
+| <a id="tty-events"></a>`tty.events(h)` | the channel of decoded events (below) |
+| <a id="tty-size"></a>`tty.size()` | `Ok((cols, rows))`, or `Err` when stdout is not a terminal. Needs no `enter` |
+| <a id="tty-write"></a>`tty.write(h, s)` | write a String or Bytes now — after anything `print` left buffered, without waiting for a newline → `Ok(())` / `Err` |
+| <a id="tty-query"></a>`tty.query(h, seq, ms)` / `tty.query(h, seq, #{ timeout_ms })` | write a query (`"\u{1b}]11;?\u{1b}\\"` for the background colour, `"\u{1b}[c"` for DA1, `"\u{1b}[?u"` for the kitty flags) → `Ok(reply)` — the reply's raw bytes — or `Err("timeout")` |
+| <a id="tty-is_tty"></a>`tty.is_tty()` | stdin and stdout are both terminals — what `enter` needs |
+| <a id="tty-suspend"></a>`tty.suspend(h)` | ctrl+z done right: restore, stop, and on `fg` re-enter and deliver `signal` `cont` and a `resize` |
 
 **Options.** `tty.enter` takes a map of Bools, each optional; an
 unknown key raises (a typo'd option is a bug, not a preference).
@@ -2717,36 +2724,36 @@ Native-only; on in the released binaries (the `gui` cargo feature).
 
 | Function | Description |
 |---|---|
-| `gui.available()` | a window can be opened here: olang's own main thread, and a display (on Linux, a Wayland display) |
-| `gui.open(opts)` | open a window → `Ok(window)`, or `Err` when there is no display. `opts`: `title`, `size` `(w, h)`, `min` `(w, h)`, `at` `(x, y)` (where on the screen the window opens: its frame's top left, title bar included, in points), `resizable`, `renderer` (`"gpu"`, the default, or `"software"`; also `LOOM_RENDERER`), `background`, `tabbing` (the windows it may share a tab bar with: macOS's tabbing identifier), `tab_of` (an open window's id: this one opens as that window's tab, macOS), `titlebar` (`"unified"`: the content runs under a transparent title bar, the traffic lights kept and the title's text hidden, macOS; `"standard"` the default). A `resize` event with the real size and scale follows at once, and with a unified title bar its `titlebar`, `#{ height, left }` (the bar's height and the lights' right edge, in points; `()` in full screen) |
-| `gui.headless(opts)` | a window with no display: drawn in software, fed by `gui.input`, read by `gui.read`. The same options, plus `scale`. The headless windows a thread made have one key window, as the platform's do: the one opened last is key, a press in another (or `gui.input` `"window_focus"` with `on`) makes that one key, `on: false` leaves none key, and the key window closed hands the key to the one key before it; each change is a `window_focus` event to the window it changes. A field's caret and focus ring are drawn only in the key window (`gui.read(w, "key")`) |
-| `gui.close(w)` | close a window. Closing is the program's: the close button only sends `close_requested` |
-| `gui.events()` | the channel every window's events arrive on (below) |
-| `gui.apply(w, patch)` | apply a list of operations to the window's tree → `Ok(())`, or `Err` naming the operation and what is wrong with it |
-| `gui.measure(text, style, opts?)` | the size of a text as it would be drawn → `#{ width, height, lines, baseline }`, logical pixels. `style` as a node's; `opts`: `width` (wraps when the style says `wrap`), `scale` |
-| `gui.read(w, what, arg?)` | read the window back: `"focus"`, `"key"` (whether it is the key window: a field's caret and focus show only there), `"hover"`, `"size"` → `(w, h, scale)`, `"place"` → `(x, y, w, h)` (where its content is on the screen, in points; `()` where the platform cannot say), `"hit"` `(x, y)` → a key, `"drags"` `(x, y)` → whether a press there moves the window (a node's `drag: "window"`: a unified title bar's row), `"titlebar"` → the unified title bar's `#{ height, left }` or `()`, `"node"` key (its role, text, name, children, scroll `offset`, `bounds`, and `visible`: what of it shows once scrolling and clipping ancestors and the window cut it, or `()`), `"value"` key and `"selection"` key of a field, `"keys"` (focus order), `"a11y"` (the accessibility tree as maps: each node's `key`, `role`, `name`, `value`, `depth`, states, `actions`, `custom` actions, `description`, `bounds`, `placeholder`, `level`, `expanded`, `live`, `in_set` `(index, size)`, `row`, `column`, a set's `size`, a table's `rows` and `columns`, `range`, a field's `text_runs`, `text_selection` and `caret_box`), `"pixels"` (a PNG, from the software renderer), `"rgba"`, `"caret"` → `(x, y, w, h)` of the caret as the last frame showed it, clipped, or `()`, `"settings"` (the system's settings as the window last heard them), `"animation"` key (an animated picture: `#{ frames, frame, paused, button }`), `"next_frame"` (when an animation in view next changes, on the window's clock), `"motion"` (what transitions are moving: see Transitions), `"render"` (the renderers' frames and memory: see Rendering) |
-| `gui.input(w, event)` | send input as the platform would: `#{ kind: "key", key, text?, mods? }` (`"mod": true` is the platform's command key), `"text"`, `"pointer"` (`action` down/up/move/leave, `x`, `y`, `button`, `clicks`), `"wheel"` (`dx`, `dy`, and the modifiers held: `mods` or `mod`, `shift`, `alt`, `ctrl`), `"pinch"` (`delta`, `phase`), `"modifiers"` (the modifier keys now held: `mod`, `shift`, `alt`, `ctrl`; a press with ⌘ held), `"compose"` and `"commit"` (an input method), `"resize"`, `"window_focus"`, `"files"` (`action` hover/drop/cancel, `paths`, `x`, `y`: files from another program); and what the platform does around a window: `"close"` (sends `close_requested`), `"menu"` with an `id` (sends `menu`), `"open"` with `paths` (sends `open`), `"new_tab"` (sends `new_tab`), `"quit"` with `why` (sends `quit`, as an external quit `gui.hold_quit` holds), `"clipboard"` with a `text` (the clipboard input through `gui.input` uses, the window's own), `"clock"` with `ms` (a headless window's clock: its animations move only with it), `"appearance"` with `dark`, `contrast`, `reduce_motion`, `reduce_transparency`, `accent` (`"#rrggbb"`) — the window takes them (its pictures stop animating under reduced motion) and sends `appearance`, as a settings change would, `"a11y"` with `key` and `action` (`"click"`, `"focus"`, `"set_value"` with `value`, `"increment"`, `"decrement"`, `"expand"`, `"collapse"`, `"scroll_up"`/`"_down"`/`"_left"`/`"_right"` (a page), `"scroll_into_view"`, `"show_menu"` (VO-⇧M: the node focused, then the Menu key's `key` event), `"custom"` with `index`) — an assistive request, as a screen reader makes it. What tests drive |
-| `gui.prepare()` | start the platform's event loop now, without waiting for it: the application's start on the main thread (tens of milliseconds on macOS) then overlaps the program's work before its first window opens, which waits for the loop as before. Nothing when it is started already or cannot be (Loom's `run` asks, for real windows) |
-| `gui.wake()` | a `wake` event on the channel, so a task blocked on `gui.events()` can stop without polling |
-| `gui.context()` | the system's settings now: `#{ dark, contrast, reduce_motion, reduce_transparency, accent }` (`accent` the colour chosen in System Settings, `"#rrggbb"`, or `()`). macOS reads them from AppKit — the application's effective appearance (Auto included) and NSWorkspace's accessibility display options — and keeps them live: a window hears `appearance` the moment one changes (AppKit's notices for the display options and the system's colours, and a window's theme changing), with no restart. Elsewhere they are false and `dark` follows a window's theme |
-| `gui.platform()` | what this platform's windows can do, to check rather than find out: `#{ os, native_menu, clipboard_image, file_drop, drop_position, window_position, system_settings, ime, accessibility, window_tabs, open_documents, context_menu, window_titlebar, terminal, group_hover, scroll_bars, wheel_x, transitions, corner, shadow, vector, material, window_material, wide_color, a11y_depth, flash, quit_hold, spell_guesses, replace_text }` (`transitions`: a style's `transition`; `corner`, `shadow`, `material`: a style's own (see Shapes); `vector`: a canvas path's `d`, `cap`, `join`, `dash`, `rule` and a radial gradient; `wheel_x`: a node's `wheel_x`; `terminal`: the `pty` and `vt` modules, a node's `input` and `ime_area` and the `text` and `preedit` events, a canvas text's `italic`; `context_menu`: `gui.context_menu` and the `context` event; `window_tabs`: `tabbing`, `tab_of`, `tab` and the `tabs` event; `window_titlebar`: `titlebar: "unified"` and a node's `drag: "window"`; `open_documents`: the `open` and `new_tab` events; `quit_hold`: `gui.hold_quit` and the `quit` event — a program asks before it uses them, as an older engine refuses an option it does not know). On macOS all are `true` (`window_tabs`, `open_documents`, `window_material` and `wide_color` only there); on Windows `native_menu`, `clipboard_image`, `drop_position`, and `system_settings` are `false`; on Linux (Wayland) `file_drop` and `window_position` are `false` too (winit has no Wayland drag and drop, and a Wayland window is never told where it is). `ime` and `accessibility` are `true` everywhere |
-| `gui.compare(a, b, opts?)` | two PNGs compared as a pixel snapshot is: `#{ same, differing, total, worst, diff }`; a pixel differs past `threshold` (32 of 255), the images are the same while at most `ratio` (0.001) of the pixels differ; `diff` is a PNG with the differing pixels in red |
-| `gui.hold_quit(on)` | `true`: a quit from outside the program — the Dock's Quit, AppleScript's `quit app`, a logout, a restart or a shutdown (AppKit's `applicationShouldTerminate:`) — is the program's `quit` event, and the application waits for the program to end, then exits with its status; `false` (the default): such a quit ends the process at once. The wait lasts until the program ends; meanwhile the platform runs no window handler, so `gui.open` and `gui.dialog` answer an error and what is sent to the windows waits. Loom's run loop holds quits and sends the message ⌘Q sends. macOS; `gui.platform()` says `quit_hold`. → `()` |
-| `gui.turn(on)` | a program says a turn begins (`true`) and ends (`false`) — Loom's loop does, around each turn. One that runs past 2 s (`GUI_NOT_RESPONDING_MS`) makes every window show it is waiting (the busy cursor, a veil and a spinner over the frame) until it ends; the engine draws on meanwhile, so scrolls, looks and fields keep the refresh. → `()`. `gui.platform()` says `turn_watch` |
-| `gui.set(w, props)` | `title`, `size`, `min`, `at` (where on the screen the window is), `visible`, `cursor`, `focus`, `background`, `zoom` (the text size, 0.5 to 3: the window keeps its pixels and its boxes, reads, and events are in units of `zoom` logical pixels, so a program lays out in less room at a larger size; a `resize` event says the new size), `appearance` (`"light"`, `"dark"`, or `"system"`: the title bar and the platform's own controls in the appearance the program draws in), `scripted` (`true`: a script drives the window through `gui.input`, and a person's keys, pointer, wheel and drops on it are not taken — a test's window is not moved by the mouse passing over it), `tab` (macOS window tabs: `"next"`, `"previous"` tab chosen, `"merge"` every window into this one's tab bar, `"detach"` this tab into a window of its own, `"bar"` the bar shown or hidden; a `tabs` event follows), `corner` (`"continuous"` or `"round"`: the corners of every rounded box whose style says none), `wide` (a map of sRGB colours, `"#rrggbb"`, to the Display P3 ones the GPU draws for them, `"color(display-p3 r g b)"`; `()` none — see Colours), `flash` (`true`: the repaint rainbow — every region a frame draws tinted with that frame's colour, unseen by damage, so a region keeps the tint of the frame that last drew it; `false` draws the window whole again; `gui.platform()` says `flash`) |
-| `gui.fonts(sources, opts?)` | register fonts: paths or Bytes, TTF/OTF/TTC, optionally brotli-compressed → the number of faces added. Registered fonts come before the system's. `#{ "background": true }`: the sources are read now, then decompressed and registered on a thread of their own while the program goes on — whatever shapes or measures text meanwhile waits until they are in — and it answers the number of sources (Loom's `run` registers its bundled fonts so: they were tens of milliseconds of a window's first frame) |
-| `gui.clipboard_read()` / `gui.clipboard_write(text)` | the platform clipboard (headless windows' editing uses a private one) |
-| `gui.clipboard_image()` | the clipboard's image (a screenshot copied, an image copied in another program) → `Ok(#{ png, width, height })`, `png` its PNG Bytes (a TIFF is turned into one), or `Err` when it holds none. macOS only: elsewhere an `Err` that says so (`gui.platform().clipboard_image`) |
-| `gui.image_info(source)` | a picture's size and format from its header, a path or Bytes → `Ok(#{ width, height, format })` (`"png"`, `"jpeg"`, `"webp"`, `"gif"`, `"svg"`; a JPEG's turned as its EXIF orientation says, an SVG's in its own units), or `Err`. It reads the file: call it from a task |
-| `gui.dialog(kind, opts)` | the platform's dialog: `"open"`, `"open_many"`, `"save"`, `"folder"` (`title`, `directory`, `name`, `filters: [#{ name, extensions }]`) → a path, a list, or `()` when cancelled; `"message"` (`title`, `text`, `level`, `buttons`: `ok`, `ok_cancel`, `yes_no`, `yes_no_cancel`) → the button |
-| `gui.spell(op, word)` | the platform's speller (macOS: NSSpellChecker; no window needed): `"guesses"` → a misspelled word's guesses, best first; `"learn"` (the person's dictionary: every program spells it right from now on, as AppKit's Learn Spelling), `"unlearn"`, `"ignore"` (this process's fields, until it ends) → `true` when taken, every spell-checked field checked again; `"learned"` → whether the person's dictionary has it. `"stand_in"` with `#{ word: [guesses] }` (or `()` to end it): a test's speller instead — its words misspelled, learning and ignoring dropping them, the person's dictionary never written. `gui.platform().spell_guesses` |
-| `gui.spelling(window, key)` | the misspelled word at a spell-checked field's caret: `#{ key, word, from, to, guesses }` (characters of its value), or `()` |
-| `gui.replace_text(window, key, #{ from, to, text })` | characters `from..to` of field `key`'s value replaced by `text` as one edit (its undo takes it back), sent as `changed` as typing is → `true`; `false` off a field, past its end, or read-only. `gui.platform().replace_text` |
-| `gui.context_menu(window, items, at)` | a native context menu (macOS: NSMenu `popUpMenuPositioningItem:atLocation:inView:`) over `window` at `at` `#{ x, y }` (the content's logical pixels): `items` `[#{ id, label, keys?, enabled?, checked?, submenu? } or "separator"]`, keys shown as the menu bar shows them. `true` when shown — the window then hears `context` with the chosen item's `id` (`()` when dismissed); `false` on a headless window or a platform without one (`gui.platform().context_menu`): the program draws its own. A script arms a choice with `gui.input(w, #{ kind: "context_pick", label })`: the next menu shows, then closes as though that item was chosen (`picked: true`). ⌃-click arrives as the right button |
-| `gui.menu(spec)` | the macOS menu bar: `[#{ title, items: [#{ id, label, keys?, enabled?, checked? } or "separator"] }]`; an item chosen sends `menu` with its `id`. Elsewhere answers `false` — Loom draws the window's menu |
+| <a id="gui-available"></a>`gui.available()` | a window can be opened here: olang's own main thread, and a display (on Linux, a Wayland display) |
+| <a id="gui-open"></a>`gui.open(opts)` | open a window → `Ok(window)`, or `Err` when there is no display. `opts`: `title`, `size` `(w, h)`, `min` `(w, h)`, `at` `(x, y)` (where on the screen the window opens: its frame's top left, title bar included, in points), `resizable`, `renderer` (`"gpu"`, the default, or `"software"`; also `LOOM_RENDERER`), `background`, `tabbing` (the windows it may share a tab bar with: macOS's tabbing identifier), `tab_of` (an open window's id: this one opens as that window's tab, macOS), `titlebar` (`"unified"`: the content runs under a transparent title bar, the traffic lights kept and the title's text hidden, macOS; `"standard"` the default). A `resize` event with the real size and scale follows at once, and with a unified title bar its `titlebar`, `#{ height, left }` (the bar's height and the lights' right edge, in points; `()` in full screen) |
+| <a id="gui-headless"></a>`gui.headless(opts)` | a window with no display: drawn in software, fed by `gui.input`, read by `gui.read`. The same options, plus `scale`. The headless windows a thread made have one key window, as the platform's do: the one opened last is key, a press in another (or `gui.input` `"window_focus"` with `on`) makes that one key, `on: false` leaves none key, and the key window closed hands the key to the one key before it; each change is a `window_focus` event to the window it changes. A field's caret and focus ring are drawn only in the key window (`gui.read(w, "key")`) |
+| <a id="gui-close"></a>`gui.close(w)` | close a window. Closing is the program's: the close button only sends `close_requested` |
+| <a id="gui-events"></a>`gui.events()` | the channel every window's events arrive on (below) |
+| <a id="gui-apply"></a>`gui.apply(w, patch)` | apply a list of operations to the window's tree → `Ok(())`, or `Err` naming the operation and what is wrong with it |
+| <a id="gui-measure"></a>`gui.measure(text, style, opts?)` | the size of a text as it would be drawn → `#{ width, height, lines, baseline }`, logical pixels. `style` as a node's; `opts`: `width` (wraps when the style says `wrap`), `scale` |
+| <a id="gui-read"></a>`gui.read(w, what, arg?)` | read the window back: `"focus"`, `"key"` (whether it is the key window: a field's caret and focus show only there), `"hover"`, `"size"` → `(w, h, scale)`, `"place"` → `(x, y, w, h)` (where its content is on the screen, in points; `()` where the platform cannot say), `"hit"` `(x, y)` → a key, `"drags"` `(x, y)` → whether a press there moves the window (a node's `drag: "window"`: a unified title bar's row), `"titlebar"` → the unified title bar's `#{ height, left }` or `()`, `"node"` key (its role, text, name, children, scroll `offset`, `bounds`, and `visible`: what of it shows once scrolling and clipping ancestors and the window cut it, or `()`), `"value"` key and `"selection"` key of a field, `"keys"` (focus order), `"a11y"` (the accessibility tree as maps: each node's `key`, `role`, `name`, `value`, `depth`, states, `actions`, `custom` actions, `description`, `bounds`, `placeholder`, `level`, `expanded`, `live`, `in_set` `(index, size)`, `row`, `column`, a set's `size`, a table's `rows` and `columns`, `range`, a field's `text_runs`, `text_selection` and `caret_box`), `"pixels"` (a PNG, from the software renderer), `"rgba"`, `"caret"` → `(x, y, w, h)` of the caret as the last frame showed it, clipped, or `()`, `"settings"` (the system's settings as the window last heard them), `"animation"` key (an animated picture: `#{ frames, frame, paused, button }`), `"next_frame"` (when an animation in view next changes, on the window's clock), `"motion"` (what transitions are moving: see Transitions), `"render"` (the renderers' frames and memory: see Rendering) |
+| <a id="gui-input"></a>`gui.input(w, event)` | send input as the platform would: `#{ kind: "key", key, text?, mods? }` (`"mod": true` is the platform's command key), `"text"`, `"pointer"` (`action` down/up/move/leave, `x`, `y`, `button`, `clicks`), `"wheel"` (`dx`, `dy`, and the modifiers held: `mods` or `mod`, `shift`, `alt`, `ctrl`), `"pinch"` (`delta`, `phase`), `"modifiers"` (the modifier keys now held: `mod`, `shift`, `alt`, `ctrl`; a press with ⌘ held), `"compose"` and `"commit"` (an input method), `"resize"`, `"window_focus"`, `"files"` (`action` hover/drop/cancel, `paths`, `x`, `y`: files from another program); and what the platform does around a window: `"close"` (sends `close_requested`), `"menu"` with an `id` (sends `menu`), `"open"` with `paths` (sends `open`), `"new_tab"` (sends `new_tab`), `"quit"` with `why` (sends `quit`, as an external quit `gui.hold_quit` holds), `"clipboard"` with a `text` (the clipboard input through `gui.input` uses, the window's own), `"clock"` with `ms` (a headless window's clock: its animations move only with it), `"appearance"` with `dark`, `contrast`, `reduce_motion`, `reduce_transparency`, `accent` (`"#rrggbb"`) — the window takes them (its pictures stop animating under reduced motion) and sends `appearance`, as a settings change would, `"a11y"` with `key` and `action` (`"click"`, `"focus"`, `"set_value"` with `value`, `"increment"`, `"decrement"`, `"expand"`, `"collapse"`, `"scroll_up"`/`"_down"`/`"_left"`/`"_right"` (a page), `"scroll_into_view"`, `"show_menu"` (VO-⇧M: the node focused, then the Menu key's `key` event), `"custom"` with `index`) — an assistive request, as a screen reader makes it. What tests drive |
+| <a id="gui-prepare"></a>`gui.prepare()` | start the platform's event loop now, without waiting for it: the application's start on the main thread (tens of milliseconds on macOS) then overlaps the program's work before its first window opens, which waits for the loop as before. Nothing when it is started already or cannot be (Loom's `run` asks, for real windows) |
+| <a id="gui-wake"></a>`gui.wake()` | a `wake` event on the channel, so a task blocked on `gui.events()` can stop without polling |
+| <a id="gui-context"></a>`gui.context()` | the system's settings now: `#{ dark, contrast, reduce_motion, reduce_transparency, accent }` (`accent` the colour chosen in System Settings, `"#rrggbb"`, or `()`). macOS reads them from AppKit — the application's effective appearance (Auto included) and NSWorkspace's accessibility display options — and keeps them live: a window hears `appearance` the moment one changes (AppKit's notices for the display options and the system's colours, and a window's theme changing), with no restart. Elsewhere they are false and `dark` follows a window's theme |
+| <a id="gui-platform"></a>`gui.platform()` | what this platform's windows can do, to check rather than find out: `#{ os, native_menu, clipboard_image, file_drop, drop_position, window_position, system_settings, ime, accessibility, window_tabs, open_documents, context_menu, window_titlebar, terminal, group_hover, scroll_bars, wheel_x, transitions, corner, shadow, vector, material, window_material, wide_color, a11y_depth, flash, quit_hold, spell_guesses, replace_text }` (`transitions`: a style's `transition`; `corner`, `shadow`, `material`: a style's own (see Shapes); `vector`: a canvas path's `d`, `cap`, `join`, `dash`, `rule` and a radial gradient; `wheel_x`: a node's `wheel_x`; `terminal`: the `pty` and `vt` modules, a node's `input` and `ime_area` and the `text` and `preedit` events, a canvas text's `italic`; `context_menu`: `gui.context_menu` and the `context` event; `window_tabs`: `tabbing`, `tab_of`, `tab` and the `tabs` event; `window_titlebar`: `titlebar: "unified"` and a node's `drag: "window"`; `open_documents`: the `open` and `new_tab` events; `quit_hold`: `gui.hold_quit` and the `quit` event — a program asks before it uses them, as an older engine refuses an option it does not know). On macOS all are `true` (`window_tabs`, `open_documents`, `window_material` and `wide_color` only there); on Windows `native_menu`, `clipboard_image`, `drop_position`, and `system_settings` are `false`; on Linux (Wayland) `file_drop` and `window_position` are `false` too (winit has no Wayland drag and drop, and a Wayland window is never told where it is). `ime` and `accessibility` are `true` everywhere |
+| <a id="gui-compare"></a>`gui.compare(a, b, opts?)` | two PNGs compared as a pixel snapshot is: `#{ same, differing, total, worst, diff }`; a pixel differs past `threshold` (32 of 255), the images are the same while at most `ratio` (0.001) of the pixels differ; `diff` is a PNG with the differing pixels in red |
+| <a id="gui-hold_quit"></a>`gui.hold_quit(on)` | `true`: a quit from outside the program — the Dock's Quit, AppleScript's `quit app`, a logout, a restart or a shutdown (AppKit's `applicationShouldTerminate:`) — is the program's `quit` event, and the application waits for the program to end, then exits with its status; `false` (the default): such a quit ends the process at once. The wait lasts until the program ends; meanwhile the platform runs no window handler, so `gui.open` and `gui.dialog` answer an error and what is sent to the windows waits. Loom's run loop holds quits and sends the message ⌘Q sends. macOS; `gui.platform()` says `quit_hold`. → `()` |
+| <a id="gui-turn"></a>`gui.turn(on)` | a program says a turn begins (`true`) and ends (`false`) — Loom's loop does, around each turn. One that runs past 2 s (`GUI_NOT_RESPONDING_MS`) makes every window show it is waiting (the busy cursor, a veil and a spinner over the frame) until it ends; the engine draws on meanwhile, so scrolls, looks and fields keep the refresh. → `()`. `gui.platform()` says `turn_watch` |
+| <a id="gui-set"></a>`gui.set(w, props)` | `title`, `size`, `min`, `at` (where on the screen the window is), `visible`, `cursor`, `focus`, `background`, `zoom` (the text size, 0.5 to 3: the window keeps its pixels and its boxes, reads, and events are in units of `zoom` logical pixels, so a program lays out in less room at a larger size; a `resize` event says the new size), `appearance` (`"light"`, `"dark"`, or `"system"`: the title bar and the platform's own controls in the appearance the program draws in), `scripted` (`true`: a script drives the window through `gui.input`, and a person's keys, pointer, wheel and drops on it are not taken — a test's window is not moved by the mouse passing over it), `tab` (macOS window tabs: `"next"`, `"previous"` tab chosen, `"merge"` every window into this one's tab bar, `"detach"` this tab into a window of its own, `"bar"` the bar shown or hidden; a `tabs` event follows), `corner` (`"continuous"` or `"round"`: the corners of every rounded box whose style says none), `wide` (a map of sRGB colours, `"#rrggbb"`, to the Display P3 ones the GPU draws for them, `"color(display-p3 r g b)"`; `()` none — see Colours), `flash` (`true`: the repaint rainbow — every region a frame draws tinted with that frame's colour, unseen by damage, so a region keeps the tint of the frame that last drew it; `false` draws the window whole again; `gui.platform()` says `flash`) |
+| <a id="gui-fonts"></a>`gui.fonts(sources, opts?)` | register fonts: paths or Bytes, TTF/OTF/TTC, optionally brotli-compressed → the number of faces added. Registered fonts come before the system's. `#{ "background": true }`: the sources are read now, then decompressed and registered on a thread of their own while the program goes on — whatever shapes or measures text meanwhile waits until they are in — and it answers the number of sources (Loom's `run` registers its bundled fonts so: they were tens of milliseconds of a window's first frame) |
+| <a id="gui-clipboard_read"></a><a id="gui-clipboard_write"></a>`gui.clipboard_read()` / `gui.clipboard_write(text)` | the platform clipboard (headless windows' editing uses a private one) |
+| <a id="gui-clipboard_image"></a>`gui.clipboard_image()` | the clipboard's image (a screenshot copied, an image copied in another program) → `Ok(#{ png, width, height })`, `png` its PNG Bytes (a TIFF is turned into one), or `Err` when it holds none. macOS only: elsewhere an `Err` that says so (`gui.platform().clipboard_image`) |
+| <a id="gui-image_info"></a>`gui.image_info(source)` | a picture's size and format from its header, a path or Bytes → `Ok(#{ width, height, format })` (`"png"`, `"jpeg"`, `"webp"`, `"gif"`, `"svg"`; a JPEG's turned as its EXIF orientation says, an SVG's in its own units), or `Err`. It reads the file: call it from a task |
+| <a id="gui-dialog"></a>`gui.dialog(kind, opts)` | the platform's dialog: `"open"`, `"open_many"`, `"save"`, `"folder"` (`title`, `directory`, `name`, `filters: [#{ name, extensions }]`) → a path, a list, or `()` when cancelled; `"message"` (`title`, `text`, `level`, `buttons`: `ok`, `ok_cancel`, `yes_no`, `yes_no_cancel`) → the button |
+| <a id="gui-spell"></a>`gui.spell(op, word)` | the platform's speller (macOS: NSSpellChecker; no window needed): `"guesses"` → a misspelled word's guesses, best first; `"learn"` (the person's dictionary: every program spells it right from now on, as AppKit's Learn Spelling), `"unlearn"`, `"ignore"` (this process's fields, until it ends) → `true` when taken, every spell-checked field checked again; `"learned"` → whether the person's dictionary has it. `"stand_in"` with `#{ word: [guesses] }` (or `()` to end it): a test's speller instead — its words misspelled, learning and ignoring dropping them, the person's dictionary never written. `gui.platform().spell_guesses` |
+| <a id="gui-spelling"></a>`gui.spelling(window, key)` | the misspelled word at a spell-checked field's caret: `#{ key, word, from, to, guesses }` (characters of its value), or `()` |
+| <a id="gui-replace_text"></a>`gui.replace_text(window, key, #{ from, to, text })` | characters `from..to` of field `key`'s value replaced by `text` as one edit (its undo takes it back), sent as `changed` as typing is → `true`; `false` off a field, past its end, or read-only. `gui.platform().replace_text` |
+| <a id="gui-context_menu"></a>`gui.context_menu(window, items, at)` | a native context menu (macOS: NSMenu `popUpMenuPositioningItem:atLocation:inView:`) over `window` at `at` `#{ x, y }` (the content's logical pixels): `items` `[#{ id, label, keys?, enabled?, checked?, submenu? } or "separator"]`, keys shown as the menu bar shows them. `true` when shown — the window then hears `context` with the chosen item's `id` (`()` when dismissed); `false` on a headless window or a platform without one (`gui.platform().context_menu`): the program draws its own. A script arms a choice with `gui.input(w, #{ kind: "context_pick", label })`: the next menu shows, then closes as though that item was chosen (`picked: true`). ⌃-click arrives as the right button |
+| <a id="gui-menu"></a>`gui.menu(spec)` | the macOS menu bar: `[#{ title, items: [#{ id, label, keys?, enabled?, checked? } or "separator"] }]`; an item chosen sends `menu` with its `id`. Elsewhere answers `false` — Loom draws the window's menu |
 
-`gui.flatten`, the `gui.flat_` family (`flat_emit`, `flat_join`,
-`flat_diff`, `flat_index`, `flat_arrays`, `flat_keep`, `flat_geo`), and `gui.roles`
+<a id="gui-flatten"></a><a id="gui-flat_emit"></a><a id="gui-flat_join"></a>`gui.flatten`, the `gui.flat_` family (`flat_emit`, `flat_join`,
+<a id="gui-flat_diff"></a><a id="gui-flat_index"></a><a id="gui-flat_arrays"></a><a id="gui-flat_keep"></a><a id="gui-flat_geo"></a><a id="gui-roles"></a>`flat_diff`, `flat_index`, `flat_arrays`, `flat_keep`, `flat_geo`), and `gui.roles`
 are Loom's layout and diff internals; they are not part of the surface
 a program uses.
 
@@ -3125,47 +3132,47 @@ toad.frame([#{ "swarm": s, "color": "#ff9a3c", "radius": 6.0 }], #{ "size": (128
 
 | Function | |
 |---|---|
-| `toad.kernel(f, fields, world)` | compile `fn(p, w) = #{ field: new value }`: `fields` and `world` map names to defaults (a number, or a pair); `"dead"` removes an entity; refused, with the reason, where a GPU cannot follow |
-| `toad.swarm(kernel, max, kind, seed)` | `"play"`: on the CPU, every core, deterministic, its dead removed; `"show"`: on the GPU, for what is only seen; `seed` starts its random stream (a swarm made again draws the same) |
-| `toad.spawn(swarm, n, fields)` | values or generators per entity: `("between", lo, hi)`, `("cone", dir, spread)`, `("disc", centre, r)`, `("box", lo, hi)`; `"seed"` restarts the stream |
-| `toad.step(swarm, world)` | one step of every entity: `#{ alive, died }` |
-| `toad.sync(swarm)` | wait for a show swarm's queued steps |
-| `toad.count(swarm)` | how many entities |
-| `toad.read(swarm, field)` | one field of every entity (read back from the GPU for a show swarm) |
-| `toad.wgsl(kernel)` | the WGSL a kernel runs as |
-| `toad.ops(kernel)` | how many scalar operations it compiled to |
-| `toad.gpu()` | the GPU and its backend |
-| `toad.input()` | the keyboard, mouse and gamepads as switches: `#{ down, pressed, released }` since the last read, the sticks `left` and `right`, the triggers `lt` and `rt`, `pads` connected, and `mouse` (points from the window's top left) |
-| `toad.press(key, down)` | press or let go of a key as a hand would (scripts and tests) |
-| `toad.clear(swarm)` | empty a swarm |
-| `toad.wanted(name)` | whether the live picture wants a new frame (a window drew the last one); `toad.frame` skips one it does not |
-| `toad.shared(name)` | the ID of the live picture's shared frames (drawn with `"share": true`), for another process's image `("shared", id)`: the frame stays on the GPU (macOS) |
-| `toad.scripted(on)` | hear only `toad.press`: the windows' keys and the gamepads are ignored (demos and tests) |
-| `toad.audio()` | the sound output: `Ok(#{ device, rate, channels, voices })` or `Err(why it is silent)` |
-| `toad.sound(spec)` | a sound from a `file` (WAV, Ogg Vorbis) or the synth (`wave`, `freq`, `to`, `attack`, `hold`, `decay`, `volume`, `cutoff`, …, or `layers`) |
-| `toad.sound_info(sound)` | `#{ seconds, channels, rate, peak }` |
-| `toad.play(sound, opts)` | a voice: `volume`, `pan`, `pitch`, `loop`, `music`, `fade` |
-| `toad.stop(voice, fade)` | fade a voice out and let it go |
-| `toad.tune(voice, opts)` | change a playing voice's `volume`, `pan`, `pitch` |
-| `toad.volume(bus, v)` | `master`, `fx` or `music` |
-| `toad.listen(sound, seconds)` | mix a sound offline (tests): `#{ peak, rms, voices_left }` |
-| `toad.hold(keys)` | exactly these keys down, nothing pressed or let go (where a replay left them) |
-| `toad.drop(id)` | let go of a swarm or a physics world |
-| `toad.warm(world)` | build its collision structures now: the first step costs no more than the rest |
-| `toad.walk(world, body, delta, opts)` | walk a kinematic body as a character: walls, slopes (`slope`), steps (`step`), the ground (`snap`), one-way platforms; `#{ moved, grounded, sliding }` |
-| `toad.physics(opts)` | a 2D physics world (`gravity`, `scale`: world units to a metre) |
-| `toad.body(world, props)` | a rigid body: `kind`, `shape` (circle, box, capsule, poly, chain), `size`, `at`, `rot`, `vel`, `density`, `friction`, `bounce`, `sensor`, … or `parts` |
-| `toad.unbody(world, body)` | remove a body and its joints |
-| `toad.push(world, body, props)` | `impulse`, `force`, `torque`, `vel`, `spin`, or `at`/`rot` (a teleport; a kinematic body's next place) |
-| `toad.joint(world, a, b, props)` | `pin`, `weld`, `slide`, `rope` or `spring`, anchored at `at_a` and `at_b` |
-| `toad.unjoint(world, joint)` | remove a joint |
-| `toad.simulate(world, dt)` | one step: the touches that started or stopped, `#{ a, b, start, sensor, at, normal }` |
-| `toad.pose(world, body)` | `#{ at, rot, vel, spin, was_at, was_rot }` |
-| `toad.ray(world, from, to, opts)` | the first body a ray meets: `#{ body, at, normal, t }`, or `()` |
-| `toad.overlap(world, at, radius, opts)` | the bodies within `radius` of `at` |
-| `toad.collide(swarm, world, opts)` | a swarm against the bodies: pushed out, bounced, killed or marked; `#{ hits, died }` (a show swarm collides on the GPU and answers no counts) |
-| `toad.meet(a, b, opts)` | two play swarms meeting: killed or marked; `#{ met, died_a, died_b }` |
-| `toad.frame(layers, view)` | draw swarms, shapes (circle, box, capsule, ring, triangle, line, each with a material) and sprites (pictures or text) in order into an HDR target, lit, bloomed, graded and tone mapped; `"live": name` shows it in a Loom window as the image `("live", name)`; `"png": true` answers its pixels, `"probe": [(x, y)]` the colours there |
+| <a id="toad-kernel"></a>`toad.kernel(f, fields, world)` | compile `fn(p, w) = #{ field: new value }`: `fields` and `world` map names to defaults (a number, or a pair); `"dead"` removes an entity; refused, with the reason, where a GPU cannot follow |
+| <a id="toad-swarm"></a>`toad.swarm(kernel, max, kind, seed)` | `"play"`: on the CPU, every core, deterministic, its dead removed; `"show"`: on the GPU, for what is only seen; `seed` starts its random stream (a swarm made again draws the same) |
+| <a id="toad-spawn"></a>`toad.spawn(swarm, n, fields)` | values or generators per entity: `("between", lo, hi)`, `("cone", dir, spread)`, `("disc", centre, r)`, `("box", lo, hi)`; `"seed"` restarts the stream |
+| <a id="toad-step"></a>`toad.step(swarm, world)` | one step of every entity: `#{ alive, died }` |
+| <a id="toad-sync"></a>`toad.sync(swarm)` | wait for a show swarm's queued steps |
+| <a id="toad-count"></a>`toad.count(swarm)` | how many entities |
+| <a id="toad-read"></a>`toad.read(swarm, field)` | one field of every entity (read back from the GPU for a show swarm) |
+| <a id="toad-wgsl"></a>`toad.wgsl(kernel)` | the WGSL a kernel runs as |
+| <a id="toad-ops"></a>`toad.ops(kernel)` | how many scalar operations it compiled to |
+| <a id="toad-gpu"></a>`toad.gpu()` | the GPU and its backend |
+| <a id="toad-input"></a>`toad.input()` | the keyboard, mouse and gamepads as switches: `#{ down, pressed, released }` since the last read, the sticks `left` and `right`, the triggers `lt` and `rt`, `pads` connected, and `mouse` (points from the window's top left) |
+| <a id="toad-press"></a>`toad.press(key, down)` | press or let go of a key as a hand would (scripts and tests) |
+| <a id="toad-clear"></a>`toad.clear(swarm)` | empty a swarm |
+| <a id="toad-wanted"></a>`toad.wanted(name)` | whether the live picture wants a new frame (a window drew the last one); `toad.frame` skips one it does not |
+| <a id="toad-shared"></a>`toad.shared(name)` | the ID of the live picture's shared frames (drawn with `"share": true`), for another process's image `("shared", id)`: the frame stays on the GPU (macOS) |
+| <a id="toad-scripted"></a>`toad.scripted(on)` | hear only `toad.press`: the windows' keys and the gamepads are ignored (demos and tests) |
+| <a id="toad-audio"></a>`toad.audio()` | the sound output: `Ok(#{ device, rate, channels, voices })` or `Err(why it is silent)` |
+| <a id="toad-sound"></a>`toad.sound(spec)` | a sound from a `file` (WAV, Ogg Vorbis) or the synth (`wave`, `freq`, `to`, `attack`, `hold`, `decay`, `volume`, `cutoff`, …, or `layers`) |
+| <a id="toad-sound_info"></a>`toad.sound_info(sound)` | `#{ seconds, channels, rate, peak }` |
+| <a id="toad-play"></a>`toad.play(sound, opts)` | a voice: `volume`, `pan`, `pitch`, `loop`, `music`, `fade` |
+| <a id="toad-stop"></a>`toad.stop(voice, fade)` | fade a voice out and let it go |
+| <a id="toad-tune"></a>`toad.tune(voice, opts)` | change a playing voice's `volume`, `pan`, `pitch` |
+| <a id="toad-volume"></a>`toad.volume(bus, v)` | `master`, `fx` or `music` |
+| <a id="toad-listen"></a>`toad.listen(sound, seconds)` | mix a sound offline (tests): `#{ peak, rms, voices_left }` |
+| <a id="toad-hold"></a>`toad.hold(keys)` | exactly these keys down, nothing pressed or let go (where a replay left them) |
+| <a id="toad-drop"></a>`toad.drop(id)` | let go of a swarm or a physics world |
+| <a id="toad-warm"></a>`toad.warm(world)` | build its collision structures now: the first step costs no more than the rest |
+| <a id="toad-walk"></a>`toad.walk(world, body, delta, opts)` | walk a kinematic body as a character: walls, slopes (`slope`), steps (`step`), the ground (`snap`), one-way platforms; `#{ moved, grounded, sliding }` |
+| <a id="toad-physics"></a>`toad.physics(opts)` | a 2D physics world (`gravity`, `scale`: world units to a metre) |
+| <a id="toad-body"></a>`toad.body(world, props)` | a rigid body: `kind`, `shape` (circle, box, capsule, poly, chain), `size`, `at`, `rot`, `vel`, `density`, `friction`, `bounce`, `sensor`, … or `parts` |
+| <a id="toad-unbody"></a>`toad.unbody(world, body)` | remove a body and its joints |
+| <a id="toad-push"></a>`toad.push(world, body, props)` | `impulse`, `force`, `torque`, `vel`, `spin`, or `at`/`rot` (a teleport; a kinematic body's next place) |
+| <a id="toad-joint"></a>`toad.joint(world, a, b, props)` | `pin`, `weld`, `slide`, `rope` or `spring`, anchored at `at_a` and `at_b` |
+| <a id="toad-unjoint"></a>`toad.unjoint(world, joint)` | remove a joint |
+| <a id="toad-simulate"></a>`toad.simulate(world, dt)` | one step: the touches that started or stopped, `#{ a, b, start, sensor, at, normal }` |
+| <a id="toad-pose"></a>`toad.pose(world, body)` | `#{ at, rot, vel, spin, was_at, was_rot }` |
+| <a id="toad-ray"></a>`toad.ray(world, from, to, opts)` | the first body a ray meets: `#{ body, at, normal, t }`, or `()` |
+| <a id="toad-overlap"></a>`toad.overlap(world, at, radius, opts)` | the bodies within `radius` of `at` |
+| <a id="toad-collide"></a>`toad.collide(swarm, world, opts)` | a swarm against the bodies: pushed out, bounced, killed or marked; `#{ hits, died }` (a show swarm collides on the GPU and answers no counts) |
+| <a id="toad-meet"></a>`toad.meet(a, b, opts)` | two play swarms meeting: killed or marked; `#{ met, died_a, died_b }` |
+| <a id="toad-frame"></a>`toad.frame(layers, view)` | draw swarms, shapes (circle, box, capsule, ring, triangle, line, each with a material) and sprites (pictures or text) in order into an HDR target, lit, bloomed, graded and tone mapped; `"live": name` shows it in a Loom window as the image `("live", name)`; `"png": true` answers its pixels, `"probe": [(x, y)]` the colours there |
 
 Colours are sRGB as written, `(r, g, b, a)` or `"#rrggbb"`; `glow` takes
 a shape past white.
@@ -3240,15 +3247,15 @@ values for a header sent more than once, as `set-cookie` is), and
 
 | Function | Description |
 |---|---|
-| `http.get(url[, opts])` / `http.post(url, body[, opts])` / `http.put` / `http.delete` | requests |
-| `http.request(method, url, body[, opts])` | any method |
-| `http.parse_url(url)` | split a URL into parts: `Ok({ scheme, host, port, path, query, fragment })`, `port`, `query` and `fragment` `()` when the URL names none |
-| `http.encode_query(map)` / `http.decode_query(s)` | query strings — `encode_query` answers the text (`"q=a%20b&page=2"`, no `?`): it takes a `#{}` map or a `{ }` record, keys in its order, each value a string, a number, a Bool or a list of them (the name repeated for each); anything nested raises. `decode_query` answers a map: a name given once its string, a name given more than once a list of its strings in order (`"t=a&t=b"` is `#{ "t": ["a", "b"] }`) |
-| `http.serve(port, handler[, options])` | serve `handler(request)` on a bounded worker pool; blocks the calling program |
-| `http.response(status, body)` / `http.response_with_headers(status, body, headers)` | build responses: an `HttpResponse` of the client's shape, `{ status, body, headers, success }`, `headers` a map |
-| `http.shutdown()` | ask every running `http.serve` to drain: no new connections, in-flight requests finish (up to `drain_ms`), and `serve` returns `Ok` — what an [`os.on_shutdown`](#os--operating-system) handler calls |
-| `http.defer()` / `http.respond(ticket, response)` | park the connection a handler is answering and complete it later, from any thread |
-| `http.hold(topic)` / `http.notify(topic, response)` / `http.notify_all(response)` / `http.held(topic)` | park the current request under a topic; answer every connection held under it (the count answered); count what is parked |
+| <a id="http-get"></a><a id="http-post"></a><a id="http-put"></a><a id="http-delete"></a>`http.get(url[, opts])` / `http.post(url, body[, opts])` / `http.put` / `http.delete` | requests |
+| <a id="http-request"></a>`http.request(method, url, body[, opts])` | any method |
+| <a id="http-parse_url"></a>`http.parse_url(url)` | split a URL into parts: `Ok({ scheme, host, port, path, query, fragment })`, `port`, `query` and `fragment` `()` when the URL names none |
+| <a id="http-encode_query"></a><a id="http-decode_query"></a>`http.encode_query(map)` / `http.decode_query(s)` | query strings — `encode_query` answers the text (`"q=a%20b&page=2"`, no `?`): it takes a `#{}` map or a `{ }` record, keys in its order, each value a string, a number, a Bool or a list of them (the name repeated for each); anything nested raises. `decode_query` answers a map: a name given once its string, a name given more than once a list of its strings in order (`"t=a&t=b"` is `#{ "t": ["a", "b"] }`) |
+| <a id="http-serve"></a>`http.serve(port, handler[, options])` | serve `handler(request)` on a bounded worker pool; blocks the calling program |
+| <a id="http-response"></a><a id="http-response_with_headers"></a>`http.response(status, body)` / `http.response_with_headers(status, body, headers)` | build responses: an `HttpResponse` of the client's shape, `{ status, body, headers, success }`, `headers` a map |
+| <a id="http-shutdown"></a>`http.shutdown()` | ask every running `http.serve` to drain: no new connections, in-flight requests finish (up to `drain_ms`), and `serve` returns `Ok` — what an [`os.on_shutdown`](#os--operating-system) handler calls |
+| <a id="http-defer"></a><a id="http-respond"></a>`http.defer()` / `http.respond(ticket, response)` | park the connection a handler is answering and complete it later, from any thread |
+| <a id="http-hold"></a><a id="http-notify"></a><a id="http-notify_all"></a><a id="http-held"></a>`http.hold(topic)` / `http.notify(topic, response)` / `http.notify_all(response)` / `http.held(topic)` | park the current request under a topic; answer every connection held under it (the count answered); count what is parked |
 
 Every client verb takes an optional trailing **options map** — this is
 how a request carries headers, a timeout, and authentication:
@@ -3360,22 +3367,22 @@ test suite.
 
 | Function | Description |
 |---|---|
-| `db.open(path)` / `db.open(path, opts)` | open or create (`":memory:"` for in-memory); options below |
-| `db.execute(conn, sql)` / `db.execute(conn, sql, params)` | run a statement; `?` placeholders — `Ok(rows changed)` |
-| `db.query(conn, sql)` / with `params` | `Ok` of the rows, as a list of maps |
-| `db.query_one(conn, sql)` / with `params` | `Ok(row)`, the first row as a map, or `Ok(())` when there is none (unambiguous, since a row is always a map) |
-| `db.query_rows(conn, sql)` / with `params` | the columns and the rows as SQL has them: `#{ "columns": [#{ "name", "decltype", "index" }], "rows": [[value, …]] }` |
-| `db.query_frame(conn, sql, params?, timeout_ms:)` | `Ok` of the rows as a Frame: a column per result column, typed by its values (Int, Float, String; Int and Float together a Float column), a column declared `DATE` a Date and `DATETIME`/`TIMESTAMP` a Datetime (ISO text, or a Datetime's epoch seconds), `BOOLEAN` a Bool; NULL is null. A repeated name gets a suffix (`a`, `a_2`) |
-| `db.insert_frame(conn, table, frame, create = true, replace = false)` | every row of a Frame, in one transaction (or the open one): with `create`, the table is made first if missing, its column types from the Frame's (`INTEGER`, `REAL`, `TEXT`, `BOOLEAN`, `DATE`, `DATETIME`); `replace: true` drops it first. Dates and datetimes are written as ISO text, a Category as its level, a null or NaN as NULL — `Ok(rows inserted)`, and `db.query_frame` reads the same Frame back |
-| `db.cursor(conn, sql)` / with `params` | a statement to read a piece at a time — `Ok(cursor)` |
-| `db.next(cur, n)` | up to `n` more rows of a cursor, each a list; `[]` at the end |
-| `db.columns(cur)` | a cursor's columns, as `db.query_rows` has them |
-| `db.close_cursor(cur)` | finish a cursor now |
-| `db.interrupt(conn)` | stop the statement the connection is running, from any task |
-| `db.transaction(conn, f)` | `f(conn)` inside a transaction: commit unless `f` returns an `Err` or raises, which roll back; `f`'s result is handed through. Transactions on one connection are serialized across threads — a second `db.transaction` waits for the first to end — so the http workers of a served app may share a connection; plain statements from another thread do not wait, and join whatever transaction is open |
-| `db.migrate(conn, steps)` | bring the schema to the head of `steps` (a list of versions, each a list of SQL); a `schema_version` table records progress, each version runs in its own transaction, a failing statement is named — `Ok(version)` |
-| `db.begin(conn)` / `db.commit(conn)` / `db.rollback(conn)` | transactions by hand |
-| `db.close(conn)` | close the handle (its open cursors are finished first); a connection no value holds any more closes by itself once its cursors are dropped |
+| <a id="db-open"></a>`db.open(path)` / `db.open(path, opts)` | open or create (`":memory:"` for in-memory); options below |
+| <a id="db-execute"></a>`db.execute(conn, sql)` / `db.execute(conn, sql, params)` | run a statement; `?` placeholders — `Ok(rows changed)` |
+| <a id="db-query"></a>`db.query(conn, sql)` / with `params` | `Ok` of the rows, as a list of maps |
+| <a id="db-query_one"></a>`db.query_one(conn, sql)` / with `params` | `Ok(row)`, the first row as a map, or `Ok(())` when there is none (unambiguous, since a row is always a map) |
+| <a id="db-query_rows"></a>`db.query_rows(conn, sql)` / with `params` | the columns and the rows as SQL has them: `#{ "columns": [#{ "name", "decltype", "index" }], "rows": [[value, …]] }` |
+| <a id="db-query_frame"></a>`db.query_frame(conn, sql, params?, timeout_ms:)` | `Ok` of the rows as a Frame: a column per result column, typed by its values (Int, Float, String; Int and Float together a Float column), a column declared `DATE` a Date and `DATETIME`/`TIMESTAMP` a Datetime (ISO text, or a Datetime's epoch seconds), `BOOLEAN` a Bool; NULL is null. A repeated name gets a suffix (`a`, `a_2`) |
+| <a id="db-insert_frame"></a>`db.insert_frame(conn, table, frame, create = true, replace = false)` | every row of a Frame, in one transaction (or the open one): with `create`, the table is made first if missing, its column types from the Frame's (`INTEGER`, `REAL`, `TEXT`, `BOOLEAN`, `DATE`, `DATETIME`); `replace: true` drops it first. Dates and datetimes are written as ISO text, a Category as its level, a null or NaN as NULL — `Ok(rows inserted)`, and `db.query_frame` reads the same Frame back |
+| <a id="db-cursor"></a>`db.cursor(conn, sql)` / with `params` | a statement to read a piece at a time — `Ok(cursor)` |
+| <a id="db-next"></a>`db.next(cur, n)` | up to `n` more rows of a cursor, each a list; `[]` at the end |
+| <a id="db-columns"></a>`db.columns(cur)` | a cursor's columns, as `db.query_rows` has them |
+| <a id="db-close_cursor"></a>`db.close_cursor(cur)` | finish a cursor now |
+| <a id="db-interrupt"></a>`db.interrupt(conn)` | stop the statement the connection is running, from any task |
+| <a id="db-transaction"></a>`db.transaction(conn, f)` | `f(conn)` inside a transaction: commit unless `f` returns an `Err` or raises, which roll back; `f`'s result is handed through. Transactions on one connection are serialized across threads — a second `db.transaction` waits for the first to end — so the http workers of a served app may share a connection; plain statements from another thread do not wait, and join whatever transaction is open |
+| <a id="db-migrate"></a>`db.migrate(conn, steps)` | bring the schema to the head of `steps` (a list of versions, each a list of SQL); a `schema_version` table records progress, each version runs in its own transaction, a failing statement is named — `Ok(version)` |
+| <a id="db-begin"></a><a id="db-commit"></a><a id="db-rollback"></a>`db.begin(conn)` / `db.commit(conn)` / `db.rollback(conn)` | transactions by hand |
+| <a id="db-close"></a>`db.close(conn)` | close the handle (its open cursors are finished first); a connection no value holds any more closes by itself once its cursors are dropped |
 
 Values: NULL is `()`, INTEGER an `Int`, REAL a `Float`, TEXT a `String`.
 A BLOB is `Bytes` from `db.query_rows` and `db.next`; `db.query` and
@@ -3546,51 +3553,51 @@ with timers and animation frames; everything else is ordinary olang.
 
 | Function | Description |
 |---|---|
-| `dom.available()` | `true` in the browser, `false` in a native build: the one `dom` function that works everywhere, so code shared by both can skip event wiring rather than raise |
-| `dom.query(sel)` | first element matching a CSS selector — an error if none matches |
-| `dom.get_text(el)` / `dom.set_text(el, s)` | read / write an element's text content |
-| `dom.set_html(el, html)` | replace an element's inner HTML — the render primitive |
-| `dom.value(el)` / `dom.set_value(el, s)` | read / write a form control's value |
-| `dom.focus(el)` | focus an element; answers whether it holds focus afterwards (a hidden or disabled control does not take it) |
-| `dom.active_id()` | the id of the focused element, or `""` — the read side of `focus`, so a repaint can leave an in-progress edit alone |
-| `dom.prefers_dark()` | does the page prefer a dark color scheme — what a themed canvas or SVG needs to pick its palette |
-| `dom.confirm(message)` | the browser's yes/no dialog, `true` on accept |
-| `dom.read_file(el, callback)` | the first file a file input holds, delivered to the callback as `#{ "name", "size", "type", "base64" }` (or `#{ "error": … }`) |
-| `dom.on(el, event, handler)` | attach an event handler (see below); additive — binding the same element and event again adds a listener |
-| `dom.off(el, event)` | detach every handler `dom.on` attached to `el` for `event` (`"*"`: every event) and release them; answers how many |
-| `dom.window()` / `dom.document()` | handles `dom.on` accepts for the events that fire there and do not bubble to the body: `online`, `offline`, `focus`, `blur` on the window (the first two carry `online` in their event map), `visibilitychange` on the document (carries `hidden`) |
-| `dom.on_error(handler)` | hear every failed dispatch — a handler that raised, or a trap under one — as `#{ "error", "output", "trap" }`, after the failed dispatch has ended; the session goes on. `window.olangOnError` is the page-side twin |
-| `dom.fetch(method, path, body, callback)` | asynchronous HTTP from the page — the callback receives the response text |
-| `dom.fetch_json(method, path, body, callback)` | `dom.fetch`, but the callback receives the parsed value directly |
-| `dom.request(method, path, body, callback)` | the whole response — `#{ "status", "headers", "body" }`, status `0` with an `"error"` when no server answered — so a handler tells a 404 from a 500 from a network failure; the response also carries `network_ms` (the send to the last byte) and `queue_ms` (the wait for the runtime to be free) |
-| `dom.request_with(method, path, body, headers, callback)` | `dom.request` with request headers — a bearer token, another content type |
-| `dom.find(selector)` | the first match, or `()` when nothing matches — the lookup for an element that may be absent (`dom.query` raises on a miss, and a raise inside a handler takes the page down) |
-| `dom.patch(el, node)` | reconcile the element's children with a `web.html` node tree: the host diffs the data against the live DOM by `data-key`, no markup rendered or parsed; a `memo` subtree whose inputs stand is kept as it is; answers `#{ "missing", "nodes", "bytes", "serialize_ms", "patch_ms" }` — the keys of `keep` markers the page had no element for, and what the repaint cost |
-| `dom.morph(el, html)` | the same reconciliation from markup, for code that renders its own HTML |
-| `dom.checked(el)` | a checkbox's or radio's state; `()` for an element that has no checked state (a select, a div) |
-| `dom.selection(el)` / `dom.set_selection(el, from, to)` | a text control's selection as `(from, to)`, and setting it (focusing the control) — inserting at the cursor is set the value, then place the caret |
-| `dom.values(el)` | a `<select multiple>`'s chosen option values |
-| `dom.query_all(selector)` | every match, as a list of handles |
-| `dom.get_attr(el, name)` / `set_attr(el, name, v)` / `remove_attr(el, name)` | attributes |
-| `dom.class_add(el, c)` / `class_remove(el, c)` / `class_toggle(el, c)` | class list ops (`set_class` replaces wholesale) |
-| `dom.set_style(el, prop, v)` | set one style property |
-| `dom.measure(el)` | bounding rect as a Map: `x`, `y`, `width`, `height` |
-| `dom.create(tag)` / `append(parent, child)` / `remove(el)` | surgical structure edits |
-| `dom.scroll_into_view(el)` | scroll an element into view |
-| `dom.set_timeout(ms, fn)` / `set_interval(ms, fn)` / `clear_interval(t)` | timers |
-| `dom.request_frame(fn)` | one animation frame; re-arm inside the handler for a loop |
-| `dom.on_frame(fn)` | the persistent animation loop: register once, called every frame with a millisecond `delta` |
-| `dom.draw(canvas, ops)` | replay a draw-list onto a canvas — the whole scene crosses the boundary once |
-| `dom.draw_points(canvas, xs, ys, style)` | the bulk path: coordinates cross as one packed binary buffer (Series or lists; nulls drop pairwise); style takes `mode` (`"points"`/`"path"`), `color`, `size`, `alpha`, a rotation `rot` (radians), and an affine `sx`/`sy`/`tx`/`ty` — all applied host-side |
-| `dom.insert_before(parent, child, before)` | position a child (`0` appends) |
-| `dom.push_state(path)` / `dom.location()` | SPA navigation; location is a Map of `path` and `query` |
-| `dom.on_route(fn)` | the back/forward listener — a `route` event Map with `path` and `query` |
-| `dom.storage_get(k)` / `storage_set(k, v)` / `storage_remove(k)` | localStorage (missing keys read as `""`); `storage_set` answers whether the value was stored — `false` for a full quota or disabled storage, never a raise |
-| `dom.state_get(k)` / `state_set(k, v)` | session state — a JSON-typed, page-lifetime store (a Map/list round-trips; missing keys read as Unit; not persisted) |
-| `dom.worker(path)` | boot a second olang program in a Web Worker; returns a worker handle |
-| `dom.worker_send(w, value)` / `dom.worker_on(w, handler)` | send a value to / receive values from a worker |
-| `dom.worker_close(w)` | terminate a worker |
-| `dom.post(value)` / `dom.on_message(handler)` | the worker-side mirrors: post a value to the page / receive values from it |
+| <a id="dom-available"></a>`dom.available()` | `true` in the browser, `false` in a native build: the one `dom` function that works everywhere, so code shared by both can skip event wiring rather than raise |
+| <a id="dom-query"></a>`dom.query(sel)` | first element matching a CSS selector — an error if none matches |
+| <a id="dom-set_text"></a><a id="dom-get_text"></a>`dom.get_text(el)` / `dom.set_text(el, s)` | read / write an element's text content |
+| <a id="dom-set_html"></a>`dom.set_html(el, html)` | replace an element's inner HTML — the render primitive |
+| <a id="dom-value"></a><a id="dom-set_value"></a>`dom.value(el)` / `dom.set_value(el, s)` | read / write a form control's value |
+| <a id="dom-focus"></a>`dom.focus(el)` | focus an element; answers whether it holds focus afterwards (a hidden or disabled control does not take it) |
+| <a id="dom-active_id"></a>`dom.active_id()` | the id of the focused element, or `""` — the read side of `focus`, so a repaint can leave an in-progress edit alone |
+| <a id="dom-prefers_dark"></a>`dom.prefers_dark()` | does the page prefer a dark color scheme — what a themed canvas or SVG needs to pick its palette |
+| <a id="dom-confirm"></a>`dom.confirm(message)` | the browser's yes/no dialog, `true` on accept |
+| <a id="dom-read_file"></a>`dom.read_file(el, callback)` | the first file a file input holds, delivered to the callback as `#{ "name", "size", "type", "base64" }` (or `#{ "error": … }`) |
+| <a id="dom-on"></a>`dom.on(el, event, handler)` | attach an event handler (see below); additive — binding the same element and event again adds a listener |
+| <a id="dom-off"></a>`dom.off(el, event)` | detach every handler `dom.on` attached to `el` for `event` (`"*"`: every event) and release them; answers how many |
+| <a id="dom-window"></a><a id="dom-document"></a>`dom.window()` / `dom.document()` | handles `dom.on` accepts for the events that fire there and do not bubble to the body: `online`, `offline`, `focus`, `blur` on the window (the first two carry `online` in their event map), `visibilitychange` on the document (carries `hidden`) |
+| <a id="dom-on_error"></a>`dom.on_error(handler)` | hear every failed dispatch — a handler that raised, or a trap under one — as `#{ "error", "output", "trap" }`, after the failed dispatch has ended; the session goes on. `window.olangOnError` is the page-side twin |
+| <a id="dom-fetch"></a>`dom.fetch(method, path, body, callback)` | asynchronous HTTP from the page — the callback receives the response text |
+| <a id="dom-fetch_json"></a>`dom.fetch_json(method, path, body, callback)` | `dom.fetch`, but the callback receives the parsed value directly |
+| <a id="dom-request"></a>`dom.request(method, path, body, callback)` | the whole response — `#{ "status", "headers", "body" }`, status `0` with an `"error"` when no server answered — so a handler tells a 404 from a 500 from a network failure; the response also carries `network_ms` (the send to the last byte) and `queue_ms` (the wait for the runtime to be free) |
+| <a id="dom-request_with"></a>`dom.request_with(method, path, body, headers, callback)` | `dom.request` with request headers — a bearer token, another content type |
+| <a id="dom-find"></a>`dom.find(selector)` | the first match, or `()` when nothing matches — the lookup for an element that may be absent (`dom.query` raises on a miss, and a raise inside a handler takes the page down) |
+| <a id="dom-patch"></a>`dom.patch(el, node)` | reconcile the element's children with a `web.html` node tree: the host diffs the data against the live DOM by `data-key`, no markup rendered or parsed; a `memo` subtree whose inputs stand is kept as it is; answers `#{ "missing", "nodes", "bytes", "serialize_ms", "patch_ms" }` — the keys of `keep` markers the page had no element for, and what the repaint cost |
+| <a id="dom-morph"></a>`dom.morph(el, html)` | the same reconciliation from markup, for code that renders its own HTML |
+| <a id="dom-checked"></a>`dom.checked(el)` | a checkbox's or radio's state; `()` for an element that has no checked state (a select, a div) |
+| <a id="dom-selection"></a><a id="dom-set_selection"></a>`dom.selection(el)` / `dom.set_selection(el, from, to)` | a text control's selection as `(from, to)`, and setting it (focusing the control) — inserting at the cursor is set the value, then place the caret |
+| <a id="dom-values"></a>`dom.values(el)` | a `<select multiple>`'s chosen option values |
+| <a id="dom-query_all"></a>`dom.query_all(selector)` | every match, as a list of handles |
+| <a id="dom-get_attr"></a><a id="dom-set_attr"></a><a id="dom-remove_attr"></a>`dom.get_attr(el, name)` / `set_attr(el, name, v)` / `remove_attr(el, name)` | attributes |
+| <a id="dom-set_class"></a><a id="dom-class_add"></a><a id="dom-class_remove"></a><a id="dom-class_toggle"></a>`dom.class_add(el, c)` / `class_remove(el, c)` / `class_toggle(el, c)` | class list ops (`set_class` replaces wholesale) |
+| <a id="dom-set_style"></a>`dom.set_style(el, prop, v)` | set one style property |
+| <a id="dom-measure"></a>`dom.measure(el)` | bounding rect as a Map: `x`, `y`, `width`, `height` |
+| <a id="dom-create"></a><a id="dom-append"></a><a id="dom-remove"></a>`dom.create(tag)` / `append(parent, child)` / `remove(el)` | surgical structure edits |
+| <a id="dom-scroll_into_view"></a>`dom.scroll_into_view(el)` | scroll an element into view |
+| <a id="dom-set_timeout"></a><a id="dom-set_interval"></a><a id="dom-clear_interval"></a>`dom.set_timeout(ms, fn)` / `set_interval(ms, fn)` / `clear_interval(t)` | timers |
+| <a id="dom-request_frame"></a>`dom.request_frame(fn)` | one animation frame; re-arm inside the handler for a loop |
+| <a id="dom-on_frame"></a>`dom.on_frame(fn)` | the persistent animation loop: register once, called every frame with a millisecond `delta` |
+| <a id="dom-draw"></a>`dom.draw(canvas, ops)` | replay a draw-list onto a canvas — the whole scene crosses the boundary once |
+| <a id="dom-draw_points"></a>`dom.draw_points(canvas, xs, ys, style)` | the bulk path: coordinates cross as one packed binary buffer (Series or lists; nulls drop pairwise); style takes `mode` (`"points"`/`"path"`), `color`, `size`, `alpha`, a rotation `rot` (radians), and an affine `sx`/`sy`/`tx`/`ty` — all applied host-side |
+| <a id="dom-insert_before"></a>`dom.insert_before(parent, child, before)` | position a child (`0` appends) |
+| <a id="dom-push_state"></a><a id="dom-location"></a>`dom.push_state(path)` / `dom.location()` | SPA navigation; location is a Map of `path` and `query` |
+| <a id="dom-on_route"></a>`dom.on_route(fn)` | the back/forward listener — a `route` event Map with `path` and `query` |
+| <a id="dom-storage_get"></a><a id="dom-storage_set"></a><a id="dom-storage_remove"></a>`dom.storage_get(k)` / `storage_set(k, v)` / `storage_remove(k)` | localStorage (missing keys read as `""`); `storage_set` answers whether the value was stored — `false` for a full quota or disabled storage, never a raise |
+| <a id="dom-state_get"></a><a id="dom-state_set"></a>`dom.state_get(k)` / `state_set(k, v)` | session state — a JSON-typed, page-lifetime store (a Map/list round-trips; missing keys read as Unit; not persisted) |
+| <a id="dom-worker"></a>`dom.worker(path)` | boot a second olang program in a Web Worker; returns a worker handle |
+| <a id="dom-worker_send"></a><a id="dom-worker_on"></a>`dom.worker_send(w, value)` / `dom.worker_on(w, handler)` | send a value to / receive values from a worker |
+| <a id="dom-worker_close"></a>`dom.worker_close(w)` | terminate a worker |
+| <a id="dom-post"></a><a id="dom-on_message"></a>`dom.post(value)` / `dom.on_message(handler)` | the worker-side mirrors: post a value to the page / receive values from it |
 
 **Every event handler receives a structured event Map** — the same
 shape for every event type, so handlers pick the fields they need:
@@ -3680,13 +3687,13 @@ does.
 
 | Function | Description |
 |---|---|
-| `testing.assert_eq(a, b)` / `assert_ne(a, b)` | equality checks |
-| `testing.assert_true(x)` / `assert_false(x)` | boolean checks (non-boolean input is an `Err`) |
-| `testing.assert_ok(r)` / `assert_err(r)` | Result checks |
-| `testing.fail(msg)` | unconditional `Err` |
-| `testing.snapshot(name, value[, #{ update }])` | the snapshot test: `value` (a String as its text, else its display form) against `__snapshots__/<name>.snap` beside the file under test. The first run writes the file; a later run answers `()` when it matches and raises with both texts when it does not. `OLANG_UPDATE_SNAPSHOTS=1`, `UPDATE_SNAPSHOTS=1`, or the caller's `update: true` rewrites the file instead |
-| `testing.snapshot_dir()` / `testing.snapshot_failed(info)` | the `__snapshots__` directory beside the file under test, where a library keeps snapshots of its own kind (Loom's pixels); a library's report that one of its snapshots differs (`info`: `name`, `baseline`, `actual`, `diff`, …), carried by `olang test --format json` and otherwise ignored |
-| `testing.test_summary()` / `testing.reset_tests()` | the session's assertion tally: `#{ "passed", "failed", "total" }` over every `assert_*` outcome on this thread; `reset_tests()` zeroes it |
+| <a id="testing-assert_eq"></a><a id="testing-assert_ne"></a>`testing.assert_eq(a, b)` / `assert_ne(a, b)` | equality checks |
+| <a id="testing-assert_true"></a><a id="testing-assert_false"></a>`testing.assert_true(x)` / `assert_false(x)` | boolean checks (non-boolean input is an `Err`) |
+| <a id="testing-assert_ok"></a><a id="testing-assert_err"></a>`testing.assert_ok(r)` / `assert_err(r)` | Result checks |
+| <a id="testing-fail"></a>`testing.fail(msg)` | unconditional `Err` |
+| <a id="testing-snapshot"></a>`testing.snapshot(name, value[, #{ update }])` | the snapshot test: `value` (a String as its text, else its display form) against `__snapshots__/<name>.snap` beside the file under test. The first run writes the file; a later run answers `()` when it matches and raises with both texts when it does not. `OLANG_UPDATE_SNAPSHOTS=1`, `UPDATE_SNAPSHOTS=1`, or the caller's `update: true` rewrites the file instead |
+| <a id="testing-snapshot_dir"></a><a id="testing-snapshot_failed"></a>`testing.snapshot_dir()` / `testing.snapshot_failed(info)` | the `__snapshots__` directory beside the file under test, where a library keeps snapshots of its own kind (Loom's pixels); a library's report that one of its snapshots differs (`info`: `name`, `baseline`, `actual`, `diff`, …), carried by `olang test --format json` and otherwise ignored |
+| <a id="testing-test_summary"></a><a id="testing-reset_tests"></a>`testing.test_summary()` / `testing.reset_tests()` | the session's assertion tally: `#{ "passed", "failed", "total" }` over every `assert_*` outcome on this thread; `reset_tests()` zeroes it |
 
 ```olang
 println(to_string(is_ok(testing.assert_eq(2 + 2, 4))))
@@ -3730,28 +3737,28 @@ println(run.value)     // 7200000
 
 | Function | Description |
 |---|---|
-| `sim.world(opts)` | a new world, a value that can be run as often as asked (each run starts afresh). `opts`: `seed` (an Int; under `olang sim` and `olang test` the command line's seed wins), `start` (the clock's start in epoch ms, 2026-01-01 by default), `max_steps` (yield points before a run is called a livelock, 10,000,000 by default), and `net` (`latency`, a range of ms as `(lo, hi)`; `loss` and `dup`, probabilities) |
-| `sim.disk(opts)` | a disk's misbehaviour, for a node's `disk` option: `fsync_lies` (the chance a sync keeps nothing), `torn_writes` (a crash may keep part of an unsynced write), `full_at` (the bytes at which writes fail) and `slow` (how many times slower syncs are) |
-| `sim.ms(n)` · `sim.seconds(n)` · `sim.minutes(n)` · `sim.hours(n)` | a duration in virtual milliseconds: `sim.minutes(3)` is `180000` |
-| `sim.maybe(point)` | a buggify point: `false` outside a world; inside one the seed turns the named point on or off for the run, and one that is on answers `true` a quarter of the times it is reached (each a fault). About a quarter of points are on in a run, so a point reached once fires in about one run in sixteen; each point draws on its own |
-| `sim.seed()` | the seed being run, inside a world or while `olang sim` or `olang test` decides it; `()` otherwise |
-| `sim.record(name, op)` | adds `op` to the history `name` (nothing outside a world). An op is `#{ type, f, value }`: `type` is `"invoke"`, `"ok"`, `"fail"` or `"info"` (no answer; it may have happened), `f` names the operation, and `value` is its argument on an invoke and its result on an ok. The world adds `process`, `node`, `t` and `index` |
+| <a id="sim-world"></a>`sim.world(opts)` | a new world, a value that can be run as often as asked (each run starts afresh). `opts`: `seed` (an Int; under `olang sim` and `olang test` the command line's seed wins), `start` (the clock's start in epoch ms, 2026-01-01 by default), `max_steps` (yield points before a run is called a livelock, 10,000,000 by default), and `net` (`latency`, a range of ms as `(lo, hi)`; `loss` and `dup`, probabilities) |
+| <a id="sim-disk"></a><a id="sim-State-disk"></a>`sim.disk(opts)` | a disk's misbehaviour, for a node's `disk` option: `fsync_lies` (the chance a sync keeps nothing), `torn_writes` (a crash may keep part of an unsynced write), `full_at` (the bytes at which writes fail) and `slow` (how many times slower syncs are) |
+| <a id="sim-ms"></a><a id="sim-seconds"></a><a id="sim-minutes"></a><a id="sim-hours"></a>`sim.ms(n)` · `sim.seconds(n)` · `sim.minutes(n)` · `sim.hours(n)` | a duration in virtual milliseconds: `sim.minutes(3)` is `180000` |
+| <a id="sim-maybe"></a>`sim.maybe(point)` | a buggify point: `false` outside a world; inside one the seed turns the named point on or off for the run, and one that is on answers `true` a quarter of the times it is reached (each a fault). About a quarter of points are on in a run, so a point reached once fires in about one run in sixteen; each point draws on its own |
+| <a id="sim-seed"></a>`sim.seed()` | the seed being run, inside a world or while `olang sim` or `olang test` decides it; `()` otherwise |
+| <a id="sim-record"></a>`sim.record(name, op)` | adds `op` to the history `name` (nothing outside a world). An op is `#{ type, f, value }`: `type` is `"invoke"`, `"ok"`, `"fail"` or `"info"` (no answer; it may have happened), `f` names the operation, and `value` is its argument on an invoke and its result on an ok. The world adds `process`, `node`, `t` and `index` |
 
-A world's methods are in `sim.World`; on a world `w`:
+<a id="sim-World"></a>A world's methods are in `sim.World`; on a world `w`:
 
 | Method | Description |
 |---|---|
-| `run_fn(f, opts)` | starts the world's nodes and hooks, then runs `f()` as the world's main program (the node `main`, which `partition` and `link` can name) and answers the run when `f` returns. `opts`: `for` (virtual ms to stop after) and `props` (properties, below) |
-| `run(opts)` | runs the world's nodes and answers the run; `opts` is a duration or `#{ for, props }`. The run is `done` when every client has finished (with no clients, every program) |
-| `node(name, argv, opts)` | adds an olang program as a node: `argv` is `["olang", "file.ol", args...]`, the file relative to the one building the world. `name` is also its host name. `opts`: `env` (a map), `skew` (ms added to its wall clock), `deny` (capabilities, as `"fs,proc"`), `disk` (`sim.disk(...)`), `files` (path to contents, durable from the start), `cwd`, `stdin`, `crash` (`#{ p, restart_after }`: at each of its effects, a crash with chance `p`) and `optional` (the shrinker may leave it out) |
-| `client(name, f, opts)` | adds a node that runs `f()` on a copy of the interpreter that built the world; the options are `node`'s |
-| `at(t, f)` · `every(dt, f)` | runs `f` once at virtual time `t`, or every `dt` ms, on a node of its own (a hook: `hook-1`, `hook-2`, … in the events) |
-| `link(a, b, opts)` | sets the network between two nodes: `latency`, `loss`, `dup` |
-| `partition(group_a, group_b)` · `heal()` | cuts every link between two lists of nodes, until `heal`; a message in flight when the cut starts is lost |
-| `crash(n, opts)` · `kill(n, opts)` · `stop(n, opts)` | stops a node as a power cut (only synced data survives), SIGKILL (every write survives) or SIGTERM (its `os.on_shutdown` handlers run first); `opts` is `#{ restart_after }` in ms. Stopping a node that is already down does nothing (an `ignored` event, not a fault) |
-| `restart(n)` | starts a stopped node again: a fresh interpreter on the disk the stop left |
-| `write_stdin(n, text)` · `close_stdin(n)` | adds to a node's standard input, or ends it |
-| `slow_disk(n, factor)` | makes a node's syncs `factor` times slower from now on |
+| <a id="sim-World-run_fn"></a>`run_fn(f, opts)` | starts the world's nodes and hooks, then runs `f()` as the world's main program (the node `main`, which `partition` and `link` can name) and answers the run when `f` returns. `opts`: `for` (virtual ms to stop after) and `props` (properties, below) |
+| <a id="sim-World-run"></a>`run(opts)` | runs the world's nodes and answers the run; `opts` is a duration or `#{ for, props }`. The run is `done` when every client has finished (with no clients, every program) |
+| <a id="sim-World-node"></a>`node(name, argv, opts)` | adds an olang program as a node: `argv` is `["olang", "file.ol", args...]`, the file relative to the one building the world. `name` is also its host name. `opts`: `env` (a map), `skew` (ms added to its wall clock), `deny` (capabilities, as `"fs,proc"`), `disk` (`sim.disk(...)`), `files` (path to contents, durable from the start), `cwd`, `stdin`, `crash` (`#{ p, restart_after }`: at each of its effects, a crash with chance `p`) and `optional` (the shrinker may leave it out) |
+| <a id="sim-World-client"></a>`client(name, f, opts)` | adds a node that runs `f()` on a copy of the interpreter that built the world; the options are `node`'s |
+| <a id="sim-World-at"></a><a id="sim-World-every"></a>`at(t, f)` · `every(dt, f)` | runs `f` once at virtual time `t`, or every `dt` ms, on a node of its own (a hook: `hook-1`, `hook-2`, … in the events) |
+| <a id="sim-World-link"></a>`link(a, b, opts)` | sets the network between two nodes: `latency`, `loss`, `dup` |
+| <a id="sim-World-partition"></a><a id="sim-World-heal"></a>`partition(group_a, group_b)` · `heal()` | cuts every link between two lists of nodes, until `heal`; a message in flight when the cut starts is lost |
+| <a id="sim-World-crash"></a><a id="sim-World-kill"></a><a id="sim-World-stop"></a>`crash(n, opts)` · `kill(n, opts)` · `stop(n, opts)` | stops a node as a power cut (only synced data survives), SIGKILL (every write survives) or SIGTERM (its `os.on_shutdown` handlers run first); `opts` is `#{ restart_after }` in ms. Stopping a node that is already down does nothing (an `ignored` event, not a fault) |
+| <a id="sim-World-restart"></a>`restart(n)` | starts a stopped node again: a fresh interpreter on the disk the stop left |
+| <a id="sim-World-write_stdin"></a><a id="sim-World-close_stdin"></a>`write_stdin(n, text)` · `close_stdin(n)` | adds to a node's standard input, or ends it |
+| <a id="sim-World-slow_disk"></a>`slow_disk(n, factor)` | makes a node's syncs `factor` times slower from now on |
 
 Before a run, `link`, `partition` and `heal` set how the network starts;
 inside a running world (from a client or a hook) they and the stopping
@@ -3763,11 +3770,11 @@ A run is a map: `outcome` (`"done"`, `"failed"`, `"deadline"`,
 `"deadlock"`, `"step_limit"` or `"violated"`), `value` and `error` (the
 main program's), `now` (the virtual time it ended), `steps`, `tasks`,
 `failed_tasks`, `events` (each `#{ t, node, task, kind, detail }`),
-`nodes`, `net` (message counts), `history` (each request the network
+<a id="sim-State-history"></a><a id="sim-Run-history"></a>`nodes`, `net` (message counts), `history` (each request the network
 carried), `faults` (each fault the world injected), `disks` (each
 disk's counts), `violation` (`#{ property, kind, t, step, detail }`),
-`preemptions`, `histories` and `seed`. Its methods are in `sim.Run`:
-`history(name)` answers a recorded history, `check(props)` is
+<a id="sim-Run"></a>`preemptions`, `histories` and `seed`. Its methods are in `sim.Run`:
+<a id="sim-Run-check"></a>`history(name)` answers a recorded history, `check(props)` is
 `sim.check(run, props)`, and `events()` answers every event as an `ods`
 Frame, one row per event in order: `seq`, `t` (virtual ms), `node`,
 `task` (`()` for what the network did on its own), `kind`, `detail`,
@@ -3779,14 +3786,14 @@ world caused it).
 
 | Function | Description |
 |---|---|
-| `sim.always(name, pred)` | `pred(s)` is true at every check |
-| `sim.never(name, pred)` | `pred(s)` is false at every check |
-| `sim.eventually(name, within, pred)` | `pred(s)` is never false for more than `within` ms at a stretch |
-| `sim.linearizable(name, history, model)` | the named history (or a list of names) is linearizable for `model`; checked once, when the run ends |
-| `sim.check(run, props)` | checks properties after a run made without them, running the same seed again watched; raises naming the property, the time and the step at which it broke |
-| `sim.linearize(history, model, opts)` | the checker on its own, inside a world or not: `#{ ok, verdict, reason }`, `verdict` being `"linearizable"`, `"violation"` or `"unknown"` (past `max_steps` in `opts`, 2,000,000 by default; `ok` is then `()`) |
-| `sim.register(init)` | a model of one value: `write v`, `read` answering `v`, `cas [old, new]` (a result of `false` says it did not swap) |
-| `sim.kv()` | a model of a key-value store: `put [k, v]`, `get [k]`, `add [k, by]` answering the total, `cas [k, old, new]`; its history is checked key by key |
+| <a id="sim-always"></a>`sim.always(name, pred)` | `pred(s)` is true at every check |
+| <a id="sim-never"></a>`sim.never(name, pred)` | `pred(s)` is false at every check |
+| <a id="sim-eventually"></a>`sim.eventually(name, within, pred)` | `pred(s)` is never false for more than `within` ms at a stretch |
+| <a id="sim-linearizable"></a>`sim.linearizable(name, history, model)` | the named history (or a list of names) is linearizable for `model`; checked once, when the run ends |
+| <a id="sim-check"></a>`sim.check(run, props)` | checks properties after a run made without them, running the same seed again watched; raises naming the property, the time and the step at which it broke |
+| <a id="sim-linearize"></a>`sim.linearize(history, model, opts)` | the checker on its own, inside a world or not: `#{ ok, verdict, reason }`, `verdict` being `"linearizable"`, `"violation"` or `"unknown"` (past `max_steps` in `opts`, 2,000,000 by default; `ok` is then `()`) |
+| <a id="sim-register"></a>`sim.register(init)` | a model of one value: `write v`, `read` answering `v`, `cas [old, new]` (a result of `false` says it did not swap) |
+| <a id="sim-kv"></a>`sim.kv()` | a model of a key-value store: `put [k, v]`, `get [k]`, `add [k, by]` answering the total, `cas [k, old, new]`; its history is checked key by key |
 
 A model of your own is `#{ init, step }`, with `step(state, op)`
 answering `Ok(next)` or `Err(why)` for `op` = `#{ f, value, output,
@@ -3794,16 +3801,16 @@ known, process }`.
 
 A property is checked at every instant at which anything ran, and once
 more at the end. Its predicate gets the world's state `s` (methods in
-`sim.State`): `s.now`, `s.time` (the wall clock), `s.step`, `s.nodes`,
-`history(name)`, `up(node)`, and `disk(node)`, the node's disk as a
-power cut now would leave it. That disk's methods are in `sim.Disk`:
+<a id="sim-State"></a>`sim.State`): `s.now`, `s.time` (the wall clock), `s.step`, `s.nodes`,
+<a id="sim-State-up"></a>`history(name)`, `up(node)`, and `disk(node)`, the node's disk as a
+<a id="sim-Disk"></a>power cut now would leave it. That disk's methods are in `sim.Disk`:
 
 | Method | Description |
 |---|---|
-| `read(path)` · `read_bytes(path)` | the synced contents, or `()` when the name itself was never synced |
-| `exists(path)` · `list(dir)` | the names a power cut would keep |
-| `current(path)` | what the node reads now, synced or not |
-| `query(db, sql, params)` | `Ok(rows)` from the synced image of a SQLite database, recovered as SQLite would after the crash, or `Err` |
+| <a id="sim-Disk-read"></a><a id="sim-Disk-read_bytes"></a>`read(path)` · `read_bytes(path)` | the synced contents, or `()` when the name itself was never synced |
+| <a id="sim-Disk-exists"></a><a id="sim-Disk-list"></a>`exists(path)` · `list(dir)` | the names a power cut would keep |
+| <a id="sim-Disk-current"></a>`current(path)` | what the node reads now, synced or not |
+| <a id="sim-Disk-query"></a>`query(db, sql, params)` | `Ok(rows)` from the synced image of a SQLite database, recovered as SQLite would after the crash, or `Err` |
 
 A predicate cannot change the world: a call with an effect in it
 (`time.now_ms`, `fs`, `http`, `spawn`) breaks the property, naming the
@@ -3826,7 +3833,7 @@ column of `Int`, `Float`, `Bool`, `String`, `Date`, `Datetime` or
 `Category` over a contiguous native buffer; a **Frame** is a table of
 named, equal-length Series. Operators
 are vectorized (`s * 2.0` runs one kernel over the whole column;
-`s > 2` yields a Bool mask for `ods.filter`), nulls propagate through
+<a id="ods-filter"></a>`s > 2` yields a Bool mask for `ods.filter`), nulls propagate through
 arithmetic and are skipped by reductions, and the Frame verbs —
 `read_csv`, `select`, `drop`, `rename`, `with`, `filter`,
 `distinct`, `sort_by`, `group_by`, `join`, `to_records` — all chain,
@@ -3862,11 +3869,11 @@ fan-out entirely, and `OLANG_DEBUG_AUTOPAR=1` explains any decision.
 Measured on an Apple-silicon Mac (an M5 Pro, 18 cores): a 3M-element
 pure map runs ~3.7× faster with no change to the program.
 
-The data stack fans out the same way. `ods.read_csv` splits large text
+<a id="ods-read_csv"></a>The data stack fans out the same way. `ods.read_csv` splits large text
 at record boundaries (quote-aware, so embedded newlines never split a
-field) and parses the runs concurrently; `ods.read_jsonl` parses lines
+<a id="ods-read_jsonl"></a>field) and parses the runs concurrently; `ods.read_jsonl` parses lines
 concurrently and reports the lowest-numbered bad line, exactly as a
-sequential scan would; `ods.sort_by`, joins, and `ods.group_by` sort,
+<a id="ods-sort_by"></a><a id="ods-group_by"></a>sequential scan would; `ods.sort_by`, joins, and `ods.group_by` sort,
 probe, gather, and aggregate across cores above ~100k rows. Every
 fan-out joins in a fixed order, so results are cell-identical to the
 sequential run (a grouped float `sum` may differ in the last ULPs), and `set_parallel(false)` turns all of it
@@ -3881,45 +3888,45 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 
 | Group | Verbs |
 |---|---|
-| Create | `series(list\|range)` · `try_series(list)` (the Result form: a mixed-type list is `Err`, not a raise) · `zeros(n)` (n float zeros) · `ones(n)` · `full(n, v)` · `full_like(s, v)` · `linspace(a, b, n)` (n evenly spaced floats, inclusive) · `arange(stop)` / `arange(start, stop, step = 1)` (Int from Ints, else Float; `stop` excluded) · `repeat(s, k)` (each element `k` times, or a list of counts) · `tile(s, k)` (the column `k` times) |
-| Math | `abs` `exp` `exp2` `expm1` `ln` `ln1p` `log2` `log10` `sqrt` `cbrt` `sin` `cos` `tan` `asin` `acos` `atan` `sinh` `cosh` `tanh` `sigmoid` `logit` `sign` `floor` `ceil` `trunc` — each `ods.exp(s)`, the scalar `math.*` function over the column (Int widens to Float, except where the answer is whole) · `pow(s, p)` · `round(s, digits = 0)` · `map(s, "sin")` — a math function by name |
-| Conditionals | `where(mask, a, b)` (null mask → null) · `select(masks, values, default = ())` (first mask that holds) · `clip(s, lo, hi = ())` (`()` an open bound) · `between(s, lo, hi, closed = "both")` or `between(s, [lo, hi] \| ())` — `"left"`, `"right"`, `"neither"` |
-| Comparisons | `eq(a, b)` · `ne(a, b)` — elementwise masks between two Series (against a *scalar*, use the `s == v` / `s != v` operators) |
-| Nulls | `is_null(s)` · `not_null(s)` · `is_nan(s)` (masks) · `fill_null(s, v)` — `v` a value, a Series, or a method `"ffill"`, `"bfill"`, `"linear"`, `"mean"`, `"median"` (the first three take a `limit`) · `coalesce(a, b, …)` (first non-null) · `interpolate(s, limit = ())` · `null_count(s)` |
-| Reductions | `sum` `mean` `var` `std` `min` `max` `median` (skip nulls; `var`/`std` are sample; a Bool mask sums to its count of true) · `quantile(s, q)` · `count(s)` (non-null) · `first(s)` · `last(s)` · `mode(s)` · `any(mask)` · `all(mask)` · `cumsum(s)` · `cumprod(s)` · `dot(a, b)` — a reduction of an expression reads its columns once |
-| Positions | `argmax(s)` · `argmin(s)` (first row of the extreme, `()` if none) · `searchsorted(s, v, side = "left")` |
-| Windows | `shift(s, by)` (nulls at the edge) · `diff(s, lag = 1)` · `pct_change(s, lag = 1)` · `cum_max` · `cum_min` · `rank(s, method = "min")` — min/max/average/ordinal/dense · `rolling(s, window, agg, center = false, min_periods = (), exact = false)` — `agg` one of count, sum, mean, min, max, median, std, var — null until the window fills (`min_periods:` any window with that many values); O(n) running sums, `exact: true` a fresh sum per window · `runs(s)` — a Frame of each run's `start`, `end`, `length` (a Bool mask: its runs of true) · `run_id(s \| [s, …])` — a run number per row, one more at each change |
-| Recode | `recode(s, mapping, default = keep)` — through a map, an object or `[from, to]` pairs; `()` as the default nulls the unmapped |
-| Text | `a + b` on String Series, or a String Series and a String on either side — elementwise concatenation, a null cell staying null · `lower` `upper` `trim` `trim_start` `trim_end` · `replace(s, from, to)` · `replace_re(s, pattern, to)` · `contains(s, text, case = true)` · `starts_with(s, text)` · `ends_with(s, text)` · `len_chars(s)` · `substring(s, start, end = ())` · `split_n(s, sep, i)` (piece `i`, negative from the end; null where there is none) · `pad_start(s, width, fill = " ")` · `pad_end(s, width, fill = " ")` · `to_int(s)` · `to_float(s)` (null where a cell does not read) · `to_date(s, fmt = ())` · `to_datetime(s, fmt = ())` (ISO 8601 without a format, `strptime`'s `%` directives with one; null where a cell does not read) — each over the column's text with no `String` a row, a Category's once per level |
-| Head / tail | `head(s, n)` · `tail(s, n)` — the first or last `n` values (the Frame verbs, on a Series) |
-| Distinct | `unique(s)` (first-seen order) · `n_unique(s)` · `value_counts(s)` → a value/count Frame, most frequent first |
-| Dates | on a `Date` or `Datetime` column: `year` `quarter` `month` `day` `weekday` (ISO: 1 Monday … 7 Sunday — `dates.weekday` of one Date is 0 Sunday) `day_of_year` `week` (ISO) `hour` `minute` `second` `is_weekend` · `date(s)` (a Datetime's day) · `day_name(s)` · `month_name(s)` (Categories in calendar order) · `floor(s, "1h"\|"1d"\|"1w"\|"1mo"\|"1q"\|"1y"…)` · `add_days(s, n)` · `add_months(s, n)` (the day clamped to the month's end) · `months_between(a, b)` (calendar months from `b` to `a`) · `format(s, fmt)` — and `d + n`, `d - n` (days), `d - d` (an Int of days), `t - t` (Float seconds), comparisons with a Date, a Datetime or ISO text · `date_part(s, "year"\|"month"\|"day")` — the prefix of an ISO date or timestamp String Series, as a String Series |
-| Categories | `to_category(s, levels = ())` — codes into its distinct values in their order, or into the levels given (a value not among them null) · `levels(s)` · `codes(s)` · `dummies(s \| f, columns = (), drop_first = true, prefix = (), dtype = "Float")` — indicator columns as a Frame (a Frame's String and Category columns, or those named, each replaced where it stands) · `interact(a, b, sep = ":")` — the pairs of two columns as a Category of the pairs that occur |
-| Convert type | `cast(s, "Float"\|"Int"\|"Bool"\|"String"\|"Date"\|"Datetime"\|"Category")` — what the target cannot hold becomes null, so `null_count` reports what was lost; text reads as ISO 8601 dates, a Date's Int is its days since 1970-01-01, a Datetime's its microseconds |
-| Order / select | `sort(s, descending = false)` (nulls last) · `argsort(s, descending = false)` (sorting indices, stable) · `take(s, idx)` (gather) · `get(s, i)` (a negative position raises, as a list's does) |
-| Convert | `to_list(s)` (nulls → `()`) · `len(s)` |
+| <a id="ods-series"></a><a id="ods-try_series"></a><a id="ods-zeros"></a><a id="ods-linspace"></a><a id="ods-full"></a><a id="ods-ones"></a><a id="ods-arange"></a><a id="ods-full_like"></a><a id="ods-repeat"></a><a id="ods-tile"></a>Create | `series(list\|range)` · `try_series(list)` (the Result form: a mixed-type list is `Err`, not a raise) · `zeros(n)` (n float zeros) · `ones(n)` · `full(n, v)` · `full_like(s, v)` · `linspace(a, b, n)` (n evenly spaced floats, inclusive) · `arange(stop)` / `arange(start, stop, step = 1)` (Int from Ints, else Float; `stop` excluded) · `repeat(s, k)` (each element `k` times, or a list of counts) · `tile(s, k)` (the column `k` times) |
+| <a id="ods-map"></a><a id="ods-abs"></a><a id="ods-exp"></a><a id="ods-exp2"></a><a id="ods-expm1"></a><a id="ods-ln"></a><a id="ods-ln1p"></a><a id="ods-log2"></a><a id="ods-log10"></a><a id="ods-sqrt"></a><a id="ods-cbrt"></a><a id="ods-sin"></a><a id="ods-cos"></a><a id="ods-tan"></a><a id="ods-asin"></a><a id="ods-acos"></a><a id="ods-atan"></a><a id="ods-sinh"></a><a id="ods-cosh"></a><a id="ods-tanh"></a><a id="ods-sigmoid"></a><a id="ods-logit"></a><a id="ods-sign"></a><a id="ods-floor"></a><a id="ods-ceil"></a><a id="ods-trunc"></a><a id="ods-pow"></a><a id="ods-round"></a>Math | `abs` `exp` `exp2` `expm1` `ln` `ln1p` `log2` `log10` `sqrt` `cbrt` `sin` `cos` `tan` `asin` `acos` `atan` `sinh` `cosh` `tanh` `sigmoid` `logit` `sign` `floor` `ceil` `trunc` — each `ods.exp(s)`, the scalar `math.*` function over the column (Int widens to Float, except where the answer is whole) · `pow(s, p)` · `round(s, digits = 0)` · `map(s, "sin")` — a math function by name |
+| <a id="ods-select"></a><a id="ods-clip"></a><a id="ods-where"></a><a id="ods-between"></a>Conditionals | `where(mask, a, b)` (null mask → null) · `select(masks, values, default = ())` (first mask that holds) · `clip(s, lo, hi = ())` (`()` an open bound) · `between(s, lo, hi, closed = "both")` or `between(s, [lo, hi] \| ())` — `"left"`, `"right"`, `"neither"` |
+| <a id="ods-eq"></a><a id="ods-ne"></a>Comparisons | `eq(a, b)` · `ne(a, b)` — elementwise masks between two Series (against a *scalar*, use the `s == v` / `s != v` operators) |
+| <a id="ods-null_count"></a><a id="ods-is_null"></a><a id="ods-fill_null"></a><a id="ods-coalesce"></a><a id="ods-not_null"></a><a id="ods-is_nan"></a><a id="ods-interpolate"></a>Nulls | `is_null(s)` · `not_null(s)` · `is_nan(s)` (masks) · `fill_null(s, v)` — `v` a value, a Series, or a method `"ffill"`, `"bfill"`, `"linear"`, `"mean"`, `"median"` (the first three take a `limit`) · `coalesce(a, b, …)` (first non-null) · `interpolate(s, limit = ())` · `null_count(s)` |
+| <a id="ods-sum"></a><a id="ods-mean"></a><a id="ods-var"></a><a id="ods-std"></a><a id="ods-min"></a><a id="ods-max"></a><a id="ods-quantile"></a><a id="ods-median"></a><a id="ods-cumsum"></a><a id="ods-dot"></a><a id="ods-cumprod"></a><a id="ods-mode"></a><a id="ods-any"></a><a id="ods-all"></a><a id="ods-first"></a><a id="ods-last"></a>Reductions | `sum` `mean` `var` `std` `min` `max` `median` (skip nulls; `var`/`std` are sample; a Bool mask sums to its count of true) · `quantile(s, q)` · `count(s)` (non-null) · `first(s)` · `last(s)` · `mode(s)` · `any(mask)` · `all(mask)` · `cumsum(s)` · `cumprod(s)` · `dot(a, b)` — a reduction of an expression reads its columns once |
+| <a id="ods-argmax"></a><a id="ods-argmin"></a><a id="ods-searchsorted"></a>Positions | `argmax(s)` · `argmin(s)` (first row of the extreme, `()` if none) · `searchsorted(s, v, side = "left")` |
+| <a id="ods-shift"></a><a id="ods-cum_max"></a><a id="ods-cum_min"></a><a id="ods-rank"></a><a id="ods-rolling"></a><a id="ods-diff"></a><a id="ods-pct_change"></a><a id="ods-agg"></a><a id="ods-runs"></a><a id="ods-run_id"></a>Windows | `shift(s, by)` (nulls at the edge) · `diff(s, lag = 1)` · `pct_change(s, lag = 1)` · `cum_max` · `cum_min` · `rank(s, method = "min")` — min/max/average/ordinal/dense · `rolling(s, window, agg, center = false, min_periods = (), exact = false)` — `agg` one of count, sum, mean, min, max, median, std, var — null until the window fills (`min_periods:` any window with that many values); O(n) running sums, `exact: true` a fresh sum per window · `runs(s)` — a Frame of each run's `start`, `end`, `length` (a Bool mask: its runs of true) · `run_id(s \| [s, …])` — a run number per row, one more at each change |
+| <a id="ods-recode"></a>Recode | `recode(s, mapping, default = keep)` — through a map, an object or `[from, to]` pairs; `()` as the default nulls the unmapped |
+| <a id="ods-lower"></a><a id="ods-upper"></a><a id="ods-trim"></a><a id="ods-trim_start"></a><a id="ods-trim_end"></a><a id="ods-replace"></a><a id="ods-replace_re"></a><a id="ods-contains"></a><a id="ods-starts_with"></a><a id="ods-ends_with"></a><a id="ods-len_chars"></a><a id="ods-substring"></a><a id="ods-split_n"></a><a id="ods-pad_start"></a><a id="ods-pad_end"></a><a id="ods-to_int"></a><a id="ods-to_float"></a><a id="ods-to_date"></a><a id="ods-to_datetime"></a>Text | `a + b` on String Series, or a String Series and a String on either side — elementwise concatenation, a null cell staying null · `lower` `upper` `trim` `trim_start` `trim_end` · `replace(s, from, to)` · `replace_re(s, pattern, to)` · `contains(s, text, case = true)` · `starts_with(s, text)` · `ends_with(s, text)` · `len_chars(s)` · `substring(s, start, end = ())` · `split_n(s, sep, i)` (piece `i`, negative from the end; null where there is none) · `pad_start(s, width, fill = " ")` · `pad_end(s, width, fill = " ")` · `to_int(s)` · `to_float(s)` (null where a cell does not read) · `to_date(s, fmt = ())` · `to_datetime(s, fmt = ())` (ISO 8601 without a format, `strptime`'s `%` directives with one; null where a cell does not read) — each over the column's text with no `String` a row, a Category's once per level |
+| <a id="ods-head"></a><a id="ods-tail"></a>Head / tail | `head(s, n)` · `tail(s, n)` — the first or last `n` values (the Frame verbs, on a Series) |
+| <a id="ods-unique"></a><a id="ods-n_unique"></a><a id="ods-value_counts"></a>Distinct | `unique(s)` (first-seen order) · `n_unique(s)` · `value_counts(s)` → a value/count Frame, most frequent first |
+| <a id="ods-date_part"></a><a id="ods-format"></a><a id="ods-year"></a><a id="ods-quarter"></a><a id="ods-month"></a><a id="ods-day"></a><a id="ods-weekday"></a><a id="ods-day_of_year"></a><a id="ods-week"></a><a id="ods-hour"></a><a id="ods-minute"></a><a id="ods-second"></a><a id="ods-is_weekend"></a><a id="ods-date"></a><a id="ods-day_name"></a><a id="ods-month_name"></a><a id="ods-months_between"></a><a id="ods-add_days"></a><a id="ods-add_months"></a>Dates | on a `Date` or `Datetime` column: `year` `quarter` `month` `day` `weekday` (ISO: 1 Monday … 7 Sunday — `dates.weekday` of one Date is 0 Sunday) `day_of_year` `week` (ISO) `hour` `minute` `second` `is_weekend` · `date(s)` (a Datetime's day) · `day_name(s)` · `month_name(s)` (Categories in calendar order) · `floor(s, "1h"\|"1d"\|"1w"\|"1mo"\|"1q"\|"1y"…)` · `add_days(s, n)` · `add_months(s, n)` (the day clamped to the month's end) · `months_between(a, b)` (calendar months from `b` to `a`) · `format(s, fmt)` — and `d + n`, `d - n` (days), `d - d` (an Int of days), `t - t` (Float seconds), comparisons with a Date, a Datetime or ISO text · `date_part(s, "year"\|"month"\|"day")` — the prefix of an ISO date or timestamp String Series, as a String Series |
+| <a id="ods-to_category"></a><a id="ods-levels"></a><a id="ods-codes"></a><a id="ods-dummies"></a><a id="ods-interact"></a>Categories | `to_category(s, levels = ())` — codes into its distinct values in their order, or into the levels given (a value not among them null) · `levels(s)` · `codes(s)` · `dummies(s \| f, columns = (), drop_first = true, prefix = (), dtype = "Float")` — indicator columns as a Frame (a Frame's String and Category columns, or those named, each replaced where it stands) · `interact(a, b, sep = ":")` — the pairs of two columns as a Category of the pairs that occur |
+| <a id="ods-cast"></a>Convert type | `cast(s, "Float"\|"Int"\|"Bool"\|"String"\|"Date"\|"Datetime"\|"Category")` — what the target cannot hold becomes null, so `null_count` reports what was lost; text reads as ISO 8601 dates, a Date's Int is its days since 1970-01-01, a Datetime's its microseconds |
+| <a id="ods-get"></a><a id="ods-sort"></a><a id="ods-argsort"></a><a id="ods-take"></a>Order / select | `sort(s, descending = false)` (nulls last) · `argsort(s, descending = false)` (sorting indices, stable) · `take(s, idx)` (gather) · `get(s, i)` (a negative position raises, as a list's does) |
+| <a id="ods-to_list"></a><a id="ods-len"></a>Convert | `to_list(s)` (nulls → `()`) · `len(s)` |
 
 ### Frame verbs
 
 | Group | Verbs |
 |---|---|
-| Build | `frame(columns)` (`[name, column]` pairs, or an object `{ a: s, b: [1, 2] }`) · `frame_from_records(records)` · `try_frame_from_records(records)` (the Result form, for records from a file, a request, or a user) · `read_csv(text, sep:, dates:, dtypes:, nulls:)` — `sep` one character, `dates` column names or `"auto"` (ISO dates and datetimes), `dtypes` an object of column: type, `nulls` the cells that are null |
-| Files | `read_csv_file(path)` (the same options) · `write_csv(f, path, float_fmt = ())` · `to_csv(f, float_fmt = ())` — `float_fmt` `".2f"` or `".3e"` · `read_jsonl(text)` · `read_jsonl_file(path)` (`dates:` and `dtypes:`) · `write_jsonl(f, path)` · `to_jsonl(f)` |
-| Streaming | `open_csv(path)` · `open_jsonl(path)` — then `next_chunk(r, n)` · `rows_read(r)` · `at_end(r)`, the same verbs for either |
-| Native format | `write_frame(f, path)` · `read_frame(path, columns)` · `frame_info(path)` — exact types, faster loads, one column at a time |
-| Inspect | `columns(f)` · `n_rows(f)` · `n_cols(f)` · `head(f, n)` · `tail(f, n)` · `describe(f)` · `schema(f)` · `to_records(f)` · `to_matrix(f, names)` — Float/Int columns as a list of Float lists, for `vec` |
-| Splits | `split(f, frac)` — a deterministic holdout under `random.seed`, `[kept, rest]` · `split_at(f, column, frac)` — the forward-in-time split: sorted by `column`, the first `frac` first |
-| Version | `ods.version()` — the engine's version, the same as `runtime.version()`, worth quoting in a bug report |
+| <a id="ods-frame"></a><a id="ods-frame_from_records"></a><a id="ods-try_frame_from_records"></a>Build | `frame(columns)` (`[name, column]` pairs, or an object `{ a: s, b: [1, 2] }`) · `frame_from_records(records)` · `try_frame_from_records(records)` (the Result form, for records from a file, a request, or a user) · `read_csv(text, sep:, dates:, dtypes:, nulls:)` — `sep` one character, `dates` column names or `"auto"` (ISO dates and datetimes), `dtypes` an object of column: type, `nulls` the cells that are null |
+| <a id="ods-read_csv_file"></a><a id="ods-read_jsonl_file"></a><a id="ods-to_csv"></a><a id="ods-write_csv"></a><a id="ods-to_jsonl"></a><a id="ods-write_jsonl"></a>Files | `read_csv_file(path)` (the same options) · `write_csv(f, path, float_fmt = ())` · `to_csv(f, float_fmt = ())` — `float_fmt` `".2f"` or `".3e"` · `read_jsonl(text)` · `read_jsonl_file(path)` (`dates:` and `dtypes:`) · `write_jsonl(f, path)` · `to_jsonl(f)` |
+| <a id="ods-open_csv"></a><a id="ods-open_jsonl"></a><a id="ods-next_chunk"></a><a id="ods-rows_read"></a><a id="ods-at_end"></a>Streaming | `open_csv(path)` · `open_jsonl(path)` — then `next_chunk(r, n)` · `rows_read(r)` · `at_end(r)`, the same verbs for either |
+| <a id="ods-read_frame"></a><a id="ods-write_frame"></a><a id="ods-frame_info"></a>Native format | `write_frame(f, path)` · `read_frame(path, columns)` · `frame_info(path)` — exact types, faster loads, one column at a time |
+| <a id="ods-to_matrix"></a><a id="ods-to_records"></a><a id="ods-columns"></a><a id="ods-n_rows"></a><a id="ods-n_cols"></a><a id="ods-describe"></a><a id="ods-schema"></a>Inspect | `columns(f)` · `n_rows(f)` · `n_cols(f)` · `head(f, n)` · `tail(f, n)` · `describe(f)` · `schema(f)` · `to_records(f)` · `to_matrix(f, names)` — Float/Int columns as a list of Float lists, for `vec` |
+| <a id="ods-split"></a><a id="ods-split_at"></a><a id="ods-column"></a>Splits | `split(f, frac)` — a deterministic holdout under `random.seed`, `[kept, rest]` · `split_at(f, column, frac)` — the forward-in-time split: sorted by `column`, the first `frac` first |
+| <a id="ods-version"></a>Version | `ods.version()` — the engine's version, the same as `runtime.version()`, worth quoting in a bug report |
 | Subscript | `f["name"]` a column · `f[["a", "b"]]` those columns · `f[mask]` the rows a Bool Series keeps · `s[i]` an element (a negative position raises) · `column(f, name)` is the same as `f[name]`, for when a call reads better than a subscript |
-| Shape | `select(f, names and exprs)` · `drop(f, names)` · `rename(f, mapping)` (a map or an object) · `slice(f, start, n)` · `row(f, i)` (a map) · `lookup(f, key_col, key, value_col)` (a hash kept with the Frame; a list of keys gives a Series) · `with_column(f, name, series)` · `with(f, { name: expr, … })` · `filter(f, mask \| expr)` · `sort_by(f, keys, descending = false)` — several keys (names or exprs), `descending` a Bool or one per key |
-| Expressions | `col(name)` · `lit(v)` · `alias(expr, name)` · `over(agg, keys)` — an aggregation within groups, given back to every row. Every column function and operator takes an expression and gives one; [Expressions](ods.md#expressions--odscol) |
-| Whole rows | `distinct(f, names = all)` · `drop_null(f, names = all)` — duplicates and missing data, first occurrence kept |
-| Reshape | `pivot(f, index, columns, values, agg, fill = ())` long→wide · `crosstab(a, b, values = (), agg = "count", normalize = (), name = "row")` — counts (or an aggregate) of each pair of values, `normalize` `"all"`, `"rows"` or `"columns"` · `unpivot(f, ids, value_columns = the rest)` wide→long, emitting `name`/`value` |
-| Sample | `sample(f, n, rng:)` (also on a Series) — n random rows, without replacement, in original order; drawn from `rng` (a [`random.rng`](#generators-randomrng) or an Int seed), else seeded by `random.seed` |
-| Aggregate / join | `group_by(f, keys)` → a GroupBy, then `agg(by, { name: expr })` (e.g. `col("x").sum()`, `ods.count()`, `col("x").quantile(0.9)`) · `size(by)` · `transform(by, expr)` · `apply(by, fn)` (once per group) · `groups(by)` (`(key, frame)` pairs) · `sum(by)`, `mean(by)`, … over every column — or `group_by(f, keys, aggs)` with the aggs an object, or `[name, op, column]` triples, op one of count, sum, mean, min, max, median, std, var, first, last, n_unique, any, all, argmax, argmin (`[name, "count"]` counts rows) · `join(a, b, on, on_b = on, how = "inner", suffix = "_right", validate = ())` — `on` a name or a list, `how` inner/left/full/semi/anti, `validate` `"many_to_one"`, `"one_to_many"` or `"one_to_one"` · `join_left` · `join_full` · `join_semi` · `join_anti` (the same, `how` fixed) · `asof_join(a, b, on, by = (), direction = "backward", tolerance = (), suffix = "_right")` — each left row takes the right row nearest at or before it (`"forward"`, `"nearest"`) · `concat(frames)` |
-| Time | `resample(f, on, every, aggs, by = ())` — rows grouped by the start of their `every` bucket (`"15m"`, `"1h"`, `"1d"`, `"1w"`, `"1mo"`, `"1q"`, `"1y"`) of a Date or Datetime column (buckets of its type) or an ISO date/time text column, sorted by time · `floor(s, every)` — each value's bucket start, in the value's shape |
-| Matrices | `matrix(f, cols = every numeric, nulls = "raise")` — a [Matrix](#mat--matrices) of the columns (or of a list of Series), sharing null-free Float columns; `nulls: "drop"` leaves out rows with a null · `corr(f, cols = every numeric, method = "pearson")` (or `"spearman"`) · `cov(f, cols)` — labelled Frames: a `term` column, then one per variable; a column with nulls pairs over the rows both columns have |
-| Masks | `m1 & m2` · `m1 \| m2` · `m1 ^ m2` · `!m` · `eq(s, v)` · `ne(s, v)` · `is_in(s, values)` · `contains(s, text, case = true)` · `all_of(masks)` · `any_of(masks)` · `not(mask)` — three-valued, like SQL; parenthesize a comparison `&` joins |
+| <a id="ods-with_column"></a><a id="ods-rename"></a><a id="ods-drop"></a><a id="ods-with"></a><a id="ods-slice"></a><a id="ods-row"></a><a id="ods-lookup"></a>Shape | `select(f, names and exprs)` · `drop(f, names)` · `rename(f, mapping)` (a map or an object) · `slice(f, start, n)` · `row(f, i)` (a map) · `lookup(f, key_col, key, value_col)` (a hash kept with the Frame; a list of keys gives a Series) · `with_column(f, name, series)` · `with(f, { name: expr, … })` · `filter(f, mask \| expr)` · `sort_by(f, keys, descending = false)` — several keys (names or exprs), `descending` a Bool or one per key |
+| <a id="ods-col"></a><a id="ods-lit"></a><a id="ods-over"></a><a id="ods-alias"></a>Expressions | `col(name)` · `lit(v)` · `alias(expr, name)` · `over(agg, keys)` — an aggregation within groups, given back to every row. Every column function and operator takes an expression and gives one; [Expressions](ods.md#expressions--odscol) |
+| <a id="ods-distinct"></a><a id="ods-drop_null"></a>Whole rows | `distinct(f, names = all)` · `drop_null(f, names = all)` — duplicates and missing data, first occurrence kept |
+| <a id="ods-pivot"></a><a id="ods-unpivot"></a><a id="ods-crosstab"></a>Reshape | `pivot(f, index, columns, values, agg, fill = ())` long→wide · `crosstab(a, b, values = (), agg = "count", normalize = (), name = "row")` — counts (or an aggregate) of each pair of values, `normalize` `"all"`, `"rows"` or `"columns"` · `unpivot(f, ids, value_columns = the rest)` wide→long, emitting `name`/`value` |
+| <a id="ods-sample"></a>Sample | `sample(f, n, rng:)` (also on a Series) — n random rows, without replacement, in original order; drawn from `rng` (a [`random.rng`](#generators-randomrng) or an Int seed), else seeded by `random.seed` |
+| <a id="ods-concat"></a><a id="ods-join"></a><a id="ods-join_left"></a><a id="ods-join_full"></a><a id="ods-join_semi"></a><a id="ods-join_anti"></a><a id="ods-count"></a><a id="ods-size"></a><a id="ods-transform"></a><a id="ods-apply"></a><a id="ods-groups"></a><a id="ods-asof_join"></a>Aggregate / join | `group_by(f, keys)` → a GroupBy, then `agg(by, { name: expr })` (e.g. `col("x").sum()`, `ods.count()`, `col("x").quantile(0.9)`) · `size(by)` · `transform(by, expr)` · `apply(by, fn)` (once per group) · `groups(by)` (`(key, frame)` pairs) · `sum(by)`, `mean(by)`, … over every column — or `group_by(f, keys, aggs)` with the aggs an object, or `[name, op, column]` triples, op one of count, sum, mean, min, max, median, std, var, first, last, n_unique, any, all, argmax, argmin (`[name, "count"]` counts rows) · `join(a, b, on, on_b = on, how = "inner", suffix = "_right", validate = ())` — `on` a name or a list, `how` inner/left/full/semi/anti, `validate` `"many_to_one"`, `"one_to_many"` or `"one_to_one"` · `join_left` · `join_full` · `join_semi` · `join_anti` (the same, `how` fixed) · `asof_join(a, b, on, by = (), direction = "backward", tolerance = (), suffix = "_right")` — each left row takes the right row nearest at or before it (`"forward"`, `"nearest"`) · `concat(frames)` |
+| <a id="ods-resample"></a>Time | `resample(f, on, every, aggs, by = ())` — rows grouped by the start of their `every` bucket (`"15m"`, `"1h"`, `"1d"`, `"1w"`, `"1mo"`, `"1q"`, `"1y"`) of a Date or Datetime column (buckets of its type) or an ISO date/time text column, sorted by time · `floor(s, every)` — each value's bucket start, in the value's shape |
+| <a id="ods-matrix"></a><a id="ods-corr"></a><a id="ods-cov"></a>Matrices | `matrix(f, cols = every numeric, nulls = "raise")` — a [Matrix](#mat--matrices) of the columns (or of a list of Series), sharing null-free Float columns; `nulls: "drop"` leaves out rows with a null · `corr(f, cols = every numeric, method = "pearson")` (or `"spearman"`) · `cov(f, cols)` — labelled Frames: a `term` column, then one per variable; a column with nulls pairs over the rows both columns have |
+| <a id="ods-all_of"></a><a id="ods-any_of"></a><a id="ods-not"></a><a id="ods-is_in"></a>Masks | `m1 & m2` · `m1 \| m2` · `m1 ^ m2` · `!m` · `eq(s, v)` · `ne(s, v)` · `is_in(s, values)` · `contains(s, text, case = true)` · `all_of(masks)` · `any_of(masks)` · `not(mask)` — three-valued, like SQL; parenthesize a comparison `&` joins |
 
 The stack has its own chapter, **[The data stack](ods.md)**: the
 columnar model, every Series and Frame verb with its semantics, null
@@ -3959,24 +3966,24 @@ println((X * 2.0 + 1.0).to_list())        // [[1.5, -3.5], [9.0, 19.0]]
 |---|---|
 | `ods.matrix(f, cols?, nulls = "raise")` | a Matrix of a Frame's numeric columns (all of them, or the ones named) or of a list of Series; Int and Bool become Float |
 | `X @ b`, `v @ X`, `X @ Y` | the product: a Series for a vector `b` (a list or a Series), `vᵀX` for a vector on the left, a Matrix for two matrices |
-| `mat.of(rows)` / `mat.identity(n)` | a Matrix of a list of rows / the identity |
-| `mat.t(x)` / `mat.gram(x)` / `mat.matmul(a, b)` | the transpose (free: the same storage) / `XᵀX` in one parallel pass / `a @ b` |
-| `mat.col(x, j)` / `mat.row(x, i)` / `mat.shape(x)` | column `j` as a Series (shared) / row `i` as a list / `[rows, cols]`; `len(x)` is the row count |
-| `mat.sum(x, axis = 0)` / `mat.mean(x, axis = 0)` / `mat.std(x, axis = 0, ddof = 1)` | a Series: one value per column (axis 0) or per row (axis 1) |
+| <a id="mat-of"></a><a id="mat-identity"></a>`mat.of(rows)` / `mat.identity(n)` | a Matrix of a list of rows / the identity |
+| <a id="mat-t"></a><a id="mat-gram"></a><a id="mat-matmul"></a>`mat.t(x)` / `mat.gram(x)` / `mat.matmul(a, b)` | the transpose (free: the same storage) / `XᵀX` in one parallel pass / `a @ b` |
+| <a id="mat-col"></a><a id="mat-row"></a><a id="mat-shape"></a>`mat.col(x, j)` / `mat.row(x, i)` / `mat.shape(x)` | column `j` as a Series (shared) / row `i` as a list / `[rows, cols]`; `len(x)` is the row count |
+| <a id="mat-mean"></a><a id="mat-std"></a><a id="mat-sum"></a>`mat.sum(x, axis = 0)` / `mat.mean(x, axis = 0)` / `mat.std(x, axis = 0, ddof = 1)` | a Series: one value per column (axis 0) or per row (axis 1) |
 | `x + y`, `x - y`, `x * y`, `x / y`, `-x` | elementwise: Matrices of one shape, a number on either side, or a row (`1 × k`) or column (`n × 1`) Matrix, or a Series or list as long as `x` is wide (a row), broadcast as NumPy does |
-| `mat.abs(x)` `mat.sign(x)` `mat.sqrt(x)` `mat.cbrt(x)` | the absolute value, the sign (-1.0, 0.0 or 1.0), the square root and the cube root of every entry |
-| `mat.exp(x)` `mat.exp2(x)` `mat.expm1(x)` | e to the power of each entry, 2 to the power, and `exp(v) - 1`, accurate for entries near zero |
-| `mat.ln(x)` `mat.ln1p(x)` `mat.log2(x)` `mat.log10(x)` | the natural logarithm of each entry, `ln(1 + v)` (accurate near zero), and the base-2 and base-10 logarithms |
-| `mat.sin(x)` `mat.cos(x)` `mat.tan(x)` `mat.asin(x)` `mat.acos(x)` `mat.atan(x)` | the trigonometric functions and their inverses, in radians |
-| `mat.sinh(x)` `mat.cosh(x)` `mat.tanh(x)` | the hyperbolic functions |
-| `mat.sigmoid(x)` / `mat.logit(x)` | the logistic function `1 / (1 + e^-v)` of each entry / its inverse, `ln(v / (1 - v))` |
-| `mat.floor(x)` `mat.ceil(x)` `mat.trunc(x)` / `mat.round(x, digits?)` | each entry rounded down, up, or toward zero (still Floats) / rounded to `digits` places |
-| `mat.clip(x, lo?, hi?)` / `mat.pow(x, e)` | each entry held between `lo` and `hi` / raised to the power `e` |
-| `mat.solve(a, b)` / `mat.inv(a)` | `x` with `a x = b` (LU with partial pivoting; `b` a vector or a Matrix) / the inverse |
-| `mat.cholesky(a)` | the lower factor `L` of a symmetric positive-definite `a = L Lᵀ` |
-| `mat.eigh(a)` | `#{ values, vectors }` of a symmetric matrix, largest first, each vector's largest component positive |
-| `mat.cdist(x, c, metric = "sqeuclidean")` | distances between the rows of `x` and of `c`, an `n × m` Matrix; `"euclidean"`, `"cityblock"` (`"manhattan"`), `"chebyshev"`, `"cosine"` |
-| `mat.to_frame(x, names?)` / `mat.to_list(x)` | the columns as a Frame (named `0`, `1`, … by default) / the rows as lists |
+| <a id="mat-abs"></a><a id="mat-sqrt"></a><a id="mat-cbrt"></a><a id="mat-sign"></a>`mat.abs(x)` `mat.sign(x)` `mat.sqrt(x)` `mat.cbrt(x)` | the absolute value, the sign (-1.0, 0.0 or 1.0), the square root and the cube root of every entry |
+| <a id="mat-exp"></a><a id="mat-exp2"></a><a id="mat-expm1"></a>`mat.exp(x)` `mat.exp2(x)` `mat.expm1(x)` | e to the power of each entry, 2 to the power, and `exp(v) - 1`, accurate for entries near zero |
+| <a id="mat-ln"></a><a id="mat-ln1p"></a><a id="mat-log2"></a><a id="mat-log10"></a>`mat.ln(x)` `mat.ln1p(x)` `mat.log2(x)` `mat.log10(x)` | the natural logarithm of each entry, `ln(1 + v)` (accurate near zero), and the base-2 and base-10 logarithms |
+| <a id="mat-sin"></a><a id="mat-cos"></a><a id="mat-tan"></a><a id="mat-asin"></a><a id="mat-acos"></a><a id="mat-atan"></a>`mat.sin(x)` `mat.cos(x)` `mat.tan(x)` `mat.asin(x)` `mat.acos(x)` `mat.atan(x)` | the trigonometric functions and their inverses, in radians |
+| <a id="mat-sinh"></a><a id="mat-cosh"></a><a id="mat-tanh"></a>`mat.sinh(x)` `mat.cosh(x)` `mat.tanh(x)` | the hyperbolic functions |
+| <a id="mat-sigmoid"></a><a id="mat-logit"></a>`mat.sigmoid(x)` / `mat.logit(x)` | the logistic function `1 / (1 + e^-v)` of each entry / its inverse, `ln(v / (1 - v))` |
+| <a id="mat-floor"></a><a id="mat-ceil"></a><a id="mat-trunc"></a><a id="mat-round"></a>`mat.floor(x)` `mat.ceil(x)` `mat.trunc(x)` / `mat.round(x, digits?)` | each entry rounded down, up, or toward zero (still Floats) / rounded to `digits` places |
+| <a id="mat-pow"></a><a id="mat-clip"></a>`mat.clip(x, lo?, hi?)` / `mat.pow(x, e)` | each entry held between `lo` and `hi` / raised to the power `e` |
+| <a id="mat-solve"></a><a id="mat-inv"></a>`mat.solve(a, b)` / `mat.inv(a)` | `x` with `a x = b` (LU with partial pivoting; `b` a vector or a Matrix) / the inverse |
+| <a id="mat-cholesky"></a>`mat.cholesky(a)` | the lower factor `L` of a symmetric positive-definite `a = L Lᵀ` |
+| <a id="mat-eigh"></a>`mat.eigh(a)` | `#{ values, vectors }` of a symmetric matrix, largest first, each vector's largest component positive |
+| <a id="mat-cdist"></a>`mat.cdist(x, c, metric = "sqeuclidean")` | distances between the rows of `x` and of `c`, an `n × m` Matrix; `"euclidean"`, `"cityblock"` (`"manhattan"`), `"chebyshev"`, `"cosine"` |
+| <a id="mat-to_frame"></a><a id="mat-to_list"></a>`mat.to_frame(x, names?)` / `mat.to_list(x)` | the columns as a Frame (named `0`, `1`, … by default) / the rows as lists |
 
 The elementwise functions each take a Matrix and return a new Matrix of
 the same shape, applying the matching `ods` math function to every
@@ -4009,7 +4016,7 @@ let n = stats.n_for_power(0.5, power: 0.8)          // per group, d = 0.5
 println(`${math.ceil(n)} per group`)                 // 64 per group
 ```
 
-**Distributions.** Each family is a namespace of `pdf` (`pmf` for a
+<a id="stats-norm-pdf"></a><a id="stats-t-pdf"></a><a id="stats-chi2-pdf"></a><a id="stats-f-pdf"></a><a id="stats-lognorm-pdf"></a><a id="stats-beta-pdf"></a><a id="stats-gamma-pdf"></a>**Distributions.** Each family is a namespace of `pdf` (`pmf` for a
 count), `cdf`, `ppf` and `sample`. `x` (or `p`, or `k`) is a number or
 a numeric Series: a Series gives a Series, one native pass, nulls kept,
 in parallel past the elementwise threshold. A `ppf` outside [0, 1]
@@ -4018,40 +4025,40 @@ Series of `n` draws (Int for `poisson` and `binom`).
 
 | Family | Parameters |
 |---|---|
-| `stats.norm` | `mean = 0.0`, `std = 1.0` |
-| `stats.t` | `df` |
-| `stats.chi2` | `df` |
-| `stats.f` | `d1`, `d2` |
-| `stats.lognorm` | `mu = 0.0`, `sigma = 1.0`: the log is normal with this mean and sd (NumPy's `lognormal`) |
-| `stats.beta` | `a`, `b` |
-| `stats.gamma` | `shape`, `scale = 1.0` (SciPy's scale) |
-| `stats.poisson` | `lam` — `pmf`, `cdf`, `ppf`, `sample` |
-| `stats.binom` | `trials`, `p` — `pmf`, `cdf`, `ppf`, `sample` |
+| <a id="stats-norm"></a>`stats.norm` | `mean = 0.0`, `std = 1.0` |
+| <a id="stats-t"></a>`stats.t` | `df` |
+| <a id="stats-chi2"></a>`stats.chi2` | `df` |
+| <a id="stats-f"></a>`stats.f` | `d1`, `d2` |
+| <a id="stats-lognorm"></a>`stats.lognorm` | `mu = 0.0`, `sigma = 1.0`: the log is normal with this mean and sd (NumPy's `lognormal`) |
+| <a id="stats-beta"></a>`stats.beta` | `a`, `b` |
+| <a id="stats-gamma"></a>`stats.gamma` | `shape`, `scale = 1.0` (SciPy's scale) |
+| <a id="stats-poisson"></a><a id="stats-norm-cdf"></a><a id="stats-norm-ppf"></a><a id="stats-norm-sample"></a><a id="stats-t-cdf"></a><a id="stats-t-ppf"></a><a id="stats-t-sample"></a><a id="stats-chi2-cdf"></a><a id="stats-chi2-ppf"></a><a id="stats-chi2-sample"></a><a id="stats-f-cdf"></a><a id="stats-f-ppf"></a><a id="stats-f-sample"></a><a id="stats-lognorm-cdf"></a><a id="stats-lognorm-ppf"></a><a id="stats-lognorm-sample"></a><a id="stats-beta-cdf"></a><a id="stats-beta-ppf"></a><a id="stats-beta-sample"></a><a id="stats-gamma-cdf"></a><a id="stats-gamma-ppf"></a><a id="stats-gamma-sample"></a><a id="stats-poisson-pmf"></a><a id="stats-poisson-cdf"></a><a id="stats-poisson-ppf"></a><a id="stats-poisson-sample"></a><a id="stats-binom-pmf"></a><a id="stats-binom-cdf"></a><a id="stats-binom-ppf"></a><a id="stats-binom-sample"></a>`stats.poisson` | `lam` — `pmf`, `cdf`, `ppf`, `sample` |
+| <a id="stats-binom"></a>`stats.binom` | `trials`, `p` — `pmf`, `cdf`, `ppf`, `sample` |
 
 **Tests, power and description.**
 
 | Function | Description |
 |---|---|
-| `stats.describe(s)` | a map: `count`, `null_count`, `mean`, `std`, `min`, `q25`, `median`, `q75`, `max` |
-| `stats.corr(a, b)` / `stats.cov(a, b)` | Pearson correlation / sample covariance of two Series, over the rows where both are present |
-| `stats.t_test(a, b, level = 0.95, alternative = "two-sided")` | Welch's two-sample test when `b` is a Series, the one-sample test against the mean `b` when it is a number: a map of `t`, `df`, `p_value`, the means (`mean_a`, `mean_b`, or `mean`), `diff`, `se`, `ci` (the interval of the difference at `level`, a pair; of the mean for one sample, as SciPy and R give it) and `d` (Cohen's d: the difference over the pooled sd). `alternative` is `"two-sided"`, `"greater"` or `"less"` |
-| `stats.chi2_test(observed, expected)` | the χ² goodness-of-fit test of two Series of counts: a map with `chi2`, `df`, `p_value` |
-| `stats.lm(y, xs)` | ordinary least squares with an intercept, a map of coefficients and fit |
-| `stats.power_t(effect, n, alpha = 0.05, alternative = "two-sided", kind = "two-sample", ratio = 1.0)` | the power of a t-test by the noncentral t (statsmodels' `TTestIndPower`/`TTestPower`): `effect` is Cohen's d, `n` the first group's size (`ratio` the second's over it), `kind` `"two-sample"`, `"one-sample"` or `"paired"` |
-| `stats.n_for_power(effect, power = 0.8, alpha = 0.05, alternative = "two-sided", kind = "two-sample", ratio = 1.0)` | the `n` (a Float, per group) at which `power_t` reaches `power` |
-| `stats.mann_whitney(a, b, alternative = "two-sided")` | the Mann–Whitney U test by the normal approximation with tie and continuity corrections (SciPy's `method="asymptotic"`): `u` (of `a`), `z`, `p_value`, `effect` (U / n₁n₂, the chance a value of `a` exceeds one of `b`) |
-| `stats.prop_z_test(count, nobs, value = 0.0, alternative = "two-sided", level = 0.95)` | the z-test of proportions (statsmodels' `proportions_ztest`): two counts of successes out of two `nobs` (each a list of two or a Series) test p₁ − p₂ against `value` with the pooled proportion's variance; one count and one `nobs` test p against `value` with the sample proportion's. A map of `z`, `p_value`, the proportions (`prop_a`, `prop_b`, or `prop`), `diff` (p₁ − p₂, or p − `value`), `se` (the test's) and `ci` (Wald's interval of p₁ − p₂, or of p, at `level`). `alternative` is `"two-sided"`, `"greater"` or `"less"` |
-| `stats.spearman(a, b)` | Spearman's rank correlation over the complete pairs: `rho`, `p_value`, `n` |
+| <a id="stats-describe"></a>`stats.describe(s)` | a map: `count`, `null_count`, `mean`, `std`, `min`, `q25`, `median`, `q75`, `max` |
+| <a id="stats-corr"></a><a id="stats-cov"></a>`stats.corr(a, b)` / `stats.cov(a, b)` | Pearson correlation / sample covariance of two Series, over the rows where both are present |
+| <a id="stats-t_test"></a>`stats.t_test(a, b, level = 0.95, alternative = "two-sided")` | Welch's two-sample test when `b` is a Series, the one-sample test against the mean `b` when it is a number: a map of `t`, `df`, `p_value`, the means (`mean_a`, `mean_b`, or `mean`), `diff`, `se`, `ci` (the interval of the difference at `level`, a pair; of the mean for one sample, as SciPy and R give it) and `d` (Cohen's d: the difference over the pooled sd). `alternative` is `"two-sided"`, `"greater"` or `"less"` |
+| <a id="stats-chi2_test"></a>`stats.chi2_test(observed, expected)` | the χ² goodness-of-fit test of two Series of counts: a map with `chi2`, `df`, `p_value` |
+| <a id="stats-lm"></a>`stats.lm(y, xs)` | ordinary least squares with an intercept, a map of coefficients and fit |
+| <a id="stats-power_t"></a>`stats.power_t(effect, n, alpha = 0.05, alternative = "two-sided", kind = "two-sample", ratio = 1.0)` | the power of a t-test by the noncentral t (statsmodels' `TTestIndPower`/`TTestPower`): `effect` is Cohen's d, `n` the first group's size (`ratio` the second's over it), `kind` `"two-sample"`, `"one-sample"` or `"paired"` |
+| <a id="stats-n_for_power"></a>`stats.n_for_power(effect, power = 0.8, alpha = 0.05, alternative = "two-sided", kind = "two-sample", ratio = 1.0)` | the `n` (a Float, per group) at which `power_t` reaches `power` |
+| <a id="stats-mann_whitney"></a>`stats.mann_whitney(a, b, alternative = "two-sided")` | the Mann–Whitney U test by the normal approximation with tie and continuity corrections (SciPy's `method="asymptotic"`): `u` (of `a`), `z`, `p_value`, `effect` (U / n₁n₂, the chance a value of `a` exceeds one of `b`) |
+| <a id="stats-prop_z_test"></a>`stats.prop_z_test(count, nobs, value = 0.0, alternative = "two-sided", level = 0.95)` | the z-test of proportions (statsmodels' `proportions_ztest`): two counts of successes out of two `nobs` (each a list of two or a Series) test p₁ − p₂ against `value` with the pooled proportion's variance; one count and one `nobs` test p against `value` with the sample proportion's. A map of `z`, `p_value`, the proportions (`prop_a`, `prop_b`, or `prop`), `diff` (p₁ − p₂, or p − `value`), `se` (the test's) and `ci` (Wald's interval of p₁ − p₂, or of p, at `level`). `alternative` is `"two-sided"`, `"greater"` or `"less"` |
+| <a id="stats-spearman"></a>`stats.spearman(a, b)` | Spearman's rank correlation over the complete pairs: `rho`, `p_value`, `n` |
 
 **Robust statistics and the bootstrap.**
 
 | Function | Description |
 |---|---|
-| `stats.mad(s, scale = "normal")` | the median absolute deviation, times 1.4826 by default (a normal sample's sd); `scale: 1.0` for the raw MAD |
-| `stats.iqr(s)` | the interquartile range, q75 − q25 (linear interpolation, as `ods.quantile`) |
-| `stats.zscore(s, robust = false)` | standard scores: `(x − mean) / sd`, or with `robust: true` `(x − median) / mad`; nulls stay null |
-| `stats.tukey_fences(s, k = 1.5)` | the pair `(q25 − k·IQR, q75 + k·IQR)` |
-| `stats.bootstrap(s, stat = "mean", n = 2000, seed?, rng?, level = 0.95, compare = "diff")` | `n` resamples, each the statistic (`"mean"`, `"median"`, `"std"`, `"var"`, `"sum"`, or a quantile as a number such as `0.9`), and the percentile interval at `level`: a map of `estimate`, `lo`, `hi`, `ci`, `se` and `draws` (a Series). `s` may be a list of two Series, each resampled on its own: then the statistic is compared by `compare`, `"diff"` (`a − b`) or `"ratio"` (`a / b`). Native and parallel; resample `i` draws from stream `i` of its seed, so the result is the same on any number of threads |
+| <a id="stats-mad"></a>`stats.mad(s, scale = "normal")` | the median absolute deviation, times 1.4826 by default (a normal sample's sd); `scale: 1.0` for the raw MAD |
+| <a id="stats-iqr"></a>`stats.iqr(s)` | the interquartile range, q75 − q25 (linear interpolation, as `ods.quantile`) |
+| <a id="stats-zscore"></a>`stats.zscore(s, robust = false)` | standard scores: `(x − mean) / sd`, or with `robust: true` `(x − median) / mad`; nulls stay null |
+| <a id="stats-tukey_fences"></a>`stats.tukey_fences(s, k = 1.5)` | the pair `(q25 − k·IQR, q75 + k·IQR)` |
+| <a id="stats-bootstrap"></a>`stats.bootstrap(s, stat = "mean", n = 2000, seed?, rng?, level = 0.95, compare = "diff")` | `n` resamples, each the statistic (`"mean"`, `"median"`, `"std"`, `"var"`, `"sum"`, or a quantile as a number such as `0.9`), and the percentile interval at `level`: a map of `estimate`, `lo`, `hi`, `ci`, `se` and `draws` (a Series). `s` may be a list of two Series, each resampled on its own: then the statistic is compared by `compare`, `"diff"` (`a − b`) or `"ratio"` (`a / b`). Native and parallel; resample `i` draws from stream `i` of its seed, so the result is the same on any number of threads |
 
 ```olang
 let r = random.rng(4)
@@ -4073,12 +4080,12 @@ first). The functions are methods of a Series too: `s.acf(48)`.
 
 | Function | Description |
 |---|---|
-| `stats.ts.acf(s, lags?, ci = 0.95)` | the autocorrelation at lags 0..=`lags` (default `10·log₁₀ n`), by FFT in O(n log n): a Frame of `lag`, `acf`, and Bartlett's interval `lo`, `hi` at level `ci` (statsmodels' `acf(fft=True, alpha=…)`) |
-| `stats.ts.pacf(s, lags?, ci = 0.95, method = "yw")` | partial autocorrelations by Yule–Walker (`"yw"`, statsmodels' `ywadjusted`; `"ywm"` its `ywmle`): a Frame of `lag`, `pacf`, `lo`, `hi` (± z/√n) |
-| `stats.ts.decompose(s, period, model = "additive", time?)` | a centred moving average's `trend`, the phase means of the rest as `seasonal`, and `resid` (statsmodels' `seasonal_decompose`; `"multiplicative"` divides): a Frame of `observed`, `trend`, `seasonal`, `resid` (the trend null where the average does not reach), with a `time` column first when `time:` (a Date or Datetime Series) is given |
-| `stats.ts.holt_winters(s, season?, trend = "add", seasonal = "add", fit = true, alpha?, beta?, gamma?, time?)` | Holt-Winters exponential smoothing: an additive trend (`trend: "none"` for none), and with a `season` an additive or multiplicative (`"mul"`) season of that length (no `season`: Holt's linear method). The rates not given are fitted by bounded Nelder–Mead on the sum of squared one-step errors. The first season (one value without a season) sets the initial state, as Winters' method does. A `HoltWinters` value: `forecast(h)`, and the fields `fitted`, `resid`, `params` (`alpha`, `beta`, `gamma`), `sse`, `level`, `slope`, `season`, `n`, `m` |
-| `stats.ts.forecast(model, h)` | the `h` forecasts after the series: a Series, or with the model's `time:` a Frame of `time` (continuing the series' step: a day, an hour, a calendar month) and `forecast` |
-| `stats.ts.seasonal_naive(s, season, h, time?)` | the last `season` values, repeated over `h` steps (a Series, or a Frame with `time:`) |
+| <a id="stats-ts"></a><a id="stats-ts-acf"></a>`stats.ts.acf(s, lags?, ci = 0.95)` | the autocorrelation at lags 0..=`lags` (default `10·log₁₀ n`), by FFT in O(n log n): a Frame of `lag`, `acf`, and Bartlett's interval `lo`, `hi` at level `ci` (statsmodels' `acf(fft=True, alpha=…)`) |
+| <a id="stats-ts-pacf"></a>`stats.ts.pacf(s, lags?, ci = 0.95, method = "yw")` | partial autocorrelations by Yule–Walker (`"yw"`, statsmodels' `ywadjusted`; `"ywm"` its `ywmle`): a Frame of `lag`, `pacf`, `lo`, `hi` (± z/√n) |
+| <a id="stats-ts-decompose"></a>`stats.ts.decompose(s, period, model = "additive", time?)` | a centred moving average's `trend`, the phase means of the rest as `seasonal`, and `resid` (statsmodels' `seasonal_decompose`; `"multiplicative"` divides): a Frame of `observed`, `trend`, `seasonal`, `resid` (the trend null where the average does not reach), with a `time` column first when `time:` (a Date or Datetime Series) is given |
+| <a id="stats-ts-holt_winters"></a>`stats.ts.holt_winters(s, season?, trend = "add", seasonal = "add", fit = true, alpha?, beta?, gamma?, time?)` | Holt-Winters exponential smoothing: an additive trend (`trend: "none"` for none), and with a `season` an additive or multiplicative (`"mul"`) season of that length (no `season`: Holt's linear method). The rates not given are fitted by bounded Nelder–Mead on the sum of squared one-step errors. The first season (one value without a season) sets the initial state, as Winters' method does. A `HoltWinters` value: `forecast(h)`, and the fields `fitted`, `resid`, `params` (`alpha`, `beta`, `gamma`), `sse`, `level`, `slope`, `season`, `n`, `m` |
+| <a id="stats-ts-forecast"></a>`stats.ts.forecast(model, h)` | the `h` forecasts after the series: a Series, or with the model's `time:` a Frame of `time` (continuing the series' step: a day, an hour, a calendar month) and `forecast` |
+| <a id="stats-ts-seasonal_naive"></a>`stats.ts.seasonal_naive(s, season, h, time?)` | the last `season` values, repeated over `h` steps (a Series, or a Frame with `time:`) |
 
 ```olang
 let t = ods.arange(0, 140)
@@ -4191,44 +4198,44 @@ println(fit.predict(f, interval: "prediction").n_rows())   // 48
 
 | Function | Description |
 |---|---|
-| `learn.split(f, opts)` | `#{ train, test }`; opts `test` (fraction or rows, 0.25), `stratify` (a column), `shuffle`, `seed` |
-| `learn.kfold(f \| n, k, opts)` / `learn.folds(f, k, opts)` | fold ids per row / the folds as `#{ fold, train, test }`; opts `shuffle`, `stratify`, `seed` |
-| `learn.time_splits(f \| n, n_splits, opts)` | rolling-origin `#{ train, test }` windows (sklearn's `TimeSeriesSplit`); opts `test_size`, `gap`, `max_train` |
-| `learn.scaler(f, cols, opts)`, `learn.one_hot(f, cols, opts)`, `learn.imputer(f, cols, opts)` | fitted transformers: `method` standard/minmax/robust; `drop_first`; `strategy` mean/median/most_frequent/constant and `fill` |
-| `learn.transform(model, f)` | apply a fitted scaler, encoder, imputer or PCA |
-| `learn.poly(f, cols, degree, opts)` | polynomial columns (`a^2`, `a*b`) appended; `interaction_only` |
-| `learn.linear(f, y, x, opts)` | OLS: `params`, `coef`, `r2`, `adj_r2`, `sigma`, `aic`, `bic`, `fitted`, `resid`; opts `intercept`, `weights`. `y` may be a formula (`"price ~ sqft + C(hood)"`) in this and every supervised model |
-| `learn.ridge`, `learn.lasso`, `learn.elastic_net` `(f, y, x, opts)` | penalized regression (sklearn's objectives): `alpha`, `l1_ratio`, `intercept`, `max_iter`, `tol` |
-| `learn.logistic(f, y, x, opts)` | binary (IRLS) or multinomial (Newton) logistic regression with se, z, p and odds ratios; `C` or `penalty`, `class_weight` (`"balanced"` or a map), `weights` |
-| `learn.tree(f, y, x, opts)` | CART: `max_depth`, `min_samples_split`, `min_samples_leaf`, `criterion` (gini, entropy, squared_error), `max_features`, `task`, `seed` |
-| `learn.forest(f, y, x, opts)` | random forest, trees grown in parallel: the tree options plus `n_trees`, `bootstrap`, `max_samples`, `oob` (gives `oob_score`) |
-| `learn.boost(f, y, x, opts)` | histogram gradient boosting (squared loss, or log loss for a binary target): `n_trees`, `learning_rate`, `max_depth`, `max_leaf_nodes`, `min_samples_leaf`, `l2`, `subsample`, `max_bins`, `early_stopping`, `validation_fraction`, `validation_rows` (row indices held out instead: an explicit validation set), `validation_tail` (the last n rows held out: a time series' most recent), `n_iter_no_change`; the fit says `train_loss`, `valid_loss` (each round's) and `best_iter` |
-| `learn.knn(f, y, x, opts)` / `learn.naive_bayes(f, y, x, opts)` | k-nearest neighbours (`k`, `weights_by`) / Gaussian naive Bayes (`var_smoothing`) |
-| `learn.kmeans(f, cols, k, opts)` / `learn.gmm(f, cols, k, opts)` | k-means++ (`n_init`, `max_iter`, `seed`): `labels`, `centers`, `inertia` / Gaussian mixture by EM: `means`, `weights`, `bic` |
-| `learn.pca(f, cols, opts)` | principal components (`n_components`, `scale`): `explained_variance`, `explained_variance_ratio`, `components` |
-| `learn.silhouette(f, cols, labels, opts)` | mean silhouette coefficient; `sample`, `seed` |
-| `learn.conf_int(model, level = 0.95)` | the coefficients' intervals: a Frame of term, lo, hi |
-| `learn.predict(model, f, opts)` | values, class labels or clusters; `interval`: `"confidence"` or `"prediction"` (an OLS interval Frame at `level`); `kind`: `"prob"` (positive class, or a Frame for 3+ classes), `"probs"`, `"link"`, `"confidence"` / `"prediction"` (an OLS interval Frame at `level`); `trees: k` a boosted model's prediction from its first k trees (staged) |
-| `learn.importance(model)`, `learn.summary(model, opts)`, `learn.params(model)` | importances (impurity, or abs(coef)) / the model as a Frame / estimates by term |
-| `learn.score(model, f, metric)` | one metric against the target column of `f` |
-| `learn.spec(kind, y, x, opts)` / `learn.fit(spec, f)` | how to fit, without fitting (a map of `kind`, `y`, `x` and `options`, the options checked now, as the fit checks them) / fit a spec or refit a model |
-| `learn.cross_validate(spec, f, opts)` | per-fold scores (`folds`, `metrics`, `seed`); stratified for classifiers |
-| `learn.permutation_importance(model, f, opts)` | `metric`, `repeats`, `seed` |
-| `learn.partial_dependence(model, f, feature, opts)` | the mean prediction over a grid (`grid`, `points`, `sample`) |
-| `learn.learning_curve(spec, f, opts)` | train and test scores by training size (`sizes`, `folds`, `metric`) |
-| `learn.grid_search(spec, f, grid, opts)` | `#{ results, best, best_score, metric, model }`; the grid a map or an object of option to values (`{ max_depth: [2, 3, 4] }`), each key an option of the spec's kind |
-| `learn.rmse`, `learn.mse`, `learn.mae`, `learn.mape`, `learn.r2` `(y, pred)` | regression metrics |
-| `learn.accuracy(y, pred)`, `learn.precision`, `learn.recall`, `learn.f1` `(y, pred, opts)` | label metrics; `average` binary/macro/micro/weighted, `pos` |
-| `learn.log_loss`, `learn.brier`, `learn.auc`, `learn.average_precision` `(y, p, opts)` | probability metrics; `pos` names the positive class |
-| `learn.roc`, `learn.pr_curve` `(y, p, opts)` | the curves as Frames |
-| `learn.confusion(y, pred)`, `learn.classification_report(y, pred)` | Frames |
-| `learn.at_threshold(y, p, opts)` / `learn.threshold_sweep(y, p, opts)` | counts and rates at one `threshold` / at every distinct one |
-| `learn.calibration(y, p, opts)` | predicted against observed per bin (`bins`, `strategy` uniform/quantile) |
+| <a id="learn-split"></a>`learn.split(f, opts)` | `#{ train, test }`; opts `test` (fraction or rows, 0.25), `stratify` (a column), `shuffle`, `seed` |
+| <a id="learn-kfold"></a><a id="learn-folds"></a>`learn.kfold(f \| n, k, opts)` / `learn.folds(f, k, opts)` | fold ids per row / the folds as `#{ fold, train, test }`; opts `shuffle`, `stratify`, `seed` |
+| <a id="learn-time_splits"></a>`learn.time_splits(f \| n, n_splits, opts)` | rolling-origin `#{ train, test }` windows (sklearn's `TimeSeriesSplit`); opts `test_size`, `gap`, `max_train` |
+| <a id="learn-scaler"></a><a id="learn-one_hot"></a><a id="learn-imputer"></a>`learn.scaler(f, cols, opts)`, `learn.one_hot(f, cols, opts)`, `learn.imputer(f, cols, opts)` | fitted transformers: `method` standard/minmax/robust; `drop_first`; `strategy` mean/median/most_frequent/constant and `fill` |
+| <a id="learn-transform"></a>`learn.transform(model, f)` | apply a fitted scaler, encoder, imputer or PCA |
+| <a id="learn-poly"></a>`learn.poly(f, cols, degree, opts)` | polynomial columns (`a^2`, `a*b`) appended; `interaction_only` |
+| <a id="learn-linear"></a>`learn.linear(f, y, x, opts)` | OLS: `params`, `coef`, `r2`, `adj_r2`, `sigma`, `aic`, `bic`, `fitted`, `resid`; opts `intercept`, `weights`. `y` may be a formula (`"price ~ sqft + C(hood)"`) in this and every supervised model |
+| <a id="learn-ridge"></a><a id="learn-lasso"></a><a id="learn-elastic_net"></a>`learn.ridge`, `learn.lasso`, `learn.elastic_net` `(f, y, x, opts)` | penalized regression (sklearn's objectives): `alpha`, `l1_ratio`, `intercept`, `max_iter`, `tol` |
+| <a id="learn-logistic"></a>`learn.logistic(f, y, x, opts)` | binary (IRLS) or multinomial (Newton) logistic regression with se, z, p and odds ratios; `C` or `penalty`, `class_weight` (`"balanced"` or a map), `weights` |
+| <a id="learn-tree"></a>`learn.tree(f, y, x, opts)` | CART: `max_depth`, `min_samples_split`, `min_samples_leaf`, `criterion` (gini, entropy, squared_error), `max_features`, `task`, `seed` |
+| <a id="learn-forest"></a>`learn.forest(f, y, x, opts)` | random forest, trees grown in parallel: the tree options plus `n_trees`, `bootstrap`, `max_samples`, `oob` (gives `oob_score`) |
+| <a id="learn-boost"></a>`learn.boost(f, y, x, opts)` | histogram gradient boosting (squared loss, or log loss for a binary target): `n_trees`, `learning_rate`, `max_depth`, `max_leaf_nodes`, `min_samples_leaf`, `l2`, `subsample`, `max_bins`, `early_stopping`, `validation_fraction`, `validation_rows` (row indices held out instead: an explicit validation set), `validation_tail` (the last n rows held out: a time series' most recent), `n_iter_no_change`; the fit says `train_loss`, `valid_loss` (each round's) and `best_iter` |
+| <a id="learn-knn"></a><a id="learn-naive_bayes"></a>`learn.knn(f, y, x, opts)` / `learn.naive_bayes(f, y, x, opts)` | k-nearest neighbours (`k`, `weights_by`) / Gaussian naive Bayes (`var_smoothing`) |
+| <a id="learn-kmeans"></a><a id="learn-gmm"></a>`learn.kmeans(f, cols, k, opts)` / `learn.gmm(f, cols, k, opts)` | k-means++ (`n_init`, `max_iter`, `seed`): `labels`, `centers`, `inertia` / Gaussian mixture by EM: `means`, `weights`, `bic` |
+| <a id="learn-pca"></a>`learn.pca(f, cols, opts)` | principal components (`n_components`, `scale`): `explained_variance`, `explained_variance_ratio`, `components` |
+| <a id="learn-silhouette"></a>`learn.silhouette(f, cols, labels, opts)` | mean silhouette coefficient; `sample`, `seed` |
+| <a id="learn-conf_int"></a>`learn.conf_int(model, level = 0.95)` | the coefficients' intervals: a Frame of term, lo, hi |
+| <a id="learn-predict"></a>`learn.predict(model, f, opts)` | values, class labels or clusters; `interval`: `"confidence"` or `"prediction"` (an OLS interval Frame at `level`); `kind`: `"prob"` (positive class, or a Frame for 3+ classes), `"probs"`, `"link"`, `"confidence"` / `"prediction"` (an OLS interval Frame at `level`); `trees: k` a boosted model's prediction from its first k trees (staged) |
+| <a id="learn-importance"></a><a id="learn-summary"></a><a id="learn-params"></a>`learn.importance(model)`, `learn.summary(model, opts)`, `learn.params(model)` | importances (impurity, or abs(coef)) / the model as a Frame / estimates by term |
+| <a id="learn-score"></a>`learn.score(model, f, metric)` | one metric against the target column of `f` |
+| <a id="learn-spec"></a><a id="learn-fit"></a>`learn.spec(kind, y, x, opts)` / `learn.fit(spec, f)` | how to fit, without fitting (a map of `kind`, `y`, `x` and `options`, the options checked now, as the fit checks them) / fit a spec or refit a model |
+| <a id="learn-cross_validate"></a>`learn.cross_validate(spec, f, opts)` | per-fold scores (`folds`, `metrics`, `seed`); stratified for classifiers |
+| <a id="learn-permutation_importance"></a>`learn.permutation_importance(model, f, opts)` | `metric`, `repeats`, `seed` |
+| <a id="learn-partial_dependence"></a>`learn.partial_dependence(model, f, feature, opts)` | the mean prediction over a grid (`grid`, `points`, `sample`) |
+| <a id="learn-learning_curve"></a>`learn.learning_curve(spec, f, opts)` | train and test scores by training size (`sizes`, `folds`, `metric`) |
+| <a id="learn-grid_search"></a>`learn.grid_search(spec, f, grid, opts)` | `#{ results, best, best_score, metric, model }`; the grid a map or an object of option to values (`{ max_depth: [2, 3, 4] }`), each key an option of the spec's kind |
+| <a id="learn-rmse"></a><a id="learn-mse"></a><a id="learn-mae"></a><a id="learn-mape"></a><a id="learn-r2"></a>`learn.rmse`, `learn.mse`, `learn.mae`, `learn.mape`, `learn.r2` `(y, pred)` | regression metrics |
+| <a id="learn-accuracy"></a><a id="learn-precision"></a><a id="learn-recall"></a><a id="learn-f1"></a>`learn.accuracy(y, pred)`, `learn.precision`, `learn.recall`, `learn.f1` `(y, pred, opts)` | label metrics; `average` binary/macro/micro/weighted, `pos` |
+| <a id="learn-log_loss"></a><a id="learn-brier"></a><a id="learn-auc"></a><a id="learn-average_precision"></a>`learn.log_loss`, `learn.brier`, `learn.auc`, `learn.average_precision` `(y, p, opts)` | probability metrics; `pos` names the positive class |
+| <a id="learn-roc"></a><a id="learn-pr_curve"></a>`learn.roc`, `learn.pr_curve` `(y, p, opts)` | the curves as Frames |
+| <a id="learn-confusion"></a><a id="learn-classification_report"></a>`learn.confusion(y, pred)`, `learn.classification_report(y, pred)` | Frames |
+| <a id="learn-at_threshold"></a><a id="learn-threshold_sweep"></a>`learn.at_threshold(y, p, opts)` / `learn.threshold_sweep(y, p, opts)` | counts and rates at one `threshold` / at every distinct one |
+| <a id="learn-calibration"></a>`learn.calibration(y, p, opts)` | predicted against observed per bin (`bins`, `strategy` uniform/quantile) |
 
-`use ml` mirrors each of these with keywords (`ml.forest(f, y: "churn",
+<a id="ml-forest"></a>`use ml` mirrors each of these with keywords (`ml.forest(f, y: "churn",
 trees: 300, seed: 1)`; `trees`, `bins`, `validation` and `patience` are the
 short names of `n_trees`, `max_bins`, `validation_fraction` and
-`n_iter_no_change`; `ml.boost`'s `validation` may also be a Frame, its
+<a id="ml-boost"></a>`n_iter_no_change`; `ml.boost`'s `validation` may also be a Frame, its
 rows appended to the data's and held out, and `validation_rows` or
 `validation_tail` turns early stopping on). It adds three more: `prob(model, f)`, the class
 probabilities; `fit_transform(model_fn, data)`; and a
@@ -4237,14 +4244,14 @@ probabilities; `fit_transform(model_fn, data)`; and a
 
 | `ml` function | Purpose |
 |---|---|
-| `split`, `kfold`, `folds`, `time_splits` | splitting, with `test:`, `k:`, `stratify:`, `seed:` |
-| `scaler`, `one_hot`, `imputer`, `transform`, `fit_transform`, `poly` | preprocessing |
-| `linear`, `ridge`, `lasso`, `elastic_net`, `logistic` | linear models, `y:` and `x:` |
-| `tree`, `forest`, `boost`, `knn`, `naive_bayes` | trees, ensembles and the rest |
-| `kmeans`, `gmm`, `pca`, `silhouette` | unsupervised |
-| `predict`, `prob`, `importance`, `summary`, `params`, `score`, `spec`, `fit` | the model interface |
-| `cross_validate`, `permutation_importance`, `partial_dependence`, `learning_curve`, `grid_search` | evaluation |
-| `rmse`, `mse`, `mae`, `mape`, `r2`, `accuracy`, `precision`, `recall`, `f1`, `log_loss`, `brier`, `auc`, `average_precision`, `roc`, `pr_curve`, `confusion`, `classification_report`, `at_threshold`, `threshold_sweep`, `calibration` | metrics |
+| <a id="ml-split"></a><a id="ml-kfold"></a><a id="ml-folds"></a><a id="ml-time_splits"></a>`split`, `kfold`, `folds`, `time_splits` | splitting, with `test:`, `k:`, `stratify:`, `seed:` |
+| <a id="ml-scaler"></a><a id="ml-one_hot"></a><a id="ml-imputer"></a><a id="ml-transform"></a><a id="ml-fit_transform"></a><a id="ml-poly"></a>`scaler`, `one_hot`, `imputer`, `transform`, `fit_transform`, `poly` | preprocessing |
+| <a id="ml-linear"></a><a id="ml-ridge"></a><a id="ml-lasso"></a><a id="ml-elastic_net"></a><a id="ml-logistic"></a>`linear`, `ridge`, `lasso`, `elastic_net`, `logistic` | linear models, `y:` and `x:` |
+| <a id="ml-tree"></a><a id="ml-knn"></a><a id="ml-naive_bayes"></a>`tree`, `forest`, `boost`, `knn`, `naive_bayes` | trees, ensembles and the rest |
+| <a id="ml-kmeans"></a><a id="ml-gmm"></a><a id="ml-pca"></a><a id="ml-silhouette"></a>`kmeans`, `gmm`, `pca`, `silhouette` | unsupervised |
+| <a id="ml-predict"></a><a id="ml-prob"></a><a id="ml-importance"></a><a id="ml-summary"></a><a id="ml-params"></a><a id="ml-score"></a><a id="ml-spec"></a><a id="ml-fit"></a>`predict`, `prob`, `importance`, `summary`, `params`, `score`, `spec`, `fit` | the model interface |
+| <a id="ml-cross_validate"></a><a id="ml-permutation_importance"></a><a id="ml-partial_dependence"></a><a id="ml-learning_curve"></a><a id="ml-grid_search"></a>`cross_validate`, `permutation_importance`, `partial_dependence`, `learning_curve`, `grid_search` | evaluation |
+| <a id="ml-rmse"></a><a id="ml-mse"></a><a id="ml-mae"></a><a id="ml-mape"></a><a id="ml-r2"></a><a id="ml-accuracy"></a><a id="ml-precision"></a><a id="ml-recall"></a><a id="ml-f1"></a><a id="ml-log_loss"></a><a id="ml-brier"></a><a id="ml-auc"></a><a id="ml-average_precision"></a><a id="ml-roc"></a><a id="ml-pr_curve"></a><a id="ml-confusion"></a><a id="ml-classification_report"></a><a id="ml-at_threshold"></a><a id="ml-threshold_sweep"></a><a id="ml-calibration"></a>`rmse`, `mse`, `mae`, `mape`, `r2`, `accuracy`, `precision`, `recall`, `f1`, `log_loss`, `brier`, `auc`, `average_precision`, `roc`, `pr_curve`, `confusion`, `classification_report`, `at_threshold`, `threshold_sweep`, `calibration` | metrics |
 
 Early stopping on a time series holds out its most recent rows, not a
 random tenth: `validation_tail` (or `validation_rows`, or a `validation`
@@ -4271,10 +4278,10 @@ scikit-learn.
 
 `plot` draws charts as complete SVG documents, returned as strings. You
 can save one with `fs.write_file`, serve it over `http`, or put it on a
-page with `dom.set_html`. `plot.line`, `plot.scatter`, `plot.area`,
-`plot.lines` (multi-series with legend), `plot.xy` (layered marks over
-shared scales), `plot.bar`, `plot.bars` (grouped), `plot.stacked`,
-`plot.hist`, `plot.heatmap`, and `plot.box` take Series data plus one
+<a id="plot-line"></a><a id="plot-scatter"></a><a id="plot-area"></a>page with `dom.set_html`. `plot.line`, `plot.scatter`, `plot.area`,
+<a id="plot-lines"></a><a id="plot-xy"></a>`plot.lines` (multi-series with legend), `plot.xy` (layered marks over
+<a id="plot-bar"></a><a id="plot-bars"></a><a id="plot-stacked"></a>shared scales), `plot.bar`, `plot.bars` (grouped), `plot.stacked`,
+<a id="plot-hist"></a><a id="plot-heatmap"></a><a id="plot-box"></a>`plot.hist`, `plot.heatmap`, and `plot.box` take Series data plus one
 options map (`title`, `x_label`, `y_label`, `width`, `height`, `theme`
 — `"dark"` re-tunes every color for a dark surface — `paper` and `ink`,
 which take the background and the frame's color from the page
@@ -4286,15 +4293,15 @@ are errors). Defaults follow a colorblind-validated
 ten-hue palette, so a chart is presentable with `#{}` — and color is
 an option, not a fate: `colors` gives a chart its own palette, `vary`
 colors bar categories individually, `scale` picks a heatmap ramp
-(`ocean`/`ember`/`thermal`/`diverging`), and `plot.ramp(name, t)`
+<a id="plot-ramp"></a>(`ocean`/`ember`/`thermal`/`diverging`), and `plot.ramp(name, t)`
 hands the same ramps to your code. Every chart carries its description
 as data (a `<metadata class="olang-chart">` of JSON after its opening
-tag), and `plot.describe(svg)` answers it as a Map — `Err` for text
+<a id="plot-describe"></a>tag), and `plot.describe(svg)` answers it as a Map — `Err` for text
 that carries none ([the data stack](ods.md#a-charts-description)). A
 chart's ids (an area's gradient) start with `vz` and a hash of the
 chart, so charts share a page without sharing an id.
-`plot.gg(p)` renders a [`gg`](#gg--a-grammar-of-graphics) plot to SVG
-and `plot.gg_scene(p)` to its scene as JSON (the display list a host
+<a id="plot-gg"></a>`plot.gg(p)` renders a [`gg`](#gg--a-grammar-of-graphics) plot to SVG
+<a id="plot-gg_scene"></a>and `plot.gg_scene(p)` to its scene as JSON (the display list a host
 draws natively). In `viz`, `"color_by": "column"`
 maps values onto a ramp per point — continuous color encoding on both
 the SVG and canvas targets.
@@ -4360,7 +4367,7 @@ scale training, positions, facet layout, legends, text measurement) and
 serializes one scene to SVG. A plot that is a notebook cell's or the
 REPL's value is drawn natively by an editor (the kernel sends its scene:
 [tooling](tooling.md)), with each mark's values on hover and a dragged
-range zoomed; `gg.svg(p)` is its SVG text and `gg.save(p, path)` writes
+<a id="gg-svg"></a><a id="gg-save"></a>range zoomed; `gg.svg(p)` is its SVG text and `gg.save(p, path)` writes
 it.
 
 ```olang
@@ -4380,14 +4387,14 @@ assert(str.starts_with(gg.svg(p), "<svg"))
 
 A mapping names a column (`"price"`), holds a Series of the frame's
 length, or names a variable the layer's stat computes:
-`gg.aes(y: gg.after_stat("density"))`. A number or a Bool in `aes`, or
+<a id="gg-aes"></a><a id="gg-after_stat"></a>`gg.aes(y: gg.after_stat("density"))`. A number or a Bool in `aes`, or
 `gg.constant(value)`, is a constant *mapping*: one value for every row
 that still groups and keys a legend, as ggplot's `aes(group = 1)` and
-`aes(colour = "all")` do (`gg.line(gg.aes(group: 1))` joins a line across
+<a id="gg-line"></a>`aes(colour = "all")` do (`gg.line(gg.aes(group: 1))` joins a line across
 a categorical x; a String in `aes` always names a column, so a constant
 String says `gg.constant("all")`). A mapped `group` is the grouping
 alone, not crossed with the other categories. A constant look goes to
-the layer instead (`gg.point(color: "steelblue", alpha: 0.4, size: 2)`): colours
+<a id="gg-point"></a>the layer instead (`gg.point(color: "steelblue", alpha: 0.4, size: 2)`): colours
 are names or `#hex`, sizes are ggplot's units (a point's `size` 1.5, a
 line's `linewidth` 0.5), a text's `size` is pixels. Strings mapped to a
 position that all read as ISO dates (`2024-03-01`, `2024-03-01 14:30`)
@@ -4399,12 +4406,12 @@ missing column lists the frame's.
 
 | Building | Purpose |
 |---|---|
-| `plot(data, mapping)` | a plot of a Frame (or records) with a default mapping |
+| <a id="gg-plot"></a>`plot(data, mapping)` | a plot of a Frame (or records) with a default mapping |
 | `aes(x, y, color, fill, size, shape, alpha, linetype, linewidth, group, label, xmin, xmax, ymin, ymax, xend, yend, weight, sample, xintercept, yintercept)` | the mappings (`colour` too) |
 | `after_stat(name)` | a stat's variable as a mapping: `count`, `density`, `ncount`, `ndensity`, `scaled`, `prop`, `ecdf`, … |
-| `constant(value)` | one value for every row, as a mapping (`color: gg.constant("all")`): a group and a legend key |
-| `layer(p, geom, stat, position, mapping, data, params)` | any geom with any stat and position |
-| `svg(p)` · `save(p, path)` · `scene(p)` | the SVG text, written to a file; the scene as JSON (what a host draws) |
+| <a id="gg-constant"></a>`constant(value)` | one value for every row, as a mapping (`color: gg.constant("all")`): a group and a legend key |
+| <a id="gg-layer"></a>`layer(p, geom, stat, position, mapping, data, params)` | any geom with any stat and position |
+| <a id="gg-scene"></a>`svg(p)` · `save(p, path)` · `scene(p)` | the SVG text, written to a file; the scene as JSON (what a host draws) |
 
 Every geom takes `mapping` and `data` (a layer's own, else the plot's;
 `inherit: false` leaves the plot's mapping out), its constants, and
@@ -4412,28 +4419,28 @@ Every geom takes `mapping` and `data` (a layer's own, else the plot's;
 
 | Geom | Draws |
 |---|---|
-| `point(p, …)` · `jitter(p, width, height, seed, …)` | points; points moved at random (seeded) |
-| `line(p, …)` · `path(p, …)` · `step(p, direction, …)` | lines in x order, in data order, as a staircase (`"hv"`, `"vh"`) |
-| `area(p, …)` · `ribbon(p, …)` | an area from zero (stacked by group), a band from `ymin` to `ymax` |
-| `bar(p, …)` · `col(p, …)` | bars counting each x, bars of height y (stacked; `position: "dodge"` or `"fill"`) |
-| `histogram(p, bins, binwidth, boundary, center, breaks, …)` · `freqpoly(p, …)` | binned counts as bars, as a line |
-| `density(p, bw, adjust, kernel, n, trim, linewidth, linetype, …)` | a kernel density estimate: `bw` `"nrd0"` (Silverman's rule, the default), `"nrd"`, `"scott"` or a number; kernels gaussian, epanechnikov, rectangular, triangular, biweight |
-| `boxplot(p, width, coef, outliers, linewidth, …)` | median, hinges, whiskers at 1.5 IQR, outliers |
-| `violin(p, scale, trim, bw, adjust, draw_quantiles, …)` | each group's density mirrored (`scale` `"area"`, `"count"`, `"width"`) |
-| `errorbar(p, width, position, …)` · `pointrange(p, position, …)` · `linerange(p, position, …)` · `crossbar(p, width, position, …)` | intervals from `ymin` to `ymax`; `position: gg.position_dodge(width: 0.5)` sets groups side by side (each with `alpha`, `linewidth`) |
-| `summary(p, fun, level, mult, geom, alpha, fill, linewidth, position, …)` | y summarised at each x: `fun` `"mean_se"` (default), `"mean_cl_normal"` (a t interval at `level`), `"mean_sdl"`, `"median_hilow"`, `"mean"`, `"median"`, drawn as a point range (or `geom`: `"errorbar"`, `"crossbar"`, `"point"`, `"line"`, `"col"`, styled as that geom is) |
-| `smooth(p, method, se, level, span, degree, k, n, fullrange, …)` | a smoother and its standard-error band: `"lm"` (a polynomial of `degree`), `"loess"` (local quadratic, `span` 0.75), `"gam"` (penalized cubic regression spline, smoothness by REML as ggplot asks of mgcv; `k` 10, or a third of the distinct x when fewer than 30, at least 4), `"auto"` (loess under 1,000 points, gam over) |
-| `text(p, label, size, hjust, vjust, nudge_x, nudge_y, check_overlap, fontface, …)` · `label(p, …)` | text at each point; text on a box. Without a colour, text on a filled tile, bar or rect beneath it (or a label's own fill) takes the dark ink or the light, whichever reads, in either appearance |
-| `tile(p, width, height, …)` · `raster(p, …)` · `rect(p, …)` | heatmap tiles; tiles that abut; rectangles from `xmin`… (an edge not mapped is the panel's) |
-| `hline(p, yintercept)` · `vline(p, xintercept)` · `abline(p, slope, intercept)` | reference lines (a number or a list); an abline is cut to its panel (a coord's limits, a fixed ratio) |
-| `rug(p, sides, length, …)` · `segment(p, …)` | ticks along the axes; segments to (`xend`, `yend`) |
-| `hex(p, bins, binwidth)` · `bin2d(p, bins, binwidth)` | 2-D bins filled by count |
-| `ecdf(p, …)` · `qq(p, mean, sd, …)` · `qq_line(p, …)` | the empirical cdf; a normal Q-Q plot of `sample` and its quartile line |
-| `annotate(p, geom, x, y, xend, yend, xmin, xmax, ymin, ymax, label, …)` | one mark from constants: a note, a band, a line. A rect's edge left out is the panel's, as ggplot's `-Inf`/`Inf` are: `annotate(p, "rect", xmin: 3, xmax: 5)` is a band the panel's full height (an infinite value is its edge too) |
+| <a id="gg-jitter"></a>`point(p, …)` · `jitter(p, width, height, seed, …)` | points; points moved at random (seeded) |
+| <a id="gg-path"></a><a id="gg-step"></a>`line(p, …)` · `path(p, …)` · `step(p, direction, …)` | lines in x order, in data order, as a staircase (`"hv"`, `"vh"`) |
+| <a id="gg-area"></a><a id="gg-ribbon"></a>`area(p, …)` · `ribbon(p, …)` | an area from zero (stacked by group), a band from `ymin` to `ymax` |
+| <a id="gg-bar"></a><a id="gg-col"></a>`bar(p, …)` · `col(p, …)` | bars counting each x, bars of height y (stacked; `position: "dodge"` or `"fill"`) |
+| <a id="gg-histogram"></a><a id="gg-freqpoly"></a>`histogram(p, bins, binwidth, boundary, center, breaks, …)` · `freqpoly(p, …)` | binned counts as bars, as a line |
+| <a id="gg-density"></a>`density(p, bw, adjust, kernel, n, trim, linewidth, linetype, …)` | a kernel density estimate: `bw` `"nrd0"` (Silverman's rule, the default), `"nrd"`, `"scott"` or a number; kernels gaussian, epanechnikov, rectangular, triangular, biweight |
+| <a id="gg-boxplot"></a>`boxplot(p, width, coef, outliers, linewidth, …)` | median, hinges, whiskers at 1.5 IQR, outliers |
+| <a id="gg-violin"></a>`violin(p, scale, trim, bw, adjust, draw_quantiles, …)` | each group's density mirrored (`scale` `"area"`, `"count"`, `"width"`) |
+| <a id="gg-errorbar"></a><a id="gg-pointrange"></a><a id="gg-linerange"></a><a id="gg-crossbar"></a><a id="gg-position_dodge"></a>`errorbar(p, width, position, …)` · `pointrange(p, position, …)` · `linerange(p, position, …)` · `crossbar(p, width, position, …)` | intervals from `ymin` to `ymax`; `position: gg.position_dodge(width: 0.5)` sets groups side by side (each with `alpha`, `linewidth`) |
+| <a id="gg-summary"></a>`summary(p, fun, level, mult, geom, alpha, fill, linewidth, position, …)` | y summarised at each x: `fun` `"mean_se"` (default), `"mean_cl_normal"` (a t interval at `level`), `"mean_sdl"`, `"median_hilow"`, `"mean"`, `"median"`, drawn as a point range (or `geom`: `"errorbar"`, `"crossbar"`, `"point"`, `"line"`, `"col"`, styled as that geom is) |
+| <a id="gg-smooth"></a>`smooth(p, method, se, level, span, degree, k, n, fullrange, …)` | a smoother and its standard-error band: `"lm"` (a polynomial of `degree`), `"loess"` (local quadratic, `span` 0.75), `"gam"` (penalized cubic regression spline, smoothness by REML as ggplot asks of mgcv; `k` 10, or a third of the distinct x when fewer than 30, at least 4), `"auto"` (loess under 1,000 points, gam over) |
+| <a id="gg-text"></a><a id="gg-label"></a>`text(p, label, size, hjust, vjust, nudge_x, nudge_y, check_overlap, fontface, …)` · `label(p, …)` | text at each point; text on a box. Without a colour, text on a filled tile, bar or rect beneath it (or a label's own fill) takes the dark ink or the light, whichever reads, in either appearance |
+| <a id="gg-tile"></a><a id="gg-raster"></a><a id="gg-rect"></a>`tile(p, width, height, …)` · `raster(p, …)` · `rect(p, …)` | heatmap tiles; tiles that abut; rectangles from `xmin`… (an edge not mapped is the panel's) |
+| <a id="gg-hline"></a><a id="gg-vline"></a><a id="gg-abline"></a>`hline(p, yintercept)` · `vline(p, xintercept)` · `abline(p, slope, intercept)` | reference lines (a number or a list); an abline is cut to its panel (a coord's limits, a fixed ratio) |
+| <a id="gg-rug"></a><a id="gg-segment"></a>`rug(p, sides, length, …)` · `segment(p, …)` | ticks along the axes; segments to (`xend`, `yend`) |
+| <a id="gg-hex"></a><a id="gg-bin2d"></a>`hex(p, bins, binwidth)` · `bin2d(p, bins, binwidth)` | 2-D bins filled by count |
+| <a id="gg-ecdf"></a><a id="gg-qq"></a><a id="gg-qq_line"></a>`ecdf(p, …)` · `qq(p, mean, sd, …)` · `qq_line(p, …)` | the empirical cdf; a normal Q-Q plot of `sample` and its quartile line |
+| <a id="gg-annotate"></a>`annotate(p, geom, x, y, xend, yend, xmin, xmax, ymin, ymax, label, …)` | one mark from constants: a note, a band, a line. A rect's edge left out is the panel's, as ggplot's `-Inf`/`Inf` are: `annotate(p, "rect", xmin: 3, xmax: 5)` is a band the panel's full height (an infinite value is its edge too) |
 
-Positions: a layer's `position` is a name or one of `position_stack(reverse)`,
-`position_fill(reverse)`, `position_dodge(width)`, `position_dodge2(width, padding)`,
-`position_jitter(width, height, seed)`, `position_nudge(x, y)`. A dodge's
+<a id="gg-position_stack"></a>Positions: a layer's `position` is a name or one of `position_stack(reverse)`,
+<a id="gg-position_fill"></a><a id="gg-position_dodge2"></a>`position_fill(reverse)`, `position_dodge(width)`, `position_dodge2(width, padding)`,
+<a id="gg-position_jitter"></a><a id="gg-position_nudge"></a>`position_jitter(width, height, seed)`, `position_nudge(x, y)`. A dodge's
 `width` is the space the groups at an x spread over (by default the mark's
 own); each mark keeps its own width shared among them, as ggplot dodges
 (`errorbar(width: 0.2, position: gg.position_dodge(width: 0.6))`).
@@ -4442,18 +4449,18 @@ Scales (a later one for the same aesthetic replaces the earlier):
 
 | Scale | Purpose |
 |---|---|
-| `scale_x_continuous(p, name, breaks, labels, limits, expand, trans, prefix, suffix)` · `scale_y_continuous` | an axis: `labels` `"percent"`, `"comma"`, `"dollar"`, `"short"` (1.5k, 2M), `"scientific"`, `"plain"`, or a list; `breaks` a list or a count; `limits` `[lo, hi]` (either `()`); `trans` `"log10"`, `"sqrt"`, `"reverse"` |
-| `scale_x_log10` · `scale_y_log10` · `scale_x_sqrt` · `scale_y_sqrt` · `scale_x_reverse` · `scale_y_reverse` | a transformed axis (log10: breaks at powers of ten) |
-| `scale_x_discrete(p, name, limits, labels, breaks)` · `scale_y_discrete` | categories: `limits` their order, `labels` a list or a map |
-| `scale_x_date(p, name, date_breaks, date_labels, limits, breaks)` · `scale_y_date` · `scale_x_datetime` · `scale_y_datetime` | dates: `date_breaks` `"1 month"`, `"2 weeks"`, `"6 hours"`; `date_labels` strftime (`%Y %m %d %b %B %H %M %S %e %j %a %A`) |
-| `scale_color_manual(p, values, …)` · `scale_fill_manual` | colours by hand: a list, or a map of level to colour |
-| `scale_color_discrete(p, palette, …)` · `scale_fill_discrete` | categories from `"quiet"` (the default: ten hues tuned per appearance) or a viridis option |
-| `scale_color_viridis_d(p, option, begin, end, direction, …)` · `scale_fill_viridis_d` · `scale_color_viridis_c` · `scale_fill_viridis_c` | the viridis family: `option` viridis, magma, inferno, plasma, cividis, mako, rocket |
-| `scale_color_gradient(p, low, high, …)` · `scale_fill_gradient` · `scale_color_gradientn(p, colors)` · `scale_fill_gradientn` | sequential colours |
-| `scale_color_gradient2(p, low, mid, high, midpoint, …)` · `scale_fill_gradient2` | diverging colours centred on `midpoint` (0) |
-| `scale_color_grey(p, start, end)` · `scale_fill_grey` · `scale_color_identity(p)` · `scale_fill_identity` | greys; the column's values as the colours |
-| `scale_size(p, range, …)` · `scale_alpha(p, range, …)` · `scale_shape(p, values, …)` · `scale_linetype(p, values, …)` | sizes by area, opacities, glyphs (circle, triangle, square, diamond, open ones, plus, cross), dashes |
-| `scale_linewidth(p, range, name, breaks, labels, limits, trans, guide)` | line widths for a `linewidth` mapping: `range` [thinnest, thickest] in linewidth units (default [0.25, 2]) |
+| <a id="gg-scale_x_continuous"></a><a id="gg-scale_y_continuous"></a>`scale_x_continuous(p, name, breaks, labels, limits, expand, trans, prefix, suffix)` · `scale_y_continuous` | an axis: `labels` `"percent"`, `"comma"`, `"dollar"`, `"short"` (1.5k, 2M), `"scientific"`, `"plain"`, or a list; `breaks` a list or a count; `limits` `[lo, hi]` (either `()`); `trans` `"log10"`, `"sqrt"`, `"reverse"` |
+| <a id="gg-scale_x_log10"></a><a id="gg-scale_y_log10"></a><a id="gg-scale_x_sqrt"></a><a id="gg-scale_y_sqrt"></a><a id="gg-scale_x_reverse"></a><a id="gg-scale_y_reverse"></a>`scale_x_log10` · `scale_y_log10` · `scale_x_sqrt` · `scale_y_sqrt` · `scale_x_reverse` · `scale_y_reverse` | a transformed axis (log10: breaks at powers of ten) |
+| <a id="gg-scale_x_discrete"></a><a id="gg-scale_y_discrete"></a>`scale_x_discrete(p, name, limits, labels, breaks)` · `scale_y_discrete` | categories: `limits` their order, `labels` a list or a map |
+| <a id="gg-scale_x_date"></a><a id="gg-scale_y_date"></a><a id="gg-scale_x_datetime"></a><a id="gg-scale_y_datetime"></a>`scale_x_date(p, name, date_breaks, date_labels, limits, breaks)` · `scale_y_date` · `scale_x_datetime` · `scale_y_datetime` | dates: `date_breaks` `"1 month"`, `"2 weeks"`, `"6 hours"`; `date_labels` strftime (`%Y %m %d %b %B %H %M %S %e %j %a %A`) |
+| <a id="gg-scale_color_manual"></a><a id="gg-scale_fill_manual"></a>`scale_color_manual(p, values, …)` · `scale_fill_manual` | colours by hand: a list, or a map of level to colour |
+| <a id="gg-scale_color_discrete"></a><a id="gg-scale_fill_discrete"></a>`scale_color_discrete(p, palette, …)` · `scale_fill_discrete` | categories from `"quiet"` (the default: ten hues tuned per appearance) or a viridis option |
+| <a id="gg-scale_color_viridis_d"></a><a id="gg-scale_fill_viridis_d"></a><a id="gg-scale_color_viridis_c"></a><a id="gg-scale_fill_viridis_c"></a>`scale_color_viridis_d(p, option, begin, end, direction, …)` · `scale_fill_viridis_d` · `scale_color_viridis_c` · `scale_fill_viridis_c` | the viridis family: `option` viridis, magma, inferno, plasma, cividis, mako, rocket |
+| <a id="gg-scale_color_gradient"></a><a id="gg-scale_fill_gradient"></a><a id="gg-scale_color_gradientn"></a><a id="gg-scale_fill_gradientn"></a>`scale_color_gradient(p, low, high, …)` · `scale_fill_gradient` · `scale_color_gradientn(p, colors)` · `scale_fill_gradientn` | sequential colours |
+| <a id="gg-scale_color_gradient2"></a><a id="gg-scale_fill_gradient2"></a>`scale_color_gradient2(p, low, mid, high, midpoint, …)` · `scale_fill_gradient2` | diverging colours centred on `midpoint` (0) |
+| <a id="gg-scale_color_grey"></a><a id="gg-scale_fill_grey"></a><a id="gg-scale_color_identity"></a><a id="gg-scale_fill_identity"></a>`scale_color_grey(p, start, end)` · `scale_fill_grey` · `scale_color_identity(p)` · `scale_fill_identity` | greys; the column's values as the colours |
+| <a id="gg-scale_size"></a><a id="gg-scale_alpha"></a><a id="gg-scale_shape"></a><a id="gg-scale_linetype"></a>`scale_size(p, range, …)` · `scale_alpha(p, range, …)` · `scale_shape(p, values, …)` · `scale_linetype(p, values, …)` | sizes by area, opacities, glyphs (circle, triangle, square, diamond, open ones, plus, cross), dashes |
+| <a id="gg-scale_linewidth"></a>`scale_linewidth(p, range, name, breaks, labels, limits, trans, guide)` | line widths for a `linewidth` mapping: `range` [thinnest, thickest] in linewidth units (default [0.25, 2]) |
 
 Every colour scale takes `name`, `labels`, `limits`, `breaks` and
 `guide: "none"`. Legends merge: aesthetics mapped to one variable under
@@ -4462,11 +4469,11 @@ colour bar.
 
 | Layout | Purpose |
 |---|---|
-| `facet_wrap(p, facets, ncol, nrow, scales)` | a panel per value of a column (or a list of them); `scales` `"fixed"`, `"free"`, `"free_x"`, `"free_y"` (a free scale's panels each bin a histogram, and grid a density, over their own range) |
-| `facet_grid(p, rows, cols, scales)` | a grid of panels, rows by columns |
-| `coord_flip(p, xlim, ylim)` · `coord_fixed(p, ratio)` · `coord_cartesian(p, xlim, ylim)` | the axes swapped; a fixed aspect; a zoom that drops no data |
-| `labs(p, title, subtitle, caption, x, y, color, fill, size, shape, alpha, linetype, linewidth)` · `ggtitle(p, title, subtitle)` · `xlab(p, title)` · `ylab(p, title)` | titles (`""` hides an axis's) |
-| `theme(p, name, appearance, base_size, legend_position, width, height, grid, font, paper, ink, id)` | the look: `"minimal"` (the default — hairline grid, no ticks, one type scale), `"classic"`, `"bw"`, `"gray"`, `"linedraw"`, `"void"`; `appearance` `"light"`, `"dark"`, `"contrast"` (else the host's: a notebook's follows Studio's); `paper` the background and `ink` every word and line, as CSS colours (`"transparent"` and `"currentColor"` take the page's); `id` the prefix of the SVG's ids |
+| <a id="gg-facet_wrap"></a>`facet_wrap(p, facets, ncol, nrow, scales)` | a panel per value of a column (or a list of them); `scales` `"fixed"`, `"free"`, `"free_x"`, `"free_y"` (a free scale's panels each bin a histogram, and grid a density, over their own range) |
+| <a id="gg-facet_grid"></a>`facet_grid(p, rows, cols, scales)` | a grid of panels, rows by columns |
+| <a id="gg-coord_flip"></a><a id="gg-coord_fixed"></a><a id="gg-coord_cartesian"></a>`coord_flip(p, xlim, ylim)` · `coord_fixed(p, ratio)` · `coord_cartesian(p, xlim, ylim)` | the axes swapped; a fixed aspect; a zoom that drops no data |
+| <a id="gg-labs"></a><a id="gg-ggtitle"></a><a id="gg-xlab"></a><a id="gg-ylab"></a>`labs(p, title, subtitle, caption, x, y, color, fill, size, shape, alpha, linetype, linewidth)` · `ggtitle(p, title, subtitle)` · `xlab(p, title)` · `ylab(p, title)` | titles (`""` hides an axis's) |
+| <a id="gg-theme"></a>`theme(p, name, appearance, base_size, legend_position, width, height, grid, font, paper, ink, id)` | the look: `"minimal"` (the default — hairline grid, no ticks, one type scale), `"classic"`, `"bw"`, `"gray"`, `"linedraw"`, `"void"`; `appearance` `"light"`, `"dark"`, `"contrast"` (else the host's: a notebook's follows Studio's); `paper` the background and `ink` every word and line, as CSS colours (`"transparent"` and `"currentColor"` take the page's); `id` the prefix of the SVG's ids |
 
 The vertical axis's title reads across, over its labels; a plot is 720
 pixels wide and as tall as its panels need unless the theme says.
