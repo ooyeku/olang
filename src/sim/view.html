@@ -204,7 +204,7 @@ function layout() {
   [AW] = size(ac, $("axis"));
   [SW, SH] = size(sc, $("scrub"));
   laneH = Math.max(28, Math.min(64, (H - 16) / Math.max(1, LANES.length)));
-  top0 = Math.max(8, (H - laneH * LANES.length) / 2);
+  top0 = 8; // lanes from the top: no empty band above them
   const g = $("gutter");
   g.innerHTML = "";
   LANES.forEach((name, i) => {
@@ -287,9 +287,11 @@ function draw() {
   }
   // the events in view (and the messages that reach into it)
   const i0 = lower(view.t0 - maxLatency), i1 = lower(view.t1 + 1);
-  const shown = i1 - i0;
-  const dense = shown > 24000;
-  if (dense) drawDensity(g, i0, i1);
+  // More than one event every two pixels: one by one they would be a
+  // wall, so each lane is drawn as how busy it was (and how often the
+  // network lost or doubled a message), and its rare marks as clusters.
+  const dense = (i1 - i0) / Math.max(1, W) > 0.5;
+  if (dense) drawAggregate(g, i0, i1);
   const past = (i) => E[i][T] <= playhead;
   // messages
   if (!dense) {
@@ -314,9 +316,8 @@ function draw() {
   }
   // marks on the lanes
   const labelled = span / W < 40; // room to name the faults
-  for (let i = Math.max(i0, lower(view.t0 - 1)); i < i1; i++) {
+  for (let i = dense ? i1 : Math.max(i0, lower(view.t0 - 1)); i < i1; i++) {
     const e = E[i], cls = e[C];
-    if (dense && cls !== "fault" && cls !== "error" && cls !== "life") continue;
     const x = xOf(e[T]); if (x < -10 || x > W + 10) continue;
     const y = laneY(e[L]);
     g.globalAlpha = (dimmed(i) ? 0.15 : 1) * (past(i) ? 1 : 0.4);
@@ -360,26 +361,79 @@ function draw() {
   drawScrub();
 }
 
-// Too many events to draw one by one: each lane's events counted in
-// two-pixel columns, the count as the tick's strength.
-function drawDensity(g, i0, i1) {
-  const cols = Math.ceil(W / 2), bins = LANES.map(() => new Uint32Array(cols));
-  for (let i = i0; i < i1; i++) {
-    const c = Math.floor(xOf(E[i][T]) / 2);
-    if (c >= 0 && c < cols) bins[E[i][L]][c]++;
-  }
-  let max = 1;
-  for (const b of bins) for (const v of b) if (v > max) max = v;
-  g.fillStyle = C_.tick;
-  bins.forEach((b, l) => {
-    const y = laneY(l);
-    for (let c = 0; c < cols; c++) {
-      if (!b[c]) continue;
-      const h = 3 + Math.sqrt(b[c] / max) * (laneH * 0.36);
-      g.globalAlpha = 0.35 + 0.65 * Math.sqrt(b[c] / max);
-      g.fillRect(c * 2, y - h / 2, 1.5, h);
+// The network's own faults (a lost or doubled message) come by the
+// hundred on a lossy link: counted as a rate, not marked one by one.
+const NOISY = new Set(["drop", "dup", "loss"]);
+const noisy = (e) => e[C] === "fault" && NOISY.has(KINDS[e[K]]);
+const rare = (e) => !noisy(e) && (e[C] === "fault" || e[C] === "error" || e[C] === "life");
+
+// A lane's counts per column as a band around its line: thick where it
+// was busy, thin where it was quiet, absent where nothing happened.
+function band(g, counts, y, half, w) {
+  let max = 0;
+  for (const v of counts) if (v > max) max = v;
+  if (!max) return;
+  const hOf = (v) => (v ? 1 + Math.sqrt(v / max) * (half - 1) : 0);
+  let open = false;
+  const pts = [];
+  const flush = () => {
+    if (pts.length) {
+      g.beginPath();
+      g.moveTo(pts[0][0], y);
+      for (const [x, h] of pts) g.lineTo(x, y - h);
+      g.lineTo(pts[pts.length - 1][0] + w, y - pts[pts.length - 1][1]);
+      g.lineTo(pts[pts.length - 1][0] + w, y + pts[pts.length - 1][1]);
+      for (let k = pts.length - 1; k >= 0; k--) g.lineTo(pts[k][0], y + pts[k][1]);
+      g.closePath(); g.fill();
     }
-  });
+    pts.length = 0;
+  };
+  for (let c = 0; c < counts.length; c++) {
+    if (counts[c]) { pts.push([c * w, hOf(counts[c])]); open = true; }
+    else if (open) { flush(); open = false; }
+  }
+  flush();
+}
+
+function drawAggregate(g, i0, i1) {
+  const BW = 3, cols = Math.ceil(W / BW), CW = 14;
+  const busy = LANES.map(() => new Float32Array(cols));
+  const net = LANES.map(() => new Float32Array(cols));
+  const groups = new Map();
+  for (let i = i0; i < i1; i++) {
+    const e = E[i], x = xOf(e[T]);
+    if (x < 0 || x >= W) continue;
+    const l = e[L];
+    if (noisy(e)) net[l][Math.floor(x / BW)]++;
+    else if (rare(e)) {
+      const key = l * 1e6 + Math.floor(x / CW);
+      const grp = groups.get(key);
+      if (!grp) groups.set(key, { i, n: 1, fault: e[C] === "fault" || e[C] === "error" });
+      else { grp.n++; if (!grp.fault && (e[C] === "fault" || e[C] === "error")) { grp.i = i; grp.fault = true; } }
+    } else busy[l][Math.floor(x / BW)]++;
+  }
+  const xp = xOf(playhead);
+  for (let l = 0; l < LANES.length; l++) {
+    const y = laneY(l);
+    g.save();
+    // what lies after the playhead fades, as single events do
+    for (const [from, to, a] of [[0, Math.max(0, xp), 1], [Math.max(0, xp), W, 0.4]]) {
+      if (to <= from) continue;
+      g.save(); g.beginPath(); g.rect(from, 0, to - from, H); g.clip();
+      g.globalAlpha = 0.45 * a; g.fillStyle = C_.tick; band(g, busy[l], y, laneH * 0.3, BW);
+      g.globalAlpha = 0.5 * a; g.fillStyle = C_.accent; band(g, net[l], y, laneH * 0.14, BW);
+      g.restore();
+    }
+    g.restore();
+  }
+  g.font = "10px -apple-system, system-ui, sans-serif"; g.textBaseline = "middle"; g.textAlign = "left";
+  for (const { i, n, fault } of groups.values()) {
+    const e = E[i], x = xOf(e[T]), y = laneY(e[L]);
+    g.globalAlpha = (dimmed(i) ? 0.15 : 1) * (e[T] <= playhead ? 1 : 0.4);
+    if (fault) { g.fillStyle = C_.accent; shapeFault(g, x, y, n > 1 ? 6.5 : 5.5); g.fill(); }
+    else { g.fillStyle = C_.bg; g.strokeStyle = C_.ink; g.fillRect(Math.round(x - 3.5), Math.round(y - 3.5), 7, 7); g.strokeRect(Math.round(x - 3.5) + 0.5, Math.round(y - 3.5) + 0.5, 7, 7); }
+    if (n > 1) { g.fillStyle = fault ? C_.accent : C_.muted; g.fillText(String(n), x + 8, y - 8); }
+  }
   g.globalAlpha = 1;
 }
 
@@ -403,29 +457,49 @@ function drawAxis(step) {
   }
 }
 
-// the whole run at once: how busy each moment was, where the faults
-// fell, what part is in view, and the playhead
-let scrubBins = null;
+// the whole run at once: how busy each moment was (a curve, so steady
+// traffic reads as a level, not a wall), the partitions, where the rare
+// faults fell (the network's own losses are counted, not marked), what
+// part is in view, and the playhead
+let scrubBins = null, scrubFaults = null;
 function drawScrub() {
   const g = sc.getContext("2d"), k = dpr();
   g.setTransform(k, 0, 0, k, 0, 0);
   g.fillStyle = C_.bg; g.fillRect(0, 0, SW, SH);
-  const cols = Math.max(1, Math.floor(SW / 2));
+  const cols = Math.max(1, Math.floor(SW / 3));
   if (!scrubBins || scrubBins.length !== cols) {
-    scrubBins = new Uint32Array(cols);
-    for (const e of E) scrubBins[Math.min(cols - 1, Math.floor(e[T] / END * cols))]++;
+    scrubBins = new Float32Array(cols);
+    const seen = new Map();
+    for (const e of E) {
+      const c = Math.min(cols - 1, Math.floor(e[T] / END * cols));
+      if (rare(e)) {
+        if (e[C] === "fault" || e[C] === "error") {
+          const px = Math.round(e[T] / END * SW);
+          if (!seen.has(px)) seen.set(px, e[T]);
+        }
+      } else scrubBins[c]++;
+    }
+    scrubFaults = [...seen.values()];
   }
-  let max = 1; for (const v of scrubBins) if (v > max) max = v;
   const sx = (t) => t / END * SW;
-  g.fillStyle = C_.tick; g.globalAlpha = 0.6;
-  for (let c = 0; c < cols; c++) {
-    if (!scrubBins[c]) continue;
-    const h = Math.max(1, Math.sqrt(scrubBins[c] / max) * (SH - 18));
-    g.fillRect(c * 2, SH - 6 - h, 1.5, h);
+  for (const [from, to] of DATA.cuts) {
+    g.fillStyle = C_.accentWeak; g.fillRect(sx(from), 0, Math.max(1, sx(to) - sx(from)), SH);
   }
-  g.globalAlpha = 1;
+  let max = 0; for (const v of scrubBins) if (v > max) max = v;
+  if (max) {
+    const top = 14, bottom = SH - 4, hOf = (v) => bottom - Math.sqrt(v / max) * (bottom - top);
+    const w = SW / cols;
+    g.beginPath(); g.moveTo(0, bottom);
+    for (let c = 0; c < cols; c++) g.lineTo((c + 0.5) * w, hOf(scrubBins[c]));
+    g.lineTo(SW, bottom); g.closePath();
+    g.fillStyle = C_.tick; g.globalAlpha = 0.18; g.fill();
+    g.beginPath();
+    for (let c = 0; c < cols; c++) { const x = (c + 0.5) * w, y = hOf(scrubBins[c]); c ? g.lineTo(x, y) : g.moveTo(x, y); }
+    g.strokeStyle = C_.muted; g.globalAlpha = 0.7; g.lineWidth = 1; g.stroke();
+    g.globalAlpha = 1;
+  }
   g.fillStyle = C_.accent;
-  for (const e of E) if (e[C] === "fault" || e[C] === "error") g.fillRect(Math.round(sx(e[T])) - 0.5, 4, 1.5, 6);
+  for (const t of scrubFaults) g.fillRect(Math.round(sx(t)) - 0.5, 3, 1.5, 7);
   // the window in view
   const x0 = Math.max(0, sx(view.t0)), x1 = Math.min(SW, sx(view.t1));
   g.fillStyle = C_.sel; g.fillRect(x0, 0, Math.max(2, x1 - x0), SH);
