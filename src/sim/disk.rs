@@ -553,8 +553,15 @@ impl Disk {
             return;
         }
         if let Some(inode) = self.inodes.get_mut(&ino) {
-            inode.durable = inode.data.clone();
-            inode.pending.clear();
+            // The durable bytes plus the pending writes, in order, are the
+            // file's bytes: replaying what was written since the last sync
+            // costs what was written, where copying the whole file cost
+            // its size at every sync (a database's WAL and pages, synced
+            // at every commit, were most of a SQLite world's time).
+            for op in inode.pending.drain(..) {
+                Inode::apply(&mut inode.durable, &op);
+            }
+            debug_assert!(inode.durable == inode.data, "durable + pending = data");
         }
         if let Some(path) = path
             && self.entry(path) == Some(Entry::File(ino))
