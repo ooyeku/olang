@@ -68,7 +68,7 @@ at `https://raw.githubusercontent.com/ooyeku/olang/main/install.sh` (and
 The installer takes a few options. Put them after `sh -s --`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh -s -- --version v1.0.0-rc.6
+curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh -s -- --version v1.0.0-rc.7
 ```
 
 | Option | Environment variable | Effect |
@@ -85,12 +85,12 @@ curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh -
 
 `TAG` is a release's tag exactly as the [releases
 page](https://github.com/ooyeku/olang/releases) lists it: a `v`, then
-the version, such as `v1.0.0-rc.6`. A tag that is not on that page is
+the version, such as `v1.0.0-rc.7`. A tag that is not on that page is
 refused with the list's address, so check there for the release you
 want.
 
 On Windows, set the environment variable first, for example
-`$env:OLANG_VERSION = 'v1.0.0-rc.6'; irm https://raw.githubusercontent.com/ooyeku/olang/main/install.ps1 | iex`.
+`$env:OLANG_VERSION = 'v1.0.0-rc.7'; irm https://raw.githubusercontent.com/ooyeku/olang/main/install.ps1 | iex`.
 
 In CI, a typical line is:
 

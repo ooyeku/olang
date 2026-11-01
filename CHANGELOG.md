@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0-rc.7] - 2026-11-01
+
+rc.6 with its Linux and Windows builds fixed. rc.6 was tagged but never
+released: those builds failed, so its notes below arrive with rc.7.
+
+### Fixed
+
+- **Linux and Windows build again.** `gui.read(w, "frame")` called the
+  macOS-only render thread; elsewhere it now answers that the window is
+  not drawn there. Linux release builds leave out gamepad and audio
+  (their system libraries, libudev and ALSA, are not in the build
+  images); CI's Linux jobs install both so the defaults still build.
+
 ## [1.0.0-rc.6] - 2026-11-01
 
 The last candidate with new features: from here to 1.0.0 only bug

@@ -13,7 +13,7 @@
 # Run `sh install.sh --help` for the options. Options go after `sh -s --`
 # when the script is piped:
 #
-#   curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh -s -- --version v1.0.0-rc.6
+#   curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh -s -- --version v1.0.0-rc.7
 #
 # What it touches: the install folder (~/.olang/bin unless you choose
 # another), one line in your shell's startup file (unless you say not
@@ -110,7 +110,7 @@ Usage:
   sh install.sh [options]
 
 Options:
-  --version TAG       install this release, e.g. v1.0.0-rc.6 (default: the newest)
+  --version TAG       install this release, e.g. v1.0.0-rc.7 (default: the newest)
   --dir DIR           install into DIR (default: ~/.olang/bin)
   --no-modify-path    leave your shell's startup files alone
   --from-source       build from source even where a download exists
@@ -144,7 +144,7 @@ parse_args() {
             --from-source) OLANG_FROM_SOURCE=1 ;;
             --force) OLANG_FORCE=1 ;;
             --version|--dir)
-                [ $# -ge 2 ] || { setup_output; fail "the option $1 needs a value." "For example: $1 $([ "$1" = --dir ] && echo "\$HOME/bin" || echo v1.0.0-rc.6)"; }
+                [ $# -ge 2 ] || { setup_output; fail "the option $1 needs a value." "For example: $1 $([ "$1" = --dir ] && echo "\$HOME/bin" || echo v1.0.0-rc.7)"; }
                 if [ "$1" = --version ]; then OLANG_VERSION=$2; else OLANG_INSTALL_DIR=$2; fi
                 shift ;;
             --version=*) OLANG_VERSION=${1#*=} ;;
@@ -257,7 +257,7 @@ version_at_least() {
     [ "$a1" -gt "$b1" ] 2>/dev/null || { [ "$a1" -eq "$b1" ] 2>/dev/null && [ "$a2" -ge "$b2" ] 2>/dev/null; }
 }
 
-# release_at_least v1.0.0-rc.6 v1.0.0-rc.5 → true. Semantic versions:
+# release_at_least v1.0.0-rc.7 v1.0.0-rc.5 → true. Semantic versions:
 # 1.0.0 is newer than 1.0.0-rc.9, and rc.10 newer than rc.9.
 release_at_least() {
     a=${1#v}; b=${2#v}
@@ -285,7 +285,7 @@ resolve_version() {
         case "$VERSION" in
             v[0-9]*.[0-9]*.[0-9]*) ;;
             *) fail "'$OLANG_VERSION' is not a version number." \
-                   "Use a release tag, e.g. v1.0.0-rc.6 (see $GITHUB/$REPO/releases), or leave it out to get the newest." ;;
+                   "Use a release tag, e.g. v1.0.0-rc.7 (see $GITHUB/$REPO/releases), or leave it out to get the newest." ;;
         esac
         exists "$GITHUB/$REPO/releases/tag/$VERSION"
         rc=$?
@@ -310,7 +310,7 @@ resolve_version() {
     rc=$?
     [ $rc -eq 22 ] && fail "GitHub would not list olang's releases just now (it limits how often one network may ask)." \
         "Wait an hour and try again, or name a release from $GITHUB/$REPO/releases:" \
-        "  curl -fsSL $INSTALL_URL | sh -s -- --version v1.0.0-rc.6"
+        "  curl -fsSL $INSTALL_URL | sh -s -- --version v1.0.0-rc.7"
     [ $rc -eq 0 ] || network_fail $rc "$GITHUB_API/repos/$REPO/releases"
     # one field per line, whether GitHub sent the JSON pretty or compact
     VERSION=$(tr ',' '\n' <"$workdir/releases.json" | sed -n 's/.*"tag_name": *"\(v[^"]*\)".*/\1/p' | head -n 1)
