@@ -116,6 +116,19 @@ count = count + 1        // rebinding the name, not mutating a value
 println(to_string(count))
 ```
 
+A `for` loop walks a list, a range or a string. A map is walked through
+`entries(m)`, which gives its `(key, value)` pairs in the order the keys
+were first set. Writing `for (k, v) in m` does not work: a map is not
+something a loop can walk on its own, and olang stops with `cannot
+iterate over a Map`, naming the `entries` form.
+
+```olang
+let highs = #{ "north": 23.5, "south": 24.0 }
+for (station, t) in entries(highs) {
+    println(`${station}: ${t}`)
+}
+```
+
 ## Everything is an expression
 
 In olang, an `if` produces a value, and a block `{ ... }` produces the
@@ -287,6 +300,33 @@ The list holds two different types, and each one answers with its own
 code. That is all there is to polymorphism in olang. There are no
 classes and no inheritance; a type simply opts in to the traits it
 supports.
+
+This is also the only way to give a type methods. A method comes from a
+`trait` and an `impl Trait for Type`; a bare `impl Type { ... }`, as
+you might write in Rust, is not part of olang, and olang refuses it.
+When one type needs methods of its own and nothing else shares them,
+declare a trait for that one type:
+
+```olang
+type Station = struct { name: String, temps: List }
+
+trait Summary {
+    fn mean(self) -> Float
+    fn label(self) -> String
+}
+
+impl Summary for Station {
+    fn mean(self) = average(self.temps)
+    fn label(self) = `${self.name} averaged ${self.mean()}`
+}
+
+let north = Station { name: "north", temps: [20.0, 22.0, 24.0] }
+println(north.label())   // north averaged 22.0
+```
+
+Methods belong to the types you declare. Lists, strings and maps have
+none: you write `len(xs)` and `str.split(s, ",")`, not `xs.len()` or
+`s.split(",")`.
 
 ## Errors are values
 

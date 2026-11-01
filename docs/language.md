@@ -1411,6 +1411,10 @@ for (k, v) in entries(#{ "b": 2, "a": 1 }) {
 }
 ```
 
+A map, an object or a parsed JSON object is walked only through
+`entries` (or `map_keys` and `map_values`): `for (k, v) in m` on the map
+itself is a type error, `cannot iterate over a Map`.
+
 ### `par for` — parallel iteration
 
 `par for` fans iterations across OS worker threads (one interpreter,
@@ -1949,7 +1953,21 @@ takes positional fields only: `C { n: Int }` is a parse error (declare
 
 A trait declares methods; `impl Trait for Type` provides them. Method calls
 dispatch on the receiver's runtime type. Traits may supply default method
-bodies, which impls can override:
+bodies, which impls can override.
+
+This is the only way a type gets methods. A bare `impl Type { ... }`
+block, as in Rust, is not part of the language and is refused; a type
+that needs methods of its own declares a trait for them, even when it
+is the only type that implements it.
+
+```olang
+type Counter = struct { n: Int }
+trait Counting { fn bumped(self) -> Counter }
+impl Counting for Counter { fn bumped(self) = Counter { n: self.n + 1 } }
+println(Counter { n: 1 }.bumped().n)   // 2
+```
+
+A trait with several implementations, and a default method:
 
 ```olang
 trait Greet {
