@@ -222,7 +222,7 @@ pub struct Interpreter {
     /// Lambda expressions already worked out (`lambda_shape`).
     lambda_shapes: HashMap<usize, Arc<LambdaShape>>,
     /// A bridge interpreter's view of the program's functions, by name.
-    bridge_functions: Option<Arc<HashMap<String, Arc<Function>>>>,
+    bridge_functions: Option<Arc<ImHashMap<String, Arc<Function>>>>,
     module_loading_stack: Vec<String>, // what is loading now, to catch an import cycle
 
     // Module cache settings and counters
@@ -4029,7 +4029,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
 
     /// Install the program's unambiguous functions by name, for a bridge
     /// interpreter (see `lookup_name`).
-    pub fn set_bridge_functions(&mut self, functions: Arc<HashMap<String, Arc<Function>>>) {
+    pub fn set_bridge_functions(&mut self, functions: Arc<ImHashMap<String, Arc<Function>>>) {
         self.bridge_functions = Some(functions);
     }
 
@@ -4204,6 +4204,13 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             bytecode_tier: self.bytecode_tier.as_ref().map(|t| {
                 let mut tier =
                     crate::ovm::tier::BytecodeTier::new(t.threshold()).with_verbose(t.is_verbose());
+                // The parent's whole function table, module functions
+                // included (the root environment holds only the program's
+                // own globals, so a lib module's functions were unknown to
+                // every worker and ran interpreted there), with the names
+                // two definitions share. Taken whole, not noted again one
+                // by one: that cost a large program milliseconds a spawn.
+                tier.seed_functions_from(t);
                 for (name, fields) in &self.struct_defs {
                     tier.note_struct(
                         name.clone(),
@@ -4236,16 +4243,6 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     if let Value::Function(ref func) = value {
                         tier.note_function(name, func.clone());
                     }
-                }
-                // The parent's whole function table, module functions
-                // included: the root environment holds only the program's
-                // own globals, so a lib module's functions were unknown to
-                // every worker and ran interpreted there.
-                for name in t.ambiguous_names() {
-                    tier.inherit_ambiguous(&name);
-                }
-                for (name, func) in t.known_functions() {
-                    tier.note_function(name, func);
                 }
                 // Every loaded module's table, and which file is the
                 // program: a module's functions read their module's names

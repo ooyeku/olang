@@ -254,7 +254,7 @@ pub struct BytecodeVm {
     /// lambda's AST form must still CARRY the function in its closure so
     /// it behaves identically when it escapes to the interpreter (bridged
     /// builtins, returned values).
-    known_function_values: HashMap<String, std::sync::Arc<crate::ast::Function>>,
+    known_function_values: im::HashMap<String, std::sync::Arc<crate::ast::Function>>,
     /// Bare names bound to more than one distinct function body over the
     /// run — a nested `fn insert` in two modules, say. The bridge seeds
     /// its environment only with unambiguous names; a name here would
@@ -467,7 +467,7 @@ pub struct BytecodeCompiler {
 
     /// User function values for lambda-closure attachment (see
     /// BytecodeVm::known_function_values).
-    known_function_values: HashMap<String, std::sync::Arc<crate::ast::Function>>,
+    known_function_values: im::HashMap<String, std::sync::Arc<crate::ast::Function>>,
 
     /// Set while compiling a named nested fn's pending body: (name, id,
     /// real parameter count, capture count). A self-call must append the
@@ -1781,7 +1781,7 @@ impl BytecodeVm {
             unit_variant_names: std::collections::HashSet::new(),
             type_aliases: HashMap::new(),
             bridged_callees: std::collections::HashSet::new(),
-            known_function_values: HashMap::new(),
+            known_function_values: im::HashMap::new(),
             ambiguous_function_names: std::collections::HashSet::new(),
             trait_impls: HashMap::new(),
             trait_defaults: HashMap::new(),
@@ -1846,6 +1846,36 @@ impl BytecodeVm {
     }
 
     /// The tier's verdict that two different functions share `name`.
+    /// A fresh VM (a worker thread's) takes what its parent knows of the
+    /// program's functions: their values, the names they shadow, the
+    /// names two of them share. The function table is persistent, so
+    /// this costs the same for ten functions as for ten thousand, where
+    /// noting each one again made a `spawn` in a large program cost
+    /// milliseconds (OL-330).
+    /// The functions this VM knows by value, and the names two of them
+    /// share.
+    pub(crate) fn function_tables(
+        &self,
+    ) -> (
+        &im::HashMap<String, std::sync::Arc<crate::ast::Function>>,
+        &std::collections::HashSet<String>,
+    ) {
+        (&self.known_function_values, &self.ambiguous_function_names)
+    }
+
+    pub fn seed_functions_from(&mut self, parent: &BytecodeVm) {
+        self.known_function_values = parent.known_function_values.clone();
+        // a builtin a user function names is shadowed (`shadow_builtin`)
+        let known = &self.known_function_values;
+        self.builtin_names.retain(|name| !known.contains_key(name));
+        self.ambiguous_function_names = parent.ambiguous_function_names.clone();
+        self.compiler.ambiguous_names = parent.compiler.ambiguous_names.clone();
+        #[cfg(feature = "native")]
+        self.jit.seed_shadowed(&parent.jit);
+        self.hof_epoch += 1;
+        self.bridge_landscape_version += 1;
+    }
+
     pub fn mark_ambiguous(&mut self, name: &str) {
         if self.ambiguous_function_names.insert(name.to_string()) {
             self.hof_epoch += 1;
@@ -7932,14 +7962,14 @@ impl BytecodeVm {
             // few thousand inserts built every bridge a private scope map
             // of several megabytes, and a served application holds a
             // bridge per worker.
-            let mut by_name = HashMap::with_capacity(self.known_function_values.len());
-            for (name, func) in self.known_function_values.clone() {
-                if !self.ambiguous_function_names.contains(&name) {
-                    by_name.insert(name.clone(), func.clone());
-                }
-                if let Some(tier) = interp.bytecode_tier_mut() {
-                    tier.note_function(name, func);
-                }
+            //
+            // The table is persistent and taken whole, as is the tier's:
+            // noting each function again made every worker's first
+            // builtin call cost about 0.3 µs a function, milliseconds in
+            // a large program (OL-330).
+            let mut by_name = self.known_function_values.clone();
+            for name in &self.ambiguous_function_names {
+                by_name.remove(name);
             }
             interp.set_bridge_functions(std::sync::Arc::new(by_name));
             // The verdict travels with the table: a name two definitions
@@ -7947,9 +7977,7 @@ impl BytecodeVm {
             // value the table kept for it would compile by name there —
             // and in every worker the bridge spawns.
             if let Some(tier) = interp.bytecode_tier_mut() {
-                for name in self.ambiguous_function_names.clone() {
-                    tier.inherit_ambiguous(&name);
-                }
+                tier.seed_bridge_from(self);
             }
             // A module function run here resolves its file's siblings
             // through the module's complete table, as it does on the host.
@@ -11045,7 +11073,7 @@ impl BytecodeCompiler {
             volatile_globals: std::collections::HashSet::new(),
             hit_volatile: std::cell::RefCell::new(None),
             enclosing_run: Default::default(),
-            known_function_values: HashMap::new(),
+            known_function_values: im::HashMap::new(),
             self_call: None,
             pending_lambdas: Vec::new(),
             unresolved: Vec::new(),

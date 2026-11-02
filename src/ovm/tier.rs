@@ -147,7 +147,9 @@ pub struct BytecodeTier {
     rejected_reasons: HashMap<String, String>,
     /// User functions the interpreter has declared, so a promoted function
     /// calling a helper can have that helper compiled too
-    known_functions: HashMap<String, Arc<Function>>,
+    /// Persistent, so a worker's tier starts from its parent's table in
+    /// O(1) (`seed_from`) rather than noting each function again.
+    known_functions: im::HashMap<String, Arc<Function>>,
     /// Names bound to more than one distinct function body — e.g. the same
     /// function name defined in two different modules. The tier resolves
     /// callees by name, which cannot tell such functions apart, so an
@@ -194,7 +196,7 @@ impl BytecodeTier {
             compiled: HashMap::new(),
             rejected: HashSet::new(),
             rejected_reasons: HashMap::new(),
-            known_functions: HashMap::new(),
+            known_functions: im::HashMap::new(),
             ambiguous: HashSet::new(),
             arg_cache: HashMap::new(),
             arg_sweep_at: 32,
@@ -321,6 +323,31 @@ impl BytecodeTier {
     /// The parent's ambiguity verdict, replayed into a worker's tier.
     pub fn is_verbose(&self) -> bool {
         self.verbose
+    }
+
+    /// A worker's fresh tier starts from its parent's functions: the
+    /// table and its ambiguous names as they stand, in O(1) for the
+    /// table (it is persistent). Noting each function again cost about
+    /// 0.3 µs a function on the spawning thread (OL-330).
+    pub fn seed_functions_from(&mut self, parent: &BytecodeTier) {
+        self.known_functions = parent.known_functions.clone();
+        self.ambiguous = parent.ambiguous.clone();
+        self.vm.seed_functions_from(&parent.vm);
+    }
+
+    /// A bridge's fresh tier starts from the VM it bridges for: every
+    /// function that VM knows by value, the names two of them share
+    /// marked ambiguous (and so absent from the table), as noting each
+    /// one and then inheriting the ambiguous names did.
+    pub fn seed_bridge_from(&mut self, vm: &BytecodeVm) {
+        let (functions, ambiguous) = vm.function_tables();
+        let mut known = functions.clone();
+        for name in ambiguous {
+            known.remove(name);
+        }
+        self.known_functions = known;
+        self.ambiguous = ambiguous.iter().cloned().collect();
+        self.vm.seed_functions_from(vm);
     }
 
     pub fn inherit_ambiguous(&mut self, name: &str) {

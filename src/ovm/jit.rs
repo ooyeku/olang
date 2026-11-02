@@ -427,7 +427,7 @@ pub struct JitCache {
     /// Builtin names shadowed by a user definition. Compiled code that
     /// baked one of these natives is demoted the moment the shadow
     /// appears (see note_shadow); specialization refuses them up front.
-    shadowed: std::collections::HashSet<String>,
+    shadowed: im::HashSet<String>,
     /// Functions whose native body can never pay for the bytecode→native
     /// boundary (trivial constructors — see boundary_unprofitable). They
     /// still compile as group members, where callers reach them by direct
@@ -1686,7 +1686,7 @@ impl JitCache {
         Self {
             module: None,
             table: Vec::new(),
-            shadowed: std::collections::HashSet::new(),
+            shadowed: im::HashSet::new(),
             boundary_skip: Vec::new(),
             scratch: ScratchCtx::default(),
             compiled: 0,
@@ -1866,8 +1866,14 @@ impl JitCache {
     /// this from its own shadow bookkeeping). Any compiled entry that
     /// baked a direct call to that native is stale: demote it so calls
     /// fall back to bytecode, which resolves the name the ordinary way.
+    /// A fresh cache takes the builtins its parent's program shadows
+    /// (a worker thread's VM: nothing compiled yet, so nothing to demote).
+    pub fn seed_shadowed(&mut self, parent: &JitCache) {
+        self.shadowed = parent.shadowed.clone();
+    }
+
     pub fn note_shadow(&mut self, name: &str) {
-        if !self.shadowed.insert(name.to_string()) {
+        if self.shadowed.insert(name.to_string()).is_some() {
             return;
         }
         for slot in self.table.iter_mut() {
@@ -4695,7 +4701,7 @@ impl PlanFn {
         &mut self,
         sigs: &SigSnapshot,
         shapes: &HashMap<u32, ShapeSpec>,
-        shadowed: &std::collections::HashSet<String>,
+        shadowed: &im::HashSet<String>,
         requests: &mut Vec<(FunctionId, Vec<Kind>)>,
         global_changed: &mut bool,
     ) -> Option<()> {
