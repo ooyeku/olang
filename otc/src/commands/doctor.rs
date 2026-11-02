@@ -21,7 +21,7 @@ pub fn run(fix: bool) -> Result<()> {
     let mut problems = 0usize;
     let mut fixed = 0usize;
 
-    println!("olang doctor — auditing {}", home.display());
+    println!("otc doctor — auditing {}", home.display());
     println!();
 
     // ── every olang/otc on PATH, and which wins ─────────────────────
