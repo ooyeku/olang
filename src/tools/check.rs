@@ -313,6 +313,8 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
         }
     }
     let parser = crate::parser::Parser::new();
+    // the import graph's cycles, found once for all the files
+    let mut cycles = ImportCycles::default();
     for file in &files {
         let (source, shown) = match std::fs::read_to_string(file) {
             // A notebook: its program checked (`no-run` cells too), its
@@ -376,6 +378,9 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
         };
         let unresolved = crate::analyze::Analyzer::unresolved_names(&program);
         let mut diagnostics = file_diagnostics(&program, &source, file.parent(), unresolved);
+        if let Some(d) = cycles.of(file, &program) {
+            diagnostics.push(d);
+        }
         // a notebook cell's last statement is the cell's value
         if let Some(text) = &shown
             && diagnostics.iter().any(|d| d.class == Some("no_effect"))
@@ -1900,6 +1905,228 @@ fn modules_used(
     modules_used_by(&program, dir, reexports_only)
 }
 
+/// The modules a program's `use` lines import, each with the line and
+/// column of its `use`: the file each names, found as the run finds it
+/// (`use_candidates`), nothing read.
+fn imports_of(program: &Program, dir: &Path) -> Vec<(PathBuf, u32, u32)> {
+    let mut out = Vec::new();
+    for stmt in &program.statements {
+        let (line, column) = match stmt {
+            Statement::Located { line, column, .. } => (*line, *column),
+            _ => (1, 1),
+        };
+        if !matches!(
+            stmt.unwrapped(),
+            Statement::UseDecl(_) | Statement::ShareDecl(crate::ast::ShareDecl::Use(_))
+        ) {
+            continue;
+        }
+        let u = match stmt.unwrapped() {
+            Statement::UseDecl(u) | Statement::ShareDecl(crate::ast::ShareDecl::Use(u)) => u,
+            _ => continue,
+        };
+        if u.path.is_empty() {
+            continue;
+        }
+        if let Some(path) = use_candidates(&u.path, dir)
+            .into_iter()
+            .find(|c| c.is_file())
+        {
+            let path = std::path::absolute(&path).unwrap_or(path);
+            if !out.iter().any(|(p, _, _)| *p == path) {
+                out.push((path, line, column));
+            }
+        }
+    }
+    out
+}
+
+/// The import graph's cycles, as the run refuses them ("Circular
+/// dependency detected: lib/a.ol → lib/b.ol → lib/a.ol"). `olang check`
+/// called such a program clean (OL-259). The graph's strongly connected
+/// components are found once (Tarjan's), as far as the files checked
+/// reach; a cycle is said once, at the `use` that starts it in the first
+/// of its files checked.
+#[derive(Default)]
+struct ImportCycles {
+    imports: HashMap<PathBuf, Vec<(PathBuf, u32, u32)>>,
+    component: HashMap<PathBuf, usize>,
+    cyclic: Vec<bool>,
+    said: std::collections::HashSet<usize>,
+}
+
+impl ImportCycles {
+    fn edges(&mut self, p: &Path) -> Vec<PathBuf> {
+        if !self.imports.contains_key(p) {
+            let found = std::fs::read_to_string(p)
+                .ok()
+                .and_then(|src| parsed_module(p, &src))
+                .zip(p.parent())
+                .map(|(prog, d)| imports_of(&prog, d))
+                .unwrap_or_default();
+            self.imports.insert(p.to_path_buf(), found);
+        }
+        self.imports[p].iter().map(|(t, _, _)| t.clone()).collect()
+    }
+
+    /// Tarjan's components of everything `start` reaches not yet placed.
+    fn place(&mut self, start: &Path) {
+        let mut index: HashMap<PathBuf, (usize, usize)> = HashMap::new();
+        let mut on_stack: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+        let mut stack: Vec<PathBuf> = Vec::new();
+        let mut calls: Vec<(PathBuf, Vec<PathBuf>, usize)> = Vec::new();
+        let mut next = 0usize;
+        let mut enter = |n: &Path, me: &mut Self, index: &mut HashMap<PathBuf, (usize, usize)>| {
+            index.insert(n.to_path_buf(), (next, next));
+            next += 1;
+            let edges = me.edges(n);
+            (n.to_path_buf(), edges, 0usize)
+        };
+        let first = enter(start, self, &mut index);
+        stack.push(start.to_path_buf());
+        on_stack.insert(start.to_path_buf());
+        calls.push(first);
+        while let Some((node, edges, i)) = calls.pop() {
+            if i < edges.len() {
+                let t = edges[i].clone();
+                calls.push((node.clone(), edges, i + 1));
+                if self.component.contains_key(&t) {
+                    continue;
+                }
+                if let Some(&(ti, _)) = index.get(&t) {
+                    if on_stack.contains(&t) {
+                        let e = index.get_mut(&node).expect("entered");
+                        e.1 = e.1.min(ti);
+                    }
+                } else {
+                    let frame = enter(&t, self, &mut index);
+                    stack.push(t.clone());
+                    on_stack.insert(t);
+                    calls.push(frame);
+                }
+                continue;
+            }
+            let (ni, nl) = index[&node];
+            if let Some((parent, _, _)) = calls.last() {
+                let pl = index[parent].1.min(nl);
+                index.get_mut(parent).expect("entered").1 = pl;
+            }
+            if nl == ni {
+                let id = self.cyclic.len();
+                let mut members = 0usize;
+                while let Some(m) = stack.pop() {
+                    on_stack.remove(&m);
+                    self.component.insert(m.clone(), id);
+                    members += 1;
+                    if m == node {
+                        break;
+                    }
+                }
+                let self_loop = self.imports[&node].iter().any(|(t, _, _)| *t == node);
+                self.cyclic.push(members > 1 || self_loop);
+            }
+        }
+    }
+
+    fn of(&mut self, file: &Path, program: &Program) -> Option<CheckDiagnostic> {
+        let start = std::path::absolute(file).ok()?;
+        let dir = start.parent()?.to_path_buf();
+        if !self.imports.contains_key(&start) {
+            self.imports
+                .insert(start.clone(), imports_of(program, &dir));
+        }
+        if !self.component.contains_key(&start) {
+            self.place(&start);
+        }
+        let id = *self.component.get(&start)?;
+        if !self.cyclic[id] || !self.said.insert(id) {
+            return None;
+        }
+        // the cycle itself: the shortest way round, inside the component
+        let mut back: HashMap<PathBuf, PathBuf> = HashMap::new();
+        let mut queue = std::collections::VecDeque::from([start.clone()]);
+        let mut last = None;
+        'search: while let Some(n) = queue.pop_front() {
+            for t in self.edges(&n) {
+                if self.component.get(&t) != Some(&id) {
+                    continue;
+                }
+                if t == start {
+                    last = Some(n);
+                    break 'search;
+                }
+                if !back.contains_key(&t) {
+                    back.insert(t.clone(), n.clone());
+                    queue.push_back(t);
+                }
+            }
+        }
+        let mut cycle = vec![start.clone()];
+        let mut at = last?;
+        while at != start {
+            cycle.push(at.clone());
+            at = back.get(&at)?.clone();
+        }
+        cycle.push(start.clone());
+        let end = cycle.len() - 1;
+        cycle[1..end].reverse();
+        let (line, column) = self.imports[&start]
+            .iter()
+            .find(|(p, _, _)| *p == cycle[1])
+            .map(|(_, l, c)| (*l, *c))
+            .unwrap_or((1, 1));
+        let root = crate::pkg::manifest::Manifest::find_root(&start).unwrap_or(dir);
+        let shown: Vec<String> = cycle
+            .iter()
+            .map(|p| p.strip_prefix(&root).unwrap_or(p).display().to_string())
+            .collect();
+        Some(CheckDiagnostic {
+            line,
+            column,
+            message: format!("Circular dependency detected: {}", shown.join(" → ")),
+            runtime: true,
+            warning: false,
+            scope: false,
+            class: None,
+        })
+    }
+}
+
+/// Where a `use` of `path` from a file in `dir` may be, in the runtime's
+/// order: the file's directory, then its own package's root (a nested
+/// module's `use lib.x` means its package's lib/x.ol, wherever the check
+/// was started), then a package dependency's index or a module inside it.
+fn use_candidates(path: &[String], dir: &Path) -> Vec<PathBuf> {
+    let joined = path.join("/");
+    let last = path.last().cloned().unwrap_or_default();
+    let mut candidates = vec![
+        dir.join(format!("{}.ol", joined)),
+        dir.join(&joined).join("index.ol"),
+        dir.join(&joined).join("mod.ol"),
+    ];
+    let absolute = std::path::absolute(if dir.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        dir
+    })
+    .unwrap_or_else(|_| dir.to_path_buf());
+    if let Some(root) = crate::pkg::manifest::Manifest::find_root(&absolute) {
+        candidates.push(root.join(format!("{}.ol", joined)));
+        candidates.push(root.join(&joined).join("index.ol"));
+    }
+    if let Some(pkg) = crate::expand::package_dir(&path[0], Some(dir)) {
+        if path.len() == 1 {
+            candidates.push(pkg.join("index.ol"));
+        } else {
+            let rest = path[1..].join("/");
+            candidates.push(pkg.join(format!("{}.ol", rest)));
+            candidates.push(pkg.join(&rest).join("index.ol"));
+        }
+    }
+    candidates.push(dir.join(format!("{}.ol", last)));
+    candidates
+}
+
 /// `modules_used` over an already-parsed program.
 fn modules_used_by(
     program: &Program,
@@ -1927,37 +2154,7 @@ fn modules_used_by(
         if u.path.is_empty() {
             continue;
         }
-        let joined = u.path.join("/");
-        let last = u.path.last().cloned().unwrap_or_default();
-        // The runtime's order: the file's directory, then its own
-        // package's root (a nested module's `use lib.x` means its
-        // package's lib/x.ol, wherever the check was started), then a
-        // package dependency's index or a module inside it.
-        let mut candidates = vec![
-            dir.join(format!("{}.ol", joined)),
-            dir.join(&joined).join("index.ol"),
-            dir.join(&joined).join("mod.ol"),
-        ];
-        let absolute = std::path::absolute(if dir.as_os_str().is_empty() {
-            Path::new(".")
-        } else {
-            dir
-        })
-        .unwrap_or_else(|_| dir.to_path_buf());
-        if let Some(root) = crate::pkg::manifest::Manifest::find_root(&absolute) {
-            candidates.push(root.join(format!("{}.ol", joined)));
-            candidates.push(root.join(&joined).join("index.ol"));
-        }
-        if let Some(pkg) = crate::expand::package_dir(&u.path[0], Some(dir)) {
-            if u.path.len() == 1 {
-                candidates.push(pkg.join("index.ol"));
-            } else {
-                let rest = u.path[1..].join("/");
-                candidates.push(pkg.join(format!("{}.ol", rest)));
-                candidates.push(pkg.join(&rest).join("index.ol"));
-            }
-        }
-        candidates.push(dir.join(format!("{}.ol", last)));
+        let candidates = use_candidates(&u.path, dir);
         for c in candidates {
             if out.iter().any(|(p, _, _)| *p == c) {
                 break;
