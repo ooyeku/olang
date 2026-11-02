@@ -315,7 +315,10 @@ impl IntuitiveErrorFormatter {
 
         result.push_str("\nHelp:\n");
         result.push_str("  • Check the function name spelling\n");
-        result.push_str("  • Ensure the function is marked with 'share' in the module\n");
+        result.push_str(&format!(
+            "  • A name is imported only when {} shares it ('share fn')\n",
+            module_path
+        ));
         result.push_str(&format!(
             "  • Try: use {} {{ available_function_name }}\n",
             module_path

@@ -6064,7 +6064,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         let module = self.load_module_from_file(&module_path)?;
 
         // Import items into current environment (makes them available locally)
-        self.bind_module_imports(&module, &Some(use_decl.items.clone()))?;
+        self.bind_module_imports(&module, &module_path, &Some(use_decl.items.clone()))?;
 
         // Note: The re-sharing is handled in load_module_from_file when processing ShareDecl::Use
         // This just ensures the items are available in the current module's environment
