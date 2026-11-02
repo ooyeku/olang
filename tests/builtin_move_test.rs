@@ -94,3 +94,67 @@ println(r)
         );
     }
 }
+
+#[test]
+fn a_table_nested_in_a_map_is_updated_in_place_when_compiled() {
+    // OL-266: the fused `d = map_set(d, k, v)` cloned its value register,
+    // which kept the stored table until the register was written again;
+    // read back out the next turn it was shared, and its write copied it.
+    // `map_update` lent the old value to its function, which copied it
+    // the same way. 20,000 writes took over 3 s; in place, milliseconds.
+    let src = r#"
+fn moved_out(n) = {
+    let mut d = #{ "inputs": #{}, "rev": 1 }
+    for i in range(0, n) {
+        let ins = d.inputs
+        d = map_set(d, "inputs", ())
+        d = map_set(d, "inputs", map_set(ins, "k" + show(i), i))
+    }
+    map_len(d.inputs)
+}
+fn updated(n) = {
+    let mut d = #{ "inputs": #{}, "rev": 1 }
+    for i in range(0, n) { d = map_update(d, "inputs", (ins) => map_set(ins, "k" + show(i), i)) }
+    map_len(d.inputs)
+}
+fn through_a_cell(n) = {
+    let c = cell(#{ "inputs": #{} })
+    for i in range(0, n) {
+        let d0 = cell.take(c)
+        let ins = map_get(d0, "inputs")
+        cell.set(c, map_set(map_remove(d0, "inputs"), "inputs", map_set(ins, "k" + show(i), i)))
+    }
+    map_len(cell.get(c).inputs)
+}
+let t0 = time.monotonic()
+let r = [moved_out(20000), updated(20000), through_a_cell(20000)]
+println([r, time.monotonic() - t0 < 1500.0])
+"#;
+    assert_eq!(run(&[], src), "[[20000, 20000, 20000], true]");
+    // and the same answers interpreted
+    let small = src.replace("20000", "300");
+    assert_eq!(run(&["--no-ovm"], &small), "[[300, 300, 300], true]");
+}
+
+#[test]
+fn a_table_stored_in_a_map_is_still_a_value() {
+    // what the moves must never change: a table read out of a map and
+    // kept, then written through the map, keeps its own entries
+    let src = r#"
+fn keep(n) = {
+    let mut d = #{ "t": #{} }
+    let mut seen = []
+    for i in range(0, n) {
+        let t = d.t
+        seen = seen + [map_len(t)]
+        d = map_set(d, "t", map_set(t, show(i), i))
+        d = map_update(d, "t", (u) => map_set(u, "x" + show(i), i))
+    }
+    (seen, map_len(d.t))
+}
+println(keep(4))
+"#;
+    for flags in TIERS {
+        assert_eq!(run(flags, src), "([0, 2, 4, 6], 8)", "{flags:?}");
+    }
+}

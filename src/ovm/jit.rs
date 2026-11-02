@@ -3897,7 +3897,9 @@ pub(crate) fn for_each_reg(
             f(target);
             f(rhs);
         }
-        I::MapSetAssign { target, key, value } => {
+        I::MapSetAssign {
+            target, key, value, ..
+        } => {
             f(target);
             f(key);
             f(value);

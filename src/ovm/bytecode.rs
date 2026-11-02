@@ -697,6 +697,13 @@ pub enum Instruction {
         target: Register,
         key: Register,
         value: Register,
+        /// The value register is not read again (set by the liveness
+        /// pass): it is moved into the map, not cloned. A clone left the
+        /// register holding the value until it was overwritten, so a map
+        /// stored this way and read back out the next turn was shared
+        /// and copied on its next write (OL-266).
+        #[serde(default)]
+        value_dead: bool,
     },
     /// `let x: T = value` — enforce the declared type of a binding, with
     /// the interpreter's message. The check is one comparison; before this
@@ -5055,7 +5062,12 @@ impl BytecodeVm {
                     self.execution_state.set_register(*dst, result)?;
                 }
 
-                Instruction::MapSetAssign { target, key, value } => {
+                Instruction::MapSetAssign {
+                    target,
+                    key,
+                    value,
+                    value_dead,
+                } => {
                     use crate::ovm::value::ValueData;
                     // A user-defined map_set shadows the builtin: resolve
                     // exactly as CallNamed would and call it.
@@ -5106,7 +5118,11 @@ impl BytecodeVm {
                             ));
                         }
                     };
-                    let v = self.execution_state.get_register(*value)?;
+                    let v = if *value_dead && value != target && value != key {
+                        self.execution_state.take_register(*value)?
+                    } else {
+                        self.execution_state.get_register(*value)?
+                    };
                     // Take the map out of its register so a sole owner is
                     // recognizable; aliased maps copy, exactly like the
                     // list writes.
@@ -8010,6 +8026,33 @@ impl BytecodeVm {
         }
     }
 
+    /// `call_function_value` with the arguments handed over: a compiled
+    /// callee's frame takes them by move, so a value nothing else holds
+    /// stays uniquely held there. Anything else is called as
+    /// `call_function_value` calls it.
+    fn call_function_value_taking(
+        &mut self,
+        callee: &OvmValue,
+        mut args: Vec<OvmValue>,
+    ) -> Result<OvmValue, BytecodeError> {
+        use crate::ovm::value::ValueData;
+        match &callee.data {
+            ValueData::AstFunction(f) if f.parameters.len() == args.len() => {
+                let f = f.clone();
+                if let Some(func_id) = self.hof_function_id(&f, args.len()) {
+                    return self.execute_taking(func_id, &mut args);
+                }
+            }
+            ValueData::Closure(c) if c.template.parameters.len() == args.len() => {
+                let c = c.clone();
+                args.extend(c.captured.iter().cloned());
+                return self.execute_taking(c.func_id, &mut args);
+            }
+            _ => {}
+        }
+        self.call_function_value(callee, &args)
+    }
+
     fn call_function_value(
         &mut self,
         callee: &OvmValue,
@@ -10015,7 +10058,10 @@ impl BytecodeVm {
                     .get_mut(&key)
                     .map(|v| std::mem::replace(v, OvmValue::new_unit()))
                     .unwrap_or_else(OvmValue::new_unit);
-                let new = self.call_function_value(&f, &[old])?;
+                // handed over, not lent: the function's frame then holds
+                // the old value's only reference, so a table nested in a
+                // map is updated in place (OL-266)
+                let new = self.call_function_value_taking(&f, vec![old])?;
                 Arc::make_mut(&mut m).insert(key, new);
                 Ok(OvmValue::new_map(m))
             }
@@ -11840,6 +11886,27 @@ impl BytecodeCompiler {
                 Ok(dst_reg)
             }
 
+            // A module that exports `new` is callable: `cell(0)` is
+            // `cell.new(0)`, as the interpreter calls it. Compiled as that
+            // call; it refused the whole function as an unresolved name.
+            Expr::Call { callee, arguments }
+                if matches!(callee.as_ref(), Expr::Identifier(module)
+                    if !self.local_variables.contains_key(module)
+                        && self.q_registry(module).is_none()
+                        && self.q_module_builtin(module, "new").is_some()) =>
+            {
+                let Expr::Identifier(module) = callee.as_ref() else {
+                    unreachable!("matched above")
+                };
+                let rewritten = Expr::Call {
+                    callee: Box::new(Expr::FieldAccess {
+                        object: Box::new(Expr::Identifier(module.clone())),
+                        field: "new".to_string(),
+                    }),
+                    arguments: arguments.clone(),
+                };
+                self.compile_expression(&rewritten)
+            }
             Expr::Call { callee, arguments } => {
                 // Callee resolution mirrors the interpreter's scope order. A
                 // name held by a LOCAL is a function value and the call goes
@@ -14065,6 +14132,7 @@ impl BytecodeCompiler {
                     target: target_reg,
                     key: k,
                     value: v,
+                    value_dead: false,
                 });
                 return Ok(target_reg);
             }
@@ -15273,6 +15341,16 @@ impl BytecodeOptimizer {
                 let dead = !(pc + 1 < n && live_in[pc + 1][lhs.0 as usize]);
                 *lhs_dead = dead && lhs != rhs && dst != rhs;
             }
+            if let I::MapSetAssign {
+                target,
+                key,
+                value,
+                value_dead,
+            } = &mut instructions[pc]
+            {
+                let dead = !(pc + 1 < n && live_in[pc + 1][value.0 as usize]);
+                *value_dead = dead && value != target && value != key;
+            }
             if let I::CallFn {
                 args, arg_moves, ..
             } = &mut instructions[pc]
@@ -15431,7 +15509,9 @@ impl BytecodeOptimizer {
                 uses.push(j.0);
                 defs.push(target.0);
             }
-            I::MapSetAssign { target, key, value } => {
+            I::MapSetAssign {
+                target, key, value, ..
+            } => {
                 uses.push(target.0);
                 uses.push(key.0);
                 uses.push(value.0);
