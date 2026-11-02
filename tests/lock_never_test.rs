@@ -99,6 +99,10 @@ fn never_leaves_a_stale_lock_byte_for_byte() {
 
 #[test]
 fn an_explicit_install_still_writes_a_never_lock() {
+    // The install runs in this process: a caller's OLANG_LOCK_READONLY=1
+    // (Studio's Checks set it) would keep the lock unwritten. No other
+    // test in this file reads the variable in-process.
+    unsafe { std::env::remove_var("OLANG_LOCK_READONLY") };
     let dir = project("explicit", Some("never"));
     let app = dir.join("app");
     let incidental = olang::pkg::install(&app, &olang::pkg::InstallOptions::default()).unwrap();

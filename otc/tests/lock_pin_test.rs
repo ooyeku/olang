@@ -17,6 +17,9 @@ use std::sync::Mutex;
 static SHELF_ENV: Mutex<()> = Mutex::new(());
 
 fn otc(dir: &Path, home: &Path, args: &[&str]) -> (bool, String) {
+    // A caller's OLANG_LOCK_READONLY=1 (Studio's Checks set it) would keep
+    // the locks these tests expect unwritten.
+    unsafe { std::env::remove_var("OLANG_LOCK_READONLY") };
     let out = Command::new(env!("CARGO_BIN_EXE_otc"))
         .args(args)
         .current_dir(dir)
@@ -53,6 +56,9 @@ fn git(dir: &Path, args: &[&str]) -> String {
 /// Run `main.ol` of `project` the way `olang main.ol` does: a dependency
 /// that does not resolve is an error naming it and why.
 fn run_program(project: &Path) -> Result<String, String> {
+    // A caller's OLANG_LOCK_READONLY=1 (Studio's Checks set it) would keep
+    // the locks these tests expect unwritten.
+    unsafe { std::env::remove_var("OLANG_LOCK_READONLY") };
     let (map, missing) =
         olang::pkg::install_lenient(project, &olang::pkg::InstallOptions::default());
     let source = std::fs::read_to_string(project.join("main.ol")).unwrap();

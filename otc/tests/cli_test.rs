@@ -22,6 +22,9 @@ struct Run {
 }
 
 fn run_in(dir: &Path, shelf: &Path, args: &[&str]) -> Run {
+    // A caller's OLANG_LOCK_READONLY=1 (Studio's Checks set it) would keep
+    // the locks these tests expect unwritten.
+    unsafe { std::env::remove_var("OLANG_LOCK_READONLY") };
     let out = Command::new(otc())
         .args(args)
         .current_dir(dir)
@@ -50,6 +53,9 @@ fn parses(path: &Path) {
 /// exactly what makes this a test of the shelf: install() must resolve
 /// the `{ shelf = ... }` entry for the import to exist at all.
 fn run_olang(project: &Path, rel: &str) -> String {
+    // A caller's OLANG_LOCK_READONLY=1 (Studio's Checks set it) would keep
+    // the locks these tests expect unwritten.
+    unsafe { std::env::remove_var("OLANG_LOCK_READONLY") };
     let map = olang::pkg::install(project, &olang::pkg::InstallOptions::default())
         .expect("install resolves the shelf dependency");
     let source = std::fs::read_to_string(project.join(rel)).expect("read program");
