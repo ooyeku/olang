@@ -2373,9 +2373,16 @@ impl BuiltinFunctions {
             }
             .map(|c| Value::String(c.to_string().into()))
             .unwrap_or(Value::Unit)),
+            // a byte, as `b[0]` reads it (OL-181)
+            other if crate::stdlib::bytes::bytes_of(other).is_ok() => {
+                let b = crate::stdlib::bytes::bytes_of(other).unwrap_or(&[]);
+                Ok(if first { b.first() } else { b.last() }
+                    .map(|&x| Value::Integer(x as i64))
+                    .unwrap_or(Value::Unit))
+            }
             other => Err(InterpreterError::TypeError {
                 message: format!(
-                    "{}: argument must be a list, tuple or string, got {}",
+                    "{}: argument must be a list, tuple, string or Bytes, got {}",
                     name,
                     other.type_name()
                 ),
