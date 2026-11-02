@@ -26,7 +26,11 @@ use std::path::PathBuf;
 /// The root: `$OLANG_HOME`, else `~/.olang`. `None` only when no home
 /// directory can be determined at all.
 pub fn root() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("OLANG_HOME") {
+    // Set but empty is unset, as with HOME: an empty root put every
+    // cache under ./state of whatever folder olang ran in (OL-263).
+    if let Ok(p) = std::env::var("OLANG_HOME")
+        && !p.is_empty()
+    {
         return Some(PathBuf::from(p));
     }
     std::env::var_os("HOME")
@@ -84,6 +88,11 @@ mod tests {
             super::warm().unwrap(),
             std::path::PathBuf::from("/tmp/olang-home-test/state/warm")
         );
+        // set but empty: the default root, never the working folder
+        unsafe { std::env::set_var("OLANG_HOME", "") };
+        let root = super::root();
         unsafe { std::env::remove_var("OLANG_HOME") };
+        assert_eq!(root, super::root());
+        assert!(root.is_some_and(|r| r.ends_with(".olang")));
     }
 }
