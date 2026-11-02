@@ -36,11 +36,10 @@ thread_local! {
 /// The line each expression-bodied function is declared on, by its file
 /// and name: such a body has no located statement, so a failure in it
 /// was said at line 0 (OL-180). Noted once per declaration.
-fn decl_lines()
--> &'static std::sync::Mutex<std::collections::HashMap<(Option<String>, String), u32>> {
-    static LINES: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<(Option<String>, String), u32>>,
-    > = std::sync::OnceLock::new();
+type DeclLines = std::sync::Mutex<std::collections::HashMap<(Option<String>, String), u32>>;
+
+fn decl_lines() -> &'static DeclLines {
+    static LINES: std::sync::OnceLock<DeclLines> = std::sync::OnceLock::new();
     LINES.get_or_init(Default::default)
 }
 
