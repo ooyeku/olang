@@ -1657,6 +1657,13 @@ the function it shadows is the usual cause; `olang check` names the parameter",
 
     fn eval_function_decl(&mut self, func_decl: FunctionDecl) -> Result<Value, InterpreterError> {
         let name = func_decl.name.clone();
+        // An expression body has no located statement to place a failure
+        // by: its declaration's line does (OL-180).
+        if !matches!(func_decl.body, Expr::Block(_))
+            && let Some((line, _)) = func_decl.name_span
+        {
+            crate::errtrace::note_decl(self.defining_file().as_deref(), &name, line);
+        }
         let top_level = self.environment.parent.is_none() && !self.environment.is_frame;
         let function_value = self.build_function_value(func_decl, None)?;
         // Define the function in the current environment so it can be called recursively

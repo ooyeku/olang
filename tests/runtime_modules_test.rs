@@ -382,13 +382,13 @@ println(runtime.shape(#{ "n": 1, "items": ["a"], "s": Ok(#{ "k": 2.0 }) }))
     );
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(
-        lines[0], "plugin.ol:0 boom",
-        "an expression body: named, no line"
+        lines[0], "plugin.ol:1 boom",
+        "an expression body: its declaration's line (OL-180)"
     );
     assert_eq!(lines[1], "plugin.ol:3 deeper");
     assert_eq!(lines[2], "--");
     assert_eq!(lines[3], "str.trim: argument 1 must be a string, got Unit");
-    assert_eq!(lines[4], "plugin.ol:0 boom");
+    assert_eq!(lines[4], "plugin.ol:1 boom");
     assert_eq!(lines[5], "plugin.ol:3 deeper");
     assert_eq!(lines[6], "host.ol:2 outer");
     assert_eq!(lines[7], "host.ol:0 <lambda>");
