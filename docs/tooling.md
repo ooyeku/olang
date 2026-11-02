@@ -2125,7 +2125,8 @@ nothing should depend on them.
 | `OLANG_TEST` | yes | Set to `1` by `olang test` for the files it runs, for a program to read. |
 | `OLANG_COMPILE_CACHE` | yes | `0` turns off the compile cache ([ovm.md](ovm.md)). |
 | `OLANG_COMPILE_CACHE_MB` | yes | The compile cache's size cap in MB (default 64). |
-| `OLANG_PARSE_CACHE` | no | `0`: parse every module instead of reading it back from `~/.olang/state/parsed`. |
+| `OLANG_PARSE_CACHE` | no | `0`: parse every module instead of reading it back from `~/.olang/state/parsed`. An entry unused for two weeks is dropped, and past its cap the least recently used go first, as the compile cache's do. |
+| `OLANG_PARSE_CACHE_MB` | no | The parse cache's size cap in MB (default 64). |
 | `OLANG_WARM` | yes | `0` disables the warm tier profile ([ovm.md](ovm.md)), for measurement. |
 | `LOOM_RENDERER` | yes | `gpu` (the default) or `software`: the renderer `gui.open` uses when its options name none. |
 | `NO_COLOR` / `CLICOLOR_FORCE` | yes | Disable or force `term` styling regardless of whether output is a TTY. |
