@@ -358,6 +358,8 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
                     expanded = e.text;
                     expanded.clone()
                 }
+                // the file's own syntax error: the parser below says it
+                Err(message) if crate::expand::is_source_parse_error(&message) => source,
                 Err(message) => {
                     eprintln!("{}: {}", file.display(), message);
                     problems += 1;

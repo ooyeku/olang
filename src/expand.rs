@@ -152,6 +152,16 @@ pub fn expand_source_mapped(source: &str) -> Result<Expansion, String> {
     expand_impl(source, None)
 }
 
+/// The start of an expansion's error when the text given does not parse
+/// before anything expanded: a caller reports it as the parser does, with
+/// the file (`is_source_parse_error`).
+pub const SOURCE_DOES_NOT_PARSE: &str = "the program does not parse:";
+
+/// Whether an expansion failed only because its input does not parse.
+pub fn is_source_parse_error(message: &str) -> bool {
+    message.starts_with(SOURCE_DOES_NOT_PARSE)
+}
+
 fn expand_impl(source: &str, base_dir: Option<&std::path::Path>) -> Result<Expansion, String> {
     // Same source, same program: gensym names restart at zero for every
     // expansion, so re-parsing a file yields byte-identical output.
@@ -183,10 +193,17 @@ fn expand_impl(source: &str, base_dir: Option<&std::path::Path>) -> Result<Expan
         .map(LineOrigin::Original)
         .collect();
 
-    for _round in 0..FUEL {
-        let program = parser
-            .parse_raw(&text)
-            .map_err(|e| format!("macro expansion produced text that does not parse:\n{e}"))?;
+    for round in 0..FUEL {
+        let program = parser.parse_raw(&text).map_err(|e| {
+            // Before any expansion it is the file's own text that does
+            // not parse: its error is the parser's, not an expansion's
+            // (OL-178; any file with a matrix product `a @ b` comes here)
+            if round == 0 {
+                format!("{SOURCE_DOES_NOT_PARSE}\n{e}")
+            } else {
+                format!("macro expansion produced text that does not parse:\n{e}")
+            }
+        })?;
         let (meta_fns, calls, decorated) = collect_sites(&program, &text);
 
         // Placement rules, enforced before anything runs. A meta fn is a

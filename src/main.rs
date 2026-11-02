@@ -4128,6 +4128,9 @@ fn execute_source(
                 expanded_holder = same.text;
                 expanded_holder.as_str()
             }
+            // the file itself does not parse: the parser below says
+            // where, as for any file
+            Err(message) if olang::expand::is_source_parse_error(&message) => source,
             Err(message) => {
                 eprintln!("olang: {}", message);
                 return Err(anyhow::anyhow!("Macro expansion failed"));

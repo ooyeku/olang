@@ -871,3 +871,34 @@ fn check_tier_loads_a_used_module_without_running_its_effects() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_syntax_error_in_a_file_with_a_matrix_product_is_the_files_parse_error() {
+    // OL-178: any parse error in a file that uses `@` (a matrix product)
+    // was "macro expansion produced text that does not parse", with no
+    // file and none of the usual report.
+    let dir = std::env::temp_dir().join(format!("olang_at_parse_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("u.ol");
+    std::fs::write(
+        &file,
+        "let a = mat.of([[1.0]])\nlet b = a @ a\nlet f = (_) => 1\n",
+    )
+    .unwrap();
+    for args in [vec![], vec!["check"]] {
+        let out = Command::new(env!("CARGO_BIN_EXE_olang"))
+            .args(&args)
+            .arg(&file)
+            .output()
+            .unwrap();
+        let said = String::from_utf8_lossy(&out.stderr).to_string()
+            + &String::from_utf8_lossy(&out.stdout);
+        assert!(!out.status.success(), "{args:?}: {said}");
+        assert!(!said.contains("macro expansion"), "{args:?}: {said}");
+        assert!(
+            said.contains("u.ol") && said.contains("3"),
+            "{args:?}: {said}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
