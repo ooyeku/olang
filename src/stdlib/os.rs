@@ -161,8 +161,15 @@ pub fn call_os_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn s
         "home_dir" => os_home_dir(args),
         "temp_dir" => os_temp_dir(args),
         "exit" => os_exit(args),
-        "exec" => os_exec(args),
-        "read_line" => os_read_line(args),
+        // waits on a child or the terminal: parked, as proc's are
+        "exec" => {
+            let _parked = crate::profile::blocked();
+            os_exec(args)
+        }
+        "read_line" => {
+            let _parked = crate::profile::blocked();
+            os_read_line(args)
+        }
         "is_tty" => os_is_tty(args),
         "stdin_is_tty" => os_stdin_is_tty(args),
         "color_enabled" => os_color_enabled(args),

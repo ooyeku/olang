@@ -643,3 +643,39 @@ fn a_gui_program_ending_with_os_exit_is_profiled_to_its_end() {
         .unwrap_or(0.0);
     assert!(secs >= 1.4, "{out}");
 }
+
+#[test]
+fn a_thread_waiting_on_a_child_s_output_is_blocked_not_running() {
+    // OL-329: a task reading a streamed child with proc.read_line sat in
+    // it for the child's life and was charged as self time (92–98% of a
+    // long-lived app's samples); a wait on a child is parked, as a
+    // channel's receive is.
+    let dir = project(
+        "read-line",
+        r#"fn reader(p) = {
+    let mut n = 0
+    let mut going = true
+    while going {
+        match proc.read_line(p) { Ok(_) => { n = n + 1 }, Err(_) => { going = false } }
+    }
+    n
+}
+let p = unwrap(proc.spawn(["sleep", "1"]))
+let t = spawn reader(p)
+println(show(unwrap(task.join(t))))
+"#,
+    );
+    let (code, _, err) = olang(
+        &dir,
+        &["profile", "--format", "json", "-o", "p.json", "main.ol"],
+    );
+    assert_eq!(code, 0, "{err}");
+    let doc = read(&dir.join("p.json"));
+    let blocked = doc["blocked"].as_u64().unwrap();
+    let samples = doc["samples"].as_u64().unwrap();
+    assert!(blocked > 300, "blocked {blocked}");
+    assert!(
+        samples < blocked / 10,
+        "a child's wait counted as running: {samples} samples, {blocked} blocked"
+    );
+}

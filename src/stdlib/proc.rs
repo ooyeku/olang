@@ -229,13 +229,27 @@ pub fn call_proc_function(
         "write_line" => proc_write(args, true),
         "write_frame" => proc_write_frame(args),
         "close_stdin" => proc_close_stdin(args),
-        "read_line" => proc_read_line(args),
-        "read_all" => proc_read_all(args),
+        // A thread waiting on a child is parked, as on a channel: the
+        // sampler counts it blocked, not running (OL-329).
+        "read_line" => {
+            let _parked = crate::profile::blocked();
+            proc_read_line(args)
+        }
+        "read_all" => {
+            let _parked = crate::profile::blocked();
+            proc_read_all(args)
+        }
         "stderr" => proc_stderr(args),
-        "wait" => proc_wait(args),
+        "wait" => {
+            let _parked = crate::profile::blocked();
+            proc_wait(args)
+        }
         "kill" => proc_kill(args),
         "pid" => proc_pid(args),
-        "pipeline" => proc_pipeline(args),
+        "pipeline" => {
+            let _parked = crate::profile::blocked();
+            proc_pipeline(args)
+        }
         _ => Err(format!("Unknown proc function: {}", name).into()),
     }
 }

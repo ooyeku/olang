@@ -235,11 +235,18 @@ mod imp {
     pub fn call(name: &str, args: Vec<Value>) -> Res {
         match name {
             "spawn" => spawn(args),
-            "read" => read(args),
+            // waits on the terminal's child: parked, as proc's are
+            "read" => {
+                let _parked = crate::profile::blocked();
+                read(args)
+            }
             "write" => write(args),
             "resize" => resize(args),
             "kill" => kill(args),
-            "wait" => wait(args),
+            "wait" => {
+                let _parked = crate::profile::blocked();
+                wait(args)
+            }
             "pid" => {
                 let p = match pty_of(args.first().unwrap_or(&Value::Unit)) {
                     Ok(p) => p,

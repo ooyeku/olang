@@ -276,6 +276,8 @@ pub fn watch(args: Vec<Value>) -> Res {
 /// `fs.watch_next(w, opts)`: the next batch of changes, `()` when none
 /// came within `timeout_ms`, `Err` once the watch is closed.
 pub fn watch_next(args: Vec<Value>) -> Res {
+    // waits on the file system: parked, as a channel's receive is
+    let _parked = crate::profile::blocked();
     if args.is_empty() || args.len() > 2 {
         return Err(crate::stdlib::misuse::arity(
             "fs.watch_next",

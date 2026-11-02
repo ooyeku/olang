@@ -5139,8 +5139,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     fn names_identifier(body: &Expr, name: &str) -> bool {
         match serde_json::to_string(body) {
             Ok(text) => {
-                let needle = serde_json::to_string(&Expr::Identifier(name.to_string()))
-                    .unwrap_or_default();
+                let needle =
+                    serde_json::to_string(&Expr::Identifier(name.to_string())).unwrap_or_default();
                 text.contains(&needle)
             }
             Err(_) => true,
