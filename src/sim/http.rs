@@ -326,17 +326,35 @@ fn serve(
             Err(message) => return Ok(err(message)),
         };
     let node = ctx.node;
+    let mut tasks = Vec::with_capacity(workers);
     for i in 0..workers {
         let mut worker = interpreter.thread_safe_clone();
         let handler = handler.clone();
         let world = w.clone();
         let label = format!("http worker {} of :{port}", i + 1);
-        spawn_task(w, ctx.task, node, None, &label, move || {
+        let (task, _) = spawn_task(w, ctx.task, node, None, &label, move || {
             let me = super::current().map(|c| c.task).unwrap_or(0);
             work(&world, me, node, port, queue, &mut worker, &handler)
         })?;
+        tasks.push(task);
     }
     w.serve_wait(ctx.task, node, port, queue, ctl)?;
+    // A drain waits up to `drain_ms` (the world's time) for the handlers
+    // in flight, as a real server does: returning at once dropped a
+    // request in flight at a stop that a real machine answers (OL-270).
+    let until = w.now() + config.drain_ms;
+    while let Some(&busy) = tasks.iter().find(|&&t| w.outcome(t).is_none()) {
+        if w.now() >= until {
+            w.note(ctx.task, "timeout", format!("http.serve drain on :{port}"));
+            break;
+        }
+        w.block(
+            ctx.task,
+            super::sched::Wait::Task(busy),
+            format!("http.serve draining :{port}"),
+            Some(until),
+        )?;
+    }
     Ok(Value::Ok(Box::new(Value::Unit)))
 }
 
