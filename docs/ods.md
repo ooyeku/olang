@@ -1060,8 +1060,12 @@ let f = ods.read_csv("region,amount,qty\neast,25.5,10\nwest,320.0,3\n")
 println(to_string(ods.describe(f)))
 ```
 
-The numeric statistics are null for String and Bool columns, so the
-summary has the same shape whatever the input. `ods.schema(f)` is the same thing without the arithmetic — name, type,
+A Bool column is summarized as its 0s and 1s (its mean is the share
+true, and `mean * count` the number true); the numeric statistics are
+null for a String column, so the summary has the same shape whatever
+the input. A Bool Series widens in arithmetic the same way: `12.0 * b`
+is 12 where `b` is true and 0 where it is false, as are its `sum`,
+`mean`, `std` and `var`. `ods.schema(f)` is the same thing without the arithmetic — name, type,
 and null count per column — for a Frame too wide to summarize
 comfortably.
 

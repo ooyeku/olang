@@ -455,3 +455,22 @@ fn a_chain_past_the_depth_cap_still_computes() {
     assert_eq!(items[0], Value::Float(41.0));
     assert_eq!(items[1], Value::Float(42.0));
 }
+
+#[test]
+fn a_bool_series_is_zero_and_one_in_arithmetic_and_reductions() {
+    // OL-182: `.mean()` read a Bool series as 0 and 1, but `2.0 * s`,
+    // `s + 1`, `.std()` and `.var()` raised.
+    let result = assert_tier_transparent(
+        r#"
+        fn scaled(b) = (12.0 * b).to_list()
+        let b = ods.series([true, false, true, true])
+        [scaled(b), (b + 1).to_list(), (b * ods.series([1.0, 2.0, 3.0, 4.0])).to_list(),
+         show(b.mean()), show(b.var()), show(b.std() > 0.0), show((b == true).to_list())]
+        "#,
+    )
+    .expect("runs");
+    assert_eq!(
+        format!("{}", result),
+        r#"[[12.0, 0.0, 12.0, 12.0], [2, 1, 2, 2], [1.0, 0.0, 3.0, 4.0], "0.75", "0.25", "true", "[true, false, true, true]"]"#
+    );
+}
