@@ -1389,6 +1389,11 @@ fn literal_default(expr: &Expr) -> Option<OvmValue> {
     })
 }
 
+thread_local! {
+    /// The construct a lambda's free-variable walk refused first.
+    static FREE_REFUSED: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
 /// One compile of a lambda body shared by all its closures whose captures
 /// are the same (`BytecodeVm::hof_shared`).
 ///
@@ -13003,10 +13008,19 @@ impl BytecodeCompiler {
         let bound: std::collections::HashSet<String> =
             parameters.iter().map(|p| p.name.clone()).collect();
         let mut free = std::collections::HashSet::new();
+        FREE_REFUSED.with(|r| *r.borrow_mut() = None);
         if !Self::collect_free_vars(body, &bound, &mut free) {
-            return Err(BytecodeError::CompilationFailed(
-                "Lambda body uses constructs the bytecode tier cannot analyze".to_string(),
-            ));
+            let what = FREE_REFUSED
+                .with(|r| r.borrow_mut().take())
+                .unwrap_or_else(|| "a construct".to_string());
+            return Err(BytecodeError::CompilationFailed(format!(
+                "a lambda{} uses {}, which the bytecode tier cannot analyze",
+                match self_name {
+                    Some(n) => format!(" (`{n}`)"),
+                    None => String::new(),
+                },
+                what
+            )));
         }
 
         // Free variables split three ways. A name currently living
@@ -13832,14 +13846,41 @@ impl BytecodeCompiler {
                             }
                             scope.insert(decl.name.clone());
                         }
-                        _ => return false,
+                        other => {
+                            Self::refuse_free(|| match other {
+                                Statement::UseDecl(_) => "a `use`".to_string(),
+                                Statement::TypeDecl(_) => "a type declaration".to_string(),
+                                _ => "a declaration".to_string(),
+                            });
+                            return false;
+                        }
                     }
                 }
                 true
             }
 
-            _ => false,
+            // an early `return` leaves the lambda, as a `fn`'s leaves it
+            Expr::Return(value) => value
+                .as_ref()
+                .is_none_or(|v| Self::collect_free_vars(v, bound, free)),
+
+            other => {
+                Self::refuse_free(|| Self::construct_name(other));
+                false
+            }
         }
+    }
+
+    /// The first construct `collect_free_vars` refused, said in a
+    /// lambda's refusal (OL-251: "uses constructs the bytecode tier
+    /// cannot analyze" named neither the lambda nor the construct).
+    fn refuse_free(name: impl FnOnce() -> String) {
+        FREE_REFUSED.with(|r| {
+            let mut r = r.borrow_mut();
+            if r.is_none() {
+                *r = Some(name());
+            }
+        });
     }
 
     /// Collect the names a pattern binds.

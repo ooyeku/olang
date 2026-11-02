@@ -870,3 +870,39 @@ fn the_checker_means_what_the_file_imported() {
     assert_ne!(code, 0, "{all}");
     assert!(all.contains("Missing required argument: children"), "{all}");
 }
+
+#[test]
+fn a_lambda_with_an_early_return_compiles_and_a_refused_one_names_its_construct() {
+    // OL-251: "Lambda body uses constructs the bytecode tier cannot
+    // analyze" named neither the lambda nor the construct; an early
+    // `return` (which a `fn`'s body compiles) was one of them.
+    let ws = workspace("lambda_construct");
+    write(
+        &ws,
+        "olang.toml",
+        "[package]\nname = \"t\"\nversion = \"0.1.0\"\n",
+    );
+    write(
+        &ws,
+        "lib/a.ol",
+        "fn lo_on(m) = m > 0\n\
+         share fn arms() = #{ \"a\": (m) => { if !lo_on(m) => return (m, []); (m + 1, [m]) } }\n\
+         share fn weird() = { let f = (x) => { type T = Int; x }; f(1) }\n",
+    );
+    let (out, _, _) = olang(&ws, &["check", "--tier", "lib"]);
+    assert!(!out.contains("`arms`"), "{out}");
+    assert!(
+        out.contains("`weird` stays on the tree-walker")
+            && out.contains("a lambda uses a type declaration"),
+        "{out}"
+    );
+    write(
+        &ws,
+        "main.ol",
+        "use lib.a { arms }\nlet t = arms()\nlet mut s = 0\nfor i in range(-3, 300) { s = s + t.a(i)[0] }\nprintln(s)\n",
+    );
+    let (a, _, _) = olang(&ws, &["main.ol"]);
+    let (b, _, _) = olang(&ws, &["--no-ovm", "main.ol"]);
+    assert_eq!(a, b);
+    assert_eq!(a.trim(), "45143");
+}
