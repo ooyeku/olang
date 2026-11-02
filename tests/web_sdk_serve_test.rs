@@ -37,3 +37,36 @@ fn serve_on_a_port_held_elsewhere_says_so_and_exits_1() {
     drop(held);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `dispatch` run in process prints its access line at OLANG_ACCESS_LOG's
+/// level, as `serve` does: a stdio child speaking a protocol on stdout
+/// sets `off` (OL-254; the line was printed whatever the level).
+#[test]
+fn dispatch_in_process_honours_the_access_log_level() {
+    let web = Path::new(env!("CARGO_MANIFEST_DIR")).join("frameworks/web-sdk");
+    let dir = std::env::temp_dir().join(format!("olang_webdispatch_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let script = dir.join("app.ol");
+    std::fs::write(
+        &script,
+        "use lib.routes { rpc }\n\
+         use lib.server { dispatch }\n\
+         let r = dispatch([rpc(\"x\", (req, p) => 1)], { method: \"POST\", path: \"/api/rpc/x\", query: #{}, headers: #{}, body: \"{}\" })\n\
+         println(\"status \" + show(r.status))\n",
+    )
+    .unwrap();
+    let run = |level: Option<&str>| {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_olang"));
+        cmd.current_dir(&web).arg(&script).env_remove("OLANG_ACCESS_LOG");
+        if let Some(l) = level {
+            cmd.env("OLANG_ACCESS_LOG", l);
+        }
+        let out = cmd.output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    assert_eq!(run(Some("off")), "status 200\n");
+    assert_eq!(run(Some("errors")), "status 200\n");
+    assert!(run(None).contains("POST /api/rpc/x -> 200"));
+    let _ = std::fs::remove_dir_all(&dir);
+}

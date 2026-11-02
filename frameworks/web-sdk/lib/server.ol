@@ -102,7 +102,8 @@ fn access_level() = match os.get_env("OLANG_ACCESS_LOG") {
 }
 
 /// `dispatch` with the request line under the app's control: `log` is
-/// `(req, response, ms) => ...` — or Unit for the default line. Passed
+/// `(req, response, ms) => ...` — or Unit for the default line, at
+/// OLANG_ACCESS_LOG's level. Passed
 /// as a value (never a cell: handlers run on worker threads), so an app
 /// with its own structured logging owns every line of its output.
 share fn dispatch_with(routes, req, log) = dispatch_in(routes, req, log, under_test(), ())
@@ -143,7 +144,9 @@ fn dispatch_in(routes, req, log, hop, missing) = {
     else =>
         error_response(404, "not_found", "no route for " + req.method + " " + req.path)
     let ms = time.monotonic_ms() - started
-    let level = log ?? "all"
+    // no hook: OLANG_ACCESS_LOG's level, in process as when served (a
+    // stdio child's protocol is on stdout, OL-254)
+    let level = log ?? access_level()
     // A deferred answer has no status yet: the ticket passes through and
     // the line, when one is wanted, is the responder's to write.
     if typeof(response) == "HttpDeferred" => ()
