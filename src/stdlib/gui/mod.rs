@@ -760,6 +760,10 @@ fn gui_read(args: Vec<Value>) -> Res<Value> {
                         Value::Map(m) => {
                             let mut m = (**m).clone();
                             m.insert("visible".to_string(), shown.unwrap_or(Value::Unit));
+                            // a picture that could not be read, and why
+                            if let Some(why) = st.unreadable.get(&k) {
+                                m.insert("error".to_string(), s(why));
+                            }
                             Value::Map(Arc::new(m))
                         }
                         _ => v,

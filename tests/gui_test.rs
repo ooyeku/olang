@@ -2690,3 +2690,21 @@ fn a_standard_edit_item_goes_to_the_focused_field_else_to_the_programs_command()
     assert!(edit_enabled(&st, "copy", &ctx(&["input"])));
     assert!(edit_enabled(&st, "paste", &none));
 }
+
+#[test]
+fn an_image_the_engine_cannot_read_says_why() {
+    // OL-185: an `image` over a path that does not exist applied, drew
+    // nothing and said nothing; its node now carries the reason.
+    let _turn = events_turn();
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (100, 60) })
+        let r = gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 100, 60) },
+          #{ "key": "pic", "parent": "root", "role": "image", "box": (0, 0, 40, 40), "image": "/no/such/picture.png" }
+        ])
+        let png = gui.read(w, "pixels")
+        let e = map_get(gui.read(w, "node", "pic"), "error")
+        [r, e != (), str.contains(show(e), "picture.png") || str.contains(show(e), "No such file")]
+    "##);
+    assert_eq!(text(&v), "[Ok(()), true, true]");
+}
