@@ -1630,7 +1630,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     .lambda_shape(parameters, body)
                     .mentioned
                     .binary_search(name)
-                    .is_ok() =>
+                    .is_ok()
+                && Self::names_identifier(body, name) =>
             {
                 let mut named = (**func).clone();
                 named.name = Some(name.clone());
@@ -5129,6 +5130,23 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     /// cached by the expression's address and checked against its content
     /// (an address can be reused by another program's tree, so a hit is
     /// only a hit when parameters and body are equal).
+    /// Whether `body` names `name` as an identifier. `mentioned_names`
+    /// keeps every string of the syntax, a field's and a method's too, so
+    /// `let get = (k) => cell.get(st)` read as a lambda calling itself
+    /// and took the name `get`: the tier then knew it by that name, as
+    /// another module's `get`, and ran a stale closure from its second
+    /// call on (OL-272).
+    fn names_identifier(body: &Expr, name: &str) -> bool {
+        match serde_json::to_string(body) {
+            Ok(text) => {
+                let needle = serde_json::to_string(&Expr::Identifier(name.to_string()))
+                    .unwrap_or_default();
+                text.contains(&needle)
+            }
+            Err(_) => true,
+        }
+    }
+
     fn lambda_shape(&mut self, parameters: &[Parameter], body: &Expr) -> Arc<LambdaShape> {
         let key = body as *const Expr as usize;
         if let Some(shape) = self.lambda_shapes.get(&key)

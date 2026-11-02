@@ -765,7 +765,15 @@ impl BytecodeTier {
         // the interpreter. `hof_function_id` compiles under the function's
         // own closure and caches per body, and returns None for bodies the
         // tier can't take (arity/defaults/bounds) — an honest fallback.
-        if self.ambiguous.contains(name) {
+        // A function bearing a declared function's name but not its body
+        // (a closure named by its binding) is not that function: run it
+        // by identity too, so neither its name nor its compiled code is
+        // shared with the declaration's (OL-272).
+        let impostor = self
+            .known_functions
+            .get(name)
+            .is_some_and(|known| !Arc::ptr_eq(&known.body, &func.body));
+        if impostor || self.ambiguous.contains(name) {
             let arity = func.parameters.len();
             return match self.vm.hof_function_id(func, arity) {
                 Some(func_id) => self.run_on_vm(func_id, args, None),
@@ -773,7 +781,11 @@ impl BytecodeTier {
                     crate::tier_stats::note_fallback(
                         name,
                         func.def_file.as_deref(),
-                        "its name is declared more than once (two modules), so it is compiled by identity, and that compile was refused",
+                        if impostor {
+                            "a closure bearing a declared function's name is compiled by identity, and that compile was refused"
+                        } else {
+                            "its name is declared more than once (two modules), so it is compiled by identity, and that compile was refused"
+                        },
                     );
                     TierOutcome::Fallback
                 }
