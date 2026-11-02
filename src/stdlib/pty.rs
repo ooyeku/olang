@@ -235,11 +235,18 @@ mod imp {
     pub fn call(name: &str, args: Vec<Value>) -> Res {
         match name {
             "spawn" => spawn(args),
-            "read" => read(args),
+            // waits on the terminal's child: parked, as proc's are
+            "read" => {
+                let _parked = crate::profile::blocked();
+                read(args)
+            }
             "write" => write(args),
             "resize" => resize(args),
             "kill" => kill(args),
-            "wait" => wait(args),
+            "wait" => {
+                let _parked = crate::profile::blocked();
+                wait(args)
+            }
             "pid" => {
                 let p = match pty_of(args.first().unwrap_or(&Value::Unit)) {
                     Ok(p) => p,
@@ -352,7 +359,9 @@ mod imp {
                 &mut slave,
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
-                &mut ws,
+                // a raw pointer: macOS's openpty takes it mutable, Linux's
+                // const, and `&mut` is needless there (CI's Linux lint)
+                std::ptr::addr_of_mut!(ws),
             )
         };
         if r != 0 {

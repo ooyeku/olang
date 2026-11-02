@@ -1766,3 +1766,56 @@ fn a_recursive_helper_stays_a_call_and_agrees() {
          run(5000)",
     );
 }
+
+const SHORT_CIRCUIT_LEN_ABS: &str = r#"
+fn upto(v, n) = { let mut i = 0; while i < n && v[i] == i { i = i + 1 }; i }
+fn either(n) = { let mut s = 0; let mut i = 0; while i < n { if i == 3 || i > 9 => { s = s + 1 } else => { s = s + 2 }; i = i + 1 }; s }
+fn both(a, b) = (a > 2 && b < 5) || (a == b && !(a < 0))
+fn total(v) = { let mut i = 0; let mut s = 0; while i < len(v) { s = s + abs(v[i] - 3); i = i + 1 }; s }
+fn ftotal(v) = { let mut i = 0; let mut s = 0.0; while i < len(v) { s = s + abs(v[i] - 2.5); i = i + 1 }; s }
+let xs = [0, 1, 2, 3, 9, 5]
+let ys = range(-5, 50)
+let fs = map(ys, (x) => to_float(x) * 0.5)
+let mut out = []
+for k in range(0, 300) {
+    out = [upto(xs, 6), either(k), show(both(k % 6, k % 7)), total(ys), show(ftotal(fs))]
+}
+out
+"#;
+
+#[test]
+fn short_circuits_len_and_abs_are_correct_under_the_jit() {
+    assert_jit_transparent(SHORT_CIRCUIT_LEN_ABS);
+    // abs of i64::MIN overflows: native code deopts and the VM raises
+    assert_jit_transparent(
+        "fn mag(x) = abs(x)\nlet mut s = 0\nfor k in range(0, 300) { s = mag(0 - k) }\nmag(-9223372036854775807 - 1)",
+    );
+}
+
+#[test]
+fn short_circuits_len_and_abs_run_native() {
+    // OL-271: `&&` and `||` (their short-circuit's PatternEq), `len` of a
+    // list and `abs` refused the whole function, so these loops ran on
+    // bytecode.
+    let dir = std::env::temp_dir().join(format!("olang-jit-native-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("main.ol");
+    std::fs::write(&file, SHORT_CIRCUIT_LEN_ABS).unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_olang"))
+        .arg(&file)
+        .env("OLANG_TIER_STATS", "1")
+        .output()
+        .expect("run olang");
+    let _ = std::fs::remove_dir_all(&dir);
+    let stats = String::from_utf8_lossy(&out.stderr);
+    for name in ["upto", "either", "both", "total", "ftotal"] {
+        let line = stats
+            .lines()
+            .find(|l| l.starts_with(&format!("tier-fn: {name} ")))
+            .unwrap_or_else(|| panic!("no tier line for {name}:\n{stats}"));
+        assert!(
+            !line.contains("native_calls=0"),
+            "{name} stayed off native: {line}"
+        );
+    }
+}

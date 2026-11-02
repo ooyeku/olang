@@ -132,3 +132,62 @@ sum(jobs |> map((t) => unwrap(task.join(t))))
     assert_eq!(eval(src).unwrap(), Value::Integer(12));
     assert!(started.elapsed().as_millis() < 200);
 }
+
+/// The median time of `spawn` and of a task's start, in ms, for a
+/// program declaring `functions` functions besides its own.
+fn spawn_times(functions: usize) -> (f64, f64) {
+    let mut src = String::new();
+    for i in 0..functions {
+        src.push_str(&format!("fn f{i}(x) = x + {i}\n"));
+    }
+    src.push_str(
+        r#"
+fn started() = time.monotonic()
+let mut waits = []
+let mut costs = []
+for i in range(0, 201) {
+    let t0 = time.monotonic()
+    let t = spawn started()
+    let t1 = time.monotonic()
+    let s = unwrap(task.join(t))
+    waits = waits + [s - t0]
+    costs = costs + [t1 - t0]
+}
+println(show(sort(costs)[100]) + " " + show(sort(waits)[100]))
+"#,
+    );
+    let dir = std::env::temp_dir().join(format!(
+        "olang-spawn-cost-{}-{functions}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("main.ol");
+    std::fs::write(&file, src).unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_olang"))
+        .arg(&file)
+        .output()
+        .expect("run olang");
+    let _ = std::fs::remove_dir_all(&dir);
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut parts = text.split_whitespace().map(|p| p.parse::<f64>().unwrap());
+    (parts.next().unwrap(), parts.next().unwrap())
+}
+
+#[test]
+fn a_spawn_costs_about_the_same_in_a_large_program() {
+    // OL-330: a worker's tier (and the bridge it builds for its first
+    // builtin call) noted every function of the program again, about
+    // 0.3 µs each: with 4,000 functions a spawn took 0.69 ms and its
+    // task started 1.5 ms after it was asked for, against 0.05 and 0.12
+    // in a small program. The tables are taken whole now.
+    let (small_cost, small_wait) = spawn_times(0);
+    let (large_cost, large_wait) = spawn_times(4000);
+    assert!(
+        large_cost < small_cost * 5.0 + 0.1,
+        "spawn: {large_cost} ms with 4,000 functions, {small_cost} ms without"
+    );
+    assert!(
+        large_wait < small_wait * 5.0 + 0.3,
+        "a task's start: {large_wait} ms with 4,000 functions, {small_wait} ms without"
+    );
+}

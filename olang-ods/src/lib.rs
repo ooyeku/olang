@@ -862,12 +862,31 @@ impl Series {
         }))
     }
 
+    /// A Bool series as Int (1 and 0, its nulls kept), for arithmetic;
+    /// `None` for any other.
+    pub fn bool_as_int(&self) -> Option<Series> {
+        match self {
+            Series::Bool { values, validity } => Some(Series::I64 {
+                values: Arc::new(values.iter().map(|&b| b as i64).collect()),
+                validity: validity.clone(),
+            }),
+            _ => None,
+        }
+    }
+
     pub fn arith(&self, op: ArithOp, other: &Series, par: bool) -> Result<Series> {
         if self.len() != other.len() {
             return Err(OdsError::LengthMismatch {
                 left: self.len(),
                 right: other.len(),
             });
+        }
+        // a Bool side is 0 and 1 in arithmetic, as in `mean` (OL-182)
+        if let Some(a) = self.bool_as_int() {
+            return a.arith(op, other, par);
+        }
+        if let Some(b) = other.bool_as_int() {
+            return self.arith(op, &b, par);
         }
         let validity = merge_validity(self.validity(), other.validity());
         match (self, other) {
@@ -913,6 +932,11 @@ impl Series {
         swapped: bool,
         par: bool,
     ) -> Result<Series> {
+        if let Some(a) = self.bool_as_int()
+            && !matches!(scalar, Scalar::Null)
+        {
+            return a.arith_scalar(op, scalar, swapped, par);
+        }
         let validity = self.validity().cloned();
         match (self, &scalar) {
             (_, Scalar::Null) => Err(OdsError::InvalidArgument(
@@ -1250,6 +1274,11 @@ impl Series {
             }
             Series::I64 { values, validity } => {
                 let cast: Vec<f64> = values.iter().map(|&x| x as f64).collect();
+                f64_sum_sq_dev(&cast, validity.as_ref(), mean, par)
+            }
+            // a Bool is 0 or 1, as in `mean` (OL-182)
+            Series::Bool { values, validity } => {
+                let cast: Vec<f64> = values.iter().map(|&x| x as u8 as f64).collect();
                 f64_sum_sq_dev(&cast, validity.as_ref(), mean, par)
             }
             _ => {

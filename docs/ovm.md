@@ -147,8 +147,9 @@ launch compiled.
   A pack whose header, index or an entry's checksum fails (truncated,
   garbled, another build's) is not trusted. Entries unused for two weeks
   are dropped when their pack is next written; the directory is held
-  under 64 MB (`OLANG_COMPILE_CACHE_MB`), the least recently written
-  packs removed first.
+  under 256 MB (`OLANG_COMPILE_CACHE_MB`), room for a few checkouts of
+  a large program (packs are keyed by a module's path), the least
+  recently written packs removed first.
 - **Cost.** A cold cache costs ~10% more compiling (the questions are
   recorded; entries are made, encoded and written off the program's
   thread). `OLANG_COMPILE_CACHE=0` turns it off; `OLANG_BOOT_TRACE`
@@ -480,8 +481,9 @@ machine code via Cranelift, extending the correctness ladder unchanged.
 "can't compile natively → stay on bytecode".
 
 A function prequalifies at promotion time when every instruction falls
-in a **pure whitelist**: arithmetic, comparisons, logic, branches,
-calls to other olang functions, return, the float `math.*` builtins,
+in a **pure whitelist**: arithmetic, comparisons, logic (`&&` and `||`
+included, on Booleans), branches, calls to other olang functions,
+return, the float `math.*` builtins, `len` of a list and `abs`,
 struct field reads and construction, list indexing and `for` iteration,
 tuple returns, and strings — including template strings, whose scalar
 interpolations stringify natively with the interpreter's exact rules

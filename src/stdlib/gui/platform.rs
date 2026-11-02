@@ -576,9 +576,11 @@ struct PWin {
     /// next tick, not on a timer.
     animating: bool,
     /// When the display link last ticked (host ns).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     last_tick: u64,
     /// The size last presented (a frame of another size is never put off:
     /// a live resize draws at once).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     shown_size: (u32, u32),
     /// The cursor the program asked for (put back when the window is
     /// responding again).
@@ -608,6 +610,8 @@ fn close_window(pw: PWin) -> Closing {
     if let Renderer::Threaded(h) = &renderer {
         h.remove();
     }
+    // `()` off macOS, where nothing is watched
+    #[allow(clippy::let_unit_value)]
     let window = Closing::watch(&win);
     let teardown = move || {
         drop(renderer);
@@ -637,6 +641,7 @@ struct Closing {
     #[cfg(target_os = "macos")]
     window: Option<objc2::rc::Weak<objc2::runtime::AnyObject>>,
     #[cfg(not(target_os = "macos"))]
+    #[allow(dead_code)]
     window: (),
     /// When the window was closed: the loop nudges AppKit for a while.
     at: std::time::Instant,
@@ -2953,8 +2958,11 @@ pub fn menu(spec: &Value) -> Result<Value, String> {
 /// A menu bar as `gui.menu` reads it: menus (a title, items), an item a
 /// separator or `(id, label, enabled, keys, checked)` with the keys in
 /// the platform's spelling, already checked to parse.
+// read where the menu bar is the platform's (macOS)
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub struct MenuSpec(Vec<(String, Vec<MenuItemSpec>)>);
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 enum MenuItemSpec {
     Separator,
     /// One of the Mac's standard Edit menu items (`standard`: `undo`,
@@ -5595,6 +5603,7 @@ pub mod quit_hold {
     static HELD: AtomicBool = AtomicBool::new(false);
     static ASKED: AtomicBool = AtomicBool::new(false);
     static CODE: AtomicI32 = AtomicI32::new(0);
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     static DELEGATE: AtomicUsize = AtomicUsize::new(0);
 
     /// The program holds external quits (`true`) or lets them end the
@@ -5608,6 +5617,7 @@ pub mod quit_hold {
         ASKED.load(Ordering::SeqCst)
     }
 
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(super) fn set_delegate(ptr: usize) {
         DELEGATE.store(ptr, Ordering::SeqCst);
     }

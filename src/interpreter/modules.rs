@@ -287,6 +287,7 @@ impl Interpreter {
     pub(crate) fn bind_module_imports(
         &mut self,
         module: &Value,
+        module_name: &str,
         items: &Option<Vec<crate::ast::UseItem>>,
     ) -> Result<(), InterpreterError> {
         match items {
@@ -397,10 +398,10 @@ already binds — an import never replaces a program's own name. Alias the impor
                                         .error_formatter
                                         .generate_suggestions(item_name, &available_functions);
 
-                                    let module_path = self
-                                        .current_module_path
-                                        .clone()
-                                        .unwrap_or_else(|| "unknown_module".to_string());
+                                    // the module imported from, as the `use`
+                                    // names it: the importing file is the
+                                    // report's place (OL-267)
+                                    let module_path = module_name.to_string();
 
                                     return Err(InterpreterError::FunctionNotFoundInModule {
                                         function_name: item_name.clone(),
@@ -1696,7 +1697,7 @@ already binds — an import never replaces a program's own name. Alias the impor
     pub(crate) fn eval_use_decl(&mut self, use_decl: UseDecl) -> Result<Value, InterpreterError> {
         let module_path = use_decl.path.join(".");
         let module = self.load_module_from_file(&module_path)?;
-        self.bind_module_imports(&module, &Some(use_decl.items.clone()))?;
+        self.bind_module_imports(&module, &module_path, &Some(use_decl.items.clone()))?;
 
         // Also bind the module's own name as a namespace, so an imported
         // module is inspectable and callable as `name.fn(...)` — matching the

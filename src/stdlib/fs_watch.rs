@@ -117,11 +117,13 @@ fn strings_opt(
 /// and paths under them reported all the same (`.git/HEAD` under an
 /// ignored `.git`).
 #[derive(Clone, Default)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 struct Filter {
     ignore: Vec<String>,
     keep: Vec<String>,
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 impl Filter {
     /// Whether `rel` (relative to the root, `/`-separated) is passed on.
     fn passes(&self, rel: &str) -> bool {
@@ -156,6 +158,7 @@ struct Raw {
 }
 
 /// The queue's room: past it, the root is read again instead.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const QUEUE_MAX: usize = 65_536;
 
 struct Watch {
@@ -208,6 +211,7 @@ fn watch_of(
 
 /// `rel` of `path` under `root` (both without a trailing slash), or None
 /// when it is not under it; `Some("")` for the root itself.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn rel_under<'a>(root: &str, path: &'a str) -> Option<&'a str> {
     if path == root {
         return Some("");
@@ -276,6 +280,8 @@ pub fn watch(args: Vec<Value>) -> Res {
 /// `fs.watch_next(w, opts)`: the next batch of changes, `()` when none
 /// came within `timeout_ms`, `Err` once the watch is closed.
 pub fn watch_next(args: Vec<Value>) -> Res {
+    // waits on the file system: parked, as a channel's receive is
+    let _parked = crate::profile::blocked();
     if args.is_empty() || args.len() > 2 {
         return Err(crate::stdlib::misuse::arity(
             "fs.watch_next",

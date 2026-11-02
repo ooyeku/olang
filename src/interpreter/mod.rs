@@ -222,7 +222,7 @@ pub struct Interpreter {
     /// Lambda expressions already worked out (`lambda_shape`).
     lambda_shapes: HashMap<usize, Arc<LambdaShape>>,
     /// A bridge interpreter's view of the program's functions, by name.
-    bridge_functions: Option<Arc<HashMap<String, Arc<Function>>>>,
+    bridge_functions: Option<Arc<ImHashMap<String, Arc<Function>>>>,
     module_loading_stack: Vec<String>, // what is loading now, to catch an import cycle
 
     // Module cache settings and counters
@@ -1630,7 +1630,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     .lambda_shape(parameters, body)
                     .mentioned
                     .binary_search(name)
-                    .is_ok() =>
+                    .is_ok()
+                && Self::names_identifier(body, name) =>
             {
                 let mut named = (**func).clone();
                 named.name = Some(name.clone());
@@ -1656,6 +1657,13 @@ the function it shadows is the usual cause; `olang check` names the parameter",
 
     fn eval_function_decl(&mut self, func_decl: FunctionDecl) -> Result<Value, InterpreterError> {
         let name = func_decl.name.clone();
+        // An expression body has no located statement to place a failure
+        // by: its declaration's line does (OL-180).
+        if !matches!(func_decl.body, Expr::Block(_))
+            && let Some((line, _)) = func_decl.name_span
+        {
+            crate::errtrace::note_decl(self.defining_file().as_deref(), &name, line);
+        }
         let top_level = self.environment.parent.is_none() && !self.environment.is_frame;
         let function_value = self.build_function_value(func_decl, None)?;
         // Define the function in the current environment so it can be called recursively
@@ -4028,7 +4036,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
 
     /// Install the program's unambiguous functions by name, for a bridge
     /// interpreter (see `lookup_name`).
-    pub fn set_bridge_functions(&mut self, functions: Arc<HashMap<String, Arc<Function>>>) {
+    pub fn set_bridge_functions(&mut self, functions: Arc<ImHashMap<String, Arc<Function>>>) {
         self.bridge_functions = Some(functions);
     }
 
@@ -4203,6 +4211,13 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             bytecode_tier: self.bytecode_tier.as_ref().map(|t| {
                 let mut tier =
                     crate::ovm::tier::BytecodeTier::new(t.threshold()).with_verbose(t.is_verbose());
+                // The parent's whole function table, module functions
+                // included (the root environment holds only the program's
+                // own globals, so a lib module's functions were unknown to
+                // every worker and ran interpreted there), with the names
+                // two definitions share. Taken whole, not noted again one
+                // by one: that cost a large program milliseconds a spawn.
+                tier.seed_functions_from(t);
                 for (name, fields) in &self.struct_defs {
                     tier.note_struct(
                         name.clone(),
@@ -4235,16 +4250,6 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     if let Value::Function(ref func) = value {
                         tier.note_function(name, func.clone());
                     }
-                }
-                // The parent's whole function table, module functions
-                // included: the root environment holds only the program's
-                // own globals, so a lib module's functions were unknown to
-                // every worker and ran interpreted there.
-                for name in t.ambiguous_names() {
-                    tier.inherit_ambiguous(&name);
-                }
-                for (name, func) in t.known_functions() {
-                    tier.note_function(name, func);
                 }
                 // Every loaded module's table, and which file is the
                 // program: a module's functions read their module's names
@@ -5129,6 +5134,23 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     /// cached by the expression's address and checked against its content
     /// (an address can be reused by another program's tree, so a hit is
     /// only a hit when parameters and body are equal).
+    /// Whether `body` names `name` as an identifier. `mentioned_names`
+    /// keeps every string of the syntax, a field's and a method's too, so
+    /// `let get = (k) => cell.get(st)` read as a lambda calling itself
+    /// and took the name `get`: the tier then knew it by that name, as
+    /// another module's `get`, and ran a stale closure from its second
+    /// call on (OL-272).
+    fn names_identifier(body: &Expr, name: &str) -> bool {
+        match serde_json::to_string(body) {
+            Ok(text) => {
+                let needle =
+                    serde_json::to_string(&Expr::Identifier(name.to_string())).unwrap_or_default();
+                text.contains(&needle)
+            }
+            Err(_) => true,
+        }
+    }
+
     fn lambda_shape(&mut self, parameters: &[Parameter], body: &Expr) -> Arc<LambdaShape> {
         let key = body as *const Expr as usize;
         if let Some(shape) = self.lambda_shapes.get(&key)
@@ -6049,7 +6071,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         let module = self.load_module_from_file(&module_path)?;
 
         // Import items into current environment (makes them available locally)
-        self.bind_module_imports(&module, &Some(use_decl.items.clone()))?;
+        self.bind_module_imports(&module, &module_path, &Some(use_decl.items.clone()))?;
 
         // Note: The re-sharing is handled in load_module_from_file when processing ShareDecl::Use
         // This just ensures the items are available in the current module's environment

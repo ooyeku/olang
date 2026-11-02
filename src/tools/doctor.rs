@@ -143,7 +143,7 @@ fn audit(root: &Path) -> Vec<Finding> {
                             dir.display()
                         ))),
                         None => out.push(bad(format!(
-                            "dependency {name}: shelf entry {entry} is not registered (otc shelf add)"
+                            "dependency {name}: shelf entry {entry} is not registered (otc lib add)"
                         ))),
                     }
                 }

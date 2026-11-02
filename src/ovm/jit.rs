@@ -427,7 +427,7 @@ pub struct JitCache {
     /// Builtin names shadowed by a user definition. Compiled code that
     /// baked one of these natives is demoted the moment the shadow
     /// appears (see note_shadow); specialization refuses them up front.
-    shadowed: std::collections::HashSet<String>,
+    shadowed: im::HashSet<String>,
     /// Functions whose native body can never pay for the bytecode→native
     /// boundary (trivial constructors — see boundary_unprofitable). They
     /// still compile as group members, where callers reach them by direct
@@ -1686,7 +1686,7 @@ impl JitCache {
         Self {
             module: None,
             table: Vec::new(),
-            shadowed: std::collections::HashSet::new(),
+            shadowed: im::HashSet::new(),
             boundary_skip: Vec::new(),
             scratch: ScratchCtx::default(),
             compiled: 0,
@@ -1866,8 +1866,14 @@ impl JitCache {
     /// this from its own shadow bookkeeping). Any compiled entry that
     /// baked a direct call to that native is stale: demote it so calls
     /// fall back to bytecode, which resolves the name the ordinary way.
+    /// A fresh cache takes the builtins its parent's program shadows
+    /// (a worker thread's VM: nothing compiled yet, so nothing to demote).
+    pub fn seed_shadowed(&mut self, parent: &JitCache) {
+        self.shadowed = parent.shadowed.clone();
+    }
+
     pub fn note_shadow(&mut self, name: &str) {
-        if !self.shadowed.insert(name.to_string()) {
+        if self.shadowed.insert(name.to_string()).is_some() {
             return;
         }
         for slot in self.table.iter_mut() {
@@ -2670,7 +2676,7 @@ impl JitCache {
                     Instruction::CallNamed { function_name, .. }
                         if matches!(
                             function_name.as_str(),
-                            "map_get" | "map_has_key" | "map_set"
+                            "map_get" | "map_has_key" | "map_set" | "len" | "abs"
                         ) =>
                     {
                         baked.insert(function_name.clone());
@@ -3437,6 +3443,9 @@ pub(crate) fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         | Instruction::And { .. }
         | Instruction::Or { .. }
         | Instruction::Not { .. }
+        // `&&` and `||` test their left side with it (is it exactly
+        // false, or true?); inference admits Booleans only
+        | Instruction::PatternEq { .. }
         | Instruction::Jump { .. }
         | Instruction::JumpIfTrue { .. }
         | Instruction::JumpIfFalse { .. }
@@ -3489,6 +3498,9 @@ pub(crate) fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         } => match function_name.as_str() {
             "map_get" | "map_has_key" => args.len() == 2,
             "map_set" => args.len() == 3,
+            // a list's length (as IterLen reads it) and a number's
+            // magnitude: neither allocates, so both compile in loops
+            "len" | "abs" => args.len() == 1,
             _ => false,
         },
         Instruction::BinImm { imm, .. } => {
@@ -3571,6 +3583,12 @@ fn list_write_targets_unaliased(bytecode: &CompiledBytecode) -> bool {
                 targets.contains(&src.0)
             }
             Instruction::CallFn { args, .. } => args.iter().any(|a| targets.contains(&a.0)),
+            // `len` reads the length and keeps nothing
+            Instruction::CallNamed {
+                function_name,
+                args,
+                ..
+            } if function_name == "len" && args.len() == 1 => false,
             Instruction::CallNamed { args, .. } | Instruction::CallBuiltin { args, .. } => {
                 args.iter().any(|a| targets.contains(&a.0))
             }
@@ -3879,7 +3897,9 @@ pub(crate) fn for_each_reg(
             f(target);
             f(rhs);
         }
-        I::MapSetAssign { target, key, value } => {
+        I::MapSetAssign {
+            target, key, value, ..
+        } => {
             f(target);
             f(key);
             f(value);
@@ -4695,7 +4715,7 @@ impl PlanFn {
         &mut self,
         sigs: &SigSnapshot,
         shapes: &HashMap<u32, ShapeSpec>,
-        shadowed: &std::collections::HashSet<String>,
+        shadowed: &im::HashSet<String>,
         requests: &mut Vec<(FunctionId, Vec<Kind>)>,
         global_changed: &mut bool,
     ) -> Option<()> {
@@ -4919,6 +4939,15 @@ impl PlanFn {
                 | Instruction::Ge { dst, lhs, rhs } => {
                     narrow!(lhs.0, K_NUM | K_STR);
                     narrow!(rhs.0, K_NUM | K_STR);
+                    grow!(self.writes[dst.0 as usize], K_BOOL);
+                }
+                // `&&` / `||`'s short-circuit test: the left side against
+                // the settling constant. Total equality on any kinds, so
+                // native code takes the Boolean case alone (a left side
+                // of another kind stays on bytecode).
+                Instruction::PatternEq { dst, value, other } => {
+                    narrow!(value.0, K_BOOL);
+                    narrow!(other.0, K_BOOL);
                     grow!(self.writes[dst.0 as usize], K_BOOL);
                 }
                 Instruction::And { dst, lhs, rhs } | Instruction::Or { dst, lhs, rhs } => {
@@ -5339,6 +5368,30 @@ impl PlanFn {
                             narrow!(args[0].0, K_MAP);
                             narrow!(args[1].0, K_STR);
                             grow!(self.writes[dst.0 as usize], K_BOOL);
+                        }
+                        // a list's length, as IterLen: a string's or a
+                        // map's stays on bytecode
+                        "len" if args.len() == 1 => {
+                            narrow!(args[0].0, K_LIST);
+                            if !matches!(
+                                self.exotic[args[0].0 as usize],
+                                Some(
+                                    Kind::ListFloat
+                                        | Kind::ListInt
+                                        | Kind::ListFloatRaw
+                                        | Kind::ListIntRaw
+                                        | Kind::ListStruct(_)
+                                        | Kind::ListStr
+                                )
+                            ) {
+                                return None;
+                            }
+                            grow!(self.writes[dst.0 as usize], K_INT);
+                        }
+                        "abs" if args.len() == 1 => {
+                            narrow!(args[0].0, K_NUM);
+                            let a = self.writes[args[0].0 as usize];
+                            grow!(self.writes[dst.0 as usize], a & K_NUM);
                         }
                         "map_set" if args.len() == 3 => {
                             narrow!(args[0].0, K_MAP);
@@ -5979,7 +6032,25 @@ pub(crate) fn instruction_name(inst: &Instruction) -> &'static str {
         Instruction::CheckLet { .. } => "CheckLet",
         Instruction::ListSetAssign { .. } => "ListSetAssign",
         Instruction::ListAppendAssign { .. } => "ListAppendAssign",
-        _ => "other",
+        Instruction::ListSwapAssign { .. } => "ListSwapAssign",
+        Instruction::MakeStruct { .. } => "MakeStruct",
+        Instruction::MakeTemplate { .. } => "MakeTemplate",
+        Instruction::MakeEnum { .. } => "MakeEnum",
+        Instruction::PatternTestEnum { .. } => "PatternTestEnum",
+        Instruction::ExtractEnumPayload { .. } => "ExtractEnumPayload",
+        Instruction::PatternTestStructField { .. } => "PatternTestStructField",
+        Instruction::PatternTestRecord { .. } => "PatternTestRecord",
+        Instruction::MakeClosure { .. } => "MakeClosure",
+        Instruction::TailCallSelf { .. } => "TailCallSelf",
+        Instruction::PatternEq { .. } => "PatternEq",
+        Instruction::PatternInRange { .. } => "PatternInRange",
+        Instruction::PatternTestList { .. } => "PatternTestList",
+        Instruction::PatternTestTuple { .. } => "PatternTestTuple",
+        Instruction::ExtractElement { .. } => "ExtractElement",
+        Instruction::ExtractRest { .. } => "ExtractRest",
+        Instruction::MakeRange { .. } => "MakeRange",
+        Instruction::MakeTuple { .. } => "MakeTuple",
+        Instruction::Nop => "Nop",
     }
 }
 
@@ -6556,6 +6627,16 @@ fn translate_body(
                 let val = builder.ins().uextend(types::I64, flag);
                 r#gen.write(builder, dst.0, val);
             }
+            Instruction::PatternEq { dst, value, other } => {
+                if r#gen.kind(value.0)? != Kind::Bool || r#gen.kind(other.0)? != Kind::Bool {
+                    return None;
+                }
+                let a = r#gen.read(builder, value.0)?;
+                let b = r#gen.read(builder, other.0)?;
+                let flag = builder.ins().icmp(IntCC::Equal, a, b);
+                let val = builder.ins().uextend(types::I64, flag);
+                r#gen.write(builder, dst.0, val);
+            }
             Instruction::And { dst, lhs, rhs } => {
                 let a = r#gen.read(builder, lhs.0)?;
                 let b = r#gen.read(builder, rhs.0)?;
@@ -6957,6 +7038,39 @@ fn translate_body(
                 args,
                 ..
             } => match function_name.as_str() {
+                "len" => {
+                    let which = match r#gen.kind(args[0].0)? {
+                        Kind::ListFloatRaw => len_rawf_helper,
+                        Kind::ListIntRaw => len_rawi_helper,
+                        Kind::ListFloat | Kind::ListInt | Kind::ListStruct(_) | Kind::ListStr => {
+                            len_helper
+                        }
+                        _ => return None,
+                    };
+                    let list_ptr = builder.use_var(Variable::from_u32(args[0].0));
+                    let helper_ref = module.declare_func_in_func(which, builder.func);
+                    let call = builder.ins().call(helper_ref, &[list_ptr]);
+                    let val = builder.inst_results(call)[0];
+                    r#gen.write(builder, dst.0, val);
+                }
+                "abs" => {
+                    let a = builder.use_var(Variable::from_u32(args[0].0));
+                    let val = match r#gen.kind(args[0].0)? {
+                        Kind::Float => builder.ins().fabs(a),
+                        Kind::Int => {
+                            // checked_abs: i64::MIN overflows, and the VM
+                            // raises the error
+                            let min = builder.ins().iconst(types::I64, i64::MIN);
+                            let is_min = builder.ins().icmp(IntCC::Equal, a, min);
+                            let cont = builder.create_block();
+                            builder.ins().brif(is_min, deopt_block, &[], cont, &[]);
+                            builder.switch_to_block(cont);
+                            builder.ins().iabs(a)
+                        }
+                        _ => return None,
+                    };
+                    r#gen.write(builder, dst.0, val);
+                }
                 "map_get" => {
                     let Kind::Map(p) = r#gen.kind(args[0].0)? else {
                         return None;

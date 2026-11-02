@@ -1601,6 +1601,34 @@ fn files_dropped_on_a_window_say_where_they_landed() {
     );
 }
 
+/// A canvas text with no room (`max_w` 0 or less) is cut to nothing, as
+/// the documented cut says; it was drawn whole (OL-186).
+#[test]
+fn a_canvas_text_with_no_room_draws_nothing() {
+    use olang::stdlib::gui::canvas::{self, Item};
+    let n = |v: f64| Value::Float(v);
+    let text = |max_w: f64| {
+        m(vec![
+            ("op", s("text")),
+            ("x", n(2.0)),
+            ("y", n(30.0)),
+            ("text", s("a label")),
+            ("max_w", n(max_w)),
+        ])
+    };
+    let ops = Value::List(Arc::new(vec![text(0.0), text(-4.0), text(40.0)]));
+    let d = canvas::draw(&ops, 200.0, 100.0, 1.0).expect("draws");
+    let texts: Vec<_> = d
+        .items
+        .iter()
+        .filter_map(|i| match i {
+            Item::Text(t) => Some(t.max_w),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(texts, vec![Some(40.0)], "{:?}", d.items);
+}
+
 /// A canvas's operations as the window draws them: rectangles and lines
 /// along an axis are the renderers' own rectangles, a clip and a
 /// transform are kept on a stack (a transform moves and sizes geometry,
@@ -2661,4 +2689,22 @@ fn a_standard_edit_item_goes_to_the_focused_field_else_to_the_programs_command()
     assert!(!edit_enabled(&st, "copy", &none));
     assert!(edit_enabled(&st, "copy", &ctx(&["input"])));
     assert!(edit_enabled(&st, "paste", &none));
+}
+
+#[test]
+fn an_image_the_engine_cannot_read_says_why() {
+    // OL-185: an `image` over a path that does not exist applied, drew
+    // nothing and said nothing; its node now carries the reason.
+    let _turn = events_turn();
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (100, 60) })
+        let r = gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 100, 60) },
+          #{ "key": "pic", "parent": "root", "role": "image", "box": (0, 0, 40, 40), "image": "/no/such/picture.png" }
+        ])
+        let png = gui.read(w, "pixels")
+        let e = map_get(gui.read(w, "node", "pic"), "error")
+        [r, e != (), str.contains(show(e), "picture.png") || str.contains(show(e), "No such file")]
+    "##);
+    assert_eq!(text(&v), "[Ok(()), true, true]");
 }

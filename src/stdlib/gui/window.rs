@@ -234,6 +234,10 @@ pub struct WinState {
     plays: HashMap<String, Play>,
     /// The animated pictures the last frame drew.
     pub shown_anims: Vec<AnimShown>,
+    /// The `image` nodes whose source could not be read, by key, with
+    /// why (`gui.read(w, "node", key)`'s `error`): a missing file drew
+    /// nothing and said nothing (OL-185).
+    pub unreadable: HashMap<String, String>,
     /// When the next frame of a playing animation in view is due, on
     /// this window's clock (ms): the platform draws again then. `None`
     /// when nothing in view moves.
@@ -412,6 +416,7 @@ impl WinState {
             test_clock: if headless { Some(0.0) } else { None },
             plays: HashMap::new(),
             shown_anims: Vec::new(),
+            unreadable: HashMap::new(),
             next_frame: None,
             autoscroll_at: None,
             spell: HashMap::new(),
@@ -2964,7 +2969,20 @@ impl WinState {
                     let now = self.clock_ms();
                     self.next_frame = Some(self.next_frame.map_or(now, |d| d.min(now)));
                 }
-            } else if let Ok(Some((still, info))) = super::picture::get(src, want, waiter) {
+            } else if let Some((still, info)) = match super::picture::get(src, want, waiter) {
+                Ok(got) => {
+                    if got.is_some() {
+                        self.unreadable.remove(key);
+                    }
+                    got
+                }
+                Err(why) => {
+                    if self.unreadable.get(key) != Some(&why) {
+                        self.unreadable.insert(key.to_string(), why);
+                    }
+                    None
+                }
+            } {
                 // An animation: the frame its clock says (once its frames
                 // are decoded; its still until then).
                 let mut pic = still;

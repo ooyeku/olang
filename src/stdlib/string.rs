@@ -11,32 +11,37 @@
 use crate::ast::Value;
 use std::sync::Arc;
 
+/// The functions taking the text alone. A second argument is ignored
+/// at run time, and `olang check` warns of it (`str.trim_start(s, "/")`
+/// trimmed only whitespace and nothing said so, OL-257).
+pub(crate) const UNARY: &[&str] = &[
+    "to_upper",
+    "to_lower",
+    "trim",
+    "trim_start",
+    "trim_end",
+    "reverse",
+    "chars",
+    "graphemes",
+    "width",
+    "cell_width",
+    "lines",
+    "words",
+    "capitalize",
+    "is_empty",
+    "is_ascii",
+    "length",
+    "parse_int",
+    "parse_float",
+    "char_code",
+    "from_char_code",
+];
+
 /// Creates the string module.
 pub fn create_string_module() -> Value {
     let mut module = crate::ast::ValueMap::default();
 
-    let unary = [
-        "to_upper",
-        "to_lower",
-        "trim",
-        "trim_start",
-        "trim_end",
-        "reverse",
-        "chars",
-        "graphemes",
-        "width",
-        "cell_width",
-        "lines",
-        "words",
-        "capitalize",
-        "is_empty",
-        "is_ascii",
-        "length",
-        "parse_int",
-        "parse_float",
-        "char_code",
-        "from_char_code",
-    ];
+    let unary = UNARY;
     for name in unary {
         module.insert(name.to_string(), create_builtin_function(name, 1));
     }

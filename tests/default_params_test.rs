@@ -152,3 +152,48 @@ fn argument_errors_match_the_oracle() {
         assert_tiers_agree(src);
     }
 }
+
+#[test]
+fn a_default_naming_a_top_level_constant_compiles_and_agrees() {
+    // OL-320: `dur = LOW` kept the function on the tree-walker (each
+    // short call went through the bridge), 8.5× slower than `dur = 0`.
+    let src = r#"
+let LOW = 3
+let NAME = "x"
+let mut MUT = 1
+fn with_const(a, b = LOW) = a + b
+fn with_name(a, n = NAME) = n + show(a)
+fn with_mut(a, m = MUT) = a + m
+fn shadowed() = { let LOW = 100; with_const(1) }
+let mut s = 0
+for i in range(0, 2000) { s = s + with_const(i) + with_mut(i) }
+MUT = 10
+println([s, with_const(1), with_name(2), with_mut(1), shadowed()])
+"#;
+    assert_tiers_agree(src);
+    assert!(
+        run(src, false).contains("[4006000, 4, \"x2\", 11, 4]"),
+        "{}",
+        run(src, false)
+    );
+    // and the short calls run compiled, not through the bridge
+    let timed = r#"
+let LOW = 0
+fn with_const(a, b = LOW) = a + b
+fn r() = { let mut s = 0; for i in range(0, 300000) { s = s + with_const(i) }; s }
+let v = r()
+println(show(v))
+"#;
+    let dir = std::env::temp_dir().join(format!("olang_default_const_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("main.ol");
+    std::fs::write(&path, timed).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_olang"))
+        .arg(&path)
+        .env("OLANG_TIER_STATS", "1")
+        .output()
+        .unwrap();
+    let stats = String::from_utf8_lossy(&out.stderr);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!stats.contains("bridge-call: fn with_const"), "{stats}");
+}

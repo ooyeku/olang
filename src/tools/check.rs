@@ -313,6 +313,8 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
         }
     }
     let parser = crate::parser::Parser::new();
+    // the import graph's cycles, found once for all the files
+    let mut cycles = ImportCycles::default();
     for file in &files {
         let (source, shown) = match std::fs::read_to_string(file) {
             // A notebook: its program checked (`no-run` cells too), its
@@ -356,6 +358,8 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
                     expanded = e.text;
                     expanded.clone()
                 }
+                // the file's own syntax error: the parser below says it
+                Err(message) if crate::expand::is_source_parse_error(&message) => source,
                 Err(message) => {
                     eprintln!("{}: {}", file.display(), message);
                     problems += 1;
@@ -376,6 +380,9 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
         };
         let unresolved = crate::analyze::Analyzer::unresolved_names(&program);
         let mut diagnostics = file_diagnostics(&program, &source, file.parent(), unresolved);
+        if let Some(d) = cycles.of(file, &program) {
+            diagnostics.push(d);
+        }
         // a notebook cell's last statement is the cell's value
         if let Some(text) = &shown
             && diagnostics.iter().any(|d| d.class == Some("no_effect"))
@@ -1900,6 +1907,228 @@ fn modules_used(
     modules_used_by(&program, dir, reexports_only)
 }
 
+/// The modules a program's `use` lines import, each with the line and
+/// column of its `use`: the file each names, found as the run finds it
+/// (`use_candidates`), nothing read.
+fn imports_of(program: &Program, dir: &Path) -> Vec<(PathBuf, u32, u32)> {
+    let mut out = Vec::new();
+    for stmt in &program.statements {
+        let (line, column) = match stmt {
+            Statement::Located { line, column, .. } => (*line, *column),
+            _ => (1, 1),
+        };
+        if !matches!(
+            stmt.unwrapped(),
+            Statement::UseDecl(_) | Statement::ShareDecl(crate::ast::ShareDecl::Use(_))
+        ) {
+            continue;
+        }
+        let u = match stmt.unwrapped() {
+            Statement::UseDecl(u) | Statement::ShareDecl(crate::ast::ShareDecl::Use(u)) => u,
+            _ => continue,
+        };
+        if u.path.is_empty() {
+            continue;
+        }
+        if let Some(path) = use_candidates(&u.path, dir)
+            .into_iter()
+            .find(|c| c.is_file())
+        {
+            let path = std::path::absolute(&path).unwrap_or(path);
+            if !out.iter().any(|(p, _, _)| *p == path) {
+                out.push((path, line, column));
+            }
+        }
+    }
+    out
+}
+
+/// The import graph's cycles, as the run refuses them ("Circular
+/// dependency detected: lib/a.ol → lib/b.ol → lib/a.ol"). `olang check`
+/// called such a program clean (OL-259). The graph's strongly connected
+/// components are found once (Tarjan's), as far as the files checked
+/// reach; a cycle is said once, at the `use` that starts it in the first
+/// of its files checked.
+#[derive(Default)]
+struct ImportCycles {
+    imports: HashMap<PathBuf, Vec<(PathBuf, u32, u32)>>,
+    component: HashMap<PathBuf, usize>,
+    cyclic: Vec<bool>,
+    said: std::collections::HashSet<usize>,
+}
+
+impl ImportCycles {
+    fn edges(&mut self, p: &Path) -> Vec<PathBuf> {
+        if !self.imports.contains_key(p) {
+            let found = std::fs::read_to_string(p)
+                .ok()
+                .and_then(|src| parsed_module(p, &src))
+                .zip(p.parent())
+                .map(|(prog, d)| imports_of(&prog, d))
+                .unwrap_or_default();
+            self.imports.insert(p.to_path_buf(), found);
+        }
+        self.imports[p].iter().map(|(t, _, _)| t.clone()).collect()
+    }
+
+    /// Tarjan's components of everything `start` reaches not yet placed.
+    fn place(&mut self, start: &Path) {
+        let mut index: HashMap<PathBuf, (usize, usize)> = HashMap::new();
+        let mut on_stack: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+        let mut stack: Vec<PathBuf> = Vec::new();
+        let mut calls: Vec<(PathBuf, Vec<PathBuf>, usize)> = Vec::new();
+        let mut next = 0usize;
+        let mut enter = |n: &Path, me: &mut Self, index: &mut HashMap<PathBuf, (usize, usize)>| {
+            index.insert(n.to_path_buf(), (next, next));
+            next += 1;
+            let edges = me.edges(n);
+            (n.to_path_buf(), edges, 0usize)
+        };
+        let first = enter(start, self, &mut index);
+        stack.push(start.to_path_buf());
+        on_stack.insert(start.to_path_buf());
+        calls.push(first);
+        while let Some((node, edges, i)) = calls.pop() {
+            if i < edges.len() {
+                let t = edges[i].clone();
+                calls.push((node.clone(), edges, i + 1));
+                if self.component.contains_key(&t) {
+                    continue;
+                }
+                if let Some(&(ti, _)) = index.get(&t) {
+                    if on_stack.contains(&t) {
+                        let e = index.get_mut(&node).expect("entered");
+                        e.1 = e.1.min(ti);
+                    }
+                } else {
+                    let frame = enter(&t, self, &mut index);
+                    stack.push(t.clone());
+                    on_stack.insert(t);
+                    calls.push(frame);
+                }
+                continue;
+            }
+            let (ni, nl) = index[&node];
+            if let Some((parent, _, _)) = calls.last() {
+                let pl = index[parent].1.min(nl);
+                index.get_mut(parent).expect("entered").1 = pl;
+            }
+            if nl == ni {
+                let id = self.cyclic.len();
+                let mut members = 0usize;
+                while let Some(m) = stack.pop() {
+                    on_stack.remove(&m);
+                    self.component.insert(m.clone(), id);
+                    members += 1;
+                    if m == node {
+                        break;
+                    }
+                }
+                let self_loop = self.imports[&node].iter().any(|(t, _, _)| *t == node);
+                self.cyclic.push(members > 1 || self_loop);
+            }
+        }
+    }
+
+    fn of(&mut self, file: &Path, program: &Program) -> Option<CheckDiagnostic> {
+        let start = std::path::absolute(file).ok()?;
+        let dir = start.parent()?.to_path_buf();
+        if !self.imports.contains_key(&start) {
+            self.imports
+                .insert(start.clone(), imports_of(program, &dir));
+        }
+        if !self.component.contains_key(&start) {
+            self.place(&start);
+        }
+        let id = *self.component.get(&start)?;
+        if !self.cyclic[id] || !self.said.insert(id) {
+            return None;
+        }
+        // the cycle itself: the shortest way round, inside the component
+        let mut back: HashMap<PathBuf, PathBuf> = HashMap::new();
+        let mut queue = std::collections::VecDeque::from([start.clone()]);
+        let mut last = None;
+        'search: while let Some(n) = queue.pop_front() {
+            for t in self.edges(&n) {
+                if self.component.get(&t) != Some(&id) {
+                    continue;
+                }
+                if t == start {
+                    last = Some(n);
+                    break 'search;
+                }
+                if !back.contains_key(&t) {
+                    back.insert(t.clone(), n.clone());
+                    queue.push_back(t);
+                }
+            }
+        }
+        let mut cycle = vec![start.clone()];
+        let mut at = last?;
+        while at != start {
+            cycle.push(at.clone());
+            at = back.get(&at)?.clone();
+        }
+        cycle.push(start.clone());
+        let end = cycle.len() - 1;
+        cycle[1..end].reverse();
+        let (line, column) = self.imports[&start]
+            .iter()
+            .find(|(p, _, _)| *p == cycle[1])
+            .map(|(_, l, c)| (*l, *c))
+            .unwrap_or((1, 1));
+        let root = crate::pkg::manifest::Manifest::find_root(&start).unwrap_or(dir);
+        let shown: Vec<String> = cycle
+            .iter()
+            .map(|p| p.strip_prefix(&root).unwrap_or(p).display().to_string())
+            .collect();
+        Some(CheckDiagnostic {
+            line,
+            column,
+            message: format!("Circular dependency detected: {}", shown.join(" → ")),
+            runtime: true,
+            warning: false,
+            scope: false,
+            class: None,
+        })
+    }
+}
+
+/// Where a `use` of `path` from a file in `dir` may be, in the runtime's
+/// order: the file's directory, then its own package's root (a nested
+/// module's `use lib.x` means its package's lib/x.ol, wherever the check
+/// was started), then a package dependency's index or a module inside it.
+fn use_candidates(path: &[String], dir: &Path) -> Vec<PathBuf> {
+    let joined = path.join("/");
+    let last = path.last().cloned().unwrap_or_default();
+    let mut candidates = vec![
+        dir.join(format!("{}.ol", joined)),
+        dir.join(&joined).join("index.ol"),
+        dir.join(&joined).join("mod.ol"),
+    ];
+    let absolute = std::path::absolute(if dir.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        dir
+    })
+    .unwrap_or_else(|_| dir.to_path_buf());
+    if let Some(root) = crate::pkg::manifest::Manifest::find_root(&absolute) {
+        candidates.push(root.join(format!("{}.ol", joined)));
+        candidates.push(root.join(&joined).join("index.ol"));
+    }
+    if let Some(pkg) = crate::expand::package_dir(&path[0], Some(dir)) {
+        if path.len() == 1 {
+            candidates.push(pkg.join("index.ol"));
+        } else {
+            let rest = path[1..].join("/");
+            candidates.push(pkg.join(format!("{}.ol", rest)));
+            candidates.push(pkg.join(&rest).join("index.ol"));
+        }
+    }
+    candidates.push(dir.join(format!("{}.ol", last)));
+    candidates
+}
+
 /// `modules_used` over an already-parsed program.
 fn modules_used_by(
     program: &Program,
@@ -1927,37 +2156,7 @@ fn modules_used_by(
         if u.path.is_empty() {
             continue;
         }
-        let joined = u.path.join("/");
-        let last = u.path.last().cloned().unwrap_or_default();
-        // The runtime's order: the file's directory, then its own
-        // package's root (a nested module's `use lib.x` means its
-        // package's lib/x.ol, wherever the check was started), then a
-        // package dependency's index or a module inside it.
-        let mut candidates = vec![
-            dir.join(format!("{}.ol", joined)),
-            dir.join(&joined).join("index.ol"),
-            dir.join(&joined).join("mod.ol"),
-        ];
-        let absolute = std::path::absolute(if dir.as_os_str().is_empty() {
-            Path::new(".")
-        } else {
-            dir
-        })
-        .unwrap_or_else(|_| dir.to_path_buf());
-        if let Some(root) = crate::pkg::manifest::Manifest::find_root(&absolute) {
-            candidates.push(root.join(format!("{}.ol", joined)));
-            candidates.push(root.join(&joined).join("index.ol"));
-        }
-        if let Some(pkg) = crate::expand::package_dir(&u.path[0], Some(dir)) {
-            if u.path.len() == 1 {
-                candidates.push(pkg.join("index.ol"));
-            } else {
-                let rest = u.path[1..].join("/");
-                candidates.push(pkg.join(format!("{}.ol", rest)));
-                candidates.push(pkg.join(&rest).join("index.ol"));
-            }
-        }
-        candidates.push(dir.join(format!("{}.ol", last)));
+        let candidates = use_candidates(&u.path, dir);
         for c in candidates {
             if out.iter().any(|(p, _, _)| *p == c) {
                 break;
@@ -3075,6 +3274,27 @@ fn embedded_exports(module: &str) -> Option<Vec<String>> {
     names
 }
 
+/// A name the language itself binds everywhere: a builtin function
+/// (`first`, `len`) or a stdlib module. A block's `let mut first` ends
+/// with the block, and `first(xs)` after it is the builtin again, as the
+/// run reads it (OL-177).
+fn global_name(name: &str) -> bool {
+    static NAMES: std::sync::OnceLock<std::collections::HashSet<String>> =
+        std::sync::OnceLock::new();
+    NAMES
+        .get_or_init(|| {
+            let mut names: std::collections::HashSet<String> =
+                crate::builtin::BuiltinFunctions::new()
+                    .get_functions()
+                    .keys()
+                    .cloned()
+                    .collect();
+            names.extend(crate::stdlib::get_stdlib().into_keys());
+            names
+        })
+        .contains(name)
+}
+
 /// The fewest arguments a stdlib module's function takes: the arity its
 /// module registers it with ("the fewest arguments a call takes"), which
 /// its implementation asks for ("str.thousands: missing argument 2").
@@ -3252,6 +3472,25 @@ impl Checker {
                             min,
                             got
                         ),
+                    );
+                }
+                // str's functions of the text alone ignore a second
+                // argument: `str.trim_start(s, "/")` trims whitespace,
+                // not the "/" (OL-257)
+                if module == "str"
+                    && got > 1
+                    && crate::stdlib::string::UNARY.contains(&field.as_str())
+                {
+                    self.warn(
+                        span,
+                        if got == 2 {
+                            format!("str.{field} takes one argument, the text: its second is ignored")
+                        } else {
+                            format!(
+                                "str.{field} takes one argument, the text: its other {} are ignored",
+                                got - 1
+                            )
+                        },
                     );
                 }
             }
@@ -4922,7 +5161,32 @@ impl Checker {
                 }
                 self.walk_children(right, span);
             }
-            Expr::UnaryOp { operand, .. } => self.check_expr(operand, span),
+            Expr::UnaryOp { op, operand } => {
+                // `!re.is_match(p, s)`: a Result under a Bool operator
+                // raises when it runs (OL-265)
+                if matches!(op, crate::ast::UnaryOp::Not)
+                    && let Expr::Call { callee, .. } = operand.as_ref()
+                    && let Expr::FieldAccess { object, field } = callee.as_ref()
+                    && let Expr::Identifier(module) = object.as_ref()
+                    && !self.bound(module)
+                {
+                    if self.fallible.is_empty() {
+                        self.fallible = crate::help::HelpSystem::new().result_returning_functions();
+                    }
+                    let qualified = format!("{}.{}", module, field);
+                    if self.fallible.contains(&qualified) {
+                        self.diag(
+                            span,
+                            true,
+                            format!(
+                                "Invalid unary operation: cannot apply ! to Result: {qualified} \
+                                 answers a Result; unwrap it first (`!unwrap_or({qualified}(...), false)`)"
+                            ),
+                        );
+                    }
+                }
+                self.check_expr(operand, span)
+            }
             Expr::Assignment { target, value } => {
                 self.check_expr(value, span);
                 // Whether the target is declared, whether it is `mut`, and
@@ -5046,6 +5310,7 @@ impl Checker {
                 // once per name.
                 if !self.bound(name)
                     && self.leaked.iter().any(|l| l.contains(name))
+                    && !global_name(name)
                     && self.warned_leaks.insert(name.clone())
                 {
                     self.diag(
@@ -5132,6 +5397,9 @@ pub fn run_tier_as(paths: &[PathBuf], json: bool) -> i32 {
     }
     let mut refused_total = 0usize;
     let mut unchecked = 0usize;
+    // files whose declarations did not load (a module needing an effect
+    // to load, which a check never grants): not checked either
+    let mut not_loaded = 0usize;
     let mut promoted_errors = 0usize;
     let mut file_rows: Vec<serde_json::Value> = Vec::new();
     for file in &files {
@@ -5249,12 +5517,13 @@ pub fn run_tier_as(paths: &[PathBuf], json: bool) -> i32 {
         });
         interpreter.restore_capabilities(was);
         if let Err(e) = loaded {
+            not_loaded += 1;
             if json {
                 file_rows.push(serde_json::json!({
                     "file": absolute.to_string_lossy(), "error": e.to_string(), "functions": [] }));
             } else {
                 println!(
-                    "{}\n  ⚠ not checked (its declarations did not load): {}",
+                    "{}\n  ⚠ not checked (its declarations did not load, and a check grants no capability to load them): {}",
                     file.display(),
                     e
                 );
@@ -5392,17 +5661,35 @@ pub fn run_tier_as(paths: &[PathBuf], json: bool) -> i32 {
         );
         return 1;
     }
-    if refused_total == 0 {
+    // A file not checked is never "every function compiles" (OL-252).
+    let not_loaded_note = match not_loaded {
+        0 => String::new(),
+        1 => "; 1 file not checked (its declarations did not load)".to_string(),
+        n => format!("; {n} files not checked (their declarations did not load)"),
+    };
+    if refused_total == 0 && not_loaded == files.len() {
         println!(
-            "olang check --tier: {} file{}, every function compiles",
+            "olang check --tier: {} file{} not checked (the declarations did not load)",
             files.len(),
             if files.len() == 1 { "" } else { "s" }
         );
+    } else if refused_total == 0 {
+        println!(
+            "olang check --tier: {} file{}, every function compiles{}",
+            files.len() - not_loaded,
+            if files.len() - not_loaded == 1 {
+                ""
+            } else {
+                "s"
+            },
+            not_loaded_note
+        );
     } else {
         println!(
-            "olang check --tier: {} function{} refused by the bytecode tier{}",
+            "olang check --tier: {} function{} refused by the bytecode tier{}{}",
             refused_total,
             if refused_total == 1 { "" } else { "s" },
+            not_loaded_note,
             if promoted_errors > 0 {
                 " (an error here: [check] promote names `tier`, or a function is pinned native)"
             } else {
@@ -5693,6 +5980,44 @@ mod tests {
         let d = check("fn f(a, b) = a\nf(1)\n");
         assert_eq!(d.len(), 1);
         assert!(d[0].message.contains("Missing required argument: b"));
+    }
+
+    #[test]
+    fn a_blocks_binding_of_a_builtins_name_ends_with_the_block() {
+        // OL-177: `first(xs)` after a block's `let mut first` is the builtin
+        let d = check(
+            "let xs = [1]\nif true => { let mut first = 1\nfirst = 2 } else => {}\nlet a = first(xs)\n",
+        );
+        assert!(d.is_empty(), "{d:?}");
+        // a name of the program's own still says the block ended it
+        let d = check("if true => { let mut mine = 1\nmine = 2 } else => {}\nlet b = mine\n");
+        assert_eq!(d.len(), 1, "{d:?}");
+    }
+
+    #[test]
+    fn not_applied_to_a_result_is_refused() {
+        // OL-265: it raises "cannot apply ! to Result" when it runs
+        let d = check(
+            "fn f(r) = !re.is_match(\"^a$\", r)\nfn h(p) = !json.parse(p)\nfn g(x) = !str.contains(x, \"a\")\n",
+        );
+        assert_eq!(d.len(), 2, "{d:?}");
+        assert!(
+            d.iter()
+                .all(|x| x.runtime && x.message.contains("cannot apply ! to Result")),
+            "{d:?}"
+        );
+    }
+
+    #[test]
+    fn a_text_function_given_more_than_the_text_is_warned_of() {
+        // OL-257: `str.trim_start(s, "/")` trims whitespace, not the "/"
+        let d = check("let s = \"/a\"\nlet t = str.trim_start(s, \"/\")\nlet u = str.trim(s)\n");
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert!(d[0].warning && !d[0].runtime, "{d:?}");
+        assert!(
+            d[0].message.contains("str.trim_start takes one argument"),
+            "{d:?}"
+        );
     }
 
     #[test]

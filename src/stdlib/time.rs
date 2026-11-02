@@ -133,14 +133,23 @@ fn time_sleep(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     // In slices, the interrupt asked between them: a REPL's ⌘. (or a
     // call's time budget) stops a long sleep as it stops a loop — one
     // sleep of the whole time could not be stopped at all.
-    let mut left = ms;
-    while left > 0 {
+    // Each slice is measured against one deadline, not counted: a slice
+    // ends late (the system's timer slack, more of it in a busy or
+    // backgrounded process), and counting slices added every lateness
+    // up, so a sleep in Studio ran 4–10 times what was asked (OL-331).
+    let deadline = std::time::Duration::from_millis(ms);
+    let start = crate::clock::Instant::now();
+    loop {
         if crate::interrupt::pending() {
             return Err(crate::interrupt::MESSAGE.into());
         }
-        let slice = left.min(SLEEP_SLICE_MS);
-        crate::clock::sleep_ms(slice);
-        left -= slice;
+        let Some(left) = deadline.checked_sub(start.elapsed()) else {
+            break;
+        };
+        if left.is_zero() {
+            break;
+        }
+        crate::clock::sleep(left.min(std::time::Duration::from_millis(SLEEP_SLICE_MS)));
     }
     Ok(Value::Unit)
 }
@@ -169,6 +178,17 @@ mod tests {
             _ => unreachable!(),
         };
         assert!(b >= a);
+    }
+
+    #[test]
+    fn sleep_ends_near_its_deadline() {
+        // Counted slices each ended late and the lateness added up
+        // (500 ms took 610–650); measured against one deadline a sleep
+        // is late by one slice's slack at most (OL-331).
+        let start = std::time::Instant::now();
+        time_sleep(vec![Value::Integer(500)]).unwrap();
+        let took = start.elapsed().as_millis();
+        assert!((500..580).contains(&took), "500 ms sleep took {took} ms");
     }
 
     #[test]

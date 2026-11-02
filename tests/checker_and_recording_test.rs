@@ -492,3 +492,39 @@ fn an_image_carries_hot_hints_and_a_top_level_range_map_is_native() {
         "true\nErr(\"meta.encode: hot must be a list of function names, got Int\")\nErr(\"meta.encode: unknown option 'warm' — the option is hot\")\n3000000 1500000 3\n"
     );
 }
+
+#[test]
+fn the_checker_reports_a_circular_import_as_the_run_refuses_it() {
+    // OL-259: `olang check .` said "3 files clean" for a cycle the run
+    // refuses ("Circular dependency detected: lib/a.ol → lib/b.ol → lib/a.ol").
+    let dir = workspace("cycle");
+    write(
+        &dir,
+        "olang.toml",
+        "[package]\nname = \"t\"\nversion = \"0.1.0\"\n",
+    );
+    write(
+        &dir,
+        "lib/a.ol",
+        "use lib.b { bf }\nshare fn af() = 1\nshare fn ag() = bf()\n",
+    );
+    write(
+        &dir,
+        "lib/b.ol",
+        "use lib.a { af }\nshare fn bf() = af() + 1\n",
+    );
+    write(&dir, "main.ol", "use lib.a { ag }\nprintln(ag())\n");
+    let (out, err, code) = olang(&dir, &["check", "."]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert_eq!(
+        err.matches("Circular dependency detected").count(),
+        1,
+        "said once: {err}"
+    );
+    assert!(err.contains("lib/a.ol → lib/b.ol → lib/a.ol"), "{err}");
+    // a chain that comes back nowhere is clean
+    write(&dir, "lib/b.ol", "share fn bf() = 2\n");
+    let (out, err, code) = olang(&dir, &["check", "."]);
+    assert_eq!(code, 0, "{out}{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -3166,8 +3166,8 @@ fn concat(frames: &[Value]) -> Result<Value, String> {
 
 /// Per-column summary statistics, one row per column.
 ///
-/// The numeric statistics are null for String and Bool columns rather
-/// than absent: a Frame has one type per column, so the alternative is
+/// A Bool column's are its 0s and 1s' (the mean is the share true). The
+/// numeric statistics are null for a String column rather than absent: a Frame has one type per column, so the alternative is
 /// two shapes of result depending on the input, and a caller that has to
 /// branch on the shape of a summary is worse off than one reading nulls.
 fn describe(frame: &Frame) -> Result<Value, String> {
@@ -3187,6 +3187,9 @@ fn describe(frame: &Frame) -> Result<Value, String> {
         counts.push(Value::Integer((col.len() - null_count) as i64));
         nulls.push(Value::Integer(null_count as i64));
 
+        // a Bool column is 0 and 1 here, as in its `mean` (OL-182)
+        let as_int = col.bool_as_int();
+        let col = as_int.as_ref().unwrap_or(col);
         let numeric = matches!(col.dtype(), olang_ods::DType::F64 | olang_ods::DType::I64);
         let values: [Option<f64>; 7] = if numeric {
             let scalar_f64 = |s: Scalar| match s {

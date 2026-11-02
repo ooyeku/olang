@@ -556,7 +556,8 @@ no hint.
 `serve` also takes `"log": (req, response, ms) => …` to own the
 access line — `"log": ()` silences it, and absent the option the
 environment levels it: `OLANG_ACCESS_LOG` is `all` (the default),
-`errors` (400 and up), or `off` — `"bind"` for the address to listen on (`"0.0.0.0"` for
+`errors` (400 and up), or `off`, and the same level governs `dispatch`
+run in process (a stdio child whose protocol is on stdout sets `off`) — `"bind"` for the address to listen on (`"0.0.0.0"` for
 other machines; the default stays `127.0.0.1`), and `"sdk_dir"` to say
 where the SDK's assets are read from — by default `WEB_SDK_DIR`, then
 the directory the project's own `olang.lock` resolved `web` to (a path

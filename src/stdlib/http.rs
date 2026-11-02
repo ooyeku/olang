@@ -971,7 +971,7 @@ pub(crate) struct ServeConfig {
     /// How long a drain waits for the requests in flight before the rest
     /// are cut — a long poll re-issued on a kept-alive connection would
     /// otherwise hold the process open for as long as a tab stays up.
-    drain_ms: u64,
+    pub(crate) drain_ms: u64,
 }
 
 fn default_worker_count() -> usize {

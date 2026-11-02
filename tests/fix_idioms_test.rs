@@ -287,8 +287,8 @@ fn first_and_last_answer_as_the_guarded_index_did() {
 
 #[test]
 fn first_and_last_leave_what_might_be_bytes() {
-    // `len` and `[i]` take Bytes, `last` refuses it: an unproven list is
-    // left, for this is the input it would answer differently
+    // `len` and `[i]` take Bytes, and `last` before 1.0.0 refused it
+    // (OL-181): an unproven list is left, as the rewrite may run on rc.7
     let decl = "fn f(xs) = if len(xs) == 0 => () else => xs[len(xs) - 1]";
     let (out, report) = fix(decl, Target::FirstLast).unwrap();
     assert_eq!(out, decl);
@@ -300,7 +300,11 @@ fn first_and_last_leave_what_might_be_bytes() {
             eval(&format!("{decl}\nfn main() = f({b})\nmain()\n"), tier),
             Ok(Value::Integer(98))
         );
-        assert!(eval(&format!("fn main() = last({b})\nmain()\n"), tier).is_err());
+        // and `last` now answers it as `[i]` does (OL-181)
+        assert_eq!(
+            eval(&format!("fn main() = last({b})\nmain()\n"), tier),
+            Ok(Value::Integer(98))
+        );
     }
 }
 

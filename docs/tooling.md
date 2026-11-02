@@ -222,7 +222,9 @@ with `__snapshots__/<name>.snap` beside the file under test — a String
 as its text, any other value as `show` writes it: the first run writes
 the file and passes, a later run that differs fails with both texts,
 and `OLANG_UPDATE_SNAPSHOTS=1` (or the generic `UPDATE_SNAPSHOTS=1`)
-accepts the new form. A library with an update variable of its own
+accepts the new form. In CI set `OLANG_SNAPSHOTS=ci`: a snapshot not
+recorded fails instead of being written, so one deleted or never
+committed turns the run red. A library with an update variable of its own
 passes it: `testing.snapshot(name, value, #{ "update": true })`. It is
 for the long HTML and SVG strings a test would otherwise inline; commit
 the directory.
@@ -2122,10 +2124,12 @@ nothing should depend on them.
 | `OLANG_PROFILE_LIVE` | yes | A live-profile directory, as `--profile-live DIR`; reaches the children a run starts. |
 | `OLANG_PROFILE_LIVE_EVERY` | yes | Milliseconds between live-profile snapshots (default 500). |
 | `OLANG_UPDATE_SNAPSHOTS` | yes | `1`: `testing.snapshot` rewrites its snapshots instead of comparing (`UPDATE_SNAPSHOTS=1`, the generic spelling, too). |
+| `OLANG_SNAPSHOTS` | yes | `ci`: a snapshot `testing.snapshot` finds no recording of fails instead of being written (for CI). |
 | `OLANG_TEST` | yes | Set to `1` by `olang test` for the files it runs, for a program to read. |
 | `OLANG_COMPILE_CACHE` | yes | `0` turns off the compile cache ([ovm.md](ovm.md)). |
-| `OLANG_COMPILE_CACHE_MB` | yes | The compile cache's size cap in MB (default 64). |
-| `OLANG_PARSE_CACHE` | no | `0`: parse every module instead of reading it back from `~/.olang/state/parsed`. |
+| `OLANG_COMPILE_CACHE_MB` | yes | The compile cache's size cap in MB (default 256). |
+| `OLANG_PARSE_CACHE` | no | `0`: parse every module instead of reading it back from `~/.olang/state/parsed`. An entry unused for two weeks is dropped, and past its cap the least recently used go first, as the compile cache's do. |
+| `OLANG_PARSE_CACHE_MB` | no | The parse cache's size cap in MB (default 64). |
 | `OLANG_WARM` | yes | `0` disables the warm tier profile ([ovm.md](ovm.md)), for measurement. |
 | `LOOM_RENDERER` | yes | `gpu` (the default) or `software`: the renderer `gui.open` uses when its options name none. |
 | `NO_COLOR` / `CLICOLOR_FORCE` | yes | Disable or force `term` styling regardless of whether output is a TTY. |

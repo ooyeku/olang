@@ -1291,6 +1291,19 @@ pub fn binary_op(
     {
         return Some(r);
     }
+    // A Bool series is 0 and 1 in arithmetic, as in `mean` and `sum`
+    // (OL-182: `12.0 * flags` raised "cannot apply multiplication").
+    let widened = |v: &Value| -> Option<Value> {
+        if !matches!(
+            bop,
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::Pow
+        ) {
+            return None;
+        }
+        series_of(v)?.bool_as_int().map(OdsSeries::into_value)
+    };
+    let (wl, wr) = (widened(lhs), widened(rhs));
+    let (lhs, rhs) = (wl.as_ref().unwrap_or(lhs), wr.as_ref().unwrap_or(rhs));
     let a = super::expr::operand(lhs)?;
     let b = super::expr::operand(rhs)?;
     // Elementwise work is one fused expression: `a * b + 1.0` is

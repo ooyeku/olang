@@ -165,3 +165,21 @@ fn circular_imports_are_still_refused() {
     assert!(err.to_lowercase().contains("circular"), "{err}");
     let _ = fs::remove_dir_all(&ws);
 }
+
+#[test]
+fn an_import_of_a_private_name_names_the_module_it_is_not_shared_from() {
+    // OL-267: the report named the importing file as the module that
+    // lacked the name, everywhere it named a module.
+    let ws = workspace("private");
+    let app = scaffold_nested(&ws);
+    write(
+        &app.join("lib/hidden.ol"),
+        "fn kept() = 1\nshare fn shown() = 2\n",
+    );
+    let err = run(&app, "use lib.hidden { kept }\nkept()").unwrap_err();
+    assert!(
+        err.contains("'kept' not found in module 'lib.hidden'"),
+        "{err}"
+    );
+    let _ = fs::remove_dir_all(&ws);
+}

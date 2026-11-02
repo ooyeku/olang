@@ -171,3 +171,38 @@ fn module_scopes_handed_to_an_interpreter_reach_its_tier() {
     let tier = bridge.bytecode_tier_mut().expect("a tier");
     assert!(tier.knows_module_function("/app/lib/m.ol", "helper"));
 }
+
+#[test]
+fn a_local_lambda_is_not_another_modules_function_of_its_name() {
+    // OL-272: `let get = (k) => cell.get(st)` mentions `get` only as a
+    // field, yet was named `get` as if it called itself; the tier then
+    // knew it by the name of the other module's private `fn get` and ran
+    // the first call's closure (its cell) from the second call on.
+    let ws = workspace("local_lambda");
+    let app = scaffold(&ws);
+    fs::write(
+        ws.join("lib/other.ol"),
+        "fn get(k) = \"other's private get\"\nshare fn one() = 1\n",
+    )
+    .unwrap();
+    let source = r#"use lib.other { one }
+fn recorded() = {
+    let st = cell(0)
+    let get = (k) => cell.get(st)
+    let tests = (s0) => {
+        let k = get("n")
+        if k >= 3 => return s0
+        cell.set(st, k + 1)
+        s0 + 1
+    }
+    (s0) => {
+        let mut s = s0
+        for r in range(0, 10) { s = tests(s) }
+        s
+    }
+}
+show(map(range(0, 5), (i) => recorded()(0)))"#;
+    let out = run(&app, source);
+    assert_eq!(out.as_deref(), Ok("[3, 3, 3, 3, 3]"));
+    let _ = fs::remove_dir_all(&ws);
+}

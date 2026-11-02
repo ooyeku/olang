@@ -33,6 +33,36 @@ thread_local! {
     static MARK: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
 }
 
+/// The line each expression-bodied function is declared on, by its file
+/// and name: such a body has no located statement, so a failure in it
+/// was said at line 0 (OL-180). Noted once per declaration.
+type DeclLines = std::sync::Mutex<std::collections::HashMap<(Option<String>, String), u32>>;
+
+fn decl_lines() -> &'static DeclLines {
+    static LINES: std::sync::OnceLock<DeclLines> = std::sync::OnceLock::new();
+    LINES.get_or_init(Default::default)
+}
+
+/// An expression-bodied function declared at `line` of `file`.
+pub fn note_decl(file: Option<&str>, name: &str, line: u32) {
+    if let Ok(mut lines) = decl_lines().lock() {
+        lines.insert((file.map(str::to_string), name.to_string()), line);
+    }
+}
+
+/// A frame with no line of its own (an expression body) takes its
+/// function's declaration line.
+fn placed(mut frame: Frame) -> Frame {
+    if frame.line == 0
+        && let Some(name) = &frame.function
+        && let Ok(lines) = decl_lines().lock()
+        && let Some(line) = lines.get(&(frame.file.clone(), name.clone()))
+    {
+        frame.line = *line;
+    }
+    frame
+}
+
 /// The most frames a trace keeps (a runaway recursion's are all alike).
 const MOST: usize = 64;
 
@@ -53,7 +83,7 @@ pub fn note(fresh: bool, mark: (usize, usize), frame: Frame) {
         }
         MARK.with(|m| m.set(mark));
         if p.len() < MOST {
-            p.push(frame);
+            p.push(placed(frame));
         }
     });
 }

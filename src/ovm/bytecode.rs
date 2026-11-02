@@ -254,7 +254,7 @@ pub struct BytecodeVm {
     /// lambda's AST form must still CARRY the function in its closure so
     /// it behaves identically when it escapes to the interpreter (bridged
     /// builtins, returned values).
-    known_function_values: HashMap<String, std::sync::Arc<crate::ast::Function>>,
+    known_function_values: im::HashMap<String, std::sync::Arc<crate::ast::Function>>,
     /// Bare names bound to more than one distinct function body over the
     /// run — a nested `fn insert` in two modules, say. The bridge seeds
     /// its environment only with unambiguous names; a name here would
@@ -467,7 +467,7 @@ pub struct BytecodeCompiler {
 
     /// User function values for lambda-closure attachment (see
     /// BytecodeVm::known_function_values).
-    known_function_values: HashMap<String, std::sync::Arc<crate::ast::Function>>,
+    known_function_values: im::HashMap<String, std::sync::Arc<crate::ast::Function>>,
 
     /// Set while compiling a named nested fn's pending body: (name, id,
     /// real parameter count, capture count). A self-call must append the
@@ -697,6 +697,13 @@ pub enum Instruction {
         target: Register,
         key: Register,
         value: Register,
+        /// The value register is not read again (set by the liveness
+        /// pass): it is moved into the map, not cloned. A clone left the
+        /// register holding the value until it was overwritten, so a map
+        /// stored this way and read back out the next turn was shared
+        /// and copied on its next write (OL-266).
+        #[serde(default)]
+        value_dead: bool,
     },
     /// `let x: T = value` — enforce the declared type of a binding, with
     /// the interpreter's message. The check is one comparison; before this
@@ -1382,6 +1389,11 @@ fn literal_default(expr: &Expr) -> Option<OvmValue> {
     })
 }
 
+thread_local! {
+    /// The construct a lambda's free-variable walk refused first.
+    static FREE_REFUSED: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
 /// One compile of a lambda body shared by all its closures whose captures
 /// are the same (`BytecodeVm::hof_shared`).
 ///
@@ -1781,7 +1793,7 @@ impl BytecodeVm {
             unit_variant_names: std::collections::HashSet::new(),
             type_aliases: HashMap::new(),
             bridged_callees: std::collections::HashSet::new(),
-            known_function_values: HashMap::new(),
+            known_function_values: im::HashMap::new(),
             ambiguous_function_names: std::collections::HashSet::new(),
             trait_impls: HashMap::new(),
             trait_defaults: HashMap::new(),
@@ -1846,6 +1858,36 @@ impl BytecodeVm {
     }
 
     /// The tier's verdict that two different functions share `name`.
+    /// A fresh VM (a worker thread's) takes what its parent knows of the
+    /// program's functions: their values, the names they shadow, the
+    /// names two of them share. The function table is persistent, so
+    /// this costs the same for ten functions as for ten thousand, where
+    /// noting each one again made a `spawn` in a large program cost
+    /// milliseconds (OL-330).
+    /// The functions this VM knows by value, and the names two of them
+    /// share.
+    pub(crate) fn function_tables(
+        &self,
+    ) -> (
+        &im::HashMap<String, std::sync::Arc<crate::ast::Function>>,
+        &std::collections::HashSet<String>,
+    ) {
+        (&self.known_function_values, &self.ambiguous_function_names)
+    }
+
+    pub fn seed_functions_from(&mut self, parent: &BytecodeVm) {
+        self.known_function_values = parent.known_function_values.clone();
+        // a builtin a user function names is shadowed (`shadow_builtin`)
+        let known = &self.known_function_values;
+        self.builtin_names.retain(|name| !known.contains_key(name));
+        self.ambiguous_function_names = parent.ambiguous_function_names.clone();
+        self.compiler.ambiguous_names = parent.compiler.ambiguous_names.clone();
+        #[cfg(feature = "native")]
+        self.jit.seed_shadowed(&parent.jit);
+        self.hof_epoch += 1;
+        self.bridge_landscape_version += 1;
+    }
+
     pub fn mark_ambiguous(&mut self, name: &str) {
         if self.ambiguous_function_names.insert(name.to_string()) {
             self.hof_epoch += 1;
@@ -5025,7 +5067,12 @@ impl BytecodeVm {
                     self.execution_state.set_register(*dst, result)?;
                 }
 
-                Instruction::MapSetAssign { target, key, value } => {
+                Instruction::MapSetAssign {
+                    target,
+                    key,
+                    value,
+                    value_dead,
+                } => {
                     use crate::ovm::value::ValueData;
                     // A user-defined map_set shadows the builtin: resolve
                     // exactly as CallNamed would and call it.
@@ -5076,7 +5123,11 @@ impl BytecodeVm {
                             ));
                         }
                     };
-                    let v = self.execution_state.get_register(*value)?;
+                    let v = if *value_dead && value != target && value != key {
+                        self.execution_state.take_register(*value)?
+                    } else {
+                        self.execution_state.get_register(*value)?
+                    };
                     // Take the map out of its register so a sole owner is
                     // recognizable; aliased maps copy, exactly like the
                     // list writes.
@@ -7932,14 +7983,14 @@ impl BytecodeVm {
             // few thousand inserts built every bridge a private scope map
             // of several megabytes, and a served application holds a
             // bridge per worker.
-            let mut by_name = HashMap::with_capacity(self.known_function_values.len());
-            for (name, func) in self.known_function_values.clone() {
-                if !self.ambiguous_function_names.contains(&name) {
-                    by_name.insert(name.clone(), func.clone());
-                }
-                if let Some(tier) = interp.bytecode_tier_mut() {
-                    tier.note_function(name, func);
-                }
+            //
+            // The table is persistent and taken whole, as is the tier's:
+            // noting each function again made every worker's first
+            // builtin call cost about 0.3 µs a function, milliseconds in
+            // a large program (OL-330).
+            let mut by_name = self.known_function_values.clone();
+            for name in &self.ambiguous_function_names {
+                by_name.remove(name);
             }
             interp.set_bridge_functions(std::sync::Arc::new(by_name));
             // The verdict travels with the table: a name two definitions
@@ -7947,9 +7998,7 @@ impl BytecodeVm {
             // value the table kept for it would compile by name there —
             // and in every worker the bridge spawns.
             if let Some(tier) = interp.bytecode_tier_mut() {
-                for name in self.ambiguous_function_names.clone() {
-                    tier.inherit_ambiguous(&name);
-                }
+                tier.seed_bridge_from(self);
             }
             // A module function run here resolves its file's siblings
             // through the module's complete table, as it does on the host.
@@ -7980,6 +8029,33 @@ impl BytecodeVm {
                 std::sync::atomic::Ordering::Relaxed,
             );
         }
+    }
+
+    /// `call_function_value` with the arguments handed over: a compiled
+    /// callee's frame takes them by move, so a value nothing else holds
+    /// stays uniquely held there. Anything else is called as
+    /// `call_function_value` calls it.
+    fn call_function_value_taking(
+        &mut self,
+        callee: &OvmValue,
+        mut args: Vec<OvmValue>,
+    ) -> Result<OvmValue, BytecodeError> {
+        use crate::ovm::value::ValueData;
+        match &callee.data {
+            ValueData::AstFunction(f) if f.parameters.len() == args.len() => {
+                let f = f.clone();
+                if let Some(func_id) = self.hof_function_id(&f, args.len()) {
+                    return self.execute_taking(func_id, &mut args);
+                }
+            }
+            ValueData::Closure(c) if c.template.parameters.len() == args.len() => {
+                let c = c.clone();
+                args.extend(c.captured.iter().cloned());
+                return self.execute_taking(c.func_id, &mut args);
+            }
+            _ => {}
+        }
+        self.call_function_value(callee, &args)
     }
 
     fn call_function_value(
@@ -9987,7 +10063,10 @@ impl BytecodeVm {
                     .get_mut(&key)
                     .map(|v| std::mem::replace(v, OvmValue::new_unit()))
                     .unwrap_or_else(OvmValue::new_unit);
-                let new = self.call_function_value(&f, &[old])?;
+                // handed over, not lent: the function's frame then holds
+                // the old value's only reference, so a table nested in a
+                // map is updated in place (OL-266)
+                let new = self.call_function_value_taking(&f, vec![old])?;
                 Arc::make_mut(&mut m).insert(key, new);
                 Ok(OvmValue::new_map(m))
             }
@@ -11045,7 +11124,7 @@ impl BytecodeCompiler {
             volatile_globals: std::collections::HashSet::new(),
             hit_volatile: std::cell::RefCell::new(None),
             enclosing_run: Default::default(),
-            known_function_values: HashMap::new(),
+            known_function_values: im::HashMap::new(),
             self_call: None,
             pending_lambdas: Vec::new(),
             unresolved: Vec::new(),
@@ -11812,6 +11891,27 @@ impl BytecodeCompiler {
                 Ok(dst_reg)
             }
 
+            // A module that exports `new` is callable: `cell(0)` is
+            // `cell.new(0)`, as the interpreter calls it. Compiled as that
+            // call; it refused the whole function as an unresolved name.
+            Expr::Call { callee, arguments }
+                if matches!(callee.as_ref(), Expr::Identifier(module)
+                    if !self.local_variables.contains_key(module)
+                        && self.q_registry(module).is_none()
+                        && self.q_module_builtin(module, "new").is_some()) =>
+            {
+                let Expr::Identifier(module) = callee.as_ref() else {
+                    unreachable!("matched above")
+                };
+                let rewritten = Expr::Call {
+                    callee: Box::new(Expr::FieldAccess {
+                        object: Box::new(Expr::Identifier(module.clone())),
+                        field: "new".to_string(),
+                    }),
+                    arguments: arguments.clone(),
+                };
+                self.compile_expression(&rewritten)
+            }
             Expr::Call { callee, arguments } => {
                 // Callee resolution mirrors the interpreter's scope order. A
                 // name held by a LOCAL is a function value and the call goes
@@ -12908,10 +13008,19 @@ impl BytecodeCompiler {
         let bound: std::collections::HashSet<String> =
             parameters.iter().map(|p| p.name.clone()).collect();
         let mut free = std::collections::HashSet::new();
+        FREE_REFUSED.with(|r| *r.borrow_mut() = None);
         if !Self::collect_free_vars(body, &bound, &mut free) {
-            return Err(BytecodeError::CompilationFailed(
-                "Lambda body uses constructs the bytecode tier cannot analyze".to_string(),
-            ));
+            let what = FREE_REFUSED
+                .with(|r| r.borrow_mut().take())
+                .unwrap_or_else(|| "a construct".to_string());
+            return Err(BytecodeError::CompilationFailed(format!(
+                "a lambda{} uses {}, which the bytecode tier cannot analyze",
+                match self_name {
+                    Some(n) => format!(" (`{n}`)"),
+                    None => String::new(),
+                },
+                what
+            )));
         }
 
         // Free variables split three ways. A name currently living
@@ -13737,14 +13846,41 @@ impl BytecodeCompiler {
                             }
                             scope.insert(decl.name.clone());
                         }
-                        _ => return false,
+                        other => {
+                            Self::refuse_free(|| match other {
+                                Statement::UseDecl(_) => "a `use`".to_string(),
+                                Statement::TypeDecl(_) => "a type declaration".to_string(),
+                                _ => "a declaration".to_string(),
+                            });
+                            return false;
+                        }
                     }
                 }
                 true
             }
 
-            _ => false,
+            // an early `return` leaves the lambda, as a `fn`'s leaves it
+            Expr::Return(value) => value
+                .as_ref()
+                .is_none_or(|v| Self::collect_free_vars(v, bound, free)),
+
+            other => {
+                Self::refuse_free(|| Self::construct_name(other));
+                false
+            }
         }
+    }
+
+    /// The first construct `collect_free_vars` refused, said in a
+    /// lambda's refusal (OL-251: "uses constructs the bytecode tier
+    /// cannot analyze" named neither the lambda nor the construct).
+    fn refuse_free(name: impl FnOnce() -> String) {
+        FREE_REFUSED.with(|r| {
+            let mut r = r.borrow_mut();
+            if r.is_none() {
+                *r = Some(name());
+            }
+        });
     }
 
     /// Collect the names a pattern binds.
@@ -14037,6 +14173,7 @@ impl BytecodeCompiler {
                     target: target_reg,
                     key: k,
                     value: v,
+                    value_dead: false,
                 });
                 return Ok(target_reg);
             }
@@ -14453,6 +14590,35 @@ impl BytecodeCompiler {
     /// non-literal default (whose evaluation needs the callee's scope)
     /// or no default at all (arity error — the value path reproduces
     /// the interpreter's message).
+    /// A default naming a top-level constant of the callee's own file
+    /// (`dur = LOW`), when the call is compiled in that file: the value
+    /// the name holds, baked as a body's read of it is (a `let mut` is
+    /// never baked, and a local of the name in the caller refuses). It
+    /// kept the function on the tree-walker, 8.5× slower (OL-320).
+    fn constant_default(
+        &mut self,
+        func: &crate::ast::Function,
+        default: &Expr,
+    ) -> Option<OvmValue> {
+        let Expr::Identifier(name) = default else {
+            return None;
+        };
+        if self.local_variables.contains_key(name)
+            || func.def_file.is_none()
+            || func.def_file.as_deref() != self.pending_def_file.as_deref()
+        {
+            return None;
+        }
+        match self.q_ident(name)? {
+            v @ (Value::Integer(_)
+            | Value::Float(_)
+            | Value::Boolean(_)
+            | Value::String(_)
+            | Value::Unit) => Some(OvmValue::from_ast(v)),
+            _ => None,
+        }
+    }
+
     fn splice_literal_defaults(
         &mut self,
         func: &crate::ast::Function,
@@ -14460,7 +14626,11 @@ impl BytecodeCompiler {
     ) -> Option<Vec<Register>> {
         let mut extra = Vec::new();
         for param in &func.parameters[from..] {
-            let value = literal_default(param.default_value.as_ref()?)?;
+            let default = param.default_value.as_ref()?;
+            let value = match literal_default(default) {
+                Some(v) => v,
+                None => self.constant_default(func, default)?,
+            };
             let idx = self.emitter.add_constant(value);
             let reg = self.register_allocator.allocate_register();
             self.emitter.instructions.push(Instruction::LoadConst {
@@ -15245,6 +15415,16 @@ impl BytecodeOptimizer {
                 let dead = !(pc + 1 < n && live_in[pc + 1][lhs.0 as usize]);
                 *lhs_dead = dead && lhs != rhs && dst != rhs;
             }
+            if let I::MapSetAssign {
+                target,
+                key,
+                value,
+                value_dead,
+            } = &mut instructions[pc]
+            {
+                let dead = !(pc + 1 < n && live_in[pc + 1][value.0 as usize]);
+                *value_dead = dead && value != target && value != key;
+            }
             if let I::CallFn {
                 args, arg_moves, ..
             } = &mut instructions[pc]
@@ -15403,7 +15583,9 @@ impl BytecodeOptimizer {
                 uses.push(j.0);
                 defs.push(target.0);
             }
-            I::MapSetAssign { target, key, value } => {
+            I::MapSetAssign {
+                target, key, value, ..
+            } => {
                 uses.push(target.0);
                 uses.push(key.0);
                 uses.push(value.0);

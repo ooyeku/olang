@@ -716,6 +716,28 @@ sim.world(#{ "seed": 1 }).run_fn(() => {
     assert_eq!(v.to_string(), r#"["hello sim", true]"#);
 }
 
+#[test]
+fn a_servers_drain_waits_for_its_handlers_in_flight_up_to_drain_ms() {
+    // OL-270: in a world `http.serve` returned as a drain began, so the
+    // request in flight was dropped where a real server answers it.
+    let v = eval(
+        r#"
+fn drained(handler_ms, drain_ms) = sim.world(#{ "seed": 1 }).run_fn(() => {
+    let s = spawn { http.serve(7931, (req) => { time.sleep(handler_ms); "done" }, #{ "drain_ms": drain_ms }) }
+    time.sleep(300)
+    let c = spawn { http.get("http://main:7931/x") }
+    time.sleep(300)
+    let t0 = time.monotonic_ms()
+    http.shutdown()
+    let _s = task.join(s)
+    time.monotonic_ms() - t0
+}).value
+[drained(1500, 5000), drained(9000, 2000)]
+"#,
+    );
+    assert_eq!(v.to_string(), "[1200, 2000]");
+}
+
 fn builder_report(file: &str, seed: u64) -> olang::sim::Report {
     olang::sim::cli::run_builder(&fixture(file), seed).expect("runs")
 }
