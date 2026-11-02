@@ -14,7 +14,7 @@
 // lost), "none". MINUTES (env): how long the agents write (5). EVERY
 // (env): seconds between chances of a crash (30).
 
-let TRACK = match os.get_env("OLANG_TRACK_DIR") { Ok(d) => d, Err(e) => "../../../../olang-track" }
+let TRACK = match os.get_env("OLANG_TRACK_DIR") { Ok(d) => d, Err(e) => "../../../../libraries/olang-track" }
 let CRASH = match os.get_env("CRASH") { Ok(c) => c, Err(e) => "kill" }
 let MINUTES = match os.get_env("MINUTES") { Ok(m) => unwrap(str.parse_int(m)), Err(e) => 5 }
 

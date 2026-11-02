@@ -1139,7 +1139,7 @@ let inside = sim.world(#{ "seed": 1 }).run_fn(() => db.query(conn, "SELECT 1 AS 
 /// and the shelf its server reads (its packages are files on the node's
 /// disk, copied from there by the fixture).
 fn olang_track() -> Option<PathBuf> {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../olang-track");
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../libraries/olang-track");
     let shelf = std::env::var("HOME")
         .map(|h| PathBuf::from(h).join(".olang/shelf.toml"))
         .ok()?;

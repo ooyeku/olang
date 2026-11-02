@@ -1,4 +1,4 @@
-//! `toad` — the engine under the Toad game framework (olang-world/toad).
+//! `toad` — the engine under the Toad game framework (olang-world/libraries/toad).
 //!
 //! T0, the spike: kernels (plain olang functions compiled to a scalar
 //! program, [`kernel`]) and swarms (an engine-owned column store of many

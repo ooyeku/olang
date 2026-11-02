@@ -475,9 +475,9 @@ fn a_saved_module_reloads_keeping_state_and_a_broken_one_is_kept() {
 #[test]
 fn a_loom_view_renders_headless_to_a_picture() {
     // Loom is a sibling checkout; without it there is nothing to draw with
-    let loom = Path::new(env!("CARGO_MANIFEST_DIR")).join("../loom");
+    let loom = Path::new(env!("CARGO_MANIFEST_DIR")).join("../libraries/loom");
     if !loom.join("lib/test.ol").exists() {
-        eprintln!("no ../loom: skipped");
+        eprintln!("no ../libraries/loom: skipped");
         return;
     }
     let dir = project();
