@@ -57,12 +57,18 @@ fn dispatch_in_process_honours_the_access_log_level() {
     .unwrap();
     let run = |level: Option<&str>| {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_olang"));
-        cmd.current_dir(&web).arg(&script).env_remove("OLANG_ACCESS_LOG");
+        cmd.current_dir(&web)
+            .arg(&script)
+            .env_remove("OLANG_ACCESS_LOG");
         if let Some(l) = level {
             cmd.env("OLANG_ACCESS_LOG", l);
         }
         let out = cmd.output().unwrap();
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         String::from_utf8_lossy(&out.stdout).into_owned()
     };
     assert_eq!(run(Some("off")), "status 200\n");
