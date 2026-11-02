@@ -147,8 +147,9 @@ launch compiled.
   A pack whose header, index or an entry's checksum fails (truncated,
   garbled, another build's) is not trusted. Entries unused for two weeks
   are dropped when their pack is next written; the directory is held
-  under 64 MB (`OLANG_COMPILE_CACHE_MB`), the least recently written
-  packs removed first.
+  under 256 MB (`OLANG_COMPILE_CACHE_MB`), room for a few checkouts of
+  a large program (packs are keyed by a module's path), the least
+  recently written packs removed first.
 - **Cost.** A cold cache costs ~10% more compiling (the questions are
   recorded; entries are made, encoded and written off the program's
   thread). `OLANG_COMPILE_CACHE=0` turns it off; `OLANG_BOOT_TRACE`

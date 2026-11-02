@@ -2124,7 +2124,7 @@ nothing should depend on them.
 | `OLANG_UPDATE_SNAPSHOTS` | yes | `1`: `testing.snapshot` rewrites its snapshots instead of comparing (`UPDATE_SNAPSHOTS=1`, the generic spelling, too). |
 | `OLANG_TEST` | yes | Set to `1` by `olang test` for the files it runs, for a program to read. |
 | `OLANG_COMPILE_CACHE` | yes | `0` turns off the compile cache ([ovm.md](ovm.md)). |
-| `OLANG_COMPILE_CACHE_MB` | yes | The compile cache's size cap in MB (default 64). |
+| `OLANG_COMPILE_CACHE_MB` | yes | The compile cache's size cap in MB (default 256). |
 | `OLANG_PARSE_CACHE` | no | `0`: parse every module instead of reading it back from `~/.olang/state/parsed`. An entry unused for two weeks is dropped, and past its cap the least recently used go first, as the compile cache's do. |
 | `OLANG_PARSE_CACHE_MB` | no | The parse cache's size cap in MB (default 64). |
 | `OLANG_WARM` | yes | `0` disables the warm tier profile ([ovm.md](ovm.md)), for measurement. |

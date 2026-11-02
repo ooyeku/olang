@@ -45,7 +45,7 @@
 //! writing one pack lose at most what the other added (compiled again
 //! next run). An entry no run has written or used for two weeks is
 //! dropped when its pack is next written; a pack holds 4,096 entries at
-//! most; the directory is held under a size (64 MB,
+//! most; the directory is held under a size (256 MB,
 //! `OLANG_COMPILE_CACHE_MB`), the packs least recently written removed
 //! first. A pack whose header, index or an entry's checksum does not
 //! hold — truncated, garbled, another build's — is not trusted: what it
@@ -90,7 +90,10 @@ fn cap_bytes() -> u64 {
     std::env::var("OLANG_COMPILE_CACHE_MB")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(64)
+        // a few checkouts of a large program: at 64 one checkout's
+        // packs evicted another's, and a program's memory and start
+        // depended on what other checkouts had run (OL-260)
+        .unwrap_or(256)
         * 1024
         * 1024
 }
