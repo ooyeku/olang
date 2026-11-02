@@ -5395,6 +5395,9 @@ pub fn run_tier_as(paths: &[PathBuf], json: bool) -> i32 {
     }
     let mut refused_total = 0usize;
     let mut unchecked = 0usize;
+    // files whose declarations did not load (a module needing an effect
+    // to load, which a check never grants): not checked either
+    let mut not_loaded = 0usize;
     let mut promoted_errors = 0usize;
     let mut file_rows: Vec<serde_json::Value> = Vec::new();
     for file in &files {
@@ -5512,12 +5515,13 @@ pub fn run_tier_as(paths: &[PathBuf], json: bool) -> i32 {
         });
         interpreter.restore_capabilities(was);
         if let Err(e) = loaded {
+            not_loaded += 1;
             if json {
                 file_rows.push(serde_json::json!({
                     "file": absolute.to_string_lossy(), "error": e.to_string(), "functions": [] }));
             } else {
                 println!(
-                    "{}\n  ⚠ not checked (its declarations did not load): {}",
+                    "{}\n  ⚠ not checked (its declarations did not load, and a check grants no capability to load them): {}",
                     file.display(),
                     e
                 );
@@ -5655,17 +5659,35 @@ pub fn run_tier_as(paths: &[PathBuf], json: bool) -> i32 {
         );
         return 1;
     }
-    if refused_total == 0 {
+    // A file not checked is never "every function compiles" (OL-252).
+    let not_loaded_note = match not_loaded {
+        0 => String::new(),
+        1 => "; 1 file not checked (its declarations did not load)".to_string(),
+        n => format!("; {n} files not checked (their declarations did not load)"),
+    };
+    if refused_total == 0 && not_loaded == files.len() {
         println!(
-            "olang check --tier: {} file{}, every function compiles",
+            "olang check --tier: {} file{} not checked (the declarations did not load)",
             files.len(),
             if files.len() == 1 { "" } else { "s" }
         );
+    } else if refused_total == 0 {
+        println!(
+            "olang check --tier: {} file{}, every function compiles{}",
+            files.len() - not_loaded,
+            if files.len() - not_loaded == 1 {
+                ""
+            } else {
+                "s"
+            },
+            not_loaded_note
+        );
     } else {
         println!(
-            "olang check --tier: {} function{} refused by the bytecode tier{}",
+            "olang check --tier: {} function{} refused by the bytecode tier{}{}",
             refused_total,
             if refused_total == 1 { "" } else { "s" },
+            not_loaded_note,
             if promoted_errors > 0 {
                 " (an error here: [check] promote names `tier`, or a function is pinned native)"
             } else {

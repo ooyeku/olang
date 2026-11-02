@@ -206,6 +206,18 @@ fn check_tier_lists_refusals_ahead_of_time() {
     let (out, _, rc) = olang(&ws, &["check", "--tier", "lib"]);
     assert_eq!(rc, 0, "{out}");
     assert!(out.contains("every function compiles"), "{out}");
+    // A file whose declarations need an effect to load is not checked,
+    // and the summary says so, never "every function compiles" (OL-252).
+    write(
+        &ws,
+        "lib/eff.ol",
+        "let _e = os.set_env(\"X_OL252\", \"1\")\nshare fn h() = 1\n",
+    );
+    write(&ws, "tool.ol", "use lib.eff { h }\nfn f(x) = x + 1\n");
+    let (out, _, _) = olang(&ws, &["check", "--tier", "tool.ol"]);
+    assert!(out.contains("capability 'env' denied"), "{out}");
+    assert!(out.contains("1 file not checked"), "{out}");
+    assert!(!out.contains("every function compiles"), "{out}");
 }
 
 #[test]
