@@ -3254,6 +3254,25 @@ impl Checker {
                         ),
                     );
                 }
+                // str's functions of the text alone ignore a second
+                // argument: `str.trim_start(s, "/")` trims whitespace,
+                // not the "/" (OL-257)
+                if module == "str"
+                    && got > 1
+                    && crate::stdlib::string::UNARY.contains(&field.as_str())
+                {
+                    self.warn(
+                        span,
+                        if got == 2 {
+                            format!("str.{field} takes one argument, the text: its second is ignored")
+                        } else {
+                            format!(
+                                "str.{field} takes one argument, the text: its other {} are ignored",
+                                got - 1
+                            )
+                        },
+                    );
+                }
             }
             _ => {}
         }
@@ -5693,6 +5712,18 @@ mod tests {
         let d = check("fn f(a, b) = a\nf(1)\n");
         assert_eq!(d.len(), 1);
         assert!(d[0].message.contains("Missing required argument: b"));
+    }
+
+    #[test]
+    fn a_text_function_given_more_than_the_text_is_warned_of() {
+        // OL-257: `str.trim_start(s, "/")` trims whitespace, not the "/"
+        let d = check("let s = \"/a\"\nlet t = str.trim_start(s, \"/\")\nlet u = str.trim(s)\n");
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert!(d[0].warning && !d[0].runtime, "{d:?}");
+        assert!(
+            d[0].message.contains("str.trim_start takes one argument"),
+            "{d:?}"
+        );
     }
 
     #[test]
