@@ -480,8 +480,9 @@ machine code via Cranelift, extending the correctness ladder unchanged.
 "can't compile natively → stay on bytecode".
 
 A function prequalifies at promotion time when every instruction falls
-in a **pure whitelist**: arithmetic, comparisons, logic, branches,
-calls to other olang functions, return, the float `math.*` builtins,
+in a **pure whitelist**: arithmetic, comparisons, logic (`&&` and `||`
+included, on Booleans), branches, calls to other olang functions,
+return, the float `math.*` builtins, `len` of a list and `abs`,
 struct field reads and construction, list indexing and `for` iteration,
 tuple returns, and strings — including template strings, whose scalar
 interpolations stringify natively with the interpreter's exact rules
