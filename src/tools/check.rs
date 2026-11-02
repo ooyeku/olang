@@ -5138,7 +5138,32 @@ impl Checker {
                 }
                 self.walk_children(right, span);
             }
-            Expr::UnaryOp { operand, .. } => self.check_expr(operand, span),
+            Expr::UnaryOp { op, operand } => {
+                // `!re.is_match(p, s)`: a Result under a Bool operator
+                // raises when it runs (OL-265)
+                if matches!(op, crate::ast::UnaryOp::Not)
+                    && let Expr::Call { callee, .. } = operand.as_ref()
+                    && let Expr::FieldAccess { object, field } = callee.as_ref()
+                    && let Expr::Identifier(module) = object.as_ref()
+                    && !self.bound(module)
+                {
+                    if self.fallible.is_empty() {
+                        self.fallible = crate::help::HelpSystem::new().result_returning_functions();
+                    }
+                    let qualified = format!("{}.{}", module, field);
+                    if self.fallible.contains(&qualified) {
+                        self.diag(
+                            span,
+                            true,
+                            format!(
+                                "Invalid unary operation: cannot apply ! to Result: {qualified} \
+                                 answers a Result; unwrap it first (`!unwrap_or({qualified}(...), false)`)"
+                            ),
+                        );
+                    }
+                }
+                self.check_expr(operand, span)
+            }
             Expr::Assignment { target, value } => {
                 self.check_expr(value, span);
                 // Whether the target is declared, whether it is `mut`, and
@@ -5909,6 +5934,20 @@ mod tests {
         let d = check("fn f(a, b) = a\nf(1)\n");
         assert_eq!(d.len(), 1);
         assert!(d[0].message.contains("Missing required argument: b"));
+    }
+
+    #[test]
+    fn not_applied_to_a_result_is_refused() {
+        // OL-265: it raises "cannot apply ! to Result" when it runs
+        let d = check(
+            "fn f(r) = !re.is_match(\"^a$\", r)\nfn h(p) = !json.parse(p)\nfn g(x) = !str.contains(x, \"a\")\n",
+        );
+        assert_eq!(d.len(), 2, "{d:?}");
+        assert!(
+            d.iter()
+                .all(|x| x.runtime && x.message.contains("cannot apply ! to Result")),
+            "{d:?}"
+        );
     }
 
     #[test]
