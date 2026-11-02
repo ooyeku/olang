@@ -99,8 +99,7 @@ const SKIP_DEFAULT_JUMP: &str = "the default is a return, break, continue, loop 
 const SKIP_DEFAULT_UNIT: &str = "the default is () (`olang fix guards` drops that test)";
 const SKIP_UNGUARDED: &str =
     "not proven non-empty: xs[len(xs) - 1] raises on an empty list where last(xs) answers ()";
-const SKIP_NOT_SEQUENCE: &str =
-    "not proven a list, tuple or string (len and [i] take Bytes; first and last refuse it)";
+const SKIP_NOT_SEQUENCE: &str = "not proven a list, tuple or string (len and [i] take Bytes; first and last refused it before 1.0.0)";
 const SKIP_SHADOW_FL: &str = "the file binds len, first or last itself";
 const SKIP_SHADOW_UNITS: &str = "the file binds to_int or math itself";
 const SKIP_ROUND_ARGS: &str = "not a one-argument math.floor/ceil/round/trunc";
