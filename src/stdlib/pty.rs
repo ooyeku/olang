@@ -359,7 +359,9 @@ mod imp {
                 &mut slave,
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
-                &mut ws,
+                // a raw pointer: macOS's openpty takes it mutable, Linux's
+                // const, and `&mut` is needless there (CI's Linux lint)
+                std::ptr::addr_of_mut!(ws),
             )
         };
         if r != 0 {

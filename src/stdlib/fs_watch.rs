@@ -117,11 +117,13 @@ fn strings_opt(
 /// and paths under them reported all the same (`.git/HEAD` under an
 /// ignored `.git`).
 #[derive(Clone, Default)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 struct Filter {
     ignore: Vec<String>,
     keep: Vec<String>,
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 impl Filter {
     /// Whether `rel` (relative to the root, `/`-separated) is passed on.
     fn passes(&self, rel: &str) -> bool {
@@ -156,6 +158,7 @@ struct Raw {
 }
 
 /// The queue's room: past it, the root is read again instead.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const QUEUE_MAX: usize = 65_536;
 
 struct Watch {
@@ -208,6 +211,7 @@ fn watch_of(
 
 /// `rel` of `path` under `root` (both without a trailing slash), or None
 /// when it is not under it; `Some("")` for the root itself.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn rel_under<'a>(root: &str, path: &'a str) -> Option<&'a str> {
     if path == root {
         return Some("");
