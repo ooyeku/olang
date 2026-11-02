@@ -853,7 +853,11 @@ pub fn draw_at(ops: &Value, w: f32, h: f32, _scale: f32, raster: bool) -> Res<Dr
             "text" => {
                 let (x, y) = f.pt(n("x")?, n("y")?);
                 let size = get_num(op, "size", &what)?.unwrap_or(12.0);
-                let max_w = get_num(op, "max_w", &what)?.filter(|m| *m > 0.0);
+                // no room (`max_w` 0 or less): cut to nothing, as the
+                // documented cut says, rather than drawn whole (OL-186)
+                let raw_max_w = get_num(op, "max_w", &what)?;
+                let no_room = raw_max_w.is_some_and(|m| m <= 0.0);
+                let max_w = raw_max_w.filter(|m| *m > 0.0);
                 let align = match get_str(op, "align", &what)?.unwrap_or("start") {
                     "center" => 1,
                     "end" => 2,
@@ -869,19 +873,21 @@ pub fn draw_at(ops: &Value, w: f32, h: f32, _scale: f32, raster: bool) -> Res<Dr
                     _ => x,
                 };
                 bbox = Some((tx0, y, tw, th));
-                out.items.push(Item::Text(CanvasText {
-                    x,
-                    y,
-                    text: get_str(op, "text", &what)?.unwrap_or("").to_string(),
-                    size,
-                    weight: get_num(op, "weight", &what)?.unwrap_or(400.0),
-                    color: line_c.or(fill).unwrap_or([24, 24, 27, 255]),
-                    align,
-                    max_w,
-                    clip: f.clip,
-                    font: get_str(op, "font", &what)?.map(|f| f.to_string()),
-                    italic: matches!(get(op, "italic"), Some(Value::Boolean(true))),
-                }));
+                if !no_room {
+                    out.items.push(Item::Text(CanvasText {
+                        x,
+                        y,
+                        text: get_str(op, "text", &what)?.unwrap_or("").to_string(),
+                        size,
+                        weight: get_num(op, "weight", &what)?.unwrap_or(400.0),
+                        color: line_c.or(fill).unwrap_or([24, 24, 27, 255]),
+                        align,
+                        max_w,
+                        clip: f.clip,
+                        font: get_str(op, "font", &what)?.map(|f| f.to_string()),
+                        italic: matches!(get(op, "italic"), Some(Value::Boolean(true))),
+                    }));
+                }
             }
             other => {
                 return Err(format!(
