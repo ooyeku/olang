@@ -80,6 +80,21 @@ fn snapshots_record_then_compare_then_refresh() {
         .unwrap();
     assert!(out.status.success());
     assert!(std::fs::read_to_string(&snap).unwrap().contains(">2<"));
+    // In CI a snapshot never recorded fails and nothing is written
+    // (OL-176: a deleted or uncommitted one kept the run green).
+    std::fs::remove_file(&snap).unwrap();
+    let ci = Command::new(env!("CARGO_BIN_EXE_olang"))
+        .args(["test", "s.ol"])
+        .current_dir(&ws)
+        .env_remove("OLANG_UPDATE_SNAPSHOTS")
+        .env("OLANG_SNAPSHOTS", "ci")
+        .output()
+        .unwrap();
+    let said =
+        String::from_utf8_lossy(&ci.stdout).to_string() + &String::from_utf8_lossy(&ci.stderr);
+    assert!(!ci.status.success(), "{said}");
+    assert!(said.contains("snapshot 'card' is not recorded"), "{said}");
+    assert!(!snap.exists());
 }
 
 #[test]

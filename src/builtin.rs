@@ -4816,6 +4816,22 @@ fn testing_snapshot(
                 ),
             })
         }
+        // In CI (`OLANG_SNAPSHOTS=ci`) a snapshot never recorded fails:
+        // written and passed, a deleted or uncommitted one kept the run
+        // green (OL-176).
+        Err(_)
+            if !update
+                && std::env::var("OLANG_SNAPSHOTS").is_ok_and(|v| v.eq_ignore_ascii_case("ci")) =>
+        {
+            crate::stdlib::testing::record_fail();
+            Err(InterpreterError::RuntimeError {
+                message: format!(
+                    "snapshot '{}' is not recorded ({} does not exist) and OLANG_SNAPSHOTS=ci: record it with a run without it, and commit it",
+                    name,
+                    path.display()
+                ),
+            })
+        }
         Err(_) => {
             write(&actual)?;
             crate::stdlib::testing::record_pass();
