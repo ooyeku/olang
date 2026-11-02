@@ -3272,6 +3272,27 @@ fn embedded_exports(module: &str) -> Option<Vec<String>> {
     names
 }
 
+/// A name the language itself binds everywhere: a builtin function
+/// (`first`, `len`) or a stdlib module. A block's `let mut first` ends
+/// with the block, and `first(xs)` after it is the builtin again, as the
+/// run reads it (OL-177).
+fn global_name(name: &str) -> bool {
+    static NAMES: std::sync::OnceLock<std::collections::HashSet<String>> =
+        std::sync::OnceLock::new();
+    NAMES
+        .get_or_init(|| {
+            let mut names: std::collections::HashSet<String> =
+                crate::builtin::BuiltinFunctions::new()
+                    .get_functions()
+                    .keys()
+                    .cloned()
+                    .collect();
+            names.extend(crate::stdlib::get_stdlib().into_keys());
+            names
+        })
+        .contains(name)
+}
+
 /// The fewest arguments a stdlib module's function takes: the arity its
 /// module registers it with ("the fewest arguments a call takes"), which
 /// its implementation asks for ("str.thousands: missing argument 2").
@@ -5287,6 +5308,7 @@ impl Checker {
                 // once per name.
                 if !self.bound(name)
                     && self.leaked.iter().any(|l| l.contains(name))
+                    && !global_name(name)
                     && self.warned_leaks.insert(name.clone())
                 {
                     self.diag(
@@ -5934,6 +5956,18 @@ mod tests {
         let d = check("fn f(a, b) = a\nf(1)\n");
         assert_eq!(d.len(), 1);
         assert!(d[0].message.contains("Missing required argument: b"));
+    }
+
+    #[test]
+    fn a_blocks_binding_of_a_builtins_name_ends_with_the_block() {
+        // OL-177: `first(xs)` after a block's `let mut first` is the builtin
+        let d = check(
+            "let xs = [1]\nif true => { let mut first = 1\nfirst = 2 } else => {}\nlet a = first(xs)\n",
+        );
+        assert!(d.is_empty(), "{d:?}");
+        // a name of the program's own still says the block ended it
+        let d = check("if true => { let mut mine = 1\nmine = 2 } else => {}\nlet b = mine\n");
+        assert_eq!(d.len(), 1, "{d:?}");
     }
 
     #[test]
