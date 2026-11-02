@@ -14549,6 +14549,35 @@ impl BytecodeCompiler {
     /// non-literal default (whose evaluation needs the callee's scope)
     /// or no default at all (arity error — the value path reproduces
     /// the interpreter's message).
+    /// A default naming a top-level constant of the callee's own file
+    /// (`dur = LOW`), when the call is compiled in that file: the value
+    /// the name holds, baked as a body's read of it is (a `let mut` is
+    /// never baked, and a local of the name in the caller refuses). It
+    /// kept the function on the tree-walker, 8.5× slower (OL-320).
+    fn constant_default(
+        &mut self,
+        func: &crate::ast::Function,
+        default: &Expr,
+    ) -> Option<OvmValue> {
+        let Expr::Identifier(name) = default else {
+            return None;
+        };
+        if self.local_variables.contains_key(name)
+            || func.def_file.is_none()
+            || func.def_file.as_deref() != self.pending_def_file.as_deref()
+        {
+            return None;
+        }
+        match self.q_ident(name)? {
+            v @ (Value::Integer(_)
+            | Value::Float(_)
+            | Value::Boolean(_)
+            | Value::String(_)
+            | Value::Unit) => Some(OvmValue::from_ast(v)),
+            _ => None,
+        }
+    }
+
     fn splice_literal_defaults(
         &mut self,
         func: &crate::ast::Function,
@@ -14556,7 +14585,11 @@ impl BytecodeCompiler {
     ) -> Option<Vec<Register>> {
         let mut extra = Vec::new();
         for param in &func.parameters[from..] {
-            let value = literal_default(param.default_value.as_ref()?)?;
+            let default = param.default_value.as_ref()?;
+            let value = match literal_default(default) {
+                Some(v) => v,
+                None => self.constant_default(func, default)?,
+            };
             let idx = self.emitter.add_constant(value);
             let reg = self.register_allocator.allocate_register();
             self.emitter.instructions.push(Instruction::LoadConst {
