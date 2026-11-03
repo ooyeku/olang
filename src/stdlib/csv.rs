@@ -250,7 +250,8 @@ fn csv_parse_with_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::error:
 }
 
 /// Convert a 2D array to CSV string
-/// Usage: csv.stringify([["name", "age"], ["Alice", "30"], ["Bob", "25"]]) -> String
+/// Usage: csv.stringify([["name", "age"], ["Alice", "30"], ["Bob", "25"]]) -> Result<String, Error>
+/// (`Ok` of the text always, as `stringify_with_headers` and `csv.parse`: OL-335)
 fn csv_stringify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
         return Err(format!("stringify expects 1 argument, got {}", args.len()).into());
@@ -303,7 +304,7 @@ fn csv_stringify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 
     match writer.into_inner() {
         Ok(bytes) => match String::from_utf8(bytes) {
-            Ok(csv_string) => Ok(Value::String(Arc::new(csv_string))),
+            Ok(csv_string) => Ok(Value::Ok(Box::new(Value::String(Arc::new(csv_string))))),
             Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
                 "UTF-8 conversion error: {}",
                 e
@@ -513,6 +514,13 @@ fn csv_read_cell(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     };
 
     let row_index = match &args[1] {
+        // a negative position said as itself, never as a wrapped unsigned (OL-343)
+        Value::Integer(i) if *i < 0 => {
+            return Err(format!(
+                "csv.read_cell: row position {i} is negative: a position counts from 0"
+            )
+            .into());
+        }
         Value::Integer(i) => *i as usize,
         _ => {
             return Err("read_cell: second argument must be an integer"
@@ -522,6 +530,13 @@ fn csv_read_cell(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     };
 
     let col_index = match &args[2] {
+        // a negative position said as itself, never as a wrapped unsigned (OL-343)
+        Value::Integer(i) if *i < 0 => {
+            return Err(format!(
+                "csv.read_cell: column position {i} is negative: a position counts from 0"
+            )
+            .into());
+        }
         Value::Integer(i) => *i as usize,
         _ => {
             return Err("read_cell: third argument must be an integer"
@@ -1239,10 +1254,12 @@ mod tests {
         }
     }
 
-    // Helper to extract string from Value::String
+    // Helper to extract string from Value::String (or `Ok` of one:
+    // stringify's answer)
     fn extract_string(value: &Value) -> &str {
         match value {
             Value::String(s) => s,
+            Value::Ok(inner) => extract_string(inner),
             _ => {
                 panic!("Expected string value, got: {:?}", value)
             }
@@ -1379,7 +1396,7 @@ mod tests {
 
     #[test]
     fn test_csv_stringify() {
-        // Test successful stringification - should return String directly, not Result
+        // Test successful stringification - `Ok` of the text (OL-335)
         let data = list_val(vec![
             list_val(vec![string_val("name"), string_val("age")]),
             list_val(vec![string_val("Alice"), string_val("30")]),
@@ -1387,9 +1404,10 @@ mod tests {
         ]);
 
         let result = csv_stringify(vec![data]).unwrap();
-
-        // Should return String directly, not wrapped in Ok()
-        let csv_string = extract_string(&result);
+        let Value::Ok(inner) = &result else {
+            panic!("expected Ok, got {result:?}")
+        };
+        let csv_string = extract_string(inner);
         assert!(csv_string.contains("name,age"));
         assert!(csv_string.contains("Alice,30"));
         assert!(csv_string.contains("Bob,25"));
@@ -1405,7 +1423,10 @@ mod tests {
         ]);
 
         let result = csv_stringify(vec![mixed_data]).unwrap();
-        let csv_string = extract_string(&result);
+        let Value::Ok(inner) = &result else {
+            panic!("expected Ok, got {result:?}")
+        };
+        let csv_string = extract_string(inner);
         assert!(csv_string.contains("Alice,30,true"));
 
         // Test error conditions - should return Err
@@ -1569,8 +1590,8 @@ mod tests {
 
         // Test stringify function
         let result = call_csv_function("stringify", vec![csv_data.clone()]).unwrap();
-        // stringify should return String directly, not wrapped in Ok()
-        assert!(matches!(result, Value::String(_)));
+        // stringify answers Ok of the text (OL-335)
+        assert!(matches!(&result, Value::Ok(v) if matches!(**v, Value::String(_))));
 
         // Test row_count function
         let result = call_csv_function("row_count", vec![csv_data]).unwrap();

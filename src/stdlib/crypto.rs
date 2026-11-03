@@ -595,6 +595,14 @@ fn crypto_secure_compare(args: Vec<Value>) -> Result<Value, Box<dyn std::error::
 /// Encrypt data using AES-256-GCM (FIXED IMPLEMENTATION)
 /// Usage: crypto.encrypt_aes(data, key) -> Result<String, Error>
 /// Returns hex-encoded ciphertext with nonce prepended
+/// A key, nonce or ciphertext that is not what AES takes: input a program
+/// read (a key from its configuration), so an `Err` it can handle, not a
+/// raise (stdlib.md rule 2; OL-385). A wrong argument count or type still
+/// raises: that is the call's own mistake.
+fn aes_bad_input(why: &str) -> Value {
+    Value::Err(Box::new(Value::String(Arc::new(why.to_string()))))
+}
+
 fn crypto_encrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
         return Err(format!("encrypt_aes expects 2 arguments, got {}", args.len()).into());
@@ -622,16 +630,12 @@ fn crypto_encrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
     let key_bytes = match hex::decode(key) {
         Ok(k) => k,
         Err(_) => {
-            return Err("encrypt_aes: key must be valid hex string"
-                .to_string()
-                .into());
+            return Ok(aes_bad_input("encrypt_aes: key must be valid hex string"));
         }
     };
 
     if key_bytes.len() != 32 {
-        return Err("encrypt_aes: key must be 32 bytes (64 hex characters)"
-            .to_string()
-            .into());
+        return Ok(aes_bad_input("encrypt_aes: key must be 32 bytes (64 hex characters)"));
     }
 
     let cipher = match Aes256Gcm::new_from_slice(&key_bytes) {
@@ -697,18 +701,14 @@ fn crypto_decrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
     let key_bytes = match hex::decode(key) {
         Ok(k) => k,
         Err(_) => {
-            return Err("decrypt_aes: key must be valid hex string"
-                .to_string()
-                .into());
+            return Ok(aes_bad_input("decrypt_aes: key must be valid hex string"));
         }
     };
 
     let decoded = match hex::decode(encrypted_data) {
         Ok(c) => c,
         Err(_) => {
-            return Err("decrypt_aes: encrypted_data must be valid hex string"
-                .to_string()
-                .into());
+            return Ok(aes_bad_input("decrypt_aes: encrypted_data must be valid hex string"));
         }
     };
 
@@ -726,9 +726,7 @@ fn crypto_decrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
         let nonce_bytes = match hex::decode(nonce) {
             Ok(n) => n,
             Err(_) => {
-                return Err("decrypt_aes: nonce must be valid hex string"
-                    .to_string()
-                    .into());
+                return Ok(aes_bad_input("decrypt_aes: nonce must be valid hex string"));
             }
         };
         (nonce_bytes, decoded)
@@ -745,15 +743,11 @@ fn crypto_decrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
     };
 
     if key_bytes.len() != 32 {
-        return Err("decrypt_aes: key must be 32 bytes (64 hex characters)"
-            .to_string()
-            .into());
+        return Ok(aes_bad_input("decrypt_aes: key must be 32 bytes (64 hex characters)"));
     }
 
     if nonce_bytes.len() != 12 {
-        return Err("decrypt_aes: nonce must be 12 bytes (24 hex characters)"
-            .to_string()
-            .into());
+        return Ok(aes_bad_input("decrypt_aes: nonce must be 12 bytes (24 hex characters)"));
     }
 
     let cipher = match Aes256Gcm::new_from_slice(&key_bytes) {

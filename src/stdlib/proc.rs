@@ -864,6 +864,11 @@ pub(crate) fn signal_of(v: &Value, who: &str) -> Result<i32, String> {
     }
 }
 
+/// A tree kill of a child spawned without `group`: an `Err`, as stdlib.md
+/// says, so the program's cleanup after it still runs (OL-380: it raised).
+const NO_GROUP: &str = "proc.kill: a tree kill needs a process spawned with #{ group: true } \
+                        (proc.spawn(argv, #{ group: true }))";
+
 fn proc_kill(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.is_empty() || args.len() > 2 {
         return Err(
@@ -908,10 +913,7 @@ fn proc_kill(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     #[cfg(unix)]
     if let Some(sig) = signal {
         if tree && !p.group {
-            return Err(misuse(
-                "kill: a tree kill needs a process spawned with #{ group: true } \
-                 (proc.spawn(argv, #{ group: true }))",
-            ));
+            return Ok(err(NO_GROUP));
         }
         let pid = p.pid as i32;
         if pid > 0 {
@@ -926,10 +928,7 @@ fn proc_kill(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     #[cfg(not(unix))]
     let _ = signal;
     if tree && !p.group {
-        return Err(misuse(
-            "kill: a tree kill needs a process spawned with #{ group: true } \
-             (proc.spawn(argv, #{ group: true }))",
-        ));
+        return Ok(err(NO_GROUP));
     }
     let mut child = p.child.lock().unwrap();
     if tree {

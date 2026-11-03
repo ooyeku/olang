@@ -1655,6 +1655,17 @@ static SHUTDOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::
 
 /// Create an HTTP response struct
 /// Usage: http.response(200, "Hello World") -> HttpResponse
+/// A response builder's body: text, or Bytes (an image, a gzip, a
+/// download), kept as given with `bytes: true` as the client's response
+/// says it (OL-377: Bytes raised "body must be a string").
+fn response_body(v: &Value, func: &str) -> Result<(Value, bool), Box<dyn std::error::Error>> {
+    match v {
+        Value::String(_) => Ok((v.clone(), false)),
+        other if crate::stdlib::bytes::bytes_of(other).is_ok() => Ok((other.clone(), true)),
+        _ => Err(format!("{func}: body must be a String or Bytes").into()),
+    }
+}
+
 fn http_response(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
         return Err(format!("response expects 2 arguments, got {}", args.len()).into());
@@ -1665,17 +1676,14 @@ fn http_response(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         _ => return Err("response: status must be an integer".into()),
     };
 
-    let body = match &args[1] {
-        Value::String(s) => s.as_ref(),
-        _ => return Err("response: body must be a string".into()),
-    };
+    let (body, is_bytes) = response_body(&args[1], "response")?;
 
     let mut response_map = crate::ast::ValueMap::default();
     response_map.insert("status".to_string(), Value::Integer(status));
-    response_map.insert(
-        "body".to_string(),
-        Value::String(Arc::new(body.to_string())),
-    );
+    response_map.insert("body".to_string(), body);
+    if is_bytes {
+        response_map.insert("bytes".to_string(), Value::Boolean(true));
+    }
     response_map.insert(
         "headers".to_string(),
         Value::Map(Arc::new(crate::ast::ValueMap::default())),
@@ -1707,10 +1715,7 @@ fn http_response_with_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::er
         _ => return Err("response_with_headers: status must be an integer".into()),
     };
 
-    let body = match &args[1] {
-        Value::String(s) => s.as_ref(),
-        _ => return Err("response_with_headers: body must be a string".into()),
-    };
+    let (body, is_bytes) = response_body(&args[1], "response_with_headers")?;
 
     // Headers may be a map literal (`#{ "Content-Type": "..." }`) — the only
     // way to write keys containing `-` — or an anonymous object.
@@ -1722,10 +1727,10 @@ fn http_response_with_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::er
 
     let mut response_map = crate::ast::ValueMap::default();
     response_map.insert("status".to_string(), Value::Integer(status));
-    response_map.insert(
-        "body".to_string(),
-        Value::String(Arc::new(body.to_string())),
-    );
+    response_map.insert("body".to_string(), body);
+    if is_bytes {
+        response_map.insert("bytes".to_string(), Value::Boolean(true));
+    }
     response_map.insert("headers".to_string(), Value::Map(Arc::new(headers)));
     response_map.insert(
         "success".to_string(),
@@ -1887,6 +1892,24 @@ fn decode_query(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
     use crate::ast::Value;
+
+    #[test]
+    fn a_response_builder_takes_a_bytes_body_and_serves_it_raw() {
+        // OL-377: Bytes raised "body must be a string"
+        let body = crate::stdlib::bytes::to_value(vec![0, 255, 10]);
+        let r = http_response(vec![Value::Integer(200), body.clone()]).unwrap();
+        let out = render_handler_result(&r, false, crate::caps::FsCap::Full);
+        assert!(out.ends_with(&[0, 255, 10]), "{out:?}");
+        let mut h = crate::ast::ValueMap::default();
+        h.insert("Content-Type".into(), Value::String(Arc::new("image/png".into())));
+        let r = http_response_with_headers(vec![Value::Integer(200), body, Value::Map(Arc::new(h))]).unwrap();
+        let out = render_handler_result(&r, false, crate::caps::FsCap::Full);
+        let text = String::from_utf8_lossy(&out);
+        assert!(text.contains("Content-Type: image/png"), "{text}");
+        assert!(out.ends_with(&[0, 255, 10]), "{out:?}");
+        // anything else is still a mistake
+        assert!(http_response(vec![Value::Integer(200), Value::Integer(1)]).is_err());
+    }
 
     #[test]
     fn the_servers_own_answers_carry_their_reason_phrases() {

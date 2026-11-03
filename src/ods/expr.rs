@@ -360,10 +360,9 @@ pub fn build(func: &str, op: Op, args: Vec<Operand>) -> Result<Value, String> {
             match len {
                 None => len = Some(l),
                 Some(m) if m != l => {
-                    return Err(format!(
-                        "ods.{}: series length mismatch: {} vs {}",
-                        func, m, l
-                    ));
+                    // an operator (`a + b`) has no verb to name (OL-343)
+                    let at = if func.is_empty() { "ods".to_string() } else { format!("ods.{func}") };
+                    return Err(format!("{at}: series length mismatch: {m} vs {l}"));
                 }
                 _ => {}
             }

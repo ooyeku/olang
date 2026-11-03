@@ -276,14 +276,13 @@ fn export_csv(req, params) = {
     // CSV layer only ever sees lists of strings.
     let grid = concat([headers],
         rows |> map((r) => headers |> map((h) => show(map_get(r, h)))))
-    // csv.stringify returns the text directly on success, an Err value
-    // on failure — check the shape rather than pattern-matching Ok.
-    let out = csv.stringify(grid)
-    if typeof(out) == "String" => http.response_with_headers(200, out, #{
-        "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": "attachment; filename=issues.csv"
-    })
-    else => error_response(500, "export_failed", show(out))
+    match csv.stringify(grid) {
+        Ok(out) => http.response_with_headers(200, out, #{
+            "Content-Type": "text/csv; charset=utf-8",
+            "Content-Disposition": "attachment; filename=issues.csv"
+        }),
+        Err(why) => error_response(500, "export_failed", why)
+    }
 }
 
 fn backup(req, params) = {

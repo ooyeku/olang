@@ -241,6 +241,55 @@ fn re_split(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     Ok(ok(Value::List(parts.into())))
 }
 
+/// A `$name` in a replacement that names no group of the pattern: the
+/// regex reads the longest name after `$`, so `$1_n` is a group called
+/// `1_n`, which would put nothing there and lose the text silently
+/// (OL-341). Said, with the braces that mean what was likely meant.
+fn missing_group(re: &Regex, rep: &str) -> Option<String> {
+    let b = rep.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] != b'$' {
+            i += 1;
+            continue;
+        }
+        // `$$` is a literal `$`; `${name}` is braced and taken as written
+        if i + 1 < b.len() && (b[i + 1] == b'$' || b[i + 1] == b'{') {
+            i += 2;
+            continue;
+        }
+        let start = i + 1;
+        let mut end = start;
+        while end < b.len() && (b[end].is_ascii_alphanumeric() || b[end] == b'_') {
+            end += 1;
+        }
+        if end > start {
+            let name = &rep[start..end];
+            let known = match name.parse::<usize>() {
+                Ok(n) => n < re.captures_len(),
+                Err(_) => re.capture_names().flatten().any(|g| g == name),
+            };
+            if !known {
+                let digits: String = name.chars().take_while(|c| c.is_ascii_digit()).collect();
+                let hint = if !digits.is_empty() && digits.len() < name.len() {
+                    format!(
+                        "; for group {digits} then `{}`, write `${{{digits}}}{}`",
+                        &name[digits.len()..],
+                        &name[digits.len()..]
+                    )
+                } else {
+                    String::new()
+                };
+                return Some(format!(
+                    "`${name}` in the replacement names no group of the pattern{hint}"
+                ));
+            }
+        }
+        i = end.max(i + 1);
+    }
+    None
+}
+
 fn re_replace(
     args: Vec<Value>,
     func: &str,
@@ -253,6 +302,9 @@ fn re_replace(
         Ok(re) => re,
         Err(e) => return Ok(e),
     };
+    if let Some(why) = missing_group(&re, replacement) {
+        return Ok(err(format!("{func}: {why}")));
+    }
     let result = if all {
         re.replace_all(text, replacement).into_owned()
     } else {

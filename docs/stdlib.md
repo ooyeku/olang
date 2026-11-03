@@ -555,7 +555,7 @@ variants. `colx` (`use colx`) implements the higher-order core of `col`
 | <a id="col-flat_map"></a>`col.flat_map(xs, f)` | map then flatten one level |
 | <a id="col-window"></a>`col.window(xs, n)` | sliding windows |
 | <a id="col-zip_with"></a>`col.zip_with(a, b, f)` | combine pairwise |
-| <a id="col-last"></a>`col.last(xs)` | final element |
+| <a id="col-last"></a>`col.last(xs)` | final element, `()` when empty (as `last`) |
 
 ```olang
 println(to_string(col.unique([3, 1, 3, 2, 1])))
@@ -853,7 +853,7 @@ are strings — convert explicitly).
 |---|---|
 | <a id="csv-parse"></a>`csv.parse(s)` | rows as lists of strings |
 | <a id="csv-parse_with_headers"></a>`csv.parse_with_headers(s)` | rows as maps keyed by the header |
-| <a id="csv-stringify"></a><a id="csv-stringify_with_headers"></a>`csv.stringify(rows)` / `csv.stringify_with_headers` | write CSV text |
+| <a id="csv-stringify"></a><a id="csv-stringify_with_headers"></a>`csv.stringify(rows)` / `csv.stringify_with_headers` | write CSV text: `Ok(text)`, or `Err` for a ragged row or a field that is not text, a number or a bool |
 | <a id="csv-get_headers"></a><a id="csv-set_headers"></a>`csv.get_headers(s)` / `csv.set_headers` | header row |
 | <a id="csv-row_count"></a><a id="csv-column_count"></a>`csv.row_count(rows)` / `csv.column_count(rows)` | dimensions |
 | <a id="csv-read_row"></a><a id="csv-read_column"></a><a id="csv-read_cell"></a><a id="csv-set_cell"></a>`csv.read_row` `csv.read_column` `csv.read_cell` `csv.set_cell` | access |
@@ -944,7 +944,7 @@ that calls `re.*` hears so. The full profile, `runtime.wasm("full")`
 | <a id="re-find_all"></a>`re.find_all(pat, s)` | all match texts |
 | <a id="re-find_spans"></a>`re.find_spans(pat, s)` | where every match is: `(start, end)` character offsets |
 | <a id="re-captures"></a>`re.captures(pat, s)` | full match + capture groups (`()` for a group that took no part), `Ok(())` when nothing matches |
-| <a id="re-replace"></a>`re.replace(pat, s, rep)` | every match replaced, as `str.replace` replaces every occurrence; `$1` and `${name}` in `rep` name a capture |
+| <a id="re-replace"></a>`re.replace(pat, s, rep)` | every match replaced, as `str.replace` replaces every occurrence; `$1` and `${name}` in `rep` name a capture (the longest name after `$`: write `${1}_n` for group 1 then `_n`); a name no group has is an `Err` |
 | <a id="re-replace_first"></a>`re.replace_first(pat, s, rep)` | the first match replaced |
 | <a id="re-split"></a>`re.split(pat, s)` | split by pattern |
 | <a id="re-is_valid"></a>`re.is_valid(pat)` | is the pattern itself well-formed? |
@@ -1673,7 +1673,9 @@ hexadecimal characters longer than twice its plaintext's bytes, and a
 fresh random nonce makes every encryption of the same text different.
 <a id="crypto-decrypt_aes"></a>`crypto.decrypt_aes(data, key)` takes that string whole, or `(ciphertext,
 key, nonce)` with the nonce apart (both hexadecimal); a wrong key or a
-changed byte is an `Err`, never a wrong plaintext. The plaintext is text
+changed byte is an `Err`, never a wrong plaintext. A key, nonce or data
+that is not hexadecimal or not the length AES takes is an `Err` too, on
+both sides: a key read from a file is input. The plaintext is text
 (UTF-8) both ways.
 
 ## `bytes` — binary data
@@ -3252,7 +3254,7 @@ values for a header sent more than once, as `set-cookie` is), and
 | <a id="http-parse_url"></a>`http.parse_url(url)` | split a URL into parts: `Ok({ scheme, host, port, path, query, fragment })`, `port`, `query` and `fragment` `()` when the URL names none |
 | <a id="http-encode_query"></a><a id="http-decode_query"></a>`http.encode_query(map)` / `http.decode_query(s)` | query strings — `encode_query` answers the text (`"q=a%20b&page=2"`, no `?`): it takes a `#{}` map or a `{ }` record, keys in its order, each value a string, a number, a Bool or a list of them (the name repeated for each); anything nested raises. `decode_query` answers a map: a name given once its string, a name given more than once a list of its strings in order (`"t=a&t=b"` is `#{ "t": ["a", "b"] }`) |
 | <a id="http-serve"></a>`http.serve(port, handler[, options])` | serve `handler(request)` on a bounded worker pool; blocks the calling program |
-| <a id="http-response"></a><a id="http-response_with_headers"></a>`http.response(status, body)` / `http.response_with_headers(status, body, headers)` | build responses: an `HttpResponse` of the client's shape, `{ status, body, headers, success }`, `headers` a map |
+| <a id="http-response"></a><a id="http-response_with_headers"></a>`http.response(status, body)` / `http.response_with_headers(status, body, headers)` | build responses: an `HttpResponse` of the client's shape, `{ status, body, headers, success }`, `headers` a map; `body` is text or Bytes (served raw, with `bytes: true` as the client says it) |
 | <a id="http-shutdown"></a>`http.shutdown()` | ask every running `http.serve` to drain: no new connections, in-flight requests finish (up to `drain_ms`), and `serve` returns `Ok` — what an [`os.on_shutdown`](#os--operating-system) handler calls |
 | <a id="http-defer"></a><a id="http-respond"></a>`http.defer()` / `http.respond(ticket, response)` | park the connection a handler is answering and complete it later, from any thread |
 | <a id="http-hold"></a><a id="http-notify"></a><a id="http-notify_all"></a><a id="http-held"></a>`http.hold(topic)` / `http.notify(topic, response)` / `http.notify_all(response)` / `http.held(topic)` | park the current request under a topic; answer every connection held under it (the count answered); count what is parked |

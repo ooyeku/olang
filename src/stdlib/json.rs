@@ -718,6 +718,12 @@ fn json_array_get(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
     };
 
     let index = match &args[1] {
+        // a negative position said as itself, never as a wrapped unsigned (OL-343)
+        Value::Integer(i) if *i < 0 => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                "json.array_get: position {i} is negative: a position counts from 0"
+            ))))));
+        }
         Value::Integer(i) => *i as usize,
         _ => {
             return Err("array_get: second argument must be an integer"

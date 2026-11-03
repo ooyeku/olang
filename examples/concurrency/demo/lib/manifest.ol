@@ -67,7 +67,7 @@ share fn charges_to_csv(rows) = {
     let table = concat([["callsign", "kind", "units", "amount"]],
         rows |> map((r) => [r.callsign, r.kind,
                             show(r.units), show(r.amount)]))
-    csv.stringify(table)
+    unwrap(csv.stringify(table))
 }
 
 // A digest filename from the date, slug-safe.
