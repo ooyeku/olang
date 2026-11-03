@@ -157,3 +157,22 @@ fn brackets_inside_strings_do_not_count_as_openers() {
     let text = suggestion_text("let s = \"a ( in a string\"\nlet t = ) oops\n");
     assert!(!text.contains("Unclosed"), "false positive: {text}");
 }
+
+// ── OL-345: `x += 1` names olang's own form, never "only in let" ─────
+#[test]
+fn compound_assignment_suggests_the_rebinding() {
+    let text = suggestion_text("let mut total = 0\ntotal += 1\n");
+    assert!(text.contains("olang has no `+=`"), "got: {text}");
+    assert!(text.contains("Write `total = total + 1`"), "got: {text}");
+    assert!(text.contains("let mut"), "got: {text}");
+    assert!(
+        !text.contains("only allowed in let declarations"),
+        "the old, wrong help: {text}"
+    );
+}
+
+#[test]
+fn a_function_without_a_body_is_not_called_an_assignment() {
+    let text = suggestion_text("fn f(a) =\n");
+    assert!(!text.contains("assignment"), "got: {text}");
+}

@@ -5498,18 +5498,23 @@ impl ErrorSuggestionEngine {
             });
         }
 
-        // Check for assignment vs equality
-        if line_content.contains("=")
-            && !line_content.contains("==")
-            && !line_content.contains("let")
-        {
+        // `x += 1`: olang has no compound assignment (OL-345)
+        if let Some((name, op, rhs)) = compound_assignment(line_content) {
             suggestions.push(ErrorSuggestion {
-                message: "Possible assignment in expression context".to_string(),
-                fix: Some(
-                    "Use `==` for equality comparison, `=` only for let declarations".to_string(),
-                ),
+                message: format!("olang has no `{op}=`"),
+                fix: Some(format!("Write `{name} = {name} {op} {rhs}`")),
+                help: Some(format!(
+                    "`{name}` must be bound with `let mut` to be assigned again"
+                )),
+                severity: SuggestionSeverity::Hint,
+            });
+        } else if is_condition_with_assignment(line_content) {
+            // `if x = 1 => …`: a comparison is `==`
+            suggestions.push(ErrorSuggestion {
+                message: "Possible assignment in a condition".to_string(),
+                fix: Some("Use `==` to compare".to_string()),
                 help: Some(
-                    "Assignments are only allowed in let declarations and function parameters"
+                    "`=` binds a name (`let x = …`) or assigns a `let mut` again (`x = …`)"
                         .to_string(),
                 ),
                 severity: SuggestionSeverity::Hint,
@@ -5816,6 +5821,43 @@ fn template_interpolations(content: &str) -> Vec<(usize, usize)> {
         }
     }
     out
+}
+
+/// `name op= rhs` on a line (`total += 1`, `p.x *= 2`): its name, the
+/// operator and the right-hand side.
+fn compound_assignment(line: &str) -> Option<(String, String, String)> {
+    let t = line.trim();
+    for op in ["+", "-", "*", "/", "%"] {
+        let pat = format!("{op}=");
+        let Some(at) = t.find(&pat) else { continue };
+        let name = t[..at].trim();
+        let rhs = t[at + pat.len()..].trim();
+        let is_name = !name.is_empty()
+            && name
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
+            && !name.starts_with(|c: char| c.is_ascii_digit());
+        if is_name && !rhs.is_empty() && !rhs.starts_with('=') {
+            return Some((name.to_string(), op.to_string(), rhs.to_string()));
+        }
+    }
+    None
+}
+
+/// An `if`/`while` line whose condition holds a lone `=` (not `==`, `!=`,
+/// `<=`, `>=` or an arm's `=>`).
+fn is_condition_with_assignment(line: &str) -> bool {
+    let t = line.trim_start();
+    if !(t.starts_with("if ") || t.starts_with("while ") || t.contains(" if ")) {
+        return false;
+    }
+    let cond = t.split("=>").next().unwrap_or(t);
+    let cleaned = cond
+        .replace("==", "")
+        .replace("!=", "")
+        .replace("<=", "")
+        .replace(">=", "");
+    cleaned.contains('=')
 }
 
 #[cfg(test)]
