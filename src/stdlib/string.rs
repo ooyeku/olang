@@ -960,6 +960,10 @@ fn str_parse_float(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
     match s.parse::<f64>() {
         // A Float is never inf or NaN, so text whose value would be one
         // does not parse: "1e999" is out of range, not infinity.
+        Ok(f) if f.is_nan() => Ok(Value::Err(Box::new(ok_string(format!(
+            "'{}' is not a number: a Float is never NaN",
+            s
+        ))))),
         Ok(f) if !f.is_finite() => Ok(Value::Err(Box::new(ok_string(format!(
             "'{}' is out of range for a float",
             s

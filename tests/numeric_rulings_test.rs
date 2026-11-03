@@ -97,6 +97,18 @@ fn math_functions_and_parsing_never_produce_inf() {
     }
 }
 
+// OL-383: NaN is said to be not a number, not out of range
+#[test]
+fn nan_text_is_said_not_a_number() {
+    let (out, rc) = agree("println(show(str.parse_float(\"NaN\")))\nprintln(show(str.parse_float(\"inf\")))");
+    assert_eq!(rc, 0, "{out}");
+    assert!(
+        out.contains("Err(\"'NaN' is not a number: a Float is never NaN\")"),
+        "{out}"
+    );
+    assert!(out.contains("Err(\"'inf' is out of range for a float\")"), "{out}");
+}
+
 #[test]
 fn an_out_of_range_float_literal_is_a_syntax_error() {
     let (out, rc) = run("println(to_string(1e400))", false);

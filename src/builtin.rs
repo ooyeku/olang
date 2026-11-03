@@ -2547,6 +2547,9 @@ impl BuiltinFunctions {
             Value::Float(x) => Ok(Value::Float(*x)),
             Value::String(s) => match s.parse::<f64>() {
                 // A Float is never inf or NaN: "1e999" is out of range.
+                Ok(x) if x.is_nan() => Err(InterpreterError::TypeError {
+                    message: format!("to_float: '{}' is not a number: a Float is never NaN", s),
+                }),
                 Ok(x) if !x.is_finite() => Err(InterpreterError::TypeError {
                     message: format!("to_float: '{}' is out of range for a float", s),
                 }),
