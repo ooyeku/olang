@@ -1257,10 +1257,10 @@ impl BuiltinFunctions {
                         })
                         .unwrap_or_else(|| {
                             format!(
-                                "Assertion failed: {:?} {} {:?}",
-                                arguments[0],
+                                "Assertion failed: {} {} {}",
+                                crate::interpreter::ops::assert_form(&arguments[0]),
                                 if want_equal { "!=" } else { "==" },
-                                arguments[1]
+                                crate::interpreter::ops::assert_form(&arguments[1])
                             )
                         });
                     return Err(InterpreterError::RuntimeError { message });
@@ -1309,8 +1309,11 @@ impl BuiltinFunctions {
                         })
                         .unwrap_or_else(|| {
                             format!(
-                                "Assertion failed: {:?} is not within {:?} of {:?} (difference {:?})",
-                                arguments[0], arguments[2], arguments[1], difference
+                                "Assertion failed: {} is not within {} of {} (difference {:?})",
+                                crate::interpreter::ops::assert_form(&arguments[0]),
+                                crate::interpreter::ops::assert_form(&arguments[2]),
+                                crate::interpreter::ops::assert_form(&arguments[1]),
+                                difference
                             )
                         });
                     return Err(InterpreterError::RuntimeError { message });
@@ -1332,7 +1335,7 @@ impl BuiltinFunctions {
                             Value::String(s) => Some(s.as_str().to_string()),
                             _ => None,
                         })
-                        .unwrap_or_else(|| format!("Assertion failed: {:?}", first));
+                        .unwrap_or_else(|| format!("Assertion failed: {}", crate::interpreter::ops::assert_form(first)));
                     return Err(InterpreterError::RuntimeError { message });
                 }
                 Ok(Value::Unit)

@@ -568,6 +568,16 @@ fn map_like(v: &Value) -> Option<&crate::ast::ValueMap> {
 /// and Float numerically at the top — and total, where `==` refuses some
 /// kinds: a Result is compared through its payload, so
 /// `assert_eq(json.parse(s), Ok(#{ "a": 1 }))` holds too.
+/// A value as an assertion's failure shows it: olang's notation (`6`,
+/// `[1, 2]`, `#{"k": "v"}`), text quoted so `"1"` and `1` differ (OL-399:
+/// these read `Integer(6) != Integer(7)` before).
+pub fn assert_form(v: &Value) -> String {
+    match v {
+        Value::String(s) => format!("{:?}", s.as_str()),
+        other => other.to_string(),
+    }
+}
+
 pub fn assert_eq_holds(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Integer(x), Value::Float(y)) => (*x as f64) == *y,

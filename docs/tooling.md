@@ -263,7 +263,7 @@ are absolute paths.
 {"event":"run","format":1,"files":["/p/tests/calc_test.ol"],"count":7,"only":null,"verify_tiers":null}
 {"event":"test","file":"/p/tests/calc_test.ol","name":"total is off by one","line":13}
 {"event":"failed","file":"/p/tests/calc_test.ol","name":"total is off by one","line":13,"ms":0.21,
- "kind":"assert_eq","message":"Runtime error: Assertion failed: Integer(42) != Integer(41)",
+ "kind":"assert_eq","message":"Runtime error: Assertion failed: 42 != 41",
  "at":{"file":"/p/tests/calc_test.ol","line":14,"col":5},"stmt":14,"frames":[],
  "expected":{"type":"Int","show":"41","pretty":"41","value":41},
  "actual":{"type":"Int","show":"42","pretty":"42","value":42}}

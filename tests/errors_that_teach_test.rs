@@ -176,3 +176,15 @@ fn a_function_without_a_body_is_not_called_an_assignment() {
     let text = suggestion_text("fn f(a) =\n");
     assert!(!text.contains("assignment"), "got: {text}");
 }
+
+// ── OL-399: assertion failures read in olang's notation ─────────────
+#[test]
+fn assertion_failures_show_olang_values() {
+    let e = err("assert_eq(6, 7)\n");
+    assert!(e.contains("Assertion failed: 6 != 7"), "got: {e}");
+    let e = err("assert_eq([1, \"a\"], \"1\")\n");
+    assert!(e.contains("Assertion failed: [1, \"a\"] != \"1\""), "got: {e}");
+    let e = err("assert_ne(#{ \"k\": 1 }, #{ \"k\": 1 })\n");
+    assert!(e.contains("#{\"k\": 1} == #{\"k\": 1}"), "got: {e}");
+    assert!(!e.contains("Integer("), "got: {e}");
+}

@@ -2588,7 +2588,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 if !ops::assert_eq_holds(&actual_val, &expected_val) {
                     crate::tools::test_events::note_values("assert_eq", &expected_val, &actual_val);
                     let msg = message.clone().unwrap_or_else(|| {
-                        format!("Assertion failed: {:?} != {:?}", actual_val, expected_val)
+                        format!("Assertion failed: {} != {}", ops::assert_form(&actual_val), ops::assert_form(&expected_val))
                     });
                     return Err(InterpreterError::RuntimeError { message: msg });
                 }
@@ -2604,7 +2604,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 if ops::assert_eq_holds(&actual_val, &expected_val) {
                     crate::tools::test_events::note_values("assert_ne", &expected_val, &actual_val);
                     let msg = message.clone().unwrap_or_else(|| {
-                        format!("Assertion failed: {:?} == {:?}", actual_val, expected_val)
+                        format!("Assertion failed: {} == {}", ops::assert_form(&actual_val), ops::assert_form(&expected_val))
                     });
                     return Err(InterpreterError::RuntimeError { message: msg });
                 }
@@ -2623,8 +2623,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     _ => {
                         let msg = message.clone().unwrap_or_else(|| {
                             format!(
-                                "Assertion failed: condition is not boolean: {:?}",
-                                condition_val
+                                "Assertion failed: condition is not boolean: {}",
+                                ops::assert_form(&condition_val)
                             )
                         });
                         Err(InterpreterError::RuntimeError { message: msg })
@@ -2640,7 +2640,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     Value::Boolean(true) => Ok(Value::Unit),
                     _ => {
                         let msg = message.clone().unwrap_or_else(|| {
-                            format!("Assertion failed: expected true, got {:?}", val)
+                            format!("Assertion failed: expected true, got {}", ops::assert_form(&val))
                         });
                         Err(InterpreterError::RuntimeError { message: msg })
                     }
@@ -2655,7 +2655,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     Value::Boolean(false) => Ok(Value::Unit),
                     _ => {
                         let msg = message.clone().unwrap_or_else(|| {
-                            format!("Assertion failed: expected false, got {:?}", val)
+                            format!("Assertion failed: expected false, got {}", ops::assert_form(&val))
                         });
                         Err(InterpreterError::RuntimeError { message: msg })
                     }

@@ -347,7 +347,7 @@ fn the_human_output_is_unchanged() {
     assert_eq!(lines[2], "  ✓ adds", "{out}");
     assert_eq!(lines[3], "  ✗ off by one", "{out}");
     assert_eq!(
-        lines[4], "      Runtime error: Assertion failed: Integer(42) != Integer(41)",
+        lines[4], "      Runtime error: Assertion failed: 42 != 41",
         "{out}"
     );
     assert!(

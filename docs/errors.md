@@ -135,7 +135,7 @@ or asked to stop.
 | `Missing required argument: y` | a call with too few arguments | pass it, or give the parameter a default |
 | `Unwrap failed on error: "bad"` | `unwrap` of an `Err` | `match`, `unwrap_or` or `?` |
 | `head: cannot get head of empty list` | `head` or `tail` of `[]` | `first(xs)`, which answers `()` |
-| `Assertion failed: Integer(1) != Integer(2)` | a failed `assert_eq` (each assertion has its own wording) | the test caught something |
+| `Assertion failed: 1 != 2` | a failed `assert_eq` (each assertion has its own wording) | the test caught something |
 | your own text | `raise("your own text")` | `raise` is for misuse; expected failures return `Err` |
 
 ## Pattern match failed
