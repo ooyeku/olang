@@ -6,8 +6,8 @@ use lib.parse { parse }
 use lib.matcher { matches, find, find_all }
 
 fn demo(pat, s) = {
-    let re = parse(pat)
-    let f = find(re, s)
+    let rx = parse(pat)
+    let f = find(rx, s)
     let verdict = if f.found => `matched "${f.text}" at ${f.start}`
         else => "no match"
     println("  " + str.pad_end("/" + pat + "/", 16, " ") + str.pad_end("\"" + s + "\"", 22, " ") + verdict)
@@ -37,10 +37,10 @@ let args = os.args()
 if len(args) > 1 => {
     println("")
     println("═══ grep /" + args[1] + "/ ═══")
-    let re = parse(args[1])
+    let rx = parse(args[1])
     let lines = ["the quick brown fox", "jumps over 42 lazy dogs", "in 2026, right?"]
     for line in lines {
-        let mark = if matches(re, line) => "  ✓ " else => "    "
+        let mark = if matches(rx, line) => "  ✓ " else => "    "
         println(mark + line)
     }
 }

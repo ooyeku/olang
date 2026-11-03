@@ -138,14 +138,14 @@ fn drain() = {
 }
 
 let mut m = initial
-gui.apply(w, view(m))
-gui.apply(w, [#{ "op": "focus", "key": "name" }])
+let _ = gui.apply(w, view(m))
+let _ = gui.apply(w, [#{ "op": "focus", "key": "name" }])
 
 if headless_png != "" => {
     gui.input(w, #{ "kind": "text", "text": "Dennis Ritchie" })
     for e in drain() { m = update(m, e) }
-    gui.apply(w, view(m))
-    fs.write_bytes(headless_png, gui.read(w, "pixels"))
+    let _ = gui.apply(w, view(m))
+    unwrap(fs.write_bytes(headless_png, gui.read(w, "pixels")))
     println("wrote " + headless_png)
     os.exit(0)
 }
@@ -158,7 +158,7 @@ while running {
             if e.kind == "close_requested" => { running = false }
             let before = m.people
             m = update(m, e)
-            gui.apply(w, view(m))
+            let _ = gui.apply(w, view(m))
             if len(m.people) != len(before) =>
                 { gui.apply(w, [#{ "op": "scroll", "key": "people", "to": (0, m.at * ROW) }]) }
             ()

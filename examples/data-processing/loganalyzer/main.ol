@@ -1,5 +1,5 @@
 use lib.parse { parse_line }
-use lib.stats { level_counts, errors, top_routes }
+use lib.tally { level_counts, errors, top_routes }
 
 let args = os.args()
 let path = if len(args) > 1 => args[1] else => "data/app.log"

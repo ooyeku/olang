@@ -191,7 +191,7 @@ and negative zero prints `-0.0`.
 
 A Float is always a finite number. Operations whose IEEE result would
 be `NaN` or infinite raise a runtime error instead: `0.0 / 0.0`,
-`math.sqrt(-1.0)`, `math.log(-1.0)`, division by zero (exactly as for
+`math.sqrt(-1.0)`, `math.ln(-1.0)`, division by zero (exactly as for
 integers), and overflow — `1e308 * 10.0` is `Float overflow in
 multiplication`, as `math.exp(1000.0)` and `math.pow(10.0, 400.0)` are
 errors, and `str.parse_float("1e999")` is an `Err` ("out of range").

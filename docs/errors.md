@@ -80,8 +80,8 @@ another language's syntax.
 | `expected unary expr` | `x += 1` | `x = x + 1` |
 | `expected argument` | `map(xs, fn(x) => x)` | `map(xs, (x) => x)` |
 | `expected fn kw` | trait methods separated by `;` | one method per line |
-| `Unclosed template interpolation — ... templates do not nest` | a template inside `${...}` | bind the inner template to a name first |
-| `a spread ... is not supported in a declared struct's literal` | `P { ...p, x: 1 }` | `map_set(p, "x", 1)` |
+| `expected an operator or a function call — a backtick inside ${...} ends the template (templates do not nest)` | a template inside `${...}` | bind the inner template to a name first |
+| `a spread ... is not supported in a declared struct's literal` | `P { ...p, x: 1 }` | `map_merge(p, #{ "x": 1 })`, or each field |
 
 ## Undefined variable
 
@@ -95,9 +95,9 @@ it is read. The usual causes:
   `to_int(x)`, `sqrt(x)` is `math.sqrt(x)`, `set(xs)` is `col.unique(xs)`.
 - A bare `impl Type { ... }` block used to fail here as `Undefined
   variable: impl`. It is now refused before the program runs, at the
-  `impl`: `olang has no inherent impl blocks: methods come from a trait,
-  so declare one (trait Name { fn method(self) }) and write impl Name
-  for Type { ... }` ([Methods come only from a
+  `impl`: olang has no inherent impl blocks: methods come from a trait,
+  so declare one (`trait Name { fn method(self) }`) and write `impl Name
+  for P { ... }`, with your type's name for `P` ([Methods come only from a
   trait](pitfalls.md#methods-come-only-from-a-trait)).
 
 ## Type errors
@@ -106,7 +106,7 @@ it is read. The usual causes:
 
 | Message | Usual cause | Write instead |
 |---|---|---|
-| `cannot add Int and String; use to_string(...) to convert` | `"n = " + n` | `"n = " + show(n)` or `` `n = ${n}` `` |
+| `cannot add String and Int; use to_string(...) to convert` | `"n = " + n` | `"n = " + show(n)` or `` `n = ${n}` `` |
 | `cannot iterate over a Map — iterate its pairs with for (k, v) in entries(m)` | `for (k, v) in m` | `for (k, v) in entries(m)` |
 | `Cannot access field 'len' on non-struct value` | `xs.len()`, `s.split(",")`, `xs.push(v)` | `len(xs)`, `str.split(s, ",")`, `xs = xs + [v]` |
 | `P has no field or method 'y'` | a field the struct does not declare, or a method no trait gave it | check the declaration and the `impl` |

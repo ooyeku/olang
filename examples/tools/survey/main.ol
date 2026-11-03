@@ -164,9 +164,11 @@ fn view_summary(report) = {
     println("")
     let langs = ranked(report)
     let top = if len(langs) > 6 => take(langs, 6) else => langs
-    let widest = if len(top) > 0 => top[0][2] else => 1
+    // each bar is the language's share of every line, so its percent
+    // matches the langs view
+    let total = if lines > 0 => lines else => 1
     for row in top {
-        let frac = to_float(row[2]) / to_float(widest)
+        let frac = to_float(row[2]) / to_float(total)
         println("  " + paint(row[0], str.pad_end(row[0], 12, " ")) + " " +
             paint(row[0], term.bar(frac, 22)) +
             term.dim("  " + commas(row[2])))

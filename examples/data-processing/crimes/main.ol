@@ -24,12 +24,12 @@ use lib.report { table, chart, derived_csv, write }
 // Styling degrades to plain text automatically when output is piped;
 // the in-place progress bars and spinners additionally gate on
 // term.color() so a piped run stays line-oriented.
-let tty = term.color()
+let live = term.color()
 let t0 = time.monotonic_ms()
 let t = cell(time.monotonic_ms())
 let stage_rows = cell([])
 let stage_i = cell(0)
-fn wipe() = if tty => { print("\r" + str.pad_start("", 72, " ") + "\r") } else => ()
+fn wipe() = if live => { print("\r" + str.pad_start("", 72, " ") + "\r") } else => ()
 fn stage(name, note) = {
     let now = time.monotonic_ms()
     let ms = now - cell.get(t)
@@ -46,7 +46,7 @@ fn preview(headers, rows) =
     println(str.join(map(str.lines(term.table(headers, rows)), (l) => "      " + l), "\n"))
 /// One in-place progress bar frame for a long computation.
 fn progress(label, done, total, extra) =
-    if tty => {
+    if live => {
         print("\r" + `  ${term.bar(to_float(done) / to_float(total), 26)} ${term.dim(label)} ${done}/${total}${extra}`)
         os.flush()
     } else => ()
@@ -287,7 +287,7 @@ let t_gnb0 = time.monotonic_ms()
 let nb = gnb_train(train_cols, train_y)
 let t_gnb = time.monotonic_ms() - t_gnb0
 wipe()
-if tty => { print(`  ${term.dim("growing the tree (histogram CART, depth 6)...")}`) } else => ()
+if live => { print(`  ${term.dim("growing the tree (histogram CART, depth 6)...")}`) } else => ()
 os.flush()
 let t_tree0 = time.monotonic_ms()
 let tree = tree_train(train_cols, train_y, 6, 500)
@@ -394,8 +394,8 @@ let methods = str.join([
 let header = ["# Chicago crime, 2001—present: a full-record analysis",
     `Generated ${dates.today()} by examples/data-processing/crimes/main.ol over the complete City of Chicago extract, all computation in olang.`,
     "## Abstract", abstract, "## Data and methods", methods]
-let bytes = write(concat(header, cell.get(blocks)))
-stage("report", `out/report.md (${bytes} bytes), 8 charts, 3 derived CSVs`)
+let written = write(concat(header, cell.get(blocks)))
+stage("report", `out/report.md (${written} bytes), 8 charts, 3 derived CSVs`)
 println(term.dim(term.rule(72)))
 preview(["stage", "ms"], cell.get(stage_rows))
 let total_s = math.round(to_float(time.monotonic_ms() - t0) / 100.0) / 10.0

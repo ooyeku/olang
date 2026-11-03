@@ -5,7 +5,7 @@ computed. Run any of them directly:
 
 ```bash
 olang examples/language/metatool/main.ol
-cd examples/tools/survey && olang main.ol summary ../../src
+olang examples/tools/survey/main.ol summary src/
 ```
 
 To run all of them at once, use the harness. It starts each program in
@@ -74,7 +74,7 @@ order, so read whichever subject interests you.
   CLI dispatch on `os.args()` (`main.ol`)
 - [`loganalyzer/`](data-processing/loganalyzer/) — parses application logs with `re` capture
   groups (`lib/parse.ol`), aggregates by level and route with `col` +
-  pipelines (`lib/stats.ol`), and reads files with `fs` from `os.args()`
+  pipelines (`lib/tally.ol`), and reads files with `fs` from `os.args()`
   (`main.ol`). Handles malformed lines, missing/empty files, and 2000-line
   logs
 - [`scheduler/`](concurrency/scheduler/) — concurrent fan-out and timeouts on real

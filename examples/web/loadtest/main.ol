@@ -10,7 +10,7 @@
 // olang's own spawn and task.join — no external benchmark tool.
 
 use lib.server { make_server, server_hit_count }
-use lib.stats { empty_stats, record, merge }
+use lib.metrics { empty_stats, record, merge }
 
 let args = os.args()
 let clients = if len(args) > 1 => unwrap(str.parse_int(args[1])) else => 12

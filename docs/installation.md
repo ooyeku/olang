@@ -161,15 +161,16 @@ Homebrew checks it.
 
 Every [release](https://github.com/ooyeku/olang/releases) has a file per
 platform (see [Platforms](#platforms) for which is which), a
-`SHA256SUMS` file with each file's checksum, and, once releases are
-signed, `SHA256SUMS.sig`, the signature on those checksums. To check a
-download before you unpack it:
+`SHA256SUMS` file with each file's checksum. To check a download before
+you unpack it, put it and `SHA256SUMS` in one folder and run:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/ooyeku/olang/main/dist/signing/olang-release.pub
-openssl dgst -sha256 -verify olang-release.pub -signature SHA256SUMS.sig SHA256SUMS
 shasum -a 256 -c SHA256SUMS --ignore-missing
 ```
+
+Releases are not signed yet, so there is no release key to fetch and no
+`SHA256SUMS.sig` to check. When signing is switched on, this section will
+say where the public key lives and how to check the signature with it.
 
 With the GitHub CLI, `gh attestation verify olang-1.0.0-macos-arm64.tar.gz
 --repo ooyeku/olang` checks that the file was built by olang's release
@@ -377,6 +378,7 @@ language as a program file and keeps bindings across lines within a session.
 ```
 $ olang
 olang> let x = 21
+21
 olang> x * 2
 42
 olang> :help

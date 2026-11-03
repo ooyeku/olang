@@ -152,6 +152,6 @@ section(`Relationships (${both_year}, ${ods.n_rows(joined)} countries)`,
 stage("relationships", `r=${r_energy}, R2=${r2}, n=${ods.n_rows(joined)}`)
 
 // ── 9. report ────────────────────────────────────────────────────────
-let bytes = write(cell.get(blocks))
-stage("report", `out/report.md (${bytes} bytes), 4 charts, 2 derived CSVs`)
+let written = write(cell.get(blocks))
+stage("report", `out/report.md (${written} bytes), 4 charts, 2 derived CSVs`)
 println(`done in ${time.monotonic_ms() - t0} ms — open out/report.md`)

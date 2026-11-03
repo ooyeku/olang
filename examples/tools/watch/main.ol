@@ -94,8 +94,8 @@ fn watch(cmd, is_pipe, interval, count) = {
     unwrap_or(os.on_interrupt(), false)
     // Without a terminal (piped, or under the example runner) there is no
     // one to press Ctrl-C, so a "forever" watch would never end: cap it.
-    let tty = os.is_tty()
-    let limit = if count > 0 => count else => (if tty => 0 else => 2)
+    let on_tty = os.is_tty()
+    let limit = if count > 0 => count else => (if on_tty => 0 else => 2)
 
     let mut run = 0
     let mut last = 0
