@@ -152,6 +152,8 @@ pub fn run_paths(
     let mut file_errors = 0usize;
     let mut parse_errors = 0usize;
     let mut test_files = 0usize;
+    // the files whose blocks ran (under `--only`, not every file scanned: OL-397)
+    let mut files_ran = 0usize;
     let json = options.json;
 
     let parser = Parser::new();
@@ -362,6 +364,9 @@ pub fn run_paths(
             let _ = std::env::set_current_dir(cwd);
         }
         let results = interpreter.take_test_results();
+        if !results.is_empty() || run_error.is_some() {
+            files_ran += 1;
+        }
         if json && options.record_args {
             for call in interpreter.take_test_calls() {
                 super::test_events::args(&call);
@@ -491,12 +496,13 @@ pub fn run_paths(
         // Unparseable files still make the run fail, even with no test blocks.
         return if parse_errors > 0 || none_ran { 1 } else { 0 };
     }
+    let shown_files = if options.only.is_some() { files_ran } else { test_files };
     let summary = format!(
         "  {} passed, {} failed  ({} test file{}, {}ms)",
         total_passed,
         total_failed + file_errors,
-        test_files,
-        if test_files == 1 { "" } else { "s" },
+        shown_files,
+        if shown_files == 1 { "" } else { "s" },
         elapsed
     );
     let failed = total_failed + file_errors + parse_errors > 0;

@@ -115,3 +115,16 @@ fn fail_if_none_fails_a_run_that_ran_no_test() {
     );
     assert_eq!(code, 1, "{out}");
 }
+
+// OL-397: under --only, the summary counts the files that ran, not every one scanned
+#[test]
+fn only_counts_the_files_whose_blocks_ran() {
+    let ws = workspace("only-count");
+    std::fs::write(ws.join("a_test.ol"), "test \"alpha\" { assert_eq(1, 1) }\n").unwrap();
+    std::fs::write(ws.join("b_test.ol"), "test \"beta\" { assert_eq(1, 1) }\n").unwrap();
+    let (out, code) = olang(&ws, &["test", ".", "--only", "alpha"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("1 passed, 0 failed  (1 test file,"), "{out}");
+    let (out, _) = olang(&ws, &["test", "."]);
+    assert!(out.contains("(2 test files,"), "{out}");
+}
