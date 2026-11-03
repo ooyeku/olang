@@ -128,3 +128,13 @@ fn only_counts_the_files_whose_blocks_ran() {
     let (out, _) = olang(&ws, &["test", "."]);
     assert!(out.contains("(2 test files,"), "{out}");
 }
+
+// OL-406: an error in `olang eval` is placed at `<eval>`, not a made-up file
+#[test]
+fn an_eval_error_is_placed_at_eval() {
+    let ws = workspace("eval-place");
+    let (out, code) = olang(&ws, &["eval", "raise(\"boom\")"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("<eval>:1"), "{out}");
+    assert!(!out.contains("<eval>.ol"), "{out}");
+}

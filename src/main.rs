@@ -1465,7 +1465,9 @@ fn run_eval(cli: &Cli, source: &str) -> i32 {
         Ok(_) => 0,
         Err(e) => {
             let location = interpreter.take_error_location();
-            show_classic_interpreter_error(&e, &probe, &interpreter, location, source);
+            // the code came from the command line: placed at `<eval>:line:col`,
+            // never a file in the working folder (OL-406)
+            show_classic_interpreter_error(&e, std::path::Path::new("<eval>"), &interpreter, location, source);
             1
         }
     }
