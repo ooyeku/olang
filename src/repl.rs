@@ -2585,7 +2585,10 @@ impl Repl {
                 .collect();
             builtin_names.sort();
 
-            (builtin_names.len(), builtin_names, user_vars.len())
+            // modules (the stdlib's, and any `use`d) are not the person's
+            // bindings: named on a line of their own (OL-407)
+            let user = user_vars.values().filter(|v| !Self::is_module(v)).count();
+            (builtin_names.len(), builtin_names, user)
         };
 
         // Built-in functions
@@ -2631,7 +2634,11 @@ impl Repl {
 
         if self.headless && user_var_count > 0 {
             let user_vars = self.interpreter.get_user_variables();
-            let mut names: Vec<&String> = user_vars.keys().collect();
+            let mut names: Vec<&String> = user_vars
+                .iter()
+                .filter(|(_, v)| !Self::is_module(v))
+                .map(|(k, _)| k)
+                .collect();
             names.sort();
             let rows: Vec<Value> = names
                 .iter()
@@ -2663,8 +2670,11 @@ impl Repl {
         } else {
             // Get user variables again (after releasing previous borrow)
             let user_vars = self.interpreter.get_user_variables();
-            let mut sorted: Vec<(&String, &Value)> =
-                user_vars.iter().map(|(k, v)| (k, *v)).collect();
+            let mut sorted: Vec<(&String, &Value)> = user_vars
+                .iter()
+                .filter(|(_, v)| !Self::is_module(v))
+                .map(|(k, v)| (k, *v))
+                .collect();
             sorted.sort_by(|a, b| a.0.cmp(b.0));
             for (name, value) in sorted {
                 let type_name = Self::get_type_name(value);
@@ -2678,7 +2688,37 @@ impl Repl {
             }
         }
 
+        let user_vars = self.interpreter.get_user_variables();
+        let mut modules: Vec<&String> = user_vars
+            .iter()
+            .filter(|(_, v)| Self::is_module(v))
+            .map(|(k, _)| k)
+            .collect();
+        modules.sort();
+        if !modules.is_empty() {
+            println!(
+                "\n{} ({}):",
+                "Modules".bright_cyan().bold(),
+                modules.len().to_string().bright_white()
+            );
+            for chunk in modules.chunks(8) {
+                println!(
+                    "  {}",
+                    chunk
+                        .iter()
+                        .map(|n| n.bright_blue().to_string())
+                        .collect::<Vec<_>>()
+                        .join("  ")
+                );
+            }
+        }
+
         println!();
+    }
+
+    /// A module's value (the stdlib's, or one `use` brought in).
+    fn is_module(v: &Value) -> bool {
+        matches!(v, Value::Struct { type_name, .. } if type_name == "Module")
     }
 
     /// A deep, value-derived type description for `:type`: element types

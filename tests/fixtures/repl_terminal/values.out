@@ -39,54 +39,19 @@ Core Functions (79):
   zip
   (use :env --full for detailed descriptions)
 
-User Environment (47):
-    asset : struct = Module { ... }
-    base64 : struct = Module { ... }
-    bigint : struct = Module { ... }
-    bytes : struct = Module { ... }
-    caps : struct = Module { ... }
-    cell : struct = Module { ... }
-    chan : struct = Module { ... }
-    col : struct = Module { ... }
-    collections : struct = Module { ... }
-    compress : struct = Module { ... }
-    crypto : struct = Module { ... }
-    csv : struct = Module { ... }
-    dates : struct = Module { ... }
-    db : struct = Module { ... }
-    dom : struct = Module { ... }
-    fs : struct = Module { ... }
-    gui : struct = Module { ... }
-    http : struct = Module { ... }
+User Environment (4):
     it : int = 6
-    json : struct = Module { ... }
-    learn : struct = Module { ... }
-    mat : struct = Module { ... }
-    math : struct = Module { ... }
-    md : struct = Module { ... }
-    meta : struct = Module { ... }
-    ods : struct = Module { ... }
-    os : struct = Module { ... }
-    plot : struct = Module { ... }
-    proc : struct = Module { ... }
-    pty : struct = Module { ... }
-    random : struct = Module { ... }
-    re : struct = Module { ... }
-    runtime : struct = Module { ... }
-    sim : struct = Module { ... }
-    stats : struct = Module { ... }
-    str : struct = Module { ... }
-    task : struct = Module { ... }
-    testing : struct = Module { ... }
-    time : struct = Module { ... }
-    toad : struct = Module { ... }
-    toml : struct = Module { ... }
-    tty : struct = Module { ... }
     twice : function = <function: twice>
-    vec : struct = Module { ... }
-    vt : struct = Module { ... }
     x : int = 5
     z : int = 3
+
+Modules (43):
+  asset  base64  bigint  bytes  caps  cell  chan  col
+  collections  compress  crypto  csv  dates  db  dom  fs
+  gui  http  json  learn  mat  math  md  meta
+  ods  os  plot  proc  pty  random  re  runtime
+  sim  stats  str  task  testing  time  toad  toml
+  tty  vec  vt
 
 
 === Memory ===
