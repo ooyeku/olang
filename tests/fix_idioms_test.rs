@@ -321,3 +321,16 @@ fn units_answer_as_before() {
         same_on(Target::Units, decl, "f({})", &numbers);
     }
 }
+
+// OL-394: each units rewrite is counted under its own form
+#[test]
+fn units_rewrites_are_labelled_by_their_rounding() {
+    let src = "fn f(x) = to_int(math.round(x)) + to_int(math.ceil(x)) + to_int(math.floor(x)) + to_int(math.trunc(x))\n";
+    let (_, report) = fix(src, Target::Units).unwrap();
+    let mut kinds: Vec<_> = report.rewritten.iter().map(|r| r.1).collect();
+    kinds.sort();
+    assert_eq!(
+        kinds,
+        vec!["to_int(math.ceil(e))", "to_int(math.floor(e))", "to_int(math.round(e))", "to_int(math.trunc(e))"]
+    );
+}

@@ -2152,7 +2152,14 @@ impl<'a> Analyzer<'a> {
             return;
         }
         let piece = self.src_piece(is, ie);
-        self.edit(start, call_end, vec![piece], "to_int(math.floor(e))");
+        // each rewrite counted under its own form (OL-394)
+        let kind = match ik[1].as_str() {
+            "ceil" => "to_int(math.ceil(e))",
+            "round" => "to_int(math.round(e))",
+            "trunc" => "to_int(math.trunc(e))",
+            _ => "to_int(math.floor(e))",
+        };
+        self.edit(start, call_end, vec![piece], kind);
     }
 }
 
