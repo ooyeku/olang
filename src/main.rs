@@ -1161,7 +1161,7 @@ fn run() -> i32 {
             }
             match what.as_str() {
                 "maps" => {
-                    std::process::exit(olang::tools::fix::run_maps(&paths, check || dry_run, &skip))
+                    std::process::exit(olang::tools::fix::run_maps(&paths, check, dry_run, &skip))
                 }
                 other => match olang::tools::fix_idioms::Target::from_name(other) {
                     Some(target) => std::process::exit(olang::tools::fix_idioms::run(

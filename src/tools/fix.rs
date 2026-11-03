@@ -784,8 +784,11 @@ fn default_is_pure(text: &str) -> bool {
 }
 
 /// `olang fix maps`: every `.ol` file under `paths`, fixed in place (or,
-/// with `check`, reported). `skip` names files left untouched.
-pub fn run_maps(paths: &[PathBuf], check: bool, skip: &[PathBuf]) -> i32 {
+/// with `check` or `dry_run`, reported). `skip` names files left
+/// untouched. As the other rewrites: `check` exits 1 when something would
+/// change, `dry_run` only reports (OL-393).
+pub fn run_maps(paths: &[PathBuf], check: bool, dry_run: bool, skip: &[PathBuf]) -> i32 {
+    let report_only = check || dry_run;
     let mut total = Report::default();
     let mut files_changed = 0;
     let mut failed = 0;
@@ -816,12 +819,12 @@ pub fn run_maps(paths: &[PathBuf], check: bool, skip: &[PathBuf]) -> i32 {
                         files_changed += 1;
                         println!(
                             "  {} {} ({} map_get, {} map_get_or)",
-                            if check { "would fix" } else { "fixed" },
+                            if report_only { "would fix" } else { "fixed" },
                             display(&file),
                             report.gets,
                             report.get_ors
                         );
-                        if !check && std::fs::write(&file, &fixed).is_err() {
+                        if !report_only && std::fs::write(&file, &fixed).is_err() {
                             eprintln!("  could not write {}", file.display());
                             failed += 1;
                         }

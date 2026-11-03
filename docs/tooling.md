@@ -429,7 +429,9 @@ to change come from the grammar's parse tree, the text is changed only
 there (layout and comments stay byte for byte), parentheses are
 added only where precedence needs them, and a file whose rewrite would
 read back as a different program is left untouched and reported. Each
-runs to its fixed point, so a second run changes nothing.
+runs to its fixed point, so a second run changes nothing. All five take
+the same flags and exits: `--dry-run` reports and exits 0; `--check`
+reports and exits 1 when something would change, for CI.
 
 ```bash
 olang fix guards --dry-run src/   # what would change, and each form left with why
