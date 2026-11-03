@@ -678,25 +678,71 @@ fn request_to_value(req: &ParsedRequest, remote_addr: &str) -> Value {
     }
 }
 
+/// A status line's reason phrase (RFC 9110's, and the registry's common
+/// others); a code with none, its class's words (OL-379).
 fn reason_phrase(status: i64) -> &'static str {
     match status {
+        100 => "Continue",
+        101 => "Switching Protocols",
+        103 => "Early Hints",
         200 => "OK",
         201 => "Created",
+        202 => "Accepted",
+        203 => "Non-Authoritative Information",
         204 => "No Content",
+        205 => "Reset Content",
+        206 => "Partial Content",
+        207 => "Multi-Status",
+        300 => "Multiple Choices",
         301 => "Moved Permanently",
         302 => "Found",
+        303 => "See Other",
         304 => "Not Modified",
+        307 => "Temporary Redirect",
+        308 => "Permanent Redirect",
         400 => "Bad Request",
         401 => "Unauthorized",
+        402 => "Payment Required",
         403 => "Forbidden",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        406 => "Not Acceptable",
+        407 => "Proxy Authentication Required",
+        408 => "Request Timeout",
         409 => "Conflict",
-        422 => "Unprocessable Entity",
+        410 => "Gone",
+        411 => "Length Required",
+        412 => "Precondition Failed",
+        413 => "Content Too Large",
+        414 => "URI Too Long",
+        415 => "Unsupported Media Type",
+        416 => "Range Not Satisfiable",
+        417 => "Expectation Failed",
+        418 => "I'm a teapot",
+        421 => "Misdirected Request",
+        422 => "Unprocessable Content",
+        423 => "Locked",
+        424 => "Failed Dependency",
+        425 => "Too Early",
+        426 => "Upgrade Required",
+        428 => "Precondition Required",
+        429 => "Too Many Requests",
+        431 => "Request Header Fields Too Large",
+        451 => "Unavailable For Legal Reasons",
         500 => "Internal Server Error",
         501 => "Not Implemented",
+        502 => "Bad Gateway",
         503 => "Service Unavailable",
-        _ => "Status",
+        504 => "Gateway Timeout",
+        505 => "HTTP Version Not Supported",
+        507 => "Insufficient Storage",
+        508 => "Loop Detected",
+        511 => "Network Authentication Required",
+        100..=199 => "Informational",
+        200..=299 => "Success",
+        300..=399 => "Redirection",
+        400..=499 => "Client Error",
+        _ => "Server Error",
     }
 }
 
@@ -1841,6 +1887,25 @@ fn decode_query(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
     use crate::ast::Value;
+
+    #[test]
+    fn the_servers_own_answers_carry_their_reason_phrases() {
+        // OL-379: these read "Status" before
+        for (code, words) in [
+            (408, "Request Timeout"),
+            (413, "Content Too Large"),
+            (431, "Request Header Fields Too Large"),
+            (200, "OK"),
+            (299, "Success"),
+            (599, "Server Error"),
+        ] {
+            let raw = String::from_utf8(response_raw_bytes(code, b"", &[], false)).unwrap();
+            assert!(
+                raw.starts_with(&format!("HTTP/1.1 {code} {words}\r\n")),
+                "{code}: {raw}"
+            );
+        }
+    }
 
     use std::sync::Arc;
 
