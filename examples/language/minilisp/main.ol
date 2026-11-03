@@ -48,10 +48,10 @@ println("")
 println("  lisp fib(17): " + bench_result + "  in " + show(t1 - t0) + "ms")
 
 test "minilisp evaluates correctly" {
-    assert_eq(run_src("(* (+ 1 2) (- 10 3))"), "LVal.LNum(21)")
-    assert_eq(run_src("(define fact (lambda (n) (if (< n 2) 1 (* n (fact (- n 1)))))) (fact 12)"), "LVal.LNum(479001600)")
-    assert_eq(run_src("(define twice (lambda (f x) (f (f x)))) (twice (lambda (n) (* n 3)) 7)"), "LVal.LNum(63)")
-    assert_eq(run_src("(define make-adder (lambda (n) (lambda (x) (+ x n)))) ((make-adder 5) 37)"), "LVal.LNum(42)")
+    assert_eq(run_src("(* (+ 1 2) (- 10 3))"), "LNum(21)")
+    assert_eq(run_src("(define fact (lambda (n) (if (< n 2) 1 (* n (fact (- n 1)))))) (fact 12)"), "LNum(479001600)")
+    assert_eq(run_src("(define twice (lambda (f x) (f (f x)))) (twice (lambda (n) (* n 3)) 7)"), "LNum(63)")
+    assert_eq(run_src("(define make-adder (lambda (n) (lambda (x) (+ x n)))) ((make-adder 5) 37)"), "LNum(42)")
     assert_eq(run_src("(car (list))"), "error: car: empty list")
     assert_eq(run_src("(nope 1)"), "error: unbound symbol: nope")
 }

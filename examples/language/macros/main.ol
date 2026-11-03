@@ -70,5 +70,5 @@ test "unless runs the body exactly when the condition is false" {
 
 test "the derive serializes every declared field" {
     let j = reading_to_json(Reading { station: "s", kwh: 1.5 })
-    assert_eq(j, "{\"kwh\":1.5,\"station\":\"s\"}")
+    assert_eq(j, "{\"station\":\"s\",\"kwh\":1.5}")
 }
