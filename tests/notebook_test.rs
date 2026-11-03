@@ -106,7 +106,7 @@ fn params_bind_with_their_types_and_param_overrides() {
     let out = run_in(&fixtures(), &["test", "params.olmd", "--param", "n=3"]);
     assert!(!out.status.success());
     assert!(
-        stdout(&out).contains("Integer(6) != Integer(4)"),
+        stdout(&out).contains("Assertion failed: 6 != 4"),
         "{}",
         stdout(&out)
     );
