@@ -1480,6 +1480,17 @@ impl Gpu {
         }
     }
 
+    /// Let go of the textures of pictures the cache let go of (no window
+    /// shows them: picture.rs's sweep).
+    pub fn forget_textures(&self, ids: &[u64]) {
+        let mut cache = self.pictures.lock().unwrap_or_else(|e| e.into_inner());
+        for id in ids {
+            if let Some(v) = cache.views.remove(id) {
+                cache.bytes -= v.1;
+            }
+        }
+    }
+
     /// Stop showing the live picture `id`.
     pub fn forget_picture(&self, id: u64) {
         if let Ok(mut l) = self.live.lock() {

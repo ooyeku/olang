@@ -363,6 +363,13 @@ fn badge_picture(side: u32, play: bool) -> Arc<super::canvas::Picture> {
 
 const WHITE: Color = [255, 255, 255, 255];
 
+// A window gone: the pictures it showed are no longer shown by it.
+impl Drop for WinState {
+    fn drop(&mut self) {
+        super::picture::window_gone(self.id);
+    }
+}
+
 impl WinState {
     /// Make the window the key one (`on`) or not, as the platform says
     /// it with `window_focus`: the flag, a redraw, and the event — only
@@ -2630,8 +2637,11 @@ impl WinState {
         let mut rings = Vec::new();
         self.motion.begin();
         self.motion.wide = dl.wide.clone();
+        // the pictures this frame draws: what this window shows now
+        super::picture::frame_begin();
         self.paint(&root, 0.0, 0.0, full, 1.0, &mut ts, &mut dl, &mut rings);
         self.paint_ghosts(full, &mut ts, &mut dl, &mut rings);
+        super::picture::frame_end(self.id);
         self.motion.end();
         drop(ts);
         super::holds::since("list_text_held", held);

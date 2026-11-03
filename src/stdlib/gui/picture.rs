@@ -28,10 +28,21 @@
 //! modification time (a file written again is read again), or the
 //! content of Bytes. It keeps at most [`BUDGET`] bytes of pixels,
 //! dropping the least recently drawn.
+//!
+//! **What no window shows goes.** Each window's frame says the pictures
+//! it drew ([`frame_begin`], [`frame_end`]); a picture of Bytes that no
+//! window drew in its last frame is let go, but for the few drawn most
+//! recently ([`UNSHOWN_KEPT`], [`UNSHOWN_BYTES`]: a picture that comes
+//! back, a tab shown again, is not decoded again), and its texture with
+//! it. Bytes that change every frame (a live canvas's frames) would
+//! otherwise fill the budget with frames never drawn again (OL-409). A
+//! file's picture keeps the budget's rule alone: its path may be drawn
+//! again.
 
 use super::canvas::Picture;
 use super::values::Res;
 use crate::ast::Value;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -46,6 +57,10 @@ pub const MAX_SIDE: u32 = 8192;
 const MIN_BUCKET: u32 = 64;
 /// The bytes of pixels the cache keeps (stills and animations' frames).
 pub const BUDGET: usize = 384 << 20;
+/// The pictures of Bytes kept though no window shows them, the most
+/// recently drawn first, and the most bytes they may take together.
+pub const UNSHOWN_KEPT: usize = 8;
+pub const UNSHOWN_BYTES: usize = 64 << 20;
 /// The most bytes one animation's frames may take at the size it shows;
 /// past it the picture stands still.
 pub const ANIM_BYTES: usize = 48 << 20;
@@ -873,6 +888,8 @@ pub fn decode_anim(b: &[u8], info: Info, bucket: u32) -> Res<Option<Anim>> {
 struct Held {
     pic: Arc<Picture>,
     used: u64,
+    /// Decoded from Bytes (not a file): let go once no window shows it.
+    bytes: bool,
 }
 
 struct HeldAnim {
@@ -893,10 +910,12 @@ struct Cache {
     pending: HashMap<(u64, u32), HashSet<u64>>,
     /// Animations being decoded, with the windows to redraw.
     anim_pending: HashMap<(u64, u32), HashSet<u64>>,
+    /// The pictures (their ids) each window drew in its last frame.
+    shown: HashMap<u64, HashSet<u64>>,
 }
 
 impl Cache {
-    fn put(&mut self, key: (u64, u32), pic: Arc<Picture>) {
+    fn put(&mut self, key: (u64, u32), pic: Arc<Picture>, bytes: bool) {
         self.clock += 1;
         self.bytes += pic.rgba.len();
         if let Some(old) = self.pics.insert(
@@ -904,6 +923,7 @@ impl Cache {
             Held {
                 pic,
                 used: self.clock,
+                bytes,
             },
         ) {
             self.bytes -= old.pic.rgba.len();
@@ -924,6 +944,40 @@ impl Cache {
             self.bytes -= old.anim.map(|a| a.bytes).unwrap_or(0);
         }
         self.evict(None, Some(key));
+    }
+
+    /// Let go of the pictures of Bytes no window drew in its last frame,
+    /// but for the [`UNSHOWN_KEPT`] drawn most recently (within
+    /// [`UNSHOWN_BYTES`]). Answers the ids let go (their textures go too).
+    fn sweep(&mut self) -> Vec<u64> {
+        let shown: HashSet<u64> = self.shown.values().flatten().copied().collect();
+        let mut unshown: Vec<((u64, u32), u64, usize)> = self
+            .pics
+            .iter()
+            .filter(|(_, h)| h.bytes && !shown.contains(&h.pic.id))
+            .map(|(k, h)| (*k, h.used, h.pic.rgba.len()))
+            .collect();
+        if unshown.len() <= UNSHOWN_KEPT
+            && unshown.iter().map(|u| u.2).sum::<usize>() <= UNSHOWN_BYTES
+        {
+            return Vec::new();
+        }
+        unshown.sort_by(|a, b| b.1.cmp(&a.1));
+        let mut kept = 0;
+        let mut kept_bytes = 0;
+        let mut gone = Vec::new();
+        for (k, _, n) in unshown {
+            if kept < UNSHOWN_KEPT && kept_bytes + n <= UNSHOWN_BYTES {
+                kept += 1;
+                kept_bytes += n;
+                continue;
+            }
+            if let Some(h) = self.pics.remove(&k) {
+                self.bytes -= h.pic.rgba.len();
+                gone.push(h.pic.id);
+            }
+        }
+        gone
     }
 
     /// Drop the least recently drawn stills and animations until the
@@ -1053,7 +1107,7 @@ fn run_job(job: Job) {
     let mut waiting = HashSet::new();
     if let Ok(mut c) = cache().lock() {
         match r {
-            Ok((k, pic)) => c.put((job.id, k), Arc::new(pic)),
+            Ok((k, pic)) => c.put((job.id, k), Arc::new(pic), matches!(job.src, Source::Bytes(_))),
             Err(e) => {
                 c.infos.insert(job.id, Err(e));
             }
@@ -1110,6 +1164,7 @@ pub fn get(src: &Value, want: Want, window: Option<u64>) -> Res<Option<(Arc<Pict
             let now = c.clock;
             if let Some(h) = c.pics.get_mut(&(id, k)) {
                 h.used = now;
+                frame_saw(h.pic.id);
                 return Ok(Some((h.pic.clone(), info)));
             }
             if let Some(w) = window {
@@ -1160,9 +1215,72 @@ pub fn get(src: &Value, want: Want, window: Option<u64>) -> Res<Option<(Arc<Pict
     let k = bucket(info, want);
     let pic = Arc::new(make(&b, info, k)?);
     if let Ok(mut c) = cache().lock() {
-        c.put((id, k), pic.clone());
+        c.put((id, k), pic.clone(), matches!(sr, SrcRef::Bytes(_)));
     }
+    frame_saw(pic.id);
     Ok(Some((pic, info)))
+}
+
+thread_local! {
+    /// The pictures drawn in the frame this thread is making (a window's
+    /// `display_list`), `None` outside one.
+    static FRAME: RefCell<Option<HashSet<u64>>> = const { RefCell::new(None) };
+}
+
+fn frame_saw(id: u64) {
+    FRAME.with(|f| {
+        if let Some(s) = f.borrow_mut().as_mut() {
+            s.insert(id);
+        }
+    });
+}
+
+/// A window's frame begins: the pictures it draws are noted until
+/// [`frame_end`].
+pub fn frame_begin() {
+    FRAME.with(|f| *f.borrow_mut() = Some(HashSet::new()));
+}
+
+/// A window's frame is made: what it drew is what `window` shows now, and
+/// the pictures of Bytes no window shows are let go (with their textures).
+pub fn frame_end(window: u64) {
+    let Some(seen) = FRAME.with(|f| f.borrow_mut().take()) else {
+        return;
+    };
+    let gone = match cache().lock() {
+        Ok(mut c) => {
+            if c.shown.get(&window) == Some(&seen) {
+                return;
+            }
+            c.shown.insert(window, seen);
+            c.sweep()
+        }
+        Err(_) => return,
+    };
+    forget_textures(&gone);
+}
+
+/// A window is gone: what it showed is no longer shown.
+pub fn window_gone(window: u64) {
+    let gone = match cache().lock() {
+        Ok(mut c) => {
+            if c.shown.remove(&window).is_none() {
+                return;
+            }
+            c.sweep()
+        }
+        Err(_) => return,
+    };
+    forget_textures(&gone);
+}
+
+fn forget_textures(ids: &[u64]) {
+    if ids.is_empty() {
+        return;
+    }
+    if let Some(g) = super::gpu::current() {
+        g.forget_textures(ids);
+    }
 }
 
 /// The frames of `src`, an animated picture (its still already shown),
@@ -1210,6 +1328,15 @@ pub fn animation(src: &Value, info: Info, want: Want, window: Option<u64>) -> Op
     anim
 }
 
+/// The ids of the pictures the cache holds, for a test.
+#[cfg(test)]
+fn held_ids() -> HashSet<u64> {
+    cache()
+        .lock()
+        .map(|c| c.pics.values().map(|h| h.pic.id).collect())
+        .unwrap_or_default()
+}
+
 /// What the cache holds: `(pictures, bytes)`, for a test.
 pub fn held() -> (usize, usize) {
     cache()
@@ -1246,6 +1373,49 @@ mod tests {
                 .contains("more than a picture is read from")
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_frame_shown_in_place_of_another_lets_the_old_go() {
+        // a window no other test draws in
+        let w = u64::MAX - 409;
+        let frame = |n: usize| {
+            crate::stdlib::bytes::to_value(
+                format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="rgb({n},0,0)"/></svg>"#)
+                    .into_bytes(),
+            )
+        };
+        // every frame a new picture of Bytes, as a live canvas shows them
+        let mut ids = Vec::new();
+        let mut srcs = Vec::new();
+        for n in 0..20 {
+            let v = frame(n);
+            frame_begin();
+            let (p, _) = get(&v, None, None).unwrap().unwrap();
+            frame_end(w);
+            ids.push(p.id);
+            srcs.push(v);
+        }
+        let held = held_ids();
+        // the one shown stays; of those no window shows, at most the few
+        // drawn last are kept, and the oldest are gone
+        assert!(held.contains(&ids[19]));
+        let kept = ids[..19].iter().filter(|id| held.contains(id)).count();
+        assert!(kept <= UNSHOWN_KEPT, "{kept} kept");
+        for id in &ids[..19 - UNSHOWN_KEPT] {
+            assert!(!held.contains(id), "picture {id} is no longer shown and still held");
+        }
+        // the window gone: what it showed is let go too (once past the few kept)
+        window_gone(w);
+        for n in 20..20 + UNSHOWN_KEPT + 1 {
+            let v = frame(n);
+            frame_begin();
+            let _ = get(&v, None, None).unwrap();
+            frame_end(w + 1);
+            srcs.push(v);
+        }
+        window_gone(w + 1);
+        assert!(!held_ids().contains(&ids[19]));
     }
 
     #[test]
