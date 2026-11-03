@@ -1,45 +1,45 @@
 olang <version> — :help for help · quit or ^D to exit
 
 
-[1molang help[0m
+olang help
 
-  [36m:help <name>[0m     a function's documentation      [2m:help map, :help collections.heap.push[0m
-  [36m:help <module>[0m   a module's functions            [2m:help str, :help collections[0m
-  [36m:help <your fn>[0m  your own code's docs            [2m/// comments above a declaration appear here[0m
-  [36m:help list[0m       every function, grouped
-  [36m:help syntax[0m     language syntax reference
-  [36m:help examples[0m   worked examples                 [2m:help tutorials for guided ones[0m
-  [36m:help search <q>[0m find functions by keyword
+  :help <name>     a function's documentation      :help map, :help collections.heap.push
+  :help <module>   a module's functions            :help str, :help collections
+  :help <your fn>  your own code's docs            /// comments above a declaration appear here
+  :help list       every function, grouped
+  :help syntax     language syntax reference
+  :help examples   worked examples                 :help tutorials for guided ones
+  :help search <q> find functions by keyword
 
-[33mModules[0m [2m(:help <module> to open one)[0m
-  core       [36mstr col math json toml re dates time random crypto base64 bytes bigint[0m
-  system     [36mfs os proc http db chan task cell caps meta testing[0m
-  data       [36mods stats plot csv collections[0m
-  via use    [36mcli term ui viz dash colx mathx[0m
+Modules (:help <module> to open one)
+  core       str col math json toml re dates time random crypto base64 bytes bigint
+  system     fs os proc http db chan task cell caps meta testing
+  data       ods stats plot csv collections
+  via use    cli term ui viz dash colx mathx
 
-[33mREPL[0m
-  [36m:env[0m variables    [36m:type <expr>[0m a value's type    [36m:time <expr>[0m wall-clock an expression
-  [36m:history[0m this session    [36m:clear[0m screen or environment    [36m:cd :pwd :ls[0m filesystem
-  [36m:sh <cmd>[0m or [36m!<cmd>[0m shell    [36mTAB[0m completes    [36mit[0m holds the last printed result
+REPL
+  :env variables    :type <expr> a value's type    :time <expr> wall-clock an expression
+  :history this session    :clear screen or environment    :cd :pwd :ls filesystem
+  :sh <cmd> or !<cmd> shell    TAB completes    it holds the last printed result
 
-Anything without a leading colon is olang: [36muse collections { heap }[0m, [36mlet x = 1[0m, [36m1 + 1[0m.
+Anything without a leading colon is olang: use collections { heap }, let x = 1, 1 + 1.
 
 
-[1m═══ Function: [36mlen ═══[0m
+═══ Function: len ═══
 
-[33mDescription:[0m Returns the length of a list, string, or tuple
-[33mCategory:   [0m Collection
-[33mSyntax:     [0m [36mlen(collection)[0m
-[33mReturns:    [0m [32mInt[0m
+Description: Returns the length of a list, string, or tuple
+Category:    Collection
+Syntax:      len(collection)
+Returns:     Int
 
-[1mParameters:[0m
+Parameters:
   • collection: List[T] | String | Tuple - The collection to measure
 
-[1mExamples:[0m
-  [32m>>[0m [36mlen([1, 2, 3, 4])  // 4[0m
-  [32m>>[0m [36mlen("hello")  // 5[0m
+Examples:
+  >> len([1, 2, 3, 4])  // 4
+  >> len("hello")  // 5
 
-[2mSee Also:[0m head, tail
+See Also: head, tail
 
 
 ═══ Module: str ═══
@@ -56,338 +56,338 @@ Anything without a leading colon is olang: [36muse collections { heap }[0m, [
     trim_start, width, words
 
   Try :help str.<fn> for a function's documentation.
-[1m=== olang Syntax Reference ===[0m
+=== olang Syntax Reference ===
 
-[32mVariables:[0m
+Variables:
   let name = "Alice"          // Immutable binding
   let mut age = 25             // Reassignable binding
   age = 26                     // Reassignment (requires `let mut`)
 
-[36mFunctions:[0m
+Functions:
   fn add(a, b) = a + b                       // One expression
   fn dist(a, b) = { let d = b - a  d * d }   // A block; last expression is the value
   fn label(n: Int) -> String = `#${n}`       // With type annotations
 
-[33mLambdas:[0m
+Lambdas:
   (x) => x * 2                 // Single parameter
   (a, b) => a + b              // Multiple parameters
   () => "Hello"                // No parameters
   let double = (x) => x * 2    // Bind one to a name
 
-[35mControl Flow:[0m
+Control Flow:
   if cond => value1 else => value2
   if cond => { ... } else => { ... }
   for item in list { ... }
   while cond { ... }
 
-[34mLists, Tuples, Ranges:[0m
+Lists, Tuples, Ranges:
   [1, 2, 3, 4]                 // List
   ("Alice", 25, true)          // Tuple
   1..10                        // Range (exclusive); 1..=10 inclusive
 
-[31mPipeline Operator:[0m
+Pipeline Operator:
   data |> map((x) => x * 2) |> filter((x) => x > 10) |> fold(0, (a, x) => a + x)
 
-[2mPattern Matching:[0m
+Pattern Matching:
   match value {
     Ok(result) => "Success: " + result,
     Err(error) => "Error: " + error
   }
 
-[32mType Annotations:[0m
+Type Annotations:
   let count: Int = 3
   fn process(items: List<Int>) -> Int = len(items)
 
-[35mStrings:[0m
+Strings:
   `hello ${name}`              // Template string with interpolation
 
-[36mComments:[0m
+Comments:
   // Single line comment
   /* Multi-line
      comment */
 
-[33mModules:[0m
+Modules:
   use collections { heap, table }   // import from a module
   share fn helper(x) = x + 1         // export from this module
 
-For function-specific syntax, use: [34m:help <function_name>[0m
+For function-specific syntax, use: :help <function_name>
 No help found for 'nosuchthing'. Try 'help search nosuchthing' for advanced search.
 Usage: :search <query> [filters]
 
-[36mAdvanced Search Options:[0m
-  [34mcategory:<name>[0m - Filter by category
-  [34mreturns:<type>[0m - Filter by return type
-  [34mlimit:<num>[0m - Limit number of results
+Advanced Search Options:
+  category:<name> - Filter by category
+  returns:<type> - Filter by return type
+  limit:<num> - Limit number of results
 
-[32mExamples:[0m
+Examples:
   :search map category:List
   :search returns:Bool
   :search transform limit:5
   :search "file operations"
-[1m=== Search Results (20 found) ===[0m
+=== Search Results (20 found) ===
 
-[2m1. FUZZY[0m [34mmap_clear[0m [2m(Maps)[0m
-   [32mAn empty value of the same kind (a map, an object, a parsed JSON object) — for a map, equivalent to #{}.[0m
-   [35mSyntax:[0m [36mmap_clear(map)[0m
+1. FUZZY map_clear (Maps)
+   An empty value of the same kind (a map, an object, a parsed JSON object) — for a map, equivalent to #{}.
+   Syntax: map_clear(map)
 
-[2m2. FUZZY[0m [34mmap_merge[0m [2m(Maps)[0m
-   [32mA new value of a's kind (a map, an object, a parsed JSON object) holding both's entries; where keys collide, b wins.[0m
-   [35mSyntax:[0m [36mmap_merge(a, b)[0m
+2. FUZZY map_merge (Maps)
+   A new value of a's kind (a map, an object, a parsed JSON object) holding both's entries; where keys collide, b wins.
+   Syntax: map_merge(a, b)
 
-[2m3. FUZZY[0m [34mmap_remove[0m [2m(Maps)[0m
-   [32mA new map without key; removing an absent key returns an equal map.[0m
-   [35mSyntax:[0m [36mmap_remove(map, key)[0m
+3. FUZZY map_remove (Maps)
+   A new map without key; removing an absent key returns an equal map.
+   Syntax: map_remove(map, key)
 
-[2m4. FUZZY[0m [34mmap_set[0m [2m(Maps)[0m
-   [32mA new map with key bound to value; the original is unchanged, like every                  olang value.[0m
-   [35mSyntax:[0m [36mmap_set(map, key, value)[0m
+4. FUZZY map_set (Maps)
+   A new map with key bound to value; the original is unchanged, like every                  olang value.
+   Syntax: map_set(map, key, value)
 
-[2m5. FUZZY[0m [34mmap_set_in[0m [2m(Maps)[0m
-   [32mA copy with the value at the end of the key path set: each level a new value of its own kind, a missing level a new map. A level nothing else holds is written in place, as map_set's sole-owner write.[0m
-   [35mSyntax:[0m [36mmap_set_in(value, keys, v)[0m
+5. FUZZY map_set_in (Maps)
+   A copy with the value at the end of the key path set: each level a new value of its own kind, a missing level a new map. A level nothing else holds is written in place, as map_set's sole-owner write.
+   Syntax: map_set_in(value, keys, v)
 
-[2m6. FUZZY[0m [34mmap_update[0m [2m(Maps)[0m
-   [32mA copy with key set to f(the old value) — f is given Unit for an absent key. The old value is moved into f when nothing else holds the map.[0m
-   [35mSyntax:[0m [36mmap_update(value, key, f)[0m
+6. FUZZY map_update (Maps)
+   A copy with key set to f(the old value) — f is given Unit for an absent key. The old value is moved into f when nothing else holds the map.
+   Syntax: map_update(value, key, f)
 
-[2m7. FUZZY[0m [34mmap_get[0m [2m(Maps)[0m
-   [32mThe value under key, or Unit () when the key is absent — a missing key is                  not an error. Reads maps, structs, objects, and parsed JSON uniformly.[0m
-   [35mSyntax:[0m [36mmap_get(map, key)[0m
+7. FUZZY map_get (Maps)
+   The value under key, or Unit () when the key is absent — a missing key is                  not an error. Reads maps, structs, objects, and parsed JSON uniformly.
+   Syntax: map_get(map, key)
 
-[2m8. FUZZY[0m [34mmap_get_in[0m [2m(Maps)[0m
-   [32mThe value at the end of a key path, or Unit at the first missing hop — map_set_in's reading half.[0m
-   [35mSyntax:[0m [36mmap_get_in(value, keys)[0m
+8. FUZZY map_get_in (Maps)
+   The value at the end of a key path, or Unit at the first missing hop — map_set_in's reading half.
+   Syntax: map_get_in(value, keys)
 
-[2m9. FUZZY[0m [34mmap_get_or[0m [2m(Maps)[0m
-   [32mThe value under key, or the default when the key is absent — the one-call form of the missing-key-with-default idiom (map_get returns Unit for absence, which unwrap_or cannot take).[0m
-   [35mSyntax:[0m [36mmap_get_or(map, key, default)[0m
+9. FUZZY map_get_or (Maps)
+   The value under key, or the default when the key is absent — the one-call form of the missing-key-with-default idiom (map_get returns Unit for absence, which unwrap_or cannot take).
+   Syntax: map_get_or(map, key, default)
 
-[2m10. FUZZY[0m [34mmap_keys[0m [2m(Maps)[0m
-   [32mEvery key, in the map's order (each where it was first set) — the order entries uses.[0m
-   [35mSyntax:[0m [36mmap_keys(map)[0m
+10. FUZZY map_keys (Maps)
+   Every key, in the map's order (each where it was first set) — the order entries uses.
+   Syntax: map_keys(map)
 
-[2m11. FUZZY[0m [34mmap_values[0m [2m(Maps)[0m
-   [32mEvery value, in the order map_keys reports.[0m
-   [35mSyntax:[0m [36mmap_values(map)[0m
+11. FUZZY map_values (Maps)
+   Every value, in the order map_keys reports.
+   Syntax: map_values(map)
 
-[2m12. FUZZY[0m [34mpar_map[0m [2m(List)[0m
-   [32mmap fanned out across OS threads: same results in the same order, one worker interpreter per thread (no GIL). The function runs against worker snapshots like spawn, so mutations to enclosing state are not visible to the caller[0m
-   [35mSyntax:[0m [36mpar_map(list, function)[0m
+12. FUZZY par_map (List)
+   map fanned out across OS threads: same results in the same order, one worker interpreter per thread (no GIL). The function runs against worker snapshots like spawn, so mutations to enclosing state are not visible to the caller
+   Syntax: par_map(list, function)
 
-[2m13. FUZZY[0m [34mcol.flat_map[0m [2m(Collections)[0m
-   [32mMap then flatten one level.[0m
-   [35mSyntax:[0m [36mcol.flat_map(list, fn)[0m
+13. FUZZY col.flat_map (Collections)
+   Map then flatten one level.
+   Syntax: col.flat_map(list, fn)
 
-[2m14. FUZZY[0m [34mcolx.flat_map[0m [2m(colx)[0m
-   [32mmap f over xs and concatenate the resulting lists[0m
-   [35mSyntax:[0m [36mcolx.flat_map(xs, f)[0m
+14. FUZZY colx.flat_map (colx)
+   map f over xs and concatenate the resulting lists
+   Syntax: colx.flat_map(xs, f)
 
-[2m15. FUZZY[0m [34mmap_filtered[0m [2m(Higher-Order)[0m
-   [32mFilter then map in one pass: function applied to each element the                  predicate accepts.[0m
-   [35mSyntax:[0m [36mmap_filtered(list, predicate, function)[0m
+15. FUZZY map_filtered (Higher-Order)
+   Filter then map in one pass: function applied to each element the                  predicate accepts.
+   Syntax: map_filtered(list, predicate, function)
 
-[2m16. FUZZY[0m [34mplot.heatmap[0m [2m(plot)[0m
-   [32ma heatmap of the row-major value grid, as an SVG string[0m
-   [35mSyntax:[0m [36mplot.heatmap(x_labels, y_labels, rows, title:, x_label:, y_label:, width:, height:, theme:, paper:, ink:, responsive:, interactive:, colors:, vary:, scale:, font_size:, font:)[0m
+16. FUZZY plot.heatmap (plot)
+   a heatmap of the row-major value grid, as an SVG string
+   Syntax: plot.heatmap(x_labels, y_labels, rows, title:, x_label:, y_label:, width:, height:, theme:, paper:, ink:, responsive:, interactive:, colors:, vary:, scale:, font_size:, font:)
 
-[2m17. FUZZY[0m [34mmap_has_key[0m [2m(Maps)[0m
-   [32mWhether key is present — the way to tell an absent key from one stored                  with a Unit value.[0m
-   [35mSyntax:[0m [36mmap_has_key(map, key)[0m
+17. FUZZY map_has_key (Maps)
+   Whether key is present — the way to tell an absent key from one stored                  with a Unit value.
+   Syntax: map_has_key(map, key)
 
-[2m18. FUZZY[0m [34mmap_len[0m [2m(Maps)[0m
-   [32mThe number of entries (an object's or a parsed JSON object's fields).[0m
-   [35mSyntax:[0m [36mmap_len(map)[0m
+18. FUZZY map_len (Maps)
+   The number of entries (an object's or a parsed JSON object's fields).
+   Syntax: map_len(map)
 
-[2m19. EXACT[0m [34mmap[0m [2m(List)[0m
-   [32mApplies a function to each element in a list, returning a new list[0m
-   [35mSyntax:[0m [36mmap(list, function)[0m
+19. EXACT map (List)
+   Applies a function to each element in a list, returning a new list
+   Syntax: map(list, function)
 
-[2m20. FUZZY[0m [34mresult_map[0m [2m(Result)[0m
-   [32mTransform the Ok value of a Result using a function, leaving Err values unchanged[0m
-   [35mSyntax:[0m [36mresult_map(result, function)[0m
+20. FUZZY result_map (Result)
+   Transform the Ok value of a Result using a function, leaving Err values unchanged
+   Syntax: result_map(result, function)
 
-[2mTIP: Use ':help <function>' for detailed documentation[0m
+TIP: Use ':help <function>' for detailed documentation
 
-[33mNo functions found matching your search.[0m
+No functions found matching your search.
 
-[36mSearch Tips:[0m
+Search Tips:
   • Try broader terms: 'list' instead of 'list_operations'
   • Use category filters: 'category:List map'
   • Use return type filters: 'returns:List filter'
   • Use fuzzy search: 'lst' will match 'list' functions
   • Search in descriptions: 'transform' finds map, filter, etc.
-[1m=== Search Results (4 found) ===[0m
+=== Search Results (4 found) ===
 
-[2m1. DESC[0m [34mdom.storage_get[0m [2m(dom)[0m
-   [32mRead a localStorage value (missing keys read as "").[0m
-   [33mMatch:[0m Read a localStorage value (missing keys read as "").
-   [35mSyntax:[0m [36mdom.storage_get(k)[0m
+1. DESC dom.storage_get (dom)
+   Read a localStorage value (missing keys read as "").
+   Match: Read a localStorage value (missing keys read as "").
+   Syntax: dom.storage_get(k)
 
-[2m2. DESC[0m [34mdom.storage_remove[0m [2m(dom)[0m
-   [32mRemove a localStorage key.[0m
-   [33mMatch:[0m Remove a localStorage key.
-   [35mSyntax:[0m [36mdom.storage_remove(k)[0m
+2. DESC dom.storage_remove (dom)
+   Remove a localStorage key.
+   Match: Remove a localStorage key.
+   Syntax: dom.storage_remove(k)
 
-[2m3. DESC[0m [34mdom.storage_set[0m [2m(dom)[0m
-   [32mWrite a localStorage value. Answers false when the browser refused it (a full quota, storage disabled) instead of raising.[0m
-   [33mMatch:[0m Write a localStorage value. Answers false when the browser refused it (a full quota, storage disabled) instead of raising.
-   [35mSyntax:[0m [36mdom.storage_set(k, v)[0m
+3. DESC dom.storage_set (dom)
+   Write a localStorage value. Answers false when the browser refused it (a full quota, storage disabled) instead of raising.
+   Match: Write a localStorage value. Answers false when the browser refused it (a full quota, storage disabled) instead of raising.
+   Syntax: dom.storage_set(k, v)
 
-[2m4. FUZZY[0m [34mlast[0m [2m(List)[0m
-   [32mThe last element of a list, or () when it is empty (a negative index raises)[0m
-   [35mSyntax:[0m [36mlast(list)[0m
+4. FUZZY last (List)
+   The last element of a list, or () when it is empty (a negative index raises)
+   Syntax: last(list)
 
-[2mTIP: Use ':help <function>' for detailed documentation[0m
+TIP: Use ':help <function>' for detailed documentation
 
-[1m=== Interactive Tutorials ===[0m
+=== Interactive Tutorials ===
 
-[34mTUTORIAL: basic_operations[0m [32m([1mBeginner[0m)[0m
-   [2mLearn basic olang operations and syntax[0m
-   [2mTIME: 5 minutes • 3 steps[0m
+TUTORIAL: basic_operations (Beginner)
+   Learn basic olang operations and syntax
+   TIME: 5 minutes • 3 steps
 
-[34mTUTORIAL: file_handling[0m [33m([1mIntermediate[0m)[0m
-   [2mWorking with files and directories[0m
-   [2mTIME: 8 minutes • 3 steps[0m
-   [2mPrerequisites: basic_operations[0m
+TUTORIAL: file_handling (Intermediate)
+   Working with files and directories
+   TIME: 8 minutes • 3 steps
+   Prerequisites: basic_operations
 
-[34mTUTORIAL: list_operations[0m [33m([1mIntermediate[0m)[0m
-   [2mMaster list operations and functional programming[0m
-   [2mTIME: 10 minutes • 4 steps[0m
-   [2mPrerequisites: basic_operations[0m
+TUTORIAL: list_operations (Intermediate)
+   Master list operations and functional programming
+   TIME: 10 minutes • 4 steps
+   Prerequisites: basic_operations
 
-[34mTUTORIAL: web_requests[0m [31m([1mAdvanced[0m)[0m
-   [2mMaking HTTP requests and handling responses[0m
-   [2mTIME: 12 minutes • 3 steps[0m
-   [2mPrerequisites: basic_operations, file_handling[0m
+TUTORIAL: web_requests (Advanced)
+   Making HTTP requests and handling responses
+   TIME: 12 minutes • 3 steps
+   Prerequisites: basic_operations, file_handling
 
-[2mTIP: Start a tutorial: :help tutorial <name>[0m
+TIP: Start a tutorial: :help tutorial <name>
 
-[1m=== Interactive Tutorials ===[0m
+=== Interactive Tutorials ===
 
-[34mTUTORIAL: basic_operations[0m [32m([1mBeginner[0m)[0m
-   [2mLearn basic olang operations and syntax[0m
-   [2mTIME: 5 minutes • 3 steps[0m
+TUTORIAL: basic_operations (Beginner)
+   Learn basic olang operations and syntax
+   TIME: 5 minutes • 3 steps
 
-[34mTUTORIAL: file_handling[0m [33m([1mIntermediate[0m)[0m
-   [2mWorking with files and directories[0m
-   [2mTIME: 8 minutes • 3 steps[0m
-   [2mPrerequisites: basic_operations[0m
+TUTORIAL: file_handling (Intermediate)
+   Working with files and directories
+   TIME: 8 minutes • 3 steps
+   Prerequisites: basic_operations
 
-[34mTUTORIAL: list_operations[0m [33m([1mIntermediate[0m)[0m
-   [2mMaster list operations and functional programming[0m
-   [2mTIME: 10 minutes • 4 steps[0m
-   [2mPrerequisites: basic_operations[0m
+TUTORIAL: list_operations (Intermediate)
+   Master list operations and functional programming
+   TIME: 10 minutes • 4 steps
+   Prerequisites: basic_operations
 
-[34mTUTORIAL: web_requests[0m [31m([1mAdvanced[0m)[0m
-   [2mMaking HTTP requests and handling responses[0m
-   [2mTIME: 12 minutes • 3 steps[0m
-   [2mPrerequisites: basic_operations, file_handling[0m
+TUTORIAL: web_requests (Advanced)
+   Making HTTP requests and handling responses
+   TIME: 12 minutes • 3 steps
+   Prerequisites: basic_operations, file_handling
 
-[2mTIP: Start a tutorial: :help tutorial <name>[0m
+TIP: Start a tutorial: :help tutorial <name>
 
-[1m=== Tutorial: basic_operations ===[0m
+=== Tutorial: basic_operations ===
 
-[32mLearn basic olang operations and syntax[0m
-[33mDifficulty:[0m Beginner
-[33mEstimated Time:[0m 5 minutes
+Learn basic olang operations and syntax
+Difficulty: Beginner
+Estimated Time: 5 minutes
 
-[36mStep 1: Basic Arithmetic[0m
-[2mLet's start with simple arithmetic operations[0m
+Step 1: Basic Arithmetic
+Let's start with simple arithmetic operations
 
-[35mCode to try:[0m
-[34m2 + 3 * 4
-[0m
+Code to try:
+2 + 3 * 4
 
-[32mExpected Output:[0m
-[32m14
-[0m
 
-[33mExplanation:[0m
-[2molang follows standard operator precedence: multiplication before addition[0m
+Expected Output:
+14
 
-[36mHINTS:[0m
-   • [2mUse parentheses to change precedence: (2 + 3) * 4[0m
+
+Explanation:
+olang follows standard operator precedence: multiplication before addition
+
+HINTS:
+   • Use parentheses to change precedence: (2 + 3) * 4
 
 ---
 
-[36mStep 2: Variables[0m
-[2mCreating and using variables[0m
+Step 2: Variables
+Creating and using variables
 
-[35mCode to try:[0m
-[34mlet name = "Alice"
+Code to try:
+let name = "Alice"
 let age = 25
 println(name + " is " + age + " years old")
-[0m
 
-[32mExpected Output:[0m
-[32mAlice is 25 years old
-[0m
 
-[33mExplanation:[0m
-[2mVariables are created with 'let' and can be reassigned[0m
+Expected Output:
+Alice is 25 years old
 
-[36mHINTS:[0m
-   • [2mUse to_string() to convert numbers to strings if needed[0m
+
+Explanation:
+Variables are created with 'let' and can be reassigned
+
+HINTS:
+   • Use to_string() to convert numbers to strings if needed
 
 ---
 
-[36mStep 3: Functions[0m
-[2mDefining and calling functions[0m
+Step 3: Functions
+Defining and calling functions
 
-[35mCode to try:[0m
-[34mfn greet(name) = "Hello, " + name + "!"
+Code to try:
+fn greet(name) = "Hello, " + name + "!"
 greet("World")
-[0m
 
-[32mExpected Output:[0m
-[32mHello, World!
-[0m
 
-[33mExplanation:[0m
-[2mFunctions are defined with 'fn' and can have parameters[0m
+Expected Output:
+Hello, World!
 
-[36mHINTS:[0m
-   • [2mUse => for multi-line functions: fn name() => { ... }[0m
+
+Explanation:
+Functions are defined with 'fn' and can have parameters
+
+HINTS:
+   • Use => for multi-line functions: fn name() => { ... }
 
 ---
 
-[32mCONGRATULATIONS! You've completed the basic_operations tutorial![0m
+CONGRATULATIONS! You've completed the basic_operations tutorial!
 
 
-[36mInteractive Mode:[0m
+Interactive Mode:
   Would you like to try the tutorial interactively?
   Use ':tutorial_run basic_operations' to start interactive mode
 
-[1m=== Advanced Help Features ===[0m
+=== Advanced Help Features ===
 
-[36mAdvanced Search:[0m
-  [34m:search <query>[0m - Fuzzy search with relevance scoring
-  [34mhelp search <query>[0m - Same as :search
-  [32mcategory:<name>[0m - Filter by category
-  [32mreturns:<type>[0m - Filter by return type
-  [32mlimit:<num>[0m - Limit results
+Advanced Search:
+  :search <query> - Fuzzy search with relevance scoring
+  help search <query> - Same as :search
+  category:<name> - Filter by category
+  returns:<type> - Filter by return type
+  limit:<num> - Limit results
 
-[36mInteractive Tutorials:[0m
-  [34mhelp tutorials[0m - List all available tutorials
-  [34mhelp tutorial <name>[0m - View specific tutorial
-  [34m:tutorial <name>[0m - View tutorial with interactive options
-  [34m:tutorial_run <name>[0m - Start interactive tutorial mode
+Interactive Tutorials:
+  help tutorials - List all available tutorials
+  help tutorial <name> - View specific tutorial
+  :tutorial <name> - View tutorial with interactive options
+  :tutorial_run <name> - Start interactive tutorial mode
 
-[36mContext-Sensitive Help:[0m
-  [34m:contextual_help[0m - Get suggestions based on recent activity
-  [34mhelp contextual[0m - Same as :contextual_help
+Context-Sensitive Help:
+  :contextual_help - Get suggestions based on recent activity
+  help contextual - Same as :contextual_help
   Automatic suggestions based on:
     • Recent commands and patterns
     • Last error messages
     • Current variables and types
     • Working category context
 
-[36mExamples:[0m
-  [34m:examples <function>[0m - Interactive examples with execution
-  [34mhelp examples[0m - Examples for every category
+Examples:
+  :examples <function> - Interactive examples with execution
+  help examples - Examples for every category
   All examples are runnable and include explanations
 
-[36mSearch Result Types:[0m
+Search Result Types:
   Exact name matches (highest priority)
   Fuzzy name matches
   Description matches
@@ -395,15 +395,15 @@ greet("World")
   Example matches
   Parameter matches
   Signature matches
-[1m=== Contextual Help Suggestions ===[0m
+=== Contextual Help Suggestions ===
 
-[32mBased on your recent activity:[0m
+Based on your recent activity:
 
-[34m1. [0mTutorial: basic_operations - Learn olang fundamentals[0m
-[34m2. [0m:help examples - See practical examples[0m
-[34m3. [0m:help syntax - Language syntax reference[0m
+1. Tutorial: basic_operations - Learn olang fundamentals
+2. :help examples - See practical examples
+3. :help syntax - Language syntax reference
 
-[2mTIP: Type ':help <topic>' for detailed information[0m
+TIP: Type ':help <topic>' for detailed information
 
 unknown command :hlep — :help lists them. Statements need no colon: `use collections`, `let x = 1`
 unknown command :zzzzzzzz — :help lists them. Statements need no colon: `use collections`, `let x = 1`

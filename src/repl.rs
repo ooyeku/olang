@@ -749,6 +749,16 @@ impl Repl {
     }
 
     pub fn run(&mut self) -> Result<(), ReplError> {
+        // styled only where it renders, as everywhere else in olang
+        // (os.color_enabled): CLICOLOR_FORCE, or a terminal without NO_COLOR
+        // (OL-348: `:help` piped or with NO_COLOR wrote escapes)
+        if !repl_color_on(
+            std::env::var_os("CLICOLOR_FORCE").is_some(),
+            std::env::var_os("NO_COLOR").is_some(),
+            std::io::IsTerminal::is_terminal(&std::io::stdout()),
+        ) {
+            colored::control::set_override(false);
+        }
         println!(
             "{} {} — {} for help · {} or ^D to exit",
             "olang".bold(),
@@ -4626,8 +4636,22 @@ fn color_value(value: &Value) -> String {
     }
 }
 
+/// Whether the REPL styles its output: `CLICOLOR_FORCE` set, or standard
+/// output a terminal with `NO_COLOR` unset.
+fn repl_color_on(force: bool, no_color: bool, tty: bool) -> bool {
+    force || (tty && !no_color)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_repl_styles_only_where_it_renders() {
+        assert!(super::repl_color_on(false, false, true));
+        assert!(!super::repl_color_on(false, true, true));
+        assert!(!super::repl_color_on(false, false, false));
+        assert!(super::repl_color_on(true, true, false));
+    }
+
     use super::*;
     use rustyline::history::DefaultHistory;
 

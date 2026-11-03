@@ -4,19 +4,35 @@
 use std::collections::HashMap;
 use std::fmt;
 
-/// Color codes for terminal output
+/// Color codes for terminal output: each written only where colour
+/// renders (`colored`'s decision, which the REPL sets from the terminal,
+/// `NO_COLOR` and `CLICOLOR_FORCE`: OL-348), else nothing.
 pub struct Colors;
 
+/// One terminal style's escape, written only while colour is on.
+#[derive(Clone, Copy)]
+pub struct Ansi(pub &'static str);
+
+impl fmt::Display for Ansi {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if colored::control::SHOULD_COLORIZE.should_colorize() {
+            f.write_str(self.0)
+        } else {
+            Ok(())
+        }
+    }
+}
+
 impl Colors {
-    pub const RESET: &'static str = "\x1b[0m";
-    pub const BOLD: &'static str = "\x1b[1m";
-    pub const BLUE: &'static str = "\x1b[34m";
-    pub const GREEN: &'static str = "\x1b[32m";
-    pub const YELLOW: &'static str = "\x1b[33m";
-    pub const CYAN: &'static str = "\x1b[36m";
-    pub const MAGENTA: &'static str = "\x1b[35m";
-    pub const RED: &'static str = "\x1b[31m";
-    pub const DIM: &'static str = "\x1b[2m";
+    pub const RESET: Ansi = Ansi("\x1b[0m");
+    pub const BOLD: Ansi = Ansi("\x1b[1m");
+    pub const BLUE: Ansi = Ansi("\x1b[34m");
+    pub const GREEN: Ansi = Ansi("\x1b[32m");
+    pub const YELLOW: Ansi = Ansi("\x1b[33m");
+    pub const CYAN: Ansi = Ansi("\x1b[36m");
+    pub const MAGENTA: Ansi = Ansi("\x1b[35m");
+    pub const RED: Ansi = Ansi("\x1b[31m");
+    pub const DIM: Ansi = Ansi("\x1b[2m");
 }
 
 /// Search result with relevance scoring
