@@ -677,12 +677,9 @@ fn zip_with(args: Vec<Value>, interpreter: &mut Interpreter) -> Result<Value, In
     Ok(Value::List(out.into()))
 }
 
+/// The list's final element, `()` when it is empty: as the global
+/// `last` answers (OL-381: this raised).
 fn last(args: Vec<Value>) -> Result<Value, InterpreterError> {
     let list = list_arg(&args, 0, "last")?;
-    match list.last() {
-        Some(v) => Ok(v.clone()),
-        None => Err(InterpreterError::RuntimeError {
-            message: "col.last: empty list".to_string(),
-        }),
-    }
+    Ok(list.last().cloned().unwrap_or(Value::Unit))
 }

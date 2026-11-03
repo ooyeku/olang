@@ -137,6 +137,9 @@ fn frequencies_agrees() {
 fn last_agrees() {
     assert_agrees("last([5, 6, 7])", "col.last([5, 6, 7])");
     assert_agrees("last([42])", "col.last([42])");
+    // OL-381: empty is `()` on both sides, as the global `last` answers
+    assert_agrees("last([])", "col.last([])");
+    assert_eq!(eval("col.last([])"), Value::Unit);
 }
 
 #[test]

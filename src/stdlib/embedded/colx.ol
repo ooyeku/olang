@@ -67,8 +67,8 @@ share fn flat_map(xs, f) = xs |> fold([], (acc, x) => {
 // Count occurrences of each distinct value (count_by with identity).
 share fn frequencies(xs) = count_by(xs, (x) => x)
 
-// The last element (errors on an empty list, like indexing past the end).
-share fn last(xs) = xs[len(xs) - 1]
+// The last element, `()` when the list is empty (as the global `last`).
+share fn last(xs) = if len(xs) == 0 => () else => xs[len(xs) - 1]
 
 // The element with the smallest key; ties keep the first seen.
 share fn min_by(xs, key_fn) = xs |> fold(head(xs), (best, x) =>
