@@ -1887,13 +1887,7 @@ fn document_symbols(text: &str) -> Vec<lsp_types::DocumentSymbol> {
         )
     };
     for (name, detail, span) in declarations(text) {
-        let kind = if detail.starts_with("fn ") || detail.starts_with("meta fn ") {
-            lsp_types::SymbolKind::FUNCTION
-        } else if detail.starts_with("type ") {
-            lsp_types::SymbolKind::STRUCT
-        } else {
-            lsp_types::SymbolKind::VARIABLE
-        };
+        let kind = symbol_kind(&detail);
         let (line, col) = (span.0.saturating_sub(1), span.1.saturating_sub(1) as usize);
         push(
             name.clone(),
@@ -2530,13 +2524,7 @@ fn workspace_symbols(
             if !q.is_empty() && !name.to_lowercase().contains(&q) {
                 continue;
             }
-            let kind = if detail.contains("fn ") {
-                lsp_types::SymbolKind::FUNCTION
-            } else if detail.starts_with("type") || detail.contains("type ") {
-                lsp_types::SymbolKind::STRUCT
-            } else {
-                lsp_types::SymbolKind::VARIABLE
-            };
+            let kind = symbol_kind(&detail);
             #[allow(deprecated)]
             out.push(lsp_types::SymbolInformation {
                 name: name.clone(),
@@ -3187,4 +3175,33 @@ fn format_edits(text: &str) -> Vec<TextEdit> {
         ),
         new_text: formatted,
     }]
+}
+
+/// A declaration's symbol kind from its detail (`fn f(a)`, `share fn f(a)`,
+/// `type T`, `let x`): the word after `share ` decides (OL-332: every
+/// `share fn` came back VARIABLE).
+fn symbol_kind(detail: &str) -> lsp_types::SymbolKind {
+    let d = detail.strip_prefix("share ").unwrap_or(detail);
+    if d.starts_with("fn ") || d.starts_with("meta fn ") {
+        lsp_types::SymbolKind::FUNCTION
+    } else if d.starts_with("type ") {
+        lsp_types::SymbolKind::STRUCT
+    } else {
+        lsp_types::SymbolKind::VARIABLE
+    }
+}
+
+#[cfg(test)]
+mod symbol_kind_tests {
+    use lsp_types::SymbolKind;
+
+    #[test]
+    fn a_shared_declaration_has_its_own_kind() {
+        assert_eq!(super::symbol_kind("share fn up_vcmp(a, b)"), SymbolKind::FUNCTION);
+        assert_eq!(super::symbol_kind("fn f(a)"), SymbolKind::FUNCTION);
+        assert_eq!(super::symbol_kind("share meta fn m(x)"), SymbolKind::FUNCTION);
+        assert_eq!(super::symbol_kind("share type Point"), SymbolKind::STRUCT);
+        assert_eq!(super::symbol_kind("share let LIMIT"), SymbolKind::VARIABLE);
+        assert_eq!(super::symbol_kind("let x"), SymbolKind::VARIABLE);
+    }
 }
