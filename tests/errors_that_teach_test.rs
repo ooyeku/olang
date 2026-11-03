@@ -188,3 +188,14 @@ fn assertion_failures_show_olang_values() {
     assert!(e.contains("#{\"k\": 1} == #{\"k\": 1}"), "got: {e}");
     assert!(!e.contains("Integer("), "got: {e}");
 }
+
+// ── OL-388: an unclosed `${` in a template says where ───────────────
+#[test]
+fn an_unclosed_interpolation_has_a_place() {
+    let e = Parser::new()
+        .parse("let a = 1\nlet s = `a ${1 + 2`\n")
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("Unclosed template interpolation"), "got: {e}");
+    assert!(e.contains("line 2"), "got: {e}");
+}
