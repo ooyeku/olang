@@ -157,7 +157,7 @@ fn audit(root: &Path) -> Vec<Finding> {
                 if m.dependencies.is_empty() {
                     out.push(ok("no olang.lock: no dependencies to pin"));
                 } else {
-                    out.push(ok("no olang.lock yet: written on the first run"));
+                    out.push(ok(no_lock_yet(&m)));
                 }
             }
             Ok(lock) => {
@@ -209,7 +209,7 @@ fn audit(root: &Path) -> Vec<Finding> {
                 if m.dependencies.is_empty() {
                     out.push(ok("no olang.lock: no dependencies to pin"));
                 } else {
-                    out.push(ok("no olang.lock yet: written on the first run"));
+                    out.push(ok(no_lock_yet(&m)));
                 }
             }
         }
@@ -289,4 +289,15 @@ fn walk(root: &Path, depth: usize) -> Vec<PathBuf> {
         }
     }
     out
+}
+
+/// A project with dependencies and no lock yet: when one is written. With
+/// `[package] lock = "never"` only an explicit `otc install` writes it
+/// (OL-396: it said "written on the first run", which that rules out).
+fn no_lock_yet(m: &crate::pkg::manifest::Manifest) -> &'static str {
+    if m.lock_never() {
+        "no olang.lock: lock = \"never\", so only `otc install` writes one"
+    } else {
+        "no olang.lock yet: written on the first run"
+    }
 }

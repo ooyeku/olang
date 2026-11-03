@@ -192,6 +192,25 @@ fn the_project_doctor_names_what_is_off() {
     }
 }
 
+// OL-396: with lock = "never" the doctor says only an install writes the lock
+#[test]
+fn the_doctor_knows_a_lock_that_is_never_written_by_a_run() {
+    let ws = workspace("doctor-never");
+    write(
+        &ws,
+        "app/olang.toml",
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\nlock = \"never\"\n\n[dependencies]\nshuttle = { path = \"../vendor/shuttle\" }\n",
+    );
+    write(
+        &ws,
+        "vendor/shuttle/olang.toml",
+        "[package]\nname = \"shuttle\"\nversion = \"0.1.0\"\n",
+    );
+    let (out, _, _) = olang(&ws.join("app"), &["doctor"]);
+    assert!(out.contains("lock = \"never\", so only `otc install` writes one"), "{out}");
+    assert!(!out.contains("written on the first run"), "{out}");
+}
+
 #[test]
 fn a_spawned_tasks_effects_record_and_replay_on_their_own_stream() {
     let ws = workspace("timeline");
