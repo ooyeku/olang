@@ -12255,8 +12255,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             return_type: "String".to_string(),
             examples: vec![
                 "crypto.md5(\"hello\")  // \"5d41402abc4b2a76b9719d911017c592\"".to_string(),
-                "crypto.md5(\"password123\")  // \"482c811da5d5b4bc6d497ffa98491e38\""
-                    .to_string(),
+                "crypto.md5(\"password123\")  // \"482c811da5d5b4bc6d497ffa98491e38\"".to_string(),
             ],
             category: "Crypto".to_string(),
             see_also: vec!["crypto.sha1".to_string(), "crypto.sha256".to_string()],
