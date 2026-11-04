@@ -306,3 +306,51 @@ pub(crate) fn timeout_ms_arg(v: &crate::ast::Value) -> Option<u64> {
         _ => None,
     }
 }
+
+/// A call with more arguments than `module.name` takes, said as stdlib.md
+/// rule 3 says it: `str.split expects at most 2 arguments, got 3`. `table`
+/// is the module's most arguments by function; a name it does not list
+/// is not checked here.
+pub(crate) fn too_many_args(
+    module: &str,
+    name: &str,
+    given: usize,
+    table: &[(&str, usize)],
+) -> Option<String> {
+    let most = table.iter().find(|(n, _)| *n == name)?.1;
+    (given > most).then(|| {
+        format!(
+            "{module}.{name} expects at most {most} argument{}, got {given}",
+            if most == 1 { "" } else { "s" }
+        )
+    })
+}
+
+#[cfg(test)]
+mod max_args_tests {
+    /// Each module's table says what its functions' help says: a
+    /// parameter the help lists is one a call may pass.
+    #[test]
+    fn help_and_max_args_agree() {
+        let help = crate::help::HelpSystem::new();
+        for (module, table) in [
+            ("str", super::string::MAX_ARGS),
+            ("re", super::regex_mod::MAX_ARGS),
+            ("col", super::collections::MAX_ARGS),
+        ] {
+            for (name, most) in table {
+                let Some(doc) = help.get_function(&format!("{module}.{name}")) else {
+                    continue;
+                };
+                let inner =
+                    &doc.syntax[doc.syntax.find('(').unwrap() + 1..doc.syntax.rfind(')').unwrap()];
+                let params = if inner.trim().is_empty() {
+                    0
+                } else {
+                    inner.split(',').count()
+                };
+                assert_eq!(params, *most, "{module}.{name}: help says {}", doc.syntax);
+            }
+        }
+    }
+}

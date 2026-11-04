@@ -97,10 +97,59 @@ fn create_builtin_function(name: &str, arity: usize) -> Value {
 }
 
 /// Dispatcher for `str` functions.
+/// The most arguments each function takes (stdlib.md rule 3: a call
+/// with more raises, rather than dropping them). Kept equal to the
+/// functions' help (`help_and_max_args_agree`, OL-334).
+pub(crate) const MAX_ARGS: &[(&str, usize)] = &[
+    ("to_upper", 1),
+    ("to_lower", 1),
+    ("trim", 1),
+    ("trim_start", 1),
+    ("trim_end", 1),
+    ("reverse", 1),
+    ("chars", 1),
+    ("graphemes", 1),
+    ("width", 1),
+    ("cell_width", 1),
+    ("lines", 1),
+    ("words", 1),
+    ("capitalize", 1),
+    ("is_empty", 1),
+    ("is_ascii", 1),
+    ("length", 1),
+    ("parse_int", 1),
+    ("parse_float", 1),
+    ("contains", 2),
+    ("starts_with", 2),
+    ("ends_with", 2),
+    ("split", 2),
+    ("index_of", 2),
+    ("last_index_of", 2),
+    ("repeat", 2),
+    ("count", 2),
+    ("fuzzy_score", 2),
+    ("char_at", 2),
+    ("char_code", 1),
+    ("from_char_code", 1),
+    ("replace", 3),
+    ("replace_first", 3),
+    ("substring", 3),
+    ("pad_start", 3),
+    ("pad_end", 3),
+    ("fixed", 2),
+    ("thousands", 2),
+    ("join", 2),
+    ("pct", 2),
+    ("money", 3),
+];
+
 pub fn call_string_function(
     name: &str,
     args: Vec<Value>,
 ) -> Result<Value, Box<dyn std::error::Error>> {
+    if let Some(e) = super::too_many_args("str", name, args.len(), MAX_ARGS) {
+        return Err(e.into());
+    }
     match name {
         "to_upper" => str_to_upper(args),
         "to_lower" => str_to_lower(args),

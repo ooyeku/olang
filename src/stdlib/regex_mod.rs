@@ -55,10 +55,28 @@ fn create_builtin_function(name: &str, arity: usize) -> Value {
 }
 
 /// Dispatcher for `re` functions.
+/// The most arguments each function takes (stdlib.md rule 3: a call
+/// with more raises, rather than dropping them). Kept equal to the
+/// functions' help (`help_and_max_args_agree`, OL-334).
+pub(crate) const MAX_ARGS: &[(&str, usize)] = &[
+    ("is_valid", 1),
+    ("is_match", 2),
+    ("find_spans", 2),
+    ("find", 2),
+    ("find_all", 2),
+    ("captures", 2),
+    ("split", 2),
+    ("replace", 3),
+    ("replace_first", 3),
+];
+
 pub fn call_regex_function(
     name: &str,
     args: Vec<Value>,
 ) -> Result<Value, Box<dyn std::error::Error>> {
+    if let Some(e) = super::too_many_args("re", name, args.len(), MAX_ARGS) {
+        return Err(e.into());
+    }
     match name {
         "is_valid" => re_is_valid(args),
         "is_match" => re_is_match(args),

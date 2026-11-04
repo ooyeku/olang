@@ -3474,24 +3474,19 @@ impl Checker {
                         ),
                     );
                 }
-                // str's functions of the text alone ignore a second
-                // argument: `str.trim_start(s, "/")` trims whitespace,
-                // not the "/" (OL-257)
-                if module == "str"
-                    && got > 1
-                    && crate::stdlib::string::UNARY.contains(&field.as_str())
+                // A call with more arguments than str's, re's or col's
+                // functions take raises (OL-334); it once dropped them,
+                // `str.trim_start(s, "/")` trimming whitespace (OL-257).
+                let table = match module.as_str() {
+                    "str" => Some(crate::stdlib::string::MAX_ARGS),
+                    "re" => Some(crate::stdlib::regex_mod::MAX_ARGS),
+                    "col" => Some(crate::stdlib::collections::MAX_ARGS),
+                    _ => None,
+                };
+                if let Some(message) =
+                    table.and_then(|t| crate::stdlib::too_many_args(module, field, got, t))
                 {
-                    self.warn(
-                        span,
-                        if got == 2 {
-                            format!("str.{field} takes one argument, the text: its second is ignored")
-                        } else {
-                            format!(
-                                "str.{field} takes one argument, the text: its other {} are ignored",
-                                got - 1
-                            )
-                        },
-                    );
+                    self.diag(span, true, message);
                 }
             }
             _ => {}

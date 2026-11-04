@@ -112,11 +112,42 @@ fn create_builtin_function(name: &str, arity: usize) -> Value {
 
 /// Dispatcher for `col` functions. Takes the interpreter so higher-order
 /// operations can call their function arguments.
+/// The most arguments each function takes (stdlib.md rule 3: a call
+/// with more raises, rather than dropping them). Kept equal to the
+/// functions' help (`help_and_max_args_agree`, OL-334).
+pub(crate) const MAX_ARGS: &[(&str, usize)] = &[
+    ("min_by", 2),
+    ("max_by", 2),
+    ("sort_by", 2),
+    ("count_by", 2),
+    ("frequencies", 1),
+    ("partition", 2),
+    ("flat_map", 2),
+    ("take_while", 2),
+    ("drop_while", 2),
+    ("all", 2),
+    ("any", 2),
+    ("sum_by", 2),
+    ("unique", 1),
+    ("window", 2),
+    ("zip_with", 3),
+    ("last", 1),
+    ("set", 3),
+    ("swap", 3),
+    ("filled", 2),
+    ("index_of", 2),
+    ("slice", 3),
+    ("splice", 4),
+];
+
 pub fn call_collections_function(
     name: &str,
     args: Vec<Value>,
     interpreter: &mut Interpreter,
 ) -> Result<Value, InterpreterError> {
+    if let Some(e) = super::too_many_args("col", name, args.len(), MAX_ARGS) {
+        return Err(InterpreterError::RuntimeError { message: e });
+    }
     match name {
         "min_by" => min_max_by(args, interpreter, false),
         "max_by" => min_max_by(args, interpreter, true),

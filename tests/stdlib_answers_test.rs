@@ -86,3 +86,44 @@ fn a_tree_kill_without_group_is_an_err() {
     assert!(out.starts_with("Err("), "{out}");
     assert!(out.contains("group: true"), "{out}");
 }
+
+// OL-334: str, re and col raise for an argument they would have dropped,
+// as every other module does, on the interpreter and in a function
+// (the bytecode tier)
+#[test]
+fn an_extra_argument_raises_instead_of_being_dropped() {
+    for (call, says) in [
+        (
+            "str.split(\"a,b,c\", \",\", 1)",
+            "str.split expects at most 2 arguments, got 3",
+        ),
+        (
+            "str.index_of(\"abcabc\", \"a\", 1)",
+            "str.index_of expects at most 2 arguments, got 3",
+        ),
+        (
+            "str.replace(\"aaa\", \"a\", \"b\", 1)",
+            "str.replace expects at most 3 arguments, got 4",
+        ),
+        (
+            "str.trim(\"xax\", \"x\")",
+            "str.trim expects at most 1 argument, got 2",
+        ),
+        (
+            "re.find(\"a\", \"a\", 1)",
+            "re.find expects at most 2 arguments, got 3",
+        ),
+        (
+            "col.unique([1], 2)",
+            "col.unique expects at most 1 argument, got 2",
+        ),
+    ] {
+        let out = show(&format!("attempt(() => {call})"));
+        assert!(out.contains(says), "{call}: {out}");
+        let out = show(&format!("fn f() = {call}\nattempt(() => f())"));
+        assert!(out.contains(says), "{call} in a function: {out}");
+    }
+    // what they take still works, and str.fmt takes any number
+    assert_eq!(show("str.split(\"a,b\", \",\")"), "[\"a\", \"b\"]");
+    assert_eq!(show("str.fmt(\"{} and {}\", 1, 2)"), "\"1 and 2\"");
+}
