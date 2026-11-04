@@ -125,9 +125,7 @@ fn dispatch_in(routes, req, log, hop, missing) = {
     let response = if hit.found => {
         let h = hit.handler
         let params = hit.params
-        // a raise on the hop is its Err; what the handler returned is as it is
-        let result = if hop => match task.join(spawn { h(req, params) }) { Ok(v) => v, Err(m) => Err(m) }
-            else => h(req, params)
+        let result = if hop => on_task(h, req, params) else => h(req, params)
         match result {
             Err(message) => error_response(500, "internal", show(message)),
             Ok(v) => if is_response(v) => v else => ok_data(v),
@@ -156,6 +154,12 @@ fn dispatch_in(routes, req, log, hop, missing) = {
     else => println(req.method + " " + req.path + " -> " + show(response.status) + " (" + show(ms) + "ms)")
     response
 }
+
+/// The handler on a task thread: a raise there is its Err; what the
+/// handler returned is as it is. Its own function, so `dispatch_in`
+/// holds no `spawn` (OL-419: there, an imported `find` would resolve to
+/// the builtin).
+fn on_task(h, req, params) = match task.join(spawn { h(req, params) }) { Ok(v) => v, Err(m) => Err(m) }
 
 fn under_test() = match os.get_env("OLANG_TEST") { Ok(v) => v != "", Err(e) => false }
 
