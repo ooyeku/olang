@@ -938,6 +938,16 @@ impl RichEditor {
         {
             return false;
         }
+        // A value the program made from an earlier revision, with keys
+        // typed since (Enter continuing a list, and a key before the
+        // program's answer): its change is made over what was typed, not
+        // in place of it (OL-187).
+        if let Some(r) = rev
+            && r < self.rev
+            && self.rebase(r, value, ts)
+        {
+            return true;
+        }
         let value: &str = value.as_str();
         // the change as one replacement: what both share at each end
         self.refresh(ts);
@@ -959,6 +969,63 @@ impl RichEditor {
         };
         self.anchor = map(a).min(new_len);
         self.focus = map(f).min(new_len);
+        self.snap_selection();
+        self.rev += 1;
+        self.remember();
+        true
+    }
+
+    /// The program's change to the value it saw at revision `r` (one
+    /// replacement), made over the field's own edits since, when the two
+    /// do not overlap. At one place the program's text comes first: a list
+    /// marker Enter asked for, then the keys typed after Enter. Answers
+    /// whether it was made; else the program's value is adopted whole.
+    fn rebase(&mut self, r: i64, value: &Arc<String>, ts: &mut TextSystem) -> bool {
+        let Some(base) = self
+            .sent
+            .iter()
+            .find(|(sr, _)| *sr == r)
+            .and_then(|(_, sv)| sv.upgrade())
+        else {
+            return false;
+        };
+        // what the program changed, and what was typed, both against `base`
+        let (pp, ps) = common_ends(&base, value);
+        let (prog_from, prog_to) = (pp, base.len() - ps);
+        let prog_text = value[pp..value.len() - ps].to_string();
+        let (lp, ls) = common_ends(&base, &self.buffer);
+        let (local_from, local_to) = (lp, base.len() - ls);
+        let local_len = self.buffer.len() - ls - lp;
+        let at = if prog_to <= local_from {
+            prog_from
+        } else if local_to <= prog_from {
+            prog_from + local_len - (local_to - local_from)
+        } else {
+            return false;
+        };
+        let end = at + (prog_to - prog_from);
+        if end > self.buffer.len()
+            || !self.buffer.is_char_boundary(at)
+            || !self.buffer.is_char_boundary(end)
+        {
+            return false;
+        }
+        self.refresh(ts);
+        let (a, f) = (self.anchor, self.focus);
+        self.replace(at, end, &prog_text, ts);
+        let grew = prog_text.len() as isize - (end - at) as isize;
+        // the caret after the change stays after it; one before stays put
+        let map = |x: usize| {
+            if x < at || (x == at && at != end) {
+                x
+            } else if x >= end {
+                (x as isize + grew) as usize
+            } else {
+                at + prog_text.len()
+            }
+        };
+        self.anchor = map(a).min(self.buffer.len());
+        self.focus = map(f).min(self.buffer.len());
         self.snap_selection();
         self.rev += 1;
         self.remember();
@@ -2589,5 +2656,58 @@ pub fn delta_of(old: &str, now: &str) -> Delta {
         at: old[..p].chars().count(),
         old_len: old[p..old_end].chars().count(),
         inserted: now[p..new_end].to_string(),
+    }
+}
+
+#[cfg(test)]
+mod rebase_tests {
+    use super::RichEditor;
+    use crate::stdlib::gui::text::{Font, system};
+    use std::sync::Arc;
+
+    /// Enter continuing a list, and a key typed before the program's
+    /// answer: the program's `- ` is made over the typed key, not in place
+    /// of it, and the caret stays after what was typed (OL-187).
+    #[test]
+    fn a_programs_edit_is_made_over_keys_typed_since() {
+        let mut ts = system().lock().unwrap();
+        let mut ed = RichEditor::new("", &Font::default(), Default::default());
+        ed.insert("- a", &mut ts);
+        ed.insert("\n", &mut ts);
+        // the value the program is told of, and answers from
+        let (seen_rev, seen) = (ed.rev, ed.value_arc());
+        assert_eq!(seen.as_str(), "- a\n");
+        // a key typed before the program's answer arrives
+        ed.insert("b", &mut ts);
+        let answer = Arc::new("- a\n- ".to_string());
+        assert!(ed.offer(&answer, Some(seen_rev), &mut ts));
+        assert_eq!(ed.value(), "- a\n- b");
+        assert_eq!(
+            ed.focus,
+            ed.value().len(),
+            "the caret stays after the typed key"
+        );
+        // its own earlier value is still not adopted
+        let (r, mine) = (ed.rev, ed.value_arc());
+        ed.insert("c", &mut ts);
+        assert!(!ed.offer(&mine, Some(r), &mut ts));
+        assert_eq!(ed.value(), "- a\n- bc");
+        drop(seen);
+    }
+
+    /// Where the program's change and the typed keys overlap, the
+    /// program's value is adopted, as before.
+    #[test]
+    fn an_overlapping_change_is_adopted_whole() {
+        let mut ts = system().lock().unwrap();
+        let mut ed = RichEditor::new("", &Font::default(), Default::default());
+        ed.insert("abc", &mut ts);
+        let (seen_rev, seen) = (ed.rev, ed.value_arc());
+        ed.select_all(&mut ts);
+        ed.insert("xyz", &mut ts);
+        let answer = Arc::new("aBc".to_string());
+        assert!(ed.offer(&answer, Some(seen_rev), &mut ts));
+        assert_eq!(ed.value(), "aBc");
+        drop(seen);
     }
 }
