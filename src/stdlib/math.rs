@@ -102,8 +102,13 @@ pub fn call_math_function(
     // `sinh` errors like an overflowing `*` does (language.md, "Floats").
     match call_math_function_inner(name, args)? {
         Value::Float(x) if !x.is_finite() => Err(format!(
-            "math.{}: the result is not a finite number (float overflow)",
-            name
+            "math.{}: the result is not a finite number ({})",
+            name,
+            if x.is_nan() {
+                "not a number: no real answer"
+            } else {
+                "float overflow"
+            }
         )
         .into()),
         other => Ok(other),

@@ -6818,6 +6818,14 @@ fn translate_body(
                         builder.inst_results(call)[0]
                     }
                 };
+                // A Float is never inf or NaN: |r| < inf is false for both,
+                // and the deopt re-runs the call where it raises (OL-333).
+                let abs = builder.ins().fabs(val);
+                let inf = builder.ins().f64const(f64::INFINITY);
+                let finite = builder.ins().fcmp(FloatCC::LessThan, abs, inf);
+                let ok_block = builder.create_block();
+                builder.ins().brif(finite, ok_block, &[], deopt_block, &[]);
+                builder.switch_to_block(ok_block);
                 r#gen.write(builder, dst.0, val);
             }
             Instruction::MakeTuple { dst, elements } => {

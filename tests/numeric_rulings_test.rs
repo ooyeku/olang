@@ -152,3 +152,54 @@ fn series_division_by_zero_still_raises() {
     assert_ne!(rc, 0, "{out}");
     assert!(out.contains("Division by zero"), "{out}");
 }
+
+/// A Float is never inf or NaN, on every tier: in a function (the bytecode
+/// tier) math.pow, exp, exp2, sinh and cosh raise as at the top level,
+/// rather than handing back inf or NaN (OL-333).
+#[test]
+fn math_overflow_raises_inside_a_function_too() {
+    let dir = std::env::temp_dir().join(format!("olang_ol333_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "fn p(x, y) = math.pow(x, y)\n\
+fn e(x) = math.exp(x)\n\
+fn e2(x) = math.exp2(x)\n\
+fn sh(x) = math.sinh(x)\n\
+fn ch(x) = math.cosh(x)\n\
+println(attempt(() => p(-8.0, 0.5)))\n\
+println(attempt(() => p(10.0, 400.0)))\n\
+println(attempt(() => e(1000.0)))\n\
+println(attempt(() => e2(2000.0)))\n\
+println(attempt(() => sh(1000.0)))\n\
+println(attempt(() => ch(1000.0)))\n\
+println(p(2.0, 0.5))\n\
+println(e(1.0))\n";
+    std::fs::write(dir.join("m.ol"), src).unwrap();
+    for flag in [None, Some("--no-ovm")] {
+        let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_olang"));
+        if let Some(f) = flag {
+            cmd.arg(f);
+        }
+        let out = cmd.arg("m.ol").current_dir(&dir).output().unwrap();
+        let text = String::from_utf8_lossy(&out.stdout).to_string();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 8, "{flag:?}: {text}");
+        assert!(
+            lines[0].contains("math.pow: the result is not a finite number (not a number"),
+            "{flag:?}: {text}"
+        );
+        for (line, name) in lines[1..6]
+            .iter()
+            .zip(["pow", "exp", "exp2", "sinh", "cosh"])
+        {
+            assert!(
+                line.contains(&format!(
+                    "math.{name}: the result is not a finite number (float overflow)"
+                )),
+                "{flag:?}: {text}"
+            );
+        }
+        assert_eq!(lines[6], "1.4142135623730951", "{flag:?}");
+        assert_eq!(lines[7], "2.718281828459045", "{flag:?}");
+    }
+}

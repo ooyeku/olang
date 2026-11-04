@@ -5684,14 +5684,19 @@ impl BytecodeVm {
                                 Ok(crate::ovm::value::ValueData::Integer(_))
                             )
                         });
-                    let result = if let Some(n) = whole {
-                        OvmValue::new_integer(n)
-                    } else if all_numeric
+                    // An answer that is not a finite number takes the module's
+                    // path too: a Float is never inf or NaN, and the module
+                    // raises (OL-333).
+                    let fast = (all_numeric
                         && !Self::float_math_whole(id)
                         && !int_pow
-                        && !Self::float_math_out_of_domain(id, nums[0])
-                    {
-                        OvmValue::new_float(Self::eval_float_math(id, nums[0], nums[1]))
+                        && !Self::float_math_out_of_domain(id, nums[0]))
+                    .then(|| Self::eval_float_math(id, nums[0], nums[1]))
+                    .filter(|x| x.is_finite());
+                    let result = if let Some(n) = whole {
+                        OvmValue::new_integer(n)
+                    } else if let Some(x) = fast {
+                        OvmValue::new_float(x)
                     } else {
                         let mut arg_values = Vec::with_capacity(args.len());
                         for arg_reg in args {
