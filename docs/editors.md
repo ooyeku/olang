@@ -22,7 +22,7 @@ Part of [the olang book](README.md) · [Command-line tooling](tooling.md)
 | Go to definition | jumps to the name's declaration — including into the module file that `share`s it |
 | Document outline | every `fn`, `meta fn`, `type`, top-level `let`, and `test` block, live while you type |
 | References / highlight | every place reading the binding the name under the cursor reads, as olang scopes it: a parameter, a lambda's, a loop's, a match arm's or a block's `let` that shadows an outer name is its own; a module's top-level name is one name wherever it is bound; a name bound nowhere in the file (a builtin, a module) by its spelling; by spelling too while the file does not parse |
-| Rename | those places; refuses keywords and standard-library names the file does not bind itself, with a reason |
+| Rename | those places; refuses, with a reason, to rename a keyword or a standard-library name the file does not bind itself, and to rename anything to a keyword, a standard-library name, or a name the file already uses (its references would be captured); `prepareRename` says what a rename at a place would rename |
 | Signature help | the signature and active parameter as you type a call — local functions and every registry entry alike |
 | Formatting | the `olang fmt` engine — AST-verified, whitespace-only |
 | Semantic tokens | names colored by what they bind (a parameter, a function, a module, a type), as olang scopes them |

@@ -227,7 +227,11 @@ pub fn run() -> Result<(), Box<dyn Error + Sync + Send>> {
         document_symbol_provider: Some(OneOf::Left(true)),
         references_provider: Some(OneOf::Left(true)),
         document_highlight_provider: Some(OneOf::Left(true)),
-        rename_provider: Some(OneOf::Left(true)),
+        // a client may ask first what a rename at a place would rename
+        rename_provider: Some(OneOf::Right(lsp_types::RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: Default::default(),
+        })),
         inlay_hint_provider: Some(OneOf::Left(true)),
         code_action_provider: Some(lsp_types::CodeActionProviderCapability::Simple(true)),
         workspace_symbol_provider: Some(OneOf::Left(true)),
@@ -606,6 +610,26 @@ fn handle_request(
                         .collect()
                 });
             respond(connection, id, &highlights)?;
+        }
+        lsp_types::request::PrepareRenameRequest::METHOD => {
+            let (id, params): (RequestId, lsp_types::TextDocumentPositionParams) =
+                req.extract(lsp_types::request::PrepareRenameRequest::METHOD)?;
+            let (text, _) = read_doc(docs, &params.text_document.uri);
+            match prepare_rename(&text, params.position) {
+                Ok(range) => respond(
+                    connection,
+                    id,
+                    &Some(lsp_types::PrepareRenameResponse::Range(range)),
+                )?,
+                Err(message) => {
+                    let resp = Response::new_err(
+                        id,
+                        lsp_server::ErrorCode::InvalidRequest as i32,
+                        message,
+                    );
+                    connection.sender.send(Message::Response(resp))?;
+                }
+            }
         }
         lsp_types::request::Rename::METHOD => {
             let (id, params): (RequestId, lsp_types::RenameParams) =
@@ -2073,7 +2097,7 @@ fn rename_in(
     if let Some(r) = resolved_at(text, nb, pos)
         && r.bound
     {
-        rename_checks(&r.name, None, new_name, true)?;
+        rename_checks(&r.name, None, new_name, true, text)?;
         let edits: Vec<TextEdit> = resolved_ranges(text, nb, &r)
             .into_iter()
             .map(|range| TextEdit {
@@ -2645,7 +2669,7 @@ fn rename(text: &str, pos: Position, new_name: &str) -> Result<Vec<TextEdit>, St
     let Some((word, qualified)) = word_at(text, pos) else {
         return Err("nothing to rename here".to_string());
     };
-    rename_checks(&word, qualified.as_deref(), new_name, false)?;
+    rename_checks(&word, qualified.as_deref(), new_name, false, text)?;
     let edits: Vec<TextEdit> = occurrences(text, &word)
         .into_iter()
         .map(|range| TextEdit {
@@ -2761,11 +2785,31 @@ fn rename_across_edits(
 /// Whether `word` may become `new_name`: never a keyword, never a
 /// standard-library name the program does not bind itself (`bound`), and
 /// the new name an identifier.
+/// What a rename at `pos` would rename (`textDocument/prepareRename`): the
+/// name's range there, or why there is nothing to rename.
+fn prepare_rename(text: &str, pos: Position) -> Result<lsp_types::Range, String> {
+    let Some((word, qualified)) = word_at(text, pos) else {
+        return Err("nothing to rename here".to_string());
+    };
+    if qualified.is_some() || KEYWORDS.contains(&word.as_str()) {
+        return Err(format!("'{word}' cannot be renamed"));
+    }
+    occurrences(text, &word)
+        .into_iter()
+        .find(|r| {
+            r.start.line == pos.line
+                && r.start.character <= pos.character
+                && pos.character <= r.end.character
+        })
+        .ok_or_else(|| "nothing to rename here".to_string())
+}
+
 fn rename_checks(
     word: &str,
     qualified: Option<&str>,
     new_name: &str,
     bound: bool,
+    text: &str,
 ) -> Result<(), String> {
     if qualified.is_some() || (!bound && help().get_function(word).is_some()) {
         return Err(format!(
@@ -2784,6 +2828,24 @@ fn rename_checks(
     if !valid {
         return Err(format!(
             "'{new_name}' is not a valid olang identifier (letter first, then letters, digits, _)"
+        ));
+    }
+    // The new name may not be one the language or the standard library
+    // gives, nor one the file already uses: every reference that sees it
+    // would read the renamed binding, or the program stop parsing
+    // (`let let = 10`, `fn g(y) = y + y`; OL-353).
+    if KEYWORDS.contains(&new_name) {
+        return Err(format!("'{new_name}' is a keyword"));
+    }
+    if crate::stdlib::get_stdlib().contains_key(new_name) || help().get_function(new_name).is_some()
+    {
+        return Err(format!(
+            "'{new_name}' is a standard-library name: renaming to it would shadow it"
+        ));
+    }
+    if new_name != word && !occurrences(text, new_name).is_empty() {
+        return Err(format!(
+            "'{new_name}' is already a name in this file: renaming '{word}' to it would capture it"
         ));
     }
     Ok(())

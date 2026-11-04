@@ -1109,7 +1109,8 @@ fn a_renamed_file_moves_its_document_and_rechecks_its_importers() {
     std::fs::create_dir_all(dir.join("lib")).unwrap();
     let dir = dir.canonicalize().unwrap();
     // the importer names the new name, with a call its function refuses:
-    // no problem while the module is not there, one once it is
+    // while the module is not there its one problem is the missing module
+    // (OL-354), and once it is, the call
     let main_text = "use lib.helpers { twice }\nprintln(twice(2, 3))\n";
     let util_text = "share fn twice(x) = x * 2\n";
     std::fs::write(dir.join("main.ol"), main_text).unwrap();
@@ -1140,7 +1141,18 @@ fn a_renamed_file_moves_its_document_and_rechecks_its_importers() {
             .filter(|d| d["severity"] == 1)
             .cloned()
             .collect();
-        assert!(errors.is_empty(), "{uri}: {errors:?}");
+        if *uri == main_uri {
+            assert!(
+                errors.len() == 1
+                    && errors[0]["message"]
+                        .as_str()
+                        .unwrap_or("")
+                        .contains("Cannot find module 'lib.helpers'"),
+                "{uri}: {errors:?}"
+            );
+        } else {
+            assert!(errors.is_empty(), "{uri}: {errors:?}");
+        }
     }
 
     // renamed on disk, then said
@@ -1168,8 +1180,12 @@ fn a_renamed_file_moves_its_document_and_rechecks_its_importers() {
     );
     let main = seen.get(&main_uri).expect("the importer re-checked");
     assert!(
-        main.iter().any(|d| d["severity"] == 1),
-        "the importer of the new name has a problem now: {main:?}"
+        main.iter().any(|d| d["severity"] == 1
+            && !d["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("Cannot find module")),
+        "the importer of the new name has the call's problem now: {main:?}"
     );
 
     // the document is answered under its new name
@@ -1180,18 +1196,22 @@ fn a_renamed_file_moves_its_document_and_rechecks_its_importers() {
     let m = c.recv_until(|m| m["id"] == 7);
     assert!(m["result"].to_string().contains("twice"), "{m}");
 
-    // the file deleted: said, and the importer re-checked (its problem gone)
+    // the file deleted: said, and the importer re-checked (the call's
+    // problem gone, the missing module's back)
     std::fs::remove_file(dir.join("lib/helpers.ol")).unwrap();
     c.send(&serde_json::json!({
         "jsonrpc":"2.0","method":"workspace/didDeleteFiles","params":{
             "files":[{"uri": new_uri}]}
     }));
     let m = c.recv_until(|m| diagnostics_of(m).is_some() && m["params"]["uri"] == main_uri);
+    let errors: Vec<String> = diagnostics_of(&m)
+        .unwrap()
+        .iter()
+        .filter(|d| d["severity"] == 1)
+        .map(|d| d["message"].as_str().unwrap_or("").to_string())
+        .collect();
     assert!(
-        !diagnostics_of(&m)
-            .unwrap()
-            .iter()
-            .any(|d| d["severity"] == 1),
+        errors.len() == 1 && errors[0].contains("Cannot find module 'lib.helpers'"),
         "{m}"
     );
     let _ = c.child.kill();
@@ -1538,7 +1558,9 @@ fn a_shadowed_name_is_its_own_in_references_and_a_rename() {
         "textDocument/rename",
         8,
         5,
-        serde_json::json!({ "newName": "sum" }),
+        // a name the standard library does not give (`sum` is a builtin:
+        // a rename to it is refused, OL-353)
+        serde_json::json!({ "newName": "grand" }),
     );
     assert_eq!(
         places(&r, &r["result"]["changes"][uri.as_str()]),
@@ -1952,5 +1974,82 @@ fn native_methods_and_names_complete() {
     c.send(&serde_json::json!({"jsonrpc":"2.0","method":"exit","params":null}));
     drop(c.stdin);
     assert!(c.child.wait().unwrap().success());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_rename_to_a_keyword_a_library_name_or_a_name_in_use_is_refused() {
+    // OL-353: every new name was accepted, `let let = 10` and a parameter
+    // renamed onto a global it then captured (`fn g(y) = y + y`).
+    let mut c = Client::start();
+    let dir = std::env::temp_dir().join(format!("olang-lsp-rename-to-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("cap.ol");
+    let uri = format!("file://{}", path.display());
+    let text = "let y = 10\nfn g(x) = x + y\nprintln(g(1))\n";
+    std::fs::write(&path, text).unwrap();
+    c.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {}, "rootUri": format!("file://{}", dir.display()) }
+    }));
+    let init = c.recv_until(|m| m["id"] == 1);
+    assert_eq!(
+        init["result"]["capabilities"]["renameProvider"]["prepareProvider"], true,
+        "{init}"
+    );
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+            "textDocument":{"uri":uri,"languageId":"olang","version":1,"text":text}}
+    }));
+    let mut id = 10;
+    let mut rename = |c: &mut Client, line: u32, character: u32, new_name: &str| {
+        id += 1;
+        c.send(&serde_json::json!({
+            "jsonrpc":"2.0","id":id,"method":"textDocument/rename","params":{
+                "textDocument":{"uri":uri},"position":{"line":line,"character":character},
+                "newName":new_name}
+        }));
+        let want = id;
+        c.recv_until(|m| m["id"] == want)
+    };
+    for (name, says) in [
+        ("let", "is a keyword"),
+        ("match", "is a keyword"),
+        ("str", "standard-library name"),
+        ("println", "standard-library name"),
+    ] {
+        let m = rename(&mut c, 0, 4, name);
+        assert!(
+            m["error"]["message"].as_str().unwrap_or("").contains(says),
+            "{name}: {m}"
+        );
+    }
+    // the parameter onto the global it reads: refused, not captured
+    let m = rename(&mut c, 1, 5, "y");
+    assert!(
+        m["error"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("already a name in this file"),
+        "{m}"
+    );
+    // a fresh name is renamed
+    let m = rename(&mut c, 0, 4, "limit");
+    assert!(m["result"]["changes"].is_object(), "{m}");
+    // prepareRename answers the name's range, and refuses a keyword
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":90,"method":"textDocument/prepareRename","params":{
+            "textDocument":{"uri":uri},"position":{"line":0,"character":4}}
+    }));
+    let m = c.recv_until(|m| m["id"] == 90);
+    assert_eq!(m["result"]["start"]["character"], 4, "{m}");
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":91,"method":"textDocument/prepareRename","params":{
+            "textDocument":{"uri":uri},"position":{"line":0,"character":1}}
+    }));
+    let m = c.recv_until(|m| m["id"] == 91);
+    assert!(m["error"].is_object(), "{m}");
+    let _ = c.child.kill();
     let _ = std::fs::remove_dir_all(&dir);
 }
