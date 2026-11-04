@@ -2302,7 +2302,12 @@ impl Surface {
             width: width.clamp(1, gpu.device.limits().max_texture_dimension_2d.max(1)),
             height: height.clamp(1, gpu.device.limits().max_texture_dimension_2d.max(1)),
             present_mode: wgpu::PresentMode::AutoVsync,
-            desired_maximum_frame_latency: 2,
+            // Two drawables, not three: each is a window-sized IOSurface
+            // (13.7 MB for OlangStudio's window on a Retina screen), and a
+            // frame is the kept frame's damage re-encoded and copied, a
+            // couple of milliseconds of GPU work, so a third in flight
+            // bought no frames. Metal's layer keeps latency + 1 (OL-417).
+            desired_maximum_frame_latency: 1,
             alpha_mode: opaque,
             view_formats: vec![],
             // Display P3 where the surface takes it: the layer is then
