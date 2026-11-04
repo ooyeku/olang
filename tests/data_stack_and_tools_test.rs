@@ -379,6 +379,13 @@ fn check_keeps_a_builtin_a_namespace_import_does_not_name() {
         ),
     )
     .unwrap();
+    // a shelf library is reached through a dependency the project
+    // declares: without one the run (and so check, OL-354) cannot find it
+    std::fs::write(
+        dir.join("olang.toml"),
+        "[package]\nname = \"p\"\nversion = \"0.1.0\"\n\n[dependencies]\nweb = { shelf = \"web\" }\n",
+    )
+    .unwrap();
     std::fs::write(
         dir.join("p.ol"),
         "use gg\nuse web { el }\nprintln(show(find([1, 2, 3], (r) => r > 1)))\n",

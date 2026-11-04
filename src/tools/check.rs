@@ -6144,13 +6144,15 @@ mod tests {
     }
 
     #[test]
-    fn a_text_function_given_more_than_the_text_is_warned_of() {
-        // OL-257: `str.trim_start(s, "/")` trims whitespace, not the "/"
+    fn a_text_function_given_more_than_the_text_is_an_error() {
+        // OL-257: `str.trim_start(s, "/")` trimmed whitespace, not the "/";
+        // since OL-334 the call raises, and check says so
         let d = check("let s = \"/a\"\nlet t = str.trim_start(s, \"/\")\nlet u = str.trim(s)\n");
         assert_eq!(d.len(), 1, "{d:?}");
-        assert!(d[0].warning && !d[0].runtime, "{d:?}");
+        assert!(!d[0].warning && d[0].runtime, "{d:?}");
         assert!(
-            d[0].message.contains("str.trim_start takes one argument"),
+            d[0].message
+                .contains("str.trim_start expects at most 1 argument, got 2"),
             "{d:?}"
         );
     }

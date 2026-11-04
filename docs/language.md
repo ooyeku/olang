@@ -2635,8 +2635,8 @@ not names, so `http.defer()` and `{ "const": 1 }` are untouched.
 
 `select` is deliberately not reserved: olang's concurrency is threads
 and channels, with no `select` statement planned, and choosing among
-several channels would be a function (`chan.select([...])`, beside
-`chan.recv_timeout`), not a keyword, while Loom's and Heddle's `select`
+several channels would be a function of `chan`'s, beside
+`chan.recv_timeout`, not a keyword, while Loom's and Heddle's `select`
 components, the web SDK's `select` element and `term.select` use the
 name.
 
