@@ -550,6 +550,109 @@ fn read_request(
         }
     }
 
+    // A chunked body (RFC 9112 §7.1), which a streaming upload sends:
+    // it was read as no body, and the handler answered 200 over lost data
+    // (OL-362). Chunked and a Content-Length together are refused (one
+    // would be ignored, the shape a request smuggled past a proxy takes),
+    // and a coding this server cannot undo is a 501, never a lost body.
+    if let Some((_, te)) = headers.iter().find(|(k, _)| k == "transfer-encoding") {
+        let codings: Vec<String> = te
+            .split(',')
+            .map(|c| c.trim().to_ascii_lowercase())
+            .filter(|c| !c.is_empty())
+            .collect();
+        if codings.as_slice() != ["chunked"] {
+            return Err((
+                501,
+                format!(
+                    "Transfer-Encoding {:?} is not supported: send chunked or a Content-Length",
+                    te
+                ),
+            ));
+        }
+        if headers.iter().any(|(k, _)| k == "content-length") {
+            return Err((
+                400,
+                "a request has Transfer-Encoding and Content-Length both".to_string(),
+            ));
+        }
+        let mut pending: Vec<u8> = buf[head_end + 4..].to_vec();
+        let mut body_bytes: Vec<u8> = Vec::new();
+        // more bytes from the stream, within the deadline
+        let mut more = |pending: &mut Vec<u8>| -> Result<(), (i64, String)> {
+            loop {
+                if let Some(e) = overdue(&buf) {
+                    return Err(e);
+                }
+                match stream.read(&mut chunk) {
+                    Ok(0) => return Err((400, "connection closed mid-body".to_string())),
+                    Ok(n) => {
+                        pending.extend_from_slice(&chunk[..n]);
+                        return Ok(());
+                    }
+                    Err(e)
+                        if matches!(
+                            e.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        ) => {}
+                    Err(e) => return Err((400, e.to_string())),
+                }
+            }
+        };
+        loop {
+            // the size line: hex digits, then extensions after `;`
+            let line_end = loop {
+                if let Some(at) = pending.windows(2).position(|w| w == b"\r\n") {
+                    break at;
+                }
+                if pending.len() > 1024 {
+                    return Err((400, "a chunk size line is too long".to_string()));
+                }
+                more(&mut pending)?;
+            };
+            let line = String::from_utf8_lossy(&pending[..line_end]).to_string();
+            let hex = line.split(';').next().unwrap_or("").trim();
+            let size = usize::from_str_radix(hex, 16)
+                .map_err(|_| (400, format!("invalid chunk size: {:?}", hex)))?;
+            pending.drain(..line_end + 2);
+            if size == 0 {
+                // the trailer section, to its blank line
+                loop {
+                    if pending.starts_with(b"\r\n") {
+                        break;
+                    }
+                    if let Some(at) = pending.windows(4).position(|w| w == b"\r\n\r\n") {
+                        pending.drain(..at + 2);
+                        break;
+                    }
+                    if pending.len() > max_head {
+                        return Err((431, "request trailers too large".to_string()));
+                    }
+                    more(&mut pending)?;
+                }
+                break;
+            }
+            if body_bytes.len() + size > max_body {
+                return Err((413, "request body too large".to_string()));
+            }
+            while pending.len() < size + 2 {
+                more(&mut pending)?;
+            }
+            if &pending[size..size + 2] != b"\r\n" {
+                return Err((400, "a chunk is not followed by CRLF".to_string()));
+            }
+            body_bytes.extend_from_slice(&pending[..size]);
+            pending.drain(..size + 2);
+        }
+        return Ok(Some(ParsedRequest {
+            method,
+            path,
+            query,
+            headers,
+            body: body_bytes,
+        }));
+    }
+
     // Body: exactly Content-Length bytes (what's already buffered plus
     // more). A Content-Length that does not parse is a malformed
     // request, not an empty body — treating it as 0 would desynchronize
@@ -2533,5 +2636,61 @@ mod tests {
         );
         let refused = encode_query(vec![Value::Map(Arc::new(params))]);
         assert!(refused.unwrap_err().to_string().contains("complex_struct"));
+    }
+}
+
+#[cfg(test)]
+mod chunked_tests {
+    /// One request as `read_request` parses it off a real socket.
+    fn parse(raw: &'static [u8]) -> Result<Option<super::ParsedRequest>, (i64, String)> {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let writer = std::thread::spawn(move || {
+            use std::io::Write;
+            let mut c = std::net::TcpStream::connect(addr).unwrap();
+            c.write_all(raw).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        });
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_millis(100)))
+            .unwrap();
+        let config = super::serve_config(None).unwrap();
+        let got = super::read_request(&mut stream, &config);
+        writer.join().unwrap();
+        got
+    }
+
+    /// A chunked request body arrives whole; it was read as no body and
+    /// the handler answered 200 over lost data (OL-362).
+    #[test]
+    fn a_chunked_body_is_read_whole() {
+        let req = parse(
+            b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5;ext=1\r\nhello\r\n6\r\n world\r\n0\r\nX-Trailer: 1\r\n\r\n",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(req.body, b"hello world");
+        let plain = parse(b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nplain")
+            .unwrap()
+            .unwrap();
+        assert_eq!(plain.body, b"plain");
+    }
+
+    #[test]
+    fn a_body_it_cannot_read_is_refused_not_lost() {
+        let err = |raw| parse(raw).err().map(|e| e.0);
+        assert_eq!(
+            err(b"POST / HTTP/1.1\r\nTransfer-Encoding: gzip\r\n\r\n"),
+            Some(501)
+        );
+        assert_eq!(
+            err(b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\n5\r\nhello\r\n0\r\n\r\n"),
+            Some(400)
+        );
+        assert_eq!(
+            err(b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nhello\r\n0\r\n\r\n"),
+            Some(400)
+        );
     }
 }

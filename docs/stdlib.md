@@ -3338,7 +3338,10 @@ past `max_header_bytes` a `431`, a declared body past `max_body_bytes` a
 `413`, and a request that has not arrived in full within
 `request_timeout_ms` a `408` — the whole-request deadline is what stops
 a client dribbling one byte at a time from holding a worker forever,
-which per-read timeouts alone cannot. Header values a handler returns
+which per-read timeouts alone cannot. A body sent with
+`Transfer-Encoding: chunked` (a streaming upload) is read whole, and
+counts against `max_body_bytes` as it arrives. Chunked together with a
+`Content-Length` is a `400`, and any other transfer-coding a `501`. Header values a handler returns
 are flattened to one line (CR and LF become spaces), so interpolating
 untrusted text into a header cannot split the response or inject
 headers.
