@@ -594,3 +594,23 @@ fn allow_comments_silence_the_same_findings_in_both() {
     assert_eq!(checked, vec![(8, "no_effect".to_string())], "{doc}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_let_lambda_that_calls_itself_in_a_block_is_defined() {
+    // OL-352: language.md's own `countdown_from` sample, a lambda bound
+    // by `let` calling itself inside a function or a test block, was
+    // reported "Undefined variable" at its binding.
+    let dir = project(
+        "let_recursion",
+        &[(
+            "main.ol",
+            "fn f() = {\n    let go = (k) => if k == 0 => \"done\" else => go(k - 1)\n    go(3)\n}\n\
+             println(f())\n\
+             test \"t\" {\n    let fact = (n) => if n <= 1 => 1 else => n * fact(n - 1)\n    assert_eq(fact(4), 24)\n}\n",
+        )],
+    );
+    let mut c = Client::start();
+    let ds = agree(&mut c, &dir.join("main.ol"));
+    assert!(ds.iter().all(|d| d["severity"] != 1), "{ds:#?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

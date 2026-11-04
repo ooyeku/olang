@@ -270,13 +270,29 @@ impl Analyzer {
             Statement::MetaFnDecl { .. } | Statement::DecoratedDecl { .. } => Ok(()),
             Statement::Expression(expr) => self.analyze_expr(expr),
             Statement::LetDecl(let_decl) => {
+                // A lambda bound by `let` may call itself by the binding's
+                // name (language.md), so the name is in scope in its body,
+                // in a block as at the top level (OL-352).
+                let recursive = match (&let_decl.pattern, let_decl.value.as_ref()) {
+                    (crate::ast::Pattern::Identifier(name), Some(Expr::Lambda { .. })) => {
+                        Some(name.clone())
+                    }
+                    _ => None,
+                };
+                if let Some(name) = &recursive {
+                    self.bind(name, true);
+                }
                 // Analyze the value expression if present
                 if let Some(value) = &let_decl.value {
                     self.analyze_expr(value)?;
                 }
 
                 // Extract variable names from the pattern
-                let pattern_variables = self.extract_pattern_variables(&let_decl.pattern);
+                let pattern_variables: Vec<String> = self
+                    .extract_pattern_variables(&let_decl.pattern)
+                    .into_iter()
+                    .filter(|n| recursive.as_ref() != Some(n))
+                    .collect();
 
                 // Each name gets a tracking entry — without one, usage
                 // counting silently no-ops for every let-bound variable.
