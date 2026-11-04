@@ -222,7 +222,7 @@ pub struct Interpreter {
     /// Lambda expressions already worked out (`lambda_shape`).
     lambda_shapes: HashMap<usize, Arc<LambdaShape>>,
     /// A bridge interpreter's view of the program's functions, by name.
-    bridge_functions: Option<Arc<ImHashMap<String, Arc<Function>>>>,
+    bridge_functions: Option<BridgeFunctions>,
     module_loading_stack: Vec<String>, // what is loading now, to catch an import cycle
 
     // Module cache settings and counters
@@ -4057,10 +4057,17 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         self.did_you_mean(name)
     }
 
-    /// Install the program's unambiguous functions by name, for a bridge
-    /// interpreter (see `lookup_name`).
-    pub fn set_bridge_functions(&mut self, functions: Arc<ImHashMap<String, Arc<Function>>>) {
-        self.bridge_functions = Some(functions);
+    /// Install the program's functions by name, for a bridge interpreter
+    /// (see `lookup_name`): `functions` with the `ambiguous` names left out.
+    pub fn set_bridge_functions(
+        &mut self,
+        functions: ImHashMap<String, Arc<Function>>,
+        ambiguous: Arc<std::collections::HashSet<String>>,
+    ) {
+        self.bridge_functions = Some(BridgeFunctions {
+            functions,
+            ambiguous,
+        });
     }
 
     /// Install the module tables a bridge interpreter resolves through.
@@ -7404,5 +7411,25 @@ mod tests {
         assert!(interpreter.would_create_circular_dependency("C", "A")); // Would create cycle
         assert!(interpreter.would_create_circular_dependency("C", "B")); // Would create cycle
         assert!(interpreter.would_create_circular_dependency("B", "A")); // Would create cycle
+    }
+}
+
+/// A bridge interpreter's table of the program's functions: the VM's own
+/// table, shared as it is, with the names two definitions share left out
+/// by lookup. Removing them built every bridge a private copy of the
+/// table's nodes, 36.8 MB across OlangStudio's bridges, one a spawned
+/// task's VM (OL-415).
+#[derive(Clone)]
+struct BridgeFunctions {
+    functions: ImHashMap<String, Arc<Function>>,
+    ambiguous: Arc<std::collections::HashSet<String>>,
+}
+
+impl BridgeFunctions {
+    fn get(&self, name: &str) -> Option<&Arc<Function>> {
+        if self.ambiguous.contains(name) {
+            return None;
+        }
+        self.functions.get(name)
     }
 }

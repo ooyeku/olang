@@ -341,11 +341,7 @@ impl BytecodeTier {
     /// one and then inheriting the ambiguous names did.
     pub fn seed_bridge_from(&mut self, vm: &BytecodeVm) {
         let (functions, ambiguous) = vm.function_tables();
-        let mut known = functions.clone();
-        for name in ambiguous {
-            known.remove(name);
-        }
-        self.known_functions = known;
+        self.known_functions = unambiguous(functions, ambiguous);
         self.ambiguous = ambiguous.iter().cloned().collect();
         self.vm.seed_functions_from(vm);
     }
@@ -1579,6 +1575,27 @@ let t2 = time.monotonic_ms()
         }
     }
 
+    /// The table less its ambiguous names is made once per table: a
+    /// second tier seeded from the same table shares the first's nodes
+    /// (OL-415), and a different ambiguous set makes it again.
+    #[test]
+    fn the_unambiguous_table_is_shared_per_source() {
+        let mut functions: im::HashMap<String, Arc<Function>> = im::HashMap::new();
+        for i in 0..2000 {
+            functions.insert(format!("f{i}"), Arc::new(double_fn()));
+        }
+        let ambiguous: std::collections::HashSet<String> =
+            ["f1".to_string(), "f7".to_string()].into_iter().collect();
+        let a = super::unambiguous(&functions, &ambiguous);
+        let b = super::unambiguous(&functions, &ambiguous);
+        assert!(a.ptr_eq(&b), "a second seeding copied the table");
+        assert_eq!(a.len(), 1998);
+        assert!(!a.contains_key("f1") && !a.contains_key("f7") && a.contains_key("f2"));
+        let other: std::collections::HashSet<String> = ["f2".to_string()].into_iter().collect();
+        let c = super::unambiguous(&functions, &other);
+        assert!(!c.contains_key("f2") && c.contains_key("f1"));
+    }
+
     #[test]
     fn promotes_only_after_threshold() {
         let mut tier = BytecodeTier::new(3);
@@ -1819,4 +1836,38 @@ let t2 = time.monotonic_ms()
             _ => panic!("division by zero should surface as an error"),
         }
     }
+}
+
+/// The last function table a bridge's tier was seeded from, its ambiguous
+/// names, and the table less those names.
+type Unambiguous = (
+    im::HashMap<String, Arc<Function>>,
+    std::collections::HashSet<String>,
+    im::HashMap<String, Arc<Function>>,
+);
+
+static UNAMBIGUOUS: std::sync::Mutex<Option<Unambiguous>> = std::sync::Mutex::new(None);
+
+/// `functions` without the `ambiguous` names, made once per table and
+/// shared by every tier seeded from it. A spawned task's VM shares its
+/// parent's table, and each of its bridges removing the names again
+/// copied the table's nodes: 18.9 MB across OlangStudio's bridges
+/// (OL-415).
+fn unambiguous(
+    functions: &im::HashMap<String, Arc<Function>>,
+    ambiguous: &std::collections::HashSet<String>,
+) -> im::HashMap<String, Arc<Function>> {
+    let mut memo = UNAMBIGUOUS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((from, names, out)) = memo.as_ref()
+        && from.ptr_eq(functions)
+        && names == ambiguous
+    {
+        return out.clone();
+    }
+    let mut out = functions.clone();
+    for name in ambiguous {
+        out.remove(name);
+    }
+    *memo = Some((functions.clone(), ambiguous.clone(), out.clone()));
+    out
 }

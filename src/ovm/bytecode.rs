@@ -8002,11 +8002,14 @@ impl BytecodeVm {
             // noting each function again made every worker's first
             // builtin call cost about 0.3 µs a function, milliseconds in
             // a large program (OL-330).
-            let mut by_name = self.known_function_values.clone();
-            for name in &self.ambiguous_function_names {
-                by_name.remove(name);
-            }
-            interp.set_bridge_functions(std::sync::Arc::new(by_name));
+            //
+            // The VM's table is handed over as it is, the ambiguous names
+            // left out by lookup: removing them copied the table's nodes
+            // into every bridge (OL-415).
+            interp.set_bridge_functions(
+                self.known_function_values.clone(),
+                std::sync::Arc::new(self.ambiguous_function_names.clone()),
+            );
             // The verdict travels with the table: a name two definitions
             // share is ambiguous in the bridge's tier too, or the one
             // value the table kept for it would compile by name there —
