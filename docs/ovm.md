@@ -141,7 +141,8 @@ launch compiled.
   run to run (which callees the registry had met yet).
 - **Storage.** One pack a module under `~/.olang/state/compiled/`
   (`OLANG_HOME` moves it), read ahead on a thread of its own while the
-  module loads; written on a writer thread, read again, merged and
+  module loads, each entry decoded when its function first compiles;
+  written on a writer thread, read again, merged and
   renamed over, so a reader never meets half a pack and takes no lock,
   and two processes writing one pack lose at most what the other added.
   A pack whose header, index or an entry's checksum fails (truncated,

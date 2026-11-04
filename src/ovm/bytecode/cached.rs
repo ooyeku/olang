@@ -301,7 +301,7 @@ impl BytecodeCompiler {
                 let same = self
                     .known_function_values
                     .get(name)
-                    .is_some_and(|k| Arc::ptr_eq(&k.body, &f.body));
+                    .is_some_and(|k| crate::ast::Body::ptr_eq(&k.body, &f.body));
                 cc::answer(&(1u8, &f.name, same))
             }
             Some(Value::Builtin(b)) => cc::answer(&(2u8, &b.name)),
@@ -468,7 +468,7 @@ impl BytecodeCompiler {
             param_checks: crate::ast::param_checks_of(&src.params, &[]),
             return_check: crate::ast::return_check_of(src.return_type.as_ref(), &[]),
             parameters: src.params.clone(),
-            body: Arc::new(src.body.clone()),
+            body: Arc::new(src.body.clone()).into(),
             closure: Arc::new(closure),
             param_bounds: Vec::new(),
             def_file: src.def_file.clone(),

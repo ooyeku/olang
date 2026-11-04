@@ -1263,7 +1263,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     param_checks: crate::ast::param_checks_of(&method.parameters, &[]),
                     return_check: None,
                     parameters: method.parameters.clone(),
-                    body: Arc::new(body.clone()),
+                    body: Arc::new(body.clone()).into(),
                     closure: Arc::new(closure.clone()),
                     param_bounds: Vec::new(),
                     def_file: self.current_module_path.clone(),
@@ -1300,7 +1300,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     &method.type_params,
                 ),
                 parameters: method.parameters.clone(),
-                body: Arc::new(method.body.clone()),
+                body: Arc::new(method.body.clone()).into(),
                 closure: Arc::new(closure.clone()),
                 param_bounds: Vec::new(),
                 def_file: self.current_module_path.clone(),
@@ -1780,19 +1780,28 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             closure
         };
 
-        // Resolve identifiers to frame slots once, at declaration — the
-        // call path then indexes instead of probing names (with per-use
-        // verification and name fallback, so this can never change results)
+        // Resolve identifiers to frame slots once — the call path then
+        // indexes instead of probing names (with per-use verification and
+        // name fallback, so this can never change results). A top-level
+        // function's body is resolved when it is first read (see `Body`):
+        // most of a large program's functions are never called.
         let param_names: Vec<String> = func_decl
             .parameters
             .iter()
             .map(|p| p.name.clone())
             .collect();
-        let resolved_body = crate::resolve::Resolver::resolve_function_body(
-            &func_decl.body,
-            Some(&func_decl.name),
-            &param_names,
-        );
+        let body = if early_root || self.environment.parent.is_none() {
+            crate::ast::Body::deferred(&func_decl.body, &func_decl.name, param_names.clone())
+        } else {
+            None
+        }
+        .unwrap_or_else(|| {
+            crate::ast::Body::new(Arc::new(crate::resolve::Resolver::resolve_function_body(
+                &func_decl.body,
+                Some(&func_decl.name),
+                &param_names,
+            )))
+        });
 
         // Resolve trait bounds to parameter positions: a parameter annotated
         // with a bounded type variable (`x: T` where `T: Show`) records
@@ -1807,7 +1816,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         let function = Function {
             name: Some(func_decl.name.clone()),
             parameters: func_decl.parameters,
-            body: Arc::new(resolved_body),
+            body,
             closure,
             param_bounds,
             param_checks,
@@ -2090,7 +2099,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     param_checks: crate::ast::param_checks_of(&parameters, &[]),
                     return_check,
                     parameters,
-                    body: shape.resolved.clone(),
+                    body: shape.resolved.clone().into(),
                     closure: Arc::new(closure),
                     param_bounds: Vec::new(),
                     def_file: self.defining_file(),
@@ -2588,7 +2597,11 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 if !ops::assert_eq_holds(&actual_val, &expected_val) {
                     crate::tools::test_events::note_values("assert_eq", &expected_val, &actual_val);
                     let msg = message.clone().unwrap_or_else(|| {
-                        format!("Assertion failed: {} != {}", ops::assert_form(&actual_val), ops::assert_form(&expected_val))
+                        format!(
+                            "Assertion failed: {} != {}",
+                            ops::assert_form(&actual_val),
+                            ops::assert_form(&expected_val)
+                        )
                     });
                     return Err(InterpreterError::RuntimeError { message: msg });
                 }
@@ -2604,7 +2617,11 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 if ops::assert_eq_holds(&actual_val, &expected_val) {
                     crate::tools::test_events::note_values("assert_ne", &expected_val, &actual_val);
                     let msg = message.clone().unwrap_or_else(|| {
-                        format!("Assertion failed: {} == {}", ops::assert_form(&actual_val), ops::assert_form(&expected_val))
+                        format!(
+                            "Assertion failed: {} == {}",
+                            ops::assert_form(&actual_val),
+                            ops::assert_form(&expected_val)
+                        )
                     });
                     return Err(InterpreterError::RuntimeError { message: msg });
                 }
@@ -2640,7 +2657,10 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     Value::Boolean(true) => Ok(Value::Unit),
                     _ => {
                         let msg = message.clone().unwrap_or_else(|| {
-                            format!("Assertion failed: expected true, got {}", ops::assert_form(&val))
+                            format!(
+                                "Assertion failed: expected true, got {}",
+                                ops::assert_form(&val)
+                            )
                         });
                         Err(InterpreterError::RuntimeError { message: msg })
                     }
@@ -2655,7 +2675,10 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     Value::Boolean(false) => Ok(Value::Unit),
                     _ => {
                         let msg = message.clone().unwrap_or_else(|| {
-                            format!("Assertion failed: expected false, got {}", ops::assert_form(&val))
+                            format!(
+                                "Assertion failed: expected false, got {}",
+                                ops::assert_form(&val)
+                            )
                         });
                         Err(InterpreterError::RuntimeError { message: msg })
                     }
@@ -4454,7 +4477,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 };
                 let callee_value = self.eval_expr(callee)?;
                 if let Value::Function(target) = &callee_value
-                    && Arc::ptr_eq(&target.body, &me.body)
+                    && crate::ast::Body::ptr_eq(&target.body, &me.body)
                     && Arc::ptr_eq(&target.closure, &me.closure)
                 {
                     let slots = self

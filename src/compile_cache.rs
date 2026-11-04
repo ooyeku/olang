@@ -528,14 +528,14 @@ fn decode(body: &[u8]) -> Option<Entry> {
     postcard::from_bytes(body).ok()
 }
 
-/// What this process has read of each pack, the entries it stored, by
-/// key (newest first), and the newest entry of each key of a pack read
-/// ahead (`prefetch`), decoded and waiting to be taken.
+/// What this process has read of each pack (its bytes, each entry
+/// decoded only when its function compiles: decoded ahead, the entries
+/// of functions a run never called held 67 MB of OlangStudio's start,
+/// OL-408), and the entries it stored, by key (newest first).
 #[derive(Default)]
 struct Memo {
     packs: HashMap<PathBuf, Arc<Pack>>,
     entries: HashMap<Key, Vec<Arc<Entry>>>,
-    ahead: HashMap<Key, Entry>,
     asked: HashSet<PathBuf>,
 }
 
@@ -548,14 +548,11 @@ fn memo() -> &'static Mutex<Memo> {
 /// (not yet checked against the scope): those this process stored, then
 /// the pack's, each read and decoded as it is asked for.
 pub fn load(def_file: Option<&str>, key: &Key) -> impl Iterator<Item = Arc<Entry>> {
-    let (stored, ahead, pack, path) =
-        pack_of(def_file, key).unwrap_or((Vec::new(), None, None, None));
+    let (stored, pack, path) = pack_of(def_file, key).unwrap_or((Vec::new(), None, None));
     let rows = pack
         .as_ref()
         .and_then(|p| p.rows.get(key))
         .map_or(0, Vec::len);
-    // the newest, when read ahead, is decoded already
-    let first = if ahead.is_some() { 1 } else { 0 };
     // Used: an entry not written or used for a day is marked used, so
     // the pack keeps it when it is next written.
     if let (Some(path), Some(p)) = (path, pack.as_ref())
@@ -568,32 +565,22 @@ pub fn load(def_file: Option<&str>, key: &Key) -> impl Iterator<Item = Arc<Entry
     }
     let key = *key;
     // decoded at each use, not kept: the caller takes its parts
-    stored
-        .into_iter()
-        .chain(ahead.map(Arc::new))
-        .chain((first..rows).filter_map(move |i| {
-            let p = pack.as_ref()?;
-            decode(p.body_at(&key, i)?).map(Arc::new)
-        }))
+    stored.into_iter().chain((0..rows).filter_map(move |i| {
+        let p = pack.as_ref()?;
+        decode(p.body_at(&key, i)?).map(Arc::new)
+    }))
 }
 
-#[allow(clippy::type_complexity)]
 fn pack_of(
     def_file: Option<&str>,
     key: &Key,
-) -> Option<(
-    Vec<Arc<Entry>>,
-    Option<Entry>,
-    Option<Arc<Pack>>,
-    Option<PathBuf>,
-)> {
+) -> Option<(Vec<Arc<Entry>>, Option<Arc<Pack>>, Option<PathBuf>)> {
     let path = pack_path(def_file)?;
     {
-        let mut m = memo().lock().ok()?;
+        let m = memo().lock().ok()?;
         let stored = m.entries.get(key).cloned().unwrap_or_default();
         if let Some(p) = m.packs.get(&path).cloned() {
-            let ahead = m.ahead.remove(key);
-            return Some((stored, ahead, Some(p), Some(path)));
+            return Some((stored, Some(p), Some(path)));
         }
     }
     // read outside the lock (the reader thread may be reading another)
@@ -601,13 +588,12 @@ fn pack_of(
     let mut m = memo().lock().ok()?;
     let stored = m.entries.get(key).cloned().unwrap_or_default();
     let pack = m.packs.entry(path.clone()).or_insert(read).clone();
-    let ahead = m.ahead.remove(key);
-    Some((stored, ahead, Some(pack), Some(path)))
+    Some((stored, Some(pack), Some(path)))
 }
 
 /// Read the pack of `def_file` ahead, on a thread of its own: a module is
 /// loaded (and evaluated) well before its functions first compile, and
-/// its pack, read and decoded meanwhile, is then waiting in memory.
+/// its pack, read meanwhile, is then waiting in memory.
 pub fn prefetch(def_file: Option<&str>) {
     if !enabled() {
         return;
@@ -647,36 +633,11 @@ fn read_ahead(path: PathBuf) {
     let Some(pack) = Pack::read(&path) else {
         return;
     };
-    let pack = Arc::new(pack);
-    {
-        let Ok(mut m) = memo().lock() else {
-            return;
-        };
-        if m.packs.contains_key(&path) {
-            // the program got there first
-            return;
-        }
-        m.packs.insert(path, pack.clone());
-    }
-    // each key's newest entry, decoded; taken (not copied) when used
-    let mut batch = Vec::new();
-    for key in pack.rows.keys() {
-        if let Some(entry) = pack.body_at(key, 0).and_then(decode) {
-            batch.push((*key, entry));
-        }
-        if batch.len() >= 32 {
-            flush_ahead(&mut batch);
-        }
-    }
-    flush_ahead(&mut batch);
-}
-
-fn flush_ahead(batch: &mut Vec<(Key, Entry)>) {
-    if let Ok(mut m) = memo().lock() {
-        for (key, entry) in batch.drain(..) {
-            m.ahead.entry(key).or_insert(entry);
-        }
-    }
+    let Ok(mut m) = memo().lock() else {
+        return;
+    };
+    // the program may have got there first
+    m.packs.entry(path).or_insert_with(|| Arc::new(pack));
 }
 
 /// Keep the entry `make` makes under `key` in the pack of `def_file`:

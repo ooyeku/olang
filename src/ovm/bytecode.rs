@@ -1925,7 +1925,7 @@ impl BytecodeVm {
         func: std::sync::Arc<crate::ast::Function>,
     ) {
         match self.known_function_values.get(&name) {
-            Some(existing) if !std::sync::Arc::ptr_eq(&existing.body, &func.body) => {
+            Some(existing) if !crate::ast::Body::ptr_eq(&existing.body, &func.body) => {
                 self.ambiguous_function_names.insert(name.clone());
                 self.compiler.ambiguous_names.insert(name.clone());
                 self.hof_epoch += 1;
@@ -1956,7 +1956,7 @@ impl BytecodeVm {
         // invalidates that snapshot.
         self.builtin_interpreter = None;
         let changed = match self.trait_impls.insert((type_name, method), func.clone()) {
-            Some(old) => !std::sync::Arc::ptr_eq(&old.body, &func.body),
+            Some(old) => !crate::ast::Body::ptr_eq(&old.body, &func.body),
             None => true,
         };
         if changed {
@@ -1978,7 +1978,7 @@ impl BytecodeVm {
             .trait_defaults
             .insert((trait_name, method), func.clone())
         {
-            Some(old) => !std::sync::Arc::ptr_eq(&old.body, &func.body),
+            Some(old) => !crate::ast::Body::ptr_eq(&old.body, &func.body),
             None => true,
         };
         if changed {
@@ -2506,7 +2506,7 @@ impl BytecodeVm {
         // The declaration's newest value: a module re-closes its functions
         // over its whole scope once loaded, which a later sibling needs.
         let func = match self.known_function_values.get(&name) {
-            Some(f) if Arc::ptr_eq(&f.body, &owed.body) => f.clone(),
+            Some(f) if crate::ast::Body::ptr_eq(&f.body, &owed.body) => f.clone(),
             _ => owed,
         };
         self.lazy_born.insert(func_id, func.clone());
@@ -2521,7 +2521,7 @@ impl BytecodeVm {
                 self.lazy_events.push(LazyEvent::Compiled {
                     name,
                     id: func_id,
-                    body: func.body.clone(),
+                    body: func.body.tree().clone(),
                 });
                 self.peek_code(func_id)
             }
@@ -2559,7 +2559,7 @@ impl BytecodeVm {
             type_param_bounds: Vec::new(),
             parameters: func.parameters.clone(),
             return_type: None,
-            body: (*func.body).clone(),
+            body: (**func.body).clone(),
         };
         let mut bridged_here: std::collections::HashSet<String> = std::collections::HashSet::new();
         for _ in 0..4096 {
@@ -7581,7 +7581,7 @@ impl BytecodeVm {
             type_param_bounds: Vec::new(),
             parameters: func.parameters.clone(),
             return_type: None,
-            body: (*func.body).clone(),
+            body: (**func.body).clone(),
         };
         let func_id = FunctionId::new();
         // The named tier path resolves unresolved callees (compile the
@@ -8393,7 +8393,7 @@ impl BytecodeVm {
             type_param_bounds: Vec::new(),
             parameters: func.parameters.clone(),
             return_type: None,
-            body: (*func.body).clone(),
+            body: (**func.body).clone(),
         };
         let mut asked: std::collections::HashSet<String> = std::collections::HashSet::new();
         for _ in 0..HOF_RESOLUTION_STEPS {
@@ -12111,7 +12111,7 @@ impl BytecodeCompiler {
                     Some(Value::Function(ref f)) => self
                         .known_function_values
                         .get(&function_name)
-                        .is_none_or(|known| !std::sync::Arc::ptr_eq(&known.body, &f.body)),
+                        .is_none_or(|known| !crate::ast::Body::ptr_eq(&known.body, &f.body)),
                     // A function named as a builtin calling itself: its
                     // declaration-time closure, taken before the function
                     // was bound, holds the builtin (a top-level `fn find`
@@ -13108,7 +13108,7 @@ impl BytecodeCompiler {
             param_checks: crate::ast::param_checks_of(parameters, &[]),
             return_check: crate::ast::return_check_of(return_type, &[]),
             parameters: parameters.to_vec(),
-            body: std::sync::Arc::new(body.clone()),
+            body: std::sync::Arc::new(body.clone()).into(),
             // Values cloned from the enclosing snapshot — free
             // variables resolve identically in both tiers
             closure: std::sync::Arc::new(captured.clone()),

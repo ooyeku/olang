@@ -141,7 +141,7 @@ fn build_continuation(
         param_checks: crate::ast::param_checks_of(&params, &[]),
         return_check: None,
         parameters: params,
-        body: Arc::new(resolved),
+        body: Arc::new(resolved).into(),
         closure: Arc::new(im::HashMap::new()),
         param_bounds: Vec::new(),
         def_file,

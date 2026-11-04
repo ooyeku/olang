@@ -594,7 +594,7 @@ impl BytecodeTier {
             // declaration-time closure loses `expr`-style mutual
             // references ("Undefined variable" from a path that worked
             // interpreted).
-            if Arc::ptr_eq(&existing.body, &func.body) {
+            if crate::ast::Body::ptr_eq(&existing.body, &func.body) {
                 if !Arc::ptr_eq(&existing.closure, &func.closure) {
                     self.vm.note_function_value(name.clone(), func.clone());
                     self.known_functions.insert(name, func);
@@ -799,7 +799,7 @@ impl BytecodeTier {
         let impostor = self
             .known_functions
             .get(name)
-            .is_some_and(|known| !Arc::ptr_eq(&known.body, &func.body));
+            .is_some_and(|known| !crate::ast::Body::ptr_eq(&known.body, &func.body));
         if impostor || self.ambiguous.contains(name) {
             let arity = func.parameters.len();
             return match self.vm.hof_function_id(func, arity) {
@@ -1148,7 +1148,7 @@ impl BytecodeTier {
             ) {
                 Ok(()) => {
                     self.compiled
-                        .insert(name.to_string(), (func_id, func.body.clone()));
+                        .insert(name.to_string(), (func_id, func.body.tree().clone()));
                     self.stats.promoted += 1;
                     if self.verbose {
                         eprintln!("[ovm] promoted '{}' to the bytecode tier", name);
@@ -1286,7 +1286,7 @@ impl BytecodeTier {
             type_param_bounds: Vec::new(),
             parameters: func.parameters.clone(),
             return_type: None,
-            body: (*func.body).clone(),
+            body: (**func.body).clone(),
         })
     }
 
@@ -1567,7 +1567,8 @@ let t2 = time.monotonic_ms()
                 left: Box::new(Expr::Identifier("x".to_string())),
                 op: BinaryOp::Multiply,
                 right: Box::new(Expr::Integer(2)),
-            }),
+            })
+            .into(),
             closure: Arc::new(im::HashMap::new()),
             param_bounds: Vec::new(),
             param_checks: Vec::new(),
@@ -1608,7 +1609,8 @@ let t2 = time.monotonic_ms()
                 left: Box::new(Expr::Identifier("x".to_string())),
                 op: BinaryOp::Multiply,
                 right: Box::new(Expr::Integer(3)),
-            }),
+            })
+            .into(),
             ..double_fn()
         }
     }
@@ -1691,7 +1693,8 @@ let t2 = time.monotonic_ms()
                 left: Box::new(Expr::Identifier("x".to_string())),
                 op: BinaryOp::Add,
                 right: Box::new(Expr::Identifier("captured".to_string())),
-            }),
+            })
+            .into(),
             closure: Arc::new(closure),
             param_bounds: Vec::new(),
             param_checks: Vec::new(),
@@ -1737,7 +1740,7 @@ let t2 = time.monotonic_ms()
         let func = Function {
             name: Some("bad".to_string()),
             parameters: vec![param("x")],
-            body: Arc::new(Expr::Identifier("nonexistent_global".to_string())),
+            body: Arc::new(Expr::Identifier("nonexistent_global".to_string())).into(),
             closure: Arc::new(im::HashMap::new()),
             param_bounds: Vec::new(),
             param_checks: Vec::new(),
@@ -1800,7 +1803,8 @@ let t2 = time.monotonic_ms()
                 left: Box::new(Expr::Identifier("a".to_string())),
                 op: BinaryOp::Divide,
                 right: Box::new(Expr::Identifier("b".to_string())),
-            }),
+            })
+            .into(),
             closure: Arc::new(im::HashMap::new()),
             param_bounds: Vec::new(),
             param_checks: Vec::new(),

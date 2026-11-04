@@ -863,9 +863,10 @@ const _: () = assert!(std::mem::size_of::<Value>() <= 40);
 pub struct Function {
     pub name: Option<String>,
     pub parameters: Vec<Parameter>,
-    // Arc so cloning a function value (every call/env lookup) is cheap
-    // instead of deep-copying the body AST and captured environment
-    pub body: Arc<Expr>,
+    // Shared, so cloning a function value (every call/env lookup) is
+    // cheap instead of deep-copying the body AST; built on first read
+    // for a top-level declaration (see `Body`)
+    pub body: Body,
     // Persistent map so a call can adopt the whole closure as its
     // environment in O(1) instead of copying every entry per call —
     // with the prelude captured, that was ~200 inserts on every call
@@ -903,6 +904,131 @@ pub struct Function {
     /// or nested `fn` declared outside any run, and for rebuilt values.
     #[serde(skip)]
     pub run: RunRef,
+}
+
+/// A function's body: the resolved tree its calls run.
+///
+/// A top-level declaration keeps its body as written, encoded, and builds
+/// the tree the first time anything reads it. The tree is about fifteen
+/// times its source and twenty-five times the encoding, and most of a
+/// large program's functions are never called in a given run: OlangStudio
+/// declared 7,500 functions whose trees held 106 MB before its first frame
+/// (OL-408). Clones share one cell, so the tree is built once and every
+/// clone reads the same `Arc`: what identity checks compare (`ptr_eq`).
+#[derive(Clone)]
+pub struct Body(Arc<BodyCell>);
+
+struct BodyCell {
+    tree: std::sync::OnceLock<Arc<Expr>>,
+    pending: Option<PendingBody>,
+}
+
+/// What the tree is built from: the body as declared, encoded, with the
+/// names the resolver binds before it.
+struct PendingBody {
+    encoded: Box<[u8]>,
+    name: String,
+    parameters: Vec<String>,
+}
+
+impl Body {
+    /// A body whose tree is already built.
+    pub fn new(tree: Arc<Expr>) -> Body {
+        let cell = std::sync::OnceLock::new();
+        let _ = cell.set(tree);
+        Body(Arc::new(BodyCell {
+            tree: cell,
+            pending: None,
+        }))
+    }
+
+    /// A body built on first read from `body` as declared (resolved then
+    /// as `Resolver::resolve_function_body` would now); `None` when it
+    /// cannot be encoded, and the caller builds it at once.
+    pub fn deferred(body: &Expr, name: &str, parameters: Vec<String>) -> Option<Body> {
+        let encoded = postcard::to_stdvec(body).ok()?.into_boxed_slice();
+        Some(Body(Arc::new(BodyCell {
+            tree: std::sync::OnceLock::new(),
+            pending: Some(PendingBody {
+                encoded,
+                name: name.to_string(),
+                parameters,
+            }),
+        })))
+    }
+
+    /// The tree, built now if it has not been.
+    pub fn tree(&self) -> &Arc<Expr> {
+        self.0.tree.get_or_init(|| {
+            let pending = self
+                .0
+                .pending
+                .as_ref()
+                .expect("a body is either built or pending");
+            let declared: Expr = postcard::from_bytes(&pending.encoded)
+                .expect("a body encoded by this process decodes");
+            Arc::new(crate::resolve::Resolver::resolve_function_body(
+                &declared,
+                Some(&pending.name),
+                &pending.parameters,
+            ))
+        })
+    }
+
+    /// Has the tree been built? (Reading it builds it.)
+    pub fn is_built(&self) -> bool {
+        self.0.tree.get().is_some()
+    }
+
+    /// The same body: one declaration's cell, shared by its clones, or
+    /// one tree (two cells made from one `Arc`). Builds neither.
+    pub fn ptr_eq(a: &Body, b: &Body) -> bool {
+        Arc::ptr_eq(&a.0, &b.0)
+            || matches!((a.0.tree.get(), b.0.tree.get()), (Some(x), Some(y)) if Arc::ptr_eq(x, y))
+    }
+}
+
+impl From<Arc<Expr>> for Body {
+    fn from(tree: Arc<Expr>) -> Body {
+        Body::new(tree)
+    }
+}
+
+impl From<Expr> for Body {
+    fn from(tree: Expr) -> Body {
+        Body::new(Arc::new(tree))
+    }
+}
+
+impl std::ops::Deref for Body {
+    type Target = Arc<Expr>;
+    fn deref(&self) -> &Arc<Expr> {
+        self.tree()
+    }
+}
+
+impl std::fmt::Debug for Body {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.tree().fmt(f)
+    }
+}
+
+impl PartialEq for Body {
+    fn eq(&self, other: &Body) -> bool {
+        Body::ptr_eq(self, other) || **self.tree() == **other.tree()
+    }
+}
+
+impl Serialize for Body {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        self.tree().serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for Body {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Body, D::Error> {
+        Ok(Body::new(Arc::<Expr>::deserialize(d)?))
+    }
 }
 
 /// A run of consecutive top-level `fn` declarations shares ONE closure:
@@ -1020,7 +1146,7 @@ impl PartialEq for Function {
             && self.parameters == other.parameters
             && self.run == other.run
             && self.param_bounds == other.param_bounds
-            && (Arc::ptr_eq(&self.body, &other.body) || self.body == other.body)
+            && self.body == other.body
             && (Arc::ptr_eq(&self.closure, &other.closure)
                 || (self.closure.len() == other.closure.len()
                     && self
@@ -1053,7 +1179,7 @@ impl Function {
     /// per worker, not per element.
     pub fn thread_localized(&self) -> Function {
         let mut f = self.clone();
-        f.body = std::sync::Arc::new((*self.body).clone());
+        f.body = Body::new(std::sync::Arc::new((**self.body).clone()));
         f.closure = std::sync::Arc::new((*self.closure).clone());
         f
     }
@@ -2388,5 +2514,63 @@ mod float_format_tests {
             let back: f64 = s.parse().unwrap();
             assert_eq!(back.to_bits(), x.to_bits(), "round-trip failed for {s}");
         }
+    }
+}
+
+#[cfg(test)]
+mod body_tests {
+    use super::{Body, Expr, Statement};
+    use std::sync::Arc;
+
+    /// The body of the first `fn` in `source`, as declared.
+    fn declared(source: &str) -> (String, Vec<String>, Expr) {
+        let program = crate::parser::Parser::new().parse(source).unwrap();
+        let decl = program
+            .statements
+            .iter()
+            .find_map(|s| match s.unwrapped() {
+                Statement::FunctionDecl(d) => Some(d.clone()),
+                _ => None,
+            })
+            .expect("a fn");
+        let params = decl.parameters.iter().map(|p| p.name.clone()).collect();
+        (decl.name, params, decl.body)
+    }
+
+    #[test]
+    fn a_deferred_body_builds_the_tree_a_declaration_would() {
+        let (name, params, body) = declared(
+            "fn f(xs, n) = { let k = n * 2\n xs |> map((x) => x + k) |> fold(0, (a, b) => a + b) }",
+        );
+        let eager = crate::resolve::Resolver::resolve_function_body(&body, Some(&name), &params);
+        let lazy = Body::deferred(&body, &name, params).expect("encodes");
+        assert!(!lazy.is_built());
+        assert_eq!(**lazy.tree(), eager);
+        assert!(lazy.is_built());
+    }
+
+    #[test]
+    fn clones_share_one_tree_and_compare_without_building() {
+        let (name, params, body) = declared("fn g(a) = a + 1");
+        let lazy = Body::deferred(&body, &name, params.clone()).unwrap();
+        let copy = lazy.clone();
+        let other = Body::deferred(&body, &name, params).unwrap();
+        assert!(Body::ptr_eq(&lazy, &copy));
+        assert!(!Body::ptr_eq(&lazy, &other));
+        assert!(!lazy.is_built() && !copy.is_built());
+        assert!(Arc::ptr_eq(lazy.tree(), copy.tree()));
+        // two cells made from one tree are the same body
+        let tree = lazy.tree().clone();
+        assert!(Body::ptr_eq(&Body::new(tree.clone()), &Body::from(tree)));
+    }
+
+    #[test]
+    fn a_body_serializes_as_its_tree() {
+        let (name, params, body) = declared("fn h(s) = s + \"!\"");
+        let lazy = Body::deferred(&body, &name, params).unwrap();
+        let bytes = postcard::to_stdvec(&lazy).unwrap();
+        let back: Body = postcard::from_bytes(&bytes).unwrap();
+        assert!(back.is_built());
+        assert_eq!(back, lazy);
     }
 }
