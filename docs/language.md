@@ -2633,6 +2633,13 @@ meaning: they are reserved, and a program that names something with
 one is refused with an error that says so. A member after `.` and a key are
 not names, so `http.defer()` and `{ "const": 1 }` are untouched.
 
+`select` is deliberately not reserved: olang's concurrency is threads
+and channels, with no `select` statement planned, and choosing among
+several channels would be a function (`chan.select([...])`, beside
+`chan.recv_timeout`), not a keyword, while Loom's and Heddle's `select`
+components, the web SDK's `select` element and `term.select` use the
+name.
+
 **Eight more that introduce declarations are *contextual*, not
 reserved**: `share`, `error`, `test`, `type`, `trait`, `impl`, `use`,
 and `meta` (which introduces a [macro declaration](macros.md) only when
