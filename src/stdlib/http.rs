@@ -1901,8 +1901,13 @@ mod tests {
         let out = render_handler_result(&r, false, crate::caps::FsCap::Full);
         assert!(out.ends_with(&[0, 255, 10]), "{out:?}");
         let mut h = crate::ast::ValueMap::default();
-        h.insert("Content-Type".into(), Value::String(Arc::new("image/png".into())));
-        let r = http_response_with_headers(vec![Value::Integer(200), body, Value::Map(Arc::new(h))]).unwrap();
+        h.insert(
+            "Content-Type".into(),
+            Value::String(Arc::new("image/png".into())),
+        );
+        let r =
+            http_response_with_headers(vec![Value::Integer(200), body, Value::Map(Arc::new(h))])
+                .unwrap();
         let out = render_handler_result(&r, false, crate::caps::FsCap::Full);
         let text = String::from_utf8_lossy(&out);
         assert!(text.contains("Content-Type: image/png"), "{text}");

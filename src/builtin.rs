@@ -1335,7 +1335,12 @@ impl BuiltinFunctions {
                             Value::String(s) => Some(s.as_str().to_string()),
                             _ => None,
                         })
-                        .unwrap_or_else(|| format!("Assertion failed: {}", crate::interpreter::ops::assert_form(first)));
+                        .unwrap_or_else(|| {
+                            format!(
+                                "Assertion failed: {}",
+                                crate::interpreter::ops::assert_form(first)
+                            )
+                        });
                     return Err(InterpreterError::RuntimeError { message });
                 }
                 Ok(Value::Unit)

@@ -1107,7 +1107,11 @@ fn run_job(job: Job) {
     let mut waiting = HashSet::new();
     if let Ok(mut c) = cache().lock() {
         match r {
-            Ok((k, pic)) => c.put((job.id, k), Arc::new(pic), matches!(job.src, Source::Bytes(_))),
+            Ok((k, pic)) => c.put(
+                (job.id, k),
+                Arc::new(pic),
+                matches!(job.src, Source::Bytes(_)),
+            ),
             Err(e) => {
                 c.infos.insert(job.id, Err(e));
             }
@@ -1403,7 +1407,10 @@ mod tests {
         let kept = ids[..19].iter().filter(|id| held.contains(id)).count();
         assert!(kept <= UNSHOWN_KEPT, "{kept} kept");
         for id in &ids[..19 - UNSHOWN_KEPT] {
-            assert!(!held.contains(id), "picture {id} is no longer shown and still held");
+            assert!(
+                !held.contains(id),
+                "picture {id} is no longer shown and still held"
+            );
         }
         // the window gone: what it showed is let go too (once past the few kept)
         window_gone(w);

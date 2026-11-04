@@ -50,16 +50,28 @@ fn a_replacement_naming_no_group_is_an_err() {
     let out = show("re.replace(\"(\\\\d+)\", \"a1 b2\", \"$1_n\")");
     assert!(out.starts_with("Err("), "{out}");
     assert!(out.contains("write `${1}_n`"), "{out}");
-    assert_eq!(show("re.replace(\"(\\\\d+)\", \"a1 b2\", \"${1}_n\")"), "Ok(\"a1_n b2_n\")");
-    assert_eq!(show("re.replace(\"(\\\\d+)\", \"a1 b2\", \"<$1>\")"), "Ok(\"a<1> b<2>\")");
-    assert_eq!(show("re.replace(\"(?P<n>\\\\d+)\", \"a1\", \"$n\")"), "Ok(\"a1\")");
+    assert_eq!(
+        show("re.replace(\"(\\\\d+)\", \"a1 b2\", \"${1}_n\")"),
+        "Ok(\"a1_n b2_n\")"
+    );
+    assert_eq!(
+        show("re.replace(\"(\\\\d+)\", \"a1 b2\", \"<$1>\")"),
+        "Ok(\"a<1> b<2>\")"
+    );
+    assert_eq!(
+        show("re.replace(\"(?P<n>\\\\d+)\", \"a1\", \"$n\")"),
+        "Ok(\"a1\")"
+    );
     assert_eq!(show("re.replace(\"a\", \"a\", \"$$\")"), "Ok(\"$\")");
 }
 
 // OL-335: csv.stringify answers one shape: Ok(text), or Err
 #[test]
 fn csv_stringify_is_always_a_result() {
-    assert_eq!(show("csv.stringify([[\"a\", \"b\"], [\"1\", \"2\"]])"), "Ok(\"a,b\\n1,2\\n\")");
+    assert_eq!(
+        show("csv.stringify([[\"a\", \"b\"], [\"1\", \"2\"]])"),
+        "Ok(\"a,b\\n1,2\\n\")"
+    );
     assert!(show("csv.stringify([[\"a\"], [\"b\", \"c\"]])").starts_with("Err("));
     assert!(show("csv.stringify([[()]])").starts_with("Err("));
     assert_eq!(show("unwrap(csv.stringify([[\"x\"]]))"), "\"x\\n\"");

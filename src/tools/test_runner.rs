@@ -496,7 +496,11 @@ pub fn run_paths(
         // Unparseable files still make the run fail, even with no test blocks.
         return if parse_errors > 0 || none_ran { 1 } else { 0 };
     }
-    let shown_files = if options.only.is_some() { files_ran } else { test_files };
+    let shown_files = if options.only.is_some() {
+        files_ran
+    } else {
+        test_files
+    };
     let summary = format!(
         "  {} passed, {} failed  ({} test file{}, {}ms)",
         total_passed,

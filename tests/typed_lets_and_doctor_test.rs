@@ -207,7 +207,10 @@ fn the_doctor_knows_a_lock_that_is_never_written_by_a_run() {
         "[package]\nname = \"shuttle\"\nversion = \"0.1.0\"\n",
     );
     let (out, _, _) = olang(&ws.join("app"), &["doctor"]);
-    assert!(out.contains("lock = \"never\", so only `otc install` writes one"), "{out}");
+    assert!(
+        out.contains("lock = \"never\", so only `otc install` writes one"),
+        "{out}"
+    );
     assert!(!out.contains("written on the first run"), "{out}");
 }
 

@@ -3628,10 +3628,13 @@ impl Parser {
                 // a template's own errors (an unclosed `${`) placed at the
                 // template, as every other parse error is (OL-388)
                 let at = PositionInfo::from_pair(&pair);
-                self.build_template_string(pair.into_inner()).map_err(|e| match e {
-                    ParseError::InvalidSyntax { message } => ParseError::invalid_syntax_at(message, at),
-                    other => other,
-                })
+                self.build_template_string(pair.into_inner())
+                    .map_err(|e| match e {
+                        ParseError::InvalidSyntax { message } => {
+                            ParseError::invalid_syntax_at(message, at)
+                        }
+                        other => other,
+                    })
             }
             Rule::boolean => {
                 let value = pair.as_str().parse::<bool>().map_err(|_| {

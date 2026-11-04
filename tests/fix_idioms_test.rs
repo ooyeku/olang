@@ -331,6 +331,11 @@ fn units_rewrites_are_labelled_by_their_rounding() {
     kinds.sort();
     assert_eq!(
         kinds,
-        vec!["to_int(math.ceil(e))", "to_int(math.floor(e))", "to_int(math.round(e))", "to_int(math.trunc(e))"]
+        vec![
+            "to_int(math.ceil(e))",
+            "to_int(math.floor(e))",
+            "to_int(math.round(e))",
+            "to_int(math.trunc(e))"
+        ]
     );
 }

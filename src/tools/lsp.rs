@@ -3197,9 +3197,15 @@ mod symbol_kind_tests {
 
     #[test]
     fn a_shared_declaration_has_its_own_kind() {
-        assert_eq!(super::symbol_kind("share fn up_vcmp(a, b)"), SymbolKind::FUNCTION);
+        assert_eq!(
+            super::symbol_kind("share fn up_vcmp(a, b)"),
+            SymbolKind::FUNCTION
+        );
         assert_eq!(super::symbol_kind("fn f(a)"), SymbolKind::FUNCTION);
-        assert_eq!(super::symbol_kind("share meta fn m(x)"), SymbolKind::FUNCTION);
+        assert_eq!(
+            super::symbol_kind("share meta fn m(x)"),
+            SymbolKind::FUNCTION
+        );
         assert_eq!(super::symbol_kind("share type Point"), SymbolKind::STRUCT);
         assert_eq!(super::symbol_kind("share let LIMIT"), SymbolKind::VARIABLE);
         assert_eq!(super::symbol_kind("let x"), SymbolKind::VARIABLE);
