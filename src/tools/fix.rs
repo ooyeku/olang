@@ -15,6 +15,14 @@
 //! may have an effect (a call to a user function, or to a builtin outside
 //! the pure set) is **flagged, never rewritten**: the person decides.
 //!
+//! The first rewrite is exact on a map, an object and `()`, but not on a
+//! struct or a module, where `.` raises for a name the value lacks and
+//! `map_get` answers `()` (OL-344). A file is read without types, so a
+//! call is rewritten only when its receiver is seen to be a map: a map or
+//! object literal, `()`, or a name the file binds to one and rewrites
+//! only through `map_set`, `map_merge` or `map_remove`. Any other call is
+//! flagged too.
+//!
 //! Left alone, and counted: a key that is not an identifier (or is a
 //! reserved word), a computed key, a call whose value is called
 //! (`map_get(m, "f")(x)` would read as a method call), a call a pipeline
@@ -41,9 +49,10 @@ pub struct Report {
     pub gets: usize,
     /// `map_get_or(x, "k", d)` → `x.k ?? d`
     pub get_ors: usize,
-    /// `map_get_or` calls left because the default may have an effect:
-    /// (line, the call's text, first line only).
-    pub flagged: Vec<(usize, String)>,
+    /// Calls left for the person: (line, why, the call's text, first line
+    /// only). Why is a default that may have an effect, or a receiver
+    /// that may be a struct or a module.
+    pub flagged: Vec<(usize, &'static str, String)>,
     /// Calls left alone, by reason.
     pub left: Vec<(usize, &'static str)>,
 }
@@ -586,17 +595,26 @@ impl<'a> Fixer<'a> {
                 .push((line, "the receiver is not an expression `.` can follow"));
             return plain(self, pair);
         };
+        let call_text = || {
+            pair.as_str()
+                .lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string()
+        };
+        if !receiver_is_a_map(self.file, &receiver_expr) {
+            self.report
+                .flagged
+                .push((line, NOT_SEEN_A_MAP, call_text()));
+            return plain(self, pair);
+        }
         if is_get_or {
             let default_text = positional[2].as_str();
             if !default_is_pure(default_text) {
-                let call = pair
-                    .as_str()
-                    .lines()
-                    .next()
-                    .unwrap_or("")
-                    .trim()
-                    .to_string();
-                self.report.flagged.push((line, call));
+                self.report
+                    .flagged
+                    .push((line, MAY_HAVE_AN_EFFECT, call_text()));
                 return plain(self, pair);
             }
         }
@@ -687,6 +705,90 @@ fn identifier_key(arg: &Pair<'_, Rule>) -> Option<String> {
 /// Whether `.k` may follow the expression as written (`Some(true)`),
 /// only in parentheses (`Some(false)`), or not at all (`None`: an
 /// assignment or a loop in argument position).
+/// Why a call is flagged.
+const NOT_SEEN_A_MAP: &str = "the receiver may be a struct or a module, where `.` raises for a missing name and map_get answers ()";
+const MAY_HAVE_AN_EFFECT: &str =
+    "the default may have an effect, and `??` evaluates it only when used";
+
+/// Whether `expr`, a call's receiver, is seen to be a map, an object or
+/// `()`: a literal one, or a name `src` binds only to a map or object
+/// literal and assigns only through map_set, map_merge or map_remove.
+fn receiver_is_a_map(src: &str, expr: &Pair<'_, Rule>) -> bool {
+    let text = expr.as_str().trim();
+    if text.starts_with("#{") || text == "()" {
+        return true;
+    }
+    if text.starts_with('{') {
+        // an object literal: a block would not be a call's argument
+        return text.ends_with('}');
+    }
+    if text.is_empty() || !text.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return false;
+    }
+    let name = text;
+    let mut bound = false;
+    for line in src.lines() {
+        let t = line.trim_start();
+        let t = t.strip_prefix("share ").unwrap_or(t).trim_start();
+        let after = |rest: &str| -> Option<String> {
+            let rest = rest.trim_start().strip_prefix(name)?;
+            if rest.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_') {
+                return None;
+            }
+            Some(rest.trim_start().to_string())
+        };
+        // `let name = …` (or `let mut name = …`)
+        let decl = ["let mut ", "let "]
+            .iter()
+            .find_map(|kw| t.strip_prefix(kw));
+        if let Some(rest) = decl.and_then(after) {
+            let Some(value) = rest.strip_prefix('=') else {
+                return false; // a pattern or an annotation: not seen
+            };
+            let value = value.trim_start();
+            if !(value.starts_with("#{") || value.starts_with('{')) {
+                return false;
+            }
+            bound = true;
+            continue;
+        }
+        // `name = …`: only a map's own writes keep it a map
+        if let Some(rest) = after(t)
+            && let Some(value) = rest.strip_prefix('=')
+            && !value.starts_with('=')
+        {
+            let value = value.trim_start();
+            if !["map_set(", "map_merge(", "map_remove(", "#{"]
+                .iter()
+                .any(|w| value.starts_with(w))
+            {
+                return false;
+            }
+            continue;
+        }
+        // a parameter, a loop variable, a match binding or an import of
+        // the name: not seen
+        let words = |s: &str| {
+            s.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .any(|w| w == name)
+        };
+        if (t.starts_with("fn ") || t.starts_with("for ") || t.starts_with("use "))
+            && words(t.split('=').next().unwrap_or(t))
+        {
+            return false;
+        }
+        if line.contains("=>")
+            && line
+                .split("=>")
+                .next()
+                .is_some_and(|head| head.contains('(') && words(head))
+        {
+            return false;
+        }
+    }
+    bound
+}
+
 fn receiver_is_atomic(expr: &Pair<'_, Rule>) -> Option<bool> {
     let binary = expr.clone().into_inner().next()?;
     if binary.as_rule() != Rule::binary_expr {
@@ -807,13 +909,8 @@ pub fn run_maps(paths: &[PathBuf], check: bool, dry_run: bool, skip: &[PathBuf])
             };
             match fix_maps(&src) {
                 Ok((fixed, report)) => {
-                    for (line, call) in &report.flagged {
-                        println!(
-                            "  flagged {}:{}: the default may have an effect, and `??` evaluates it only when used — {}",
-                            file.display(),
-                            line,
-                            call
-                        );
+                    for (line, why, call) in &report.flagged {
+                        println!("  flagged {}:{}: {} — {}", file.display(), line, why, call);
                     }
                     if fixed != src {
                         files_changed += 1;
@@ -890,43 +987,46 @@ mod tests {
         }
     }
 
+    /// The maps the rewrite tests read: names bound to map literals.
+    const MAPS: &str =
+        "let p = #{}\nlet m = #{}\nlet opts = { pad: 1 }\nlet a = #{}\nlet b = #{}\n";
+
+    fn fixed_over_maps(body: &str) -> String {
+        let out = fixed(&format!("{MAPS}{body}"));
+        out.strip_prefix(MAPS)
+            .expect("the bindings stay")
+            .to_string()
+    }
+
     #[test]
     fn rewrites_reads_and_defaults_keeping_layout_and_comments() {
-        let src = "// head\nlet a = map_get(p, \"profiles\")   // trailing\nlet b = map_get(map_get(m, \"pp\"), \"cur\")\nlet c = map_get_or(opts, \"pad\", 0) + 1\nlet d = len(filter(map_get(p, \"xs\"), (e) => map_get(e, \"id\") != live))\n";
+        let src = "// head\nlet x = map_get(p, \"profiles\")   // trailing\nlet c = map_get_or(opts, \"pad\", 0) + 1\nlet d = map_get(#{ \"k\": 1 }, \"k\")\n";
         assert_eq!(
-            fixed(src),
-            "// head\nlet a = p.profiles   // trailing\nlet b = m.pp.cur\nlet c = (opts.pad ?? 0) + 1\nlet d = len(filter(p.xs, (e) => e.id != live))\n"
+            fixed_over_maps(src),
+            "// head\nlet x = p.profiles   // trailing\nlet c = (opts.pad ?? 0) + 1\nlet d = #{ \"k\": 1 }.k\n"
         );
     }
 
     #[test]
     fn parenthesizes_where_precedence_needs_it() {
         assert_eq!(
-            fixed("let x = map_get(a + b, \"k\")\n"),
-            "let x = (a + b).k\n"
-        );
-        assert_eq!(
-            fixed("let x = map_get_or(m, \"k\", a == b)\n"),
+            fixed_over_maps("let x = map_get_or(m, \"k\", a == b)\n"),
             "let x = m.k ?? (a == b)\n"
         );
         assert_eq!(
-            fixed("let x = map_get_or(m, \"k\", 1) > 3\n"),
+            fixed_over_maps("let x = map_get_or(m, \"k\", 1) > 3\n"),
             "let x = m.k ?? 1 > 3\n"
         );
         assert_eq!(
-            fixed("let x = !map_get_or(m, \"on\", false)\n"),
+            fixed_over_maps("let x = !map_get_or(m, \"on\", false)\n"),
             "let x = !(m.on ?? false)\n"
         );
         assert_eq!(
-            fixed("let x = map_get_or(m, \"k\", #{}).j\n"),
+            fixed_over_maps("let x = map_get_or(m, \"k\", #{}).j\n"),
             "let x = (m.k ?? #{}).j\n"
         );
         assert_eq!(
-            fixed("let x = map_get(map_get_or(m, \"k\", #{}), \"j\")\n"),
-            "let x = (m.k ?? #{}).j\n"
-        );
-        assert_eq!(
-            fixed("let x = map_get_or(m, \"a\", map_get_or(m, \"b\", 0))\n"),
+            fixed_over_maps("let x = map_get_or(m, \"a\", map_get_or(m, \"b\", 0))\n"),
             "let x = m.a ?? (m.b ?? 0)\n"
         );
     }
@@ -944,22 +1044,58 @@ mod tests {
             "fn map_get(a, b) = 1\nlet x = map_get(m, \"k\")\n",
             "use lib.w { map_get_or }\nlet x = map_get_or(m, \"k\", 0)\n",
         ] {
-            assert_eq!(fixed(src), src, "{src}");
+            let with = format!("{MAPS}{src}");
+            assert_eq!(fixed(&with), with, "{src}");
         }
-        let (_, report) = fix_maps("let x = map_get_or(m, \"k\", fresh())\n").unwrap();
+        let (_, report) =
+            fix_maps(&format!("{MAPS}let x = map_get_or(m, \"k\", fresh())\n")).unwrap();
         assert_eq!(report.flagged.len(), 1);
+        assert_eq!(report.flagged[0].1, super::MAY_HAVE_AN_EFFECT);
         // its own map_get_or leaves the builtin map_get's calls rewritable
         assert_eq!(
-            fixed("fn map_get_or(m, k, d) = d\nlet x = map_get_or(m, \"k\", map_get(m, \"j\"))\n"),
-            "fn map_get_or(m, k, d) = d\nlet x = map_get_or(m, \"k\", m.j)\n"
+            fixed_over_maps(
+                "fn map_get_or(m, k, d) = d\nlet x = map_get_or(m, \"k\", map_get(p, \"j\"))\n"
+            ),
+            "fn map_get_or(m, k, d) = d\nlet x = map_get_or(m, \"k\", p.j)\n"
+        );
+    }
+
+    /// On a struct or a module `.` raises for a missing name where
+    /// map_get answers (): a call whose receiver is not seen to be a map
+    /// is flagged and left (OL-344).
+    #[test]
+    fn a_receiver_that_may_be_a_struct_or_a_module_is_flagged() {
+        for src in [
+            "type P = struct { x: Int }\nlet p = P { x: 1 }\nprintln(show(map_get(p, \"y\")))\nprintln(show(map_get_or(p, \"y\", 9)))\n",
+            "use lib.plugin\nlet hook = map_get(plugin, \"init\")\n",
+            "fn f(m) = map_get(m, \"k\")\n",
+            "let rows = map(xs, (r) => map_get(r, \"id\"))\n",
+            "let m = #{}\nm = load()\nlet x = map_get(m, \"k\")\n",
+            "let x = map_get(map_get(#{}, \"a\"), \"b\")\n",
+            "let x = map_get(5, \"k\")\n",
+        ] {
+            let (out, report) = fix_maps(src).unwrap();
+            assert!(
+                report.flagged.iter().any(|f| f.1 == super::NOT_SEEN_A_MAP),
+                "{src}: {:?}",
+                report.flagged
+            );
+            if !src.contains("map_get(map_get(#{}") {
+                assert_eq!(out, src, "{src}");
+            }
+        }
+        // a map's own writes keep it a map
+        assert_eq!(
+            fixed("let m = #{}\nm = map_set(m, \"k\", 1)\nlet x = map_get(m, \"k\")\n"),
+            "let m = #{}\nm = map_set(m, \"k\", 1)\nlet x = m.k\n"
         );
     }
 
     #[test]
     fn templates_and_idempotence() {
         let src = "let s = `${map_get(p, \"name\")} is ${map_get_or(p, \"age\", \"?\")}`\n";
-        let once = fixed(src);
+        let once = fixed_over_maps(src);
         assert_eq!(once, "let s = `${p.name} is ${p.age ?? \"?\"}`\n");
-        assert_eq!(fixed(&once), once);
+        assert_eq!(fixed_over_maps(&once), once);
     }
 }

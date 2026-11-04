@@ -406,6 +406,14 @@ have an effect — a call to one of the program's own functions, or to a
 builtin outside the pure set — is **flagged, never rewritten**
 (`flagged file:line: …`), for a person to decide.
 
+`m.key` is not `map_get(m, "key")` on a struct or a module: there `.`
+raises for a name the value lacks, and `map_get` answers `()`. A file is
+read without types, so a call is rewritten only when its receiver is
+seen to be a map. That means a map or object literal, `()`, or a name the
+file binds to one and changes only through `map_set`, `map_merge` or
+`map_remove`. Every other call, a parameter's or a value read out of
+another map, is flagged the same way.
+
 The rewrite is made in the source text: parentheses are added only
 where precedence needs them (`(m.pad ?? 0) + 1`, `(a + b).k`), and
 everything else — layout, comments, blank lines — stays byte for byte.
