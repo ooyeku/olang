@@ -49,6 +49,9 @@ pub fn file_diagnostics(
     let context: Vec<&Program> = modules.iter().map(|(_, _, p)| p).collect();
     let mut diagnostics = check_program_with_context(&context, program);
     diagnostics.extend(use_shadow_warnings(program, dir));
+    if let Some(d) = dir {
+        diagnostics.extend(unresolvable_uses(program, d));
+    }
     diagnostics.extend(unimported_names(program, source, &modules, dir, unresolved));
     diagnostics.extend(template_escape_warnings(source));
     diagnostics.extend(shadow_warnings_in(program, source));
@@ -2130,6 +2133,143 @@ fn use_candidates(path: &[String], dir: &Path) -> Vec<PathBuf> {
 }
 
 /// `modules_used` over an already-parsed program.
+/// The project's dependencies as a run would resolve them, offline (no
+/// fetch, no lock written): the map and the declared ones that did not
+/// resolve, by project root, kept while its olang.toml and olang.lock are
+/// unchanged. The language server asks on every edit.
+type DepsMemo = HashMap<
+    PathBuf,
+    (
+        (Option<std::time::SystemTime>, Option<std::time::SystemTime>),
+        HashMap<String, PathBuf>,
+        HashMap<String, String>,
+    ),
+>;
+static DEPS: std::sync::Mutex<Option<DepsMemo>> = std::sync::Mutex::new(None);
+
+fn project_dependencies(root: &Path) -> (HashMap<String, PathBuf>, HashMap<String, String>) {
+    let stamp = |f: &str| {
+        std::fs::metadata(root.join(f))
+            .and_then(|m| m.modified())
+            .ok()
+    };
+    let now = (stamp("olang.toml"), stamp("olang.lock"));
+    let mut memo = DEPS.lock().unwrap_or_else(|e| e.into_inner());
+    let memo = memo.get_or_insert_with(HashMap::new);
+    if let Some((at, map, missing)) = memo.get(root)
+        && *at == now
+    {
+        return (map.clone(), missing.clone());
+    }
+    let opts = crate::pkg::InstallOptions {
+        offline: true,
+        registry: std::env::var("OLANG_REGISTRY").ok().map(PathBuf::from),
+        ..Default::default()
+    };
+    let (map, missing) = crate::pkg::install_lenient(root, &opts);
+    let mut map: HashMap<String, PathBuf> = map.into_iter().collect();
+    if let Ok(m) = crate::pkg::manifest::Manifest::load(root) {
+        map.entry(m.package.name.clone())
+            .or_insert(root.to_path_buf());
+    }
+    let missing: HashMap<String, String> = missing.into_iter().collect();
+    memo.insert(root.to_path_buf(), (now, map.clone(), missing.clone()));
+    (map, missing)
+}
+
+/// Each `use` a run of the file in `dir` would fail at once: a module that
+/// is not there, a typo'd package, a declared dependency that does not
+/// resolve. Said as the run says it, at the `use` (OL-354).
+fn unresolvable_uses(program: &Program, dir: &Path) -> Vec<CheckDiagnostic> {
+    let uses: Vec<(u32, u32, String)> = program
+        .statements
+        .iter()
+        .filter_map(|stmt| {
+            let (line, column) = match stmt {
+                Statement::Located { line, column, .. } => (*line as u32, *column as u32),
+                _ => (1, 1),
+            };
+            match stmt.unwrapped() {
+                Statement::UseDecl(u) | Statement::ShareDecl(crate::ast::ShareDecl::Use(u))
+                    if !u.path.is_empty() =>
+                {
+                    Some((line, column, u.path.join(".")))
+                }
+                _ => None,
+            }
+        })
+        .collect();
+    if uses.is_empty() {
+        return Vec::new();
+    }
+    // A module is loaded from a program somewhere above it, and its own
+    // `use`s may resolve from that program's folder (minilisp's
+    // `lib/eval.ol` names `lib.reader`): a `use` is reported only when it
+    // resolves from none of the file's folders up to its project's root
+    // (its olang.toml, or its repository's top).
+    let root = crate::pkg::manifest::Manifest::find_root(dir);
+    let deps = root.as_deref().map(project_dependencies);
+    let mut folders = Vec::new();
+    let mut at = Some(dir);
+    while let Some(d) = at {
+        folders.push(d.to_path_buf());
+        if folders.len() >= 8 || root.as_deref() == Some(d) || d.join(".git").exists() {
+            break;
+        }
+        at = d.parent();
+    }
+    // One resolver a folder, kept while the dependencies are the same: a
+    // check of a project asks the same folders file after file.
+    thread_local! {
+        static RESOLVERS: std::cell::RefCell<HashMap<PathBuf, (usize, crate::interpreter::Interpreter)>> =
+            std::cell::RefCell::new(HashMap::new());
+    }
+    let deps_key = deps.as_ref().map_or(0, |(map, missing)| {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        let mut names: Vec<_> = map.iter().collect();
+        names.sort();
+        names.hash(&mut h);
+        let mut gone: Vec<_> = missing.iter().collect();
+        gone.sort();
+        gone.hash(&mut h);
+        h.finish() as usize
+    });
+    let resolves = |folder: &Path, path: &str| -> Result<(), String> {
+        RESOLVERS.with(|cell| {
+            let mut all = cell.borrow_mut();
+            let fresh = all.get(folder).is_none_or(|(k, _)| *k != deps_key);
+            if fresh {
+                let mut r = crate::interpreter::Interpreter::new();
+                r.set_current_file(&folder.join("<check>.ol"));
+                if let Some((map, missing)) = &deps {
+                    r.set_missing_dependencies(missing.clone());
+                    r.set_dependency_map(map.clone());
+                }
+                all.insert(folder.to_path_buf(), (deps_key, r));
+            }
+            all.get_mut(folder).expect("made above").1.resolve_use(path)
+        })
+    };
+    uses.into_iter()
+        .filter_map(|(line, column, path)| {
+            let message = resolves(dir, &path).err()?;
+            if folders[1..].iter().any(|f| resolves(f, &path).is_ok()) {
+                return None;
+            }
+            Some(CheckDiagnostic {
+                line,
+                column,
+                message,
+                runtime: true,
+                warning: false,
+                scope: false,
+                class: None,
+            })
+        })
+        .collect()
+}
+
 fn modules_used_by(
     program: &Program,
     dir: &Path,

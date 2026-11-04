@@ -614,3 +614,62 @@ fn a_let_lambda_that_calls_itself_in_a_block_is_defined() {
     assert!(ds.iter().all(|d| d["severity"] != 1), "{ds:#?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_use_of_a_module_that_is_not_there_is_an_error() {
+    // OL-354: `use lib.nothere { x }`, a typo'd package and a declared
+    // dependency that does not resolve were called clean, and the run
+    // failed at once.
+    let dir = project(
+        "missing_use",
+        &[
+            ("missing.ol", "use lib.nothere { x }\nprintln(x)\n"),
+            ("typo.ol", "use nothere_pkg { x }\nprintln(x)\n"),
+            // a module's `use` that resolves from the program's folder
+            ("lib/reader.ol", "share fn read(s) = s\n"),
+            (
+                "lib/eval.ol",
+                "use lib.reader { read }\nshare fn ev(s) = read(s)\n",
+            ),
+            ("main.ol", "use lib.eval { ev }\nprintln(ev(\"x\"))\n"),
+        ],
+    );
+    let mut c = Client::start();
+    for (file, says) in [
+        ("missing.ol", "Cannot find module 'lib.nothere'"),
+        ("typo.ol", "Cannot find module 'nothere_pkg'"),
+    ] {
+        let (errors, _, report) = check(&dir.join(file));
+        assert!(errors >= 1 && report.contains(says), "{file}: {report}");
+        let ds = agree(&mut c, &dir.join(file));
+        assert!(
+            ds.iter()
+                .any(|d| d["severity"] == 1 && d["message"].as_str().unwrap_or("").contains(says)),
+            "{file}: {ds:#?}"
+        );
+    }
+    for file in ["main.ol", "lib/eval.ol"] {
+        let (errors, _, report) = check(&dir.join(file));
+        assert_eq!(errors, 0, "{file}: {report}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let dep = project(
+        "missing_dep",
+        &[
+            (
+                "olang.toml",
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ngeo = { path = \"../no-such-geo\" }\n",
+            ),
+            ("main.ol", "use geo { area }\nprintln(area(1))\n"),
+        ],
+    );
+    let (errors, _, report) = check(&dep.join("main.ol"));
+    assert!(
+        errors >= 1
+            && report.contains("dependency 'geo' is declared in olang.toml but could not be"),
+        "{report}"
+    );
+    assert!(!dep.join("olang.lock").exists(), "check wrote a lock");
+    let _ = std::fs::remove_dir_all(&dep);
+}

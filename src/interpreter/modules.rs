@@ -599,6 +599,27 @@ already binds — an import never replaces a program's own name. Alias the impor
         self.dependency_tracker.dependencies.clone()
     }
 
+    /// Whether a `use` of `module_path` finds a module, as the run would
+    /// look for it from the current file, without loading it: `olang
+    /// check`'s question (OL-354). The error is the run's own first line
+    /// (`Cannot find module 'lib.nothere'`, or why a declared dependency
+    /// did not resolve).
+    pub fn resolve_use(&mut self, module_path: &str) -> Result<(), String> {
+        self.resolve_module_path(module_path)
+            .map(|_| ())
+            .map_err(|e| {
+                // the run's own words, as its error formatter says them
+                let text = super::errors::IntuitiveErrorFormatter::default().format_error(&e);
+                let first = text
+                    .lines()
+                    .map(|l| l.trim())
+                    .find(|l| !l.is_empty())
+                    .unwrap_or("")
+                    .to_string();
+                first.strip_prefix("Error: ").unwrap_or(&first).to_string()
+            })
+    }
+
     /// Load a module from the file system or standard library
     pub(crate) fn load_module_from_file(
         &mut self,
