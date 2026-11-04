@@ -193,6 +193,11 @@ pub struct RichEditor {
     /// The wrap width, device pixels.
     width: f32,
     pub rev: i64,
+    /// The revision of the field's own last edit (a key, a paste, its own
+    /// undo), and of the last value adopted from the program: a program's
+    /// edit is rebased only over the field's own edits (`rebase`).
+    own_rev: i64,
+    adopted_rev: i64,
     /// The values reported, by revision: known again by their identity
     /// (the program hands back the very string it was given), never
     /// copied or compared.
@@ -657,6 +662,8 @@ impl RichEditor {
             scale: 1.0,
             width: 240.0,
             rev: 0,
+            own_rev: 0,
+            adopted_rev: 0,
             sent: VecDeque::new(),
             multiline: true,
             secure: false,
@@ -971,6 +978,7 @@ impl RichEditor {
         self.focus = map(f).min(new_len);
         self.snap_selection();
         self.rev += 1;
+        self.adopted_rev = self.rev;
         self.remember();
         true
     }
@@ -981,6 +989,12 @@ impl RichEditor {
     /// marker Enter asked for, then the keys typed after Enter. Answers
     /// whether it was made; else the program's value is adopted whole.
     fn rebase(&mut self, r: i64, value: &Arc<String>, ts: &mut TextSystem) -> bool {
+        // Only keys typed since `r` and nothing adopted since: a revision
+        // the engine moved on by adopting the program's own value is not
+        // an edit to keep (a join, then the next patch made from before it)
+        if self.own_rev <= r || self.adopted_rev > r {
+            return false;
+        }
         let Some(base) = self
             .sent
             .iter()
@@ -1028,6 +1042,7 @@ impl RichEditor {
         self.focus = map(f).min(self.buffer.len());
         self.snap_selection();
         self.rev += 1;
+        self.adopted_rev = self.rev;
         self.remember();
         true
     }
@@ -1441,6 +1456,7 @@ impl RichEditor {
             self.redo.clear();
         }
         self.rev += 1;
+        self.own_rev = self.rev;
         self.remember();
         Outcome::Changed
     }
@@ -1511,6 +1527,7 @@ impl RichEditor {
         self.focus = snap.2.min(self.buffer.len());
         self.snap_selection();
         self.rev += 1;
+        self.own_rev = self.rev;
         self.remember();
     }
 
@@ -2692,6 +2709,21 @@ mod rebase_tests {
         ed.insert("c", &mut ts);
         assert!(!ed.offer(&mine, Some(r), &mut ts));
         assert_eq!(ed.value(), "- a\n- bc");
+        drop(seen);
+    }
+
+    /// A revision the engine moved on by adopting the program's value is
+    /// no edit of the field's: the program's next value, made from before
+    /// it, is adopted whole (Studio's join, then its undo).
+    #[test]
+    fn a_value_adopted_since_is_not_rebased_over() {
+        let mut ts = system().lock().unwrap();
+        let mut ed = RichEditor::new("", &Font::default(), Default::default());
+        ed.insert("a\nb", &mut ts);
+        let (seen_rev, seen) = (ed.rev, ed.value_arc());
+        assert!(ed.offer(&Arc::new("a b".to_string()), Some(seen_rev), &mut ts));
+        assert!(ed.offer(&Arc::new("a\nb".to_string()), Some(seen_rev), &mut ts));
+        assert_eq!(ed.value(), "a\nb");
         drop(seen);
     }
 
