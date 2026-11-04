@@ -1520,7 +1520,10 @@ A program that can still make progress is never interrupted: a thread
 that is computing, sleeping, or waiting with a bound (`recv_timeout`,
 `join_timeout`, `try_recv`) counts as live but not parked, and a
 running `http.serve` disables the abort entirely, because an incoming
-request can wake a worker at any time. Setting `OLANG_STALL_ABORT=0`
+request can wake a worker at any time. So does an installed
+`os.on_shutdown` handler until it has run: a signal runs it on a thread
+of its own, and it may send, so `chan.recv(stop)` waiting for it is not
+a deadlock. Setting `OLANG_STALL_ABORT=0`
 turns the abort off (the program hangs instead), for embedding hosts
 that manage their own threads.
 

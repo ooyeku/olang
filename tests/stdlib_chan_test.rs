@@ -250,3 +250,57 @@ total
     // sum 0..5000
     assert_eq!(format!("{}", result), "12497500");
 }
+
+/// A program that waits for its `os.on_shutdown` handler to send is not a
+/// deadlock: the handler is a wake from outside, which a signal runs on a
+/// thread of its own. The stall detector aborted it (exit 101) half a
+/// second after it started (OL-363); a channel nothing can send on is
+/// still reported.
+#[cfg(unix)]
+#[test]
+fn a_program_waiting_on_its_shutdown_handler_is_not_a_deadlock() {
+    use std::process::{Command, Stdio};
+    let dir = std::env::temp_dir().join(format!("olang_ol363_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("s.ol"),
+        "let stop = chan.new()\nos.on_shutdown((why) => { chan.send(stop, why) })\nprintln(\"waiting\")\nprintln(show(chan.recv(stop)))\nprintln(\"clean exit\")\n",
+    )
+    .unwrap();
+    let child = Command::new(env!("CARGO_BIN_EXE_olang"))
+        .arg("s.ol")
+        .current_dir(&dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // well past the detector's half second
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let killed = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(killed.success());
+    let out = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        stdout,
+        "waiting\nOk(\"shutdown\")\nclean exit\n",
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success());
+
+    std::fs::write(
+        dir.join("d.ol"),
+        "let c = chan.new()\nprintln(chan.recv(c))\n",
+    )
+    .unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_olang"))
+        .arg("d.ol")
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&out.stderr).contains("deadlock"));
+}

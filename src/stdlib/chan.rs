@@ -192,6 +192,27 @@ impl Drop for LiveGuard {
     }
 }
 
+/// A wake from outside the program's threads that may still come: an
+/// installed `os.on_shutdown` handler, which a signal runs on its own
+/// thread, and which may send. It counts as a live thread that never
+/// parks, for as long as it is held, so a program waiting on its handler
+/// is not a deadlock (OL-363). It touches no thread's census mark: it is
+/// made on one thread and dropped on another.
+pub struct ExternalWaker(());
+
+pub fn external_waker() -> ExternalWaker {
+    LIVE.fetch_add(1, Ordering::SeqCst);
+    PARK_GEN.fetch_add(1, Ordering::SeqCst);
+    ExternalWaker(())
+}
+
+impl Drop for ExternalWaker {
+    fn drop(&mut self) {
+        LIVE.fetch_sub(1, Ordering::SeqCst);
+        PARK_GEN.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
 /// Enter the parked set. The token unparks; the guard pattern is not
 /// used because unpark order interleaves with lock scopes.
 fn park(what: String) -> u64 {

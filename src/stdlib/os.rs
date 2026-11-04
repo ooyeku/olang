@@ -1041,7 +1041,13 @@ pub fn signals_trapped() -> bool {
 /// thread against a thread-safe clone of the registering interpreter when
 /// SIGINT or SIGTERM arrives, with the signal's name ("INT" or "TERM" is
 /// not distinguishable through the handler crate, so "shutdown").
-type ShutdownHandler = (crate::interpreter::Interpreter, Value);
+/// Each holds an external waker until it has run: a program that waits
+/// for its handler to send is waiting on a wake that may come.
+type ShutdownHandler = (
+    crate::interpreter::Interpreter,
+    Value,
+    crate::stdlib::chan::ExternalWaker,
+);
 static SHUTDOWN_HANDLERS: std::sync::Mutex<Vec<ShutdownHandler>> =
     std::sync::Mutex::new(Vec::new());
 
@@ -1060,10 +1066,14 @@ fn install_signal_handler() -> Result<(), String> {
             .lock()
             .map(|mut h| std::mem::take(&mut *h))
             .unwrap_or_default();
-        for (mut interp, handler) in handlers {
+        for (mut interp, handler, waker) in handlers {
             let _ = std::thread::Builder::new()
                 .name("olang-shutdown".to_string())
                 .spawn(move || {
+                    // the handler's thread runs olang code: it is in the
+                    // census while it does, and the waker it was goes
+                    let _live = crate::stdlib::chan::live_guard();
+                    drop(waker);
                     if let Err(e) = interp.call_function(
                         handler,
                         vec![Value::String(Arc::new("shutdown".to_string()))],
@@ -1090,7 +1100,7 @@ pub fn register_shutdown_handler(
     SHUTDOWN_HANDLERS
         .lock()
         .map_err(|_| "shutdown handlers poisoned".to_string())?
-        .push((interpreter, handler));
+        .push((interpreter, handler, crate::stdlib::chan::external_waker()));
     Ok(())
 }
 
