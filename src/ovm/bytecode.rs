@@ -1020,6 +1020,15 @@ pub enum Instruction {
         dst: Register,
         src: Register,
     },
+    /// Let go of the values `regs` hold, leaving Unit: nothing reads them
+    /// again (OL-411). The registers a loop's body used, at the loop's
+    /// exit, and a variable written where nothing reads it after (the
+    /// write's source too, when it is dead). Without it a dead register
+    /// kept its value alive until the function returned: `x = ()` freed
+    /// nothing, and a loop body's last value outlived the loop.
+    Release {
+        regs: Vec<Register>,
+    },
     /// A self-call in tail position (Campaign 5, R4b): rebind the
     /// parameter registers and jump to the entry point instead of
     /// pushing a frame. Rewritten from `CallFn` by the compiler's
@@ -4537,6 +4546,11 @@ impl BytecodeVm {
                 Instruction::TakeMove { dst, src } => {
                     let v = self.execution_state.take_register(*src)?;
                     self.execution_state.set_register(*dst, v)?;
+                }
+                Instruction::Release { regs } => {
+                    for r in regs {
+                        self.execution_state.take_register(*r)?;
+                    }
                 }
                 Instruction::Move { dst, src } => {
                     let value = self.execution_state.get_register(*src)?;
@@ -12723,13 +12737,14 @@ impl BytecodeCompiler {
                     && crate::interpreter::loop_promo::analyze(body, None)
                         .is_some_and(|f| !f.writes.iter().any(|w| w == variable))
                 {
+                    let first_reg = self.register_allocator.next_register;
                     let start_reg = self.compile_expression(start)?;
                     let var_reg = self.register_allocator.allocate_register();
                     self.emitter.instructions.push(Instruction::Move {
                         dst: var_reg,
                         src: start_reg,
                     });
-                    self.local_variables.insert(variable.clone(), var_reg);
+                    let outer = self.local_variables.insert(variable.clone(), var_reg);
                     let end_reg = self.compile_expression(end)?;
                     // The range is evaluated once; a body that reassigns
                     // the variable behind `end` must not see the bound
@@ -12772,6 +12787,7 @@ impl BytecodeCompiler {
                     self.emitter.emit_jump(loop_start);
 
                     self.emitter.place_label(loop_end);
+                    self.end_loop_scope(first_reg, result, variable, outer);
                     return match result {
                         Some(r) => Ok(r),
                         None => self.unit_register(),
@@ -12782,6 +12798,7 @@ impl BytecodeCompiler {
                 // interpreter (which never materializes a range).
                 // IterGet re-reads the source register EVERY pass, so a body
                 // that reassigns the iterable variable must not share it.
+                let first_reg = self.register_allocator.next_register;
                 let source_reg = self.compile_expression(iterable)?;
                 let source_reg = self.shield_operand(source_reg, !Self::assignment_free(body));
 
@@ -12797,7 +12814,7 @@ impl BytecodeCompiler {
 
                 // The loop variable gets its own register, rebound each pass
                 let var_reg = self.register_allocator.allocate_register();
-                self.local_variables.insert(variable.clone(), var_reg);
+                let outer = self.local_variables.insert(variable.clone(), var_reg);
 
                 let loop_start = self.emitter.create_label();
                 let loop_step = self.emitter.create_label();
@@ -12835,6 +12852,7 @@ impl BytecodeCompiler {
                 self.emitter.emit_jump(loop_start);
 
                 self.emitter.place_label(loop_end);
+                self.end_loop_scope(first_reg, result, variable, outer);
 
                 // For loops evaluate to Unit, or a `break value`'s value
                 match result {
@@ -12856,6 +12874,7 @@ impl BytecodeCompiler {
             }
 
             Expr::WhileLoop { condition, body } => {
+                let first_reg = self.register_allocator.next_register;
                 let loop_start = self.emitter.create_label();
                 let loop_end = self.emitter.create_label();
 
@@ -12875,6 +12894,7 @@ impl BytecodeCompiler {
                 self.emitter.emit_jump(loop_start);
 
                 self.emitter.place_label(loop_end);
+                self.release_loop_registers(first_reg, result);
 
                 // While loops evaluate to Unit, or a `break value`'s value
                 if let Some(r) = result {
@@ -12889,6 +12909,7 @@ impl BytecodeCompiler {
             // `loop { … }`: runs until a `break` (its value the loop's) or
             // a `return`; `continue` starts the body again.
             Expr::Loop { body } => {
+                let first_reg = self.register_allocator.next_register;
                 let loop_start = self.emitter.create_label();
                 let loop_end = self.emitter.create_label();
                 let result = self.unit_register()?;
@@ -12901,6 +12922,7 @@ impl BytecodeCompiler {
                 body_result?;
                 self.emitter.emit_jump(loop_start);
                 self.emitter.place_label(loop_end);
+                self.release_loop_registers(first_reg, Some(result));
                 Ok(result)
             }
 
@@ -14244,6 +14266,53 @@ impl BytecodeCompiler {
         Ok(target_reg)
     }
 
+    /// At a loop's exit: let go of what its registers hold (OL-411). Every
+    /// register allocated since `first` belongs to the loop (its source,
+    /// counters and body; registers are never handed out twice, and a
+    /// block's names are gone at its end), so nothing after the loop reads
+    /// one, except the register the loop answers with. Without this a
+    /// loop body's last value stayed alive until the function returned.
+    /// A loop inside another's body leaves it to the outer loop's exit,
+    /// whose registers include its own: releasing at every pass of the
+    /// outer loop cost a tight nested loop 7%, and what it holds is
+    /// overwritten by the next pass anyway.
+    fn release_loop_registers(&mut self, first: u32, result: Option<Register>) {
+        if !self.loop_targets.is_empty() {
+            return;
+        }
+        let regs: Vec<Register> = (first..self.register_allocator.next_register)
+            .map(Register)
+            .filter(|r| Some(*r) != result)
+            .collect();
+        if !regs.is_empty() {
+            self.emitter
+                .instructions
+                .push(Instruction::Release { regs });
+        }
+    }
+
+    /// A `for` loop's end: its registers let go, and its variable's name
+    /// back to what it named before the loop. The interpreter gives the
+    /// loop a scope of its own, so after `for x in xs` an outer `x` is the
+    /// outer one again, and a name the loop introduced is gone.
+    fn end_loop_scope(
+        &mut self,
+        first: u32,
+        result: Option<Register>,
+        variable: &str,
+        outer: Option<Register>,
+    ) {
+        self.release_loop_registers(first, result);
+        match outer {
+            Some(reg) => {
+                self.local_variables.insert(variable.to_string(), reg);
+            }
+            None => {
+                self.local_variables.remove(variable);
+            }
+        }
+    }
+
     fn unit_register(&mut self) -> Result<Register, BytecodeError> {
         let const_idx = self.emitter.add_constant(OvmValue::new_unit());
         let dst_reg = self.register_allocator.allocate_register();
@@ -15161,7 +15230,69 @@ impl BytecodeOptimizer {
         let instructions = Self::fold_constant_branches(instructions, constants);
         let instructions = Self::sweep_unreachable(instructions);
         let instructions = Self::fuse_scalar_appends(instructions);
-        Ok(Self::eliminate_dead_moves(instructions))
+        let instructions = Self::eliminate_dead_moves(instructions);
+        Ok(Self::trim_releases(instructions, constants))
+    }
+
+    /// Leave out of each `Release` the registers that only ever hold a
+    /// number or a Boolean: every write to them is a numeric constant, a
+    /// comparison or arithmetic. Letting go of one frees nothing, and a
+    /// loop's exit releases a counter per pass of an enclosing loop. A
+    /// register kept out by mistake (a sum of two strings, say) keeps its
+    /// value as it did before `Release` existed, so this cannot change a
+    /// result. A `Release` left with nothing is a `Nop`.
+    fn trim_releases(
+        mut instructions: Vec<Instruction>,
+        constants: &[OvmValue],
+    ) -> Vec<Instruction> {
+        use crate::ovm::value::ValueData as D;
+        use Instruction as I;
+        if !instructions.iter().any(|i| matches!(i, I::Release { .. })) {
+            return instructions;
+        }
+        let mut written_other: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        let mut uses = Vec::new();
+        let mut defs = Vec::new();
+        for inst in &instructions {
+            let numeric = match inst {
+                I::LoadConst { const_idx, .. } => matches!(
+                    constants.get(*const_idx as usize).map(|c| &c.data),
+                    Some(D::Integer(_) | D::Float(_) | D::Boolean(_) | D::Unit)
+                ),
+                I::Lt { .. }
+                | I::Le { .. }
+                | I::Gt { .. }
+                | I::Ge { .. }
+                | I::Eq { .. }
+                | I::Ne { .. }
+                | I::Not { .. }
+                | I::Sub { .. }
+                | I::Mul { .. }
+                | I::Div { .. }
+                | I::Mod { .. }
+                | I::Neg { .. }
+                | I::Bitwise { .. }
+                | I::BinImm { .. }
+                | I::IterLen { .. }
+                | I::Release { .. } => true,
+                _ => false,
+            };
+            if !numeric {
+                uses.clear();
+                defs.clear();
+                Self::uses_defs_into(inst, &mut uses, &mut defs);
+                written_other.extend(defs.iter().copied());
+            }
+        }
+        for inst in &mut instructions {
+            if let I::Release { regs } = inst {
+                regs.retain(|r| written_other.contains(&r.0));
+                if regs.is_empty() {
+                    *inst = I::Nop;
+                }
+            }
+        }
+        instructions
     }
 
     /// Rewrite the accumulate idiom's instruction pair — `MakeList` of
@@ -15457,8 +15588,15 @@ impl BytecodeOptimizer {
                     let live_after = |r: u32| pc + 1 < n && live_in[pc + 1][r as usize];
                     if !live_after(dst.0) {
                         // Nobody reads the destination: the Move (and the
-                        // reference it would plant) can vanish entirely.
-                        Some(I::Nop)
+                        // reference it would plant) can go. Its old value
+                        // goes too, and the source's when it is dead: a
+                        // Nop left both alive until something overwrote
+                        // them, so `x = ()` freed nothing (OL-411).
+                        let mut regs = vec![*dst];
+                        if !live_after(src.0) {
+                            regs.push(*src);
+                        }
+                        Some(I::Release { regs })
                     } else if !live_after(src.0) {
                         // The destination lives but the source is dead —
                         // the call-result pattern (`CallFn dst; Move x ←
@@ -15516,6 +15654,7 @@ impl BytecodeOptimizer {
                 defs.push(dst.0);
                 defs.push(src.0);
             }
+            I::Release { regs } => defs.extend(regs.iter().map(|r| r.0)),
             I::Nop | I::MatchFail | I::TryFail => {}
             I::Jump { .. } => {}
             I::JumpIfTrue { condition, .. } | I::JumpIfFalse { condition, .. } => {
@@ -15790,6 +15929,10 @@ impl fmt::Display for Instruction {
                 }
             }
             Instruction::Nop => write!(f, "NOP"),
+            Instruction::Release { regs } => {
+                let regs: Vec<String> = regs.iter().map(|r| format!("r{}", r.0)).collect();
+                write!(f, "RELEASE {}", regs.join(", "))
+            }
             _ => write!(f, "{:?}", self),
         }
     }

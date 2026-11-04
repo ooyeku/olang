@@ -3425,6 +3425,7 @@ pub(crate) fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         }
         Instruction::Move { .. }
         | Instruction::TakeMove { .. }
+        | Instruction::Release { .. }
         | Instruction::Add { .. }
         | Instruction::AddAssign { .. }
         | Instruction::Sub { .. }
@@ -3573,9 +3574,12 @@ fn list_write_targets_unaliased(bytecode: &CompiledBytecode) -> bool {
     // AT the tuple is fine (that is exactly how a synthesized region's
     // exit reaches its epilogue); what matters is what follows.
     let pure_exit_after = |pc: usize| {
-        bytecode.instructions[pc + 1..]
-            .iter()
-            .all(|i| matches!(i, Instruction::Return { .. } | Instruction::Nop))
+        bytecode.instructions[pc + 1..].iter().all(|i| {
+            matches!(
+                i,
+                Instruction::Return { .. } | Instruction::Nop | Instruction::Release { .. }
+            )
+        })
     };
     for (pc, inst) in bytecode.instructions.iter().enumerate() {
         let aliased = match inst {
@@ -3653,6 +3657,7 @@ fn boundary_unprofitable(bytecode: &CompiledBytecode) -> bool {
             // return through out slots) but it is not compute either.
             Instruction::Move { .. }
             | Instruction::TakeMove { .. }
+            | Instruction::Release { .. }
             | Instruction::LoadConst { .. }
             | Instruction::Return { .. }
             | Instruction::MakeTuple { .. } => {}
@@ -3893,6 +3898,7 @@ pub(crate) fn for_each_reg(
             f(dst);
             f(src);
         }
+        I::Release { regs } => regs.iter_mut().for_each(&mut f),
         I::AddAssign { target, rhs } => {
             f(target);
             f(rhs);
@@ -4610,14 +4616,17 @@ impl PlanFn {
         // Canonicalize: AddAssign{t, r} is semantically Add{dst: t, lhs: t,
         // rhs: r}, and TakeMove is Move whose source the optimizer proved
         // dead afterward — native code keeping the source value alive is
-        // unobservable. Rewriting both up front means inference and
-        // codegen handle one shape each. 1:1, so jump targets are
-        // untouched. The rewritten copy is what the JittedFn keeps alive
+        // unobservable; a Release lets go of dead registers, which native
+        // code need not do either (a Nop). Rewriting them up front means
+        // inference and codegen handle one shape each. 1:1, so jump
+        // targets are untouched. The rewritten copy is what the JittedFn keeps alive
         // (its instructions carry the baked shape Arcs).
         let bytecode = if bytecode.instructions.iter().any(|i| {
             matches!(
                 i,
-                Instruction::AddAssign { .. } | Instruction::TakeMove { .. }
+                Instruction::AddAssign { .. }
+                    | Instruction::TakeMove { .. }
+                    | Instruction::Release { .. }
             )
         }) {
             let mut b = (*bytecode).clone();
@@ -4637,6 +4646,7 @@ impl PlanFn {
                             src: *src,
                         };
                     }
+                    Instruction::Release { .. } => *inst = Instruction::Nop,
                     _ => {}
                 }
             }
@@ -5987,6 +5997,7 @@ pub(crate) fn instruction_name(inst: &Instruction) -> &'static str {
         Instruction::StoreLocal { .. } => "StoreLocal",
         Instruction::Move { .. } => "Move",
         Instruction::TakeMove { .. } => "TakeMove",
+        Instruction::Release { .. } => "Release",
         Instruction::Add { .. } => "Add",
         Instruction::AddAssign { .. } => "AddAssign",
         Instruction::Sub { .. } => "Sub",
