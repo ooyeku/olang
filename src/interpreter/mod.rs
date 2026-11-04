@@ -3933,6 +3933,20 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         // code never reads the program's names.
         let root_is_home = self.root_is_home();
         if root_is_home && let Some(value) = self.environment.root().get_here(name) {
+            // A bridge's root holds the builtins; the program's own
+            // binding of a builtin's name (an import of `find`) is the
+            // host's, and the program's code reads it, as it does on the
+            // host (OL-419).
+            if matches!(value, Value::Builtin(_))
+                && let Some(host) = self
+                    .fallback_globals
+                    .as_ref()
+                    .filter(|_| self.code_is_program())
+                    .and_then(|g| g.get(name))
+                    .filter(|v| !matches!(v, Value::Builtin(_)))
+            {
+                return Some(host.clone());
+            }
             return Some(value);
         }
         // A sibling declared earlier in the running function's run
