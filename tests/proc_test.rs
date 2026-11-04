@@ -251,3 +251,42 @@ let fend = proc.read_line(f)
         8,
     );
 }
+
+/// os.exec feeds a large `stdin` while it reads the output: written first,
+/// a child that answers as it reads filled its output pipe and both sides
+/// waited forever (OL-360).
+#[test]
+fn os_exec_feeds_a_large_stdin_to_a_child_that_writes_as_it_reads() {
+    let dir = std::env::temp_dir().join(format!("olang_ol360_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("p.ol"),
+        "let r = unwrap(os.exec([\"cat\"], #{ \"stdin\": str.repeat(\"x\", 1000000) }))\nprintln(len(r.stdout))\n\
+         let s = unwrap(os.exec([\"head\", \"-c\", \"10\"], #{ \"stdin\": str.repeat(\"y\", 1000000) }))\nprintln(s.stdout)\n",
+    )
+    .unwrap();
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_olang"))
+        .arg("p.ol")
+        .current_dir(&dir)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let started = std::time::Instant::now();
+    loop {
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        if started.elapsed() > std::time::Duration::from_secs(30) {
+            let _ = child.kill();
+            panic!("os.exec hung on a large stdin");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let out = child.wait_with_output().unwrap();
+    // a child that exits before reading all of it is not an error either
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "1000000\nyyyyyyyyyy\n"
+    );
+}

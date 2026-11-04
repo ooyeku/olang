@@ -686,7 +686,11 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 }
 
 /// `os.exec` without a deadline: run to completion. With stdin data the
-/// child is spawned piped and fed before collecting.
+/// child is spawned piped and fed on a thread of its own while its output
+/// is collected. Written first, a child that answers as it reads (`cat`,
+/// `sort`, `jq` over a few hundred KB) filled its output pipe and stopped
+/// reading, and both sides waited forever (OL-360). A child that exits
+/// without reading all of it is not an error, as with `timeout_ms`.
 fn exec_unbounded(
     mut command: process::Command,
     stdin_data: Option<String>,
@@ -698,11 +702,17 @@ fn exec_unbounded(
             .stderr(process::Stdio::piped())
             .spawn()
             .and_then(|mut child| {
-                use std::io::Write;
-                if let Some(mut pipe) = child.stdin.take() {
-                    pipe.write_all(input.as_bytes())?;
+                let feeder = child.stdin.take().map(|mut pipe| {
+                    std::thread::spawn(move || {
+                        use std::io::Write;
+                        let _ = pipe.write_all(input.as_bytes());
+                    })
+                });
+                let output = child.wait_with_output();
+                if let Some(f) = feeder {
+                    let _ = f.join();
                 }
-                child.wait_with_output()
+                output
             })
     } else {
         command.output()
