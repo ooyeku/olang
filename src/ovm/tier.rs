@@ -1121,6 +1121,8 @@ impl BytecodeTier {
         let func_id = self.register(name, func)?;
         let mut resolved_by_bridge: HashSet<String> = HashSet::new();
 
+        let mut compiled_for_this: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         for _ in 0..MAX_RESOLUTION_STEPS {
             let decl = match Self::declaration(name, func) {
                 Some(decl) => decl,
@@ -1164,7 +1166,13 @@ impl BytecodeTier {
                         if self.verbose {
                             eprintln!("[ovm] '{}' waits on callee '{}'", name, callee);
                         }
-                        if self.compile_dependency(&callee) {
+                        // A callee said compiled once and still unresolved
+                        // will be no better the next time: it is bridged
+                        // (or the caller refused) now, not retried 4,096
+                        // times, a second of compiling in one call (OL-422).
+                        if compiled_for_this.insert(callee.clone())
+                            && self.compile_dependency(&callee)
+                        {
                             continue;
                         }
                         // The callee stays interpreted; this function need
