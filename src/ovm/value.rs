@@ -250,8 +250,14 @@ fn small_and_flat(map: &crate::ast::ValueMap) -> bool {
 /// The typed-conversion cache: interpreter list (by Arc pointer) → its
 /// typed OvmValue. Bounded; oldest entry evicted. Thread-local because
 /// conversions happen on whichever thread runs the boundary.
+///
+/// The list is held weakly, and an entry whose list has died is let go
+/// at the next insertion: held strongly, the cache kept its last sixteen
+/// lists and their typed copies alive whether or not anything else did,
+/// so a loop over `len(map(range(0, n), f))` held sixteen dead results,
+/// 75 MB at n = 100,000 (OL-412).
 const TYPED_CACHE_CAP: usize = 16;
-type TypedCacheEntry = (usize, Arc<Vec<Value>>, OvmValue);
+type TypedCacheEntry = (usize, std::sync::Weak<Vec<Value>>, OvmValue);
 thread_local! {
     static TYPED_CACHE: std::cell::RefCell<std::collections::VecDeque<TypedCacheEntry>> =
         const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
@@ -262,20 +268,33 @@ fn typed_cache_lookup(items: &Arc<Vec<Value>>) -> Option<OvmValue> {
     TYPED_CACHE.with(|c| {
         c.borrow()
             .iter()
-            .find(|(k, _, _)| *k == key)
+            .find(|(k, list, _)| {
+                *k == key && list.upgrade().is_some_and(|live| Arc::ptr_eq(&live, items))
+            })
             .map(|(_, _, v)| v.clone())
     })
 }
 
 fn typed_cache_insert(items: &Arc<Vec<Value>>, typed: &OvmValue) {
     let key = Arc::as_ptr(items) as usize;
+    // dropped after the borrow ends, as the identity cache's are
+    let mut dead = Vec::new();
     TYPED_CACHE.with(|c| {
         let mut c = c.borrow_mut();
-        if c.len() >= TYPED_CACHE_CAP {
-            c.pop_front();
+        let mut i = 0;
+        while i < c.len() {
+            if c[i].1.strong_count() == 0 {
+                dead.extend(c.remove(i));
+            } else {
+                i += 1;
+            }
         }
-        c.push_back((key, items.clone(), typed.clone()));
+        if c.len() >= TYPED_CACHE_CAP {
+            dead.extend(c.pop_front());
+        }
+        c.push_back((key, Arc::downgrade(items), typed.clone()));
     });
+    drop(dead);
 }
 
 /// Value data variants
