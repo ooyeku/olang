@@ -138,3 +138,28 @@ fn an_eval_error_is_placed_at_eval() {
     assert!(out.contains("<eval>:1"), "{out}");
     assert!(!out.contains("<eval>.ol"), "{out}");
 }
+
+#[test]
+fn an_os_exit_in_a_test_fails_that_block_and_the_run_goes_on() {
+    // OL-351: `os.exit(0)` in a block ended the whole run with exit 0, so
+    // the blocks and files after it never ran and CI read green.
+    let dir = workspace("exit_in_test");
+    std::fs::write(
+        dir.join("a_test.ol"),
+        "test \"exits\" { os.exit(0) }\ntest \"after\" { assert_eq(1, 1) }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("b_test.ol"),
+        "test \"fails\" { assert_eq(1, 2) }\n",
+    )
+    .unwrap();
+    let (out, code) = olang(&dir, &["test"]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("os.exit(0) under olang test"), "{out}");
+    assert!(out.contains("1 passed, 2 failed"), "{out}");
+    // a program still exits as asked
+    std::fs::write(dir.join("p.ol"), "os.exit(3)\n").unwrap();
+    let (_, code) = olang(&dir, &["p.ol"]);
+    assert_eq!(code, 3);
+}

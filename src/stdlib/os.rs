@@ -950,6 +950,16 @@ fn os_temp_dir(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
 /// Exit the program with a status code
 /// Usage: os.exit(0) -> Never returns
+/// Whether `os.exit` raises rather than ends the process: under `olang
+/// test`, where an exit in one block ended the whole run with its status
+/// (0 for `os.exit(0)`), the files after it never ran and CI read green
+/// (OL-351). The block that exits fails, and the run goes on.
+static EXIT_RAISES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_exit_raises(on: bool) {
+    EXIT_RAISES.store(on, std::sync::atomic::Ordering::SeqCst);
+}
+
 fn os_exit(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
         return Err(format!("os.exit expects 1 argument, got {}", args.len()).into());
@@ -961,6 +971,12 @@ fn os_exit(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             return Err("os.exit: argument must be an integer".to_string().into());
         }
     };
+    if EXIT_RAISES.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(format!(
+            "os.exit({exit_code}) under olang test: a test cannot end the run, so this one fails and the run goes on"
+        )
+        .into());
+    }
 
     // The terminal first: a program that entered `tty` and exits from
     // anywhere gets its terminal back (atexit covers Unix too; Windows's

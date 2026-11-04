@@ -98,6 +98,9 @@ pub fn run_paths(
     show_missing: bool,
     options: &Options,
 ) -> i32 {
+    // An `os.exit` a test reaches raises from here on instead of ending
+    // the run (OL-351).
+    crate::stdlib::os::set_exit_raises(true);
     let started = crate::clock::Instant::now();
     let path: &Path = match paths.first() {
         Some(p) => p,

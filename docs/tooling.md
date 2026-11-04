@@ -203,7 +203,9 @@ the end. Both pass through `--watch`, as `--deps` does.
 Under the runner, a failing block **records its failure and execution
 continues**, so one red test doesn't hide the rest (in a normal
 `olang <file>` run, a failing assertion still aborts — the runner is what
-changes the policy). Programs see a bare `os.args()`, so a file that
+changes the policy). An `os.exit` a test reaches raises instead of ending
+the run, so the block that exits fails, an exit at a file's top level is
+that file's error, and the files after it still run. Programs see a bare `os.args()`, so a file that
 branches on arguments takes its no-argument path, and `OLANG_TEST` is
 set in the environment, so a library can choose test-time behavior
 (the web SDK's `dispatch` runs handlers on a task thread under it).
