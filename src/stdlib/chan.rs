@@ -17,6 +17,7 @@
 
 use crate::ast::Value;
 use crate::native::{NativeHandle, NativeObject};
+use crate::ovm::value::OvmValue;
 #[cfg(not(target_arch = "wasm32"))]
 use crossbeam_channel::RecvTimeoutError;
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
@@ -771,7 +772,7 @@ fn chan_ask(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             match rx.try_recv() {
                 Ok(v) => {
                     reply_chan.depth.fetch_sub(1, Ordering::Relaxed);
-                    return Ok(ok(v));
+                    return Ok(got(v));
                 }
                 Err(TryRecvError::Empty) => std::hint::spin_loop(),
                 Err(TryRecvError::Disconnected) => return Ok(err("channel is closed")),
@@ -784,7 +785,7 @@ fn chan_ask(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             match rx.recv_timeout(std::time::Duration::from_millis(STALL_TICK_MS)) {
                 Ok(v) => {
                     reply_chan.depth.fetch_sub(1, Ordering::Relaxed);
-                    break ok(v);
+                    break got(v);
                 }
                 Err(RecvTimeoutError::Timeout) => stall_tick(&mut last_gen),
                 Err(RecvTimeoutError::Disconnected) => break err("channel is closed"),
@@ -816,7 +817,7 @@ fn chan_recv(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             match rx.recv_timeout(std::time::Duration::from_millis(STALL_TICK_MS)) {
                 Ok(v) => {
                     chan.depth.fetch_sub(1, Ordering::Relaxed);
-                    break ok(v);
+                    break got(v);
                 }
                 Err(RecvTimeoutError::Timeout) => stall_tick(&mut last_gen),
                 Err(RecvTimeoutError::Disconnected) => break err("channel is closed"),
@@ -848,7 +849,7 @@ fn wait_hosted(chan: &Chan, limit_ms: Option<u64>) -> Value {
         match chan.rx.try_recv() {
             Ok(v) => {
                 chan.depth.fetch_sub(1, Ordering::Relaxed);
-                return ok(v);
+                return got(v);
             }
             Err(TryRecvError::Disconnected) => return err("channel is closed"),
             Err(TryRecvError::Empty) => match limit_ms {
@@ -875,7 +876,7 @@ fn chan_try_recv(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     Ok(match rx.try_recv() {
         Ok(v) => {
             chan.depth.fetch_sub(1, Ordering::Relaxed);
-            ok(v)
+            got(v)
         }
         // nothing yet: Ok(()), as every "not yet" answers; a closed and
         // drained channel is the named sentinel
@@ -902,7 +903,7 @@ fn chan_recv_timeout(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
         match rx.recv_timeout(std::time::Duration::from_millis(ms)) {
             Ok(v) => {
                 chan.depth.fetch_sub(1, Ordering::Relaxed);
-                ok(v)
+                got(v)
             }
             Err(RecvTimeoutError::Timeout) => err("timed out"),
             Err(RecvTimeoutError::Disconnected) => err("channel is closed"),
@@ -1026,4 +1027,172 @@ pub(crate) fn sim_try_recv(channel: &Value) -> Result<SimRecv, String> {
         Err(TryRecvError::Empty) => SimRecv::Empty,
         Err(TryRecvError::Disconnected) => SimRecv::Closed,
     })
+}
+
+// ── the VM's values, carried as they are (OL-430) ───────────────────
+
+/// A message a compiled sender put on a channel in the VM's own form: a
+/// typed list, a string, a wrapped interpreter collection, or a boxed one
+/// of plain data. A compiled receiver takes it as it is, so a million
+/// Ints cross in O(1); anything else that receives it (the interpreter,
+/// a world) gets it converted, at the receive (`landed`).
+pub struct VmCarried(pub OvmValue);
+
+impl std::fmt::Debug for VmCarried {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<carried>")
+    }
+}
+
+impl NativeObject for VmCarried {
+    fn module(&self) -> &'static str {
+        "chan"
+    }
+    fn type_name(&self) -> &'static str {
+        "Carried"
+    }
+    fn display(&self) -> String {
+        "<carried>".to_string()
+    }
+    fn native_eq(&self, other: &dyn NativeObject) -> bool {
+        other
+            .as_any()
+            .downcast_ref::<VmCarried>()
+            .is_some_and(|o| std::ptr::eq(self, o))
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// Whether a VM value can be carried to another thread as it is: data
+/// only (a closure's bytecode is its VM's own), and no thread-confined
+/// value inside. O(1) for a typed list or a string; a boxed collection is
+/// walked, without allocating.
+fn carriable(v: &OvmValue, depth: usize) -> bool {
+    use crate::ovm::value::{EnumData, ValueData as D};
+    if depth > 64 {
+        return false;
+    }
+    let confined = crate::native::any_confined_live();
+    match &v.data {
+        D::Integer(_) | D::Float(_) | D::Boolean(_) | D::Unit | D::String(_) => true,
+        D::IntList(_) | D::FloatList(_) | D::Range(_) => true,
+        D::AstList(l) => {
+            !confined
+                || l.iter()
+                    .all(|x| crate::stdlib::cell::confined_within(x).is_none())
+        }
+        D::AstMap(m) | D::AstStruct(m, _) => {
+            !confined
+                || m.values()
+                    .all(|x| crate::stdlib::cell::confined_within(x).is_none())
+        }
+        D::List(items) | D::Tuple(items) => items.iter().all(|x| carriable(x, depth + 1)),
+        D::Map(m) => m.values().all(|x| carriable(x, depth + 1)),
+        D::Struct(st) => st.values.iter().all(|x| carriable(x, depth + 1)),
+        D::Enum(e) => match &e.data {
+            EnumData::Unit => true,
+            EnumData::Tuple(items) => items.iter().all(|x| carriable(x, depth + 1)),
+            EnumData::Struct(fields) => fields.iter().all(|(_, x)| carriable(x, depth + 1)),
+        },
+        D::Result(r) => {
+            r.ok.iter()
+                .chain(r.err.iter())
+                .all(|x| carriable(x, depth + 1))
+        }
+        D::Native(h) => h.0.confined_to().is_none() && !h.0.as_any().is::<VmCarried>(),
+        D::Function(_) | D::AstFunction(_) | D::Closure(_) | D::Builtin(_) | D::Error(_) => false,
+    }
+}
+
+thread_local! {
+    /// Set while a compiled receive runs: its message comes back carried.
+    static RAW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// A received message as the receiver takes it: carried for a compiled
+/// receive, converted for anyone else.
+fn landed(v: Value) -> Value {
+    if RAW.with(|r| r.get()) {
+        return v;
+    }
+    match &v {
+        Value::Native(h) => match h.0.as_any().downcast_ref::<VmCarried>() {
+            Some(c) => c.0.to_ast().unwrap_or(Value::Unit),
+            None => v,
+        },
+        _ => v,
+    }
+}
+
+/// `Ok` of a received message.
+fn got(v: Value) -> Value {
+    ok(landed(v))
+}
+
+/// `chan.send` and the receives as the bytecode VM calls them: a VM value
+/// that can be carried goes on the channel as it is, and a carried one
+/// comes off it as it is. `None` (the bridge runs the call) for anything
+/// else, and in a simulated world.
+pub fn vm_call(op: &str, args: &[OvmValue]) -> Option<Result<OvmValue, String>> {
+    use crate::ovm::value::ValueData as D;
+    if crate::sim::in_world() {
+        return None;
+    }
+    match (op, args) {
+        ("send", [ch, v]) => {
+            if !matches!(&ch.data, D::Native(_)) || !carriable(v, 0) {
+                return None;
+            }
+            // a scalar or a small value converts for nothing anyway
+            if matches!(
+                &v.data,
+                D::Integer(_) | D::Float(_) | D::Boolean(_) | D::Unit
+            ) {
+                return None;
+            }
+            let ch = ch.to_ast().ok()?;
+            let carried = Value::Native(NativeHandle::new(VmCarried(v.clone())));
+            Some(
+                chan_send(vec![ch, carried])
+                    .map(OvmValue::from_ast)
+                    .map_err(|e| e.to_string()),
+            )
+        }
+        ("recv" | "try_recv", [ch]) | ("recv_timeout", [ch, _]) => {
+            let mut ast_args = vec![ch.to_ast().ok()?];
+            if let [_, limit] = args {
+                ast_args.push(limit.to_ast().ok()?);
+            }
+            RAW.with(|r| r.set(true));
+            let answer = match op {
+                "recv" => chan_recv(ast_args),
+                "try_recv" => chan_try_recv(ast_args),
+                _ => chan_recv_timeout(ast_args),
+            };
+            RAW.with(|r| r.set(false));
+            Some(answer.map(vm_answer).map_err(|e| e.to_string()))
+        }
+        _ => None,
+    }
+}
+
+/// A receive's answer in the VM's form: `Ok(carried)` unwrapped as it is.
+fn vm_answer(v: Value) -> OvmValue {
+    if let Value::Ok(inner) = &v
+        && let Value::Native(h) = inner.as_ref()
+        && let Some(c) = h.0.as_any().downcast_ref::<VmCarried>()
+    {
+        return OvmValue::new_result(c.0.clone(), true);
+    }
+    OvmValue::from_ast(landed_owned(v))
+}
+
+/// `landed` for an answer `Ok(v)` (RAW is off again by now).
+fn landed_owned(v: Value) -> Value {
+    match &v {
+        Value::Ok(inner) => Value::Ok(Box::new(landed((**inner).clone()))),
+        _ => v,
+    }
 }

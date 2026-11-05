@@ -6294,6 +6294,12 @@ impl BytecodeVm {
                     {
                         // the VM's own values kept in the cell as they are
                         r.map_err(BytecodeError::RuntimeError)
+                    } else if let Some(op) = function_name.strip_prefix("chan.")
+                        && let Some(r) = crate::stdlib::chan::vm_call(op, &arg_values)
+                    {
+                        // a message between compiled code, carried in the
+                        // VM's form: no conversion either way (OL-430)
+                        r.map_err(BytecodeError::RuntimeError)
                     } else if let Some(op) = function_name.strip_prefix("weak.")
                         && let Some(r) = crate::stdlib::weak::vm_call(op, &arg_values)
                     {
@@ -9196,6 +9202,13 @@ impl BytecodeVm {
             // Identity, without converting either side: `same(a, b)` on
             // the bridge compared two converted copies, never one.
             "same" if args.len() == 2 => Some(Ok(OvmValue::new_boolean(args[0].same(&args[1])))),
+            // An Ok's payload as it is: bridged, the whole payload was
+            // converted out and back (a received message among them). An
+            // Err raises on the bridge, in the interpreter's words.
+            "unwrap" if args.len() == 1 => match &args[0].data {
+                ValueData::Result(r) => r.ok.clone().map(Ok),
+                _ => None,
+            },
             // Hashed in the VM's own form: bridged, the whole value was
             // converted to be read once.
             "hash" if args.len() == 1 => Some(
@@ -9733,6 +9746,7 @@ impl BytecodeVm {
                 "typeof",
                 "same",
                 "hash",
+                "unwrap",
             ]
             .map(String::from),
         );

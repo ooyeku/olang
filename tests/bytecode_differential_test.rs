@@ -147,9 +147,9 @@ fn float_arithmetic_and_mixed() {
 
 #[test]
 fn float_equality_matches_interpreter() {
-    let src = "fn same(a, b) = a == b";
-    assert_same(src, "same", &[Value::Float(1e-17), Value::Float(0.0)]);
-    assert_same(src, "same", &[Value::Float(0.5), Value::Float(0.5)]);
+    let src = "fn feq(a, b) = a == b";
+    assert_same(src, "feq", &[Value::Float(1e-17), Value::Float(0.0)]);
+    assert_same(src, "feq", &[Value::Float(0.5), Value::Float(0.5)]);
 }
 
 #[test]

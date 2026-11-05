@@ -111,7 +111,7 @@ pub const AST_MAP_PROMOTE: usize = 256;
 /// writer copies once, and the copy is a new identity), and
 /// `Arc::make_mut` on a sole owner dissociates the weak. A dead
 /// allocation fails to upgrade; a reused address fails `ptr_eq`. Typed
-/// lists are not cached (they convert in one contiguous pass).
+/// lists of TO_AST_CACHE_MIN elements or more are cached too.
 const TO_AST_CACHE_MIN: usize = 32;
 
 /// Dead entries are let go a few at a time, as entries are added: each
@@ -142,6 +142,8 @@ thread_local! {
 }
 
 enum VmOwner {
+    IntList(std::sync::Weak<Vec<i64>>),
+    FloatList(std::sync::Weak<Vec<f64>>),
     List(std::sync::Weak<Vec<OvmValue>>),
     Tuple(std::sync::Weak<Vec<OvmValue>>),
     Map(std::sync::Weak<OvmMap>),
@@ -151,6 +153,18 @@ enum VmOwner {
 impl VmOwner {
     fn of(value: &OvmValue) -> Option<(usize, VmOwner)> {
         match &value.data {
+            // Typed lists too (OL-430): a list of a million Ints handed to
+            // the interpreter again and again converts once. Sound as for
+            // the rest: the VM writes one in place only through
+            // `Arc::get_mut`, which this entry's Weak refuses.
+            ValueData::IntList(items) if items.len() >= TO_AST_CACHE_MIN => Some((
+                Arc::as_ptr(items) as *const u8 as usize,
+                VmOwner::IntList(Arc::downgrade(items)),
+            )),
+            ValueData::FloatList(items) if items.len() >= TO_AST_CACHE_MIN => Some((
+                Arc::as_ptr(items) as *const u8 as usize,
+                VmOwner::FloatList(Arc::downgrade(items)),
+            )),
             ValueData::List(items) if items.len() > 1 => Some((
                 Arc::as_ptr(items) as *const u8 as usize,
                 VmOwner::List(Arc::downgrade(items)),
@@ -173,6 +187,12 @@ impl VmOwner {
 
     fn still_is(&self, value: &OvmValue) -> bool {
         match (self, &value.data) {
+            (VmOwner::IntList(w), ValueData::IntList(items)) => {
+                w.upgrade().is_some_and(|live| Arc::ptr_eq(&live, items))
+            }
+            (VmOwner::FloatList(w), ValueData::FloatList(items)) => {
+                w.upgrade().is_some_and(|live| Arc::ptr_eq(&live, items))
+            }
             (VmOwner::List(w), ValueData::List(items))
             | (VmOwner::Tuple(w), ValueData::Tuple(items)) => {
                 w.upgrade().is_some_and(|live| Arc::ptr_eq(&live, items))
@@ -189,6 +209,8 @@ impl VmOwner {
 
     fn is_alive(&self) -> bool {
         match self {
+            VmOwner::IntList(w) => w.strong_count() > 0,
+            VmOwner::FloatList(w) => w.strong_count() > 0,
             VmOwner::List(w) | VmOwner::Tuple(w) => w.strong_count() > 0,
             VmOwner::Map(w) => w.strong_count() > 0,
             VmOwner::Struct(w) => w.strong_count() > 0,
@@ -1908,12 +1930,18 @@ impl OvmValue {
             ValueData::Boolean(b) => Ok(Value::Boolean(*b)),
             ValueData::Unit => Ok(Value::Unit),
             ValueData::String(gc_ptr) => Ok(Value::String(gc_ptr.clone())),
-            ValueData::FloatList(v) => Ok(Value::List(Arc::new(
-                v.iter().map(|&f| Value::Float(f)).collect(),
-            ))),
-            ValueData::IntList(v) => Ok(Value::List(Arc::new(
-                v.iter().map(|&n| Value::Integer(n)).collect(),
-            ))),
+            ValueData::FloatList(v) => {
+                TO_AST_WORK.set(TO_AST_WORK.get() + v.len());
+                Ok(Value::List(Arc::new(
+                    v.iter().map(|&f| Value::Float(f)).collect(),
+                )))
+            }
+            ValueData::IntList(v) => {
+                TO_AST_WORK.set(TO_AST_WORK.get() + v.len());
+                Ok(Value::List(Arc::new(
+                    v.iter().map(|&n| Value::Integer(n)).collect(),
+                )))
+            }
             ValueData::List(gc_ptr) => {
                 TO_AST_WORK.set(TO_AST_WORK.get() + gc_ptr.len());
                 let mut ast_values = Vec::with_capacity(gc_ptr.len());

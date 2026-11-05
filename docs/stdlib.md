@@ -1619,6 +1619,13 @@ boundary like anything else.
 | <a id="chan-close"></a>`chan.close(c)` | closes the sending side (idempotent) |
 | <a id="chan-on_drop"></a>`chan.on_drop(c, msg)` | a guard: when the last copy of it is dropped, `msg` is sent on `c`. Keep the guard in whatever owns a subscription (its model, its record), and the service hears when the owner goes. A guard is dropped once nothing uses it any more, which can be before the end of the block that made it. The send never blocks: on a full bounded channel, or a closed one, the message is lost |
 
+A message is never copied. Between two compiled functions it does not
+even change form: a list of a million Ints a hot function sends reaches
+a hot receiver in the time a small one takes. A closure is the
+exception (it is converted, as it always was), and so is a message the
+interpreter receives, which gets it in its own form, equal to what was
+sent.
+
 Closing is cooperative and drains: after `chan.close(c)` new sends
 fail, but messages already queued are still received before `recv`
 starts reporting the close — so a consumer loop can simply `match` on
