@@ -64,6 +64,13 @@ pub struct PackageMeta {
     /// images, data.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub assets: Vec<String>,
+    /// Modules besides the root (`index.ol`) that other packages may
+    /// `use`, as dotted paths relative to the package (`"shapes.circle"`,
+    /// or `"testing.*"` for every module below `testing`). Everything else
+    /// in a package is internal to it: from outside, `use pkg.lib.x` is
+    /// refused (OL-448).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub public: Vec<String>,
     /// The oldest olang this package runs on, as `rust-version` is Rust's:
     /// `"0.88"` is 0.88.0 or newer (1.x included), `"1"` 1.0.0 or newer.
     /// `otc install` records the toolchain that resolved it in olang.lock;
@@ -93,6 +100,7 @@ pub const PACKAGE_KEYS: &[&str] = &[
     "authors",
     "license",
     "assets",
+    "public",
     "olang",
     "lock",
 ];
@@ -299,6 +307,20 @@ impl Manifest {
         }
         let text = crate::vfs::read_to_string(&path).map_err(ManifestError::Io)?;
         Self::from_toml(&text)
+    }
+
+    /// Whether `module` (dotted, relative to the package: `lib.area`) is
+    /// one `[package] public` lists, by name or under a `prefix.*`.
+    pub fn lists_public(&self, module: &str) -> bool {
+        self.package.public.iter().any(|entry| {
+            let entry = entry.trim().trim_end_matches(".ol").replace('/', ".");
+            match entry.strip_suffix(".*") {
+                Some(prefix) => module
+                    .strip_prefix(prefix)
+                    .is_some_and(|rest| rest.starts_with('.')),
+                None => entry == module,
+            }
+        })
     }
 
     /// Serialize back to TOML (used by `otc add`/`init`).

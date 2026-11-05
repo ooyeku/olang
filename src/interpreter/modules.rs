@@ -1400,6 +1400,27 @@ already binds — an import never replaces a program's own name. Alias the impor
         })?;
 
         let rest: Vec<&str> = parts.collect();
+        // A package's internals are its own: from outside it, only its
+        // root module and the modules its `[package] public` lists resolve.
+        if !rest.is_empty() {
+            let module = rest.join(".");
+            if !self.importer_is_inside(&dep_dir)
+                && !crate::pkg::manifest::Manifest::load(&dep_dir)
+                    .is_ok_and(|m| m.lists_public(&module))
+            {
+                return Err(InterpreterError::RuntimeError {
+                    message: format!(
+                        "'{module_path}' is internal to package '{head}': from outside a \
+                         package only its root module (`use {head}`) and the modules its \
+                         olang.toml lists in [package] public can be imported. Import what \
+                         {head}'s index.ol re-exports (`use {head} {{ ... }}`), or, if \
+                         '{module}' is meant to be public, add \"{module}\" to `public` \
+                         under [package] in {}",
+                        dep_dir.join("olang.toml").display()
+                    ),
+                });
+            }
+        }
         let mut candidates: Vec<std::path::PathBuf> = Vec::new();
         if rest.is_empty() {
             // `use foo` -> the package's public root
@@ -1425,7 +1446,13 @@ already binds — an import never replaces a program's own name. Alias the impor
         // application package — `main.ol` plus a `lib/` — which has no
         // public root module, so `use <pkg>` can never work and the reader
         // needs to be pointed at `use <pkg>.lib.<module>` instead.
-        let importable = Self::importable_modules(&dep_dir);
+        // what may be imported from here: everything from inside the
+        // package, its public modules from outside
+        let mut importable = Self::importable_modules(&dep_dir);
+        if !self.importer_is_inside(&dep_dir) {
+            let manifest = crate::pkg::manifest::Manifest::load(&dep_dir).ok();
+            importable.retain(|m| manifest.as_ref().is_some_and(|mf| mf.lists_public(m)));
+        }
         let mut message = if rest.is_empty() {
             format!(
                 "package '{head}' has no root module: `use {head}` needs one of \
@@ -1449,6 +1476,35 @@ already binds — an import never replaces a program's own name. Alias the impor
             ));
         }
         Err(InterpreterError::RuntimeError { message })
+    }
+
+    /// Is the module doing the importing part of the package at `dep_dir`
+    /// (its nearest package root is that one)? A package `use`s its own
+    /// modules by its name freely: its tests and its entry do.
+    fn importer_is_inside(&self, dep_dir: &std::path::Path) -> bool {
+        let canon = |p: &std::path::Path| {
+            std::fs::canonicalize(p).unwrap_or_else(|_| crate::vfs::normalize(p))
+        };
+        let dep = canon(dep_dir);
+        let own = match self.current_package_root() {
+            Some(root) => root,
+            None => {
+                // no module current (a REPL, a check of a folder): the
+                // working directory's package
+                let Ok(mut dir) = crate::clock::current_dir() else {
+                    return false;
+                };
+                loop {
+                    if crate::vfs::exists(&dir.join("olang.toml")) {
+                        break dir;
+                    }
+                    if !dir.pop() {
+                        return false;
+                    }
+                }
+            }
+        };
+        canon(&own) == dep
     }
 
     /// 1. Check same directory as current file

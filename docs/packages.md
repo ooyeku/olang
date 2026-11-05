@@ -115,8 +115,28 @@ Nothing forces the split: a one-file library that `share`s directly from
 
 That is all a consumable library is: an `olang.toml` (so the resolver can
 find the package and name it) plus a root module with `share`d bindings.
-`share` is the package boundary — there is no separate export manifest to
-maintain.
+
+The root module is the package's boundary. From outside the package,
+`use geometry` resolves and `use geometry.lib.area` does not: a module
+below the root is internal to its package, `share` or no `share`, and a
+`use` of one from another package is refused, at run time and by
+`olang check`, with the fix in the message. Inside the package every
+module stays reachable, by a relative path (`use lib.area`) or by the
+package's own name (`use geometry.lib.area`, as its tests do).
+
+A package that means a second module to be public says so in its
+manifest, by dotted path relative to the package:
+
+```toml
+[package]
+name = "geometry"
+version = "0.1.0"
+public = ["shapes.circle", "testing.*"]   # testing.* is every module below testing
+```
+
+Then `use geometry.shapes.circle` resolves from anywhere. Everything not
+listed stays internal, so a library can rearrange its `lib/` without
+breaking anyone.
 
 ## The manifest
 
@@ -170,6 +190,7 @@ println(to_string(area(5, 5)))
 |---|---|---|
 | `[package] lock` | `"auto"` or `"never"`: whether incidental runs may write `olang.lock` | [The lockfile](#the-lockfile) |
 | `[package] assets` | files and folders a built application carries | [`olang build`](tooling.md#olang-build) |
+| `[package] public` | modules besides the root that other packages may `use` | [Starting a package](#starting-a-package) |
 | `[capabilities]` | what the package's code may touch, and each dependency's attenuation | [Capabilities](#capabilities) |
 | `[check] rules` | rules files (`rules = ["tools/rules.ol"]`, relative to the project root) that `olang check` runs with no `--rules` | [Project rules](tooling.md#project-rules) |
 | `[check] promote` | advisory classes `olang check` treats as errors | [Promoting advisories](tooling.md#promoting-advisories) |
@@ -193,8 +214,10 @@ directory, a bare `use geometry` resolves the root module — the first of
 `index.ol`, `mod.ol`, `geometry.ol`, `src/index.ol` that exists — and a
 dotted path like `use geometry.shapes.circle` resolves below it
 (`shapes/circle.ol`, or `shapes/circle/index.ol`, `shapes/circle/mod.ol`,
-`src/shapes/circle.ol`). A package can also `use` itself by name, which
-is what lets its own tests import its public surface.
+`src/shapes/circle.ol`) when the `use` is inside the package or the
+package lists `shapes.circle` under `[package] public`. A package can
+also `use` itself by name, which is what lets its own tests import any
+of its modules.
 
 ## Commands
 

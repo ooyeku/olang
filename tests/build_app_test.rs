@@ -15,7 +15,7 @@ fn an_application_runs_after_its_sources_are_gone() {
     fs::create_dir_all(dep.join("data/nested")).unwrap();
     fs::write(
         dep.join("olang.toml"),
-        "[package]\nname = \"dep\"\nversion = \"0.1.0\"\nassets = [\"data\"]\n",
+        "[package]\nname = \"dep\"\nversion = \"0.1.0\"\nassets = [\"data\"]\npublic = [\"lib.words\"]\n",
     )
     .unwrap();
     fs::write(dep.join("data/nested/greeting.txt"), "hello from an asset").unwrap();
