@@ -154,6 +154,25 @@ pub fn create_crypto_module() -> Value {
         create_builtin_function("verify_signature", 3),
     );
 
+    // Ed25519 (RFC 8032): keys and signatures travel as base64, the form
+    // Sparkle's appcasts use; each also accepts Bytes.
+    module.insert(
+        "ed25519_keypair".to_string(),
+        create_builtin_function("ed25519_keypair", 0),
+    );
+    module.insert(
+        "ed25519_public_key".to_string(),
+        create_builtin_function("ed25519_public_key", 1),
+    );
+    module.insert(
+        "ed25519_sign".to_string(),
+        create_builtin_function("ed25519_sign", 2),
+    );
+    module.insert(
+        "ed25519_verify".to_string(),
+        create_builtin_function("ed25519_verify", 3),
+    );
+
     Value::Struct {
         type_name: "Module".to_string(),
         fields: std::sync::Arc::new(module),
@@ -194,6 +213,10 @@ pub fn call_crypto_function(
         #[cfg(feature = "rsa-crypto")]
         "decrypt_rsa" => crypto_decrypt_rsa(args),
         "derive_key" => crypto_derive_key(args),
+        "ed25519_keypair" => crypto_ed25519_keypair(args),
+        "ed25519_public_key" => crypto_ed25519_public_key(args),
+        "ed25519_sign" => crypto_ed25519_sign(args),
+        "ed25519_verify" => crypto_ed25519_verify(args),
         #[cfg(feature = "rsa-crypto")]
         "generate_key_pair" => crypto_generate_key_pair(args),
         #[cfg(feature = "rsa-crypto")]
@@ -1114,14 +1137,7 @@ fn crypto_sign_data(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
         return Err(format!("sign_data expects 2 arguments, got {}", args.len()).into());
     }
 
-    let data = match &args[0] {
-        Value::String(s) => s.as_ref(),
-        _ => {
-            return Err("sign_data: first argument must be a string"
-                .to_string()
-                .into());
-        }
-    };
+    let data = digest_input(&args[0], "sign_data")?;
 
     let private_key_pem = match &args[1] {
         Value::String(s) => s.as_ref(),
@@ -1144,7 +1160,7 @@ fn crypto_sign_data(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
 
     // RSA PKCS#1 v1.5 signature over SHA-256(data)
     let signing_key = RsaSigningKey::<Sha256>::new(private_key);
-    let signature = signing_key.sign(data.as_bytes());
+    let signature = signing_key.sign(data);
 
     Ok(Value::Ok(Box::new(Value::String(Arc::new(hex::encode(
         signature.to_bytes(),
@@ -1159,14 +1175,7 @@ fn crypto_verify_signature(args: Vec<Value>) -> Result<Value, Box<dyn std::error
         return Err(format!("verify_signature expects 3 arguments, got {}", args.len()).into());
     }
 
-    let data = match &args[0] {
-        Value::String(s) => s.as_ref(),
-        _ => {
-            return Err("verify_signature: first argument must be a string"
-                .to_string()
-                .into());
-        }
-    };
+    let data = digest_input(&args[0], "verify_signature")?;
 
     let signature = match &args[1] {
         Value::String(s) => s.as_ref(),
@@ -1211,7 +1220,143 @@ fn crypto_verify_signature(args: Vec<Value>) -> Result<Value, Box<dyn std::error
     };
 
     let verifying_key = RsaVerifyingKey::<Sha256>::new(public_key);
-    let is_valid = verifying_key.verify(data.as_bytes(), &signature).is_ok();
+    let is_valid = verifying_key.verify(data, &signature).is_ok();
 
     Ok(Value::Ok(Box::new(Value::Boolean(is_valid))))
+}
+
+// ── Ed25519 ──────────────────────────────────────────────────────────
+
+fn crypto_err(message: String) -> Value {
+    Value::Err(Box::new(Value::String(Arc::new(message))))
+}
+
+fn b64(bytes: &[u8]) -> Value {
+    use base64::Engine as _;
+    Value::String(Arc::new(
+        base64::engine::general_purpose::STANDARD.encode(bytes),
+    ))
+}
+
+/// A key or signature of exactly `N` bytes: Bytes as they are, or a
+/// String in standard base64 (with or without padding) or in hex.
+fn fixed_bytes<const N: usize>(v: &Value, fname: &str, what: &str) -> Result<[u8; N], String> {
+    use base64::Engine as _;
+    let raw: Vec<u8> = match v {
+        Value::String(s) => {
+            let t = s.trim();
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(t)
+                .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(t))
+                .ok()
+                .filter(|b| b.len() == N)
+                .or_else(|| hex::decode(t).ok().filter(|b| b.len() == N));
+            match decoded {
+                Some(b) => b,
+                None => {
+                    return Err(format!(
+                        "{fname}: the {what} must be {N} bytes, as Bytes or a base64 or hex string"
+                    ));
+                }
+            }
+        }
+        other => crate::stdlib::bytes::bytes_of(other)
+            .map_err(|_| format!("{fname}: the {what} must be Bytes or a base64 string"))?
+            .to_vec(),
+    };
+    raw.try_into()
+        .map_err(|b: Vec<u8>| format!("{fname}: the {what} must be {N} bytes, not {}", b.len()))
+}
+
+/// A new Ed25519 key pair: `Ok({private_key, public_key})`, each base64
+/// (the private key is the 32-byte seed, as Sparkle's tools write it).
+/// Usage: crypto.ed25519_keypair()
+fn crypto_ed25519_keypair(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if !args.is_empty() {
+        return Err(format!("ed25519_keypair expects 0 arguments, got {}", args.len()).into());
+    }
+    let mut seed = [0u8; 32];
+    fill_random(&mut seed);
+    let key = ed25519_dalek::SigningKey::from_bytes(&seed);
+    let mut pair = crate::ast::ValueMap::default();
+    pair.insert("private_key".to_string(), b64(&seed));
+    pair.insert("public_key".to_string(), b64(key.verifying_key().as_bytes()));
+    seed.fill(0);
+    Ok(Value::Ok(Box::new(Value::Struct {
+        type_name: "KeyPair".to_string(),
+        fields: Arc::new(pair),
+    })))
+}
+
+/// The public key of an Ed25519 private key, base64.
+/// Usage: crypto.ed25519_public_key(private_key) -> Result<String, Error>
+fn crypto_ed25519_public_key(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 1 {
+        return Err(format!("ed25519_public_key expects 1 argument, got {}", args.len()).into());
+    }
+    let seed = match fixed_bytes::<32>(&args[0], "ed25519_public_key", "private key") {
+        Ok(s) => s,
+        Err(e) => return Ok(crypto_err(e)),
+    };
+    let key = ed25519_dalek::SigningKey::from_bytes(&seed);
+    Ok(Value::Ok(Box::new(b64(key.verifying_key().as_bytes()))))
+}
+
+/// Sign `data` (a String's UTF-8, or Bytes) with an Ed25519 private key:
+/// the 64-byte signature, base64.
+/// Usage: crypto.ed25519_sign(data, private_key) -> Result<String, Error>
+fn crypto_ed25519_sign(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 2 {
+        return Err(format!("ed25519_sign expects 2 arguments, got {}", args.len()).into());
+    }
+    let data = digest_input(&args[0], "ed25519_sign")?;
+    let seed = match fixed_bytes::<32>(&args[1], "ed25519_sign", "private key") {
+        Ok(s) => s,
+        Err(e) => return Ok(crypto_err(e)),
+    };
+    use ed25519_dalek::Signer as _;
+    let key = ed25519_dalek::SigningKey::from_bytes(&seed);
+    Ok(Value::Ok(Box::new(b64(&key.sign(data).to_bytes()))))
+}
+
+/// Whether `signature` is an Ed25519 signature of `data` by the holder of
+/// `public_key`: `Ok(true)` or `Ok(false)`; `Err` only for a public key
+/// that is no key. Verification is strict (RFC 8032 with the weak-key and
+/// malleability checks), so a signature has one valid form.
+/// Usage: crypto.ed25519_verify(data, signature, public_key) -> Result<Bool, Error>
+fn crypto_ed25519_verify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 3 {
+        return Err(format!("ed25519_verify expects 3 arguments, got {}", args.len()).into());
+    }
+    let data = digest_input(&args[0], "ed25519_verify")?;
+    let public = match fixed_bytes::<32>(&args[2], "ed25519_verify", "public key") {
+        Ok(p) => p,
+        Err(e) => return Ok(crypto_err(e)),
+    };
+    let key = match ed25519_dalek::VerifyingKey::from_bytes(&public) {
+        Ok(k) => k,
+        Err(_) => {
+            return Ok(crypto_err(
+                "ed25519_verify: the public key is not a valid Ed25519 point".to_string(),
+            ));
+        }
+    };
+    let Ok(sig) = fixed_bytes::<64>(&args[1], "ed25519_verify", "signature") else {
+        return Ok(Value::Ok(Box::new(Value::Boolean(false))));
+    };
+    let sig = ed25519_dalek::Signature::from_bytes(&sig);
+    Ok(Value::Ok(Box::new(Value::Boolean(
+        key.verify_strict(data, &sig).is_ok(),
+    ))))
+}
+
+/// Verify an Ed25519 signature from Rust (the code-layer boot, OL-445):
+/// raw public key, signature and message.
+pub fn ed25519_verify_raw(public: &[u8; 32], signature: &[u8; 64], data: &[u8]) -> bool {
+    match ed25519_dalek::VerifyingKey::from_bytes(public) {
+        Ok(k) => k
+            .verify_strict(data, &ed25519_dalek::Signature::from_bytes(signature))
+            .is_ok(),
+        Err(_) => false,
+    }
 }

@@ -12645,7 +12645,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             description: "Sign data using RSA private key with SHA-256".to_string(),
             syntax: "crypto.sign_data(data, private_key)".to_string(),
             parameters: vec![
-                "data: String - The data to sign".to_string(),
+                "data: String or Bytes - The data to sign".to_string(),
                 "private_key: String - RSA private key in PEM format".to_string(),
             ],
             return_type: "Result<String, Error>".to_string(),
@@ -12662,7 +12662,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             description: "Verify a digital signature using RSA public key".to_string(),
             syntax: "crypto.verify_signature(data, signature, public_key)".to_string(),
             parameters: vec![
-                "data: String - The original data that was signed".to_string(),
+                "data: String or Bytes - The original data that was signed".to_string(),
                 "signature: String - Base64 encoded signature".to_string(),
                 "public_key: String - RSA public key in PEM format".to_string(),
             ],
@@ -12672,6 +12672,67 @@ For function-specific syntax, use: {}:help <function_name>{}",
             ],
             category: "Crypto".to_string(),
             see_also: vec!["crypto.sign_data".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "crypto.ed25519_keypair".to_string(),
+            description: "A new Ed25519 key pair; each key is base64 (the private key is its 32-byte seed)".to_string(),
+            syntax: "crypto.ed25519_keypair()".to_string(),
+            parameters: vec![],
+            return_type: "Result<{private_key: String, public_key: String}, Error>".to_string(),
+            examples: vec![
+                "let keys = unwrap(crypto.ed25519_keypair())".to_string(),
+            ],
+            category: "Crypto".to_string(),
+            see_also: vec!["crypto.ed25519_sign".to_string(), "crypto.ed25519_verify".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "crypto.ed25519_public_key".to_string(),
+            description: "The public key, base64, of an Ed25519 private key".to_string(),
+            syntax: "crypto.ed25519_public_key(private_key)".to_string(),
+            parameters: vec![
+                "private_key: String or Bytes - the 32-byte seed, as Bytes or base64".to_string(),
+            ],
+            return_type: "Result<String, Error>".to_string(),
+            examples: vec![
+                "crypto.ed25519_public_key(keys.private_key) == Ok(keys.public_key)  // true".to_string(),
+            ],
+            category: "Crypto".to_string(),
+            see_also: vec!["crypto.ed25519_keypair".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "crypto.ed25519_sign".to_string(),
+            description: "Sign data with an Ed25519 private key: the 64-byte signature, base64".to_string(),
+            syntax: "crypto.ed25519_sign(data, private_key)".to_string(),
+            parameters: vec![
+                "data: String or Bytes - what to sign".to_string(),
+                "private_key: String or Bytes - the 32-byte seed, as Bytes or base64".to_string(),
+            ],
+            return_type: "Result<String, Error>".to_string(),
+            examples: vec![
+                "let sig = unwrap(crypto.ed25519_sign(\"release 1.2.0\", keys.private_key))".to_string(),
+            ],
+            category: "Crypto".to_string(),
+            see_also: vec!["crypto.ed25519_verify".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "crypto.ed25519_verify".to_string(),
+            description: "Whether a signature is an Ed25519 signature of the data by the public key's holder (strict RFC 8032)".to_string(),
+            syntax: "crypto.ed25519_verify(data, signature, public_key)".to_string(),
+            parameters: vec![
+                "data: String or Bytes - what was signed".to_string(),
+                "signature: String or Bytes - 64 bytes, as Bytes or base64".to_string(),
+                "public_key: String or Bytes - 32 bytes, as Bytes or base64".to_string(),
+            ],
+            return_type: "Result<Bool, Error>".to_string(),
+            examples: vec![
+                "crypto.ed25519_verify(\"release 1.2.0\", sig, keys.public_key)  // Ok(true)".to_string(),
+            ],
+            category: "Crypto".to_string(),
+            see_also: vec!["crypto.ed25519_sign".to_string()],
         });
 
         self.add_function(FunctionDoc {

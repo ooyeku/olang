@@ -1628,8 +1628,8 @@ println(means == par_map(random.rng(7).spawn(4), (r) => r.normal(10000).mean()))
 
 ## `crypto` — hashing and encryption
 
-The `crypto` module provides digests, HMACs, password hashing, and AES and
-RSA encryption, with string-friendly conventions: digests return lowercase
+The `crypto` module provides digests, HMACs, password hashing, AES and
+RSA encryption, and RSA and Ed25519 signatures, with string-friendly conventions: digests return lowercase
 hexadecimal strings, and key operations return `Result`. `secure_compare`
 compares two strings in constant time; use it in place of `==` when comparing
 secrets, because `==` can leak information through its timing.
@@ -1641,11 +1641,28 @@ secrets, because `==` can leak information through its timing.
 | <a id="crypto-hash_password"></a><a id="crypto-verify_password"></a><a id="crypto-derive_key"></a>Passwords | `hash_password` `verify_password` `derive_key` |
 | Symmetric | `encrypt_aes` `decrypt_aes` |
 | <a id="crypto-encrypt_rsa"></a><a id="crypto-decrypt_rsa"></a><a id="crypto-generate_key_pair"></a><a id="crypto-export_public_key"></a><a id="crypto-import_public_key"></a><a id="crypto-sign_data"></a><a id="crypto-verify_signature"></a>Asymmetric | `generate_key_pair` `encrypt_rsa` `decrypt_rsa` `sign_data` `verify_signature` `export_public_key` `import_public_key` — not in the browser runtime the web SDK ships, which says so when one is called |
+| <a id="crypto-ed25519_keypair"></a><a id="crypto-ed25519_public_key"></a><a id="crypto-ed25519_sign"></a><a id="crypto-ed25519_verify"></a>Ed25519 | `ed25519_keypair` `ed25519_public_key` `ed25519_sign` `ed25519_verify` — in every build, the browser's too |
 | <a id="crypto-hex_encode"></a><a id="crypto-hex_decode"></a><a id="crypto-secure_compare"></a>Utilities | `random_bytes` `random_hex` `hex_encode` `hex_decode` `secure_compare` |
 
 ```olang
 println(str.substring(crypto.sha256("olang"), 0, 16))
 println(to_string(crypto.secure_compare("abc", "abc")))
+```
+
+Ed25519 signs and verifies the way update feeds and signed downloads
+need (Sparkle's appcasts use it). Keys and signatures are base64 strings,
+the form those feeds write; each function also takes them as `Bytes`, and
+the data signed may be a String or `Bytes`. The private key is the
+32-byte seed. `ed25519_verify` answers `Ok(false)` for a signature that
+does not verify (or is not 64 bytes) and `Err` only for a public key that
+is not one. It is strict: a signature has exactly one form that passes.
+`sign_data` and `verify_signature`, the RSA pair, take `Bytes` data too.
+
+```olang
+let keys = unwrap(crypto.ed25519_keypair())
+let sig = unwrap(crypto.ed25519_sign("release 1.2.0", keys.private_key))
+println(crypto.ed25519_verify("release 1.2.0", sig, keys.public_key))   // Ok(true)
+println(crypto.ed25519_verify("release 1.2.1", sig, keys.public_key))   // Ok(false)
 ```
 
 <a id="crypto-random_hex"></a>`crypto.random_hex(n)` answers `n` random bytes as `2n` hexadecimal
