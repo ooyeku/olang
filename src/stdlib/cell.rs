@@ -40,7 +40,8 @@
 //! a task runs is harmless and stays legal, and only an actual cross-thread
 //! access fails. `chan.send` is the one crossing where the value *is* in
 //! hand, so that one is refused at the send, where the mistake is: a cell
-//! anywhere inside the message, a closure's captured one included.
+//! anywhere inside the message's data. A closure that captured one still
+//! crosses, and fails only if the other thread reads the cell.
 //!
 //! The send looks only while some confined value is alive in the process
 //! (`native::any_confined_live`, a count every cell and row reader holds
@@ -267,8 +268,8 @@ fn cell_of(value: &Value) -> Result<&CellObject, String> {
 /// The name of the thread-confined value inside `value`, if there is one.
 /// Used by `chan.send`, the one thread crossing that holds the value being
 /// sent — a confined value nested in a list or a struct field is exactly
-/// the case a shallow check would wave through, and so is one a closure
-/// captured (`let c = cell(0)` then `() => cell.get(c)` sent to a task).
+/// the case a shallow check would wave through. A closure's captures are
+/// not looked in: a cell there is legal until it is read off its thread.
 ///
 /// Asks each native whether it is confined rather than naming the types it
 /// knows about, so a new confined native is refused here without anyone
@@ -311,18 +312,11 @@ fn confined_walk(value: &Value, seen: &mut rustc_hash::FxHashSet<usize>) -> Opti
             crate::ast::EnumVariantData::Struct(fields) => first(fields.values(), seen),
             crate::ast::EnumVariantData::Unit => None,
         },
-        // A closure holds what it captured: the local names its body
-        // mentions (a top-level name is read where the function runs).
-        Value::Function(f) => {
-            if !seen.insert(std::sync::Arc::as_ptr(&f.closure) as usize) {
-                return None;
-            }
-            first(f.closure.values(), seen).map(|kind| match kind {
-                "Cell" => "Cell captured by a closure",
-                k if k.ends_with("captured by a closure") => k,
-                _ => "thread-confined value captured by a closure",
-            })
-        }
+        // A closure that captured a cell crosses: the cell sits in its
+        // scope, harmless until the other task reads it, which fails there
+        // (a cell's rule is about access, not about being in scope). A
+        // performer's task often captures one it never reads off its
+        // thread.
         _ => None,
     }
 }

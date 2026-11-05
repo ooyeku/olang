@@ -185,21 +185,18 @@ fn a_cell_nested_inside_a_sent_value_is_also_refused() {
 }
 
 #[test]
-fn a_cell_a_closure_captured_is_refused_at_the_send() {
-    // OL-429: the closure passed the check and failed on its first call
-    // in the receiving task.
-    for source in [
-        "fn make() = {\n    let c = cell(0)\n    () => cell.get(c)\n}\nlet ch = chan.new()\nchan.send(ch, make())\n",
-        "fn make() = {\n    let c = cell(0)\n    let g = () => cell.get(c)\n    (x) => g() + x\n}\nlet ch = chan.new()\nchan.send(ch, [1, make()])\n",
-        "fn make() = {\n    let c = cell(0)\n    () => cell.get(c)\n}\nfn go(ch) = chan.send(ch, #{ \"f\": make() })\nlet ch = chan.new()\nfor i in 0..3 { go(ch) }\n",
-    ] {
-        let e = err(source);
-        assert!(
-            e.contains("a Cell captured by a closure cannot be sent through a channel"),
-            "{source}: {e}"
-        );
-    }
-    // A closure capturing no cell still crosses.
+fn a_closure_that_captured_a_cell_crosses_a_send() {
+    // A closure is not refused for a cell it captured: Loom's performer
+    // hands tasks to pooled workers through a channel, and their closures
+    // capture cells they never read there. Reading one on the other side
+    // is what fails.
+    let out = run("fn make() = {\n    let c = cell(41)\n    () => cell.get(c) + 1\n}\n\
+                   let ch = chan.new()\n\
+                   chan.send(ch, make())\n\
+                   show(unwrap(chan.recv(ch))())\n")
+    .unwrap();
+    assert_eq!(out, "42");
+    // A closure capturing no cell crosses too.
     let out = run("fn make(n) = (x) => x + n\n\
                    let ch = chan.new()\n\
                    chan.send(ch, make(2))\n\
