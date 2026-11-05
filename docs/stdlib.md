@@ -1948,8 +1948,14 @@ preview. `fs.read_bytes`/`fs.write_bytes` move it to and from disk;
 | <a id="bytes-to_string_lossy"></a>`bytes.to_string_lossy(b)` | decode as UTF-8, each sequence that is not UTF-8 replaced by U+FFFD (`�`); never fails |
 | <a id="bytes-decode"></a>`bytes.decode(b, encoding, #{"lossy"})` | decode as `"utf-8"`, `"utf-16le"`, `"utf-16be"` or `"latin1"`: a `Result`, and always `Ok` with `lossy: true` (U+FFFD for what is not text). Latin-1 never fails, since every byte is a character |
 | <a id="bytes-len"></a>`bytes.len(b)` | byte count (the global `len` works too) |
-| <a id="bytes-slice"></a>`bytes.slice(b, from, to)` | half-open, by `str.substring`'s rule: past the end stops at the end, a negative position raises |
-| <a id="bytes-concat"></a>`bytes.concat(a, b)` | concatenation |
+| <a id="bytes-slice"></a>`bytes.slice(b, from, to)` | half-open, by `str.substring`'s rule: past the end stops at the end, a negative position raises. A view: it shares `b`'s memory and copies nothing |
+| <a id="bytes-concat"></a>`bytes.concat(a, b)` | concatenation (a new copy of both: to build up bytes piece by piece, use a builder) |
+| <a id="bytes-join"></a>`bytes.join(parts)` / `bytes.join(parts, sep)` | the parts (Bytes or Strings) one after another, `sep` between them, in one allocation |
+| <a id="bytes-builder"></a><a id="bytes-push"></a><a id="bytes-build"></a>`bytes.builder()`, `bytes.push(bld, x)`, `bytes.build(bld)` | a buffer that grows in place: `push` appends Bytes, a String's UTF-8, one byte (an Int 0..=255) or a list of them, and answers the builder; `build` answers what it holds as Bytes and leaves it empty |
+| <a id="bytes-index_of"></a>`bytes.index_of(b, needle)` / `bytes.index_of(b, needle, from)` | where `needle` (Bytes, a String, or one byte) first occurs at or after `from`, or `()` |
+| <a id="bytes-compare"></a>`bytes.compare(a, b)` | -1, 0 or 1, comparing byte by byte (a prefix comes first) |
+| <a id="bytes-get_u8"></a><a id="bytes-get_i8"></a><a id="bytes-get_u16"></a><a id="bytes-get_i16"></a><a id="bytes-get_u32"></a><a id="bytes-get_i32"></a><a id="bytes-get_u64"></a><a id="bytes-get_i64"></a><a id="bytes-get_f32"></a><a id="bytes-get_f64"></a>`bytes.get_u16(b, at)` / `bytes.get_u16(b, at, "be")`, and `get_u8` `get_i8` `get_i16` `get_u32` `get_i32` `get_u64` `get_i64` `get_f32` `get_f64` | the number stored at byte `at`, little endian unless `"be"` is given; reading past the end raises. A `u64` past the Int range reads as the Int with the same 64 bits (negative) |
+| <a id="bytes-pack"></a><a id="bytes-unpack"></a>`bytes.pack(layout, values)` / `bytes.unpack(layout, b)` / `bytes.unpack(layout, b, at)` | numbers to bytes and back by a layout of types: `"u16 u32be f64"` is a little-endian u16, a big-endian u32 and a little-endian f64. A value that does not fit its type raises |
 | <a id="bytes-to_hex"></a><a id="bytes-from_hex"></a>`bytes.to_hex(b)` / `bytes.from_hex(s)` | lowercase hex, two digits a byte; `from_hex` reads either case and answers a `Result` (an odd count or a character that is not a digit is `Err`) |
 
 ```olang
@@ -1979,6 +1985,29 @@ println(is_binary(bytes.from_list([137, 80, 78, 71, 0, 0])))   // true
 println(bytes.to_string_lossy(bytes.from_list([104, 255, 105])))   // h�i
 println(unwrap(bytes.decode(unwrap(str.encode("café", "utf-16le")), "utf-16le")))   // café
 ```
+
+A builder is how a file format gets written: each `push` adds to the
+end in place, so building a megabyte costs a megabyte, where
+`b = bytes.concat(b, part)` copies everything so far on every step. A
+builder is a place that changes, so like a cell it belongs to the thread
+that made it.
+
+```olang
+let out = bytes.builder()
+bytes.push(out, "PK")
+bytes.push(out, bytes.pack("u16 u32", [20, 1024]))
+bytes.push(out, [0, 255])
+let b = bytes.build(out)
+println(len(b))                                      // 10
+println(bytes.unpack("u16 u32", b, 2))               // [20, 1024]
+println(bytes.get_u32(b, 4))                         // 1024
+println(bytes.index_of(b, 255))                      // 9
+```
+
+`b[i]` in a compiled function reads the byte directly, as fast as an
+element of an Int list. A slice keeps the whole buffer it was cut from
+alive; to keep a small piece of a large value without the rest,
+`bytes.join([piece])` copies it.
 
 ## `compress` — gzip, brotli and deflate
 

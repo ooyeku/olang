@@ -253,7 +253,7 @@ fn write(out: &mut Vec<u8>, v: &Value, canonical: bool) -> Result<(), String> {
             let any = h.0.as_any();
             if let Some(b) = any.downcast_ref::<crate::stdlib::bytes::BytesObject>() {
                 out.push(T_BYTES);
-                bytes(out, &b.0);
+                bytes(out, b.as_slice());
             } else if let Some(d) = any.downcast_ref::<crate::stdlib::dates::DateObject>() {
                 use chrono::Datelike;
                 out.push(T_DATE);

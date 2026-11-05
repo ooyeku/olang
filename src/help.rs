@@ -8294,7 +8294,7 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             "bytes.slice(b, from, to)",
             "Bytes",
             "Bytes",
-            "Half-open byte slice, clamped to the value's bounds — the same shape as str.substring.",
+            "Half-open byte slice, clamped to the value's bounds — the same shape as str.substring. A view: it shares b's memory and copies nothing.",
             &[r##"bytes.slice(b, 0, 4)  // the first four bytes"##],
         );
         self.doc_ex(
@@ -8304,6 +8304,150 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             "Bytes",
             "The concatenation of two Bytes values.",
             &[r##"bytes.concat(header, payload)"##],
+        );
+        self.doc_ex(
+            "bytes.join",
+            "bytes.join(parts) / bytes.join(parts, sep)",
+            "Bytes",
+            "Bytes",
+            "The parts (Bytes or Strings) one after another, sep between them, in one allocation.",
+            &[r##"bytes.join([header, body], "\r\n")"##],
+        );
+        self.doc_ex(
+            "bytes.builder",
+            "bytes.builder()",
+            "BytesBuilder",
+            "Bytes",
+            "A buffer that grows in place: bytes.push adds to its end, bytes.build answers its contents. Building with it costs what the result weighs, where repeated concat copies everything so far each time. Like a cell, it belongs to the thread that made it.",
+            &[r##"let out = bytes.builder()"##],
+        );
+        self.doc_ex(
+            "bytes.push",
+            "bytes.push(bld, x)",
+            "BytesBuilder",
+            "Bytes",
+            "Append x to the builder in place: Bytes, a String's UTF-8, one byte (an Int 0..=255) or a list of them. Answers the builder.",
+            &[r##"bytes.push(out, bytes.pack("u32", [n]))"##],
+        );
+        self.doc_ex(
+            "bytes.build",
+            "bytes.build(bld)",
+            "Bytes",
+            "Bytes",
+            "What the builder holds, as Bytes, without a copy; the builder is empty afterwards.",
+            &[r##"let b = bytes.build(out)"##],
+        );
+        self.doc_ex(
+            "bytes.index_of",
+            "bytes.index_of(b, needle) / bytes.index_of(b, needle, from)",
+            "Int",
+            "Bytes",
+            "Where needle (Bytes, a String, or one byte as an Int) first occurs in b at or after from, or () when it does not.",
+            &[r##"bytes.index_of(bytes.from_string("a=b"), "=")  // 1"##],
+        );
+        self.doc_ex(
+            "bytes.compare",
+            "bytes.compare(a, b)",
+            "Int",
+            "Bytes",
+            "-1, 0 or 1 as a sorts before, with or after b, byte by byte (a prefix first).",
+            &[r##"bytes.compare(bytes.from_list([1]), bytes.from_list([1, 0]))  // -1"##],
+        );
+        self.doc_ex(
+            "bytes.pack",
+            "bytes.pack(layout, values)",
+            "Bytes",
+            "Bytes",
+            "The values written as the layout's types, one after another. The layout is types separated by spaces: u8 i8 u16 i16 u32 i32 u64 i64 f32 f64, each little endian unless suffixed be (or le). A value that does not fit its type raises.",
+            &[r##"bytes.pack("u16 u32be", [1, 2])  // 6 bytes"##],
+        );
+        self.doc_ex(
+            "bytes.unpack",
+            "bytes.unpack(layout, b) / bytes.unpack(layout, b, at)",
+            "List",
+            "Bytes",
+            "The values the layout's types read from b, from byte at (0 when left out). Reading past the end raises.",
+            &[r##"bytes.unpack("u16 u32be", bytes.pack("u16 u32be", [1, 2]))  // [1, 2]"##],
+        );
+        self.doc_ex(
+            "bytes.get_u8",
+            "bytes.get_u8(b, at)",
+            "Int",
+            "Bytes",
+            "The an unsigned byte stored at byte at. Reading past the end raises.",
+            &[r##"bytes.get_u8(b, 0)"##],
+        );
+        self.doc_ex(
+            "bytes.get_i8",
+            "bytes.get_i8(b, at)",
+            "Int",
+            "Bytes",
+            "The a signed byte stored at byte at. Reading past the end raises.",
+            &[r##"bytes.get_i8(b, 0)"##],
+        );
+        self.doc_ex(
+            "bytes.get_u16",
+            "bytes.get_u16(b, at) / bytes.get_u16(b, at, \"be\")",
+            "Int",
+            "Bytes",
+            "The an unsigned 16-bit number stored at byte at, little endian unless \"be\" is given. Reading past the end raises.",
+            &[r##"bytes.get_u16(b, 0)"##],
+        );
+        self.doc_ex(
+            "bytes.get_i16",
+            "bytes.get_i16(b, at) / bytes.get_i16(b, at, \"be\")",
+            "Int",
+            "Bytes",
+            "The a signed 16-bit number stored at byte at, little endian unless \"be\" is given. Reading past the end raises.",
+            &[r##"bytes.get_i16(b, 0)"##],
+        );
+        self.doc_ex(
+            "bytes.get_u32",
+            "bytes.get_u32(b, at) / bytes.get_u32(b, at, \"be\")",
+            "Int",
+            "Bytes",
+            "The an unsigned 32-bit number stored at byte at, little endian unless \"be\" is given. Reading past the end raises.",
+            &[r##"bytes.get_u32(b, 0)"##],
+        );
+        self.doc_ex(
+            "bytes.get_i32",
+            "bytes.get_i32(b, at) / bytes.get_i32(b, at, \"be\")",
+            "Int",
+            "Bytes",
+            "The a signed 32-bit number stored at byte at, little endian unless \"be\" is given. Reading past the end raises.",
+            &[r##"bytes.get_i32(b, 0)"##],
+        );
+        self.doc_ex(
+            "bytes.get_u64",
+            "bytes.get_u64(b, at) / bytes.get_u64(b, at, \"be\")",
+            "Int",
+            "Bytes",
+            "The an unsigned 64-bit number (one past the Int range reads as the Int with the same bits, negative) stored at byte at, little endian unless \"be\" is given. Reading past the end raises.",
+            &[r##"bytes.get_u64(b, 0)"##],
+        );
+        self.doc_ex(
+            "bytes.get_i64",
+            "bytes.get_i64(b, at) / bytes.get_i64(b, at, \"be\")",
+            "Int",
+            "Bytes",
+            "The a signed 64-bit number stored at byte at, little endian unless \"be\" is given. Reading past the end raises.",
+            &[r##"bytes.get_i64(b, 0)"##],
+        );
+        self.doc_ex(
+            "bytes.get_f32",
+            "bytes.get_f32(b, at) / bytes.get_f32(b, at, \"be\")",
+            "Float",
+            "Bytes",
+            "The a 32-bit float stored at byte at, little endian unless \"be\" is given. Reading past the end raises.",
+            &[r##"bytes.get_f32(b, 0)"##],
+        );
+        self.doc_ex(
+            "bytes.get_f64",
+            "bytes.get_f64(b, at) / bytes.get_f64(b, at, \"be\")",
+            "Float",
+            "Bytes",
+            "The a 64-bit float stored at byte at, little endian unless \"be\" is given. Reading past the end raises.",
+            &[r##"bytes.get_f64(b, 0)"##],
         );
         self.doc_ex(
             "bytes.to_hex",

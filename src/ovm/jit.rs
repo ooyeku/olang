@@ -355,6 +355,11 @@ pub enum Kind {
     /// reads hand out borrowed pointers into the list, valid for the
     /// synchronous call like struct elements.
     ListStr,
+    /// A Bytes argument, read as a list of bytes (Ints 0..=255): a
+    /// borrowed pointer to its BytesObject, read by the bytes helpers.
+    /// Read-only: indexing, `len` and iteration compile, and anything
+    /// else that meets one refuses (OL-428).
+    ListBytes,
     /// A string argument or field, passed as a borrowed pointer to the
     /// String behind its Arc. Concat allocates through the scratch
     /// context under the same straight-line discipline as structs.
@@ -1587,6 +1592,31 @@ unsafe extern "C" fn olang_jit_len_rawi(list: *const Vec<i64>) -> i64 {
     unsafe { (*list).len() as i64 }
 }
 
+/// A Bytes argument's length.
+///
+/// # Safety
+/// `b` is a Bytes argument's borrowed pointer, alive for the call.
+unsafe extern "C" fn olang_jit_len_bytes(b: *const crate::stdlib::bytes::BytesObject) -> i64 {
+    unsafe { (*b).as_slice().len() as i64 }
+}
+
+/// The byte at `i` of a Bytes argument, or -1 when `i` is out of range
+/// (the caller deopts, and the VM raises the subscript's error).
+///
+/// # Safety
+/// `b` is a Bytes argument's borrowed pointer, alive for the call.
+unsafe extern "C" fn olang_jit_index_bytes(
+    b: *const crate::stdlib::bytes::BytesObject,
+    i: i64,
+) -> i64 {
+    let s = unsafe { (*b).as_slice() };
+    if i >= 0 && (i as usize) < s.len() {
+        s[i as usize] as i64
+    } else {
+        -1
+    }
+}
+
 /// Map twin of olang_jit_retain: resolve a returned borrowed pointer to
 /// an owned Arc at the entry boundary.
 ///
@@ -1773,6 +1803,8 @@ impl JitCache {
             );
             builder.symbol("olang_jit_len_rawf", olang_jit_len_rawf as *const u8);
             builder.symbol("olang_jit_len_rawi", olang_jit_len_rawi as *const u8);
+            builder.symbol("olang_jit_len_bytes", olang_jit_len_bytes as *const u8);
+            builder.symbol("olang_jit_index_bytes", olang_jit_index_bytes as *const u8);
             builder.symbol("olang_jit_set_rawf", olang_jit_set_rawf as *const u8);
             builder.symbol("olang_jit_set_rawi", olang_jit_set_rawi as *const u8);
             builder.symbol("olang_jit_append_rawf", olang_jit_append_rawf as *const u8);
@@ -1958,6 +1990,16 @@ impl JitCache {
                 ValueData::IntList(v) => {
                     kinds[i] = Kind::ListIntRaw;
                     bits[i] = Arc::as_ptr(v) as i64;
+                    any_ref = true;
+                }
+                // Bytes: the object itself, borrowed for the call (the
+                // argument holds its handle).
+                ValueData::Native(h) => {
+                    let b =
+                        h.0.as_any()
+                            .downcast_ref::<crate::stdlib::bytes::BytesObject>()?;
+                    kinds[i] = Kind::ListBytes;
+                    bits[i] = b as *const crate::stdlib::bytes::BytesObject as i64;
                     any_ref = true;
                 }
                 ValueData::String(s) => {
@@ -2333,6 +2375,8 @@ impl JitCache {
                 Kind::Map(_) => ctx.retained_map.take().map(|arc| OvmValue {
                     data: ValueData::Map(arc),
                 }),
+                // A Bytes argument is only read; it is never returned.
+                Kind::ListBytes => None,
             }
         };
         ctx.clear();
@@ -3036,6 +3080,23 @@ impl JitCache {
                 .declare_function("olang_jit_len_rawi", Linkage::Import, &sig)
                 .ok()?
         };
+        let len_bytes_helper = {
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(types::I64));
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_len_bytes", Linkage::Import, &sig)
+                .ok()?
+        };
+        let index_bytes_helper = {
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(types::I64));
+            sig.params.push(AbiParam::new(types::I64));
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_index_bytes", Linkage::Import, &sig)
+                .ok()?
+        };
         let set_rawf_helper = {
             let mut sig = module.make_signature();
             for _ in 0..4 {
@@ -3181,6 +3242,8 @@ impl JitCache {
                         index_rawi_cached: index_rawi_cached_helper,
                         len_rawf: len_rawf_helper,
                         len_rawi: len_rawi_helper,
+                        len_bytes: len_bytes_helper,
+                        index_bytes: index_bytes_helper,
                         set_rawf: set_rawf_helper,
                         set_rawi: set_rawi_helper,
                         append_rawf: append_rawf_helper,
@@ -3739,7 +3802,8 @@ fn kind_mask(k: Kind) -> u16 {
         | Kind::ListIntRaw
         | Kind::ListListFloat
         | Kind::ListStruct(_)
-        | Kind::ListStr => K_LIST,
+        | Kind::ListStr
+        | Kind::ListBytes => K_LIST,
         Kind::Str => K_STR,
         Kind::Result(..) => K_RESULT,
         Kind::Map(_) => K_MAP,
@@ -3768,6 +3832,7 @@ fn kind_discharges(
         | Kind::ListListFloat
         | Kind::ListStruct(_)
         | Kind::ListStr => check.accepts("List"),
+        Kind::ListBytes => check.accepts("Bytes"),
         Kind::Map(_) => check.accepts("Map"),
         Kind::Struct(sid) => shapes
             .get(&sid)
@@ -4903,7 +4968,9 @@ impl PlanFn {
                         else {
                             continue;
                         };
-                        if lk != rk {
+                        // Bytes are read-only here: their concat stays on
+                        // the VM.
+                        if lk != rk || lk == Kind::ListBytes {
                             return None;
                         }
                         narrow!(lhs.0, K_LIST);
@@ -5109,7 +5176,7 @@ impl PlanFn {
                     narrow!(index.0, K_INT);
                     let elem = match self.exotic[object.0 as usize] {
                         Some(Kind::ListFloat | Kind::ListFloatRaw) => Kind::Float,
-                        Some(Kind::ListInt | Kind::ListIntRaw) => Kind::Int,
+                        Some(Kind::ListInt | Kind::ListIntRaw | Kind::ListBytes) => Kind::Int,
                         Some(Kind::ListStruct(sid)) => Kind::Struct(sid),
                         Some(Kind::ListStr) => Kind::Str,
                         // Indexing a feature matrix yields the inner raw
@@ -5406,6 +5473,7 @@ impl PlanFn {
                                         | Kind::ListIntRaw
                                         | Kind::ListStruct(_)
                                         | Kind::ListStr
+                                        | Kind::ListBytes
                                 )
                             ) {
                                 return None;
@@ -5567,7 +5635,7 @@ impl PlanFn {
                     narrow!(idx.0, K_INT);
                     let elem = match self.exotic[src.0 as usize] {
                         Some(Kind::ListFloat | Kind::ListFloatRaw) => Kind::Float,
-                        Some(Kind::ListInt | Kind::ListIntRaw) => Kind::Int,
+                        Some(Kind::ListInt | Kind::ListIntRaw | Kind::ListBytes) => Kind::Int,
                         Some(Kind::ListStruct(sid)) => Kind::Struct(sid),
                         Some(Kind::ListStr) => Kind::Str,
                         _ => return None,
@@ -6100,6 +6168,8 @@ struct Helpers {
     index_rawi_cached: cranelift_module::FuncId,
     len_rawf: cranelift_module::FuncId,
     len_rawi: cranelift_module::FuncId,
+    len_bytes: cranelift_module::FuncId,
+    index_bytes: cranelift_module::FuncId,
     set_rawf: cranelift_module::FuncId,
     set_rawi: cranelift_module::FuncId,
     append_rawf: cranelift_module::FuncId,
@@ -6177,6 +6247,8 @@ fn translate_body(
         index_rawi_cached: index_rawi_cached_helper,
         len_rawf: len_rawf_helper,
         len_rawi: len_rawi_helper,
+        len_bytes: len_bytes_helper,
+        index_bytes: index_bytes_helper,
         set_rawf: set_rawf_helper,
         set_rawi: set_rawi_helper,
         append_rawf: append_rawf_helper,
@@ -7122,6 +7194,7 @@ fn translate_body(
                     let which = match r#gen.kind(args[0].0)? {
                         Kind::ListFloatRaw => len_rawf_helper,
                         Kind::ListIntRaw => len_rawi_helper,
+                        Kind::ListBytes => len_bytes_helper,
                         Kind::ListFloat | Kind::ListInt | Kind::ListStruct(_) | Kind::ListStr => {
                             len_helper
                         }
@@ -7328,6 +7401,7 @@ fn translate_body(
                 let which = match r#gen.kind(src.0)? {
                     Kind::ListFloatRaw => len_rawf_helper,
                     Kind::ListIntRaw => len_rawi_helper,
+                    Kind::ListBytes => len_bytes_helper,
                     _ => len_helper,
                 };
                 let list_ptr = builder.use_var(Variable::from_u32(src.0));
@@ -7338,6 +7412,19 @@ fn translate_body(
             }
             Instruction::IterGet { dst, src, idx } => {
                 let src_kind = r#gen.kind(src.0)?;
+                if src_kind == Kind::ListBytes {
+                    let ptr = builder.use_var(Variable::from_u32(src.0));
+                    let idx_v = r#gen.read(builder, idx.0)?;
+                    let helper_ref = module.declare_func_in_func(index_bytes_helper, builder.func);
+                    let call = builder.ins().call(helper_ref, &[ptr, idx_v]);
+                    let val = builder.inst_results(call)[0];
+                    let bad = builder.ins().icmp_imm_s(IntCC::SignedLessThan, val, 0);
+                    let ok_block = builder.create_block();
+                    builder.ins().brif(bad, deopt_block, &[], ok_block, &[]);
+                    builder.switch_to_block(ok_block);
+                    r#gen.write(builder, dst.0, val);
+                    continue;
+                }
                 if matches!(src_kind, Kind::ListFloatRaw | Kind::ListIntRaw) {
                     let (which, load_ty) = match src_kind {
                         Kind::ListFloatRaw => (index_rawf_helper, types::F64),
@@ -7525,6 +7612,38 @@ fn translate_body(
             }
             Instruction::IndexGet { dst, object, index } => {
                 let obj_kind = r#gen.kind(object.0)?;
+                if obj_kind == Kind::ListBytes {
+                    // Inline: the length, an unsigned bounds check (a
+                    // negative index is out of range too; the deopt re-runs
+                    // the read on the VM, which raises the subscript's
+                    // error), then the byte.
+                    let obj = builder.use_var(Variable::from_u32(object.0));
+                    let idx_v = r#gen.read(builder, index.0)?;
+                    let len = builder.ins().load(
+                        types::I64,
+                        MemFlagsData::trusted(),
+                        obj,
+                        crate::stdlib::bytes::BytesObject::LEN_OFFSET,
+                    );
+                    let in_bounds = builder.ins().icmp(IntCC::UnsignedLessThan, idx_v, len);
+                    let ok_block = builder.create_block();
+                    builder
+                        .ins()
+                        .brif(in_bounds, ok_block, &[], deopt_block, &[]);
+                    builder.switch_to_block(ok_block);
+                    let data = builder.ins().load(
+                        types::I64,
+                        MemFlagsData::trusted(),
+                        obj,
+                        crate::stdlib::bytes::BytesObject::PTR_OFFSET,
+                    );
+                    let addr = builder.ins().iadd(data, idx_v);
+                    let val = builder
+                        .ins()
+                        .uload8(types::I64, MemFlagsData::trusted(), addr, 0);
+                    r#gen.write(builder, dst.0, val);
+                    continue;
+                }
                 if matches!(obj_kind, Kind::ListListFloat) {
                     // Feature-matrix row: hand the inner raw list's
                     // pointer to the dst register (kind ListFloatRaw).

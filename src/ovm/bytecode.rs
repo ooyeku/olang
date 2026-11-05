@@ -3819,6 +3819,18 @@ impl BytecodeVm {
                     kinds[i] = JitKind::ListIntRaw;
                     any_ref = true;
                 }
+                // Bytes, read natively (OL-428): the register holds the
+                // handle for the whole region.
+                Ok(crate::ovm::value::ValueData::Native(h))
+                    if h.0.as_any().is::<crate::stdlib::bytes::BytesObject>() =>
+                {
+                    let b =
+                        h.0.as_any()
+                            .downcast_ref::<crate::stdlib::bytes::BytesObject>()?;
+                    bits[i] = b as *const crate::stdlib::bytes::BytesObject as i64;
+                    kinds[i] = JitKind::ListBytes;
+                    any_ref = true;
+                }
                 other => {
                     if osr_debug {
                         eprintln!(
@@ -10848,6 +10860,15 @@ impl BytecodeVm {
         // is asked before the integer-index requirement below — a Frame
         // is indexed by column name, which is the whole point.
         if let ValueData::Native(handle) = &object.data {
+            // A byte of Bytes, read in place: through `index` it took a
+            // key converted out and a value converted back (OL-428).
+            if let ValueData::Integer(i) = index.data
+                && let Some(r) = crate::stdlib::bytes::byte_at(handle, i)
+            {
+                return r
+                    .map(OvmValue::new_integer)
+                    .map_err(BytecodeError::RuntimeError);
+            }
             let key = index
                 .to_ast()
                 .map_err(|err| BytecodeError::TypeError(err.to_string()))?;
