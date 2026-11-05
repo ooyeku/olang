@@ -215,7 +215,7 @@ impl Only {
 /// the interrupt, as the evaluators' polls do.
 fn stopped() -> Result<(), Box<dyn std::error::Error>> {
     if crate::interrupt::should_stop() {
-        return Err(crate::interrupt::MESSAGE.into());
+        return Err(crate::interrupt::stop_message().into());
     }
     Ok(())
 }

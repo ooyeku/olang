@@ -6274,10 +6274,14 @@ fn translate_body(
     let n = bytecode.instructions.len();
     let param_count = inference.param_kinds.len();
     let ptr_ty = module.target_config().pointer_type();
-    // A process that can be interrupted (`olang repl --serve`) compiles a
-    // poll of the flag at each back edge: set, the body deopts and the VM
-    // raises the error. Any other run compiles no poll at all.
-    let poll_interrupt = crate::interrupt::armed();
+    // Every body polls the stop byte at each back edge and self tail
+    // call: a budget begun after the code was compiled must still stop
+    // it. The byte is set while any thread anywhere is asked to stop;
+    // then a call out asks whether it is this one (and counts the step
+    // under a step budget), and only a yes deopts, so the VM raises the
+    // error. The fast path is a load and a branch never taken.
+    let poll_interrupt = true;
+    let call_conv = module.target_config().default_call_conv;
     let interrupt_poll = |builder: &mut FunctionBuilder, deopt: cranelift_codegen::ir::Block| {
         let addr = builder
             .ins()
@@ -6285,8 +6289,20 @@ fn translate_body(
         let flag = builder
             .ins()
             .load(types::I8, MemFlagsData::trusted(), addr, 0);
+        let ask = builder.create_block();
         let cont = builder.create_block();
-        builder.ins().brif(flag, deopt, &[], cont, &[]);
+        builder.ins().brif(flag, ask, &[], cont, &[]);
+        builder.switch_to_block(ask);
+        builder.set_cold_block(ask);
+        let mut sig = cranelift_codegen::ir::Signature::new(call_conv);
+        sig.returns.push(AbiParam::new(types::I64));
+        let sig_ref = builder.import_signature(sig);
+        let fptr = builder
+            .ins()
+            .iconst(ptr_ty, crate::interrupt::native_poll as *const u8 as i64);
+        let call = builder.ins().call_indirect(sig_ref, fptr, &[]);
+        let here = builder.inst_results(call)[0];
+        builder.ins().brif(here, deopt, &[], cont, &[]);
         builder.switch_to_block(cont);
     };
 

@@ -1,0 +1,148 @@
+//! Stopping one thread's work: budgets per thread (OL-494). Every program
+//! here runs twice, on the default tiers (bytecode VM and native code)
+//! and on the interpreter alone (`--no-ovm`), and must print the same
+//! lines on both. Runs the real binary, as a user would.
+
+use std::path::PathBuf;
+use std::process::Command;
+
+fn olang() -> &'static str {
+    env!("CARGO_BIN_EXE_olang")
+}
+
+fn workspace(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("olang_stops_{}_{}", std::process::id(), tag));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// Run `source` on both tiers; its stdout, the same on each.
+fn run_both(tag: &str, source: &str) -> String {
+    let ws = workspace(tag);
+    std::fs::write(ws.join("main.ol"), source).unwrap();
+    let mut outs = Vec::new();
+    for flags in [&[][..], &["--no-ovm"][..]] {
+        let out = Command::new(olang())
+            .current_dir(&ws)
+            .args(flags)
+            .arg("main.ol")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+        assert!(
+            out.status.success(),
+            "main.ol failed ({flags:?}):\nstdout: {stdout}\nstderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        outs.push(stdout);
+    }
+    assert_eq!(outs[0], outs[1], "the tiers disagree");
+    outs.remove(0)
+}
+
+const HELPERS: &str = r#"
+fn spin() = { let mut n = 0; while true { n = n + 1 }; n }
+fn count(k) = { let mut n = 0; let mut i = 0; while i < k { n = n + i; i = i + 1 }; n }
+fn ms_of(r) = map_get(r, "us") / 1000
+"#;
+
+#[test]
+fn each_thread_s_budget_trips_on_its_own_deadline() {
+    // One shared stack watched only its top: task A's 50 ms budget ran
+    // for 1,515 ms while task B held a 1,500 ms one.
+    let out = run_both(
+        "own_deadline",
+        &format!(
+            r#"{HELPERS}
+let b = spawn runtime.call_budget(spin, [], 1500)
+time.sleep(20)
+let a = runtime.call_budget(spin, [], 50)
+println("a over=" + show(map_get(a, "over")) + " short=" + show(ms_of(a) < 400))
+let br = unwrap(task.join(b))
+println("b over=" + show(map_get(br, "over")) + " long=" + show(ms_of(br) >= 1400))
+"#
+        ),
+    );
+    assert_eq!(out, "a over=true short=true\nb over=true long=true\n");
+}
+
+#[test]
+fn code_compiled_before_the_first_budget_still_stops() {
+    // A warmed count() under a 50 ms budget ran for 2,055 ms: native
+    // code compiled before any budget had no poll.
+    let out = run_both(
+        "warm",
+        &format!(
+            r#"{HELPERS}
+let _warm = count(100000)
+let w = runtime.call_budget(count, [10000000000], 50)
+println("over=" + show(map_get(w, "over")) + " short=" + show(ms_of(w) < 400))
+println(count(1000))
+"#
+        ),
+    );
+    assert_eq!(out, "over=true short=true\n499500\n");
+}
+
+#[test]
+fn waits_honour_a_budget() {
+    // call_budget(() => chan.recv(never), [], 50) returned after 3,004 ms.
+    let out = run_both(
+        "waits",
+        &format!(
+            r#"{HELPERS}
+let never = chan.new()
+let r = runtime.call_budget(() => chan.recv(never), [], 50)
+println("recv " + show(map_get(r, "over")) + " " + show(ms_of(r) < 400) + " " + map_get(r, "error"))
+let rt = runtime.call_budget(() => chan.recv_timeout(never, 5000), [], 50)
+println("recv_timeout " + show(map_get(rt, "over")) + " " + show(ms_of(rt) < 400))
+let s = runtime.call_budget(() => time.sleep(5000), [], 50)
+println("sleep " + show(map_get(s, "over")) + " " + show(ms_of(s) < 400))
+let full = chan.bounded(0)
+let fs = runtime.call_budget(() => chan.send(full, 1), [], 50)
+println("send " + show(map_get(fs, "over")) + " " + show(ms_of(fs) < 400))
+let svc = chan.new()
+let ask = runtime.call_budget(() => chan.ask(svc, 1), [], 50)
+println("ask " + show(map_get(ask, "over")) + " " + show(ms_of(ask) < 400))
+// the thread runs on normally after each budget
+println(chan.recv_timeout(never, 10))
+"#
+        ),
+    );
+    assert_eq!(
+        out,
+        "recv true true stopped: over its time budget of 50 ms\n\
+         recv_timeout true true\n\
+         sleep true true\n\
+         send true true\n\
+         ask true true\n\
+         Err(\"timed out\")\n"
+    );
+}
+
+#[test]
+fn a_step_budget_counts_on_every_tier() {
+    // meta.eval's max_steps used to keep the evaluated code on the
+    // interpreter, the only tier that counted steps.
+    let out = run_both(
+        "steps",
+        r#"
+let src = "fn spin() = { let mut n = 0; while true { n = n + 1 }; n }\nspin()"
+println(meta.eval(src, #{ "max_steps": 100000 }))
+let ok = "fn count(k) = { let mut n = 0; let mut i = 0; while i < k { n = n + i; i = i + 1 }; n }\ncount(1000)"
+println(meta.eval(ok, #{ "max_steps": 100000 }))
+println(meta.eval(src, #{ "timeout_ms": 50 }))
+fn spin2() = { let mut n = 0; while true { n = n + 1 }; n }
+let t = spawn runtime.call_budget(spin2, [], 100)
+println(map_get(unwrap(task.join(t)), "over"))
+"#,
+    );
+    assert_eq!(
+        out,
+        "Err(\"Runtime error: budget exceeded: the evaluation used up its max_steps\")\n\
+         Ok(499500)\n\
+         Err(\"Runtime error: budget exceeded: the evaluation ran past its timeout_ms (50 ms)\")\n\
+         true\n"
+    );
+}

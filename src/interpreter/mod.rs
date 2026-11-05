@@ -241,6 +241,10 @@ pub struct Interpreter {
     /// costs one branch per step.
     step_budget: Option<u64>,
     deadline: Option<(crate::clock::Instant, std::time::Duration)>,
+    /// The same budget kept by the thread instead (`set_eval_budget_all_tiers`):
+    /// every tier counts its steps and polls its deadline, so a bounded
+    /// run may promote. Dropped with the interpreter, which ends it.
+    thread_bound: Option<crate::interrupt::Bound>,
 
     /// Stack of source positions of the statements currently being
     /// evaluated (innermost last). Maintained by eval_statement's
@@ -487,6 +491,7 @@ impl Interpreter {
             max_call_depth: DEFAULT_MAX_CALL_DEPTH,
             step_budget: None,
             deadline: None,
+            thread_bound: None,
             stmt_span_stack: Vec::new(),
             call_stack_names: Vec::new(),
             frame_funcs: Vec::new(),
@@ -2710,17 +2715,53 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         self.deadline = timeout.map(|t| (crate::clock::Instant::now(), t));
     }
 
-    /// Is this run bounded? A bounded run stays on the interpreter —
-    /// promotion would move iterations and calls where they are not
-    /// charged.
+    /// `set_eval_budget`, the budget kept by this thread rather than by
+    /// the interpreter: the bytecode VM and native code count the same
+    /// steps (loop iterations and calls) and watch the same deadline, so
+    /// the run may promote to them. Ends when the interpreter is dropped,
+    /// which must happen on this thread.
+    pub fn set_eval_budget_all_tiers(
+        &mut self,
+        max_steps: Option<u64>,
+        timeout: Option<std::time::Duration>,
+    ) {
+        self.set_eval_budget(max_steps, timeout);
+        self.thread_bound = Some(crate::interrupt::Bound::begin(
+            max_steps,
+            timeout.map(|t| {
+                (
+                    t,
+                    format!(
+                        "budget exceeded: the evaluation ran past its timeout_ms ({} ms)",
+                        t.as_millis()
+                    ),
+                )
+            }),
+        ));
+    }
+
+    /// Is this run bounded where only the interpreter counts? Such a run
+    /// stays on the interpreter: promotion would move iterations and
+    /// calls where they are not charged. A run bounded by its thread
+    /// (`set_eval_budget_all_tiers`) is counted on every tier.
     #[inline]
     fn budgeted(&self) -> bool {
-        self.step_budget.is_some() || self.deadline.is_some()
+        (self.step_budget.is_some() || self.deadline.is_some()) && self.thread_bound.is_none()
     }
 
     /// Charge one step against the evaluation budget, if one is set.
     #[inline]
     fn spend_step(&mut self) -> Result<(), InterpreterError> {
+        if self.thread_bound.is_some() {
+            // The deadline trips this thread's polls; the steps are the
+            // thread's count, which the other tiers spend from too.
+            if crate::interrupt::charge_step() {
+                return Err(InterpreterError::RuntimeError {
+                    message: crate::interrupt::STEPS_MESSAGE.to_string(),
+                });
+            }
+            return Ok(());
+        }
         if let Some(left) = self.step_budget.as_mut() {
             if *left == 0 {
                 return Err(InterpreterError::RuntimeError {
@@ -3629,6 +3670,13 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 // The interpreter's frames (this one included) count
                 // against the same budget the VM spends from.
                 let depth = self.call_depth as u32;
+                // Under a thread's step budget the VM counts the call at
+                // its entry: hand back the step charged above, and charge
+                // it again only if the call stays here.
+                let metered = self.thread_bound.is_some();
+                if metered {
+                    crate::interrupt::refund_step();
+                }
                 let outcome = tier
                     .as_mut()
                     .map(|t| {
@@ -3638,6 +3686,17 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     })
                     .unwrap_or(crate::ovm::tier::TierOutcome::Fallback);
                 self.bytecode_tier = tier;
+                if metered
+                    && matches!(outcome, crate::ovm::tier::TierOutcome::Fallback)
+                    && crate::interrupt::charge_step()
+                {
+                    self.call_depth -= 1;
+                    self.call_stack_names.pop();
+                    self.frame_funcs.pop();
+                    return Err(InterpreterError::RuntimeError {
+                        message: crate::interrupt::STEPS_MESSAGE.to_string(),
+                    });
+                }
 
                 if let crate::ovm::tier::TierOutcome::Ran(result) = outcome {
                     self.call_depth -= 1;
@@ -4283,6 +4342,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             max_call_depth: self.max_call_depth,
             step_budget: self.step_budget,
             deadline: self.deadline,
+            // A thread's bound is that thread's: a clone on another thread
+            // counts with the plain budget above.
+            thread_bound: None,
 
             // Each thread profiles independently; the VM is not shared, so
             // the clone gets a fresh, quiet tier with the same promotion
@@ -6523,8 +6585,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     /// A run being recorded or replayed does not extend into the child:
     /// the timeline covers the main program's own dispatch only.
     ///
-    /// A budget (`max_steps`, `timeout`) bounds the child: it then runs
-    /// interpreted, where every loop iteration and call is charged, so a
+    /// A budget (`max_steps`, `timeout`) bounds the child: every loop
+    /// iteration and call is charged, on whichever tier runs it, so a
     /// runaway rule costs one `Err("budget exceeded ...")` rather than a
     /// thread.
     pub fn eval_source_at_runtime(
@@ -6543,13 +6605,16 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         // The child runs with the caller's execution model: without
         // this, evaluated source tree-walks everything — the tier and
         // the JIT exist only where a tier was enabled. A budgeted child
-        // stays on the interpreter, the tier that meters steps.
-        if let Some(tier) = self.bytecode_tier.as_ref()
-            && !budgeted
-        {
+        // keeps its budget on this thread, where every tier counts its
+        // steps and polls its deadline, so it promotes as any run does.
+        if let Some(tier) = self.bytecode_tier.as_ref() {
             child.enable_bytecode_tier(tier.threshold(), false);
+            if budgeted {
+                child.set_eval_budget_all_tiers(max_steps, timeout);
+            }
+        } else {
+            child.set_eval_budget(max_steps, timeout);
         }
-        child.set_eval_budget(max_steps, timeout);
         child.caps = self.caps.clone();
         child.caps_trace = self.caps_trace.clone();
         child.dependency_map = self.dependency_map.clone();

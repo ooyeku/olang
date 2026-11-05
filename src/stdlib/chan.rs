@@ -18,8 +18,6 @@
 use crate::ast::Value;
 use crate::native::{NativeHandle, NativeObject};
 use crate::ovm::value::OvmValue;
-#[cfg(not(target_arch = "wasm32"))]
-use crossbeam_channel::RecvTimeoutError;
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 #[cfg(target_arch = "wasm32")]
 use hosted as crossbeam_channel;
@@ -337,6 +335,68 @@ pub fn parked_sites() -> Vec<(String, String, u64)> {
         .collect();
     out.sort();
     out
+}
+
+/// What a wait on a receiver came to.
+#[cfg(not(target_arch = "wasm32"))]
+enum Waited {
+    Got(Value),
+    Closed,
+    TimedOut,
+}
+
+/// Receive from `rx`, until `deadline` when one is given, ending at once
+/// with `Err` (the stop's message) when this thread is asked to stop: an
+/// interrupt, a budget's trip or a cancel wakes the wait through the
+/// thread's wake channel, which it selects on next to `rx`. `on_tick`
+/// runs every `STALL_TICK_MS` of an unbounded wait (the stall check).
+#[cfg(not(target_arch = "wasm32"))]
+fn wait_recv(
+    rx: &Receiver<Value>,
+    deadline: Option<crate::clock::Instant>,
+    mut on_tick: impl FnMut(),
+) -> Result<Waited, String> {
+    match rx.try_recv() {
+        Ok(v) => return Ok(Waited::Got(v)),
+        Err(TryRecvError::Disconnected) => return Ok(Waited::Closed),
+        Err(TryRecvError::Empty) => {}
+    }
+    let wake = crate::interrupt::wake_receiver();
+    let tick = std::time::Duration::from_millis(STALL_TICK_MS);
+    loop {
+        if crate::interrupt::pending() {
+            return Err(crate::interrupt::stop_message());
+        }
+        let wait = match deadline {
+            Some(d) => {
+                let now = crate::clock::Instant::now();
+                if now >= d {
+                    return Ok(Waited::TimedOut);
+                }
+                (d - now).min(tick)
+            }
+            None => tick,
+        };
+        let mut sel = crossbeam_channel::Select::new();
+        let at_rx = sel.recv(rx);
+        sel.recv(&wake);
+        match sel.select_timeout(wait) {
+            Ok(op) if op.index() == at_rx => {
+                return Ok(match op.recv(rx) {
+                    Ok(v) => Waited::Got(v),
+                    Err(_) => Waited::Closed,
+                });
+            }
+            Ok(op) => {
+                let _ = op.recv(&wake);
+            }
+            Err(_) => {
+                if deadline.is_none() {
+                    on_tick();
+                }
+            }
+        }
+    }
 }
 
 /// One channel's two ends. The sender is cloned out of its lock before
@@ -697,39 +757,50 @@ fn chan_send(mut args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         #[cfg(not(target_arch = "wasm32"))]
         Tx::Bounded(t) => {
             use crossbeam_channel::TrySendError;
-            let mut value = value;
-            let mut parked_mark: Option<crate::profile::Blocked> = None;
-            let mut token: Option<u64> = None;
+            let value = match t.try_send(value) {
+                Ok(()) => {
+                    chan.depth.fetch_add(1, Ordering::Relaxed);
+                    return Ok(ok(Value::Unit));
+                }
+                Err(TrySendError::Disconnected(_)) => return Ok(err("channel is closed")),
+                Err(TrySendError::Full(v)) => v,
+            };
+            // Full: wait for room, woken by the receiver that makes it
+            // (no sleep loop), or by this thread being asked to stop.
+            let _parked_mark = crate::profile::blocked();
+            let token = park(format!("chan.send on full channel #{}", chan.id));
+            chan.send_waiting.fetch_add(1, Ordering::Relaxed);
+            let wake = crate::interrupt::wake_receiver();
+            let tick = std::time::Duration::from_millis(STALL_TICK_MS);
             let mut last_gen: Option<u64> = None;
-            let mut last_tick = crate::clock::Instant::now();
+            let mut value = Some(value);
             let outcome = loop {
-                match t.try_send(value) {
-                    Ok(()) => {
-                        chan.depth.fetch_add(1, Ordering::Relaxed);
-                        break ok(Value::Unit);
+                if crate::interrupt::pending() {
+                    break Err(crate::interrupt::stop_message());
+                }
+                let mut sel = crossbeam_channel::Select::new();
+                let at_tx = sel.send(&t);
+                sel.recv(&wake);
+                match sel.select_timeout(tick) {
+                    Ok(op) if op.index() == at_tx => {
+                        let v = value.take().expect("sent once");
+                        break Ok(match op.send(&t, v) {
+                            Ok(()) => {
+                                chan.depth.fetch_add(1, Ordering::Relaxed);
+                                ok(Value::Unit)
+                            }
+                            Err(_) => err("channel is closed"),
+                        });
                     }
-                    Err(TrySendError::Disconnected(_)) => break err("channel is closed"),
-                    Err(TrySendError::Full(v)) => {
-                        value = v;
-                        if token.is_none() {
-                            parked_mark = Some(crate::profile::blocked());
-                            token = Some(park(format!("chan.send on full channel #{}", chan.id)));
-                            chan.send_waiting.fetch_add(1, Ordering::Relaxed);
-                        }
-                        if last_tick.elapsed().as_millis() as u64 >= STALL_TICK_MS {
-                            last_tick = crate::clock::Instant::now();
-                            stall_tick(&mut last_gen);
-                        }
-                        crate::clock::sleep(std::time::Duration::from_millis(1));
+                    Ok(op) => {
+                        let _ = op.recv(&wake);
                     }
+                    Err(_) => stall_tick(&mut last_gen),
                 }
             };
-            if let Some(t) = token {
-                unpark(t);
-                chan.send_waiting.fetch_sub(1, Ordering::Relaxed);
-            }
-            drop(parked_mark);
-            Ok(outcome)
+            unpark(token);
+            chan.send_waiting.fetch_sub(1, Ordering::Relaxed);
+            Ok(outcome?)
         }
     }
 }
@@ -781,18 +852,15 @@ fn chan_ask(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         let _parked = crate::profile::blocked();
         let token = park(format!("chan.ask waiting on channel #{}", reply_chan.id));
         let mut last_gen: Option<u64> = None;
-        let outcome = loop {
-            match rx.recv_timeout(std::time::Duration::from_millis(STALL_TICK_MS)) {
-                Ok(v) => {
-                    reply_chan.depth.fetch_sub(1, Ordering::Relaxed);
-                    break got(v);
-                }
-                Err(RecvTimeoutError::Timeout) => stall_tick(&mut last_gen),
-                Err(RecvTimeoutError::Disconnected) => break err("channel is closed"),
-            }
-        };
+        let outcome = wait_recv(rx, None, || stall_tick(&mut last_gen));
         unpark(token);
-        Ok(outcome)
+        Ok(match outcome? {
+            Waited::Got(v) => {
+                reply_chan.depth.fetch_sub(1, Ordering::Relaxed);
+                got(v)
+            }
+            _ => err("channel is closed"),
+        })
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -811,21 +879,17 @@ fn chan_recv(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         let _parked = crate::profile::blocked();
         let token = park(format!("chan.recv on channel #{}", chan.id));
         chan.recv_waiting.fetch_add(1, Ordering::Relaxed);
-        let rx = &chan.rx;
         let mut last_gen: Option<u64> = None;
-        let outcome = loop {
-            match rx.recv_timeout(std::time::Duration::from_millis(STALL_TICK_MS)) {
-                Ok(v) => {
-                    chan.depth.fetch_sub(1, Ordering::Relaxed);
-                    break got(v);
-                }
-                Err(RecvTimeoutError::Timeout) => stall_tick(&mut last_gen),
-                Err(RecvTimeoutError::Disconnected) => break err("channel is closed"),
-            }
-        };
+        let outcome = wait_recv(&chan.rx, None, || stall_tick(&mut last_gen));
         unpark(token);
         chan.recv_waiting.fetch_sub(1, Ordering::Relaxed);
-        Ok(outcome)
+        Ok(match outcome? {
+            Waited::Got(v) => {
+                chan.depth.fetch_sub(1, Ordering::Relaxed);
+                got(v)
+            }
+            _ => err("channel is closed"),
+        })
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -895,20 +959,18 @@ fn chan_recv_timeout(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
     #[cfg(target_arch = "wasm32")]
     return Ok(wait_hosted(&chan, Some(ms)));
     #[cfg(not(target_arch = "wasm32"))]
-    let _parked = crate::profile::blocked();
-    #[cfg(not(target_arch = "wasm32"))]
-    let rx = &chan.rx;
-    #[cfg(not(target_arch = "wasm32"))]
-    Ok(
-        match rx.recv_timeout(std::time::Duration::from_millis(ms)) {
-            Ok(v) => {
+    {
+        let _parked = crate::profile::blocked();
+        let deadline = crate::clock::Instant::now() + std::time::Duration::from_millis(ms);
+        Ok(match wait_recv(&chan.rx, Some(deadline), || {})? {
+            Waited::Got(v) => {
                 chan.depth.fetch_sub(1, Ordering::Relaxed);
                 got(v)
             }
-            Err(RecvTimeoutError::Timeout) => err("timed out"),
-            Err(RecvTimeoutError::Disconnected) => err("channel is closed"),
-        },
-    )
+            Waited::TimedOut => err("timed out"),
+            Waited::Closed => err("channel is closed"),
+        })
+    }
 }
 
 /// Advisory channel state for the REPL and the profiler: reads race

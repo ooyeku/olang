@@ -99,22 +99,28 @@ fn runtime_on_crash(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
         let max_bytes = match opts.as_ref().and_then(|o| o.get("max_bytes")) {
             None | Some(Value::Unit) => crate::crash::DEFAULT_BYTES,
             Some(Value::Integer(n)) if *n > 0 => *n as usize,
-            Some(_) => return Err("runtime.on_crash: \"max_bytes\" is a whole number of bytes".into()),
+            Some(_) => {
+                return Err("runtime.on_crash: \"max_bytes\" is a whole number of bytes".into());
+            }
         };
         // a test's way to a Rust panic with olang frames on the stack
         // (`OLANG_TEST_PANIC=crash.on_crash`, src/contain.rs)
         if crate::crash::armed() {
             crate::contain::inject("crash.on_crash");
         }
-        Ok(match crate::crash::install(std::path::Path::new(&dir), max_bytes) {
-            Ok(at) => Value::Ok(Box::new(Value::String(Arc::new(at.display().to_string())))),
-            Err(e) => err_value(format!("runtime.on_crash: {e}")),
-        })
+        Ok(
+            match crate::crash::install(std::path::Path::new(&dir), max_bytes) {
+                Ok(at) => Value::Ok(Box::new(Value::String(Arc::new(at.display().to_string())))),
+                Err(e) => err_value(format!("runtime.on_crash: {e}")),
+            },
+        )
     }
     #[cfg(not(unix))]
     {
         let _ = (dir, opts);
-        Ok(err_value("runtime.on_crash: crash reports are not in this build".to_string()))
+        Ok(err_value(
+            "runtime.on_crash: crash reports are not in this build".to_string(),
+        ))
     }
 }
 
@@ -736,9 +742,9 @@ fn host_call_budget(
     };
     crate::errtrace::begin();
     let started = std::time::Instant::now();
-    crate::interrupt::budget_begin(ms);
+    let budget = crate::interrupt::budget_begin(ms);
     let result = interpreter.call_function(f, call_args);
-    let over = crate::interrupt::budget_end();
+    let over = crate::interrupt::budget_end(budget);
     let us = Value::Integer(started.elapsed().as_micros() as i64);
     match result {
         Ok(v) => Ok(map_value(vec![
