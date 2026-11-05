@@ -2025,8 +2025,8 @@ where
             });
             let _counted = crate::memory::enter_task(&format!("olang-sim-{local}"));
             let outcome = match world.wait_first_turn(local) {
-                Ok(()) => std::panic::catch_unwind(std::panic::AssertUnwindSafe(body))
-                    .unwrap_or_else(|_| Err("task thread panicked".to_string())),
+                Ok(()) => crate::contain::catch("a world's task", body)
+                    .unwrap_or_else(|panic| Err(format!("internal error: {panic}"))),
                 Err(e) => Err(InterpreterError::from(e).to_string()),
             };
             // `task.watch`ed channels close as the task ends, under its

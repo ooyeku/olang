@@ -529,7 +529,7 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if let Some(mut se) = child.stderr.take() {
         let sink = stderr_buf.clone();
         std::thread::spawn(move || {
-            *sink.lock().unwrap() = drain_bounded(&mut se, STDERR_KEEP);
+            *sink.lock().unwrap_or_else(|e| e.into_inner()) = drain_bounded(&mut se, STDERR_KEEP);
         });
     }
 
@@ -544,7 +544,10 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         group,
     });
     let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
-    procs().lock().unwrap().insert(id, proc);
+    procs()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(id, proc);
     Ok(ok(handle(id)))
 }
 
@@ -610,7 +613,7 @@ fn proc_write(args: Vec<Value>, newline: bool) -> Result<Value, Box<dyn std::err
             )));
         }
     };
-    let mut guard = p.stdin.lock().unwrap();
+    let mut guard = p.stdin.lock().unwrap_or_else(|e| e.into_inner());
     match guard.as_mut() {
         Some(stdin) => {
             let res = stdin
@@ -639,7 +642,7 @@ fn proc_close_stdin(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
         return Err(misuse("close_stdin expects (process)"));
     }
     let p = proc_of(&args[0])?;
-    *p.stdin.lock().unwrap() = None;
+    *p.stdin.lock().unwrap_or_else(|e| e.into_inner()) = None;
     Ok(unit_ok())
 }
 
@@ -657,7 +660,7 @@ fn proc_read_line(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
                 .into(),
         );
     }
-    let rx = p.out_rx.lock().unwrap();
+    let rx = p.out_rx.lock().unwrap_or_else(|e| e.into_inner());
     match recv_or_stop(&rx)? {
         Some(line) => Ok(ok(Value::String(Arc::new(
             String::from_utf8_lossy(&line).into_owned(),
@@ -689,7 +692,7 @@ fn proc_read_all(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         return Err(misuse("read_all expects (process)"));
     }
     let p = proc_of(&args[0])?;
-    let rx = p.out_rx.lock().unwrap();
+    let rx = p.out_rx.lock().unwrap_or_else(|e| e.into_inner());
     if p.bytes {
         let mut all = Vec::new();
         while let Some(chunk) = recv_or_stop(&rx)? {
@@ -754,7 +757,7 @@ fn proc_stderr(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         return Err(misuse("stderr expects (process)"));
     }
     let p = proc_of(&args[0])?;
-    let s = p.stderr.lock().unwrap().clone();
+    let s = p.stderr.lock().unwrap_or_else(|e| e.into_inner()).clone();
     Ok(ok(text_or_bytes(s, p.bytes)))
 }
 
@@ -823,7 +826,7 @@ fn proc_wait(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let p = proc_of(&args[0])?;
     // Close stdin first if still open, so a filter waiting on more input
     // can reach EOF and exit instead of hanging the wait forever.
-    *p.stdin.lock().unwrap() = None;
+    *p.stdin.lock().unwrap_or_else(|e| e.into_inner()) = None;
     match wait_or_stop(&p.child)? {
         Ok(status) => {
             let (code, signal) = exit_parts(&status);
@@ -1030,7 +1033,7 @@ fn proc_kill(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if tree && !p.group {
         return Ok(err(NO_GROUP));
     }
-    let mut child = p.child.lock().unwrap();
+    let mut child = p.child.lock().unwrap_or_else(|e| e.into_inner());
     if tree {
         kill_tree(&mut child);
     } else {

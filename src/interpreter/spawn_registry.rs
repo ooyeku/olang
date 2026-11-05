@@ -46,7 +46,7 @@ fn tasks() -> &'static Mutex<HashMap<u64, Entry>> {
 /// thread has already finished reports "done" — the memoized join just
 /// has not collected it yet, and "running" would be a lie.
 pub(crate) fn list() -> Vec<(u64, &'static str, u64)> {
-    let map = tasks().lock().unwrap();
+    let map = tasks().lock().unwrap_or_else(|e| e.into_inner());
     let mut out: Vec<(u64, &'static str, u64)> = map
         .iter()
         .map(|(id, e)| {
@@ -70,7 +70,7 @@ pub(crate) fn list() -> Vec<(u64, &'static str, u64)> {
 /// still running and now holds the channel; false when the task is gone
 /// (or unknown), in which case the caller closes the channel itself.
 pub(crate) fn watch(id: u64, channel: Value) -> bool {
-    let mut map = tasks().lock().unwrap();
+    let mut map = tasks().lock().unwrap_or_else(|e| e.into_inner());
     match map.get_mut(&id) {
         Some(entry) if !entry.finished => {
             entry.watched.push(channel);
@@ -83,7 +83,7 @@ pub(crate) fn watch(id: u64, channel: Value) -> bool {
 /// The task's own thread, ending: mark it finished and take the channels
 /// it was watching, in one lock acquisition.
 pub(crate) fn finish(id: u64) -> Vec<Value> {
-    let mut map = tasks().lock().unwrap();
+    let mut map = tasks().lock().unwrap_or_else(|e| e.into_inner());
     match map.get_mut(&id) {
         Some(entry) => {
             entry.finished = true;
@@ -124,7 +124,7 @@ pub(crate) fn register(
     stop: crate::interrupt::Handle,
     done: crossbeam_channel::Receiver<()>,
 ) {
-    tasks().lock().unwrap().insert(
+    tasks().lock().unwrap_or_else(|e| e.into_inner()).insert(
         id,
         Entry {
             slot: TaskSlot::Running(handle),
@@ -178,7 +178,7 @@ impl Drop for SpawnGuard {
 /// still join the task, so this never races an in-flight join.
 fn forget(id: u64) {
     if let Some(map) = TASKS.get() {
-        map.lock().unwrap().remove(&id);
+        map.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
     }
 }
 

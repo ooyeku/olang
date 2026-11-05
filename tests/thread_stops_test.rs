@@ -1,6 +1,7 @@
 //! Stopping one thread's work: budgets per thread (OL-494) and
 //! `task.interrupt` (OL-493); joins and full sends that wake instead of
-//! polling (OL-498). Every program
+//! polling (OL-498); a Rust panic kept to its task or boundary (OL-499).
+//! Every program
 //! here runs twice, on the default tiers (bytecode VM and native code)
 //! and on the interpreter alone (`--no-ovm`), and must print the same
 //! lines on both. Runs the real binary, as a user would.
@@ -21,6 +22,11 @@ fn workspace(tag: &str) -> PathBuf {
 
 /// Run `source` on both tiers; its stdout, the same on each.
 fn run_both(tag: &str, source: &str) -> String {
+    run_both_env(tag, source, &[])
+}
+
+/// `run_both`, with environment variables set.
+fn run_both_env(tag: &str, source: &str, env: &[(&str, &str)]) -> String {
     let ws = workspace(tag);
     std::fs::write(ws.join("main.ol"), source).unwrap();
     let mut outs = Vec::new();
@@ -29,6 +35,7 @@ fn run_both(tag: &str, source: &str) -> String {
             .current_dir(&ws)
             .args(flags)
             .arg("main.ol")
+            .envs(env.iter().copied())
             .output()
             .unwrap();
         let stdout = String::from_utf8_lossy(&out.stdout).to_string();
@@ -303,4 +310,49 @@ println("join_timeout quick " + show(time.monotonic() - t2 < 200))
         out,
         "Ok(2000)\njoin quick true\nsend quick true\nOk(Ok(7))\njoin_timeout quick true\n"
     );
+}
+
+#[test]
+fn a_rust_panic_is_its_task_s_or_boundary_s_err() {
+    // The panic hook aborted the process unless the panic happened inside
+    // contain::catch, which only lsp and gui used: one builtin bug took
+    // the whole program (and OlangStudio) down. The sites below panic
+    // once each on purpose (OLANG_TEST_PANIC).
+    let out = run_both_env(
+        "panics",
+        r#"
+fn lister() = len(task.list())
+println(task.join(spawn lister()))
+// inside a function, so the VM's own attempt runs it on the tiers
+fn guarded() = attempt(() => task.parked())
+println(guarded())
+let r = runtime.call_budget(() => chan.stat(chan.new()), [], 1000)
+println(show(map_get(r, "ok")) + " " + map_get(r, "error"))
+fn count(k) = { let mut n = 0; let mut i = 0; while i < k { n = n + i; i = i + 1 }; n }
+println(attempt(() => count(10)))
+println(guarded())
+println(len(task.list()))
+"#,
+        &[("OLANG_TEST_PANIC", "task.list,task.parked,chan.stat")],
+    );
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 6, "{out}");
+    assert!(
+        lines[0]
+            .starts_with("Err(\"internal error: task olang-spawn-1: a panic injected at task.list"),
+        "{out}"
+    );
+    assert!(
+        lines[1].starts_with("Err(\"internal error: attempt: a panic injected at task.parked"),
+        "{out}"
+    );
+    assert!(
+        lines[2].starts_with(
+            "false internal error: runtime.call_budget: a panic injected at chan.stat"
+        ),
+        "{out}"
+    );
+    assert_eq!(lines[3], "Ok(45)", "the program runs on");
+    assert_eq!(lines[4], "Ok([])", "the same attempt runs normally after");
+    assert_eq!(lines[5], "0", "the registry is usable after the panic");
 }

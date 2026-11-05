@@ -163,6 +163,8 @@ pub fn call_task_function(name: &str, args: Vec<Value>) -> Result<Value, Interpr
 /// read. States: "running", "joining" (a thread is mid-collect), and
 /// "done" (finished; the memoized result may or may not be collected).
 fn task_list(args: Vec<Value>) -> Result<Value, InterpreterError> {
+    // a test's way to a Rust panic inside a task (OLANG_TEST_PANIC)
+    crate::contain::inject("task.list");
     if !args.is_empty() {
         return Err(raise("task.list takes no arguments".to_string()));
     }
@@ -186,6 +188,7 @@ fn task_list(args: Vec<Value>) -> Result<Value, InterpreterError> {
 /// `#{ thread, on, waited_ms }` maps — the live view behind the stall
 /// detector's report.
 fn task_parked(args: Vec<Value>) -> Result<Value, InterpreterError> {
+    crate::contain::inject("task.parked");
     if !args.is_empty() {
         return Err(raise("task.parked takes no arguments".to_string()));
     }

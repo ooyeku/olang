@@ -743,7 +743,7 @@ fn host_call_budget(
     crate::errtrace::begin();
     let started = std::time::Instant::now();
     let budget = crate::interrupt::budget_begin(ms);
-    let result = interpreter.call_function(f, call_args);
+    let result = interpreter.call_function_contained(f, call_args, "runtime.call_budget");
     let over = crate::interrupt::budget_end(budget);
     let us = Value::Integer(started.elapsed().as_micros() as i64);
     match result {
@@ -816,7 +816,7 @@ fn host_call_cancellable(
     let result = if crate::interrupt::should_stop() {
         Err(crate::interrupt::interpreter_error())
     } else {
-        interpreter.call_function(f, call_args)
+        interpreter.call_function_contained(f, call_args, "runtime.call_cancellable")
     };
     let cancelled = crate::interrupt::cancel_end();
     let us = Value::Integer(started.elapsed().as_micros() as i64);

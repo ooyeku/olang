@@ -8718,7 +8718,23 @@ impl BytecodeVm {
                     ) =>
             {
                 crate::errtrace::begin();
-                Some(match self.call_function_value(&args[0], &[]) {
+                // A Rust panic inside is the Err too ("internal error: …"),
+                // with this VM's depth and attribution put back.
+                let depth = self.call_depth;
+                let files = self.caps_file_stack.len();
+                let window = (self.execution_state.base, self.execution_state.top);
+                let ran =
+                    crate::contain::catch("attempt", || self.call_function_value(&args[0], &[]));
+                let ran = ran.unwrap_or_else(|panic| {
+                    self.call_depth = depth;
+                    self.caps_file_stack.truncate(files);
+                    (self.execution_state.base, self.execution_state.top) = window;
+                    self.clear_error_trace();
+                    Err(BytecodeError::RuntimeError(format!(
+                        "internal error: {panic}"
+                    )))
+                });
+                Some(match ran {
                     Ok(v) => Ok(OvmValue::new_result(v, true)),
                     Err(BytecodeError::RuntimeError(message))
                     | Err(BytecodeError::TypeError(message)) => {

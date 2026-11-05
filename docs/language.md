@@ -2133,6 +2133,13 @@ println(show(attempt(() => map_get(5, "k"))))   // Err("map_get: first argument 
 println(show(attempt(() => 41 + 1)))            // Ok(42)
 ```
 
+The same boundary holds for a bug in olang itself. A Rust panic inside
+`attempt`, `runtime.call_budget`, `runtime.call_cancellable` or a
+spawned task becomes that call's or that task's `Err`, with the message
+`"internal error: …"` saying what panicked and where. The rest of the
+program runs on. A panic anywhere else still ends the process, with a
+report.
+
 A library raises one of its own with `raise(message)`: a runtime error
 whose message is `message`, word for word. It is for the caller that
 used the library wrongly — an unknown option, a missing node in a test
@@ -2292,7 +2299,8 @@ on a timer. Starting a task and joining it costs tens of microseconds
 thread compiles the functions it calls afresh, which adds about 85 µs to
 a task's first call of each.
 
-**Failure is a value.** A task that raises yields `Err(message)` from
+**Failure is a value.** A task that raises (or that meets a bug in
+olang itself, an `"internal error: …"`) yields `Err(message)` from
 `task.join` rather than aborting the program, so worker failure is
 handled with the ordinary Result toolkit and one bad task never kills
 the batch. A task that *returns* an `Err` joins as `Ok(Err(…))`, so the

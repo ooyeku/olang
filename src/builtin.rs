@@ -1199,7 +1199,13 @@ impl BuiltinFunctions {
                 });
             }
             crate::errtrace::begin();
-            return match interpreter.call_function(arguments[0].clone(), Vec::new()) {
+            // A Rust panic inside is this attempt's Err too ("internal
+            // error: …"), not the end of the process.
+            return match interpreter.call_function_contained(
+                arguments[0].clone(),
+                Vec::new(),
+                "attempt",
+            ) {
                 Ok(value) => Ok(Value::Ok(Box::new(value))),
                 Err(e) if crate::interpreter::Interpreter::is_control_signal(&e) => Err(e),
                 Err(e) => {

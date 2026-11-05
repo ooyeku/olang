@@ -8992,7 +8992,7 @@ if boot != () && boot.running != () => println("running layer " + boot.running) 
             "runtime.call_budget(f, args, ms)",
             "Map",
             "runtime",
-            "Call f(args…) with a time budget: past `ms` milliseconds its evaluation is stopped — as an interrupt, on this thread only (each thread's budgets are its own) — and any failure is caught. Every tier stops, and so does a wait inside the call (chan.recv, chan.ask, a full chan.send, time.sleep). #{ \"ok\", \"value\" (when ok), \"error\" and \"frames\" (when not: each #{ \"file\", \"line\", \"fn\" }, innermost first), \"over\" (it ran past its budget), \"us\" (microseconds it took) }. How a host calls code it does not trust to finish.",
+            "Call f(args…) with a time budget: past `ms` milliseconds its evaluation is stopped — as an interrupt, on this thread only (each thread's budgets are its own) — and any failure is caught. Every tier stops, and so does a wait inside the call (chan.recv, chan.ask, a full chan.send, time.sleep). #{ \"ok\", \"value\" (when ok), \"error\" and \"frames\" (when not: each #{ \"file\", \"line\", \"fn\" }, innermost first), \"over\" (it ran past its budget), \"us\" (microseconds it took) }. A Rust panic inside is the error too (\"internal error: …\"). How a host calls code it does not trust to finish.",
             &[r##"let r = runtime.call_budget((n) => n * 2, [21], 50)
 println(show(map_get(r, "value")) + " in " + show(map_get(r, "us")) + " µs")"##],
         );
@@ -13909,7 +13909,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
         });
         self.add_function(FunctionDoc {
             name: "attempt".to_string(),
-            description: "The boundary-recovery form: f() runs; a raise inside it becomes Err(message) and any other outcome Ok(value). For the one place a long-lived loop or a compute thread must answer \"500\" rather than end — every other error stays a Result or a raise, by the error model. Control flow (`return`, `break`, `?`) passes through untouched.".to_string(),
+            description: "The boundary-recovery form: f() runs; a raise inside it becomes Err(message) and any other outcome Ok(value). For the one place a long-lived loop or a compute thread must answer \"500\" rather than end — every other error stays a Result or a raise, by the error model. A bug in olang itself (a Rust panic) inside f is the Err too, \"internal error: …\", and the program runs on. Control flow (`return`, `break`, `?`) passes through untouched.".to_string(),
             syntax: "attempt(f)".to_string(),
             parameters: vec!["f: () => value - the call that may raise".to_string()],
             return_type: "Result<value, String>".to_string(),

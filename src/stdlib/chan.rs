@@ -223,13 +223,19 @@ fn park(what: String) -> u64 {
         what,
         since: crate::clock::Instant::now(),
     };
-    parked().lock().unwrap().insert(token, site);
+    parked()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(token, site);
     PARK_GEN.fetch_add(1, Ordering::SeqCst);
     token
 }
 
 fn unpark(token: u64) {
-    parked().lock().unwrap().remove(&token);
+    parked()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&token);
     PARK_GEN.fetch_add(1, Ordering::SeqCst);
 }
 
@@ -242,7 +248,7 @@ fn stall_tick(last_gen: &mut Option<u64>) {
     }
     let generation = PARK_GEN.load(Ordering::SeqCst);
     let live = LIVE.load(Ordering::SeqCst);
-    let parked_count = parked().lock().unwrap().len();
+    let parked_count = parked().lock().unwrap_or_else(|e| e.into_inner()).len();
     let stable = *last_gen == Some(generation);
     *last_gen = Some(generation);
     if !(stable && live > 0 && parked_count == live) {
@@ -257,7 +263,7 @@ fn stall_tick(last_gen: &mut Option<u64>) {
     // The terminal back first, so the report is readable.
     #[cfg(feature = "native")]
     crate::stdlib::tty::restore_terminal();
-    let sites = parked().lock().unwrap().clone();
+    let sites = parked().lock().unwrap_or_else(|e| e.into_inner()).clone();
     let mut lines: Vec<String> = sites
         .values()
         .map(|s| {
@@ -662,7 +668,7 @@ fn send_now(t: &Sender<Value>, value: Value) -> bool {
 impl ChannelSender {
     /// Send a value; `false` once the channel is closed.
     pub fn send(&self, value: Value) -> bool {
-        let tx = self.0.tx.lock().unwrap().clone();
+        let tx = self.0.tx.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let sent = match tx {
             // try_send: a full bounded queue is a send refused, never a
             // wait, and crossbeam's waiting send (which reads std's
@@ -679,7 +685,7 @@ impl ChannelSender {
     /// Close the channel: queued values are still received, then `recv`
     /// reports the close.
     pub fn close(&self) {
-        *self.0.tx.lock().unwrap() = None;
+        *self.0.tx.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 }
 
@@ -729,7 +735,7 @@ fn chan_send(mut args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     let chan = chan_of(&args[0])?;
     // Clone the sender out of its lock: a bounded send may block until a
     // receiver drains, and holding the lock would stall chan.close.
-    let tx = chan.tx.lock().unwrap().clone();
+    let tx = chan.tx.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let Some(tx) = tx else {
         return Ok(err("channel is closed"));
     };
@@ -978,6 +984,7 @@ fn chan_recv_timeout(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
 /// Advisory channel state for the REPL and the profiler: reads race
 /// concurrent sends by design, so treat the numbers as a snapshot.
 fn chan_stat(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    crate::contain::inject("chan.stat");
     if args.len() != 1 {
         return Err("chan.stat expects a channel".into());
     }
@@ -990,7 +997,7 @@ fn chan_stat(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     );
     m.insert(
         "closed".to_string(),
-        Value::Boolean(chan.tx.lock().unwrap().is_none()),
+        Value::Boolean(chan.tx.lock().unwrap_or_else(|e| e.into_inner()).is_none()),
     );
     m.insert(
         "recv_waiting".to_string(),
@@ -1013,7 +1020,7 @@ pub(crate) fn is_channel(value: &Value) -> bool {
 /// does to the channels it was watching (`task.watch`).
 pub(crate) fn close_value(value: &Value) {
     if let Ok(chan) = chan_of(value) {
-        *chan.tx.lock().unwrap() = None;
+        *chan.tx.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 }
 
@@ -1022,7 +1029,7 @@ fn chan_close(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         return Err("chan.close expects a channel".into());
     }
     let chan = chan_of(&args[0])?;
-    *chan.tx.lock().unwrap() = None;
+    *chan.tx.lock().unwrap_or_else(|e| e.into_inner()) = None;
     Ok(Value::Unit)
 }
 
@@ -1065,7 +1072,7 @@ pub(crate) fn sim_rendezvous() -> Value {
 /// Send without waiting. The confinement rule is the caller's to check.
 pub(crate) fn sim_try_send(channel: &Value, value: Value) -> Result<SimSend, String> {
     let chan = chan_of(channel).map_err(|e| e.to_string())?;
-    let tx = chan.tx.lock().unwrap().clone();
+    let tx = chan.tx.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let Some(tx) = tx else {
         return Ok(SimSend::Closed);
     };

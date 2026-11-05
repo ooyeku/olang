@@ -2578,7 +2578,13 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                         let _live = crate::stdlib::chan::live_guard();
                         let _counted =
                             crate::memory::enter_task(&format!("olang-spawn-{}", task_id));
-                        let outcome = worker.eval_expr(&expr).map_err(|e| e.to_string());
+                        // A Rust panic in the task is its Err ("internal
+                        // error: …"), never the end of the process.
+                        let outcome = crate::contain::catch_named(
+                            || format!("task olang-spawn-{task_id}"),
+                            || worker.eval_expr(&expr).map_err(|e| e.to_string()),
+                        )
+                        .unwrap_or_else(|panic| Err(format!("internal error: {panic}")));
                         // Interrupted inside a call that could not be woken
                         // (a system call), and nothing polled after it: the
                         // task still ends with the interrupt, once it returns.
@@ -3947,6 +3953,45 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             self.frame_funcs.pop();
 
             result
+        }
+    }
+
+    /// `call_function` at a boundary that must not end the process
+    /// (`attempt`, `runtime.call_budget`, `runtime.call_cancellable`): a
+    /// Rust panic inside it becomes a runtime error, "internal error: …"
+    /// with what panicked and where, and the interpreter's stacks are put
+    /// back as they were before the call. A tier the panic unwound through
+    /// is lost for this thread, which then runs interpreted.
+    pub fn call_function_contained(
+        &mut self,
+        callee: Value,
+        arguments: Vec<Value>,
+        what: &str,
+    ) -> Result<Value, InterpreterError> {
+        let environment = self.environment.clone();
+        let depth = self.call_depth;
+        let spans = self.stmt_span_stack.len();
+        let names = self.call_stack_names.len();
+        let frames = self.frame_funcs.len();
+        let coverage = self.coverage_file_stack.len();
+        let loading = self.module_loading_stack.len();
+        let module_path = self.current_module_path.clone();
+        match crate::contain::catch(what, || self.call_function(callee, arguments)) {
+            Ok(result) => result,
+            Err(panic) => {
+                self.environment = environment;
+                self.call_depth = depth;
+                self.stmt_span_stack.truncate(spans);
+                self.call_stack_names.truncate(names);
+                self.frame_funcs.truncate(frames);
+                self.coverage_file_stack.truncate(coverage);
+                self.module_loading_stack.truncate(loading);
+                self.current_module_path = module_path;
+                self.pending_error_location = None;
+                Err(InterpreterError::RuntimeError {
+                    message: format!("internal error: {panic}"),
+                })
+            }
         }
     }
 
