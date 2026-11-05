@@ -60,6 +60,7 @@ pub fn validate_program(program: &Program, predefined: &mut Predefined) -> Vec<S
         scopes: vec![std::mem::take(predefined)],
         boundaries: Vec::new(),
         errors: Vec::new(),
+        uses: Vec::new(),
         line: 0,
         column: 0,
     };
@@ -71,6 +72,25 @@ pub fn validate_program(program: &Program, predefined: &mut Predefined) -> Vec<S
     // Hand the top-level scope back to the caller for the next program.
     *predefined = v.scopes.swap_remove(0);
     v.errors
+}
+
+/// Every `use` in a program at any depth: the top level's, and those
+/// inside blocks, functions, tests and lambdas, in source order. What an
+/// application must carry: a `use` inside a block loads when it runs.
+pub fn all_uses(program: &Program) -> Vec<crate::ast::UseDecl> {
+    let mut v = Validator {
+        scopes: vec![HashMap::new()],
+        boundaries: Vec::new(),
+        errors: Vec::new(),
+        uses: Vec::new(),
+        line: 0,
+        column: 0,
+    };
+    v.hoist(&program.statements);
+    for stmt in &program.statements {
+        v.stmt(stmt);
+    }
+    v.uses
 }
 
 /// A top-level `fn` declared twice in one file: the second declaration
@@ -119,6 +139,8 @@ struct Validator {
     /// to it reaches a snapshot rather than the binding.
     boundaries: Vec<(usize, Boundary)>,
     errors: Vec<ScopeError>,
+    /// Every `use` met, at any depth (a block's or a function's too).
+    uses: Vec<crate::ast::UseDecl>,
     /// Position of the statement being walked, used for error spans.
     line: u32,
     column: u32,
@@ -246,6 +268,7 @@ impl Validator {
     }
 
     fn use_decl(&mut self, u: &crate::ast::UseDecl) {
+        self.uses.push(u.clone());
         // An import is a binding like any other, and not assignable.
         for item in &u.items {
             match item {

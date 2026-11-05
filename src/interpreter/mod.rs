@@ -2831,7 +2831,45 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 self.eval_use_decl(u.clone())?;
             }
         }
+        // A `use` inside a block or function loads when it runs: follow
+        // those too, in the entry and in every module loaded, so an
+        // application carries every file it can reach. One that fails to
+        // resolve here is left to fail where it runs, as it would unbuilt.
+        let entry = self.current_module_path.clone();
+        self.preload_nested_uses(program, entry.clone());
+        let mut scanned: std::collections::HashSet<std::path::PathBuf> =
+            entry.iter().map(std::path::PathBuf::from).collect();
+        loop {
+            let fresh: Vec<std::path::PathBuf> = self
+                .loaded_module_files()
+                .into_iter()
+                .filter(|f| f.extension().is_some_and(|e| e == "ol") && scanned.insert(f.clone()))
+                .collect();
+            if fresh.is_empty() {
+                break;
+            }
+            for f in fresh {
+                let Ok(text) = std::fs::read_to_string(&f) else {
+                    continue;
+                };
+                let Ok((module, _)) = crate::parser::Parser::new().parse_module(&text, f.parent())
+                else {
+                    continue;
+                };
+                self.preload_nested_uses(&module, Some(f.to_string_lossy().to_string()));
+            }
+        }
+        self.current_module_path = entry;
         Ok(self.loaded_module_files())
+    }
+
+    /// Load every `use` of `program` at any depth as if from `file`.
+    fn preload_nested_uses(&mut self, program: &Program, file: Option<String>) {
+        let saved = std::mem::replace(&mut self.current_module_path, file);
+        for u in crate::scoping::all_uses(program) {
+            let _ = self.eval_use_decl(u);
+        }
+        self.current_module_path = saved;
     }
 
     pub fn loaded_module_files(&self) -> Vec<std::path::PathBuf> {
