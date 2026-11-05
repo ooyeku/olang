@@ -358,3 +358,67 @@ main()
     }
 }
 
+// ── OL-470: word bounds, line breaks, bidi, normalization, folding ──
+#[test]
+fn word_bounds_and_line_breaks_follow_uax29_and_uax14() {
+    let src = r#"
+fn main() = [str.word_bounds("can't stop, 3.5"), str.word_bounds(""),
+             str.line_breaks("a b-c\nd"), str.line_breaks("a b\nc", #{"hard": true})]
+main()
+"#;
+    assert_eq!(
+        ok(src),
+        Value::List(std::sync::Arc::new(vec![
+            ints(&[0, 5, 6, 10, 11, 12, 15]),
+            ints(&[0]),
+            ints(&[2, 4, 6, 7]),
+            ints(&[4, 5]),
+        ]))
+    );
+}
+
+#[test]
+fn bidi_runs_say_each_runs_level() {
+    // "abc " then Hebrew "שלום" (8 bytes) then " def"
+    let src = r#"
+fn main() = [str.bidi_runs("abc שלום def"), str.bidi_runs("abc שלום def", #{"visual": true}),
+             map(str.bidi_runs("שלום", #{"direction": "ltr"}), (r) => r.level)]
+main()
+"#;
+    let run = |a: i64, b: i64, l: i64| {
+        let mut m = olang::ast::ValueMap::default();
+        m.insert("start".into(), Value::Integer(a));
+        m.insert("end".into(), Value::Integer(b));
+        m.insert("level".into(), Value::Integer(l));
+        Value::Map(std::sync::Arc::new(m))
+    };
+    let logical = Value::List(std::sync::Arc::new(vec![run(0, 4, 0), run(4, 12, 1), run(12, 16, 0)]));
+    let visual = logical.clone();
+    assert_eq!(
+        agree_tiered(src).unwrap(),
+        Value::List(std::sync::Arc::new(vec![logical, visual, ints(&[1])]))
+    );
+}
+
+#[test]
+fn normalize_and_fold_compare_text_as_readers_do() {
+    let src = r#"
+fn main() = [str.normalize("e\u{301}", "nfc") == "é", str.normalize("é", "nfd") == "e\u{301}",
+             str.normalize("ﬁ", "nfkc"), str.fold("Straße") == str.fold("STRASSE"), str.fold("İ"),
+             str.fold("ΣΑΣ")]
+main()
+"#;
+    assert_eq!(
+        ok(src),
+        Value::List(std::sync::Arc::new(vec![
+            Value::Boolean(true),
+            Value::Boolean(true),
+            s("fi"),
+            Value::Boolean(true),
+            s("i\u{307}"),
+            s("σασ"),
+        ]))
+    );
+    let err = agree("fn main() = str.normalize(\"a\", \"nfx\")\nmain()\n").unwrap_err();
+    assert!(err.contains("unknown form"), "{err}");
+}

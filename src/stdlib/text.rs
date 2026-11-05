@@ -30,6 +30,11 @@ pub(crate) const MAX_ARGS: &[(&str, usize)] = &[
     ("lines", 2),
     ("line_starts", 1),
     ("stats", 1),
+    ("word_bounds", 1),
+    ("line_breaks", 2),
+    ("bidi_runs", 2),
+    ("normalize", 2),
+    ("fold", 1),
 ];
 
 /// The fewest arguments each takes (what the module registers, which
@@ -45,6 +50,11 @@ pub(crate) const MIN_ARGS: &[(&str, usize)] = &[
     ("lines", 1),
     ("line_starts", 1),
     ("stats", 1),
+    ("word_bounds", 1),
+    ("line_breaks", 1),
+    ("bidi_runs", 1),
+    ("normalize", 2),
+    ("fold", 1),
 ];
 
 /// Calls one of this file's functions, or `None` when `name` is not one.
@@ -60,6 +70,11 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<R> {
         "lines" => lines(args),
         "line_starts" => line_starts(args),
         "stats" => stats_fn(args),
+        "word_bounds" => word_bounds(args),
+        "line_breaks" => line_breaks(args),
+        "bidi_runs" => bidi_runs(args),
+        "normalize" => normalize(args),
+        "fold" => fold(args),
         _ => return None,
     })
 }
@@ -451,3 +466,129 @@ fn stats_fn(args: &[Value]) -> R {
     Ok(Value::Map(Arc::new(m)))
 }
 
+// ── Unicode text algorithms (OL-470) ────────────────────────────────
+
+fn offsets(xs: impl Iterator<Item = usize>) -> Value {
+    Value::List(Arc::new(xs.map(|i| Value::Integer(i as i64)).collect()))
+}
+
+/// `str.word_bounds(s)`: the byte offsets of every UAX #29 word
+/// boundary, 0 and the end included. Between two neighbours is a word,
+/// a run of spaces or one punctuation mark: what word motion and a word
+/// diff step over. `str.words` (split on whitespace) is the simple form.
+fn word_bounds(args: &[Value]) -> R {
+    use unicode_segmentation::UnicodeSegmentation;
+    let s = arg_str(args, 0, "word_bounds")?;
+    let starts = s.split_word_bound_indices().map(|(i, _)| i);
+    if s.is_empty() {
+        return Ok(offsets(std::iter::once(0)));
+    }
+    Ok(offsets(starts.chain(std::iter::once(s.len()))))
+}
+
+/// `str.line_breaks(s, #{hard})`: the byte offsets where UAX #14 allows a
+/// line to break (a wrap may cut there), the end of the text included.
+/// With `hard: true`, only the breaks that must happen (after a line
+/// break character).
+fn line_breaks(args: &[Value]) -> R {
+    use unicode_linebreak::BreakOpportunity;
+    let s = arg_str(args, 0, "line_breaks")?;
+    let opts = arg_opts(args, 1, "line_breaks", &["hard"])?;
+    let hard = opt_bool(opts, "hard", "line_breaks", false)?;
+    Ok(offsets(
+        unicode_linebreak::linebreaks(s)
+            .filter(|(_, o)| !hard || *o == BreakOpportunity::Mandatory)
+            .map(|(i, _)| i),
+    ))
+}
+
+/// `str.bidi_runs(s, #{direction, visual})`: the text's runs of one
+/// UAX #9 embedding level, `#{start, end, level}` in bytes (an odd level
+/// is right-to-left). Each paragraph's direction comes from its first
+/// strong character unless `direction` is "ltr" or "rtl". In logical
+/// order by default; `visual: true` gives each paragraph's runs in the
+/// order a line shows them (each paragraph taken as one line).
+fn bidi_runs(args: &[Value]) -> R {
+    use unicode_bidi::{BidiInfo, Level};
+    let s = arg_str(args, 0, "bidi_runs")?;
+    let opts = arg_opts(args, 1, "bidi_runs", &["direction", "visual"])?;
+    let visual = opt_bool(opts, "visual", "bidi_runs", false)?;
+    let level = match opts.and_then(|m| m.get("direction")) {
+        None | Some(Value::Unit) => None,
+        Some(Value::String(d)) if d.as_str() == "auto" => None,
+        Some(Value::String(d)) if d.as_str() == "ltr" => Some(Level::ltr()),
+        Some(Value::String(d)) if d.as_str() == "rtl" => Some(Level::rtl()),
+        Some(other) => {
+            return Err(format!(
+                "str.bidi_runs: option direction must be \"ltr\", \"rtl\" or \"auto\", got {}",
+                match other {
+                    Value::String(d) => format!("{d:?}"),
+                    v => v.type_name(),
+                }
+            )
+            .into());
+        }
+    };
+    let info = BidiInfo::new(s, level);
+    let run = |start: usize, end: usize, level: Level| {
+        let mut m = ValueMap::default();
+        m.insert("start".to_string(), Value::Integer(start as i64));
+        m.insert("end".to_string(), Value::Integer(end as i64));
+        m.insert("level".to_string(), Value::Integer(level.number() as i64));
+        Value::Map(Arc::new(m))
+    };
+    let mut out = Vec::new();
+    for para in &info.paragraphs {
+        if visual {
+            let (levels, runs) = info.visual_runs(para, para.range.clone());
+            for r in runs {
+                out.push(run(r.start, r.end, levels[r.start]));
+            }
+        } else {
+            let mut start = para.range.start;
+            for i in para.range.clone() {
+                if s.is_char_boundary(i) && info.levels[i] != info.levels[start] {
+                    out.push(run(start, i, info.levels[start]));
+                    start = i;
+                }
+            }
+            if start < para.range.end {
+                out.push(run(start, para.range.end, info.levels[start]));
+            }
+        }
+    }
+    Ok(Value::List(Arc::new(out)))
+}
+
+/// `str.normalize(s, form)`: the text in Unicode normalization form
+/// "nfc", "nfd", "nfkc" or "nfkd". NFC is what to compare and store:
+/// "é" typed as one character and as "e" with a combining accent are
+/// equal once both are NFC.
+fn normalize(args: &[Value]) -> R {
+    let s = arg_str(args, 0, "normalize")?;
+    let form = arg_str(args, 1, "normalize")?;
+    let out = match form.to_ascii_lowercase().as_str() {
+        "nfc" => icu_normalizer::ComposingNormalizerBorrowed::new_nfc().normalize(s),
+        "nfkc" => icu_normalizer::ComposingNormalizerBorrowed::new_nfkc().normalize(s),
+        "nfd" => icu_normalizer::DecomposingNormalizerBorrowed::new_nfd().normalize(s),
+        "nfkd" => icu_normalizer::DecomposingNormalizerBorrowed::new_nfkd().normalize(s),
+        _ => {
+            return Err(format!(
+                "str.normalize: unknown form {form:?} (it takes \"nfc\", \"nfd\", \"nfkc\" or \"nfkd\")"
+            )
+            .into());
+        }
+    };
+    Ok(match out {
+        std::borrow::Cow::Borrowed(b) if b.len() == s.len() => args[0].clone(),
+        other => string(&other),
+    })
+}
+
+/// `str.fold(s)`: Unicode full case folding, the form to compare text
+/// ignoring case in ("Straße" and "STRASSE" fold alike, and "İ" to
+/// "i̇" rather than to_lower's guess). Not for display.
+fn fold(args: &[Value]) -> R {
+    let s = arg_str(args, 0, "fold")?;
+    Ok(string(&icu_casemap::CaseMapper::new().fold_string(s)))
+}

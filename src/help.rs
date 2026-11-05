@@ -7217,6 +7217,56 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             see_also: vec!["str.length".to_string(), "str.width".to_string(), "str.line_starts".to_string()],
         });
         self.add_function(FunctionDoc {
+            name: "str.word_bounds".to_string(),
+            description: "The byte offsets of every UAX #29 word boundary, 0 and the end included. Between two neighbours is a word, a run of spaces or one punctuation mark: what word motion and a word diff step over.".to_string(),
+            syntax: "str.word_bounds(s)".to_string(),
+            parameters: vec![],
+            return_type: "List[Int]".to_string(),
+            examples: vec!["str.word_bounds(\"can't stop\")  // [0, 5, 6, 10]".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.words".to_string(), "str.line_breaks".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.line_breaks".to_string(),
+            description: "The byte offsets where UAX #14 lets a line break (where a wrap may cut), the end of the text included. With #{\"hard\": true}, only the breaks that must happen, after a line break.".to_string(),
+            syntax: "str.line_breaks(s, opts)".to_string(),
+            parameters: vec![],
+            return_type: "List[Int]".to_string(),
+            examples: vec!["str.line_breaks(\"a b-c\")  // [2, 4, 5]".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.word_bounds".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.bidi_runs".to_string(),
+            description: "The text's runs of one UAX #9 embedding level as #{start, end, level} in bytes; an odd level is right-to-left. A paragraph's direction comes from its first strong character unless #{\"direction\": \"ltr\"} or \"rtl\" says. Logical order, or the order a line shows them with #{\"visual\": true}.".to_string(),
+            syntax: "str.bidi_runs(s, opts)".to_string(),
+            parameters: vec![],
+            return_type: "List[Map]".to_string(),
+            examples: vec!["str.bidi_runs(\"abc שלום\")  // [#{start: 0, end: 4, level: 0}, #{start: 4, end: 12, level: 1}]".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.normalize".to_string(),
+            description: "The text in Unicode normalization form \"nfc\", \"nfd\", \"nfkc\" or \"nfkd\". Compare and store NFC: \"é\" typed as one character and as \"e\" plus a combining accent are equal once both are NFC.".to_string(),
+            syntax: "str.normalize(s, form)".to_string(),
+            parameters: vec![],
+            return_type: "String".to_string(),
+            examples: vec!["str.normalize(\"e\\u{301}\", \"nfc\") == \"é\"  // true".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.fold".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.fold".to_string(),
+            description: "Unicode full case folding: the form to compare text in when case should not matter (\"Straße\" and \"STRASSE\" fold alike). Not for display; to_lower is.".to_string(),
+            syntax: "str.fold(s)".to_string(),
+            parameters: vec![],
+            return_type: "String".to_string(),
+            examples: vec!["str.fold(\"Straße\") == str.fold(\"STRASSE\")  // true".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.to_lower".to_string(), "str.normalize".to_string()],
+        });
+        self.add_function(FunctionDoc {
             name: "str.index_of".to_string(),
             description:
                 "Character index of the first match, or Unit when absent (test with != ())."

@@ -140,6 +140,13 @@ unicode-segmentation = "1.13"
 # Asian Width, emoji presentation). Pure tables, so the browser build
 # carries it too.
 unicode-width = "0.2"
+# `str.line_breaks` (UAX #14), `str.bidi_runs` (UAX #9), `str.normalize`
+# and `str.fold`: pure tables, already in the tree through the GUI's
+# text stack and `url`, so the versions match theirs.
+unicode-linebreak = "0.1.5"
+unicode-bidi = "0.3.18"
+icu_normalizer = "~2.2.0"
+icu_casemap = "~2.2.0"
 memchr = "2"
 csv = "1.4"
 regex = { version = "1.13", optional = true }

@@ -475,6 +475,9 @@ every function returns a new string.
 | <a id="str-lines"></a><a id="str-words"></a>`str.lines(s, #{"keep_ends"})` / `str.words(s)` | split on line breaks (`"\n"` or `"\r\n"`) / whitespace; with `keep_ends: true` each line keeps its own end, so joined they are `s` exactly (a last line without one is the "no newline at end of file" case) |
 | <a id="str-line_starts"></a>`str.line_starts(s)` | the byte offset where each line starts: `0` and one past every `"\n"`, so a text ending in a line break has an empty last line, as in an editor |
 | <a id="str-stats"></a>`str.stats(s)` | `#{bytes, chars, lines, graphemes, utf16, width, last_line_len}` in one call, at memory speed for ASCII: what each count's own function answers |
+| <a id="str-word_bounds"></a><a id="str-line_breaks"></a>`str.word_bounds(s)` / `str.line_breaks(s, #{"hard"})` | byte offsets of the UAX #29 word boundaries, and of the UAX #14 places a line may wrap (only the forced ones with `hard: true`) |
+| <a id="str-bidi_runs"></a>`str.bidi_runs(s, #{"direction", "visual"})` | runs of one bidirectional level, `#{start, end, level}` in bytes (an odd level is right-to-left), in logical order or, with `visual: true`, the order a line shows them |
+| <a id="str-normalize"></a><a id="str-fold"></a>`str.normalize(s, form)` / `str.fold(s)` | Unicode normalization (`"nfc"`, `"nfd"`, `"nfkc"`, `"nfkd"`) and full case folding: the forms to compare text in |
 | <a id="str-trim"></a><a id="str-trim_start"></a><a id="str-trim_end"></a>`str.trim` / `str.trim_start` / `str.trim_end` | strip whitespace |
 | <a id="str-pad_start"></a><a id="str-pad_end"></a>`str.pad_start(s, n, fill)` / `str.pad_end` | pad to width |
 | <a id="str-repeat"></a>`str.repeat(s, n)` | repetition |
@@ -521,6 +524,24 @@ println(str.byte_len(s))                  // 12
 println(str.char_to_byte(s, 3))           // 4
 println(str.slice_bytes(s, 0, 4))         // naï
 println(str.chunks("ab\ncd\nefgh", 5, #{"prefer": "\n"}))  // ["ab\n", "cd\n", "efgh"]
+```
+
+**Comparing text as a reader does.** `==` compares code points, so
+`"é"` typed as one character and `"e\u{301}"` (an `e` and a combining
+accent) differ, and `to_lower` is a display rule, not a comparison one
+(`to_lower("İ")` keeps the dot as a separate mark). Normalize both sides
+to NFC with `str.normalize` before comparing or storing. To ignore case,
+compare `str.fold` of both, which also folds `ß` to `ss`. Word motion and
+word diffs step over `str.word_bounds`, and wrapping cuts only at
+`str.line_breaks`. Right-to-left text is laid out by `str.bidi_runs`.
+
+```olang
+println(str.normalize("e\u{301}", "nfc") == "é")              // true
+println(str.fold("Straße") == str.fold("STRASSE"))            // true
+println(str.word_bounds("can't stop"))                        // [0, 5, 6, 10]
+println(str.lines("a\r\nb\n", #{"keep_ends": true}) == ["a\r\n", "b\n"])   // true
+println(str.line_starts("ab\ncd\n"))                         // [0, 3, 6]
+println(str.stats("héllo\nwörld").graphemes)                  // 11
 ```
 
 **Display width.** `str.length` counts code points and `str.graphemes`

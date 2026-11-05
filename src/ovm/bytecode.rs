@@ -1704,6 +1704,11 @@ impl BytecodeVm {
             // the counts str.stats answers at once, for code that asks one
             "str.graphemes",
             "str.width",
+            "str.word_bounds",
+            "str.line_breaks",
+            "str.bidi_runs",
+            "str.normalize",
+            "str.fold",
             // map builtins — maps round-trip losslessly now, so builders
             // and readers both bridge safely
             "entries",
