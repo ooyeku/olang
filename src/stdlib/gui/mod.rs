@@ -1179,6 +1179,16 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
             emit(vec![event("open", vec![("paths", Value::List(paths))])]);
             return Ok(Value::Unit);
         }
+        // The application asked to open URLs in a scheme it declares
+        // (`myapp://…`): `urls`.
+        Some("open_url") => {
+            let urls = match get(&args[1], "urls") {
+                Some(Value::List(l)) => l.clone(),
+                _ => return Err("gui.input: \"open_url\" needs \"urls\", a list".into()),
+            };
+            emit(vec![event("open_url", vec![("urls", Value::List(urls))])]);
+            return Ok(Value::Unit);
+        }
         // The tab bar's + button.
         Some("new_tab") => {
             emit(vec![event("new_tab", vec![])]);

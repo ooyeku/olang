@@ -697,11 +697,13 @@ compiles and specializes those functions at declaration time instead
 of at first call. Profiles are hints: the tier's qualification and
 specialization run exactly as they would have, just earlier, so a
 stale or corrupted profile can cost a wasted attempt and nothing else.
-`OLANG_WARM=0` disables it for measurement. `olang build` embeds the
-build machine's profile for the source into the artifact (run once,
-then build), and the built binary installs it at startup — so its
-first run on a machine that has never seen the program is already
-warm. A sidecar profile on the running machine wins over the embedded
+`OLANG_WARM=0` disables it for measurement. `olang build --warm FILE`
+embeds a profile into the artifact (run once with `OLANG_WARM_DIR=dir`,
+then build with `--warm dir/<the file there>.toml`), and the built
+binary installs it at startup, so its first run on a machine that has
+never seen the program is already warm. Without `--warm` a build carries
+no profile, whatever runs the build machine has made, so two builds of
+the same sources are the same bytes. A sidecar profile on the running machine wins over the embedded
 one: a real run there is fresher evidence.
 
 **Tier counters.** `OLANG_TIER_STATS=1` prints the run's tier counters

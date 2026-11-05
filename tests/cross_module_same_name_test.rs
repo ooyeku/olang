@@ -110,7 +110,7 @@ fn a_dependency_reached_two_ways_is_loaded_once() {
     fs::create_dir_all(app.join("lib")).unwrap();
     fs::write(
         dep.join("olang.toml"),
-        "[package]\nname = \"dep\"\nversion = \"0.1.0\"\n",
+        "[package]\nname = \"dep\"\nversion = \"0.1.0\"\npublic = [\"lib.layout\"]\n",
     )
     .unwrap();
     fs::write(dep.join("lib/layout.ol"), "println(\"loading the layout\")\nshare fn place(n) = if n <= 0 => \"placed\" else => ly_box(n)\nfn ly_box(n) = place(n - 1)\n").unwrap();

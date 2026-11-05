@@ -134,6 +134,7 @@ consumer ignores fields it does not know. The documents:
 | `1` | Findings or failures: a runtime error the program did not handle, `olang check` problems, a failed test, a failed build, `olang fmt --check` or `olang fix --check` with something to change, a bench row past its baseline, an `olang doctor` finding, `olang test --fail-if-none` with no test block run |
 | `2` | Misuse: an unknown flag or command, a bad flag value, a path that does not exist, a `--deny` or `OLANG_DENY` olang does not know, an output file that cannot be written |
 | `3` | The tier guard: a run keeping tier statistics with `OLANG_TIER_GUARD=1` in which a pinned-native function fell back |
+| `65` | A built program refused to start because another olang made its payload: another version, AST format or commit ([The runtime it runs on](packages.md#the-runtime-it-runs-on)) |
 | `102` | `--verify-tiers` found a native call whose result differs from the bytecode VM's |
 | any | A program's own `os.exit(n)` |
 
@@ -1677,11 +1678,33 @@ dependency's — with each package's `olang.toml` and the files it lists
 under `assets` (`assets = ["fonts", "data/index.json"]`). The
 application runs them from itself, resolving its `use`s exactly as it
 did on the build machine, and reads its assets with
-`asset.read(package, path)`. The trade for zero-dependency distribution is
+`asset.read(package, path)`. A build is reproducible: the same sources
+build the same bytes on any machine, under any home folder and from any
+place on disk. The application keeps each package's files under the
+package's name (`/__olang_app__/dep/lib/words.ol`), not under the
+folders they had on the build machine, and that is the path its errors
+and stack traces name. The tier profile a run leaves (see
+[ovm.md](ovm.md)) goes in only when `--warm FILE` names it. The trade for zero-dependency distribution is
 size: the binary carries the runtime, so it is tens of megabytes (much
 smaller from a `--release` olang than a debug one). On macOS the
 appended data invalidates any code signature; re-sign the output if you
 distribute it.
+
+A release build of olang writes `olang.dSYM` beside the binary
+(`target/release/olang.dSYM`): the debug symbols a crash report's native
+addresses are read back with, `atos -o olang.dSYM -l <load_address>
+<address>…`. Keep the dSYM of each binary you ship; its
+UUID is the one the report names.
+
+Signed with the hardened runtime (which notarisation needs), the runtime
+needs one entitlement, `com.apple.security.cs.allow-jit`: the JIT writes
+its machine code into memory mapped with `MAP_JIT`, which that
+entitlement allows. [`dist/macos/entitlements.plist`](../dist/macos/entitlements.plist)
+holds exactly that. A binary signed without it still runs every program,
+on bytecode alone: the runtime asks for a `MAP_JIT` page once, and when
+the system refuses it the JIT stays off. Neither
+`allow-unsigned-executable-memory` nor `disable-library-validation` is
+needed, and olang loads no libraries signed by anyone else.
 
 [`examples/tools/watch/main.ol`](../examples/tools/watch/main.ol) is a
 self-contained tool built exactly this way — `cli` for its arguments,
@@ -1692,6 +1715,40 @@ A built binary also embeds its exact source, its `olang.toml` and
 `olang.lock`, its capability manifest, and a checksum over all of them,
 which `olang inspect` reads and verifies: see
 [The transparent binary](packages.md#the-transparent-binary).
+
+### Code layers
+
+A macOS application can run a newer program than the one sealed in its
+bundle, without re-signing the bundle: an updater writes the new program
+to a folder outside it, signed with the publisher's Ed25519 key, and
+the next launch runs it. Two Info.plist keys turn this on:
+
+| Key | Holds |
+|---|---|
+| `OlangLayersDirectory` | the layers folder: an absolute path, or one starting `~/` (`~/Library/Application Support/MyApp/layers`) |
+| `OlangLayersPublicKey` | the name of a file in `Contents/Resources` holding the 32-byte Ed25519 public key in base64 (default `layers.pub`) |
+
+The key is inside the bundle, so the bundle's own signature covers it.
+The folder holds a state file and one folder per layer:
+
+```text
+layers/state.json         {"active": "1.4.0", "tries": 0, "max_tries": 3}
+layers/1.4.0/app.olb      olang build --payload
+layers/1.4.0/app.olb.sig  crypto.ed25519_sign of app.olb's bytes, base64
+```
+
+At launch the runtime reads `state.json` and runs the `active` layer
+only when it has been tried fewer than `max_tries` times (3 when the file
+says none), its signature verifies with the bundle's key, and its
+payload was built by this olang ([The runtime it runs on](packages.md#the-runtime-it-runs-on)).
+It adds one to `tries` before the program starts, and runs the bytes it
+verified, read once. Otherwise it runs the bundled
+`Contents/Resources/app.olb`. `runtime.code_layer()` tells the program
+which ran and, when the bundled one did, why. Everything else is the
+program's: it chooses the active layer, sets `tries` back to 0 once it
+is satisfied the layer works (a layer that crashes before then is given
+up after `max_tries` launches), and keeps any other keys it likes in
+`state.json`, which the runtime leaves as they are.
 
 ## `olang doc`
 
@@ -2151,6 +2208,8 @@ nothing should depend on them.
 | `OLANG_BOOT_TRACE` | no | `1`, the same as `--trace`: where a program's start goes — a line on stderr at each landmark (the interpreter's thread started, the entry parsed, the program starting, the platform's loop, a window asked for and made, the first frame presented), stamped from the process's start, each module a `use` found and where, and at the first frame the modules read and loaded and the compiles, with their times. |
 | `OLANG_LAZY_COMPILE` | no | `0`: compile every callee with its caller (the eager route) instead of at its first call, for A/B measurement. |
 | `OLANG_JIT_DEBUG` | no | `1`: JIT compilation decisions: what compiled, what refused, and the instruction or register that refused it. |
+| `OLANG_CRASH_DIR` | no | `<dir>`: a panic or a fatal signal writes a JSON crash report there, as [`runtime.on_crash`](stdlib.md#runtime--what-this-binary-carries) does. |
+| `OLANG_NO_JIT` | no | `1`: no native code; hot functions stay on bytecode, as in a hardened binary signed without `allow-jit`. |
 | `OLANG_OSR_DEBUG`, `OLANG_OSR_OFF` | no | On-stack-replacement decisions; `1` disables on-stack replacement. |
 | `OLANG_BRIDGE_TIER_OFF` | no | `1`: disable the bridge interpreter's bytecode tier. |
 | `OLANG_COLLECTIONS_ON_INTERP` | no | Keep the auto-loaded `collections` on the tree-walker. |

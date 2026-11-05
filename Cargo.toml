@@ -167,6 +167,9 @@ bcrypt = "0.19"
 hex = "0.4"
 aes-gcm = "0.10"
 rsa = { version = "0.9", optional = true }
+# Ed25519 signatures (crypto.ed25519_*): Sparkle-style update feeds, code
+# layers. Pure Rust, small, so every build has it, the browser's too.
+ed25519-dalek = "2.2"
 argon2 = "0.5"
 
 # REPL and CLI
@@ -402,6 +405,12 @@ codegen-units = 1
 # contained (src/contain.rs); every other panic still ends the process
 # at once (olang's panic hook aborts outside a `contain::catch`).
 panic = "unwind"
+# A crash report's native frames are addresses (src/crash.rs); the dSYM
+# written beside the binary (target/release/olang.dSYM) turns them back
+# into functions and lines: `atos -o olang.dSYM -l <load_address> <addr>`.
+# Line tables only, and kept out of the executable.
+debug = "line-tables-only"
+split-debuginfo = "packed"
 
 # Tests: optimized as release is (budgets and timings stay meaningful),
 # without its whole-program LTO, which re-optimizes all of olang for
@@ -412,6 +421,9 @@ lto = false
 codegen-units = 16
 incremental = true
 panic = "unwind"
+# no dSYM for test builds: every test binary would pay dsymutil
+debug = false
+split-debuginfo = "unpacked"
 
 [profile.dev]
 opt-level = 0

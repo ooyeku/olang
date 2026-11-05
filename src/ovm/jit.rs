@@ -1707,12 +1707,18 @@ impl JitCache {
 
     fn module(&mut self) -> Option<&mut JITModule> {
         if self.module.is_none() {
+            // No MAP_JIT (a hardened build signed without allow-jit): no
+            // native code at all, and every function stays on bytecode.
+            if !super::jit_memory::available() {
+                return None;
+            }
             // Speed over compile time; the functions are tiny.
             let mut builder = JITBuilder::with_flags(
                 &[("opt_level", "speed")],
                 cranelift_module::default_libcall_names(),
             )
             .ok()?;
+            builder.memory_provider(super::jit_memory::provider());
             builder.symbol("olang_jit_field", olang_jit_field as *const u8);
             builder.symbol("olang_jit_math", olang_jit_math as *const u8);
             builder.symbol("olang_jit_index", olang_jit_index as *const u8);
@@ -2413,6 +2419,9 @@ impl JitCache {
             return None;
         }
         let _boot = crate::boot_trace::Span::start(crate::boot_trace::Counter::Native);
+        // However this compile ends, the thread leaves it able to execute
+        // MAP_JIT code again (see jit_memory).
+        let _write_window = super::jit_memory::WriteWindow::open();
 
         // ── plan + global inference fixpoint ────────────────────────
         let mut plans: Vec<PlanFn> = vec![PlanFn::new(

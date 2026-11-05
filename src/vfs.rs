@@ -1,6 +1,10 @@
 //! The files a built application carries (`olang build --app`): its
 //! modules, every package's manifest, and the assets the packages
-//! declare, keyed by the absolute paths they had on the build machine.
+//! declare, keyed by virtual paths: each package's files under
+//! `/__olang_app__/<package name>/`, as they sit in the package (see
+//! [`virtual_layout`]). Nothing of the build machine (its home, its
+//! checkout's place) is in them, so two builds of the same sources are the
+//! same bytes (OL-444).
 //! Module resolution and `asset.read` look here first and at the disk
 //! second, so an application resolves its `use`s exactly as it did when
 //! it was built, on a machine that has none of its files.
@@ -181,7 +185,8 @@ pub fn package_root(name: &str) -> Option<PathBuf> {
 pub struct AppIndex {
     /// `(path, offset, length)` into the data that follows the index.
     pub files: Vec<(String, u64, u64)>,
-    pub dependencies: HashMap<String, String>,
+    /// Sorted, so the section's bytes do not depend on a hash order.
+    pub dependencies: std::collections::BTreeMap<String, String>,
     /// Each file's sha256, in `files`' order (an older section has none:
     /// the whole section's is checked instead).
     #[serde(default)]
@@ -192,6 +197,8 @@ pub struct AppIndex {
 pub fn encode(files: &[(PathBuf, Vec<u8>)], dependencies: &HashMap<String, PathBuf>) -> Vec<u8> {
     let mut index = AppIndex::default();
     let mut data = Vec::new();
+    let mut files: Vec<&(PathBuf, Vec<u8>)> = files.iter().collect();
+    files.sort_by(|a, b| a.0.cmp(&b.0));
     for (path, bytes) in files {
         index.files.push((
             normalize(path).to_string_lossy().to_string(),
@@ -258,4 +265,74 @@ pub fn decode(section: &[u8]) -> Option<Decoded> {
         .map(|(k, v)| (k, PathBuf::from(v)))
         .collect();
     Some((files, deps))
+}
+
+/// Where an application's files live inside it.
+pub const APP_ROOT: &str = "/__olang_app__";
+
+/// The virtual place of each package root an application carries:
+/// `/__olang_app__/<name>` for each named root (its dependency name), and
+/// `/__olang_app__/_` for `entry_dir` when the entry is in no package.
+/// Returned longest real root first, so a file finds its nearest package.
+pub fn virtual_layout(
+    roots: &HashMap<String, PathBuf>,
+    entry_dir: &Path,
+) -> Vec<(PathBuf, PathBuf)> {
+    let mut out: Vec<(PathBuf, PathBuf)> = roots
+        .iter()
+        .map(|(name, real)| (normalize(real), Path::new(APP_ROOT).join(name)))
+        .collect();
+    out.push((normalize(entry_dir), Path::new(APP_ROOT).join("_")));
+    // longest first; a tie (two names for one root) by name, so it is
+    // always the same one
+    out.sort_by(|a, b| {
+        b.0.components()
+            .count()
+            .cmp(&a.0.components().count())
+            .then_with(|| a.1.cmp(&b.1))
+    });
+    out
+}
+
+/// `real`'s virtual path under the layout: its nearest root's virtual
+/// place joined with where it sits in that root; a file under none of
+/// them is placed relative to the entry's root (`..` steps kept, then
+/// normalized under the application's root).
+pub fn virtualize(layout: &[(PathBuf, PathBuf)], real: &Path, entry_dir: &Path) -> PathBuf {
+    let real = normalize(real);
+    for (root, place) in layout {
+        if let Ok(rest) = real.strip_prefix(root) {
+            return place.join(rest);
+        }
+    }
+    // outside every package: relative to the entry's folder
+    let base = normalize(entry_dir);
+    let ups = base
+        .components()
+        .count()
+        .saturating_sub(common_prefix(&base, &real));
+    let mut rel = PathBuf::new();
+    for _ in 0..ups {
+        rel.push("..");
+    }
+    for c in real.components().skip(common_prefix(&base, &real)) {
+        rel.push(c.as_os_str());
+    }
+    let joined = normalize(&Path::new(APP_ROOT).join("_").join(rel));
+    if joined.starts_with(APP_ROOT) {
+        joined
+    } else {
+        Path::new(APP_ROOT).join("_outside").join(
+            real.components()
+                .filter(|c| matches!(c, std::path::Component::Normal(_)))
+                .collect::<PathBuf>(),
+        )
+    }
+}
+
+fn common_prefix(a: &Path, b: &Path) -> usize {
+    a.components()
+        .zip(b.components())
+        .take_while(|(x, y)| x == y)
+        .count()
 }

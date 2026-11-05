@@ -504,6 +504,7 @@ pub fn host_only(full_name: &str) -> bool {
                 | "runtime.profile_stop"
                 | "runtime.profile_live_start"
                 | "runtime.profile_live_stop"
+                | "runtime.on_crash"
         )
 }
 

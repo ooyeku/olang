@@ -1825,6 +1825,10 @@ unsafe fn ns_text(s: *mut objc2::runtime::AnyObject) -> Option<String> {
 /// `application:openURLs:` — the files and folders the application is
 /// asked to open (a document opened with it in the Finder, dropped on
 /// its Dock icon, `open -a`): the program hears `open` with their paths.
+/// Any other URL (a scheme the application declares in its Info.plist's
+/// `CFBundleURLTypes`, `myapp://…`) is heard as `open_url` with `urls`:
+/// AppKit hands this method the `GURL` Apple event's URL too, at launch
+/// and while the application runs.
 #[cfg(target_os = "macos")]
 unsafe extern "C-unwind" fn app_open_urls(
     _this: *mut objc2::runtime::AnyObject,
@@ -1843,6 +1847,7 @@ unsafe fn open_urls(urls: *mut objc2::runtime::AnyObject) {
         return;
     }
     let mut paths = Vec::new();
+    let mut others = Vec::new();
     // SAFETY: AppKit's NSArray of NSURLs, alive for the call.
     unsafe {
         let n: usize = objc2::msg_send![&*urls, count];
@@ -1853,6 +1858,10 @@ unsafe fn open_urls(urls: *mut objc2::runtime::AnyObject) {
             }
             let file: bool = objc2::msg_send![&*url, isFileURL];
             if !file {
+                let text: *mut objc2::runtime::AnyObject = objc2::msg_send![&*url, absoluteString];
+                if let Some(u) = ns_text(text) {
+                    others.push(u);
+                }
                 continue;
             }
             let path: *mut objc2::runtime::AnyObject = objc2::msg_send![&*url, path];
@@ -1861,12 +1870,31 @@ unsafe fn open_urls(urls: *mut objc2::runtime::AnyObject) {
             }
         }
     }
+    let mut events = Vec::new();
     if !paths.is_empty() {
-        emit(vec![event(
+        events.push(event(
             "open",
             vec![("paths", Value::List(Arc::new(paths)))],
-        )]);
+        ));
     }
+    if !others.is_empty() {
+        events.push(open_url_event(others));
+    }
+    if !events.is_empty() {
+        emit(events);
+    }
+}
+
+/// The `open_url` event: the URLs the application was asked to open.
+#[cfg(target_os = "macos")]
+fn open_url_event(urls: Vec<String>) -> Value {
+    event(
+        "open_url",
+        vec![(
+            "urls",
+            Value::List(Arc::new(urls.iter().map(|u| s(u)).collect())),
+        )],
+    )
 }
 
 /// `newWindowForTab:` — the tab bar's + button: the program hears
