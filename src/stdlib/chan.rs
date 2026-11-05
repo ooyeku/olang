@@ -119,7 +119,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 //   a program serving traffic never aborts (external input may arrive).
 // - The *parked set*: every unbounded wait (a blocking recv, a bounded
 //   send against a full queue, a `task.join`) registers a park entry
-//   naming its thread and site for as long as it blocks.
+//   naming its thread and site for as long as it blocks. An entry that
+//   an outside source may end (OL-512) does not count toward the proof:
+//   its thread has a deadline running (a budget), or its channel is fed
+//   by Rust code on a thread of its own (`ChannelSender`).
 //
 // A blocking wait wakes the moment what it waits for happens (a
 // message, room in the queue, the task's end) or its thread is asked to
@@ -156,6 +159,25 @@ struct ParkSite {
     thread: String,
     what: String,
     since: crate::clock::Instant,
+    /// The parked thread's stop slot: a deadline running on it (a
+    /// budget, a `meta.eval` timeout) is a wake that will come.
+    slot: crate::interrupt::Handle,
+    /// The channel's Rust-side producers (`tty.events`, `gui.events`), when
+    /// it waits on a channel: while one lives, a value may still arrive
+    /// from outside the program's threads.
+    producers: Option<Arc<AtomicUsize>>,
+}
+
+impl ParkSite {
+    /// Whether this wait can be ended by something outside the program's
+    /// threads (OL-512): it then proves nothing about a deadlock.
+    fn outside(&self) -> bool {
+        self.slot.has_deadline()
+            || self
+                .producers
+                .as_ref()
+                .is_some_and(|p| p.load(Ordering::SeqCst) > 0)
+    }
 }
 
 fn parked() -> &'static Mutex<HashMap<u64, ParkSite>> {
@@ -217,11 +239,19 @@ impl Drop for ExternalWaker {
 /// Enter the parked set. The token unparks; the guard pattern is not
 /// used because unpark order interleaves with lock scopes.
 fn park(what: String) -> u64 {
+    park_on(what, None)
+}
+
+/// `park`, for a wait on a channel whose Rust-side producers are counted
+/// by `producers`.
+fn park_on(what: String, producers: Option<Arc<AtomicUsize>>) -> u64 {
     let token = PARK_SEQ.fetch_add(1, Ordering::SeqCst);
     let site = ParkSite {
         thread: std::thread::current().name().unwrap_or("?").to_string(),
         what,
         since: crate::clock::Instant::now(),
+        slot: crate::interrupt::current(),
+        producers,
     };
     parked()
         .lock()
@@ -248,7 +278,15 @@ fn stall_tick(last_gen: &mut Option<u64>) {
     }
     let generation = PARK_GEN.load(Ordering::SeqCst);
     let live = LIVE.load(Ordering::SeqCst);
-    let parked_count = parked().lock().unwrap_or_else(|e| e.into_inner()).len();
+    // A wait an outside source can end (a deadline running on its
+    // thread, a channel fed from Rust) is not blocked for good: it
+    // counts as a live thread, as an `os.on_shutdown` handler does.
+    let parked_count = parked()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+        .filter(|s| !s.outside())
+        .count();
     let stable = *last_gen == Some(generation);
     *last_gen = Some(generation);
     if !(stable && live > 0 && parked_count == live) {
@@ -427,6 +465,10 @@ struct Chan {
     /// rendezvous channel. A simulated world (`sim`) reads it to keep a
     /// channel's semantics while it runs every operation as a try.
     cap: Option<usize>,
+    /// How many `ChannelSender`s (Rust code feeding the channel from a
+    /// thread of its own) are alive: while any is, a receive waits on an
+    /// outside source and is no deadlock.
+    producers: Arc<AtomicUsize>,
 }
 
 #[derive(Clone)]
@@ -635,6 +677,7 @@ fn register_with_cap(tx: Tx, rx: Receiver<Value>, cap: Option<usize>) -> Value {
         recv_waiting: AtomicUsize::new(0),
         send_waiting: AtomicUsize::new(0),
         cap,
+        producers: Arc::new(AtomicUsize::new(0)),
     }))
 }
 
@@ -649,8 +692,26 @@ pub fn fresh_channel() -> Value {
 /// thread) that feeds olang code: `tty.events` is one. Sends go through
 /// the channel's own sender, so `chan.close` from either side closes it,
 /// and the depth `chan.stat` reports stays true.
-#[derive(Clone)]
 pub struct ChannelSender(Arc<Chan>);
+
+impl ChannelSender {
+    fn new(chan: Arc<Chan>) -> ChannelSender {
+        chan.producers.fetch_add(1, Ordering::SeqCst);
+        ChannelSender(chan)
+    }
+}
+
+impl Clone for ChannelSender {
+    fn clone(&self) -> Self {
+        ChannelSender::new(self.0.clone())
+    }
+}
+
+impl Drop for ChannelSender {
+    fn drop(&mut self) {
+        self.0.producers.fetch_sub(1, Ordering::SeqCst);
+    }
+}
 
 /// A send that never waits: `false` when the channel is closed (or a
 /// bounded one is full).
@@ -694,7 +755,7 @@ pub fn channel_with_sender() -> (Value, ChannelSender) {
     let (tx, rx) = crossbeam_channel::unbounded();
     let value = register(Tx::Unbounded(tx), rx);
     let chan = chan_of(&value).expect("a fresh channel");
-    (value, ChannelSender(chan))
+    (value, ChannelSender::new(chan))
 }
 
 fn chan_new(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
@@ -885,7 +946,10 @@ fn chan_recv(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _parked = crate::profile::blocked();
-        let token = park(format!("chan.recv on channel #{}", chan.id));
+        let token = park_on(
+            format!("chan.recv on channel #{}", chan.id),
+            Some(chan.producers.clone()),
+        );
         chan.recv_waiting.fetch_add(1, Ordering::Relaxed);
         let mut last_gen: Option<u64> = None;
         let outcome = wait_recv(&chan.rx, None, || stall_tick(&mut last_gen));

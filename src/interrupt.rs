@@ -179,6 +179,13 @@ impl Handle {
         self.0.set_bit(ASKED);
     }
 
+    /// Whether a deadline runs on the thread (a budget, a `meta.eval`
+    /// timeout): its wait will be ended by the watchdog, from outside
+    /// the program's threads.
+    pub fn has_deadline(&self) -> bool {
+        !lock(&self.0.budgets).is_empty()
+    }
+
     /// Whether an interrupt was asked and not yet raised there (a thread
     /// in a system call raises once the call returns).
     pub fn interrupt_pending(&self) -> bool {

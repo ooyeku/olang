@@ -1661,7 +1661,13 @@ running `http.serve` disables the abort entirely, because an incoming
 request can wake a worker at any time. So does an installed
 `os.on_shutdown` handler until it has run: a signal runs it on a thread
 of its own, and it may send, so `chan.recv(stop)` waiting for it is not
-a deadlock. Setting `OLANG_STALL_ABORT=0`
+a deadlock. Two more waits can be ended from outside the program's
+threads, so they never count as blocked for good: a wait inside
+`runtime.call_budget` or a `meta.eval` with `timeout_ms` (the deadline
+will end it), and a receive on a channel that olang's own runtime feeds
+from a thread of its own (`gui.events()`, `tty.events()`). An idle
+worker pool, whose workers wait on their queue while a timer task waits
+with `recv_timeout`, is never stopped. Setting `OLANG_STALL_ABORT=0`
 turns the abort off (the program hangs instead), for embedding hosts
 that manage their own threads.
 

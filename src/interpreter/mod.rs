@@ -6670,13 +6670,13 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         // the JIT exist only where a tier was enabled. A budgeted child
         // keeps its budget on this thread, where every tier counts its
         // steps and polls its deadline, so it promotes as any run does.
+        // The thread keeps the bounds either way, so a timeout is a
+        // deadline the stall detector knows will come (OL-512).
         if let Some(tier) = self.bytecode_tier.as_ref() {
             child.enable_bytecode_tier(tier.threshold(), false);
-            if budgeted {
-                child.set_eval_budget_all_tiers(max_steps, timeout);
-            }
-        } else {
-            child.set_eval_budget(max_steps, timeout);
+        }
+        if budgeted {
+            child.set_eval_budget_all_tiers(max_steps, timeout);
         }
         child.caps = self.caps.clone();
         child.caps_trace = self.caps_trace.clone();

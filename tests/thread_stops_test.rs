@@ -1,6 +1,7 @@
 //! Stopping one thread's work: budgets per thread (OL-494) and
 //! `task.interrupt` (OL-493); joins and full sends that wake instead of
-//! polling (OL-498); a Rust panic kept to its task or boundary (OL-499).
+//! polling (OL-498); a Rust panic kept to its task or boundary (OL-499);
+//! the stall detector leaving waits on outside sources alone (OL-512).
 //! Every program
 //! here runs twice, on the default tiers (bytecode VM and native code)
 //! and on the interpreter alone (`--no-ovm`), and must print the same
@@ -355,4 +356,113 @@ println(len(task.list()))
     assert_eq!(lines[3], "Ok(45)", "the program runs on");
     assert_eq!(lines[4], "Ok([])", "the same attempt runs normally after");
     assert_eq!(lines[5], "0", "the registry is usable after the panic");
+}
+
+#[test]
+fn an_idle_scheduler_stays_parked_for_ten_seconds() {
+    // Workers wait on the run queue, a handler waits on its reply inside
+    // its lane's deadline, the timer task waits on its control channel
+    // with a timeout, main waits on the workers. Nothing is ready for ten
+    // seconds; then the timer closes the queue. The stall detector must
+    // not call that a deadlock.
+    let ws = workspace("idle");
+    std::fs::write(
+        ws.join("main.ol"),
+        r#"
+let runq = chan.new()
+let control = chan.new()
+let replies = chan.new()
+fn worker(q) = {
+    let mut n = 0
+    let mut going = true
+    while going { match chan.recv(q) { Ok(job) => { n = n + 1 }, Err(_) => { going = false } } }
+    n
+}
+fn handler(r) = map_get(runtime.call_budget(() => chan.recv(r), [], 12000), "over")
+fn timer(ctl, q) = {
+    let start = time.monotonic_ms()
+    let mut going = true
+    while going {
+        match chan.recv_timeout(ctl, 1000) {
+            Ok(_) => { going = false }
+            Err(_) => { if time.monotonic_ms() - start > 10000 => { chan.close(q); going = false } else => () }
+        }
+    }
+    "timer done"
+}
+let ws = map(range(0, 4), (i) => spawn worker(runq))
+let h = spawn handler(replies)
+let t = spawn timer(control, runq)
+println(map(ws, task.join))
+println(task.join(t))
+chan.send(replies, "late")
+println(task.join(h))
+"#,
+    )
+    .unwrap();
+    let started = std::time::Instant::now();
+    let out = Command::new(olang())
+        .current_dir(&ws)
+        .arg("main.ol")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "stdout: {stdout}\nstderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        stdout,
+        "[Ok(0), Ok(0), Ok(0), Ok(0)]\nOk(\"timer done\")\nOk(false)\n"
+    );
+    assert!(started.elapsed() >= std::time::Duration::from_secs(10));
+}
+
+#[test]
+fn a_wait_inside_a_budget_runs_to_its_deadline() {
+    // The deadline is a wake that will come: the stall detector aborted
+    // this at 0.5 s, every thread being parked.
+    let out = run_both(
+        "budget_wait",
+        r#"
+let never = chan.new()
+let r = runtime.call_budget(() => chan.recv(never), [], 1500)
+println(show(map_get(r, "over")) + " " + show(map_get(r, "us") > 1400000))
+println(meta.eval("chan.recv(chan.new())", #{ "timeout_ms": 1200 }))
+"#,
+    );
+    assert_eq!(
+        out,
+        "true true\nErr(\"Runtime error: budget exceeded: the evaluation ran past its timeout_ms (1200 ms)\")\n"
+    );
+}
+
+#[test]
+fn a_wait_on_a_channel_fed_from_outside_is_no_deadlock() {
+    // gui.events() is fed by the platform's thread, outside the program's
+    // threads: a receive on it may still be answered.
+    let ws = workspace("outside_feed");
+    std::fs::write(
+        ws.join("main.ol"),
+        "let ev = gui.events()\nprintln(\"waiting\")\nprintln(chan.recv(ev))\n",
+    )
+    .unwrap();
+    let mut child = Command::new(olang())
+        .current_dir(&ws)
+        .arg("main.ol")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let still = child.try_wait().unwrap();
+    let _ = child.kill();
+    let out = child.wait_with_output().unwrap();
+    assert!(
+        still.is_none(),
+        "it ended: {still:?}\nstderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "waiting\n");
 }
