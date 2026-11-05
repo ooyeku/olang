@@ -1690,6 +1690,12 @@ smaller from a `--release` olang than a debug one). On macOS the
 appended data invalidates any code signature; re-sign the output if you
 distribute it.
 
+A release build of olang writes `olang.dSYM` beside the binary
+(`target/release/olang.dSYM`): the debug symbols a crash report's native
+addresses are read back with, `atos -o olang.dSYM/Contents/Resources/DWARF/olang
+-l <load_address> <address>…`. Keep the dSYM of each binary you ship; its
+UUID is the one the report names.
+
 Signed with the hardened runtime (which notarisation needs), the runtime
 needs one entitlement, `com.apple.security.cs.allow-jit`: the JIT writes
 its machine code into memory mapped with `MAP_JIT`, which that
@@ -2168,6 +2174,7 @@ nothing should depend on them.
 | `OLANG_BOOT_TRACE` | no | `1`, the same as `--trace`: where a program's start goes — a line on stderr at each landmark (the interpreter's thread started, the entry parsed, the program starting, the platform's loop, a window asked for and made, the first frame presented), stamped from the process's start, each module a `use` found and where, and at the first frame the modules read and loaded and the compiles, with their times. |
 | `OLANG_LAZY_COMPILE` | no | `0`: compile every callee with its caller (the eager route) instead of at its first call, for A/B measurement. |
 | `OLANG_JIT_DEBUG` | no | `1`: JIT compilation decisions: what compiled, what refused, and the instruction or register that refused it. |
+| `OLANG_CRASH_DIR` | no | `<dir>`: a panic or a fatal signal writes a JSON crash report there, as [`runtime.on_crash`](stdlib.md#runtime--what-this-binary-carries) does. |
 | `OLANG_NO_JIT` | no | `1`: no native code; hot functions stay on bytecode, as in a hardened binary signed without `allow-jit`. |
 | `OLANG_OSR_DEBUG`, `OLANG_OSR_OFF` | no | On-stack-replacement decisions; `1` disables on-stack replacement. |
 | `OLANG_BRIDGE_TIER_OFF` | no | `1`: disable the bridge interpreter's bytecode tier. |

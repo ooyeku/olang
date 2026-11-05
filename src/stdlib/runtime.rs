@@ -30,6 +30,8 @@ pub fn create_runtime_module() -> Value {
         builtin("profile_live_stop", 0),
     );
     module.insert("build".to_string(), builtin("build", 0));
+    // a panic or a fatal signal leaves a report: src/crash.rs
+    module.insert("on_crash".to_string(), builtin("on_crash", 1));
     // A host loading code it did not write (olang Studio's plugins):
     // see `call_host`.
     module.insert("load_module".to_string(), builtin("load_module", 2));
@@ -68,7 +70,44 @@ pub fn call_runtime_function(
         "profile_live_start" => runtime_profile_live_start(args),
         "profile_live_stop" => runtime_profile_live_stop(args),
         "build" => runtime_build(args),
+        "on_crash" => runtime_on_crash(args),
         _ => Err(format!("Unknown runtime function: {}", name).into()),
+    }
+}
+
+/// `runtime.on_crash(dir)` or `runtime.on_crash(dir, #{ "max_bytes" })`:
+/// from now on, a Rust panic that ends the process or a fatal signal
+/// writes a JSON crash report into `dir` (made if missing), at most
+/// `max_bytes` (256 KiB; between 16 KiB and 1 MiB). `Ok(dir)`, the folder
+/// as an absolute path.
+fn runtime_on_crash(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let usage = "runtime.on_crash expects a directory, and optionally #{ \"max_bytes\" }";
+    let (dir, opts) = match args.as_slice() {
+        [Value::String(d)] => (d.to_string(), None),
+        [Value::String(d), Value::Map(o)] => (d.to_string(), Some(o.clone())),
+        _ => return Err(usage.into()),
+    };
+    #[cfg(unix)]
+    {
+        let max_bytes = match opts.as_ref().and_then(|o| o.get("max_bytes")) {
+            None | Some(Value::Unit) => crate::crash::DEFAULT_BYTES,
+            Some(Value::Integer(n)) if *n > 0 => *n as usize,
+            Some(_) => return Err("runtime.on_crash: \"max_bytes\" is a whole number of bytes".into()),
+        };
+        // a test's way to a Rust panic with olang frames on the stack
+        // (`OLANG_TEST_PANIC=crash.on_crash`, src/contain.rs)
+        if crate::crash::armed() {
+            crate::contain::inject("crash.on_crash");
+        }
+        Ok(match crate::crash::install(std::path::Path::new(&dir), max_bytes) {
+            Ok(at) => Value::Ok(Box::new(Value::String(Arc::new(at.display().to_string())))),
+            Err(e) => err_value(format!("runtime.on_crash: {e}")),
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (dir, opts);
+        Ok(err_value("runtime.on_crash: crash reports are not in this build".to_string()))
     }
 }
 

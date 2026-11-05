@@ -8016,6 +8016,14 @@ for row in take(map_get(p, "rows"), 5) { println(map_get(row, "function") + " " 
             &[r##"unwrap(runtime.profile_live_start(fs.join(os.temp_dir(), "me")))"##],
         );
         self.doc_ex(
+            "runtime.on_crash",
+            "runtime.on_crash(dir)",
+            "Result",
+            "runtime",
+            "From now on, a Rust panic that ends the process, or a fatal signal (SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP, SIGABRT), writes one JSON crash report into dir before the process goes: the message and where in olang's Rust it happened, the thread, every thread's olang frames (function, file, and line for a panic), the crashing thread's native backtrace with each image's UUID and load address, the olang version and commit, the macOS version, the CPU and the time. Never a value, the environment or the arguments. runtime.on_crash(dir, #{ \"max_bytes\": 65536 }) caps the file (256 KiB by default). Ok(dir), the folder as an absolute path. OLANG_CRASH_DIR=dir arms it from the start.",
+            &[r##"unwrap(runtime.on_crash(fs.join(os.temp_dir(), "crashes")))"##],
+        );
+        self.doc_ex(
             "runtime.profile_live_stop",
             "runtime.profile_live_stop()",
             "Result",

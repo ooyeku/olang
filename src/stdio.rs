@@ -169,6 +169,14 @@ pub fn set_panic_hook() {
         };
         let thread = std::thread::current();
         let name = thread.name().unwrap_or("<unnamed>");
+        // a crash report, when the program armed one (`runtime.on_crash`)
+        #[cfg(unix)]
+        let crash_file = crate::crash::on_panic(
+            &message,
+            info.location()
+                .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column())),
+            name,
+        );
         let mut report = miette::miette!(
             help = "set the `RUST_BACKTRACE=1` environment variable to display a backtrace.",
             "{message}"
@@ -183,6 +191,10 @@ pub fn set_panic_hook() {
                 "\n\n{}",
                 std::backtrace::Backtrace::force_capture()
             ));
+        }
+        #[cfg(unix)]
+        if let Some(path) = crash_file {
+            text.push_str(&format!("\n\nA crash report was written to {}", path.display()));
         }
         err_line(format_args!("{text}"));
         std::process::abort();

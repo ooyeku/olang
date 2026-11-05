@@ -724,6 +724,9 @@ fn main() {
 
 fn run() -> i32 {
     olang::boot_trace::mark("the interpreter's thread started");
+    // crash reports armed from the outside (`OLANG_CRASH_DIR`)
+    #[cfg(unix)]
+    olang::crash::install_from_env();
     // The main interpreter thread joins the stall detector's census:
     // with every olang-running thread counted, "all counted threads
     // parked" proves a deadlock (src/stdlib/chan.rs).

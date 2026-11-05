@@ -106,6 +106,10 @@ struct ThreadStack {
     /// read-modify-write); allocated the first time a counted frame is
     /// pushed, so an ordinary profile never pays for it.
     counts: OnceLock<Box<[AtomicU64]>>,
+    /// The thread's name and id, as it registered: what a crash report
+    /// names it by (src/crash.rs).
+    thread_name: Option<String>,
+    thread_id: u64,
 }
 
 /// Frame ids counted per thread; a frame interned past this is timed by
@@ -125,8 +129,178 @@ impl ThreadStack {
             frames: std::array::from_fn(|_| AtomicU32::new(0)),
             tiers: std::array::from_fn(|_| AtomicU8::new(0)),
             worker,
+            thread_name: std::thread::current().name().map(str::to_string),
+            thread_id: current_thread_id(),
         }
     }
+}
+
+/// This thread's system id (`pthread_threadid_np` on macOS).
+pub fn current_thread_id() -> u64 {
+    #[cfg(target_os = "macos")]
+    {
+        let mut id: u64 = 0;
+        // SAFETY: this thread's own id, written into a local.
+        unsafe { libc::pthread_threadid_np(0 as libc::pthread_t, &mut id) };
+        id
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        0
+    }
+}
+
+// ── what a crash report reads (src/crash.rs) ───────────────────────────
+//
+// A fatal signal's handler may not lock or allocate, so the shadow
+// stacks and the interned names are mirrored into fixed tables of raw
+// pointers it can read: a thread's stack is published when it registers
+// and withdrawn as it exits, a name when it is interned (its bytes never
+// move: each name is a String the registry keeps for the process's life).
+
+/// Threads a crash report can name at once.
+pub const CRASH_THREADS: usize = 256;
+/// Interned names a crash report can spell.
+const CRASH_NAMES: usize = 1 << 15;
+
+static CRASH_STACKS: [std::sync::atomic::AtomicPtr<ThreadStack>; CRASH_THREADS] =
+    [const { std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()) }; CRASH_THREADS];
+static CRASH_NAME_PTRS: [std::sync::atomic::AtomicPtr<u8>; CRASH_NAMES] =
+    [const { std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()) }; CRASH_NAMES];
+static CRASH_NAME_LENS: [AtomicUsize; CRASH_NAMES] = [const { AtomicUsize::new(0) }; CRASH_NAMES];
+/// Frames carry their file (and so a report its line) while a crash
+/// report is armed.
+static CRASH: AtomicBool = AtomicBool::new(false);
+
+#[inline(always)]
+fn crash_on() -> bool {
+    CRASH.load(Ordering::Relaxed)
+}
+
+/// Record every thread's olang frames from now on, with their files,
+/// for a crash report (`runtime.on_crash`). Once on, it stays on.
+pub fn crash_enable() {
+    if !CRASH.swap(true, Ordering::SeqCst) {
+        retain();
+    }
+}
+
+/// Withdraws a thread's stack from the crash table as the thread ends.
+struct CrashSlot(usize);
+
+impl Drop for CrashSlot {
+    fn drop(&mut self) {
+        CRASH_STACKS[self.0].store(std::ptr::null_mut(), Ordering::Release);
+    }
+}
+
+thread_local! {
+    static CRASH_SLOT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    static CRASH_GUARD: std::cell::RefCell<Option<CrashSlot>> = const { std::cell::RefCell::new(None) };
+}
+
+fn publish_for_crash(stack: &Arc<ThreadStack>) {
+    let ptr = Arc::as_ptr(stack) as *mut ThreadStack;
+    for (i, slot) in CRASH_STACKS.iter().enumerate() {
+        if slot
+            .compare_exchange(std::ptr::null_mut(), ptr, Ordering::AcqRel, Ordering::Relaxed)
+            .is_ok()
+        {
+            CRASH_SLOT.with(|c| c.set(Some(i)));
+            let _ = CRASH_GUARD.try_with(|g| *g.borrow_mut() = Some(CrashSlot(i)));
+            return;
+        }
+    }
+}
+
+fn publish_name(id: u32, name: &str) {
+    let i = id as usize;
+    if i < CRASH_NAMES {
+        CRASH_NAME_LENS[i].store(name.len(), Ordering::Relaxed);
+        CRASH_NAME_PTRS[i].store(name.as_ptr() as *mut u8, Ordering::Release);
+    }
+}
+
+/// One olang frame as a crash report reads it.
+pub struct CrashFrame<'a> {
+    pub name: &'a str,
+    pub file: Option<&'a str>,
+    pub tier: &'static str,
+}
+
+/// One thread's olang stack as a crash report reads it, innermost frame
+/// last.
+pub struct CrashThread<'a> {
+    pub name: Option<&'a str>,
+    pub id: u64,
+    pub depth: usize,
+    pub frames: [Option<CrashFrame<'a>>; MAX_FRAMES],
+}
+
+/// The name interned as `id`, from the crash table: no lock, no
+/// allocation.
+fn crash_name(id: u32) -> Option<&'static str> {
+    let i = id as usize;
+    if i >= CRASH_NAMES {
+        return None;
+    }
+    let p = CRASH_NAME_PTRS[i].load(Ordering::Acquire);
+    if p.is_null() {
+        return None;
+    }
+    let n = CRASH_NAME_LENS[i].load(Ordering::Relaxed);
+    // SAFETY: published from a String the registry never drops or moves.
+    let bytes = unsafe { std::slice::from_raw_parts(p, n) };
+    std::str::from_utf8(bytes).ok()
+}
+
+/// Call `f` with each registered thread's olang stack, reading only the
+/// crash tables: safe in a signal handler (no lock, no allocation; a
+/// stack read while its thread pushes may be torn by a frame).
+///
+/// # Safety
+/// Only from a context where the threads' stacks may be read racily: a
+/// crash report about to end the process.
+pub unsafe fn crash_stacks(mut f: impl FnMut(&CrashThread<'_>)) {
+    for slot in CRASH_STACKS.iter() {
+        let p = slot.load(Ordering::Acquire);
+        if p.is_null() {
+            continue;
+        }
+        // SAFETY: a published stack is kept alive by the registry until
+        // its thread has withdrawn it.
+        let stack = unsafe { &*p };
+        let depth = stack.depth.load(Ordering::Relaxed);
+        let mut t = CrashThread {
+            name: stack.thread_name.as_deref(),
+            id: stack.thread_id,
+            depth,
+            frames: [const { None }; MAX_FRAMES],
+        };
+        for i in 0..depth.min(MAX_FRAMES) {
+            let id = stack.frames[i].load(Ordering::Relaxed);
+            let bits = stack.tiers[i].load(Ordering::Relaxed);
+            let Some(key) = crash_name(id) else {
+                continue;
+            };
+            let (name, file) = match key.split_once(FILE_SEP) {
+                Some((n, file)) => (n, Some(file)),
+                None => (key, None),
+            };
+            let tier = if bits & BUILTIN_BIT != 0 {
+                "builtin"
+            } else {
+                Tier::from_u8(bits).label()
+            };
+            t.frames[i] = Some(CrashFrame { name, file, tier });
+        }
+        f(&t);
+    }
+}
+
+/// The id of the thread calling, as the crash tables know it.
+pub fn crash_current_thread() -> u64 {
+    current_thread_id()
 }
 
 struct Registry {
@@ -187,6 +361,8 @@ thread_local! {
         if let Ok(stacks) = guard.as_mut() {
             stacks.push(stack.clone());
         }
+        drop(guard);
+        publish_for_crash(&stack);
         stack
     };
 }
@@ -333,6 +509,9 @@ fn intern(name: &str) -> u32 {
     }
     let id = guard.0.len() as u32;
     guard.0.push(name.to_string());
+    if let Some(kept) = guard.0.last() {
+        publish_name(id, kept);
+    }
     guard.1.insert(name.to_string(), id);
     id
 }
@@ -464,7 +643,7 @@ pub fn push_at(name: &str, file: Option<&str>, tier: Tier) -> bool {
         return false;
     }
     let anon = is_anonymous(name);
-    let file = if stats_on() || detail_on() {
+    let file = if stats_on() || detail_on() || crash_on() {
         file
     } else {
         None
