@@ -7187,6 +7187,16 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             see_also: vec!["str.slice_bytes".to_string()],
         });
         self.add_function(FunctionDoc {
+            name: "str.encode".to_string(),
+            description: "The string as Bytes in \"utf-8\", \"utf-16le\", \"utf-16be\" or \"latin1\": Ok(bytes), or Err naming the first character Latin-1 has no byte for. bytes.decode is the way back.".to_string(),
+            syntax: "str.encode(s, encoding)".to_string(),
+            parameters: vec![],
+            return_type: "Result".to_string(),
+            examples: vec!["unwrap(str.encode(\"café\", \"latin1\"))  // 4 bytes".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["bytes.decode".to_string()],
+        });
+        self.add_function(FunctionDoc {
             name: "str.index_of".to_string(),
             description:
                 "Character index of the first match, or Unit when absent (test with != ())."
@@ -7896,6 +7906,22 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             &[r##"unwrap(bytes.to_string(b))  // Err if not valid UTF-8"##],
         );
         self.doc_ex(
+            "bytes.to_string_lossy",
+            "bytes.to_string_lossy(b)",
+            "String",
+            "Bytes",
+            "Decode Bytes as UTF-8 text, putting U+FFFD where a sequence is not UTF-8. Never fails: the way to open a file that is mostly text.",
+            &[r##"bytes.to_string_lossy(bytes.from_list([104, 255, 105]))  // "h\u{FFFD}i""##],
+        );
+        self.doc_ex(
+            "bytes.decode",
+            "bytes.decode(b, encoding, opts)",
+            "Result",
+            "Bytes",
+            "Decode Bytes as \"utf-8\", \"utf-16le\", \"utf-16be\" or \"latin1\": Ok(string), or Err at the first sequence that is not text. With #{\"lossy\": true} each such sequence is U+FFFD and the answer is always Ok.",
+            &[r##"unwrap(bytes.decode(b, "utf-16le"))"##, r##"bytes.decode(b, "latin1")  // never Err"##],
+        );
+        self.doc_ex(
             "bytes.len",
             "bytes.len(b)",
             "Int",
@@ -8195,9 +8221,9 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
         // File I/O operations
         self.add_function(FunctionDoc {
             name: "fs.read_file".to_string(),
-            description: "Read the entire contents of a file as a string".to_string(),
-            syntax: "fs.read_file(path)".to_string(),
-            parameters: vec!["path: String - The file path to read from".to_string()],
+            description: "Read the entire contents of a file as a string. #{\"lossy\": true} puts U+FFFD where the file is not valid UTF-8 instead of answering Err; #{\"encoding\": \"latin1\"} (or \"utf-16le\", \"utf-16be\") reads another encoding.".to_string(),
+            syntax: "fs.read_file(path, opts)".to_string(),
+            parameters: vec!["path: String - The file path to read from".to_string(), "opts: Map - optional: lossy (Bool), encoding (String)".to_string()],
             return_type: "Result<String, Error>".to_string(),
             examples: vec![
                 "fs.read_file(\"config.txt\")  // Ok(\"file contents\")".to_string(),

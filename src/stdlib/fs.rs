@@ -212,8 +212,8 @@ pub fn call_fs_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn s
 /// Read entire file contents as a string
 /// Usage: fs.read_file("/path/to/file.txt") -> Result<String, Error>
 fn read_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    if args.len() != 1 {
-        return Err(format!("read_file expects 1 argument, got {}", args.len()).into());
+    if !(1..=2).contains(&args.len()) {
+        return Err(format!("read_file expects 1 or 2 arguments, got {}", args.len()).into());
     }
 
     let path_str = match &args[0] {
@@ -223,13 +223,67 @@ fn read_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         }
     };
 
-    match fs::read_to_string(path_str) {
-        Ok(contents) => Ok(Value::Ok(Box::new(Value::String(Arc::new(contents))))),
-        Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+    // `#{lossy: true}` reads a file that is mostly text (U+FFFD for each
+    // bad sequence); `#{encoding: "latin1"}` one in another encoding.
+    let (encoding, lossy) = read_file_options(args.get(1))?;
+    if encoding == "utf-8" && !lossy {
+        return match fs::read_to_string(path_str) {
+            Ok(contents) => Ok(Value::Ok(Box::new(Value::String(Arc::new(contents))))),
+            Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                "Failed to read file '{}': {}",
+                path_str, e
+            )))))),
+        };
+    }
+    let raw = match fs::read(path_str) {
+        Ok(raw) => raw,
+        Err(e) => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                "Failed to read file '{}': {}",
+                path_str, e
+            ))))));
+        }
+    };
+    let text = if encoding == "utf-8" {
+        // The common case: a valid file stays one allocation.
+        match String::from_utf8(raw) {
+            Ok(s) => Ok(s),
+            Err(e) => Ok(String::from_utf8_lossy(e.as_bytes()).into_owned()),
+        }
+    } else {
+        crate::stdlib::bytes::decode(&raw, encoding, lossy)
+    };
+    Ok(match text {
+        Ok(s) => Value::Ok(Box::new(Value::String(Arc::new(s)))),
+        Err(e) => Value::Err(Box::new(Value::String(Arc::new(format!(
             "Failed to read file '{}': {}",
             path_str, e
-        )))))),
-    }
+        ))))),
+    })
+}
+
+/// `fs.read_file`'s options: the encoding (UTF-8 unless said) and whether
+/// a bad sequence is replaced rather than an `Err`.
+fn read_file_options(
+    opts: Option<&Value>,
+) -> Result<(&'static str, bool), Box<dyn std::error::Error>> {
+    let lossy =
+        crate::stdlib::bytes::lossy_option(opts, "fs.read_file", &["lossy", "encoding"])?;
+    let encoding = match opts {
+        Some(Value::Map(m)) => match m.get("encoding") {
+            None | Some(Value::Unit) => "utf-8",
+            Some(Value::String(e)) => crate::stdlib::bytes::encoding_of(e, "fs.read_file")?,
+            Some(other) => {
+                return Err(format!(
+                    "fs.read_file: option encoding must be a string, got {}",
+                    other.type_name()
+                )
+                .into());
+            }
+        },
+        _ => "utf-8",
+    };
+    Ok((encoding, lossy))
 }
 
 /// Write string contents to a file

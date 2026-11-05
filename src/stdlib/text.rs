@@ -26,6 +26,7 @@ pub(crate) const MAX_ARGS: &[(&str, usize)] = &[
     ("byte_to_char", 2),
     ("utf16_len", 1),
     ("chunks", 3),
+    ("encode", 2),
 ];
 
 /// The fewest arguments each takes (what the module registers, which
@@ -37,6 +38,7 @@ pub(crate) const MIN_ARGS: &[(&str, usize)] = &[
     ("byte_to_char", 2),
     ("utf16_len", 1),
     ("chunks", 2),
+    ("encode", 2),
 ];
 
 /// Calls one of this file's functions, or `None` when `name` is not one.
@@ -48,6 +50,7 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<R> {
         "byte_to_char" => byte_to_char_fn(args),
         "utf16_len" => utf16_len_fn(args),
         "chunks" => chunks(args),
+        "encode" => encode(args),
         _ => return None,
     })
 }
@@ -264,4 +267,16 @@ fn chunks(args: &[Value]) -> R {
         pos = end;
     }
     Ok(Value::List(Arc::new(out)))
+}
+
+/// `str.encode(s, encoding)`: the text as Bytes in "utf-8", "utf-16le",
+/// "utf-16be" or "latin1" — a `Result`, `Err` naming the first
+/// character Latin-1 has no byte for (`bytes.decode` is the way back).
+fn encode(args: &[Value]) -> R {
+    let s = arg_str(args, 0, "encode")?;
+    let enc = super::bytes::encoding_of(arg_str(args, 1, "encode")?, "str.encode")?;
+    Ok(match super::bytes::encode(s, enc) {
+        Ok(b) => Value::Ok(Box::new(super::bytes::to_value(b))),
+        Err(e) => Value::Err(Box::new(string(&e))),
+    })
 }

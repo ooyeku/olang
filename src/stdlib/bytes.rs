@@ -131,6 +131,8 @@ pub fn create_bytes_module() -> Value {
         ("concat", 2),
         ("to_hex", 1),
         ("from_hex", 1),
+        ("to_string_lossy", 1),
+        ("decode", 2),
     ] {
         module.insert(
             name.to_string(),
@@ -160,6 +162,8 @@ pub fn call_bytes_function(
         "concat" => concat(args),
         "to_hex" => to_hex(args),
         "from_hex" => from_hex(args),
+        "to_string_lossy" => to_string_lossy(args),
+        "decode" => decode_fn(args),
         _ => Err(format!("Unknown bytes function: {}", name).into()),
     }
 }
@@ -342,4 +346,172 @@ fn concat(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     out.extend_from_slice(a);
     out.extend_from_slice(b);
     Ok(to_value(out))
+}
+
+// ── text in other encodings (OL-433) ────────────────────────────────
+//
+// `to_string` is strict UTF-8, which is right for data and wrong for
+// opening any file a person has: one stray byte from an old editor and
+// the whole file was an `Err`. These decode what text there is.
+
+/// The encodings `bytes.decode`, `str.encode` and `fs.read_file` name.
+pub const ENCODINGS: &[&str] = &["utf-8", "utf-16le", "utf-16be", "latin1"];
+
+/// An encoding's name as a caller writes it ("UTF-8", "utf8", "latin-1",
+/// "iso-8859-1"), or the misuse said.
+pub fn encoding_of(name: &str, func: &str) -> Result<&'static str, String> {
+    let n = name.to_ascii_lowercase().replace('_', "-");
+    Ok(match n.as_str() {
+        "utf-8" | "utf8" => "utf-8",
+        "utf-16le" | "utf16le" => "utf-16le",
+        "utf-16be" | "utf16be" => "utf-16be",
+        "latin1" | "latin-1" | "iso-8859-1" => "latin1",
+        _ => {
+            return Err(format!(
+                "{func}: unknown encoding \"{name}\" (it takes {})",
+                ENCODINGS.join(", ")
+            ));
+        }
+    })
+}
+
+/// `b` decoded as `encoding`. With `lossy`, each sequence that is not
+/// text becomes U+FFFD and the answer is always `Ok`; without, the first
+/// one is an `Err` saying where it is.
+pub fn decode(b: &[u8], encoding: &str, lossy: bool) -> Result<String, String> {
+    match encoding {
+        "utf-8" => {
+            if lossy {
+                Ok(String::from_utf8_lossy(b).into_owned())
+            } else {
+                std::str::from_utf8(b)
+                    .map(str::to_string)
+                    .map_err(|e| format!("bytes are not valid UTF-8: {e}"))
+            }
+        }
+        "latin1" => Ok(b.iter().map(|&x| x as char).collect()),
+        "utf-16le" | "utf-16be" => {
+            let le = encoding == "utf-16le";
+            let odd = b.len() % 2 == 1;
+            if odd && !lossy {
+                return Err(format!(
+                    "bytes are not valid UTF-16: an odd number of bytes ({})",
+                    b.len()
+                ));
+            }
+            let units = b.chunks_exact(2).map(|p| {
+                if le {
+                    u16::from_le_bytes([p[0], p[1]])
+                } else {
+                    u16::from_be_bytes([p[0], p[1]])
+                }
+            });
+            let mut out = String::with_capacity(b.len() / 2);
+            for (i, c) in char::decode_utf16(units).enumerate() {
+                match c {
+                    Ok(c) => out.push(c),
+                    Err(_) if lossy => out.push(char::REPLACEMENT_CHARACTER),
+                    Err(e) => {
+                        return Err(format!(
+                            "bytes are not valid UTF-16: the unpaired surrogate {:#06x} near byte {}",
+                            e.unpaired_surrogate(),
+                            i * 2
+                        ));
+                    }
+                }
+            }
+            if odd {
+                out.push(char::REPLACEMENT_CHARACTER);
+            }
+            Ok(out)
+        }
+        other => Err(format!("unknown encoding {other}")),
+    }
+}
+
+/// `s` in `encoding`: always for the UTF encodings, an `Err` naming the
+/// first character Latin-1 has no byte for.
+pub fn encode(s: &str, encoding: &str) -> Result<Vec<u8>, String> {
+    Ok(match encoding {
+        "utf-8" => s.as_bytes().to_vec(),
+        "utf-16le" => s.encode_utf16().flat_map(u16::to_le_bytes).collect(),
+        "utf-16be" => s.encode_utf16().flat_map(u16::to_be_bytes).collect(),
+        "latin1" => {
+            let mut out = Vec::with_capacity(s.len());
+            for (i, c) in s.chars().enumerate() {
+                if (c as u32) > 0xFF {
+                    return Err(format!(
+                        "Latin-1 has no byte for {c:?} (U+{:04X}, character {i})",
+                        c as u32
+                    ));
+                }
+                out.push(c as u8);
+            }
+            out
+        }
+        other => return Err(format!("unknown encoding {other}")),
+    })
+}
+
+fn ok_text(r: Result<String, String>) -> Value {
+    match r {
+        Ok(s) => Value::Ok(Box::new(Value::String(Arc::new(s)))),
+        Err(e) => Value::Err(Box::new(Value::String(Arc::new(e)))),
+    }
+}
+
+/// `bytes.to_string_lossy(b)`: UTF-8, each bad sequence U+FFFD.
+fn to_string_lossy(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let b = bytes_of(one_arg(&args, "to_string_lossy")?)
+        .map_err(|e| format!("bytes.to_string_lossy: {e}"))?;
+    Ok(Value::String(Arc::new(String::from_utf8_lossy(b).into_owned())))
+}
+
+/// `bytes.decode(b, encoding, #{lossy})`: a `Result`, always `Ok` with
+/// `lossy: true`.
+fn decode_fn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if !(2..=3).contains(&args.len()) {
+        return Err(format!("bytes.decode expects 2 or 3 arguments, got {}", args.len()).into());
+    }
+    let b = bytes_of(&args[0]).map_err(|e| format!("bytes.decode: {e}"))?;
+    let enc = match &args[1] {
+        Value::String(s) => encoding_of(s, "bytes.decode")?,
+        other => {
+            return Err(format!(
+                "bytes.decode: the encoding must be a string, got {}",
+                other.type_name()
+            )
+            .into());
+        }
+    };
+    let lossy = lossy_option(args.get(2), "bytes.decode", &["lossy"])?;
+    Ok(ok_text(decode(b, enc, lossy)))
+}
+
+/// The `lossy` key of an options map (`()` or absent is no options), an
+/// unknown key raising.
+pub fn lossy_option(opts: Option<&Value>, func: &str, known: &[&str]) -> Result<bool, String> {
+    match opts {
+        None | Some(Value::Unit) => Ok(false),
+        Some(Value::Map(m)) => {
+            if let Some(k) = m.keys().find(|k| !known.contains(&k.as_str())) {
+                return Err(format!(
+                    "{func}: unknown option \"{k}\" (it takes {})",
+                    known.join(", ")
+                ));
+            }
+            match m.get("lossy") {
+                None | Some(Value::Unit) => Ok(false),
+                Some(Value::Boolean(b)) => Ok(*b),
+                Some(other) => Err(format!(
+                    "{func}: option lossy must be true or false, got {}",
+                    other.type_name()
+                )),
+            }
+        }
+        Some(other) => Err(format!(
+            "{func}: the options must be a map, got {}",
+            other.type_name()
+        )),
+    }
 }

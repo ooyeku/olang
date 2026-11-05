@@ -182,3 +182,69 @@ main()
     );
 }
 
+// ── OL-433: text that isn't UTF-8 ───────────────────────────────────
+// `bytes` and `fs` stay off the VM's list (their Bytes and handles), so
+// these agree between the interpreter and the tiered run.
+fn tiered_ok(source: &str) -> Value {
+    agree_tiered(source).unwrap_or_else(|e| panic!("{e}\n{source}"))
+}
+
+#[test]
+fn lossy_and_other_encodings_decode() {
+    let src = r#"
+fn main() = {
+    let bad = bytes.from_list([104, 255, 105, 226, 130])
+    let le = unwrap(str.encode("aé😀", "utf-16le"))
+    let be = unwrap(str.encode("aé😀", "utf-16be"))
+    [bytes.to_string_lossy(bad),
+     unwrap(bytes.decode(bad, "utf-8", #{"lossy": true})),
+     is_err(bytes.decode(bad, "utf-8")),
+     unwrap(bytes.decode(le, "utf-16le")),
+     unwrap(bytes.decode(be, "UTF-16BE")),
+     unwrap(bytes.decode(bytes.from_list([99, 97, 102, 233]), "latin1")),
+     to_string(bytes.to_list(unwrap(str.encode("café", "latin1")))),
+     is_err(str.encode("😀", "latin1")),
+     is_err(bytes.decode(bytes.from_list([0, 216]), "utf-16le")),
+     unwrap(bytes.decode(bytes.from_list([0, 216, 97]), "utf-16le", #{"lossy": true}))]
+}
+main()
+"#;
+    let v = tiered_ok(src);
+    let want = Value::List(std::sync::Arc::new(vec![
+        s("h\u{FFFD}i\u{FFFD}"),
+        s("h\u{FFFD}i\u{FFFD}"),
+        Value::Boolean(true),
+        s("aé😀"),
+        s("aé😀"),
+        s("café"),
+        s("[99, 97, 102, 233]"),
+        Value::Boolean(true),
+        Value::Boolean(true),
+        s("\u{FFFD}\u{FFFD}"),
+    ]));
+    assert_eq!(v, want);
+    let err = agree_tiered(r#"bytes.decode(bytes.from_list([1]), "ebcdic")"#).unwrap_err();
+    assert!(err.contains("unknown encoding \"ebcdic\""), "{err}");
+}
+
+#[test]
+fn read_file_reads_lossy_and_latin1() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("mixed.txt");
+    std::fs::write(&p, [b'o', b'k', 0xFF, b'\n', 0xE9]).unwrap();
+    let path = p.to_str().unwrap();
+    let src = format!(
+        r#"[is_err(fs.read_file("{path}")), unwrap(fs.read_file("{path}", #{{"lossy": true}})), unwrap(fs.read_file("{path}", #{{"encoding": "latin1"}}))]"#
+    );
+    assert_eq!(
+        tiered_ok(&src),
+        Value::List(std::sync::Arc::new(vec![
+            Value::Boolean(true),
+            s("ok\u{FFFD}\n\u{FFFD}"),
+            s("ok\u{FF}\n\u{E9}"),
+        ]))
+    );
+    let err = agree_tiered(&format!(r#"fs.read_file("{path}", #{{"lossless": true}})"#)).unwrap_err();
+    assert!(err.contains("unknown option \"lossless\""), "{err}");
+}
+

@@ -465,6 +465,7 @@ every function returns a new string.
 | <a id="str-slice_bytes"></a>`str.slice_bytes(s, a, b)` | bytes `a` to `b`, by the same rule as `substring`; an offset inside a character raises |
 | <a id="str-char_to_byte"></a><a id="str-byte_to_char"></a>`str.char_to_byte(s, i)` / `str.byte_to_char(s, b)` | convert a character position to a byte offset and back; past the end answers the end, a byte inside a character raises |
 | <a id="str-utf16_len"></a>`str.utf16_len(s)` | UTF-16 code units, as an LSP client or a browser counts (an emoji is 2) |
+| <a id="str-encode"></a>`str.encode(s, encoding)` | the text as `Bytes` in `"utf-8"`, `"utf-16le"`, `"utf-16be"` or `"latin1"`: a `Result`, `Err` for a character Latin-1 has no byte for (`bytes.decode` reads it back) |
 | <a id="str-chunks"></a>`str.chunks(s, max_bytes, #{prefer})` | pieces of at most `max_bytes` bytes, cut between characters in one pass; with `prefer: "\n"` a piece ends after the window's last newline when it has one. Joined, they are `s` |
 | <a id="str-index_of"></a><a id="str-last_index_of"></a>`str.index_of(s, sub)` / `str.last_index_of` | position, or `()` when absent |
 | <a id="str-contains"></a><a id="str-count"></a>`str.contains(s, sub)` / `str.count(s, sub)` | search |
@@ -1720,6 +1721,8 @@ preview. `fs.read_bytes`/`fs.write_bytes` move it to and from disk;
 | <a id="bytes-from_list"></a><a id="bytes-to_list"></a>`bytes.from_list(ints)` / `bytes.to_list(b)` | to and from a list of Ints 0..=255 |
 | <a id="bytes-from_string"></a>`bytes.from_string(s)` | a string's UTF-8 bytes |
 | <a id="bytes-to_string"></a>`bytes.to_string(b)` | decode as UTF-8 — `Result`, since bytes may not be text |
+| <a id="bytes-to_string_lossy"></a>`bytes.to_string_lossy(b)` | decode as UTF-8, each sequence that is not UTF-8 replaced by U+FFFD (`�`); never fails |
+| <a id="bytes-decode"></a>`bytes.decode(b, encoding, #{"lossy"})` | decode as `"utf-8"`, `"utf-16le"`, `"utf-16be"` or `"latin1"`: a `Result`, and always `Ok` with `lossy: true` (U+FFFD for what is not text). Latin-1 never fails, since every byte is a character |
 | <a id="bytes-len"></a>`bytes.len(b)` | byte count (the global `len` works too) |
 | <a id="bytes-slice"></a>`bytes.slice(b, from, to)` | half-open, by `str.substring`'s rule: past the end stops at the end, a negative position raises |
 | <a id="bytes-concat"></a>`bytes.concat(a, b)` | concatenation |
@@ -1732,6 +1735,25 @@ println(unwrap(bytes.to_string(b)))                    // hi!
 println(show(bytes.to_list(bytes.slice(b, 0, 2))))     // [104, 105]
 println(base64.encode(b))                              // aGkh
 println(show(bytes.from_string("hi!") == b))           // true
+```
+
+**Text that isn't UTF-8.** `fs.read_file` and `bytes.to_string` are
+strict: one bad byte makes the whole read an `Err`. That is the right
+default for data, but an editor or a diff has to open whatever file a
+person has. `fs.read_file(path, #{"lossy": true})` reads it anyway and
+puts U+FFFD where a sequence was not UTF-8. `#{"encoding": "latin1"}`
+(or `"utf-16le"`, `"utf-16be"`) reads a file written in another
+encoding, and `str.encode(s, encoding)` writes one (a `Result`, since
+Latin-1 has no byte for most characters).
+
+To tell a binary file from text, look for a zero byte near the start.
+Text almost never contains one, and nearly every binary format does:
+
+```olang
+fn is_binary(b) = contains(bytes.to_list(bytes.slice(b, 0, 8000)), 0)
+println(is_binary(bytes.from_list([137, 80, 78, 71, 0, 0])))   // true
+println(bytes.to_string_lossy(bytes.from_list([104, 255, 105])))   // h�i
+println(unwrap(bytes.decode(unwrap(str.encode("café", "utf-16le")), "utf-16le")))   // café
 ```
 
 ## `compress` — gzip, brotli and deflate
@@ -1808,6 +1830,10 @@ a `Bool`, and the path functions `join`, `dirname`, `basename`, and
 | Durability | `sync(path)`: a file's bytes (fsync), or a folder's entries, on the disk before it returns |
 | Watching | `watch` `watch_next` `watch_close`: a folder's whole tree followed as it changes |
 | <a id="fs-abs_path"></a><a id="fs-real_path"></a>Paths | `join(parts)` `dirname` `basename` `ext`: pure string surgery, answering the string itself. `abs_path` answers a **`Result`** (`Ok(path)`): it resolves against the current directory, which can fail, and normalizes `.`/`..` without requiring the file to exist. `real_path` (a `Result` too) also resolves symbolic links (`/tmp/x` is `/private/tmp/x` on macOS); for a path that does not exist yet it makes the nearest existing folder real and keeps the rest |
+
+`fs.read_file(path, #{"lossy": true})` reads a file that is not all
+valid UTF-8, and `#{"encoding": "latin1"}` one in another encoding
+(see [text that isn't UTF-8](#bytes--binary-data)).
 
 <a id="fs-trash"></a>`fs.trash(path)` moves a file or a folder to the Trash as the Finder's
 Move to Trash does (macOS's NSFileManager) — never a permanent delete —
