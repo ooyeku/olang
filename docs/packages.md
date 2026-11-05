@@ -1043,8 +1043,9 @@ olang inspect ./tool --against . # compare the binary to a source tree
 olang inspect ./tool -o dir/     # extract source, manifest, and lockfile
 ```
 
-The `--verify` checksum covers the source, the compiled **AST** (the bytes
-that run), the manifest, and the lockfile, so verification fails if the
+The `--verify` checksum covers the olang the binary was built for (its
+version, AST format and commit), the source, the compiled **AST** (the
+bytes that run), the manifest, the lockfile and an application's files, so verification fails if the
 executed program or the capability grant is changed, not only the source
 text. Both `--verify` and `--against` also confirm that the embedded
 source **parses to the AST that runs**, so `--source` shows what runs: a
@@ -1053,6 +1054,23 @@ as `DIVERGES`. `--against <dir>` compares the embedded source, manifest,
 and lockfile to a checkout, reports each file as match, differ or
 missing, and exits non-zero on any mismatch: it answers whether the
 binary was built from that source tree.
+
+### The runtime it runs on
+
+A built program's AST is read back by the runtime that runs it, and only
+the olang that wrote it is sure to read it the same way. So the record
+names that olang: its version, the format of its AST, and the commit it
+was built from. At start a built program compares them with the runtime
+it finds itself on, before it reads the program, and refuses to start
+when any of them differs, with exit code 65 and a message on standard
+error that says which. A plain `olang build` copies the runtime that
+builds it, so the two always agree; what this catches is a payload built
+with `--payload` (an application's `app.olb`) put beside another
+runtime. The commit is compared only when both olangs know theirs (an
+olang built outside a git checkout does not). A payload built before
+the record named an AST format is refused too: rebuild it. `olang
+inspect` says whether the olang running it is the payload's runtime
+(`runs here:`).
 
 A transparent binary is also a software bill of materials, since it
 records its exact sources and dependency versions, and it enforces the

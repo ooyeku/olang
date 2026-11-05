@@ -263,6 +263,13 @@ fn build_info(manifest_dir: &std::path::Path) {
         }
     }
     println!("cargo:rustc-env=OLANG_BUILD_COMMIT={commit}");
+    // The AST's shape, as a built program's payload carries it (serde JSON
+    // of src/ast.rs's types): any change to that file changes the format,
+    // and a runtime refuses a payload whose format is not its own (OL-443).
+    let ast_rs = manifest_dir.join("src").join("ast.rs");
+    println!("cargo:rerun-if-changed={}", ast_rs.display());
+    let ast_format = fs::read(&ast_rs).map(|b| hash16(&b)).unwrap_or_default();
+    println!("cargo:rustc-env=OLANG_AST_FORMAT={ast_format}");
     println!("cargo:rustc-env=OLANG_BUILD_BRANCH={branch}");
     println!(
         "cargo:rustc-env=OLANG_BUILD_DIRTY={}",

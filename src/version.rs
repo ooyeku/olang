@@ -11,6 +11,9 @@ pub const fn current() -> &'static str {
 
 /// The commit the binary was built from (build.rs; empty outside a checkout).
 pub const BUILD_COMMIT: &str = env!("OLANG_BUILD_COMMIT");
+/// The shape of the AST a built program's payload carries: a hash of
+/// src/ast.rs, so it changes whenever the types the payload serialises do.
+pub const AST_FORMAT: &str = env!("OLANG_AST_FORMAT");
 /// The branch checked out then.
 pub const BUILD_BRANCH: &str = env!("OLANG_BUILD_BRANCH");
 /// `true` when the checkout had uncommitted changes to tracked files then,

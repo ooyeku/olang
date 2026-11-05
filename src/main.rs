@@ -726,6 +726,13 @@ fn run() -> i32 {
     // after the runtime. Run that and nothing else — checked before any
     // CLI parsing, so the bundled tool's own arguments reach it intact.
     if let Some(bundle) = embedded_program() {
+        let bundle = match bundle {
+            Ok(b) => b,
+            Err(why) => {
+                eprintln!("{why}");
+                return EXIT_PAYLOAD_MISMATCH;
+            }
+        };
         let logger = init_logger();
         let _ = initialize_parallelization(olang::parallel::parallelism_from_env());
         set_parallel_threshold(10_000);
@@ -2652,7 +2659,12 @@ const OLANG_META_MAGIC: &[u8; 8] = b"oLaNgMeT";
 /// which bytes the digest covers, so reading a future layout under
 /// today's rules would print "verified" about a check that never
 /// examined what the newer format binds.
-const OLANG_META_FORMAT: u32 = 3;
+const OLANG_META_FORMAT: u32 = 4;
+
+/// The exit code of a built program whose payload another runtime made
+/// (another olang version, AST format or commit): it is refused, never
+/// guessed at (OL-443).
+const EXIT_PAYLOAD_MISMATCH: i32 = 65;
 
 /// The transparency record a built binary carries alongside its program:
 /// enough for `olang inspect` to reproduce, verify, and reason about the
@@ -2663,12 +2675,22 @@ struct BundleMeta {
     format: u32,
     /// The olang that built this binary.
     olang_version: String,
+    /// Format 4: the shape of the AST it carries (`olang::version::AST_FORMAT`)
+    /// and the commit of the olang that built it. A runtime runs a payload
+    /// only when the version, this and (when both know it) the commit are
+    /// its own.
+    #[serde(default)]
+    ast_format: String,
+    #[serde(default)]
+    build_commit: String,
     /// The path the source was built from (basename context only).
     source_path: String,
     /// sha256 (hex) of the embedded source bytes alone. Kept for a
     /// human-legible per-file checksum and for reading pre-`digest` bundles.
     sha256: String,
-    /// sha256 (hex) over the *whole* transparency payload. Format 3:
+    /// sha256 (hex) over the *whole* transparency payload. Format 4: the
+    /// runtime identity (version, AST format, commit) ‖ source ‖ AST ‖
+    /// manifest ‖ lockfile ‖ the application section's sha256. Format 3:
     /// source ‖ AST ‖ manifest ‖ lockfile — binds the executed AST, so a
     /// swapped program is caught. Format 2: source ‖ manifest ‖ lockfile
     /// (no AST; verified with `payload_digest_v2`). Empty on pre-digest
@@ -2682,7 +2704,7 @@ struct BundleMeta {
     #[serde(default)]
     lockfile: Option<String>,
     /// The operating system the binary was built on (`std::env::consts::OS`,
-    /// e.g. "macos", "linux"). Informational provenance — like
+    /// e.g. "macos", "linux"). Informational provenance: unlike
     /// `olang_version`, it is not part of the integrity digest. Empty when
     /// read from a binary built before this field existed. A native `olang
     /// build` binary is platform-specific; this tells you which platform if
@@ -2840,6 +2862,96 @@ fn payload_digest(
     ])
 }
 
+/// The format-4 digest: the runtime identity the payload was built for,
+/// then everything format 3 binds, then the application section's sha256
+/// (empty for a plain build). Binding the version means a payload cannot
+/// be relabelled for another runtime and still verify.
+fn payload_digest_v4(meta: &BundleMeta, source: &[u8], ast: &[u8]) -> String {
+    let app = meta.app.as_ref().map(|a| a.sha256.as_str()).unwrap_or("");
+    digest_hex(&[
+        b"olang-payload-4",
+        meta.olang_version.as_bytes(),
+        meta.ast_format.as_bytes(),
+        meta.build_commit.as_bytes(),
+        source,
+        ast,
+        meta.manifest.as_deref().unwrap_or("").as_bytes(),
+        meta.lockfile.as_deref().unwrap_or("").as_bytes(),
+        app.as_bytes(),
+    ])
+}
+
+/// The digest a bundle's record should carry, by its format, and what it
+/// covers.
+fn digest_for(meta: &BundleMeta, source: &[u8], ast: &[u8]) -> (String, &'static str) {
+    if meta.format >= 4 {
+        (
+            payload_digest_v4(meta, source, ast),
+            "runtime version + AST format + commit + source + AST + manifest + lockfile + app files",
+        )
+    } else if meta.format == 3 {
+        (
+            payload_digest(
+                source,
+                ast,
+                meta.manifest.as_deref(),
+                meta.lockfile.as_deref(),
+            ),
+            "source + AST + manifest + lockfile",
+        )
+    } else {
+        (
+            payload_digest_v2(source, meta.manifest.as_deref(), meta.lockfile.as_deref()),
+            "source + manifest + lockfile (format 2: AST unbound)",
+        )
+    }
+}
+
+/// Why this runtime must not run a payload, if it must not: another olang
+/// version, another AST format, or another commit (when both know theirs).
+/// A payload with no record (an old rung-B bundle) carries an AST of no
+/// known shape, and one older than format 4 says no AST format: both are
+/// refused too. A rung-A bundle is source, parsed here, and always runs.
+fn runtime_mismatch(meta: Option<&BundleMeta>) -> Option<String> {
+    let Some(m) = meta else {
+        return Some("it was built by an olang too old to say which".to_string());
+    };
+    if m.olang_version != olang::VERSION {
+        return Some(format!(
+            "it was built by olang {}, and this runtime is olang {}",
+            m.olang_version,
+            olang::VERSION
+        ));
+    }
+    if m.format < 4 {
+        return Some(format!(
+            "it was built by an olang {} from before payloads named their AST format",
+            m.olang_version
+        ));
+    }
+    if m.ast_format != olang::version::AST_FORMAT {
+        return Some(format!(
+            "its program is in AST format {}, and this runtime reads {}",
+            if m.ast_format.is_empty() { "(none)" } else { &m.ast_format },
+            olang::version::AST_FORMAT
+        ));
+    }
+    let here = olang::version::BUILD_COMMIT;
+    if !m.build_commit.is_empty() && !here.is_empty() && m.build_commit != here {
+        return Some(format!(
+            "it was built by olang {} at commit {}, and this runtime is commit {}",
+            m.olang_version,
+            short_commit(&m.build_commit),
+            short_commit(here)
+        ));
+    }
+    None
+}
+
+fn short_commit(c: &str) -> &str {
+    &c[..c.len().min(12)]
+}
+
 /// The pre-0.59-hardening digest layout (source ‖ manifest ‖ lockfile, no
 /// AST), kept so `--verify` still validates format-2 bundles built before
 /// the AST was bound in. New builds are format 3.
@@ -2882,16 +2994,82 @@ enum Bundle {
 /// If this executable was produced by `olang build`, return the program
 /// appended to it — the pre-parsed AST (rung B) when present, else the raw
 /// source (rung A). `None` for the plain `olang` binary.
-fn embedded_program() -> Option<Bundle> {
+fn embedded_program() -> Option<Result<Bundle, String>> {
     let exe = std::env::current_exe().ok()?;
-    // to run: a section that says each file's sum is checked a file at a
-    // time as the program reads them, not whole before it starts
-    let b = read_bundle_with(&exe, false)
-        .or_else(|| app_sidecar(&exe).and_then(|p| read_bundle_with(&p, false)));
-    if b.is_some() {
-        olang::boot_trace::mark("the application's program read and checked");
+    let sidecar = app_sidecar(&exe);
+    let candidates = std::iter::once(exe).chain(sidecar);
+    for at in candidates {
+        // The payload's record is read, and its runtime checked, before
+        // its AST is: an AST another runtime wrote may not even parse
+        // here, and must never be run as if it meant what it meant there.
+        match bundle_record(&at) {
+            None => continue,
+            Some(BundleRecord::Source) => {}
+            Some(BundleRecord::Ast(meta)) => {
+                if let Some(why) = runtime_mismatch(meta.as_ref()) {
+                    return Some(Err(format!(
+                        "olang: refusing to run {}: {}. Rebuild it with this olang \
+                         (`olang build`), or run it with the olang that built it.",
+                        at.display(),
+                        why
+                    )));
+                }
+            }
+        }
+        // to run: a section that says each file's sum is checked a file at
+        // a time as the program reads them, not whole before it starts
+        if let Some(b) = read_bundle_with(&at, false) {
+            olang::boot_trace::mark("the application's program read and checked");
+            return Some(Ok(b));
+        }
     }
-    b
+    None
+}
+
+/// What a bundle's footer says before its program is read.
+enum BundleRecord {
+    /// Rung A: source, parsed by whichever runtime runs it.
+    Source,
+    /// An AST payload, with its transparency record when it has one
+    /// (rung B has none).
+    Ast(Option<BundleMeta>),
+}
+
+/// The kind of bundle `path` ends with, and its record: only the footer
+/// and the record are read. `None` when it carries no bundle, or its
+/// record does not read.
+fn bundle_record(path: &std::path::Path) -> Option<BundleRecord> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    let total = f.metadata().ok()?.len();
+    if total < 16 {
+        return None;
+    }
+    f.seek(SeekFrom::End(-8)).ok()?;
+    let mut magic = [0u8; 8];
+    f.read_exact(&mut magic).ok()?;
+    if &magic == OLANG_BUNDLE_MAGIC {
+        return Some(BundleRecord::Source);
+    }
+    if &magic == OLANG_AST_MAGIC {
+        return Some(BundleRecord::Ast(None));
+    }
+    if &magic != OLANG_META_MAGIC || total < 32 {
+        return None;
+    }
+    f.seek(SeekFrom::End(-32)).ok()?;
+    let mut lens = [0u8; 24];
+    f.read_exact(&mut lens).ok()?;
+    let meta_len = u64::from_le_bytes(lens[16..24].try_into().ok()?);
+    if meta_len == 0 || meta_len.checked_add(32)? > total {
+        return None;
+    }
+    f.seek(SeekFrom::End(-(32 + meta_len as i64))).ok()?;
+    let mut buf = vec![0u8; meta_len as usize];
+    f.read_exact(&mut buf).ok()?;
+    let meta: BundleMeta = serde_json::from_slice(&buf).ok()?;
+    validate_meta(&meta)?;
+    Some(BundleRecord::Ast(Some(meta)))
 }
 
 /// A macOS application's program, beside its executable: a signed
@@ -3390,6 +3568,17 @@ fn inspect_binary(args: &InspectArgs) -> i32 {
     match &meta {
         Some(m) => {
             println!("  built with:   olang {}", m.olang_version);
+            if m.format >= 4 {
+                println!(
+                    "  runtime:      AST format {}, commit {}",
+                    m.ast_format,
+                    if m.build_commit.is_empty() { "(unknown)" } else { short_commit(&m.build_commit) }
+                );
+            }
+            match runtime_mismatch(Some(m)) {
+                None => println!("  runs here:    yes, this olang is its runtime"),
+                Some(why) => println!("  runs here:    no: {why}"),
+            }
             println!("  built from:   {}", m.source_path);
             // Build host platform: a native binary only runs on a matching
             // OS/arch, so this flags a binary that turned up off-platform.
@@ -3438,26 +3627,7 @@ fn inspect_binary(args: &InspectArgs) -> i32 {
             let digest_ok = if m.digest.is_empty() {
                 true
             } else {
-                let (actual, covers) = if m.format >= 3 {
-                    (
-                        payload_digest(
-                            source.as_bytes(),
-                            ast_bytes,
-                            m.manifest.as_deref(),
-                            m.lockfile.as_deref(),
-                        ),
-                        "source + AST + manifest + lockfile",
-                    )
-                } else {
-                    (
-                        payload_digest_v2(
-                            source.as_bytes(),
-                            m.manifest.as_deref(),
-                            m.lockfile.as_deref(),
-                        ),
-                        "source + manifest + lockfile (format 2: AST unbound)",
-                    )
-                };
+                let (actual, covers) = digest_for(m, source.as_bytes(), ast_bytes);
                 let ok = actual == m.digest;
                 println!(
                     "  digest:       {}  [{}]",
@@ -3560,23 +3730,8 @@ fn inspect_json(
     let sha_ok = sha256_hex(source.as_bytes()) == m.sha256;
     let digest_ok = if m.digest.is_empty() {
         None
-    } else if m.format >= 3 {
-        Some(
-            payload_digest(
-                source.as_bytes(),
-                ast_bytes,
-                m.manifest.as_deref(),
-                m.lockfile.as_deref(),
-            ) == m.digest,
-        )
     } else {
-        Some(
-            payload_digest_v2(
-                source.as_bytes(),
-                m.manifest.as_deref(),
-                m.lockfile.as_deref(),
-            ) == m.digest,
-        )
+        Some(digest_for(m, source.as_bytes(), ast_bytes).0 == m.digest)
     };
     let faithful = program.map(|p| source_matches_ast(source, p));
     let verified = sha_ok && digest_ok != Some(false) && faithful != Some(false);
@@ -3592,6 +3747,9 @@ fn inspect_json(
             "binary": binary,
             "bundle": m.format,
             "olang": m.olang_version,
+            "ast_format": m.ast_format,
+            "build_commit": m.build_commit,
+            "runs_here": runtime_mismatch(Some(&m)).is_none(),
             "source_path": m.source_path,
             "built_os": m.built_os,
             "built_arch": m.built_arch,
@@ -3792,25 +3950,23 @@ fn build_executable(
     } else {
         None
     };
-    let meta = BundleMeta {
+    let mut meta = BundleMeta {
         app: app_section.as_ref().map(|(bytes, count)| AppMeta {
             len: bytes.len() as u64,
             sha256: sha256_hex(bytes),
             entry: source_abs.to_string_lossy().to_string(),
             files: *count,
         }),
-        format: 3,
+        format: OLANG_META_FORMAT,
         olang_version: olang::VERSION.to_string(),
+        ast_format: olang::version::AST_FORMAT.to_string(),
+        build_commit: olang::version::BUILD_COMMIT.to_string(),
         source_path: source_path.to_string_lossy().to_string(),
         sha256: sha256_hex(src.as_bytes()),
-        // The digest binds the AST — the bytes that actually execute — so a
-        // swapped program cannot pass `--verify` behind an intact source.
-        digest: payload_digest(
-            src.as_bytes(),
-            &ast_json,
-            manifest_text.as_deref(),
-            lockfile_text.as_deref(),
-        ),
+        // Filled below, over the finished record: the digest binds the
+        // runtime identity and the AST, the bytes that actually execute,
+        // so a swapped or relabelled program cannot pass `--verify`.
+        digest: String::new(),
         manifest: manifest_text,
         lockfile: lockfile_text,
         // The build host's platform: a native binary only runs on a matching
@@ -3823,6 +3979,7 @@ fn build_executable(
             .filter(|p| !p.functions.is_empty())
             .and_then(|p| toml::to_string(&p).ok()),
     };
+    meta.digest = payload_digest_v4(&meta, src.as_bytes(), &ast_json);
     let meta_json =
         serde_json::to_vec(&meta).map_err(|e| anyhow::anyhow!("serialize meta: {}", e))?;
 

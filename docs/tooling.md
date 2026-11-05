@@ -134,6 +134,7 @@ consumer ignores fields it does not know. The documents:
 | `1` | Findings or failures: a runtime error the program did not handle, `olang check` problems, a failed test, a failed build, `olang fmt --check` or `olang fix --check` with something to change, a bench row past its baseline, an `olang doctor` finding, `olang test --fail-if-none` with no test block run |
 | `2` | Misuse: an unknown flag or command, a bad flag value, a path that does not exist, a `--deny` or `OLANG_DENY` olang does not know, an output file that cannot be written |
 | `3` | The tier guard: a run keeping tier statistics with `OLANG_TIER_GUARD=1` in which a pinned-native function fell back |
+| `65` | A built program refused to start because another olang made its payload: another version, AST format or commit ([The runtime it runs on](packages.md#the-runtime-it-runs-on)) |
 | `102` | `--verify-tiers` found a native call whose result differs from the bytecode VM's |
 | any | A program's own `os.exit(n)` |
 
