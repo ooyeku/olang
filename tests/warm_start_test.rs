@@ -127,13 +127,35 @@ fn a_built_binary_carries_and_replays_its_warm_profile() {
 
     let sidecar_run = run(&script, &warm_dir);
 
+    // a build carries a profile only when asked (`--warm FILE`): the
+    // profile the run left is not taken on its own (OL-444)
+    let plain = base.join("plainbin");
+    let out = Command::new(olang())
+        .arg("build")
+        .arg(&script)
+        .arg("-o")
+        .arg(&plain)
+        .env("OLANG_WARM_DIR", &warm_dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let hay = String::from_utf8_lossy(&std::fs::read(&plain).unwrap()).to_string();
+    assert!(!hay.contains("name = \\\"hot\\\""), "no profile without --warm");
+    let profile = std::fs::read_dir(&warm_dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.extension().is_some_and(|x| x == "toml"))
+        .expect("the run left a profile");
+
     let bin = base.join("hotbin");
     let out = Command::new(olang())
         .arg("build")
         .arg(&script)
         .arg("-o")
         .arg(&bin)
-        .env("OLANG_WARM_DIR", &warm_dir)
+        .arg("--warm")
+        .arg(&profile)
         .output()
         .unwrap();
     assert!(

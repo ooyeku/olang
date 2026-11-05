@@ -405,6 +405,13 @@ enum Commands {
         /// (signable) runtime in Contents/MacOS
         #[arg(long, value_name = "FILE")]
         payload: Option<PathBuf>,
+        /// Ship this tier profile (a `.warm` file a run of the program
+        /// left, `ovm::warm`), so the built program's first run starts
+        /// with its hot functions compiled. Without it nothing of the
+        /// build machine's runs goes in, and the same sources build the
+        /// same bytes
+        #[arg(long, value_name = "FILE")]
+        warm: Option<PathBuf>,
     },
 
     /// Inspect a built binary: embedded source, manifest, capabilities, provenance
@@ -1196,12 +1203,13 @@ fn run() -> i32 {
             output,
             app,
             payload,
+            warm,
         }) => {
             let (out, only) = match payload {
                 Some(p) => (Some(p), true),
                 None => (output, false),
             };
-            match build_executable(&file, out.as_deref(), app, only) {
+            match build_executable(&file, out.as_deref(), app, only, warm.as_deref()) {
                 Ok(out) => {
                     println!("built {}", out);
                     0
@@ -2740,10 +2748,12 @@ struct AppMeta {
     files: usize,
 }
 
-/// An application's files (path, bytes) and its dependency map.
+/// An application's files (virtual path, bytes), its dependency map
+/// (virtual roots) and its entry's virtual path.
 type AppFiles = (
     Vec<(PathBuf, Vec<u8>)>,
     std::collections::HashMap<String, PathBuf>,
+    PathBuf,
 );
 
 /// The files an application carries and its dependency map: every module
@@ -2813,13 +2823,27 @@ fn collect_app(
             }
         }
     }
+    // Every path the application carries is virtual: a package's files
+    // under its name, wherever the build machine kept it (the checkout,
+    // OLANG_HOME's shelf), so the same sources build the same bytes.
+    let entry_dir = root
+        .clone()
+        .or_else(|| source_abs.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_default();
+    let layout = olang::vfs::virtual_layout(&deps, &entry_dir);
     let mut files = Vec::new();
     for p in paths {
         let bytes =
             std::fs::read(&p).map_err(|e| anyhow::anyhow!("reading {}: {}", p.display(), e))?;
-        files.push((p, bytes));
+        files.push((olang::vfs::virtualize(&layout, &p, &entry_dir), bytes));
     }
-    Ok((files, deps))
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    let virtual_deps = deps
+        .iter()
+        .map(|(name, real)| (name.clone(), olang::vfs::virtualize(&layout, real, &entry_dir)))
+        .collect();
+    let entry = olang::vfs::virtualize(&layout, source_abs, &entry_dir);
+    Ok((files, virtual_deps, entry))
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -3895,7 +3919,20 @@ fn build_executable(
     output_arg: Option<&std::path::Path>,
     app: bool,
     payload_only: bool,
+    warm_file: Option<&std::path::Path>,
 ) -> anyhow::Result<String> {
+    // A tier profile to ship (`--warm FILE`): checked as one, then carried
+    // verbatim.
+    let warm = match warm_file {
+        None => None,
+        Some(p) => {
+            let text = std::fs::read_to_string(p)
+                .map_err(|e| anyhow::anyhow!("--warm {}: {}", p.display(), e))?;
+            toml::from_str::<olang::ovm::warm::WarmProfile>(&text)
+                .map_err(|e| anyhow::anyhow!("--warm {}: not a tier profile: {}", p.display(), e))?;
+            Some(text)
+        }
+    };
     let src = std::fs::read_to_string(source_path)
         .map_err(|e| anyhow::anyhow!("cannot read {}: {}", source_path.display(), e))?;
     // Parse-check up front (a broken program is never shipped) and keep the
@@ -3944,24 +3981,35 @@ fn build_executable(
     // An application carries its modules and assets (a section before
     // the source); a plain build, one file.
     let app_section = if app {
-        let (files, deps) = collect_app(&source_abs, &program)?;
+        let (files, deps, entry) = collect_app(&source_abs, &program)?;
         let count = files.len();
-        Some((olang::vfs::encode(&files, &deps), count))
+        Some((olang::vfs::encode(&files, &deps), count, entry))
     } else {
         None
     };
     let mut meta = BundleMeta {
-        app: app_section.as_ref().map(|(bytes, count)| AppMeta {
+        app: app_section.as_ref().map(|(bytes, count, entry)| AppMeta {
             len: bytes.len() as u64,
             sha256: sha256_hex(bytes),
-            entry: source_abs.to_string_lossy().to_string(),
+            entry: entry.to_string_lossy().to_string(),
             files: *count,
         }),
         format: OLANG_META_FORMAT,
         olang_version: olang::VERSION.to_string(),
         ast_format: olang::version::AST_FORMAT.to_string(),
         build_commit: olang::version::BUILD_COMMIT.to_string(),
-        source_path: source_path.to_string_lossy().to_string(),
+        // where the source sits in its package (or its name alone): never
+        // the build machine's absolute path
+        source_path: olang::pkg::manifest::Manifest::find_root(&source_abs)
+            .and_then(|r| source_abs.strip_prefix(&r).ok().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| {
+                source_abs
+                    .file_name()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| source_path.to_path_buf())
+            })
+            .to_string_lossy()
+            .to_string(),
         sha256: sha256_hex(src.as_bytes()),
         // Filled below, over the finished record: the digest binds the
         // runtime identity and the AST, the bytes that actually execute,
@@ -3973,11 +4021,10 @@ fn build_executable(
         // OS/arch, so `olang inspect` can flag one that wandered off-platform.
         built_os: std::env::consts::OS.to_string(),
         built_arch: std::env::consts::ARCH.to_string(),
-        // Ship the tier knowledge a prior run of this source left on the
-        // build machine (run once, then build = a PGO artifact).
-        warm: olang::ovm::warm::load(&src)
-            .filter(|p| !p.functions.is_empty())
-            .and_then(|p| toml::to_string(&p).ok()),
+        // The tier profile named by `--warm FILE`, and nothing else: the
+        // profile a run left on this machine would make two builds of the
+        // same sources differ.
+        warm,
     };
     meta.digest = payload_digest_v4(&meta, src.as_bytes(), &ast_json);
     let meta_json =
@@ -3997,7 +4044,7 @@ fn build_executable(
         // The source travels as a feature, not a debugging convenience:
         // an olang binary is open by construction.
         let mut f = std::fs::OpenOptions::new().append(true).open(&output)?;
-        if let Some((bytes, _)) = &app_section {
+        if let Some((bytes, _, _)) = &app_section {
             f.write_all(bytes)?;
         }
         f.write_all(src.as_bytes())?;

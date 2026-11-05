@@ -1678,7 +1678,13 @@ dependency's — with each package's `olang.toml` and the files it lists
 under `assets` (`assets = ["fonts", "data/index.json"]`). The
 application runs them from itself, resolving its `use`s exactly as it
 did on the build machine, and reads its assets with
-`asset.read(package, path)`. The trade for zero-dependency distribution is
+`asset.read(package, path)`. A build is reproducible: the same sources
+build the same bytes on any machine, under any home folder and from any
+place on disk. The application keeps each package's files under the
+package's name (`/__olang_app__/dep/lib/words.ol`), not under the
+folders they had on the build machine, and that is the path its errors
+and stack traces name. The tier profile a run leaves (see
+[ovm.md](ovm.md)) goes in only when `--warm FILE` names it. The trade for zero-dependency distribution is
 size: the binary carries the runtime, so it is tens of megabytes (much
 smaller from a `--release` olang than a debug one). On macOS the
 appended data invalidates any code signature; re-sign the output if you
