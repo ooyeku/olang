@@ -147,9 +147,9 @@ fn float_arithmetic_and_mixed() {
 
 #[test]
 fn float_equality_matches_interpreter() {
-    let src = "fn same(a, b) = a == b";
-    assert_same(src, "same", &[Value::Float(1e-17), Value::Float(0.0)]);
-    assert_same(src, "same", &[Value::Float(0.5), Value::Float(0.5)]);
+    let src = "fn feq(a, b) = a == b";
+    assert_same(src, "feq", &[Value::Float(1e-17), Value::Float(0.0)]);
+    assert_same(src, "feq", &[Value::Float(0.5), Value::Float(0.5)]);
 }
 
 #[test]
@@ -831,8 +831,8 @@ fn json_row(i: i64) -> Value {
     r.insert(
         "owner".to_string(),
         Value::Struct {
-            type_name: "JsonObject".to_string(),
-            fields: Arc::new(owner),
+            type_name: "JsonObject".into(),
+            fields: Arc::new(owner).into(),
         },
     );
     r.insert("due".to_string(), Value::Unit);
@@ -840,8 +840,8 @@ fn json_row(i: i64) -> Value {
         r.insert(format!("f{k}"), Value::Integer(k));
     }
     Value::Struct {
-        type_name: "JsonObject".to_string(),
-        fields: Arc::new(r),
+        type_name: "JsonObject".into(),
+        fields: Arc::new(r).into(),
     }
 }
 
@@ -865,7 +865,7 @@ fn a_parsed_json_object_crosses_wrapped_and_reads_as_the_interpreter_does() {
                 type_name: tb,
             },
         ) => {
-            assert!(std::sync::Arc::ptr_eq(a, b));
+            assert!(olang::ast::StructFields::ptr_eq(a, b));
             assert_eq!(ta, tb);
         }
         _ => panic!("a JsonObject must come back a JsonObject"),
@@ -1080,7 +1080,7 @@ fn ovm_values_compare_collections_by_contents() {
         f.insert("a".into(), Value::Integer(1));
         f.insert("m".into(), small());
         Value::Struct {
-            type_name: t.to_string(),
+            type_name: t.into(),
             fields: f.into(),
         }
     };

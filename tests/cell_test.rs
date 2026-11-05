@@ -185,6 +185,75 @@ fn a_cell_nested_inside_a_sent_value_is_also_refused() {
 }
 
 #[test]
+fn a_cell_a_closure_captured_is_refused_at_the_send() {
+    // OL-429: the closure passed the check and failed on its first call
+    // in the receiving task.
+    for source in [
+        "fn make() = {\n    let c = cell(0)\n    () => cell.get(c)\n}\nlet ch = chan.new()\nchan.send(ch, make())\n",
+        "fn make() = {\n    let c = cell(0)\n    let g = () => cell.get(c)\n    (x) => g() + x\n}\nlet ch = chan.new()\nchan.send(ch, [1, make()])\n",
+        "fn make() = {\n    let c = cell(0)\n    () => cell.get(c)\n}\nfn go(ch) = chan.send(ch, #{ \"f\": make() })\nlet ch = chan.new()\nfor i in 0..3 { go(ch) }\n",
+    ] {
+        let e = err(source);
+        assert!(
+            e.contains("a Cell captured by a closure cannot be sent through a channel"),
+            "{source}: {e}"
+        );
+    }
+    // A closure capturing no cell still crosses.
+    let out = run("fn make(n) = (x) => x + n\n\
+                   let ch = chan.new()\n\
+                   chan.send(ch, make(2))\n\
+                   show(unwrap(chan.recv(ch))(40))\n")
+    .unwrap();
+    assert_eq!(out, "42");
+}
+
+#[test]
+fn a_send_costs_the_same_for_any_size_while_no_cell_is_alive() {
+    // OL-429: every send walked the whole message looking for a cell, so
+    // a round trip with a million-entry map cost about 3 ms. With no
+    // confined value alive in the process nothing can hold one, and the
+    // walk is skipped. Its own process, so no other test's cell counts.
+    let program = r#"
+fn big(n) = fold(range(0, n), #{}, (m, i) => map_set(m, to_string(i), i))
+fn per_send_us(ch, m, reps) = {
+    let t0 = time.monotonic_ms()
+    for r in range(0, reps) { chan.send(ch, m) }
+    let us = (time.monotonic_ms() - t0) * 1000.0 / reps
+    for r in range(0, reps) { chan.recv(ch) }
+    us
+}
+let ch = chan.new()
+let small = per_send_us(ch, big(10), 200)
+let large = per_send_us(ch, big(1000000), 200)
+let c = cell(0)
+let walked = per_send_us(ch, big(1000000), 5)
+println(`${small} ${large} ${walked}`)
+"#;
+    let dir = std::env::temp_dir().join(format!("olang-send-walk-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("main.ol");
+    std::fs::write(&file, program).unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_olang"))
+        .arg(&file)
+        .output()
+        .expect("run olang");
+    let _ = std::fs::remove_dir_all(&dir);
+    let text = String::from_utf8_lossy(&out.stdout);
+    let us: Vec<f64> = text
+        .split_whitespace()
+        .map(|w| w.parse().expect("a number"))
+        .collect();
+    let [small, large, walked] = us[..] else {
+        panic!("unexpected output: {text}")
+    };
+    // A million entries walked take hundreds of microseconds at the
+    // least; skipped, a send is a few.
+    assert!(large < 50.0 && large < small * 10.0 + 20.0, "{text}");
+    assert!(walked > large * 5.0, "the walk with a cell alive: {text}");
+}
+
+#[test]
 fn sending_a_cells_contents_is_the_supported_route() {
     let out = run("let ch = chan.new()\n\
                    let c = cell(11)\n\

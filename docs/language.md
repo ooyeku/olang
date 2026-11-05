@@ -673,8 +673,16 @@ equals another only when it holds the same cell (`[a] == [a]` is true,
 **A cell belongs to the thread that created it.** Reading or writing
 one from another thread is an error, and sending one through a channel
 is refused at the send, so two threads never reach the same mutable
-location. A cell created *inside* a task, and used only there, is
-ordinary: the rule is about crossing, not about tasks.
+location. That includes a cell inside the message, however deep, and
+one a closure in the message captured (`let c = cell(0)` in a function,
+then `() => cell.get(c)` sent to a task). A cell created *inside* a
+task, and used only there, is ordinary: the rule is about crossing, not
+about tasks.
+
+Looking for a cell costs nothing while no cell is alive in the program:
+then no message can hold one, and a send does not look inside it, so
+sending a million-entry map costs what sending a small one does. Once a
+cell exists, each send looks through the message for one.
 
 ```olang
 let readings = cell([])

@@ -20,8 +20,8 @@ pub fn create_toml_module() -> Value {
         create_builtin_function("is_valid", 1),
     );
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: std::sync::Arc::new(module),
+        type_name: "Module".into(),
+        fields: std::sync::Arc::new(module).into(),
     }
 }
 

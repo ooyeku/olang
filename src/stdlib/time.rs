@@ -34,8 +34,8 @@ pub fn create_time_module() -> Value {
     module.insert("sleep".to_string(), create_builtin_function("sleep", 1));
 
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: std::sync::Arc::new(module),
+        type_name: "Module".into(),
+        fields: std::sync::Arc::new(module).into(),
     }
 }
 

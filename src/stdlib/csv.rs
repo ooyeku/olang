@@ -110,8 +110,8 @@ pub fn create_csv_module() -> Value {
     );
 
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: std::sync::Arc::new(module),
+        type_name: "Module".into(),
+        fields: std::sync::Arc::new(module).into(),
     }
 }
 
@@ -1223,8 +1223,8 @@ mod tests {
 
     fn struct_val(type_name: &str, fields: crate::ast::ValueMap) -> Value {
         Value::Struct {
-            type_name: type_name.to_string(),
-            fields: std::sync::Arc::new(fields),
+            type_name: type_name.to_string().into(),
+            fields: std::sync::Arc::new(fields).into(),
         }
     }
 

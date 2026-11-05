@@ -91,8 +91,8 @@ pub fn create_json_module() -> Value {
     );
 
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: std::sync::Arc::new(module),
+        type_name: "Module".into(),
+        fields: std::sync::Arc::new(module).into(),
     }
 }
 
@@ -293,6 +293,10 @@ impl serde::Serialize for AsJson<'_> {
 
 fn serialize_nested<S: serde::Serializer>(value: &Value, serializer: S) -> Result<S::Ok, S::Error> {
     use serde::ser::{Error, SerializeMap, SerializeSeq};
+    // pmap, pvec, psorted: written exactly as the Map or List they equal
+    if let Some(p) = crate::stdlib::persistent::of(value) {
+        return serialize_nested(&p.to_plain(), serializer);
+    }
     match value {
         Value::List(items) | Value::Tuple(items) => {
             let mut seq = serializer.serialize_seq(Some(items.len()))?;
@@ -302,7 +306,8 @@ fn serialize_nested<S: serde::Serializer>(value: &Value, serializer: S) -> Resul
             seq.end()
         }
         // Structs, anonymous objects, and maps are all JSON objects.
-        Value::Struct { fields, .. } | Value::Map(fields) => {
+        Value::Struct { .. } | Value::Map(_) => {
+            let fields = value.record_fields().expect("a map or struct");
             // A `db` connection's handle is its owner, not its data: the
             // connection writes as the id and path it always did.
             // in the map's (the record's) own order
@@ -981,8 +986,8 @@ pub(crate) fn json_to_olang_value(json_value: serde_json::Value) -> Result<Value
                 fields.insert(key, json_to_olang_value(value)?);
             }
             Value::Struct {
-                type_name: "JsonObject".to_string(),
-                fields: std::sync::Arc::new(fields),
+                type_name: "JsonObject".into(),
+                fields: std::sync::Arc::new(fields).into(),
             }
         }
     })
@@ -1007,6 +1012,10 @@ fn value_to_json_at(value: &Value, depth: usize) -> Result<serde_json::Value, Js
         });
     }
     let olang_value_to_json = |v: &Value| value_to_json_at(v, depth + 1);
+    // pmap, pvec, psorted: written exactly as the Map or List they equal
+    if let Some(p) = crate::stdlib::persistent::of(value) {
+        return value_to_json_at(&p.to_plain(), depth);
+    }
     match value {
         Value::Unit => Ok(serde_json::Value::Null),
         Value::Boolean(b) => Ok(serde_json::Value::Bool(*b)),

@@ -83,8 +83,8 @@ fn builtin(name: &str, arity: usize) -> Value {
 
 fn module_value(fields: crate::ast::ValueMap) -> Value {
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: Arc::new(fields),
+        type_name: "Module".into(),
+        fields: Arc::new(fields).into(),
     }
 }
 

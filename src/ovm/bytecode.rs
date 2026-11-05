@@ -341,7 +341,9 @@ fn same_binding(now: Option<&Value>, then: &Value) -> bool {
         (Value::List(a), Value::List(b)) if Arc::ptr_eq(a, b) => true,
         (Value::Map(a), Value::Map(b)) if Arc::ptr_eq(a, b) => true,
         (Value::String(a), Value::String(b)) if Arc::ptr_eq(a, b) => true,
-        (Value::Struct { fields: a, .. }, Value::Struct { fields: b, .. }) if Arc::ptr_eq(a, b) => {
+        (Value::Struct { fields: a, .. }, Value::Struct { fields: b, .. })
+            if crate::ast::StructFields::ptr_eq(a, b) =>
+        {
             true
         }
         _ => now == then,
@@ -1502,7 +1504,7 @@ fn hof_value_same(a: &crate::ast::Value, b: &crate::ast::Value) -> bool {
                 type_name: t2,
                 fields: f2,
             },
-        ) => t1 == t2 && Arc::ptr_eq(f1, f2),
+        ) => t1 == t2 && crate::ast::StructFields::ptr_eq(f1, f2),
         (V::Enum(x), V::Enum(y)) => Arc::ptr_eq(x, y),
         (V::EnumConstructor(x), V::EnumConstructor(y)) => Arc::ptr_eq(x, y),
         (V::TypeInfo(x), V::TypeInfo(y)) => Arc::ptr_eq(x, y),
@@ -1582,6 +1584,8 @@ impl BytecodeVm {
             "to_int",
             "to_float",
             "typeof",
+            "same",
+            "hash",
             "len",
             // list access and construction
             "head",
@@ -1653,6 +1657,16 @@ impl BytecodeVm {
             "math.gcd",
             "math.lcm",
             "math.factorial",
+            "math.wrapping_add",
+            "math.wrapping_sub",
+            "math.wrapping_mul",
+            "math.wrapping_shl",
+            "math.ushr",
+            "math.rotl",
+            "math.rotr",
+            "math.popcount",
+            "math.clz",
+            "math.ctz",
             "math.min",
             "math.max",
             // pure `str` module functions — strings and lists of strings in
@@ -3712,7 +3726,7 @@ impl BytecodeVm {
                     kinds[i] = JitKind::Float;
                 }
                 Ok(crate::ovm::value::ValueData::Struct(obj)) => {
-                    bits[i] = std::sync::Arc::as_ptr(obj) as i64;
+                    bits[i] = obj.as_ptr() as i64;
                     kinds[i] = JitKind::Struct(obj.shape.id);
                     any_ref = true;
                 }
@@ -3807,6 +3821,18 @@ impl BytecodeVm {
                     kinds[i] = JitKind::ListIntRaw;
                     any_ref = true;
                 }
+                // Bytes, read natively (OL-428): the register holds the
+                // handle for the whole region.
+                Ok(crate::ovm::value::ValueData::Native(h))
+                    if h.0.as_any().is::<crate::stdlib::bytes::BytesObject>() =>
+                {
+                    let b =
+                        h.0.as_any()
+                            .downcast_ref::<crate::stdlib::bytes::BytesObject>()?;
+                    bits[i] = b as *const crate::stdlib::bytes::BytesObject as i64;
+                    kinds[i] = JitKind::ListBytes;
+                    any_ref = true;
+                }
                 other => {
                     if osr_debug {
                         eprintln!(
@@ -3848,7 +3874,7 @@ impl BytecodeVm {
                 .and_then(|s| s.clone())
                 .or_else(|| cache.read().ok().and_then(|c| c.get(&id).cloned()))
         };
-        let mut struct_args: Vec<std::sync::Arc<crate::ovm::value::StructObject>> = Vec::new();
+        let mut struct_args: Vec<crate::ovm::value::StructObject> = Vec::new();
         let mut str_args: Vec<std::sync::Arc<String>> = Vec::new();
         let mut result_args: Vec<std::sync::Arc<crate::ovm::value::ResultObject>> = Vec::new();
         let mut list_args: Vec<std::sync::Arc<Vec<crate::ovm::value::OvmValue>>> = Vec::new();
@@ -4081,7 +4107,7 @@ impl BytecodeVm {
                         kinds[i] = JitKind::Float;
                     }
                     Ok(crate::ovm::value::ValueData::Struct(obj)) => {
-                        bits[i] = std::sync::Arc::as_ptr(obj) as i64;
+                        bits[i] = obj.as_ptr() as i64;
                         kinds[i] = JitKind::Struct(obj.shape.id);
                         any_ref = true;
                     }
@@ -4168,8 +4194,7 @@ impl BytecodeVm {
                         .and_then(|s| s.clone())
                         .or_else(|| cache.read().ok().and_then(|c| c.get(&id).cloned()))
                 };
-                let mut struct_args: Vec<std::sync::Arc<crate::ovm::value::StructObject>> =
-                    Vec::new();
+                let mut struct_args: Vec<crate::ovm::value::StructObject> = Vec::new();
                 let mut str_args: Vec<std::sync::Arc<String>> = Vec::new();
                 let mut result_args: Vec<std::sync::Arc<crate::ovm::value::ResultObject>> =
                     Vec::new();
@@ -5240,12 +5265,12 @@ impl BytecodeVm {
                                 pairs.push((key_str.to_string(), v));
                                 self.execution_state.set_register(
                                     *target,
-                                    OvmValue::new_struct(std::sync::Arc::new(
+                                    OvmValue::new_struct(
                                         crate::ovm::value::StructObject::from_pairs(
                                             kind.type_name(),
                                             pairs,
                                         ),
-                                    )),
+                                    ),
                                 )?;
                             }
                         },
@@ -5258,11 +5283,9 @@ impl BytecodeVm {
                             pairs.push((key_str.to_string(), v));
                             self.execution_state.set_register(
                                 *target,
-                                OvmValue::new_struct(std::sync::Arc::new(
-                                    crate::ovm::value::StructObject::from_pairs(
-                                        st.type_name(),
-                                        pairs,
-                                    ),
+                                OvmValue::new_struct(crate::ovm::value::StructObject::from_pairs(
+                                    st.type_name(),
+                                    pairs,
                                 )),
                             )?;
                         }
@@ -5652,6 +5675,42 @@ impl BytecodeVm {
                     args,
                 } => {
                     let id = *builtin_id as usize;
+                    // The integer operations (math.wrapping_add, popcount,
+                    // ...): two Ints compute here; anything else, or a
+                    // count out of range, takes the module's path, which
+                    // raises the interpreter's error.
+                    if let Some(int_id) = Self::int_math_index(*builtin_id) {
+                        let (name, arity) = crate::stdlib::math::INT_OPS[int_id];
+                        let mut ints = [0i64; 2];
+                        let mut all_int = args.len() == arity;
+                        if all_int {
+                            for (i, arg_reg) in args.iter().enumerate() {
+                                match &self.execution_state.register_ref(*arg_reg)?.data {
+                                    crate::ovm::value::ValueData::Integer(n) => ints[i] = *n,
+                                    _ => {
+                                        all_int = false;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        let fast = all_int
+                            .then(|| crate::stdlib::math::eval_int_op(int_id, ints[0], ints[1]))
+                            .flatten();
+                        let result = match fast {
+                            Some(n) => OvmValue::new_integer(n),
+                            None => {
+                                let mut arg_values = Vec::with_capacity(args.len());
+                                for arg_reg in args {
+                                    arg_values.push(self.execution_state.get_register(*arg_reg)?);
+                                }
+                                self.execute_builtin_call(name, &arg_values, false)?
+                            }
+                        };
+                        self.execution_state.set_register(*dst, result)?;
+                        pc += 1;
+                        continue;
+                    }
                     let (name, arity) = *Self::FLOAT_MATH.get(id).ok_or_else(|| {
                         BytecodeError::RuntimeError(format!(
                             "unknown builtin id {} in CallBuiltin",
@@ -5731,17 +5790,14 @@ impl BytecodeVm {
                     field_regs,
                     field_types,
                 } => {
-                    let mut values = Vec::with_capacity(field_regs.len());
-                    for reg in field_regs {
-                        values.push(self.execution_state.get_register(*reg)?);
-                    }
                     // Enforce declared field types where the runtime can check
                     // them — the same rule and the same message the
                     // interpreter raises. `field_types` is in shape order, so
-                    // it aligns with `values` and `shape.field_names`.
+                    // it aligns with `field_regs` and `shape.field_names`.
                     for (i, check) in field_types.iter().enumerate() {
                         if let Some(check) = check {
-                            let (actual, payload, fn_arity, scalar) = ovm_value_view(&values[i]);
+                            let value = self.execution_state.register_ref(field_regs[i])?;
+                            let (actual, payload, fn_arity, scalar) = ovm_value_view(value);
                             if let Some((expected, got)) =
                                 check.check_value(actual, payload, fn_arity, scalar)
                             {
@@ -5757,12 +5813,24 @@ impl BytecodeVm {
                             }
                         }
                     }
-                    let obj = crate::ovm::value::StructObject {
-                        shape: shape.clone(),
-                        values,
-                    };
+                    // Each field written straight into the struct's one
+                    // allocation (OL-431): no vector of values between.
+                    for reg in field_regs {
+                        self.execution_state.register_ref(*reg)?;
+                    }
+                    let state = &self.execution_state;
+                    let obj = crate::ovm::value::StructObject::from_fn(
+                        shape.clone(),
+                        field_regs.len(),
+                        |i| {
+                            state
+                                .register_ref(field_regs[i])
+                                .map(OvmValue::clone)
+                                .unwrap_or_else(|_| OvmValue::new_unit())
+                        },
+                    );
                     self.execution_state
-                        .set_register(*dst, OvmValue::new_struct(Arc::new(obj)))?;
+                        .set_register(*dst, OvmValue::new_struct(obj))?;
                 }
 
                 Instruction::MakeMap { dst, entries } => {
@@ -5845,7 +5913,7 @@ impl BytecodeVm {
                         .is_some();
                     let field_callee = match &receiver.data {
                         _ if fit_method => None,
-                        crate::ovm::value::ValueData::Struct(st) => st.field(method).cloned(),
+                        crate::ovm::value::ValueData::Struct(st) => st.field(method),
                         crate::ovm::value::ValueData::AstStruct(m, _)
                         | crate::ovm::value::ValueData::AstMap(m) => m
                             .get(method.as_str())
@@ -6234,6 +6302,18 @@ impl BytecodeVm {
                     {
                         // the VM's own values kept in the cell as they are
                         r.map_err(BytecodeError::RuntimeError)
+                    } else if let Some(op) = function_name.strip_prefix("chan.")
+                        && let Some(r) = crate::stdlib::chan::vm_call(op, &arg_values)
+                    {
+                        // a message between compiled code, carried in the
+                        // VM's form: no conversion either way (OL-430)
+                        r.map_err(BytecodeError::RuntimeError)
+                    } else if let Some(op) = function_name.strip_prefix("weak.")
+                        && let Some(r) = crate::stdlib::weak::vm_call(op, &arg_values)
+                    {
+                        // a weak reference to the VM's own value, not to a
+                        // converted copy that dies at once
+                        r.map_err(BytecodeError::RuntimeError)
                     } else if self.builtin_names.contains(function_name)
                         || function_name.contains('.')
                         || (self.known_function_values.contains_key(function_name)
@@ -6588,8 +6668,8 @@ impl BytecodeVm {
                     let hit = match &object_value.data {
                         crate::ovm::value::ValueData::Struct(st) => {
                             let (cached_shape, cached_idx) = cache.load();
-                            if cached_shape == st.shape.id {
-                                st.values.get(cached_idx as usize).cloned()
+                            if cached_shape == st.shape.id && (cached_idx as usize) < st.len() {
+                                Some(st.get(cached_idx as usize))
                             } else {
                                 None
                             }
@@ -8320,10 +8400,7 @@ impl BytecodeVm {
                 .get(key_str)
                 .map(|v| OvmValue::from_ast(v.clone()))
                 .unwrap_or_else(OvmValue::new_unit),
-            Recv::Struct(st) => st
-                .field(key_str)
-                .cloned()
-                .unwrap_or_else(OvmValue::new_unit),
+            Recv::Struct(st) => st.field(key_str).unwrap_or_else(OvmValue::new_unit),
         })
     }
 
@@ -8567,7 +8644,10 @@ impl BytecodeVm {
         // compiled lambda ran the lambda on the tree-walker, the list
         // converted in and the answer converted back out, per call.
         if args.iter().any(|a| matches!(a.data, ValueData::AstList(_)))
-            && !matches!(name, "len" | "head" | "first" | "last" | "typeof")
+            && !matches!(
+                name,
+                "len" | "head" | "first" | "last" | "typeof" | "same" | "hash"
+            )
             && !(matches!(name, "map" | "filter" | "col.any" | "col.all" | "contains")
                 && args.len() == 2
                 && matches!(&args[0].data, ValueData::AstList(l) if !crate::parallel::should_parallelize(l.len()))
@@ -8579,10 +8659,12 @@ impl BytecodeVm {
         // below; everything else sees the boxed form — one O(n)
         // conversion in front of an O(n) operation.
         let normalized: Vec<OvmValue>;
-        let args: &[OvmValue] = if !matches!(name, "len" | "head" | "first" | "last" | "typeof")
-            && args
-                .iter()
-                .any(|a| matches!(a.data, ValueData::FloatList(_) | ValueData::IntList(_)))
+        let args: &[OvmValue] = if !matches!(
+            name,
+            "len" | "head" | "first" | "last" | "typeof" | "same" | "hash"
+        ) && args
+            .iter()
+            .any(|a| matches!(a.data, ValueData::FloatList(_) | ValueData::IntList(_)))
         {
             normalized = args
                 .iter()
@@ -9122,6 +9204,23 @@ impl BytecodeVm {
             // the interpreter a converted copy of the whole collection — a
             // view tree, a program's (model, effects) — to read one word.
             // Anything else (a struct, an enum, a native) still bridges.
+            // Identity, without converting either side: `same(a, b)` on
+            // the bridge compared two converted copies, never one.
+            "same" if args.len() == 2 => Some(Ok(OvmValue::new_boolean(args[0].same(&args[1])))),
+            // An Ok's payload as it is: bridged, the whole payload was
+            // converted out and back (a received message among them). An
+            // Err raises on the bridge, in the interpreter's words.
+            "unwrap" if args.len() == 1 => match &args[0].data {
+                ValueData::Result(r) => r.ok.clone().map(Ok),
+                _ => None,
+            },
+            // Hashed in the VM's own form: bridged, the whole value was
+            // converted to be read once.
+            "hash" if args.len() == 1 => Some(
+                crate::value_hash::hash_ovm(&args[0])
+                    .map(OvmValue::new_integer)
+                    .map_err(BytecodeError::RuntimeError),
+            ),
             "typeof" if args.len() == 1 => {
                 let t = match &args[0].data {
                     ValueData::List(_)
@@ -9171,7 +9270,7 @@ impl BytecodeVm {
                         "map_values" => {
                             OvmValue::new_list(st.iter().map(|(_, v)| v.clone()).collect())
                         }
-                        _ => OvmValue::new_integer(st.values.len() as i64),
+                        _ => OvmValue::new_integer(st.len() as i64),
                     },
                     _ => {
                         return Some(Err(BytecodeError::TypeError(format!(
@@ -9433,9 +9532,9 @@ impl BytecodeVm {
                             .filter(|(name, _)| **name != key)
                             .map(|(name, v)| (name.clone(), v.clone()))
                             .collect();
-                        Ok(OvmValue::new_struct(Arc::new(
+                        Ok(OvmValue::new_struct(
                             crate::ovm::value::StructObject::from_pairs(st.type_name(), pairs),
-                        )))
+                        ))
                     }
                     _ => Err(BytecodeError::TypeError(
                         "map_remove: first argument must be a map or object".to_string(),
@@ -9507,19 +9606,19 @@ impl BytecodeVm {
                         Err(_) => {
                             let st = OvmValue::force_ast_struct(m, *kind);
                             let pairs = st.set_pairs(key, args[2].clone());
-                            Ok(OvmValue::new_struct(Arc::new(
+                            Ok(OvmValue::new_struct(
                                 crate::ovm::value::StructObject::from_pairs(
                                     kind.type_name(),
                                     pairs,
                                 ),
-                            )))
+                            ))
                         }
                     },
                     ValueData::Struct(st) => {
                         let pairs = st.set_pairs(key, args[2].clone());
-                        Ok(OvmValue::new_struct(Arc::new(
+                        Ok(OvmValue::new_struct(
                             crate::ovm::value::StructObject::from_pairs(st.type_name(), pairs),
-                        )))
+                        ))
                     }
                     _ => Err(BytecodeError::TypeError(
                         "map_set: first argument must be a map or object".to_string(),
@@ -9625,6 +9724,7 @@ impl BytecodeVm {
     pub(crate) fn natives_without_bridge() -> Vec<String> {
         let mut out: Vec<String> = Self::FLOAT_MATH
             .iter()
+            .chain(crate::stdlib::math::INT_OPS)
             .map(|(n, _)| n.to_string())
             .collect();
         out.extend(
@@ -9649,6 +9749,9 @@ impl BytecodeVm {
                 "first",
                 "last",
                 "typeof",
+                "same",
+                "hash",
+                "unwrap",
             ]
             .map(String::from),
         );
@@ -9687,6 +9790,25 @@ impl BytecodeVm {
         ("math.pow", 2),
         ("math.atan2", 2),
     ];
+
+    /// `CallBuiltin` ids from here up name `math::INT_OPS` entries
+    /// (math.wrapping_add, popcount, ...), below it `FLOAT_MATH` ones.
+    pub(crate) const INT_MATH_BASE: u32 = 1 << 16;
+
+    /// The `math::INT_OPS` index a `CallBuiltin` id names, if it names one.
+    pub(crate) fn int_math_index(builtin_id: u32) -> Option<usize> {
+        builtin_id
+            .checked_sub(Self::INT_MATH_BASE)
+            .map(|i| i as usize)
+            .filter(|i| *i < crate::stdlib::math::INT_OPS.len())
+    }
+
+    fn int_math_id(name: &str, arity: usize) -> Option<u32> {
+        crate::stdlib::math::INT_OPS
+            .iter()
+            .position(|(n, a)| *n == name && *a == arity)
+            .map(|i| Self::INT_MATH_BASE + i as u32)
+    }
 
     /// floor, ceil, round, trunc: FLOAT_MATH ids whose answer is an Int.
     pub(crate) fn float_math_whole(id: usize) -> bool {
@@ -10401,6 +10523,9 @@ impl BytecodeVm {
             }
             // Strings iterate by character, matching the interpreter.
             ValueData::String(s) => Ok(s.chars().count() as i64),
+            ValueData::Native(h) if crate::stdlib::persistent::vec_len(h).is_some() => {
+                Ok(crate::stdlib::persistent::vec_len(h).unwrap_or(0) as i64)
+            }
             _ => {
                 let hint = match &source.data {
                     ValueData::Map(_)
@@ -10460,6 +10585,14 @@ impl BytecodeVm {
                 .ok_or_else(|| {
                     BytecodeError::RuntimeError("Integer overflow iterating range".to_string())
                 }),
+            ValueData::Native(h) if crate::stdlib::persistent::vec_len(h).is_some() => {
+                crate::stdlib::persistent::vec_item(h, idx as usize)
+                    .map(OvmValue::from_ast)
+                    .ok_or_else(|| BytecodeError::IndexOutOfBounds {
+                        index: idx,
+                        length: crate::stdlib::persistent::vec_len(h).unwrap_or(0),
+                    })
+            }
             // Strings iterate by character, matching the interpreter.
             ValueData::String(s) => s
                 .chars()
@@ -10724,7 +10857,7 @@ impl BytecodeVm {
                 .map(|v| OvmValue::from_ast(v.clone()))
                 .unwrap_or_else(OvmValue::new_unit)),
             ValueData::Struct(s) if matches!(s.type_name(), "JsonObject" | "Object") => {
-                Ok(s.field(field).cloned().unwrap_or_else(OvmValue::new_unit))
+                Ok(s.field(field).unwrap_or_else(OvmValue::new_unit))
             }
             // A native value's field (a Frame's column), unless the name
             // is one of its methods: the interpreter's rule (L6).
@@ -10735,9 +10868,8 @@ impl BytecodeVm {
             // called, in the interpreter's words.
             ValueData::Struct(s) if s.type_name() == "Module" => s
                 .field(field)
-                .cloned()
                 .ok_or_else(|| BytecodeError::TypeError(vm_module_miss(s, field))),
-            ValueData::Struct(s) => s.field(field).cloned().ok_or_else(|| {
+            ValueData::Struct(s) => s.field(field).ok_or_else(|| {
                 BytecodeError::TypeError(self.no_field_or_method(s.type_name(), field))
             }),
             _ => Err(BytecodeError::TypeError(format!(
@@ -10757,6 +10889,15 @@ impl BytecodeVm {
         // is asked before the integer-index requirement below — a Frame
         // is indexed by column name, which is the whole point.
         if let ValueData::Native(handle) = &object.data {
+            // A byte of Bytes, read in place: through `index` it took a
+            // key converted out and a value converted back (OL-428).
+            if let ValueData::Integer(i) = index.data
+                && let Some(r) = crate::stdlib::bytes::byte_at(handle, i)
+            {
+                return r
+                    .map(OvmValue::new_integer)
+                    .map_err(BytecodeError::RuntimeError);
+            }
             let key = index
                 .to_ast()
                 .map_err(|err| BytecodeError::TypeError(err.to_string()))?;
@@ -12244,6 +12385,7 @@ impl BytecodeCompiler {
                 if self.q_builtin(&function_name) && !closure_shadows_builtin {
                     if let Some(builtin_id) =
                         BytecodeVm::float_math_id(&function_name, arg_regs.len())
+                            .or_else(|| BytecodeVm::int_math_id(&function_name, arg_regs.len()))
                     {
                         self.emitter.instructions.push(Instruction::CallBuiltin {
                             dst: dst_reg,
@@ -16056,10 +16198,14 @@ impl crate::native_sig::BindValue for OvmValue {
 /// A module value's missing member's message (the VM's values), in the
 /// interpreter's words (`crate::interpreter::module_member_miss`).
 fn vm_module_miss(st: &crate::ovm::value::StructObject, field: &str) -> String {
-    let module = crate::interpreter::module_name_of(st.iter().filter_map(|(_, v)| match &v.data {
-        crate::ovm::value::ValueData::Builtin(b) => Some(b.name.as_str()),
-        _ => None,
-    }));
+    let builtins: Vec<String> = st
+        .values()
+        .filter_map(|v| match &v.data {
+            crate::ovm::value::ValueData::Builtin(b) => Some(b.name.clone()),
+            _ => None,
+        })
+        .collect();
+    let module = crate::interpreter::module_name_of(builtins.iter().map(|s| s.as_str()));
     crate::interpreter::module_member_miss(
         module.as_deref(),
         field,

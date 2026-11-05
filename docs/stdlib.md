@@ -36,6 +36,7 @@ the sentence that documents the function in its module's section.
 - [`asset` — a package's files](#asset--a-packages-files)
 - [Collections, in olang](#collections-in-olang)
 - [`json` — JSON](#json--json)
+- [`value` — values as bytes](#value--values-as-bytes)
 - [`toml` — TOML](#toml--toml)
 - [`csv` — CSV](#csv--csv)
 - [`md` — Markdown](#md--markdown)
@@ -46,6 +47,10 @@ the sentence that documents the function in its module's section.
 - [`task` — background threads](#task--background-threads)
 - [`cell` — mutable locations](#cell--mutable-locations)
 - [`chan` — channels](#chan--channels)
+- [`cancel` — cancellation tokens](#cancel--cancellation-tokens)
+- [`shared` — one value, every thread](#shared--one-value-every-thread)
+- [`weak` — weak references](#weak--weak-references)
+- [`pmap`, `pvec`, `psorted` — persistent collections](#pmap-pvec-psorted--persistent-collections)
 - [`random` — randomness](#random--randomness)
 - [`crypto` — hashing and encryption](#crypto--hashing-and-encryption)
 - [`bytes` — binary data](#bytes--binary-data)
@@ -222,6 +227,8 @@ helpers are aliases of the same function, never a second definition.
 | <a id="to_float"></a>`to_float(v)` | string/int → Float; a string that is not a number raises (`str.parse_float` is the `Result` form) |
 | <a id="len"></a>`len(v)` | length of a list, a string (in characters), a tuple, or `Bytes`; a map raises, and its entry count is `map_len` |
 | <a id="implements"></a>`implements(v, "Trait")` | does the value's type implement the trait? |
+| <a id="hash"></a>`hash(v)` | a 64-bit Int hash of the value, the same for values that are `==`, and the same in every run |
+| <a id="same"></a>`same(a, b)` | are `a` and `b` one value in memory, not just two equal ones? For an Int, a Float, a Bool or `()`, which have no identity, it is `==` |
 
 `to_string` and `show` render the same text: a string is returned as
 itself (`to_string("hi")` is `hi`, never `"hi"`), and every other value
@@ -233,6 +240,34 @@ use. Strings *inside* a container keep their quotes in that form, so
 println(to_string("hi") + " " + show("hi") + " " + to_string(["hi"]))
 println(typeof(3.5) + " " + show(to_int(3.9)) + " " + show(to_float("2.5")))
 println(show(len([1, 2, 3])) + " " + show(len("abcd")))
+```
+
+`hash` agrees with `==`: a map hashes the same whatever order its keys
+were added in, a parsed JSON object the same as the map with its keys
+and values, a whole Float the same as its Int. It is XXH3 over a fixed
+encoding of the value, so a hash stored on disk in one run finds its
+entry in the next, and in later releases. Unequal values may share a
+hash, rarely, so a hash table still compares the values that collide. A
+function has no hash, nor has a cell or a channel (they are compared by
+identity), and hashing one raises.
+
+```olang
+println(hash(#{ "x": 1, "y": 2 }) == hash(#{ "y": 2, "x": 1 }))  // true
+println(hash(1) == hash(1.0))                                    // true
+println(hash([1, 2]) == hash([2, 1]))                            // false
+```
+
+`same` is the cheap first question to ask before a deep comparison:
+when it answers `true`, the two are equal and nothing needs comparing.
+A `false` says nothing about equality, since an equal copy, built
+separately, is a different value. It is a hint for skipping work, never
+something a program's meaning should rest on; the two tiers may keep
+one value where the other made a copy.
+
+```olang
+let xs = [1, 2, 3]
+let ys = xs
+println(`${same(xs, ys)} ${same(xs, [1, 2] + [3])} ${xs == [1, 2] + [3]}`)  // true false true
 ```
 
 ### Lists
@@ -486,6 +521,7 @@ every function returns a new string.
 | <a id="str-reverse"></a>`str.reverse(s)` | reversed by visible character — clusters stay whole |
 | <a id="str-is_empty"></a>`str.is_empty(s)` | `""` test |
 | <a id="str-is_ascii"></a>`str.is_ascii(s)` | every character ASCII? (true for `""`) — one pass over the bytes |
+| <a id="str-hash"></a>`str.hash(s)` | the XXH3 hash of the string's UTF-8 as an Int, the same in every run (`crypto.xxh3(s)`) |
 | <a id="str-parse_int"></a><a id="str-parse_float"></a>`str.parse_int(s)` / `str.parse_float(s)` | `Result` parses |
 | <a id="str-fmt"></a>`str.fmt(template, ...)` | fill `{}` placeholders, display form; `{{`/`}}` escape |
 | <a id="str-fixed"></a>`str.fixed(x, digits)` | exactly `digits` decimals, never exponent form, never `-0.00` — the column form `to_string` is not |
@@ -640,6 +676,7 @@ all the way to native code (see [the OVM chapter](ovm.md#the-jit)).
 | <a id="math-sqrt"></a><a id="math-cbrt"></a><a id="mathx-sqrt"></a>Basics | `abs` `sign` `min` `max` `pow` `sqrt` `cbrt` |
 | Rounding | `floor` `ceil` `round` `trunc` `fract` |
 | <a id="math-gcd"></a><a id="math-lcm"></a><a id="math-factorial"></a><a id="mathx-gcd"></a><a id="mathx-lcm"></a><a id="mathx-factorial"></a>Integers | `gcd` `lcm` `factorial` |
+| <a id="math-wrapping_add"></a><a id="math-wrapping_sub"></a><a id="math-wrapping_mul"></a><a id="math-wrapping_shl"></a><a id="math-ushr"></a><a id="math-rotl"></a><a id="math-rotr"></a><a id="math-popcount"></a><a id="math-clz"></a><a id="math-ctz"></a>Bits | `wrapping_add` `wrapping_sub` `wrapping_mul` `wrapping_shl` `ushr` `rotl` `rotr` `popcount` `clz` `ctz` |
 | <a id="math-exp"></a><a id="math-exp2"></a><a id="math-ln"></a><a id="math-log"></a><a id="math-log2"></a><a id="math-log10"></a>Exp/log | `exp` `exp2` `ln` `log` `log2` `log10` |
 | <a id="math-sin"></a><a id="math-cos"></a><a id="math-tan"></a><a id="math-asin"></a><a id="math-acos"></a><a id="math-atan"></a><a id="math-atan2"></a>Trig | `sin` `cos` `tan` `asin` `acos` `atan` `atan2` |
 | <a id="math-sinh"></a><a id="math-cosh"></a><a id="math-tanh"></a>Hyperbolic | `sinh` `cosh` `tanh` |
@@ -653,6 +690,16 @@ println(`${math.round(2.6)} ${math.fract(2.75)}`)
 println(to_string((math.PI > 3.14159) && (math.TAU > 6.28)))
 ```
 
+The bit functions treat an Int as its 64 bits. With them, the usual
+hash functions can be written in olang; this is FNV-1a over a list of
+bytes:
+
+```olang
+fn fnv1a(bytes) = fold(bytes, -3750763034362895579, (h, b) => math.wrapping_mul(h ^ b, 1099511628211))
+println(fnv1a([104, 105]))                               // 628919584683901914
+println(`${math.ushr(-1, 60)} ${math.popcount(255)} ${math.ctz(8)}`)  // 15 8 3
+```
+
 What a function answers:
 
 | Function | Answers |
@@ -663,6 +710,9 @@ What a function answers:
 | <a id="math-sign"></a><a id="mathx-sign"></a>`sign` | an Int, -1, 0 or 1, for an Int or a Float |
 | <a id="math-abs"></a><a id="mathx-abs"></a>`abs` | the kind it is given |
 | <a id="math-min"></a><a id="math-max"></a><a id="mathx-min"></a><a id="mathx-max"></a>`min` `max` | as the global `min` and `max`, for numbers: two or more numbers or one list, the first of equal values (`math.min(1, 2.5)` is 1) |
+| `wrapping_add` `wrapping_sub` `wrapping_mul` | an Int, the low 64 bits of the answer: where `+`, `-` and `*` raise an overflow, these wrap around, which is what hash functions want |
+| `wrapping_shl` `ushr` `rotl` `rotr` | an Int: the 64 bits shifted left (dropping what leaves the top), shifted right filling with zeros, or rotated. The count is 0 to 63; any other count raises |
+| `popcount` `clz` `ctz` | an Int: how many bits are set, how many zero bits lead, how many trail. `clz(0)` and `ctz(0)` are 64 |
 | <a id="math-fract"></a><a id="mathx-fract"></a>`fract` and the rest | a Float |
 
 `mathx` (`use mathx`) is an olang-source module covering the integer and
@@ -757,7 +807,7 @@ it. (A binding of your own named `collections` always wins.)
 | `collections.deque` | double-ended queue over a ring buffer | BFS frontiers, sliding windows, work lists |
 | `collections.table` | flat hash table, open addressing | counting, indexing, hot single-table loops |
 | `collections.dsu` | disjoint sets (union–find), by rank + compression | connectivity, Kruskal, clustering |
-| `collections.bitset` | dense integer set, 63 members per word | sieves, visited-sets, set algebra |
+| `collections.bitset` | dense integer set, 64 members per word | sieves, visited-sets, set algebra |
 | `collections.alg` | sort / bisect / select / graphs / Dijkstra | the classic algorithms over the above |
 
 Code that leans on a few submodules imports their short names — the
@@ -839,6 +889,36 @@ per call), so they are memory-fused microsecond operations, not
 nanosecond ones. Where the builtins already cover a shape natively,
 they stay the fast path; these modules cover the shapes the builtins
 do not.
+
+## `value` — values as bytes
+
+`value.encode(v)` writes a value as `Bytes`, and `value.decode(b)`
+reads it back: `Ok` of a value `==` to the one written. Unlike JSON it
+keeps everything a value is made of: tuples stay tuples, `Bytes` stay
+bytes, `Ok` and `Err`, enums and declared structs come back as
+themselves, and an Int is not turned into a Float. It is the format for
+data a program writes for itself to read later: a cache on disk, a log
+of operations, a memo table.
+
+| Function | Returns |
+|---|---|
+| <a id="value-encode"></a>`value.encode(v)` / `value.encode(v, #{ canonical: true })` | `Bytes`. Canonical mode writes every map's keys, and every struct's fields, in sorted order, so two `==` values encode to the same bytes, which can then be hashed or compared |
+| <a id="value-decode"></a>`value.decode(b)` | `Ok(v)`, or `Err` saying what is wrong with the bytes (cut short, not an encoding, a newer version) |
+
+A function, a cell, a channel or any other handle is code or a place,
+not data, and encoding one raises. The bytes start with a header naming
+the format and its version, so a later olang that changes the format
+can still read what this one wrote, and a file that is not an encoding
+is refused.
+
+```olang
+let v = #{ "id": (7, "seven"), "raw": bytes.from_list([1, 2]), "r": Ok([1.5]) }
+let b = value.encode(v)
+println(unwrap(value.decode(b)) == v)                   // true
+let x = value.encode(#{ "a": 1, "b": 2 }, #{ "canonical": true })
+let y = value.encode(#{ "b": 2, "a": 1 }, #{ "canonical": true })
+println(x == y)                                          // true
+```
 
 ## `json` — JSON
 
@@ -1502,8 +1582,8 @@ println(to_string(cell.get(seen).ok))   // 3
 
 **Confinement.** A cell belongs to the thread that created it. Reading
 or writing it from another thread raises, and `chan.send` refuses to
-send one (including one nested inside a list, map, struct, or `Result`)
-— the language's no-shared-mutable-state guarantee is what makes
+send one (including one nested inside a list, map, struct, or `Result`,
+and one a closure captured) — the language's no-shared-mutable-state guarantee is what makes
 `spawn` and `par_map` lock-free, and cells do not weaken it. Send the
 *contents* instead:
 
@@ -1538,6 +1618,14 @@ boundary like anything else.
 | <a id="chan-ask"></a>`chan.ask(service, request)` | the reply pattern in one call: sends `#{ "req": request, "reply": r }` on a fresh reply channel and answers `Ok(reply)` — spinning briefly before it parks, so a service that answers in microseconds costs no thread wake-up |
 | <a id="chan-stat"></a>`chan.stat(c)` | a snapshot map: `id`, `queued`, `closed`, `recv_waiting`, `send_waiting` |
 | <a id="chan-close"></a>`chan.close(c)` | closes the sending side (idempotent) |
+| <a id="chan-on_drop"></a>`chan.on_drop(c, msg)` | a guard: when the last copy of it is dropped, `msg` is sent on `c`. Keep the guard in whatever owns a subscription (its model, its record), and the service hears when the owner goes. A guard is dropped once nothing uses it any more, which can be before the end of the block that made it. The send never blocks: on a full bounded channel, or a closed one, the message is lost |
+
+A message is never copied. Between two compiled functions it does not
+even change form: a list of a million Ints a hot function sends reaches
+a hot receiver in the time a small one takes. A closure is the
+exception (it is converted, as it always was), and so is a message the
+interpreter receives, which gets it in its own form, equal to what was
+sent.
 
 Closing is cooperative and drains: after `chan.close(c)` new sends
 fail, but messages already queued are still received before `recv`
@@ -1598,6 +1686,146 @@ while going {
     }
 }
 println(`${total} from ${unwrap(task.join(worker))} squares`)
+```
+
+## `cancel` — cancellation tokens
+
+A token is how one task tells another that its work is no longer
+wanted: a newer revision arrived, or a query was superseded. It starts
+clear and can be set once, from any thread. It holds no value, only
+"asked to stop", so it crosses `spawn` and channels like any value.
+
+| Function | Returns |
+|---|---|
+| <a id="cancel-token"></a>`cancel.token()` | a new token, not set |
+| <a id="cancel-set"></a>`cancel.set(t)` | `()`; the token is set from now on (setting it again does nothing) |
+| <a id="cancel-is_set"></a>`cancel.is_set(t)` | whether it has been set: one atomic read, cheap enough to check in a tight loop |
+| <a id="runtime-call_cancellable"></a>`runtime.call_cancellable(f, args, t)` | `f(args…)`, stopped wherever it is once `t` is set, with its failure caught: `#{ ok, value, error, frames, cancelled, us }`. A stopped call's `error` is `"cancelled"` |
+
+Work can check the token itself, which lets it stop at a point of its
+choosing. `runtime.call_cancellable` stops code that does not check: the
+interpreter at its next statement, compiled code at its next loop
+iteration or call, and the long builtins between their steps (the file
+walks `fs.walk`, `fs.scan` and `fs.search`, `os.exec`, which kills the
+child, and http reads). It is the same stop `runtime.call_budget` makes
+when time runs out, and it stops only the threads running a cancellable
+call on that token.
+
+```olang
+let t = cancel.token()
+fn count_until_stopped(t) = {
+    let mut n = 0
+    while !cancel.is_set(t) && n < 1000 { n = n + 1 }
+    n
+}
+println(count_until_stopped(t))          // 1000
+cancel.set(t)
+println(count_until_stopped(t))          // 0
+let r = runtime.call_cancellable((x) => x * 2, [21], cancel.token())
+println(`${r.ok} ${r.value} ${r.cancelled}`)   // true 42 false
+let stopped = runtime.call_cancellable((x) => x * 2, [21], t)
+println(`${stopped.ok} ${stopped.error}`)      // false cancelled
+```
+
+## `shared` — one value, every thread
+
+A shared reference holds one value that every thread can read, and any
+thread can replace. Reading it is cheap and never waits for a writer's
+work, so many readers can follow one writer without a channel round
+trip.
+
+| Function | Returns |
+|---|---|
+| <a id="shared-new"></a>`shared.new(v)` | a reference holding `v` |
+| <a id="shared-get"></a>`shared.get(s)` | the value it holds now |
+| <a id="shared-set"></a>`shared.set(s, v)` | `()`; it holds `v` from now on |
+| <a id="shared-swap"></a>`shared.swap(s, f)` | the new value: it holds `f(current)` from now on. If another thread replaced the value while `f` ran, `f` runs again on the newer one, so `f` should only compute |
+| <a id="shared-compare_and_set"></a>`shared.compare_and_set(s, old, new)` | `true` if it still held a value equal to `old` and now holds `new`; `false`, changing nothing, if not |
+
+This keeps the rule that threads share no mutable data. The value
+inside never changes: what changes is which value the reference holds.
+A reader always gets a whole value, the old or the new, and keeps it as
+long as it likes. Like a channel, a shared reference refuses a cell.
+
+```olang
+let counter = shared.new(0)
+let workers = map(range(0, 4), (i) => spawn {
+    for k in range(0, 100) { shared.swap(counter, (n) => n + 1) }
+})
+for w in workers { unwrap(task.join(w)) }
+println(shared.get(counter))                              // 400
+println(shared.compare_and_set(counter, 400, 0))          // true
+println(shared.compare_and_set(counter, 400, 1))          // false
+```
+
+## `weak` — weak references
+
+A weak reference refers to a value without keeping it alive. Once
+nothing else holds the value, it is freed and the reference answers
+`()`. A memo table keyed by them forgets the entries nobody uses any
+more.
+
+| Function | Returns |
+|---|---|
+| <a id="weak-new"></a>`weak.new(v)` | a weak reference to `v` |
+| <a id="weak-get"></a>`weak.get(w)` | `v` while something else still holds it, `()` once it has been freed |
+| <a id="weak-alive"></a>`weak.alive(w)` | whether `v` is still held |
+
+Only a value with memory of its own can be freed: a list, a map, a
+struct, a tuple, a string, a closure, an enum with a payload, a native
+value such as a channel. An Int, a Float, a Bool or `()` is kept, and
+`weak.get` always answers it.
+
+```olang
+fn make() = map(range(0, 100), (i) => i * i)
+let kept = make()
+let w = weak.new(kept)
+let gone = weak.new(make())
+println(`${len(weak.get(w))} ${weak.get(gone)}`)   // 100 ()
+```
+
+## `pmap`, `pvec`, `psorted` — persistent collections
+
+A Map or a List is copied whole the first time it changes while an older
+version of it is still held. An undo history, a store that keeps its last
+snapshot, a cache of earlier results: each pays for a full copy on every
+update. The persistent collections share what did not change instead, so
+an update with every older version kept costs O(log n), and every version
+stays a value that never changes.
+
+- `pmap`: a hash map. Keys are Ints or Strings.
+- `pvec`: a vector, with O(log n) `get`, `set`, `push`, `pop`, `slice` and `concat`.
+- `psorted`: a map kept in key order (Ints before Strings), with `first`, `last` and `range`.
+
+They behave like the Map and List they stand for. `==` compares what
+they hold, at once when both sides are the same object, and a pmap or a
+psorted equals a Map with the same entries, a pvec a List with the same
+items, at any depth. `hash`, `json.stringify` and `value.encode` treat
+them the same way. `len`, `p[k]`, `p.k` (a pmap or a psorted) and
+`for x in v` (a pvec) work as on a Map or a List. `show` writes them as
+`pmap#{…}`, `pvec[…]` and `psorted#{…}`, keys in order.
+
+| <a id="pmap-new"></a><a id="pmap-of"></a><a id="pmap-get"></a><a id="pmap-set"></a><a id="pmap-remove"></a><a id="pmap-has"></a><a id="pmap-len"></a><a id="pmap-keys"></a><a id="pmap-values"></a><a id="pmap-entries"></a><a id="pmap-to_map"></a><a id="pmap-diff"></a><a id="psorted-new"></a><a id="psorted-of"></a><a id="psorted-get"></a><a id="psorted-set"></a><a id="psorted-remove"></a><a id="psorted-has"></a><a id="psorted-len"></a><a id="psorted-keys"></a><a id="psorted-values"></a><a id="psorted-entries"></a><a id="psorted-to_map"></a><a id="psorted-diff"></a><a id="psorted-first"></a><a id="psorted-last"></a><a id="psorted-range"></a><a id="pvec-new"></a><a id="pvec-of"></a><a id="pvec-get"></a><a id="pvec-set"></a><a id="pvec-push"></a><a id="pvec-pop"></a><a id="pvec-last"></a><a id="pvec-len"></a><a id="pvec-slice"></a><a id="pvec-concat"></a><a id="pvec-to_list"></a>Function | Returns |
+|---|---|
+| `pmap.new()`, `pmap.of(m)` | an empty pmap, or one holding a Map's entries (`psorted.new`, `psorted.of`, `pvec.new`, `pvec.of(xs)` alike) |
+| `get(p, k)` `has(p, k)` `len(p)` | the value or `()`, whether the key is there, the entry count |
+| `set(p, k, v)` `remove(p, k)` | a new version; `p` is unchanged |
+| `keys(p)` `values(p)` `entries(p)` `to_map(p)` | lists in key order, or a plain Map |
+| `diff(old, new)` | `#{ "added", "removed", "changed" }`, each a list of keys; for a psorted, the walk skips the subtrees both versions share |
+| `psorted.first(p)` `psorted.last(p)` `psorted.range(p, lo, hi)` | the pair with the smallest or largest key, or the pairs with `lo <= key < hi` (`()` leaves an end open) |
+| `pvec.get(v, i)` `pvec.set(v, i, x)` `pvec.push(v, x)` `pvec.pop(v)` `pvec.last(v)` | an item, or a new version |
+| `pvec.slice(v, from, to)` `pvec.concat(a, b)` `pvec.to_list(v)` | a new pvec sharing storage, or a plain List |
+
+```olang
+let v1 = pmap.of(#{ "title": "draft", "words": 10 })
+let v2 = pmap.set(v1, "words", 12)
+println(v1.words, v2.words)                     // 10 12
+println(v2 == #{ "title": "draft", "words": 12 })  // true
+println(pmap.diff(v1, v2).changed)              // ["words"]
+let s = psorted.of(#{ "b": 2, "a": 1, "c": 3 })
+println(psorted.range(s, "b", ()))              // [("b", 2), ("c", 3)]
+let v = pvec.push(pvec.of([1, 2]), 3)
+println(v, v == [1, 2, 3])                      // pvec[1, 2, 3] true
 ```
 
 ## `random` — randomness
@@ -1685,7 +1913,8 @@ secrets, because `==` can leak information through its timing.
 
 | Group | Functions |
 |---|---|
-| <a id="crypto-md5"></a><a id="crypto-sha1"></a><a id="crypto-sha256"></a><a id="crypto-sha512"></a>Digests | `md5` `sha1` `sha256` `sha512` |
+| <a id="crypto-md5"></a><a id="crypto-sha1"></a><a id="crypto-sha256"></a><a id="crypto-sha512"></a><a id="crypto-blake3"></a>Digests | `md5` `sha1` `sha256` `sha512` `blake3` |
+| <a id="crypto-xxh3"></a>Fast hashing | `xxh3`: a 64-bit Int, not a cryptographic digest |
 | <a id="crypto-hmac_sha512"></a>MACs | `hmac_sha256` `hmac_sha512` |
 | <a id="crypto-hash_password"></a><a id="crypto-verify_password"></a><a id="crypto-derive_key"></a>Passwords | `hash_password` `verify_password` `derive_key` |
 | Symmetric | `encrypt_aes` `decrypt_aes` |
@@ -1722,6 +1951,12 @@ source and reseeded from it periodically; in the browser the seed comes
 from the page's `getRandomValues` — so they are the functions to mint a
 session secret, a share token, or a nonce. `random`, the module, is the
 seedable generator for simulations and is not.
+
+Every digest takes a String (its UTF-8) or `Bytes`. `blake3` is a
+cryptographic digest like `sha256`, several times faster. `xxh3` is
+not cryptographic: it is the quick 64-bit fingerprint of some bytes,
+for a cache key or a change check, where nobody is trying to forge a
+collision. It answers an Int, the same in every run and release.
 
 <a id="crypto-hmac_sha256"></a>`crypto.hmac_sha256(key, message)` answers the HMAC as a hexadecimal
 string; compare a received MAC against it with `secure_compare`, never
@@ -1765,8 +2000,14 @@ preview. `fs.read_bytes`/`fs.write_bytes` move it to and from disk;
 | <a id="bytes-to_string_lossy"></a>`bytes.to_string_lossy(b)` | decode as UTF-8, each sequence that is not UTF-8 replaced by U+FFFD (`�`); never fails |
 | <a id="bytes-decode"></a>`bytes.decode(b, encoding, #{"lossy"})` | decode as `"utf-8"`, `"utf-16le"`, `"utf-16be"` or `"latin1"`: a `Result`, and always `Ok` with `lossy: true` (U+FFFD for what is not text). Latin-1 never fails, since every byte is a character |
 | <a id="bytes-len"></a>`bytes.len(b)` | byte count (the global `len` works too) |
-| <a id="bytes-slice"></a>`bytes.slice(b, from, to)` | half-open, by `str.substring`'s rule: past the end stops at the end, a negative position raises |
-| <a id="bytes-concat"></a>`bytes.concat(a, b)` | concatenation |
+| <a id="bytes-slice"></a>`bytes.slice(b, from, to)` | half-open, by `str.substring`'s rule: past the end stops at the end, a negative position raises. A view: it shares `b`'s memory and copies nothing |
+| <a id="bytes-concat"></a>`bytes.concat(a, b)` | concatenation (a new copy of both: to build up bytes piece by piece, use a builder) |
+| <a id="bytes-join"></a>`bytes.join(parts)` / `bytes.join(parts, sep)` | the parts (Bytes or Strings) one after another, `sep` between them, in one allocation |
+| <a id="bytes-builder"></a><a id="bytes-push"></a><a id="bytes-build"></a>`bytes.builder()`, `bytes.push(bld, x)`, `bytes.build(bld)` | a buffer that grows in place: `push` appends Bytes, a String's UTF-8, one byte (an Int 0..=255) or a list of them, and answers the builder; `build` answers what it holds as Bytes and leaves it empty |
+| <a id="bytes-index_of"></a>`bytes.index_of(b, needle)` / `bytes.index_of(b, needle, from)` | where `needle` (Bytes, a String, or one byte) first occurs at or after `from`, or `()` |
+| <a id="bytes-compare"></a>`bytes.compare(a, b)` | -1, 0 or 1, comparing byte by byte (a prefix comes first) |
+| <a id="bytes-get_u8"></a><a id="bytes-get_i8"></a><a id="bytes-get_u16"></a><a id="bytes-get_i16"></a><a id="bytes-get_u32"></a><a id="bytes-get_i32"></a><a id="bytes-get_u64"></a><a id="bytes-get_i64"></a><a id="bytes-get_f32"></a><a id="bytes-get_f64"></a>`bytes.get_u16(b, at)` / `bytes.get_u16(b, at, "be")`, and `get_u8` `get_i8` `get_i16` `get_u32` `get_i32` `get_u64` `get_i64` `get_f32` `get_f64` | the number stored at byte `at`, little endian unless `"be"` is given; reading past the end raises. A `u64` past the Int range reads as the Int with the same 64 bits (negative) |
+| <a id="bytes-pack"></a><a id="bytes-unpack"></a>`bytes.pack(layout, values)` / `bytes.unpack(layout, b)` / `bytes.unpack(layout, b, at)` | numbers to bytes and back by a layout of types: `"u16 u32be f64"` is a little-endian u16, a big-endian u32 and a little-endian f64. A value that does not fit its type raises |
 | <a id="bytes-to_hex"></a><a id="bytes-from_hex"></a>`bytes.to_hex(b)` / `bytes.from_hex(s)` | lowercase hex, two digits a byte; `from_hex` reads either case and answers a `Result` (an odd count or a character that is not a digit is `Err`) |
 
 ```olang
@@ -1796,6 +2037,29 @@ println(is_binary(bytes.from_list([137, 80, 78, 71, 0, 0])))   // true
 println(bytes.to_string_lossy(bytes.from_list([104, 255, 105])))   // h�i
 println(unwrap(bytes.decode(unwrap(str.encode("café", "utf-16le")), "utf-16le")))   // café
 ```
+
+A builder is how a file format gets written: each `push` adds to the
+end in place, so building a megabyte costs a megabyte, where
+`b = bytes.concat(b, part)` copies everything so far on every step. A
+builder is a place that changes, so like a cell it belongs to the thread
+that made it.
+
+```olang
+let out = bytes.builder()
+bytes.push(out, "PK")
+bytes.push(out, bytes.pack("u16 u32", [20, 1024]))
+bytes.push(out, [0, 255])
+let b = bytes.build(out)
+println(len(b))                                      // 10
+println(bytes.unpack("u16 u32", b, 2))               // [20, 1024]
+println(bytes.get_u32(b, 4))                         // 1024
+println(bytes.index_of(b, 255))                      // 9
+```
+
+`b[i]` in a compiled function reads the byte directly, as fast as an
+element of an Int list. A slice keeps the whole buffer it was cut from
+alive; to keep a small piece of a large value without the rest,
+`bytes.join([piece])` copies it.
 
 ## `compress` — gzip, brotli and deflate
 

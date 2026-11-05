@@ -43,8 +43,8 @@ fn obj(type_name: &str, fields: Vec<(&str, Value)>) -> Value {
         m.insert(k.to_string(), v);
     }
     Value::Struct {
-        type_name: type_name.to_string(),
-        fields: Arc::new(m),
+        type_name: type_name.to_string().into(),
+        fields: Arc::new(m).into(),
     }
 }
 
@@ -73,8 +73,8 @@ pub fn create_pty_module() -> Value {
         );
     }
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: Arc::new(module),
+        type_name: "Module".into(),
+        fields: Arc::new(module).into(),
     }
 }
 
@@ -122,8 +122,8 @@ fn handle(id: i64) -> Value {
     let mut fields = crate::ast::ValueMap::default();
     fields.insert("id".to_string(), Value::Integer(id));
     Value::Struct {
-        type_name: "Pty".to_string(),
-        fields: Arc::new(fields),
+        type_name: "Pty".into(),
+        fields: Arc::new(fields).into(),
     }
 }
 

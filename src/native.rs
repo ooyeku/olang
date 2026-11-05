@@ -57,6 +57,14 @@ pub trait NativeObject: fmt::Debug + Send + Sync {
         None
     }
 
+    /// This value's part of `hash(v)`: 64 bits that two values equal by
+    /// `native_eq` share, the same in every run. `None` — the default —
+    /// means it has no hash (a cell, a channel: compared by identity), and
+    /// `hash` raises naming the type.
+    fn hash64(&self) -> Option<u64> {
+        None
+    }
+
     /// The length `len(value)` reports, when this value has one. `None` —
     /// the default — keeps the language's "len: argument must be ..."
     /// error; a sequence-like native (Bytes) answers here and `len`
@@ -100,6 +108,43 @@ pub trait NativeObject: fmt::Debug + Send + Sync {
 /// kernel call, never per element or per register move.
 #[derive(Clone)]
 pub struct NativeHandle(pub Arc<Box<dyn NativeObject>>);
+
+/// How many thread-confined natives (cells, row readers: those whose
+/// `confined_to` is `Some`) are alive in the process. While it is 0 no
+/// value can hold one, so `chan.send` skips the walk that looks for one
+/// and a send costs the same for any message size (OL-429).
+static CONFINED_LIVE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Held by every confined native for as long as it lives: counted in
+/// [`CONFINED_LIVE`] while it is.
+pub struct ConfinedLive(());
+
+impl ConfinedLive {
+    pub fn new() -> ConfinedLive {
+        CONFINED_LIVE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        ConfinedLive(())
+    }
+}
+
+impl Default for ConfinedLive {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for ConfinedLive {
+    fn drop(&mut self) {
+        CONFINED_LIVE.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Whether any thread-confined native is alive in the process. A value
+/// made on another thread is visible here only after a send or a join,
+/// which synchronises, so a confined value inside a value in hand is
+/// always counted.
+pub fn any_confined_live() -> bool {
+    CONFINED_LIVE.load(std::sync::atomic::Ordering::Relaxed) != 0
+}
 
 impl NativeHandle {
     pub fn new(obj: impl NativeObject + 'static) -> Self {
@@ -199,6 +244,8 @@ pub fn registered_modules() -> &'static [Arc<dyn OvmModule>] {
         modules.push(Arc::new(crate::stdlib::dates::DatesModule));
         // Operators for BigInt values — same arrangement as dates.
         modules.push(Arc::new(crate::stdlib::bigint::BigIntModule));
+        // `==` for pmap, pvec and psorted against Maps and Lists.
+        modules.push(Arc::new(crate::stdlib::persistent::PersistentModule));
         modules
     });
     &MODULES

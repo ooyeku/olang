@@ -249,7 +249,7 @@ A function is eligible when its body uses only the subset the VM implements:
 - the bitwise operators (`& | ^ << >>`), natively on Ints
 - map and object spreads (`#{ ...m, "k": v }`)
 - `raise(message)`
-- method calls (`value.m(..)`) on any receiver expression, evaluated
+- method calls (`x.m(..)`) on any receiver expression, evaluated
   once before the arguments as the interpreter evaluates it (chains like
   `s.fill_null(0.0).sum()` included). A `CallMethod` instruction mirrors
   the interpreter's dispatch exactly: struct fields take precedence

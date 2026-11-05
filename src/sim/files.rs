@@ -187,7 +187,7 @@ fn read(ctx: &Ctx, verb: &str, args: &[Value]) -> Result<Value, InterpreterError
                     );
                     ok(Value::Struct {
                         type_name: "Object".into(),
-                        fields: Arc::new(info),
+                        fields: Arc::new(info).into(),
                     })
                 }
                 None => err(format!(

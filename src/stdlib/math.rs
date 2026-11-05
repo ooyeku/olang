@@ -79,9 +79,15 @@ pub fn create_math_module() -> Value {
         create_builtin_function("factorial", 1),
     );
 
+    // 64-bit integer operations: wrapping arithmetic, shifts and bit counts
+    for (name, arity) in INT_OPS {
+        let short = name.strip_prefix("math.").unwrap_or(name);
+        module.insert(short.to_string(), create_builtin_function(short, *arity));
+    }
+
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: std::sync::Arc::new(module),
+        type_name: "Module".into(),
+        fields: std::sync::Arc::new(module).into(),
     }
 }
 
@@ -153,8 +159,96 @@ fn call_math_function_inner(
         "gcd" => math_gcd(args),
         "lcm" => math_lcm(args),
         "factorial" => math_factorial(args),
+        _ if int_op_id(name).is_some() => math_int_op(name, args),
         _ => Err(format!("Unknown math function: {}", name).into()),
     }
+}
+
+/// The 64-bit integer operations, with their arity. The bytecode VM and
+/// the JIT number them by their place in this table, so every tier
+/// evaluates them through [`eval_int_op`].
+pub const INT_OPS: &[(&str, usize)] = &[
+    ("math.wrapping_add", 2),
+    ("math.wrapping_sub", 2),
+    ("math.wrapping_mul", 2),
+    ("math.wrapping_shl", 2),
+    ("math.ushr", 2),
+    ("math.rotl", 2),
+    ("math.rotr", 2),
+    ("math.popcount", 1),
+    ("math.clz", 1),
+    ("math.ctz", 1),
+];
+
+/// The id of an integer operation, its place in [`INT_OPS`]; `name` with
+/// or without its `math.` prefix.
+pub fn int_op_id(name: &str) -> Option<usize> {
+    let short = name.strip_prefix("math.").unwrap_or(name);
+    INT_OPS
+        .iter()
+        .position(|(n, _)| n.strip_prefix("math.") == Some(short))
+}
+
+/// The integer operation `id` of `a` and `b` (`b` is ignored by the
+/// one-argument ones). `None` for a shift or rotation count outside
+/// 0..=63: the caller raises [`int_op_error`].
+#[inline]
+pub fn eval_int_op(id: usize, a: i64, b: i64) -> Option<i64> {
+    let count = || u32::try_from(b).ok().filter(|n| *n < 64);
+    Some(match id {
+        0 => a.wrapping_add(b),
+        1 => a.wrapping_sub(b),
+        2 => a.wrapping_mul(b),
+        3 => ((a as u64) << count()?) as i64,
+        4 => ((a as u64) >> count()?) as i64,
+        5 => (a as u64).rotate_left(count()?) as i64,
+        6 => (a as u64).rotate_right(count()?) as i64,
+        7 => i64::from(a.count_ones()),
+        8 => i64::from(a.leading_zeros()),
+        9 => i64::from(a.trailing_zeros()),
+        _ => return None,
+    })
+}
+
+/// Whether the integer operation `id` takes a shift or rotation count.
+pub fn int_op_has_count(id: usize) -> bool {
+    (3..=6).contains(&id)
+}
+
+fn math_int_op(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let id = int_op_id(name).ok_or_else(|| format!("Unknown math function: {name}"))?;
+    let (full, arity) = INT_OPS[id];
+    let short = full.strip_prefix("math.").unwrap_or(full);
+    if args.len() != arity {
+        return Err(format!(
+            "math.{short} expects {arity} argument{}, got {}",
+            if arity == 1 { "" } else { "s" },
+            args.len()
+        )
+        .into());
+    }
+    let mut ints = [0i64; 2];
+    for (i, v) in args.iter().enumerate() {
+        match v {
+            Value::Integer(n) => ints[i] = *n,
+            other => {
+                return Err(format!(
+                    "math.{short}: argument {} must be an Int, got {}",
+                    i + 1,
+                    other.type_name()
+                )
+                .into());
+            }
+        }
+    }
+    eval_int_op(id, ints[0], ints[1])
+        .map(Value::Integer)
+        .ok_or_else(|| int_op_error(short, ints[1]).into())
+}
+
+/// The error for a shift or rotation count outside 0..=63.
+pub fn int_op_error(short: &str, count: i64) -> String {
+    format!("math.{short}: the count must be between 0 and 63, got {count}")
 }
 
 /// Get numeric value from olang Value

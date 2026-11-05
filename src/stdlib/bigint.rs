@@ -57,6 +57,9 @@ impl NativeObject for BigIntObject {
             .map(|o| self.0 == o.0)
             .unwrap_or(false)
     }
+    fn hash64(&self) -> Option<u64> {
+        Some(xxhash_rust::xxh3::xxh3_64(&self.0.to_signed_bytes_le()))
+    }
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -105,8 +108,8 @@ pub fn create_bigint_module() -> Value {
         );
     }
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: Arc::new(module),
+        type_name: "Module".into(),
+        fields: Arc::new(module).into(),
     }
 }
 

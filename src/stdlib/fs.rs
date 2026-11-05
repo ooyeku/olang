@@ -166,8 +166,8 @@ pub fn create_fs_module() -> Value {
     module.insert("sync".to_string(), create_builtin_function("sync", 1));
 
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: std::sync::Arc::new(module),
+        type_name: "Module".into(),
+        fields: std::sync::Arc::new(module).into(),
     }
 }
 
@@ -816,6 +816,9 @@ fn walk(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
     let mut found: Vec<String> = Vec::new();
     if let Err(e) = walk_into(std::path::Path::new(&root), &mut found) {
+        if e.kind() == std::io::ErrorKind::Interrupted && crate::interrupt::should_stop() {
+            return Err(crate::interrupt::MESSAGE.into());
+        }
         return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
             "walk: {}",
             e
@@ -833,6 +836,14 @@ fn walk(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 // walked ~40 levels until the system said ELOOP and the walk failed); a
 // link to a file is listed as the file it names.
 fn walk_into(dir: &std::path::Path, out: &mut Vec<String>) -> std::io::Result<()> {
+    // A stop asked of this thread (a cancelled token, a budget) ends the
+    // walk at the next folder, and the call raises.
+    if crate::interrupt::should_stop() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Interrupted,
+            crate::interrupt::MESSAGE,
+        ));
+    }
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
@@ -1263,8 +1274,8 @@ fn file_info(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             info.insert("modified_ms".to_string(), modified);
 
             Ok(Value::Ok(Box::new(Value::Struct {
-                type_name: "Object".to_string(),
-                fields: std::sync::Arc::new(info),
+                type_name: "Object".into(),
+                fields: std::sync::Arc::new(info).into(),
             })))
         }
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(

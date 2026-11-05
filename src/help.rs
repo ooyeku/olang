@@ -1281,6 +1281,36 @@ impl HelpSystem {
             see_also: vec!["to_string".to_string()],
         });
 
+        self.add_function(FunctionDoc {
+            name: "hash".to_string(),
+            description: "A 64-bit hash of the value, as an Int, that agrees with `==`: a map hashes the same whatever order its keys were added in, a parsed JSON object as the map with its keys and values, a whole Float as its Int. It is XXH3 over a fixed encoding, the same in every run and release, so it can key a cache on disk. Unequal values rarely share a hash. A function, a cell or a channel has no hash, and hashing one raises".to_string(),
+            syntax: "hash(v)".to_string(),
+            parameters: vec!["v: Any - The value to hash".to_string()],
+            return_type: "Int".to_string(),
+            examples: vec![
+                "hash(#{ \"x\": 1, \"y\": 2 }) == hash(#{ \"y\": 2, \"x\": 1 })  // true".to_string(),
+                "hash(1) == hash(1.0)  // true".to_string(),
+            ],
+            category: "Introspection".to_string(),
+            see_also: vec!["str.hash".to_string(), "crypto.xxh3".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "same".to_string(),
+            description: "Whether a and b are one value in memory: the same list, map, struct or closure, not merely two equal ones. A scalar (an Int, a Float, a Bool, `()`) has no identity, so for one it is `==`. Use it as a cheap \"unchanged\" check before an expensive comparison: `true` always means `a == b`, but `false` says nothing, since an equal copy is not the same value. It never changes what a program means, only how much work it skips".to_string(),
+            syntax: "same(a, b)".to_string(),
+            parameters: vec![
+                "a: Any - A value".to_string(),
+                "b: Any - Another value".to_string(),
+            ],
+            return_type: "Bool".to_string(),
+            examples: vec![
+                "let xs = [1, 2, 3]\nsame(xs, xs)  // true".to_string(),
+                "same([1, 2, 3], [1, 2] + [3])  // false — equal, but two lists".to_string(),
+            ],
+            category: "Introspection".to_string(),
+            see_also: vec!["typeof".to_string()],
+        });
+
         // List manipulation utilities
         self.add_function(FunctionDoc {
             name: "reverse".to_string(),
@@ -3056,6 +3086,433 @@ task.watch(service, inbox)   // a dead service is an Err at the next recv, not a
             "cell",
             "apply f to the current value, store the result, and return it",
             &[r##"cell.update(counter, (n) => n + 1)  // returns the new value"##],
+        );
+
+        self.doc_ex(
+            "chan.on_drop",
+            "chan.on_drop(c, msg)",
+            "DropGuard",
+            "chan",
+            "a guard that sends msg on c when its last copy is dropped: kept with whatever owns a subscription, it tells the service the owner went away. The send never blocks; on a full bounded channel or a closed one the message is lost",
+            &[r##"let guard = chan.on_drop(service, #{ "unsubscribe": id })"##],
+        );
+
+        // shared — one immutable value, readable from every thread
+        self.doc_ex(
+            "shared.new",
+            "shared.new(v)",
+            "Shared",
+            "shared",
+            "a reference holding v that every thread can read and replace. The value inside never changes; what changes is which value the reference holds, so no thread ever sees a half-made one. A cell is refused",
+            &[r##"let latest = shared.new(#{ "rev": 0 })"##],
+        );
+        self.doc_ex(
+            "shared.get",
+            "shared.get(s)",
+            "Any",
+            "shared",
+            "the value the reference holds now; cheap, and never waits for a writer's work",
+            &[r##"shared.get(latest).rev"##],
+        );
+        self.doc_ex(
+            "shared.set",
+            "shared.set(s, v)",
+            "Unit",
+            "shared",
+            "make the reference hold v from now on",
+            &[r##"shared.set(latest, #{ "rev": 1 })"##],
+        );
+        self.doc_ex(
+            "shared.swap",
+            "shared.swap(s, f)",
+            "Any",
+            "shared",
+            "make the reference hold f(current), and answer it. If another thread replaced the value while f ran, f runs again on the newer one, so f should only compute",
+            &[r##"shared.swap(counter, (n) => n + 1)"##],
+        );
+        self.doc_ex(
+            "shared.compare_and_set",
+            "shared.compare_and_set(s, old, new)",
+            "Bool",
+            "shared",
+            "make the reference hold new if it still holds a value equal to old: true if it did, false (changing nothing) if not",
+            &[r##"shared.compare_and_set(counter, 400, 0)"##],
+        );
+
+        // weak — weak references
+        self.doc_ex(
+            "weak.new",
+            "weak.new(v)",
+            "Weak",
+            "weak",
+            "a reference to v that does not keep it alive. An Int, a Float, a Bool or () has nothing to free and is kept",
+            &[r##"let w = weak.new(rows)"##],
+        );
+        self.doc_ex(
+            "weak.get",
+            "weak.get(w)",
+            "Any",
+            "weak",
+            "the value while something else still holds it, () once it has been freed",
+            &[r##"weak.get(w) ?? recompute()"##],
+        );
+        self.doc_ex(
+            "weak.alive",
+            "weak.alive(w)",
+            "Bool",
+            "weak",
+            "whether the value is still held somewhere",
+            &[r##"weak.alive(w)"##],
+        );
+
+        // pmap, pvec, psorted — persistent collections (OL-424)
+        self.doc_ex(
+            "pmap.new",
+            "pmap.new()",
+            "PMap",
+            "pmap",
+            "an empty pmap: a map that keeps every older version when updated",
+            &[r##"pmap.new()"##],
+        );
+        self.doc_ex(
+            "pmap.of",
+            "pmap.of(m)",
+            "PMap",
+            "pmap",
+            "a pmap holding the entries of a Map (or another pmap or psorted)",
+            &[r##"pmap.of(#{ "a": 1 })"##],
+        );
+        self.doc_ex(
+            "pmap.get",
+            "pmap.get(p, k)",
+            "Any",
+            "pmap",
+            "the value at key k (an Int or a String), or () when absent; p[k] and p.k read the same",
+            &[r##"pmap.get(p, "a")"##],
+        );
+        self.doc_ex(
+            "pmap.set",
+            "pmap.set(p, k, v)",
+            "PMap",
+            "pmap",
+            "p with k set to v, in O(log n); p itself, and every older version, is unchanged",
+            &[r##"pmap.set(p, "b", 2)"##],
+        );
+        self.doc_ex(
+            "pmap.remove",
+            "pmap.remove(p, k)",
+            "PMap",
+            "pmap",
+            "p without key k, in O(log n); p itself is unchanged",
+            &[r##"pmap.remove(p, "a")"##],
+        );
+        self.doc_ex(
+            "pmap.has",
+            "pmap.has(p, k)",
+            "Bool",
+            "pmap",
+            "whether p has an entry at key k (an Int or a String)",
+            &[r##"pmap.has(p, "a")"##],
+        );
+        self.doc_ex(
+            "pmap.len",
+            "pmap.len(p)",
+            "Int",
+            "pmap",
+            "the number of entries (len(p) answers the same)",
+            &[r##"pmap.len(p)"##],
+        );
+        self.doc_ex(
+            "pmap.keys",
+            "pmap.keys(p)",
+            "List",
+            "pmap",
+            "the keys, in key order (Ints first, then Strings)",
+            &[r##"pmap.keys(p)"##],
+        );
+        self.doc_ex(
+            "pmap.values",
+            "pmap.values(p)",
+            "List",
+            "pmap",
+            "the values, in key order",
+            &[r##"pmap.values(p)"##],
+        );
+        self.doc_ex(
+            "pmap.entries",
+            "pmap.entries(p)",
+            "List",
+            "pmap",
+            "the (key, value) pairs, in key order",
+            &[r##"pmap.entries(p)"##],
+        );
+        self.doc_ex(
+            "pmap.to_map",
+            "pmap.to_map(p)",
+            "Map",
+            "pmap",
+            "p as a plain Map (an Int key becomes its text)",
+            &[r##"pmap.to_map(p)"##],
+        );
+        self.doc_ex(
+            "pmap.diff",
+            "pmap.diff(old, new)",
+            "Map",
+            "pmap",
+            "what changed from old to new: #{ \"added\", \"removed\", \"changed\" }, each a list of keys in key order",
+            &[r##"pmap.diff(p, pmap.set(p, "a", 2))"##],
+        );
+        self.doc_ex(
+            "psorted.new",
+            "psorted.new()",
+            "PSorted",
+            "psorted",
+            "an empty psorted: a map kept in key order (Ints before Strings)",
+            &[r##"psorted.new()"##],
+        );
+        self.doc_ex(
+            "psorted.of",
+            "psorted.of(m)",
+            "PSorted",
+            "psorted",
+            "a psorted holding the entries of a Map (or a pmap or another psorted)",
+            &[r##"psorted.of(#{ "b": 2, "a": 1 })"##],
+        );
+        self.doc_ex(
+            "psorted.get",
+            "psorted.get(p, k)",
+            "Any",
+            "psorted",
+            "the value at key k, or () when absent",
+            &[r##"psorted.get(s, 3)"##],
+        );
+        self.doc_ex(
+            "psorted.set",
+            "psorted.set(p, k, v)",
+            "PSorted",
+            "psorted",
+            "p with k set to v, in O(log n); older versions are unchanged",
+            &[r##"psorted.set(s, 3, "c")"##],
+        );
+        self.doc_ex(
+            "psorted.remove",
+            "psorted.remove(p, k)",
+            "PSorted",
+            "psorted",
+            "p without key k, in O(log n); p itself is unchanged",
+            &[r##"psorted.remove(s, 3)"##],
+        );
+        self.doc_ex(
+            "psorted.has",
+            "psorted.has(p, k)",
+            "Bool",
+            "psorted",
+            "whether p has an entry at key k (an Int or a String)",
+            &[r##"psorted.has(s, 3)"##],
+        );
+        self.doc_ex(
+            "psorted.len",
+            "psorted.len(p)",
+            "Int",
+            "psorted",
+            "the number of entries",
+            &[r##"psorted.len(s)"##],
+        );
+        self.doc_ex(
+            "psorted.keys",
+            "psorted.keys(p)",
+            "List",
+            "psorted",
+            "the keys, in key order (Ints first, then Strings)",
+            &[r##"psorted.keys(s)"##],
+        );
+        self.doc_ex(
+            "psorted.values",
+            "psorted.values(p)",
+            "List",
+            "psorted",
+            "the values, in key order",
+            &[r##"psorted.values(s)"##],
+        );
+        self.doc_ex(
+            "psorted.entries",
+            "psorted.entries(p)",
+            "List",
+            "psorted",
+            "the (key, value) pairs in key order",
+            &[r##"psorted.entries(s)"##],
+        );
+        self.doc_ex(
+            "psorted.to_map",
+            "psorted.to_map(p)",
+            "Map",
+            "psorted",
+            "p as a plain Map (an Int key becomes its text)",
+            &[r##"psorted.to_map(s)"##],
+        );
+        self.doc_ex(
+            "psorted.diff",
+            "psorted.diff(old, new)",
+            "Map",
+            "psorted",
+            "what changed: #{ \"added\", \"removed\", \"changed\" }, found by walking both trees and skipping what they share",
+            &[r##"psorted.diff(s, psorted.set(s, 1, 0))"##],
+        );
+        self.doc_ex(
+            "psorted.first",
+            "psorted.first(p)",
+            "Tuple",
+            "psorted",
+            "the (key, value) pair with the smallest key, or () when empty",
+            &[r##"psorted.first(s)"##],
+        );
+        self.doc_ex(
+            "psorted.last",
+            "psorted.last(p)",
+            "Tuple",
+            "psorted",
+            "the (key, value) pair with the largest key, or () when empty",
+            &[r##"psorted.last(s)"##],
+        );
+        self.doc_ex(
+            "psorted.range",
+            "psorted.range(p, lo, hi)",
+            "List",
+            "psorted",
+            "the (key, value) pairs with lo <= key < hi, in order; () for either end leaves it open",
+            &[r##"psorted.range(s, 10, 20)"##],
+        );
+        self.doc_ex(
+            "pvec.new",
+            "pvec.new()",
+            "PVec",
+            "pvec",
+            "an empty pvec: a vector that keeps every older version when updated",
+            &[r##"pvec.new()"##],
+        );
+        self.doc_ex(
+            "pvec.of",
+            "pvec.of(xs)",
+            "PVec",
+            "pvec",
+            "a pvec holding the items of a List",
+            &[r##"pvec.of([1, 2, 3])"##],
+        );
+        self.doc_ex(
+            "pvec.get",
+            "pvec.get(v, i)",
+            "Any",
+            "pvec",
+            "the item at position i (v[i] reads the same); out of range raises",
+            &[r##"pvec.get(v, 0)"##],
+        );
+        self.doc_ex(
+            "pvec.set",
+            "pvec.set(v, i, x)",
+            "PVec",
+            "pvec",
+            "v with position i set to x, in O(log n); older versions are unchanged",
+            &[r##"pvec.set(v, 0, 9)"##],
+        );
+        self.doc_ex(
+            "pvec.push",
+            "pvec.push(v, x)",
+            "PVec",
+            "pvec",
+            "v with x added at the end",
+            &[r##"pvec.push(v, 4)"##],
+        );
+        self.doc_ex(
+            "pvec.pop",
+            "pvec.pop(v)",
+            "PVec",
+            "pvec",
+            "v without its last item (an empty pvec stays empty)",
+            &[r##"pvec.pop(v)"##],
+        );
+        self.doc_ex(
+            "pvec.last",
+            "pvec.last(v)",
+            "Any",
+            "pvec",
+            "the last item, or () when empty",
+            &[r##"pvec.last(v)"##],
+        );
+        self.doc_ex(
+            "pvec.len",
+            "pvec.len(v)",
+            "Int",
+            "pvec",
+            "the number of items (len(v) answers the same)",
+            &[r##"pvec.len(v)"##],
+        );
+        self.doc_ex(
+            "pvec.slice",
+            "pvec.slice(v, from, to)",
+            "PVec",
+            "pvec",
+            "items from up to to, in O(log n), sharing v's storage; past the end stops at the end",
+            &[r##"pvec.slice(v, 1, 3)"##],
+        );
+        self.doc_ex(
+            "pvec.concat",
+            "pvec.concat(a, b)",
+            "PVec",
+            "pvec",
+            "a then b, in O(log n)",
+            &[r##"pvec.concat(a, b)"##],
+        );
+        self.doc_ex(
+            "pvec.to_list",
+            "pvec.to_list(v)",
+            "List",
+            "pvec",
+            "v as a plain List, with the same items in the same order",
+            &[r##"pvec.to_list(v)"##],
+        );
+
+        // value — the binary value codec
+        self.doc_ex(
+            "value.encode",
+            "value.encode(v) / value.encode(v, #{ canonical: true })",
+            "Bytes",
+            "value",
+            "v written as Bytes that value.decode reads back as an == value: tuples, Bytes, Ok/Err, enums and structs kept, unlike JSON. Canonical mode writes map keys and struct fields sorted, so == values encode to the same bytes. A function, a cell or another handle raises",
+            &[r##"let b = value.encode(#{ "id": (7, "seven") })"##],
+        );
+        self.doc_ex(
+            "value.decode",
+            "value.decode(b)",
+            "Result",
+            "value",
+            "the value value.encode wrote into b, as Ok(v); Err saying what is wrong when b is cut short, not an encoding, or of a newer version",
+            &[r##"unwrap(value.decode(value.encode([1, (2, 3)])))  // [1, (2, 3)]"##],
+        );
+
+        // cancel — cancellation tokens
+        self.doc_ex(
+            "cancel.token",
+            "cancel.token()",
+            "CancelToken",
+            "cancel",
+            "a new cancellation token, not set: how one task tells another its work is no longer wanted. It crosses spawn and channels like any value",
+            &[r##"let t = cancel.token()"##],
+        );
+        self.doc_ex(
+            "cancel.set",
+            "cancel.set(t)",
+            "Unit",
+            "cancel",
+            "set the token, from any thread; it stays set. Work checking it sees it at once, and a runtime.call_cancellable on it stops",
+            &[r##"cancel.set(t)"##],
+        );
+        self.doc_ex(
+            "cancel.is_set",
+            "cancel.is_set(t)",
+            "Bool",
+            "cancel",
+            "whether the token has been set: one atomic read, cheap enough for a tight loop",
+            &[r##"while !cancel.is_set(t) { step() }"##],
         );
 
         self.doc_ex(
@@ -6412,6 +6869,86 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             "least common multiple of two integers",
             &[r##"math.lcm(4, 6)  // 12"##],
         );
+        self.doc_ex(
+            "math.wrapping_add",
+            "math.wrapping_add(a, b)",
+            "Int",
+            "math",
+            "a + b on two Ints, wrapping around at 64 bits instead of raising an overflow: the arithmetic hash functions are written in",
+            &[r##"math.wrapping_add(9223372036854775807, 1)  // -9223372036854775808"##],
+        );
+        self.doc_ex(
+            "math.wrapping_sub",
+            "math.wrapping_sub(a, b)",
+            "Int",
+            "math",
+            "a - b on two Ints, wrapping around at 64 bits instead of raising an overflow",
+            &[r##"math.wrapping_sub(-9223372036854775808, 1)  // 9223372036854775807"##],
+        );
+        self.doc_ex(
+            "math.wrapping_mul",
+            "math.wrapping_mul(a, b)",
+            "Int",
+            "math",
+            "a * b on two Ints, keeping the low 64 bits instead of raising an overflow",
+            &[r##"math.wrapping_mul(1099511628211, 1099511628211)  // 956575116354345"##],
+        );
+        self.doc_ex(
+            "math.wrapping_shl",
+            "math.wrapping_shl(a, n)",
+            "Int",
+            "math",
+            "a shifted left by n bits (0 to 63), the bits shifted past bit 63 dropped; `<<` raises instead when a bit is lost",
+            &[r##"math.wrapping_shl(1, 63)  // -9223372036854775808"##],
+        );
+        self.doc_ex(
+            "math.ushr",
+            "math.ushr(a, n)",
+            "Int",
+            "math",
+            "a shifted right by n bits (0 to 63) as an unsigned number, filling with zeros; `>>` keeps the sign",
+            &[r##"math.ushr(-1, 60)  // 15"##],
+        );
+        self.doc_ex(
+            "math.rotl",
+            "math.rotl(a, n)",
+            "Int",
+            "math",
+            "the 64 bits of a rotated left by n (0 to 63): the bits leaving the top come back at the bottom",
+            &[r##"math.rotl(math.wrapping_shl(1, 63), 1)  // 1"##],
+        );
+        self.doc_ex(
+            "math.rotr",
+            "math.rotr(a, n)",
+            "Int",
+            "math",
+            "the 64 bits of a rotated right by n (0 to 63)",
+            &[r##"math.rotr(1, 1)  // -9223372036854775808"##],
+        );
+        self.doc_ex(
+            "math.popcount",
+            "math.popcount(a)",
+            "Int",
+            "math",
+            "how many of the 64 bits of a are set (a negative Int counts its sign bit)",
+            &[r##"math.popcount(255)  // 8"##],
+        );
+        self.doc_ex(
+            "math.clz",
+            "math.clz(a)",
+            "Int",
+            "math",
+            "how many zero bits lead the 64 bits of a, from the top: 64 for 0, 0 for a negative Int",
+            &[r##"math.clz(1)  // 63"##],
+        );
+        self.doc_ex(
+            "math.ctz",
+            "math.ctz(a)",
+            "Int",
+            "math",
+            "how many zero bits trail the 64 bits of a, from the bottom: 64 for 0",
+            &[r##"math.ctz(8)  // 3"##],
+        );
 
         // --- fs: path helpers and directory walking ---
         self.doc_ex(
@@ -7665,6 +8202,16 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             see_also: vec!["str.width".to_string()],
         });
         self.add_function(FunctionDoc {
+            name: "str.hash".to_string(),
+            description: "The XXH3 hash of the string's UTF-8 bytes, as an Int: quick, and the same in every run and release. Not cryptographic (crypto.blake3 is). The same as crypto.xxh3(s)".to_string(),
+            syntax: "str.hash(s)".to_string(),
+            parameters: vec!["s: String".to_string()],
+            return_type: "Int".to_string(),
+            examples: vec!["str.hash(\"\") == crypto.xxh3(\"\")  // true".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["hash".to_string(), "crypto.xxh3".to_string()],
+        });
+        self.add_function(FunctionDoc {
             name: "str.length".to_string(),
             description: "Length in characters.".to_string(),
             syntax: "str.length(s)".to_string(),
@@ -8053,7 +8600,7 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             "bytes.slice(b, from, to)",
             "Bytes",
             "Bytes",
-            "Half-open byte slice, clamped to the value's bounds — the same shape as str.substring.",
+            "Half-open byte slice, clamped to the value's bounds — the same shape as str.substring. A view: it shares b's memory and copies nothing.",
             &[r##"bytes.slice(b, 0, 4)  // the first four bytes"##],
         );
         self.doc_ex(
@@ -8063,6 +8610,150 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             "Bytes",
             "The concatenation of two Bytes values.",
             &[r##"bytes.concat(header, payload)"##],
+        );
+        self.doc_ex(
+            "bytes.join",
+            "bytes.join(parts) / bytes.join(parts, sep)",
+            "Bytes",
+            "Bytes",
+            "The parts (Bytes or Strings) one after another, sep between them, in one allocation.",
+            &[r##"bytes.join([header, body], "\r\n")"##],
+        );
+        self.doc_ex(
+            "bytes.builder",
+            "bytes.builder()",
+            "BytesBuilder",
+            "Bytes",
+            "A buffer that grows in place: bytes.push adds to its end, bytes.build answers its contents. Building with it costs what the result weighs, where repeated concat copies everything so far each time. Like a cell, it belongs to the thread that made it.",
+            &[r##"let out = bytes.builder()"##],
+        );
+        self.doc_ex(
+            "bytes.push",
+            "bytes.push(bld, x)",
+            "BytesBuilder",
+            "Bytes",
+            "Append x to the builder in place: Bytes, a String's UTF-8, one byte (an Int 0..=255) or a list of them. Answers the builder.",
+            &[r##"bytes.push(out, bytes.pack("u32", [n]))"##],
+        );
+        self.doc_ex(
+            "bytes.build",
+            "bytes.build(bld)",
+            "Bytes",
+            "Bytes",
+            "What the builder holds, as Bytes, without a copy; the builder is empty afterwards.",
+            &[r##"let b = bytes.build(out)"##],
+        );
+        self.doc_ex(
+            "bytes.index_of",
+            "bytes.index_of(b, needle) / bytes.index_of(b, needle, from)",
+            "Int",
+            "Bytes",
+            "Where needle (Bytes, a String, or one byte as an Int) first occurs in b at or after from, or () when it does not.",
+            &[r##"bytes.index_of(bytes.from_string("a=b"), "=")  // 1"##],
+        );
+        self.doc_ex(
+            "bytes.compare",
+            "bytes.compare(a, b)",
+            "Int",
+            "Bytes",
+            "-1, 0 or 1 as a sorts before, with or after b, byte by byte (a prefix first).",
+            &[r##"bytes.compare(bytes.from_list([1]), bytes.from_list([1, 0]))  // -1"##],
+        );
+        self.doc_ex(
+            "bytes.pack",
+            "bytes.pack(layout, values)",
+            "Bytes",
+            "Bytes",
+            "The values written as the layout's types, one after another. The layout is types separated by spaces: u8 i8 u16 i16 u32 i32 u64 i64 f32 f64, each little endian unless suffixed be (or le). A value that does not fit its type raises.",
+            &[r##"bytes.pack("u16 u32be", [1, 2])  // 6 bytes"##],
+        );
+        self.doc_ex(
+            "bytes.unpack",
+            "bytes.unpack(layout, b) / bytes.unpack(layout, b, at)",
+            "List",
+            "Bytes",
+            "The values the layout's types read from b, from byte at (0 when left out). Reading past the end raises.",
+            &[r##"bytes.unpack("u16 u32be", bytes.pack("u16 u32be", [1, 2]))  // [1, 2]"##],
+        );
+        self.doc_ex(
+            "bytes.get_u8",
+            "bytes.get_u8(b, at)",
+            "Int",
+            "Bytes",
+            "The an unsigned byte stored at byte at. Reading past the end raises.",
+            &[r##"bytes.get_u8(b, 0)"##],
+        );
+        self.doc_ex(
+            "bytes.get_i8",
+            "bytes.get_i8(b, at)",
+            "Int",
+            "Bytes",
+            "The a signed byte stored at byte at. Reading past the end raises.",
+            &[r##"bytes.get_i8(b, 0)"##],
+        );
+        self.doc_ex(
+            "bytes.get_u16",
+            "bytes.get_u16(b, at) / bytes.get_u16(b, at, \"be\")",
+            "Int",
+            "Bytes",
+            "The an unsigned 16-bit number stored at byte at, little endian unless \"be\" is given. Reading past the end raises.",
+            &[r##"bytes.get_u16(b, 0)"##],
+        );
+        self.doc_ex(
+            "bytes.get_i16",
+            "bytes.get_i16(b, at) / bytes.get_i16(b, at, \"be\")",
+            "Int",
+            "Bytes",
+            "The a signed 16-bit number stored at byte at, little endian unless \"be\" is given. Reading past the end raises.",
+            &[r##"bytes.get_i16(b, 0)"##],
+        );
+        self.doc_ex(
+            "bytes.get_u32",
+            "bytes.get_u32(b, at) / bytes.get_u32(b, at, \"be\")",
+            "Int",
+            "Bytes",
+            "The an unsigned 32-bit number stored at byte at, little endian unless \"be\" is given. Reading past the end raises.",
+            &[r##"bytes.get_u32(b, 0)"##],
+        );
+        self.doc_ex(
+            "bytes.get_i32",
+            "bytes.get_i32(b, at) / bytes.get_i32(b, at, \"be\")",
+            "Int",
+            "Bytes",
+            "The a signed 32-bit number stored at byte at, little endian unless \"be\" is given. Reading past the end raises.",
+            &[r##"bytes.get_i32(b, 0)"##],
+        );
+        self.doc_ex(
+            "bytes.get_u64",
+            "bytes.get_u64(b, at) / bytes.get_u64(b, at, \"be\")",
+            "Int",
+            "Bytes",
+            "The an unsigned 64-bit number (one past the Int range reads as the Int with the same bits, negative) stored at byte at, little endian unless \"be\" is given. Reading past the end raises.",
+            &[r##"bytes.get_u64(b, 0)"##],
+        );
+        self.doc_ex(
+            "bytes.get_i64",
+            "bytes.get_i64(b, at) / bytes.get_i64(b, at, \"be\")",
+            "Int",
+            "Bytes",
+            "The a signed 64-bit number stored at byte at, little endian unless \"be\" is given. Reading past the end raises.",
+            &[r##"bytes.get_i64(b, 0)"##],
+        );
+        self.doc_ex(
+            "bytes.get_f32",
+            "bytes.get_f32(b, at) / bytes.get_f32(b, at, \"be\")",
+            "Float",
+            "Bytes",
+            "The a 32-bit float stored at byte at, little endian unless \"be\" is given. Reading past the end raises.",
+            &[r##"bytes.get_f32(b, 0)"##],
+        );
+        self.doc_ex(
+            "bytes.get_f64",
+            "bytes.get_f64(b, at) / bytes.get_f64(b, at, \"be\")",
+            "Float",
+            "Bytes",
+            "The a 64-bit float stored at byte at, little endian unless \"be\" is given. Reading past the end raises.",
+            &[r##"bytes.get_f64(b, 0)"##],
         );
         self.doc_ex(
             "bytes.to_hex",
@@ -8293,6 +8984,15 @@ if boot != () && boot.running != () => println("running layer " + boot.running) 
             "Call f(args…) with a time budget: past `ms` milliseconds its evaluation is stopped — as an interrupt, on this thread only — and any failure is caught. #{ \"ok\", \"value\" (when ok), \"error\" and \"frames\" (when not: each #{ \"file\", \"line\", \"fn\" }, innermost first), \"over\" (it ran past its budget), \"us\" (microseconds it took) }. How a host calls code it does not trust to finish.",
             &[r##"let r = runtime.call_budget((n) => n * 2, [21], 50)
 println(show(map_get(r, "value")) + " in " + show(map_get(r, "us")) + " µs")"##],
+        );
+        self.doc_ex(
+            "runtime.call_cancellable",
+            "runtime.call_cancellable(f, args, t)",
+            "Map",
+            "runtime",
+            "Call f(args…) so that setting the cancel token t stops it wherever it is: the interpreter at its next statement, compiled code at its next loop iteration or call, the file walks, os.exec and http reads between their steps. Only the threads running a cancellable call on t stop. Answers, as runtime.call_budget does, #{ \"ok\", \"value\" (when ok), \"error\" (\"cancelled\" when stopped) and \"frames\" (when not), \"cancelled\" (t was set), \"us\" }.",
+            &[r##"let r = runtime.call_cancellable((n) => n * 2, [21], cancel.token())
+println(show(map_get(r, "value")))  // 42"##],
         );
         self.doc_ex(
             "runtime.last_error",
@@ -11276,9 +11976,9 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
         o.push_str(&format!(
             "{y}Modules{r} {d}(:help <module> to open one){r}\n"
         ));
-        o.push_str(&format!("  core       {c}str col math json toml re dates time random crypto base64 bytes bigint{r}\n"));
+        o.push_str(&format!("  core       {c}str col math json toml re dates time random crypto base64 bytes bigint value{r}\n"));
         o.push_str(&format!(
-            "  system     {c}fs os proc http db chan task cell caps meta testing{r}\n"
+            "  system     {c}fs os proc http db chan task cell cancel shared weak pmap pvec psorted caps meta testing{r}\n"
         ));
         o.push_str(&format!(
             "  data       {c}ods stats plot csv collections{r}\n"
@@ -12557,6 +13257,29 @@ For function-specific syntax, use: {}:help <function_name>{}",
             ],
             category: "Crypto".to_string(),
             see_also: vec!["crypto.sha256".to_string(), "crypto.hmac_sha512".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "crypto.blake3".to_string(),
+            description: "The BLAKE3 digest of a String (its UTF-8) or Bytes, as a hex string: a cryptographic digest like sha256, several times faster".to_string(),
+            syntax: "crypto.blake3(input)".to_string(),
+            parameters: vec!["input: String or Bytes - What to hash".to_string()],
+            return_type: "String".to_string(),
+            examples: vec![
+                "crypto.blake3(\"\")  // \"af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262\"".to_string(),
+            ],
+            category: "Crypto".to_string(),
+            see_also: vec!["crypto.sha256".to_string(), "crypto.xxh3".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "crypto.xxh3".to_string(),
+            description: "The XXH3 64-bit hash of a String (its UTF-8) or Bytes, as an Int: a quick fingerprint for a cache key or a change check, the same in every run and release. Not cryptographic: use blake3 or sha256 where someone might forge a collision".to_string(),
+            syntax: "crypto.xxh3(input)".to_string(),
+            parameters: vec!["input: String or Bytes - What to hash".to_string()],
+            return_type: "Int".to_string(),
+            examples: vec!["crypto.xxh3(\"\")  // 3244421341483603138".to_string()],
+            category: "Crypto".to_string(),
+            see_also: vec!["str.hash".to_string(), "hash".to_string(), "crypto.blake3".to_string()],
         });
 
         // HMAC functions

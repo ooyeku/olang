@@ -93,8 +93,8 @@ pub fn create_http_module() -> Value {
     );
 
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: std::sync::Arc::new(module),
+        type_name: "Module".into(),
+        fields: std::sync::Arc::new(module).into(),
     }
 }
 
@@ -309,6 +309,9 @@ fn perform(
         builder = builder.body(body.to_string());
     }
 
+    if crate::interrupt::should_stop() {
+        return Err(crate::interrupt::MESSAGE.into());
+    }
     match builder.send() {
         Ok(response) => {
             let status = response.status().as_u16() as i64;
@@ -320,12 +323,42 @@ fn perform(
                     .ok()
                     .map(|v| (name.as_str().to_lowercase(), v.to_string()))
             }));
-            let body = if opts.bytes {
+            // Where a call can be stopped (a cancellable call, a budget,
+            // the REPL's interrupt), the body is read a chunk at a time,
+            // and a stop between chunks raises as the evaluators do.
+            let body: Result<Value, String> = if crate::interrupt::armed() {
+                use std::io::Read;
+                let mut response = response;
+                let mut all = Vec::new();
+                let mut chunk = vec![0u8; 64 * 1024];
+                loop {
+                    if crate::interrupt::should_stop() {
+                        return Err(crate::interrupt::MESSAGE.into());
+                    }
+                    match response.read(&mut chunk) {
+                        Ok(0) => break Ok(()),
+                        Ok(n) => all.extend_from_slice(&chunk[..n]),
+                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                        Err(e) => break Err(e.to_string()),
+                    }
+                }
+                .map(|()| {
+                    if opts.bytes {
+                        crate::stdlib::bytes::to_value(all)
+                    } else {
+                        Value::String(Arc::new(String::from_utf8_lossy(&all).into_owned()))
+                    }
+                })
+            } else if opts.bytes {
                 response
                     .bytes()
                     .map(|b| crate::stdlib::bytes::to_value(b.to_vec()))
+                    .map_err(|e| e.to_string())
             } else {
-                response.text().map(|t| Value::String(Arc::new(t)))
+                response
+                    .text()
+                    .map(|t| Value::String(Arc::new(t)))
+                    .map_err(|e| e.to_string())
             };
             match body {
                 Ok(response_body) => {
@@ -338,8 +371,8 @@ fn perform(
                         Value::Boolean((200..300).contains(&status)),
                     );
                     Ok(Value::Ok(Box::new(Value::Struct {
-                        type_name: "HttpResponse".to_string(),
-                        fields: std::sync::Arc::new(response_map),
+                        type_name: "HttpResponse".into(),
+                        fields: std::sync::Arc::new(response_map).into(),
                     })))
                 }
                 Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
@@ -776,8 +809,8 @@ fn request_to_value(req: &ParsedRequest, remote_addr: &str) -> Value {
     );
 
     Value::Struct {
-        type_name: "HttpRequest".to_string(),
-        fields: std::sync::Arc::new(fields),
+        type_name: "HttpRequest".into(),
+        fields: std::sync::Arc::new(fields).into(),
     }
 }
 
@@ -1307,8 +1340,8 @@ fn http_defer(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let mut fields = crate::ast::ValueMap::default();
     fields.insert("ticket".to_string(), Value::Integer(id as i64));
     Ok(Value::Struct {
-        type_name: "HttpDeferred".to_string(),
-        fields: Arc::new(fields),
+        type_name: "HttpDeferred".into(),
+        fields: Arc::new(fields).into(),
     })
 }
 
@@ -1797,8 +1830,8 @@ fn http_response(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     );
 
     Ok(Value::Struct {
-        type_name: "HttpResponse".to_string(),
-        fields: std::sync::Arc::new(response_map),
+        type_name: "HttpResponse".into(),
+        fields: std::sync::Arc::new(response_map).into(),
     })
 }
 
@@ -1841,8 +1874,8 @@ fn http_response_with_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::er
     );
 
     Ok(Value::Struct {
-        type_name: "HttpResponse".to_string(),
-        fields: std::sync::Arc::new(response_map),
+        type_name: "HttpResponse".into(),
+        fields: std::sync::Arc::new(response_map).into(),
     })
 }
 
@@ -1895,8 +1928,8 @@ fn parse_url(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             );
 
             Ok(Value::Ok(Box::new(Value::Struct {
-                type_name: "Object".to_string(),
-                fields: std::sync::Arc::new(url_map),
+                type_name: "Object".into(),
+                fields: std::sync::Arc::new(url_map).into(),
             })))
         }
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
@@ -2054,8 +2087,8 @@ mod tests {
 
     fn struct_val(type_name: &str, fields: crate::ast::ValueMap) -> Value {
         Value::Struct {
-            type_name: type_name.to_string(),
-            fields: std::sync::Arc::new(fields),
+            type_name: type_name.to_string().into(),
+            fields: std::sync::Arc::new(fields).into(),
         }
     }
 
@@ -2368,8 +2401,8 @@ mod tests {
             crate::stdlib::bytes::to_value(vec![0, 159, 146, 150]),
         );
         let resp = Value::Struct {
-            type_name: "Response".to_string(),
-            fields: std::sync::Arc::new(fields),
+            type_name: "Response".into(),
+            fields: std::sync::Arc::new(fields).into(),
         };
         let out = render_handler_result(&resp, false, crate::caps::FsCap::Full);
         assert!(
@@ -2391,8 +2424,8 @@ mod tests {
         fields.insert("status".to_string(), int_val(200));
         fields.insert("body_file".to_string(), string_val("/etc/hostname"));
         let resp = Value::Struct {
-            type_name: "Response".to_string(),
-            fields: std::sync::Arc::new(fields),
+            type_name: "Response".into(),
+            fields: std::sync::Arc::new(fields).into(),
         };
         // fs = None: denied.
         let denied = String::from_utf8(render_handler_result(

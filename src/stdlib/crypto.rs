@@ -61,6 +61,8 @@ pub fn create_crypto_module() -> Value {
     module.insert("sha1".to_string(), create_builtin_function("sha1", 1));
     module.insert("sha256".to_string(), create_builtin_function("sha256", 1));
     module.insert("sha512".to_string(), create_builtin_function("sha512", 1));
+    module.insert("xxh3".to_string(), create_builtin_function("xxh3", 1));
+    module.insert("blake3".to_string(), create_builtin_function("blake3", 1));
 
     // HMAC functions
     module.insert(
@@ -174,8 +176,8 @@ pub fn create_crypto_module() -> Value {
     );
 
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: std::sync::Arc::new(module),
+        type_name: "Module".into(),
+        fields: std::sync::Arc::new(module).into(),
     }
 }
 
@@ -197,6 +199,21 @@ pub fn call_crypto_function(
         "sha1" => crypto_sha1(args),
         "sha256" => crypto_sha256(args),
         "sha512" => crypto_sha512(args),
+        // XXH3-64, an Int: fast and stable, not a cryptographic hash
+        "xxh3" => match args.as_slice() {
+            [v] => Ok(Value::Integer(crate::value_hash::hash_bytes(digest_input(
+                v, "xxh3",
+            )?))),
+            _ => Err(format!("xxh3 expects 1 argument, got {}", args.len()).into()),
+        },
+        "blake3" => match args.as_slice() {
+            [v] => Ok(Value::String(Arc::new(
+                blake3::hash(digest_input(v, "blake3")?)
+                    .to_hex()
+                    .to_string(),
+            ))),
+            _ => Err(format!("blake3 expects 1 argument, got {}", args.len()).into()),
+        },
         "hmac_sha256" => crypto_hmac_sha256(args),
         "hmac_sha512" => crypto_hmac_sha512(args),
         "hash_password" => crypto_hash_password(args),
@@ -1051,8 +1068,8 @@ fn crypto_generate_key_pair(args: Vec<Value>) -> Result<Value, Box<dyn std::erro
     );
 
     Ok(Value::Ok(Box::new(Value::Struct {
-        type_name: "KeyPair".to_string(),
-        fields: std::sync::Arc::new(key_pair),
+        type_name: "KeyPair".into(),
+        fields: std::sync::Arc::new(key_pair).into(),
     })))
 }
 
@@ -1118,8 +1135,8 @@ fn crypto_import_public_key(args: Vec<Value>) -> Result<Value, Box<dyn std::erro
             );
 
             Ok(Value::Ok(Box::new(Value::Struct {
-                type_name: "PublicKey".to_string(),
-                fields: std::sync::Arc::new(key_struct),
+                type_name: "PublicKey".into(),
+                fields: std::sync::Arc::new(key_struct).into(),
             })))
         }
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
@@ -1283,8 +1300,8 @@ fn crypto_ed25519_keypair(args: Vec<Value>) -> Result<Value, Box<dyn std::error:
     pair.insert("public_key".to_string(), b64(key.verifying_key().as_bytes()));
     seed.fill(0);
     Ok(Value::Ok(Box::new(Value::Struct {
-        type_name: "KeyPair".to_string(),
-        fields: Arc::new(pair),
+        type_name: "KeyPair".into(),
+        fields: Arc::new(pair).into(),
     })))
 }
 

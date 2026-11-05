@@ -111,7 +111,7 @@ pub const AST_MAP_PROMOTE: usize = 256;
 /// writer copies once, and the copy is a new identity), and
 /// `Arc::make_mut` on a sole owner dissociates the weak. A dead
 /// allocation fails to upgrade; a reused address fails `ptr_eq`. Typed
-/// lists are not cached (they convert in one contiguous pass).
+/// lists of TO_AST_CACHE_MIN elements or more are cached too.
 const TO_AST_CACHE_MIN: usize = 32;
 
 /// Dead entries are let go a few at a time, as entries are added: each
@@ -142,15 +142,28 @@ thread_local! {
 }
 
 enum VmOwner {
+    IntList(std::sync::Weak<Vec<i64>>),
+    FloatList(std::sync::Weak<Vec<f64>>),
     List(std::sync::Weak<Vec<OvmValue>>),
     Tuple(std::sync::Weak<Vec<OvmValue>>),
     Map(std::sync::Weak<OvmMap>),
-    Struct(std::sync::Weak<StructObject>),
 }
 
 impl VmOwner {
     fn of(value: &OvmValue) -> Option<(usize, VmOwner)> {
         match &value.data {
+            // Typed lists too (OL-430): a list of a million Ints handed to
+            // the interpreter again and again converts once. Sound as for
+            // the rest: the VM writes one in place only through
+            // `Arc::get_mut`, which this entry's Weak refuses.
+            ValueData::IntList(items) if items.len() >= TO_AST_CACHE_MIN => Some((
+                Arc::as_ptr(items) as *const u8 as usize,
+                VmOwner::IntList(Arc::downgrade(items)),
+            )),
+            ValueData::FloatList(items) if items.len() >= TO_AST_CACHE_MIN => Some((
+                Arc::as_ptr(items) as *const u8 as usize,
+                VmOwner::FloatList(Arc::downgrade(items)),
+            )),
             ValueData::List(items) if items.len() > 1 => Some((
                 Arc::as_ptr(items) as *const u8 as usize,
                 VmOwner::List(Arc::downgrade(items)),
@@ -163,16 +176,18 @@ impl VmOwner {
                 Arc::as_ptr(m) as *const u8 as usize,
                 VmOwner::Map(Arc::downgrade(m)),
             )),
-            ValueData::Struct(st) if st.values.len() > 1 => Some((
-                Arc::as_ptr(st) as *const u8 as usize,
-                VmOwner::Struct(Arc::downgrade(st)),
-            )),
             _ => None,
         }
     }
 
     fn still_is(&self, value: &OvmValue) -> bool {
         match (self, &value.data) {
+            (VmOwner::IntList(w), ValueData::IntList(items)) => {
+                w.upgrade().is_some_and(|live| Arc::ptr_eq(&live, items))
+            }
+            (VmOwner::FloatList(w), ValueData::FloatList(items)) => {
+                w.upgrade().is_some_and(|live| Arc::ptr_eq(&live, items))
+            }
             (VmOwner::List(w), ValueData::List(items))
             | (VmOwner::Tuple(w), ValueData::Tuple(items)) => {
                 w.upgrade().is_some_and(|live| Arc::ptr_eq(&live, items))
@@ -180,18 +195,16 @@ impl VmOwner {
             (VmOwner::Map(w), ValueData::Map(m)) => {
                 w.upgrade().is_some_and(|live| Arc::ptr_eq(&live, m))
             }
-            (VmOwner::Struct(w), ValueData::Struct(st)) => {
-                w.upgrade().is_some_and(|live| Arc::ptr_eq(&live, st))
-            }
             _ => false,
         }
     }
 
     fn is_alive(&self) -> bool {
         match self {
+            VmOwner::IntList(w) => w.strong_count() > 0,
+            VmOwner::FloatList(w) => w.strong_count() > 0,
             VmOwner::List(w) | VmOwner::Tuple(w) => w.strong_count() > 0,
             VmOwner::Map(w) => w.strong_count() > 0,
-            VmOwner::Struct(w) => w.strong_count() > 0,
         }
     }
 }
@@ -386,7 +399,7 @@ pub enum ValueData {
     /// snapshotted from the enclosing frame when the lambda expression
     /// evaluated — exactly the interpreter's capture-by-value moment.
     Closure(Arc<ClosureObject>),
-    Struct(Arc<StructObject>),
+    Struct(StructObject),
     Range(Arc<RangeObject>),
     Builtin(Arc<BuiltinObject>),
 
@@ -487,7 +500,9 @@ pub struct ClosureObject {
 #[derive(Debug)]
 pub struct StructShape {
     pub id: u32,
-    pub type_name: String,
+    /// Interned: a struct crossing into the interpreter takes its type
+    /// name from here without allocating one.
+    pub type_name: crate::ast::TypeName,
     /// The record's own order (a literal's as written, a key set later
     /// last) — the order `values` is stored in.
     pub field_names: Vec<String>,
@@ -532,7 +547,7 @@ pub fn intern_shape(type_name: &str, field_names: Vec<String>) -> Arc<StructShap
         .collect();
     let shape = Arc::new(StructShape {
         id: NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-        type_name: key.0.clone(),
+        type_name: crate::ast::TypeName::new(&key.0),
         field_names: key.1.clone(),
         index,
     });
@@ -540,66 +555,7 @@ pub fn intern_shape(type_name: &str, field_names: Vec<String>) -> Arc<StructShap
     shape
 }
 
-/// Struct object: an interned shape plus values in the shape's field order.
-#[derive(Debug)]
-pub struct StructObject {
-    pub shape: Arc<StructShape>,
-    pub values: Vec<OvmValue>,
-}
-
-impl StructObject {
-    /// Build from unordered (name, value) pairs, interning the shape.
-    pub fn from_pairs(type_name: &str, pairs: Vec<(String, OvmValue)>) -> Self {
-        let shape = intern_shape(type_name, pairs.iter().map(|(n, _)| n.clone()).collect());
-        let mut values: Vec<Option<OvmValue>> =
-            (0..shape.field_names.len()).map(|_| None).collect();
-        for (name, value) in pairs {
-            if let Some(i) = shape.field_index(&name) {
-                values[i as usize] = Some(value);
-            }
-        }
-        let values = values
-            .into_iter()
-            .map(|v| v.unwrap_or_else(OvmValue::new_unit))
-            .collect();
-        Self { shape, values }
-    }
-
-    #[inline]
-    pub fn field(&self, name: &str) -> Option<&OvmValue> {
-        self.shape
-            .field_index(name)
-            .map(|i| &self.values[i as usize])
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = (&String, &OvmValue)> {
-        self.shape.field_names.iter().zip(self.values.iter())
-    }
-
-    pub fn type_name(&self) -> &str {
-        &self.shape.type_name
-    }
-
-    /// The fields with `key` set to `value`: in its place when the record
-    /// has it (as a map keeps a key set again where it was), else last.
-    pub fn set_pairs(&self, key: String, value: OvmValue) -> Vec<(String, OvmValue)> {
-        let mut value = Some(value);
-        let mut pairs: Vec<(String, OvmValue)> = self
-            .iter()
-            .map(|(name, v)| {
-                if *name == key {
-                    (name.clone(), value.take().unwrap_or_else(|| v.clone()))
-                } else {
-                    (name.clone(), v.clone())
-                }
-            })
-            .collect();
-        if let Some(v) = value {
-            pairs.push((key, v));
-        }
-        pairs
-    }
-}
+pub use super::struct_object::{FieldRef, StructHeader, StructObject};
 
 /// FNV-1a for struct field maps. Field lookups sit on the dispatch loop's
 /// hot path (every GetField hashes the field name), the maps are tiny, and
@@ -825,6 +781,59 @@ thread_local! {
 }
 
 impl OvmValue {
+    /// `same(a, b)` on the VM's values, as `ast::Value::same` is on the
+    /// interpreter's: one allocation, or for a scalar `==`. A list in its
+    /// typed layout is the same as itself only.
+    pub fn same(&self, other: &OvmValue) -> bool {
+        use ValueData as D;
+        match (&self.data, &other.data) {
+            (D::Integer(a), D::Integer(b)) => a == b,
+            (D::Float(a), D::Float(b)) => a == b,
+            (D::Integer(a), D::Float(b)) | (D::Float(b), D::Integer(a)) => {
+                crate::interpreter::ops::int_float_eq(*a, *b)
+            }
+            (D::Boolean(a), D::Boolean(b)) => a == b,
+            (D::Unit, D::Unit) => true,
+            (D::String(a), D::String(b)) => Arc::ptr_eq(a, b),
+            (D::List(a), D::List(b)) | (D::Tuple(a), D::Tuple(b)) => Arc::ptr_eq(a, b),
+            (D::FloatList(a), D::FloatList(b)) => Arc::ptr_eq(a, b),
+            (D::IntList(a), D::IntList(b)) => Arc::ptr_eq(a, b),
+            (D::AstList(a), D::AstList(b)) => Arc::ptr_eq(a, b),
+            (D::AstMap(a), D::AstMap(b)) => Arc::ptr_eq(a, b),
+            (D::AstStruct(a, k), D::AstStruct(b, l)) => k == l && Arc::ptr_eq(a, b),
+            (D::Function(a), D::Function(b)) => Arc::ptr_eq(a, b),
+            (D::AstFunction(a), D::AstFunction(b)) => Arc::ptr_eq(a, b),
+            (D::Map(a), D::Map(b)) => Arc::ptr_eq(a, b),
+            (D::Enum(a), D::Enum(b)) => {
+                Arc::ptr_eq(a, b)
+                    || (matches!(a.data, EnumData::Unit)
+                        && matches!(b.data, EnumData::Unit)
+                        && a.type_name == b.type_name
+                        && a.variant_name == b.variant_name)
+            }
+            (D::Closure(a), D::Closure(b)) => Arc::ptr_eq(a, b),
+            (D::Struct(a), D::Struct(b)) => StructObject::ptr_eq(a, b),
+            (D::Range(a), D::Range(b)) => {
+                a.start == b.start && a.end == b.end && a.inclusive == b.inclusive
+            }
+            (D::Builtin(a), D::Builtin(b)) => Arc::ptr_eq(a, b) || a.name == b.name,
+            (D::Error(a), D::Error(b)) => Arc::ptr_eq(a, b),
+            (D::Result(a), D::Result(b)) => {
+                Arc::ptr_eq(a, b)
+                    || match (&a.ok, &a.err, &b.ok, &b.err) {
+                        (Some(x), None, Some(y), None) | (None, Some(x), None, Some(y)) => {
+                            x.same(y)
+                        }
+                        _ => false,
+                    }
+            }
+            (D::Native(a), D::Native(b)) => Arc::ptr_eq(&a.0, &b.0),
+            _ => false,
+        }
+    }
+}
+
+impl OvmValue {
     /// The value's layout in the VM, by name (`OLANG_TIER_STATS`' bridged
     /// calls name their arguments' layouts: a wrapped interpreter list is
     /// why a `map` bridged).
@@ -869,7 +878,7 @@ impl OvmValue {
                 !items.is_empty() && Arc::strong_count(items) == 1
             }
             ValueData::Map(map) => !map.is_empty() && Arc::strong_count(map) == 1,
-            ValueData::Struct(s) => !s.values.is_empty() && Arc::strong_count(s) == 1,
+            ValueData::Struct(s) => s.is_unique() && s.has_nested(),
             ValueData::Enum(e) => !matches!(e.data, EnumData::Unit) && Arc::strong_count(e) == 1,
             ValueData::Result(r) => {
                 (r.ok.is_some() || r.err.is_some()) && Arc::strong_count(r) == 1
@@ -909,16 +918,7 @@ impl OvmValue {
                     drop(sole(map, |_| OvmMap::default()));
                 }
             }
-            ValueData::Struct(s) => {
-                if let Some(s) = Arc::get_mut(s) {
-                    s.values.clear();
-                } else {
-                    drop(sole(s, |st| StructObject {
-                        shape: st.shape.clone(),
-                        values: Vec::new(),
-                    }));
-                }
-            }
+            ValueData::Struct(s) => s.clear_fields(),
             ValueData::Enum(e) => {
                 if let Some(e) = Arc::get_mut(e) {
                     e.data = EnumData::Unit;
@@ -1052,7 +1052,12 @@ impl OvmValue {
                         && x.iter()
                             .all(|(k, v)| y.get(k).is_some_and(|w| v.structural_eq(w)))
             }
-            (D::Struct(x), D::Struct(y)) if Arc::ptr_eq(x, y) => true,
+            (D::Struct(x), D::Struct(y)) if StructObject::ptr_eq(x, y) => true,
+            // One shape: one type and the same field names in one order,
+            // so the fields compare pairwise.
+            (D::Struct(x), D::Struct(y)) if x.shape.id == y.shape.id => {
+                x.values().zip(y.values()).all(|(a, b)| a.structural_eq(&b))
+            }
             (D::Enum(x), D::Enum(y)) if Arc::ptr_eq(x, y) => true,
             (D::AstMap(x), D::AstMap(y)) | (D::AstStruct(x, _), D::AstStruct(y, _)) => {
                 Arc::ptr_eq(x, y) || loose(&Value::Map(x.clone()), &Value::Map(y.clone()))
@@ -1540,6 +1545,17 @@ impl OvmValue {
                 ref type_name,
                 ref fields,
             } => {
+                // A struct the VM built crosses back as the object it
+                // left as, in O(1) (OL-431). Renamed in the interpreter
+                // (its fields under another type), it takes the new
+                // name's shape.
+                if let crate::ast::StructFields::Vm(obj) = fields {
+                    if obj.shape.type_name == *type_name {
+                        return Self::new_struct(obj.clone());
+                    }
+                    let shape = intern_shape(type_name, obj.shape.field_names.clone());
+                    return Self::new_struct(obj.with_shape(shape));
+                }
                 // A parsed JSON object or an anonymous record crosses as
                 // a wrapper unless it is a small record of scalars (see
                 // `ValueData::AstStruct`).
@@ -1547,7 +1563,7 @@ impl OvmValue {
                     && !small_and_flat(fields)
                 {
                     return OvmValue {
-                        data: ValueData::AstStruct(fields.clone(), kind),
+                        data: ValueData::AstStruct(fields.to_arc(), kind),
                     };
                 }
                 // The fields are behind an Arc now, so this borrows and
@@ -1557,13 +1573,7 @@ impl OvmValue {
                     .iter()
                     .map(|(k, v)| (k.clone(), Self::from_ast(v.clone())))
                     .collect();
-                let struct_obj = StructObject::from_pairs(type_name, pairs);
-
-                let gc_ptr = Arc::new(struct_obj);
-
-                Self {
-                    data: ValueData::Struct(gc_ptr),
-                }
+                Self::new_struct(StructObject::from_pairs(type_name, pairs))
             }
 
             Value::Enum(ref mut e) => {
@@ -1721,7 +1731,7 @@ impl OvmValue {
     }
 
     /// Wrap a struct object built by MakeStruct.
-    pub fn new_struct(obj: Arc<StructObject>) -> Self {
+    pub fn new_struct(obj: StructObject) -> Self {
         Self {
             data: ValueData::Struct(obj),
         }
@@ -1810,7 +1820,6 @@ impl OvmValue {
                 Arc::strong_count(a) == 1 && Arc::weak_count(a) == 0
             }
             ValueData::Map(m) => Arc::strong_count(m) == 1 && Arc::weak_count(m) == 0,
-            ValueData::Struct(s) => Arc::strong_count(s) == 1 && Arc::weak_count(s) == 0,
             _ => false,
         };
         if sole {
@@ -1855,12 +1864,18 @@ impl OvmValue {
             ValueData::Boolean(b) => Ok(Value::Boolean(*b)),
             ValueData::Unit => Ok(Value::Unit),
             ValueData::String(gc_ptr) => Ok(Value::String(gc_ptr.clone())),
-            ValueData::FloatList(v) => Ok(Value::List(Arc::new(
-                v.iter().map(|&f| Value::Float(f)).collect(),
-            ))),
-            ValueData::IntList(v) => Ok(Value::List(Arc::new(
-                v.iter().map(|&n| Value::Integer(n)).collect(),
-            ))),
+            ValueData::FloatList(v) => {
+                TO_AST_WORK.set(TO_AST_WORK.get() + v.len());
+                Ok(Value::List(Arc::new(
+                    v.iter().map(|&f| Value::Float(f)).collect(),
+                )))
+            }
+            ValueData::IntList(v) => {
+                TO_AST_WORK.set(TO_AST_WORK.get() + v.len());
+                Ok(Value::List(Arc::new(
+                    v.iter().map(|&n| Value::Integer(n)).collect(),
+                )))
+            }
             ValueData::List(gc_ptr) => {
                 TO_AST_WORK.set(TO_AST_WORK.get() + gc_ptr.len());
                 let mut ast_values = Vec::with_capacity(gc_ptr.len());
@@ -1892,8 +1907,8 @@ impl OvmValue {
             // Arc it came in with.
             ValueData::AstMap(m) => Ok(Value::Map(m.clone())),
             ValueData::AstStruct(m, kind) => Ok(Value::Struct {
-                type_name: kind.type_name().to_string(),
-                fields: m.clone(),
+                type_name: kind.type_name().into(),
+                fields: crate::ast::StructFields::Map(m.clone()),
             }),
             ValueData::Enum(e) => {
                 let variant_data = match &e.data {
@@ -1966,17 +1981,13 @@ impl OvmValue {
                 // A VM-only function value has no interpreter form.
                 Ok(Value::Unit)
             }
-            ValueData::Struct(gc_ptr) => {
-                TO_AST_WORK.set(TO_AST_WORK.get() + gc_ptr.values.len());
-                let mut fields = crate::ast::ValueMap::default();
-                for (name, val) in gc_ptr.iter() {
-                    fields.insert(name.clone(), val.to_ast_in(dying)?);
-                }
-                Ok(Value::Struct {
-                    type_name: gc_ptr.type_name().to_string(),
-                    fields: std::sync::Arc::new(fields),
-                })
-            }
+            // The object itself, wrapped (OL-431): O(1), no field copied
+            // and no name allocated. Its fields convert when an
+            // interpreter reader first needs them as a map, once.
+            ValueData::Struct(obj) => Ok(Value::Struct {
+                type_name: obj.shape.type_name.clone(),
+                fields: crate::ast::StructFields::Vm(obj.clone()),
+            }),
             ValueData::Range(gc_ptr) => Ok(Value::Range {
                 start: gc_ptr.start,
                 end: gc_ptr.end,

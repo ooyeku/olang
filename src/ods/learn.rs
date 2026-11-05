@@ -170,8 +170,8 @@ pub fn namespace() -> Value {
         );
     }
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: Arc::new(module),
+        type_name: "Module".into(),
+        fields: Arc::new(module).into(),
     }
 }
 
@@ -461,7 +461,7 @@ fn object_as_map(v: Value) -> Value {
         Value::Struct { type_name, fields }
             if type_name == "Object" || type_name == "JsonObject" =>
         {
-            fields.clone()
+            fields.to_arc()
         }
         _ => return v,
     };

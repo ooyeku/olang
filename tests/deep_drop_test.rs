@@ -77,7 +77,8 @@ fn every_interpreter_container_frees_a_deep_chain() {
             fields: Arc::new(olang::ast::ValueMap::from_iter([(
                 "next".to_string(),
                 next,
-            )])),
+            )]))
+            .into(),
         }));
         drop(chain(|next| Value::Ok(Box::new(next))));
         drop(chain(|next| Value::Err(Box::new(next))));
@@ -101,10 +102,7 @@ fn every_vm_container_frees_a_deep_chain() {
             }
         }));
         drop(ovm_chain(|next| OvmValue {
-            data: ValueData::Struct(Arc::new(StructObject::from_pairs(
-                "N",
-                vec![("next".into(), next)],
-            ))),
+            data: ValueData::Struct(StructObject::from_pairs("N", vec![("next".into(), next)])),
         }));
         drop(ovm_chain(|next| OvmValue {
             data: ValueData::Enum(Arc::new(EnumObject {
@@ -238,4 +236,28 @@ fn stringify_refuses_a_float_json_cannot_hold() {
             format!("Cannot convert to JSON: Type error: Invalid float value: {f}")
         );
     }
+}
+
+/// A chain of structs the VM built, crossed into the interpreter as
+/// itself (OL-431) and read through at every level, so each level holds
+/// its interpreter map as well as its fields.
+#[test]
+fn a_deep_chain_of_vm_structs_read_by_the_interpreter_frees() {
+    on_small_stack(|| {
+        let top = ovm_chain(|next| OvmValue {
+            data: ValueData::Struct(StructObject::from_pairs("N", vec![("next".into(), next)])),
+        })
+        .to_ast()
+        .unwrap();
+        let mut at = top.clone();
+        let mut depth = 0;
+        while let Value::Struct { fields, .. } = &at {
+            let next = fields.get("next").cloned().unwrap();
+            at = next;
+            depth += 1;
+        }
+        assert_eq!(depth, DEPTH);
+        drop(at);
+        drop(top);
+    });
 }

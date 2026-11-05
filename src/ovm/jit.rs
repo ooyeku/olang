@@ -71,9 +71,9 @@ type NativeEntry = unsafe extern "C" fn(*const i64, i64, *mut ScratchCtx, *mut i
 /// hands back. Registered args make returning a parameter sound.
 #[derive(Default)]
 pub struct ScratchCtx {
-    allocs: Vec<Arc<crate::ovm::value::StructObject>>,
-    args: Vec<Arc<crate::ovm::value::StructObject>>,
-    retained: Option<Arc<crate::ovm::value::StructObject>>,
+    allocs: Vec<crate::ovm::value::StructObject>,
+    args: Vec<crate::ovm::value::StructObject>,
+    retained: Option<crate::ovm::value::StructObject>,
     str_allocs: Vec<Arc<String>>,
     str_args: Vec<Arc<String>>,
     retained_str: Option<Arc<String>>,
@@ -279,8 +279,8 @@ pub fn note_shapes(v: &OvmValue, shapes: &mut HashMap<u32, ShapeSpec>) {
 }
 
 fn observe_struct(obj: &crate::ovm::value::StructObject) -> Option<(Kind, ShapeSpec)> {
-    let mut field_kinds = Vec::with_capacity(obj.values.len());
-    for v in &obj.values {
+    let mut field_kinds = Vec::with_capacity(obj.len());
+    for v in obj.values() {
         field_kinds.push(match &v.data {
             ValueData::Integer(_) => Kind::Int,
             ValueData::Float(_) => Kind::Float,
@@ -355,6 +355,11 @@ pub enum Kind {
     /// reads hand out borrowed pointers into the list, valid for the
     /// synchronous call like struct elements.
     ListStr,
+    /// A Bytes argument, read as a list of bytes (Ints 0..=255): a
+    /// borrowed pointer to its BytesObject, read by the bytes helpers.
+    /// Read-only: indexing, `len` and iteration compile, and anything
+    /// else that meets one refuses (OL-428).
+    ListBytes,
     /// A string argument or field, passed as a borrowed pointer to the
     /// String behind its Arc. Concat allocates through the scratch
     /// context under the same straight-line discipline as structs.
@@ -570,7 +575,7 @@ unsafe extern "C" fn olang_jit_index(
                 0
             }
             (ValueData::Struct(s), EXPECT_STRUCT) if s.shape.id as u64 == expect_shape => {
-                *out = Arc::as_ptr(s) as i64;
+                *out = s.as_ptr() as i64;
                 0
             }
             (ValueData::String(v), FIELD_STR) => {
@@ -607,15 +612,6 @@ unsafe extern "C" fn olang_jit_make_struct(
     kinds: i64,
 ) -> i64 {
     unsafe {
-        let mut values = Vec::with_capacity(n as usize);
-        for i in 0..n as usize {
-            let bits = *fields.add(i);
-            values.push(match (kinds >> (i * 4)) & 0xF {
-                0 => OvmValue::new_integer(bits),
-                2 => OvmValue::new_boolean(bits != 0),
-                _ => OvmValue::new_float(f64::from_bits(bits as u64)),
-            });
-        }
         let ctx = &mut *ctx;
         // Everything allocated in one native call lives until the call
         // resolves; cap it so allocation-heavy loops deopt to bytecode
@@ -623,11 +619,17 @@ unsafe extern "C" fn olang_jit_make_struct(
         if ctx.allocs.len() >= 1_000_000 {
             return 0;
         }
-        let obj = Arc::new(crate::ovm::value::StructObject {
-            shape: (*shape).clone(),
-            values,
+        // The raw bits go straight into the struct's slots (OL-431).
+        use crate::ovm::struct_object::kind;
+        let bits = std::slice::from_raw_parts(fields, n as usize);
+        let obj = crate::ovm::value::StructObject::from_scalar_bits((*shape).clone(), bits, |i| {
+            match (kinds >> (i * 4)) & 0xF {
+                0 => kind::INT,
+                2 => kind::BOOL,
+                _ => kind::FLOAT,
+            }
         });
-        let ptr = Arc::as_ptr(&obj) as i64;
+        let ptr = obj.as_ptr() as i64;
         ctx.allocs.push(obj);
         ptr
     }
@@ -646,16 +648,16 @@ unsafe extern "C" fn olang_jit_retain(ctx: *mut ScratchCtx, ptr: i64) -> i64 {
         // Called exactly once, at the entry boundary. The returned struct is
         // almost always the newest allocation; check it first, then scan.
         if let Some(last) = ctx.allocs.last()
-            && Arc::as_ptr(last) as i64 == ptr
+            && last.as_ptr() as i64 == ptr
         {
             ctx.retained = Some(last.clone());
             return 0;
         }
-        if let Some(a) = ctx.allocs.iter().find(|a| Arc::as_ptr(a) as i64 == ptr) {
+        if let Some(a) = ctx.allocs.iter().find(|a| a.as_ptr() as i64 == ptr) {
             ctx.retained = Some(a.clone());
             return 0;
         }
-        if let Some(a) = ctx.args.iter().find(|a| Arc::as_ptr(a) as i64 == ptr) {
+        if let Some(a) = ctx.args.iter().find(|a| a.as_ptr() as i64 == ptr) {
             ctx.retained = Some(a.clone());
             return 0;
         }
@@ -992,8 +994,8 @@ unsafe extern "C" fn olang_jit_make_list_structs(
                 .allocs
                 .iter()
                 .rev()
-                .find(|a| Arc::as_ptr(a) as i64 == ptr)
-                .or_else(|| ctx.args.iter().find(|a| Arc::as_ptr(a) as i64 == ptr));
+                .find(|a| a.as_ptr() as i64 == ptr)
+                .or_else(|| ctx.args.iter().find(|a| a.as_ptr() as i64 == ptr));
             match arc {
                 Some(a) => values.push(OvmValue::new_struct(a.clone())),
                 None => return 0,
@@ -1587,6 +1589,31 @@ unsafe extern "C" fn olang_jit_len_rawi(list: *const Vec<i64>) -> i64 {
     unsafe { (*list).len() as i64 }
 }
 
+/// A Bytes argument's length.
+///
+/// # Safety
+/// `b` is a Bytes argument's borrowed pointer, alive for the call.
+unsafe extern "C" fn olang_jit_len_bytes(b: *const crate::stdlib::bytes::BytesObject) -> i64 {
+    unsafe { (*b).as_slice().len() as i64 }
+}
+
+/// The byte at `i` of a Bytes argument, or -1 when `i` is out of range
+/// (the caller deopts, and the VM raises the subscript's error).
+///
+/// # Safety
+/// `b` is a Bytes argument's borrowed pointer, alive for the call.
+unsafe extern "C" fn olang_jit_index_bytes(
+    b: *const crate::stdlib::bytes::BytesObject,
+    i: i64,
+) -> i64 {
+    let s = unsafe { (*b).as_slice() };
+    if i >= 0 && (i as usize) < s.len() {
+        s[i as usize] as i64
+    } else {
+        -1
+    }
+}
+
 /// Map twin of olang_jit_retain: resolve a returned borrowed pointer to
 /// an owned Arc at the entry boundary.
 ///
@@ -1652,28 +1679,30 @@ unsafe extern "C" fn olang_jit_release(ctx: *mut ScratchCtx) {
 }
 
 unsafe extern "C" fn olang_jit_field(
-    obj: *const crate::ovm::value::StructObject,
+    obj: *const crate::ovm::value::StructHeader,
     idx: u64,
     expect: u64,
     out: *mut i64,
 ) -> i64 {
+    // The field's kind byte and word, read where they are (OL-431): a
+    // scalar's word is its bits, a string's the `String`'s address.
+    use crate::ovm::struct_object::kind;
     unsafe {
-        let obj = &*obj;
-        match obj.values.get(idx as usize).map(|v| &v.data) {
-            Some(ValueData::Integer(i)) if expect == FIELD_INT => {
-                *out = *i;
+        match crate::ovm::value::StructObject::raw_at(obj, idx as usize) {
+            Some((kind::INT, bits)) if expect == FIELD_INT => {
+                *out = bits as i64;
                 0
             }
-            Some(ValueData::Float(f)) if expect == FIELD_FLOAT => {
-                *out = f.to_bits() as i64;
+            Some((kind::FLOAT, bits)) if expect == FIELD_FLOAT => {
+                *out = bits as i64;
                 0
             }
-            Some(ValueData::Boolean(b)) if expect == FIELD_BOOL => {
-                *out = *b as i64;
+            Some((kind::BOOL, bits)) if expect == FIELD_BOOL => {
+                *out = (bits != 0) as i64;
                 0
             }
-            Some(ValueData::String(s)) if expect == FIELD_STR => {
-                *out = Arc::as_ptr(s) as i64;
+            Some((kind::STRING, bits)) if expect == FIELD_STR => {
+                *out = bits as i64;
                 0
             }
             _ => 1,
@@ -1773,6 +1802,8 @@ impl JitCache {
             );
             builder.symbol("olang_jit_len_rawf", olang_jit_len_rawf as *const u8);
             builder.symbol("olang_jit_len_rawi", olang_jit_len_rawi as *const u8);
+            builder.symbol("olang_jit_len_bytes", olang_jit_len_bytes as *const u8);
+            builder.symbol("olang_jit_index_bytes", olang_jit_index_bytes as *const u8);
             builder.symbol("olang_jit_set_rawf", olang_jit_set_rawf as *const u8);
             builder.symbol("olang_jit_set_rawi", olang_jit_set_rawi as *const u8);
             builder.symbol("olang_jit_append_rawf", olang_jit_append_rawf as *const u8);
@@ -1938,7 +1969,7 @@ impl JitCache {
                     kinds[i] = Kind::Float;
                 }
                 ValueData::Struct(obj) => {
-                    bits[i] = Arc::as_ptr(obj) as i64;
+                    bits[i] = obj.as_ptr() as i64;
                     kinds[i] = Kind::Struct(obj.shape.id);
                     any_ref = true;
                 }
@@ -1958,6 +1989,16 @@ impl JitCache {
                 ValueData::IntList(v) => {
                     kinds[i] = Kind::ListIntRaw;
                     bits[i] = Arc::as_ptr(v) as i64;
+                    any_ref = true;
+                }
+                // Bytes: the object itself, borrowed for the call (the
+                // argument holds its handle).
+                ValueData::Native(h) => {
+                    let b =
+                        h.0.as_any()
+                            .downcast_ref::<crate::stdlib::bytes::BytesObject>()?;
+                    kinds[i] = Kind::ListBytes;
+                    bits[i] = b as *const crate::stdlib::bytes::BytesObject as i64;
                     any_ref = true;
                 }
                 ValueData::String(s) => {
@@ -2003,7 +2044,7 @@ impl JitCache {
                 }
             }
         }
-        let mut struct_args: Vec<Arc<crate::ovm::value::StructObject>> = Vec::new();
+        let mut struct_args: Vec<crate::ovm::value::StructObject> = Vec::new();
         let mut str_args: Vec<Arc<String>> = Vec::new();
         let mut result_args: Vec<Arc<crate::ovm::value::ResultObject>> = Vec::new();
         let mut list_args: Vec<Arc<Vec<OvmValue>>> = Vec::new();
@@ -2166,7 +2207,7 @@ impl JitCache {
         remaining_depth: u32,
         lookup: &BytecodeLookup,
         shapes: &HashMap<u32, ShapeSpec>,
-        args_for_ctx: &[Arc<crate::ovm::value::StructObject>],
+        args_for_ctx: &[crate::ovm::value::StructObject],
         str_args_for_ctx: &[Arc<String>],
         result_args_for_ctx: &[Arc<crate::ovm::value::ResultObject>],
         list_args_for_ctx: &[Arc<Vec<OvmValue>>],
@@ -2333,6 +2374,8 @@ impl JitCache {
                 Kind::Map(_) => ctx.retained_map.take().map(|arc| OvmValue {
                     data: ValueData::Map(arc),
                 }),
+                // A Bytes argument is only read; it is never returned.
+                Kind::ListBytes => None,
             }
         };
         ctx.clear();
@@ -3036,6 +3079,23 @@ impl JitCache {
                 .declare_function("olang_jit_len_rawi", Linkage::Import, &sig)
                 .ok()?
         };
+        let len_bytes_helper = {
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(types::I64));
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_len_bytes", Linkage::Import, &sig)
+                .ok()?
+        };
+        let index_bytes_helper = {
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(types::I64));
+            sig.params.push(AbiParam::new(types::I64));
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_index_bytes", Linkage::Import, &sig)
+                .ok()?
+        };
         let set_rawf_helper = {
             let mut sig = module.make_signature();
             for _ in 0..4 {
@@ -3181,6 +3241,8 @@ impl JitCache {
                         index_rawi_cached: index_rawi_cached_helper,
                         len_rawf: len_rawf_helper,
                         len_rawi: len_rawi_helper,
+                        len_bytes: len_bytes_helper,
+                        index_bytes: index_bytes_helper,
                         set_rawf: set_rawf_helper,
                         set_rawi: set_rawi_helper,
                         append_rawf: append_rawf_helper,
@@ -3524,6 +3586,11 @@ pub(crate) fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         Instruction::CallBuiltin {
             builtin_id, args, ..
         } => {
+            // The integer operations compile too: a shift or rotation
+            // count out of range deopts, and the VM raises.
+            if let Some(i) = crate::ovm::bytecode::BytecodeVm::int_math_index(*builtin_id) {
+                return args.len() == crate::stdlib::math::INT_OPS[i].1;
+            }
             matches!(
                 crate::ovm::bytecode::BytecodeVm::FLOAT_MATH.get(*builtin_id as usize),
                 Some((_, arity)) if args.len() == *arity && *arity <= 2
@@ -3734,7 +3801,8 @@ fn kind_mask(k: Kind) -> u16 {
         | Kind::ListIntRaw
         | Kind::ListListFloat
         | Kind::ListStruct(_)
-        | Kind::ListStr => K_LIST,
+        | Kind::ListStr
+        | Kind::ListBytes => K_LIST,
         Kind::Str => K_STR,
         Kind::Result(..) => K_RESULT,
         Kind::Map(_) => K_MAP,
@@ -3763,6 +3831,7 @@ fn kind_discharges(
         | Kind::ListListFloat
         | Kind::ListStruct(_)
         | Kind::ListStr => check.accepts("List"),
+        Kind::ListBytes => check.accepts("Bytes"),
         Kind::Map(_) => check.accepts("Map"),
         Kind::Struct(sid) => shapes
             .get(&sid)
@@ -4898,7 +4967,9 @@ impl PlanFn {
                         else {
                             continue;
                         };
-                        if lk != rk {
+                        // Bytes are read-only here: their concat stays on
+                        // the VM.
+                        if lk != rk || lk == Kind::ListBytes {
                             return None;
                         }
                         narrow!(lhs.0, K_LIST);
@@ -5104,7 +5175,7 @@ impl PlanFn {
                     narrow!(index.0, K_INT);
                     let elem = match self.exotic[object.0 as usize] {
                         Some(Kind::ListFloat | Kind::ListFloatRaw) => Kind::Float,
-                        Some(Kind::ListInt | Kind::ListIntRaw) => Kind::Int,
+                        Some(Kind::ListInt | Kind::ListIntRaw | Kind::ListBytes) => Kind::Int,
                         Some(Kind::ListStruct(sid)) => Kind::Struct(sid),
                         Some(Kind::ListStr) => Kind::Str,
                         // Indexing a feature matrix yields the inner raw
@@ -5401,6 +5472,7 @@ impl PlanFn {
                                         | Kind::ListIntRaw
                                         | Kind::ListStruct(_)
                                         | Kind::ListStr
+                                        | Kind::ListBytes
                                 )
                             ) {
                                 return None;
@@ -5562,7 +5634,7 @@ impl PlanFn {
                     narrow!(idx.0, K_INT);
                     let elem = match self.exotic[src.0 as usize] {
                         Some(Kind::ListFloat | Kind::ListFloatRaw) => Kind::Float,
-                        Some(Kind::ListInt | Kind::ListIntRaw) => Kind::Int,
+                        Some(Kind::ListInt | Kind::ListIntRaw | Kind::ListBytes) => Kind::Int,
                         Some(Kind::ListStruct(sid)) => Kind::Struct(sid),
                         Some(Kind::ListStr) => Kind::Str,
                         _ => return None,
@@ -5582,27 +5654,35 @@ impl PlanFn {
                     args,
                     builtin_id,
                 } => {
-                    for a in args.iter() {
-                        narrow!(a.0, K_NUM);
-                    }
-                    let id = *builtin_id as usize;
-                    if crate::ovm::bytecode::BytecodeVm::float_math_whole(id) {
-                        // floor, ceil, round, trunc answer an Int.
+                    if crate::ovm::bytecode::BytecodeVm::int_math_index(*builtin_id).is_some() {
+                        // Ints in, an Int out.
+                        for a in args.iter() {
+                            narrow!(a.0, K_INT);
+                        }
                         grow!(self.writes[dst.0 as usize], K_INT);
-                    } else if id == crate::ovm::bytecode::BytecodeVm::FLOAT_MATH_POW {
-                        // pow of two Ints is an Int (translation refuses
-                        // it: the checked power is the VM's); any Float
-                        // makes it a Float.
-                        let l = self.writes[args[0].0 as usize];
-                        let r = self.writes[args[1].0 as usize];
-                        if (l | r) & K_FLOAT != 0 {
+                    } else {
+                        for a in args.iter() {
+                            narrow!(a.0, K_NUM);
+                        }
+                        let id = *builtin_id as usize;
+                        if crate::ovm::bytecode::BytecodeVm::float_math_whole(id) {
+                            // floor, ceil, round, trunc answer an Int.
+                            grow!(self.writes[dst.0 as usize], K_INT);
+                        } else if id == crate::ovm::bytecode::BytecodeVm::FLOAT_MATH_POW {
+                            // pow of two Ints is an Int (translation refuses
+                            // it: the checked power is the VM's); any Float
+                            // makes it a Float.
+                            let l = self.writes[args[0].0 as usize];
+                            let r = self.writes[args[1].0 as usize];
+                            if (l | r) & K_FLOAT != 0 {
+                                grow!(self.writes[dst.0 as usize], K_FLOAT);
+                            }
+                            if l & K_INT != 0 && r & K_INT != 0 {
+                                grow!(self.writes[dst.0 as usize], K_INT);
+                            }
+                        } else {
                             grow!(self.writes[dst.0 as usize], K_FLOAT);
                         }
-                        if l & K_INT != 0 && r & K_INT != 0 {
-                            grow!(self.writes[dst.0 as usize], K_INT);
-                        }
-                    } else {
-                        grow!(self.writes[dst.0 as usize], K_FLOAT);
                     }
                 }
                 Instruction::Jump { .. }
@@ -6087,6 +6167,8 @@ struct Helpers {
     index_rawi_cached: cranelift_module::FuncId,
     len_rawf: cranelift_module::FuncId,
     len_rawi: cranelift_module::FuncId,
+    len_bytes: cranelift_module::FuncId,
+    index_bytes: cranelift_module::FuncId,
     set_rawf: cranelift_module::FuncId,
     set_rawi: cranelift_module::FuncId,
     append_rawf: cranelift_module::FuncId,
@@ -6164,6 +6246,8 @@ fn translate_body(
         index_rawi_cached: index_rawi_cached_helper,
         len_rawf: len_rawf_helper,
         len_rawi: len_rawi_helper,
+        len_bytes: len_bytes_helper,
+        index_bytes: index_bytes_helper,
         set_rawf: set_rawf_helper,
         set_rawi: set_rawi_helper,
         append_rawf: append_rawf_helper,
@@ -6731,6 +6815,45 @@ fn translate_body(
                 dst,
                 builtin_id,
                 args,
+            } if crate::ovm::bytecode::BytecodeVm::int_math_index(*builtin_id).is_some() => {
+                let id = crate::ovm::bytecode::BytecodeVm::int_math_index(*builtin_id)?;
+                let mut vals = [None, None];
+                for (i, a) in args.iter().enumerate().take(2) {
+                    if r#gen.kind(a.0)? != Kind::Int {
+                        return None;
+                    }
+                    vals[i] = Some(builder.use_var(Variable::from_u32(a.0)));
+                }
+                let a = vals[0]?;
+                if crate::stdlib::math::int_op_has_count(id) {
+                    // A count outside 0..=63 deopts; the VM raises.
+                    let b = vals[1]?;
+                    let out = builder
+                        .ins()
+                        .icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, b, 64);
+                    let cont = builder.create_block();
+                    builder.ins().brif(out, deopt_block, &[], cont, &[]);
+                    builder.switch_to_block(cont);
+                }
+                let val = match id {
+                    0 => builder.ins().iadd(a, vals[1]?),
+                    1 => builder.ins().isub(a, vals[1]?),
+                    2 => builder.ins().imul(a, vals[1]?),
+                    3 => builder.ins().ishl(a, vals[1]?),
+                    4 => builder.ins().ushr(a, vals[1]?),
+                    5 => builder.ins().rotl(a, vals[1]?),
+                    6 => builder.ins().rotr(a, vals[1]?),
+                    7 => builder.ins().popcnt(a),
+                    8 => builder.ins().clz(a),
+                    9 => builder.ins().ctz(a),
+                    _ => return None,
+                };
+                r#gen.write(builder, dst.0, val);
+            }
+            Instruction::CallBuiltin {
+                dst,
+                builtin_id,
+                args,
             } => {
                 let id = *builtin_id as usize;
                 if crate::ovm::bytecode::BytecodeVm::float_math_whole(id) {
@@ -7070,6 +7193,7 @@ fn translate_body(
                     let which = match r#gen.kind(args[0].0)? {
                         Kind::ListFloatRaw => len_rawf_helper,
                         Kind::ListIntRaw => len_rawi_helper,
+                        Kind::ListBytes => len_bytes_helper,
                         Kind::ListFloat | Kind::ListInt | Kind::ListStruct(_) | Kind::ListStr => {
                             len_helper
                         }
@@ -7276,6 +7400,7 @@ fn translate_body(
                 let which = match r#gen.kind(src.0)? {
                     Kind::ListFloatRaw => len_rawf_helper,
                     Kind::ListIntRaw => len_rawi_helper,
+                    Kind::ListBytes => len_bytes_helper,
                     _ => len_helper,
                 };
                 let list_ptr = builder.use_var(Variable::from_u32(src.0));
@@ -7286,6 +7411,19 @@ fn translate_body(
             }
             Instruction::IterGet { dst, src, idx } => {
                 let src_kind = r#gen.kind(src.0)?;
+                if src_kind == Kind::ListBytes {
+                    let ptr = builder.use_var(Variable::from_u32(src.0));
+                    let idx_v = r#gen.read(builder, idx.0)?;
+                    let helper_ref = module.declare_func_in_func(index_bytes_helper, builder.func);
+                    let call = builder.ins().call(helper_ref, &[ptr, idx_v]);
+                    let val = builder.inst_results(call)[0];
+                    let bad = builder.ins().icmp_imm_s(IntCC::SignedLessThan, val, 0);
+                    let ok_block = builder.create_block();
+                    builder.ins().brif(bad, deopt_block, &[], ok_block, &[]);
+                    builder.switch_to_block(ok_block);
+                    r#gen.write(builder, dst.0, val);
+                    continue;
+                }
                 if matches!(src_kind, Kind::ListFloatRaw | Kind::ListIntRaw) {
                     let (which, load_ty) = match src_kind {
                         Kind::ListFloatRaw => (index_rawf_helper, types::F64),
@@ -7473,6 +7611,38 @@ fn translate_body(
             }
             Instruction::IndexGet { dst, object, index } => {
                 let obj_kind = r#gen.kind(object.0)?;
+                if obj_kind == Kind::ListBytes {
+                    // Inline: the length, an unsigned bounds check (a
+                    // negative index is out of range too; the deopt re-runs
+                    // the read on the VM, which raises the subscript's
+                    // error), then the byte.
+                    let obj = builder.use_var(Variable::from_u32(object.0));
+                    let idx_v = r#gen.read(builder, index.0)?;
+                    let len = builder.ins().load(
+                        types::I64,
+                        MemFlagsData::trusted(),
+                        obj,
+                        crate::stdlib::bytes::BytesObject::LEN_OFFSET,
+                    );
+                    let in_bounds = builder.ins().icmp(IntCC::UnsignedLessThan, idx_v, len);
+                    let ok_block = builder.create_block();
+                    builder
+                        .ins()
+                        .brif(in_bounds, ok_block, &[], deopt_block, &[]);
+                    builder.switch_to_block(ok_block);
+                    let data = builder.ins().load(
+                        types::I64,
+                        MemFlagsData::trusted(),
+                        obj,
+                        crate::stdlib::bytes::BytesObject::PTR_OFFSET,
+                    );
+                    let addr = builder.ins().iadd(data, idx_v);
+                    let val = builder
+                        .ins()
+                        .uload8(types::I64, MemFlagsData::trusted(), addr, 0);
+                    r#gen.write(builder, dst.0, val);
+                    continue;
+                }
                 if matches!(obj_kind, Kind::ListListFloat) {
                     // Feature-matrix row: hand the inner raw list's
                     // pointer to the dst register (kind ListFloatRaw).

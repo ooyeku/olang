@@ -274,8 +274,8 @@ fn response_value(resp: Resp, bytes: bool) -> Value {
         Value::Boolean((200..300).contains(&resp.status)),
     );
     Value::Struct {
-        type_name: "HttpResponse".to_string(),
-        fields: Arc::new(m),
+        type_name: "HttpResponse".into(),
+        fields: Arc::new(m).into(),
     }
 }
 
@@ -500,8 +500,8 @@ fn defer() -> Result<Value, InterpreterError> {
     let mut fields = ValueMap::default();
     fields.insert("ticket".to_string(), Value::Integer(id as i64));
     Ok(Value::Struct {
-        type_name: "HttpDeferred".to_string(),
-        fields: Arc::new(fields),
+        type_name: "HttpDeferred".into(),
+        fields: Arc::new(fields).into(),
     })
 }
 

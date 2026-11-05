@@ -8,6 +8,7 @@ pub mod asset;
 pub mod base64;
 pub mod bigint;
 pub mod bytes;
+pub mod cancel;
 pub mod caps_mod;
 pub mod cell;
 pub mod chan;
@@ -39,6 +40,7 @@ pub mod meta;
 #[cfg(feature = "native")]
 pub mod os;
 pub mod peg;
+pub mod persistent;
 #[cfg(feature = "native")]
 pub mod proc;
 #[cfg(feature = "native")]
@@ -48,6 +50,7 @@ pub mod random;
 pub mod regex_mod;
 #[cfg(feature = "native")]
 pub mod runtime;
+pub mod shared;
 pub mod string;
 pub mod task;
 pub mod text;
@@ -59,9 +62,11 @@ pub mod tokens;
 pub mod toml_mod;
 #[cfg(feature = "native")]
 pub mod tty;
+pub mod value_codec;
 pub mod vec;
 #[cfg(feature = "native")]
 pub mod vt;
+pub mod weak;
 
 /// The native modules' names (`str`, `math`, `ods`, `plot`, ...) and each
 /// one's members, built once per process from `get_stdlib`.
@@ -116,6 +121,13 @@ pub fn get_stdlib() -> crate::ast::ValueMap {
     stdlib.insert("chan".to_string(), chan::create_chan_module());
     stdlib.insert("caps".to_string(), caps_mod::create_caps_module());
     stdlib.insert("cell".to_string(), cell::create_cell_module());
+    stdlib.insert("cancel".to_string(), cancel::create_cancel_module());
+    stdlib.insert("weak".to_string(), weak::create_weak_module());
+    stdlib.insert("shared".to_string(), shared::create_shared_module());
+    stdlib.insert("pmap".to_string(), persistent::create_pmap_module());
+    stdlib.insert("pvec".to_string(), persistent::create_pvec_module());
+    stdlib.insert("psorted".to_string(), persistent::create_psorted_module());
+    stdlib.insert("value".to_string(), value_codec::create_value_module());
     stdlib.insert("task".to_string(), task::create_task_module());
     stdlib.insert("math".to_string(), math::create_math_module());
     #[cfg(feature = "native")]

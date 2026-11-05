@@ -123,8 +123,8 @@ pub fn create_os_module() -> Value {
     );
 
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: std::sync::Arc::new(module),
+        type_name: "Module".into(),
+        fields: std::sync::Arc::new(module).into(),
     }
 }
 
@@ -652,10 +652,19 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     }
     crate::stdlib::proc::apply_env(&mut command, clear_env, &env_vars, &env_removed);
 
+    // Where a call can be stopped (a cancellable call, a budget, the
+    // REPL's interrupt), the wait polls for it and kills the child when
+    // it comes, so even an unbounded exec stops.
     let outcome = match timeout_ms {
-        Some(ms) => exec_bounded(command, stdin_data, ms),
+        Some(ms) => exec_bounded(command, stdin_data, Some(ms)),
+        None if crate::interrupt::armed() => exec_bounded(command, stdin_data, None),
         None => exec_unbounded(command, stdin_data).map(|o| (o, false)),
     };
+    if let Err(e) = &outcome
+        && e.kind() == std::io::ErrorKind::Interrupted
+    {
+        return Err(crate::interrupt::MESSAGE.into());
+    }
 
     match outcome {
         Ok((output, timed_out)) => {
@@ -674,8 +683,8 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             fields.insert("stderr".to_string(), stderr);
             fields.insert("timed_out".to_string(), Value::Boolean(timed_out));
             Ok(Value::Ok(Box::new(Value::Struct {
-                type_name: "Object".to_string(),
-                fields: std::sync::Arc::new(fields),
+                type_name: "Object".into(),
+                fields: std::sync::Arc::new(fields).into(),
             })))
         }
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
@@ -727,11 +736,13 @@ fn exec_unbounded(
 fn exec_bounded(
     mut command: process::Command,
     stdin_data: Option<String>,
-    timeout_ms: u64,
+    timeout_ms: Option<u64>,
 ) -> std::io::Result<(process::Output, bool)> {
     use std::io::Read;
     use std::time::{Duration, Instant};
-    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    // No timeout: a deadline a year out, the wait still polling for a stop.
+    let deadline =
+        Instant::now() + Duration::from_millis(timeout_ms.unwrap_or(365 * 24 * 3600 * 1000));
     command
         .stdin(if stdin_data.is_some() {
             process::Stdio::piped()
@@ -790,6 +801,16 @@ fn exec_bounded(
         }
         if status.is_some() && stdout.is_some() && stderr.is_some() {
             break;
+        }
+        // Asked to stop (a cancelled token, a budget, an interrupt): the
+        // child goes, and the call raises as the evaluators' polls do.
+        if crate::interrupt::should_stop() {
+            crate::stdlib::proc::kill_tree(&mut child);
+            let _ = child.wait();
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                crate::interrupt::MESSAGE,
+            ));
         }
         let now = Instant::now();
         if now >= deadline {

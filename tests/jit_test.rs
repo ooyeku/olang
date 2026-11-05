@@ -1819,3 +1819,129 @@ fn short_circuits_len_and_abs_run_native() {
         );
     }
 }
+
+// ── 64-bit integer operations (OL-426) ──────────────────────────────
+
+const INT_OPS_KERNEL: &str = r#"
+fn fnv(n) = {
+    let mut h = -3750763034362895579
+    let mut i = 0
+    while i < n { h = math.wrapping_mul(h ^ (i & 255), 1099511628211); i = i + 1 }
+    h
+}
+fn mix(n) = {
+    let mut acc = 0
+    let mut i = 0
+    while i < n {
+        acc = math.wrapping_add(math.rotl(acc, 5) ^ i, math.wrapping_mul(i, -7046029254386353131))
+        acc = math.wrapping_sub(acc, math.ushr(acc, 33)) ^ math.wrapping_shl(acc, 7)
+        acc = math.rotr(acc, 3) + math.popcount(acc) + math.clz(acc) + math.ctz(acc)
+        i = i + 1
+    }
+    acc
+}
+fn counts(x) = math.popcount(x) * 10000 + math.clz(x) * 100 + math.ctz(x)
+[fnv(5000), mix(5000), counts(0), counts(-1), counts(12), counts(math.wrapping_shl(1, 63))]
+"#;
+
+#[test]
+fn integer_operations_agree_under_the_jit() {
+    assert_jit_transparent(INT_OPS_KERNEL);
+    assert_eq!(
+        eval(
+            "[math.wrapping_add(9223372036854775807, 1), math.ushr(-1, 60), math.clz(0), math.ctz(0)]",
+            None
+        ),
+        Ok(Value::List(std::sync::Arc::new(vec![
+            Value::Integer(i64::MIN),
+            Value::Integer(15),
+            Value::Integer(64),
+            Value::Integer(64),
+        ])))
+    );
+}
+
+#[test]
+fn an_integer_shift_count_out_of_range_deopts_to_the_canonical_error() {
+    for op in ["wrapping_shl", "ushr", "rotl", "rotr"] {
+        for n in ["64", "-1"] {
+            let src = format!(
+                "fn f(x, n) = {{\n    let mut acc = 0\n    let mut i = 0\n    while i < 10 {{ acc = acc ^ math.{op}(x, i); i = i + 1 }}\n    acc ^ math.{op}(x, n)\n}}\nf(3, {n})"
+            );
+            let interpreted = eval(&src, None);
+            assert!(
+                interpreted
+                    .as_ref()
+                    .is_err_and(|e| e.contains("the count must be between 0 and 63")),
+                "{op} {n}: {interpreted:?}"
+            );
+            assert_eq!(eval(&src, Some(1)), interpreted, "{op} {n}");
+        }
+    }
+    let src = "fn f(x) = math.popcount(x)\nf(1.5)";
+    assert_eq!(eval(src, Some(1)), eval(src, None));
+    assert!(eval(src, None).is_err_and(|e| e.contains("must be an Int")));
+}
+
+#[test]
+fn integer_operations_run_native() {
+    let dir = std::env::temp_dir().join(format!("olang-jit-intops-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("main.ol");
+    std::fs::write(
+        &file,
+        INT_OPS_KERNEL.replace("[fnv", "println([fnv") + ")\n",
+    )
+    .unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_olang"))
+        .arg(&file)
+        .env("OLANG_TIER_STATS", "1")
+        .output()
+        .expect("run olang");
+    let _ = std::fs::remove_dir_all(&dir);
+    let stats = String::from_utf8_lossy(&out.stderr);
+    for name in ["fnv", "mix", "counts"] {
+        let line = stats
+            .lines()
+            .find(|l| l.starts_with(&format!("tier-fn: {name} ")))
+            .unwrap_or_else(|| panic!("no tier line for {name}:\n{stats}"));
+        assert!(
+            !line.contains("native_calls=0"),
+            "{name} stayed off native: {line}"
+        );
+    }
+}
+
+// ── same(a, b): identity (OL-471) ───────────────────────────────────
+
+#[test]
+fn same_agrees_on_both_tiers() {
+    let src = r#"
+type P = struct { x: Int, y: Int }
+fn ids(xs, m, p) = {
+    let ys = xs
+    let n = m
+    let f = (v) => v + 1
+    let g = f
+    [same(xs, ys), same(m, n), same(p, p), same(f, g),
+     same(1, 1), same(1, 1.0), same(2, 3), same(true, true), same((), ()),
+     same(Ok(xs), Ok(ys)), same(xs, m), same([1, 2], [1, 2]), same(f, (v) => v + 1)]
+}
+let xs = map(range(0, 100), (i) => i * 2)
+let m = #{ "a": 1, "b": [1, 2] }
+let p = P { x: 1, y: 2 }
+let mut out = []
+for i in 0..3 { out = ids(xs, m, p) }
+out
+"#;
+    assert_jit_transparent(src);
+    let expected = [
+        true, true, true, true, true, true, false, true, true, true, false, false, false,
+    ];
+    assert_eq!(
+        eval(src, Some(1)),
+        Ok(Value::List(std::sync::Arc::new(
+            expected.iter().map(|b| Value::Boolean(*b)).collect()
+        )))
+    );
+}
