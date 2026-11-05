@@ -199,7 +199,7 @@ fn check_warns_about_a_let_that_takes_a_stdlib_module_name() {
     write(
         &ws,
         "l.ol",
-        "fn f() = {\n    let fs = 1\n    fs\n}\nprintln(to_string(f()))\n",
+        "fn f() = {\n    let fs = 1\n    fs.read_file(\"x\")\n}\nprintln(to_string(f()))\n",
     );
     let (out, err, _) = olang(&ws, &["check", "l.ol"]);
     let all = out + &err;
@@ -207,6 +207,30 @@ fn check_warns_about_a_let_that_takes_a_stdlib_module_name() {
         all.contains("`let fs` shadows the stdlib module `fs`"),
         "{all}"
     );
+}
+
+#[test]
+fn a_let_named_like_a_module_and_never_read_as_it_is_not_reported() {
+    // OL-530: modules added later (value, shared, text) made every
+    // `let value = …` a warning, and an error where shadow is promoted.
+    let ws = workspace("letquiet");
+    write(
+        &ws,
+        "l.ol",
+        "let value = 3\nfn f() = {\n    let shared = [1]\n    len(shared) + value\n}\ntest \"t\" {\n    let text = \"a\"\n    assert_eq(text, \"a\")\n}\nprintln(to_string(f()))\n",
+    );
+    let (out, err, _) = olang(&ws, &["check", "l.ol"]);
+    let all = out + &err;
+    assert!(!all.contains("shadows the stdlib module"), "{all}");
+    // read as the module at the top level, through a function: reported
+    write(
+        &ws,
+        "m.ol",
+        "let value = 3\nfn f(x) = value.encode(x)\nprintln(to_string(f(1)))\n",
+    );
+    let (out, err, _) = olang(&ws, &["check", "m.ol"]);
+    let all = out + &err;
+    assert!(all.contains("`let value` shadows the stdlib module `value`"), "{all}");
 }
 
 #[test]

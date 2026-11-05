@@ -310,7 +310,7 @@ fn genuine_findings_are_still_reported_and_agree() {
                  fn f(x) = nowhere_defined(x) + 1\n\
                  let fixed = 1\n\
                  fixed = 2\n\
-                 fn g() = {\n    let cell = 1\n    cell + 1\n}\n\
+                 fn g() = {\n    let cell = 1\n    cell.get(cell)\n}\n\
                  println(show(f(1) + g() + fixed))\n\
                  println(show(find([1], 1)))\n",
             ),

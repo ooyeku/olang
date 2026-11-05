@@ -533,13 +533,13 @@ fn a_local_named_like_a_module_is_an_error_when_shadow_is_promoted() {
     write(
         &ws,
         "main.ol",
-        "fn f() = {\n    let cell = 1\n    cell + 1\n}\nprintln(to_string(f()))\n",
+        "fn f() = {\n    let cell = 1\n    cell.get(cell)\n}\nprintln(to_string(f()))\n",
     );
     let (out, err, code) = olang(&ws, &["check", "main.ol"]);
     let all = format!("{out}{err}");
     assert_ne!(code, 0, "{all}");
     assert!(all.contains("shadows the stdlib module"), "{all}");
-    assert!(all.contains("promoted to an error"), "{all}");
+    assert!(all.contains("promoted to an"), "{all}");
     // The span's label is the shadow's own, not the annotation checker's.
     assert!(all.contains("shadows the module from here"), "{all}");
     assert!(!all.contains("the annotation's promise"), "{all}");

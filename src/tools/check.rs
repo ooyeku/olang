@@ -1290,7 +1290,7 @@ fn callable_names(nodes: &[Value]) -> std::collections::HashSet<String> {
 /// are then read as that module: `fn table_sort(rows, col) = … col.sort_by
 /// (…)` reaches the parameter, and fails at run time. A binding of the
 /// name that is never read as the module is not reported — `col` and
-/// `time` are ordinary parameter names. (`let` has its own rule above.)
+/// `time` are ordinary parameter names, and the same holds for `let`.
 pub fn binding_shadow_warnings(program: &Program) -> Vec<CheckDiagnostic> {
     let mut modules: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
     for (name, module) in crate::stdlib::get_stdlib().iter() {
@@ -1303,9 +1303,7 @@ pub fn binding_shadow_warnings(program: &Program) -> Vec<CheckDiagnostic> {
         at: (0, 0),
         out: Vec::new(),
     };
-    for statement in &program.statements {
-        walker.statement(statement);
-    }
+    walker.statements(&program.statements, true);
     walker.out
 }
 
@@ -1342,12 +1340,59 @@ impl BindingShadows {
                     self.function(m);
                 }
             }
-            Statement::TestDecl(t) => {
-                for s in &t.body {
-                    self.statement(s);
-                }
-            }
+            Statement::TestDecl(t) => self.statements(&t.body, false),
             _ => {}
+        }
+    }
+
+    /// A run of statements, each `let` checked against what follows it:
+    /// a binding is reported only when a later `name.member` reads it as
+    /// the module. At the top level a function body is in scope too, as
+    /// it reads a top-level binding where it runs.
+    fn statements(&mut self, statements: &[Statement], top: bool) {
+        for (i, s) in statements.iter().enumerate() {
+            let decl = match s.unwrapped() {
+                Statement::LetDecl(l) => Some(l),
+                Statement::ShareDecl(crate::ast::ShareDecl::Let(l)) => Some(l),
+                _ => None,
+            };
+            if let Some(l) = decl {
+                let mut names = std::collections::HashSet::new();
+                crate::resolve::pattern_names_of(&l.pattern, &mut names);
+                let mut rest: Vec<&Expr> = Vec::new();
+                for r in &statements[i + 1..] {
+                    match r.unwrapped() {
+                        Statement::Expression(x) => rest.push(x),
+                        Statement::LetDecl(l) => rest.extend(l.value.as_ref()),
+                        Statement::ShareDecl(crate::ast::ShareDecl::Let(l)) => {
+                            rest.extend(l.value.as_ref())
+                        }
+                        Statement::FunctionDecl(f)
+                        | Statement::ShareDecl(crate::ast::ShareDecl::Function(f))
+                            if top =>
+                        {
+                            rest.push(&f.body)
+                        }
+                        _ => {}
+                    }
+                }
+                let mut names: Vec<String> = names.into_iter().collect();
+                names.sort();
+                let saved = self.at;
+                if let Statement::Located { line, column, .. } = s {
+                    self.at = (*line, *column);
+                }
+                for n in names {
+                    let what = if matches!(l.pattern, crate::ast::Pattern::Identifier(_)) {
+                        format!("`let {}`", n)
+                    } else {
+                        format!("the pattern binding `{}`", n)
+                    };
+                    self.binder(&n, &rest, &what);
+                }
+                self.at = saved;
+            }
+            self.statement(s);
         }
     }
 
@@ -1462,31 +1507,7 @@ not the module — rename the binding",
                 return;
             }
             Expr::Block(statements) => {
-                for (i, s) in statements.iter().enumerate() {
-                    if let Statement::LetDecl(l) = s.unwrapped()
-                        && !matches!(l.pattern, crate::ast::Pattern::Identifier(_))
-                    {
-                        let mut names = std::collections::HashSet::new();
-                        crate::resolve::pattern_names_of(&l.pattern, &mut names);
-                        let rest: Vec<&Expr> = statements[i + 1..]
-                            .iter()
-                            .filter_map(|r| match r.unwrapped() {
-                                Statement::Expression(x) => Some(x),
-                                Statement::LetDecl(l) => l.value.as_ref(),
-                                _ => None,
-                            })
-                            .collect();
-                        let mut names: Vec<String> = names.into_iter().collect();
-                        names.sort();
-                        if let Statement::Located { line, column, .. } = s {
-                            self.at = (*line, *column);
-                        }
-                        for n in names {
-                            self.binder(&n, &rest, &format!("the pattern binding `{}`", n));
-                        }
-                    }
-                    self.statement(s);
-                }
+                self.statements(statements, false);
                 return;
             }
             _ => {}
@@ -1605,37 +1626,6 @@ this module, not the standard library — rename the file if that is not intende
             }
             _ => {}
         }
-    }
-    // `let` bindings, at any depth, that take a stdlib module's name.
-    let mut lets: Vec<(String, u32, u32)> = Vec::new();
-    for node in nodes {
-        visit_nodes(node, 0, &mut |n, line| {
-            if matches!(n.get("kind"), Some(Value::String(k)) if k.as_str() == "let")
-                && let Some(Value::String(name)) = n.get("name")
-                && stdlib.contains(name.as_str())
-            {
-                let column = match n.get("column") {
-                    Some(Value::Integer(c)) => *c as u32,
-                    _ => 0,
-                };
-                lets.push((name.to_string(), line as u32, column));
-            }
-        });
-    }
-    for (name, line, column) in lets {
-        out.push(CheckDiagnostic {
-            line,
-            column,
-            message: format!(
-                "`let {}` shadows the stdlib module `{}` for the rest of its scope — a later \
-`{}.…` reaches this binding, not the module",
-                name, name, name
-            ),
-            runtime: false,
-            warning: true,
-            scope: false,
-            class: Some("shadow"),
-        });
     }
     out
 }
