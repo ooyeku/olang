@@ -61,6 +61,7 @@ pub mod tokens;
 pub mod toml_mod;
 #[cfg(feature = "native")]
 pub mod tty;
+pub mod value_codec;
 pub mod vec;
 #[cfg(feature = "native")]
 pub mod vt;
@@ -122,6 +123,7 @@ pub fn get_stdlib() -> crate::ast::ValueMap {
     stdlib.insert("cancel".to_string(), cancel::create_cancel_module());
     stdlib.insert("weak".to_string(), weak::create_weak_module());
     stdlib.insert("shared".to_string(), shared::create_shared_module());
+    stdlib.insert("value".to_string(), value_codec::create_value_module());
     stdlib.insert("task".to_string(), task::create_task_module());
     stdlib.insert("math".to_string(), math::create_math_module());
     #[cfg(feature = "native")]

@@ -36,6 +36,7 @@ the sentence that documents the function in its module's section.
 - [`asset` — a package's files](#asset--a-packages-files)
 - [Collections, in olang](#collections-in-olang)
 - [`json` — JSON](#json--json)
+- [`value` — values as bytes](#value--values-as-bytes)
 - [`toml` — TOML](#toml--toml)
 - [`csv` — CSV](#csv--csv)
 - [`md` — Markdown](#md--markdown)
@@ -887,6 +888,36 @@ per call), so they are memory-fused microsecond operations, not
 nanosecond ones. Where the builtins already cover a shape natively,
 they stay the fast path; these modules cover the shapes the builtins
 do not.
+
+## `value` — values as bytes
+
+`value.encode(v)` writes a value as `Bytes`, and `value.decode(b)`
+reads it back: `Ok` of a value `==` to the one written. Unlike JSON it
+keeps everything a value is made of: tuples stay tuples, `Bytes` stay
+bytes, `Ok` and `Err`, enums and declared structs come back as
+themselves, and an Int is not turned into a Float. It is the format for
+data a program writes for itself to read later: a cache on disk, a log
+of operations, a memo table.
+
+| Function | Returns |
+|---|---|
+| <a id="value-encode"></a>`value.encode(v)` / `value.encode(v, #{ canonical: true })` | `Bytes`. Canonical mode writes every map's keys, and every struct's fields, in sorted order, so two `==` values encode to the same bytes, which can then be hashed or compared |
+| <a id="value-decode"></a>`value.decode(b)` | `Ok(v)`, or `Err` saying what is wrong with the bytes (cut short, not an encoding, a newer version) |
+
+A function, a cell, a channel or any other handle is code or a place,
+not data, and encoding one raises. The bytes start with a header naming
+the format and its version, so a later olang that changes the format
+can still read what this one wrote, and a file that is not an encoding
+is refused.
+
+```olang
+let v = #{ "id": (7, "seven"), "raw": bytes.from_list([1, 2]), "r": Ok([1.5]) }
+let b = value.encode(v)
+println(unwrap(value.decode(b)) == v)                   // true
+let x = value.encode(#{ "a": 1, "b": 2 }, #{ "canonical": true })
+let y = value.encode(#{ "b": 2, "a": 1 }, #{ "canonical": true })
+println(x == y)                                          // true
+```
 
 ## `json` — JSON
 

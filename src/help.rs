@@ -3165,6 +3165,24 @@ task.watch(service, inbox)   // a dead service is an Err at the next recv, not a
             &[r##"weak.alive(w)"##],
         );
 
+        // value — the binary value codec
+        self.doc_ex(
+            "value.encode",
+            "value.encode(v) / value.encode(v, #{ canonical: true })",
+            "Bytes",
+            "value",
+            "v written as Bytes that value.decode reads back as an == value: tuples, Bytes, Ok/Err, enums and structs kept, unlike JSON. Canonical mode writes map keys and struct fields sorted, so == values encode to the same bytes. A function, a cell or another handle raises",
+            &[r##"let b = value.encode(#{ "id": (7, "seven") })"##],
+        );
+        self.doc_ex(
+            "value.decode",
+            "value.decode(b)",
+            "Result",
+            "value",
+            "the value value.encode wrote into b, as Ok(v); Err saying what is wrong when b is cut short, not an encoding, or of a newer version",
+            &[r##"unwrap(value.decode(value.encode([1, (2, 3)])))  // [1, (2, 3)]"##],
+        );
+
         // cancel — cancellation tokens
         self.doc_ex(
             "cancel.token",

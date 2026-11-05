@@ -895,6 +895,12 @@ impl BuiltinFunctions {
             return crate::stdlib::shared::call_shared_function(f, arguments, interpreter);
         }
 
+        // The binary value codec
+        if let Some(f) = name.strip_prefix("value.") {
+            return crate::stdlib::value_codec::call_value_function(f, arguments)
+                .map_err(InterpreterError::runtime);
+        }
+
         // Weak references
         if let Some(f) = name.strip_prefix("weak.") {
             return crate::stdlib::weak::call_weak_function(f, arguments)
