@@ -267,6 +267,15 @@ impl BuiltinFunctions {
             },
         );
 
+        // Identity: one allocation, not two equal values (OL-471)
+        functions.insert(
+            "same".to_string(),
+            BuiltinFunction {
+                name: "same".to_string(),
+                arity: 2,
+            },
+        );
+
         // Type introspection
         functions.insert(
             "typeof".to_string(),
@@ -1376,6 +1385,15 @@ impl BuiltinFunctions {
             "range" => builtins.range(arguments),
             "zip" => builtins.zip(arguments),
             "typeof" => builtins.type_of(arguments),
+            "same" => {
+                if arguments.len() != 2 {
+                    return Err(InterpreterError::ArityMismatch {
+                        expected: 2,
+                        got: arguments.len(),
+                    });
+                }
+                Ok(Value::Boolean(arguments[0].same(&arguments[1])))
+            }
             "implements" => {
                 if arguments.len() != 2 {
                     return Err(InterpreterError::ArityMismatch {
@@ -1879,6 +1897,7 @@ impl BuiltinFunctions {
         "to_int",
         "to_float",
         "typeof",
+        "same",
         "head",
         "tail",
         "cons",

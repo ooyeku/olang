@@ -836,6 +836,50 @@ pub struct TypeInfoValue {
 }
 
 impl Value {
+    /// `same(a, b)`: whether the two are one value in memory — the same
+    /// list, map, struct or closure, not two equal ones. A scalar (an
+    /// Int, a Float, a Bool, `()`) has no identity, so for one this is
+    /// `==`. A `true` always means `a == b`; a `false` says nothing,
+    /// since an equal copy is not the same allocation (OL-471).
+    pub fn same(&self, other: &Value) -> bool {
+        use Value as V;
+        match (self, other) {
+            (V::String(a), V::String(b)) => Arc::ptr_eq(a, b),
+            (V::List(a), V::List(b)) | (V::Tuple(a), V::Tuple(b)) => Arc::ptr_eq(a, b),
+            (V::Map(a), V::Map(b)) => Arc::ptr_eq(a, b),
+            (
+                V::Struct {
+                    type_name: t,
+                    fields: a,
+                },
+                V::Struct {
+                    type_name: u,
+                    fields: b,
+                },
+            ) => t == u && Arc::ptr_eq(a, b),
+            (V::Function(a), V::Function(b)) => Arc::ptr_eq(a, b),
+            (V::Enum(a), V::Enum(b)) => {
+                Arc::ptr_eq(a, b) || (matches!(a.variant_data, EnumVariantData::Unit) && a == b)
+            }
+            (V::EnumConstructor(a), V::EnumConstructor(b)) => Arc::ptr_eq(a, b),
+            (V::TypeInfo(a), V::TypeInfo(b)) => Arc::ptr_eq(a, b),
+            (V::Native(a), V::Native(b)) => Arc::ptr_eq(&a.0, &b.0),
+            (V::Ok(a), V::Ok(b)) | (V::Err(a), V::Err(b)) => a.same(b),
+            (V::Integer(a), V::Integer(b)) => a == b,
+            (V::Float(a), V::Float(b)) => a == b,
+            (V::Integer(a), V::Float(b)) | (V::Float(b), V::Integer(a)) => {
+                crate::interpreter::ops::int_float_eq(*a, *b)
+            }
+            (V::Boolean(_), V::Boolean(_))
+            | (V::Unit, V::Unit)
+            | (V::Range { .. }, V::Range { .. })
+            | (V::Builtin(_), V::Builtin(_)) => self == other,
+            _ => false,
+        }
+    }
+}
+
+impl Value {
     /// An enum value.
     pub fn enum_of(
         type_name: String,

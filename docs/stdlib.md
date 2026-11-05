@@ -222,6 +222,7 @@ helpers are aliases of the same function, never a second definition.
 | <a id="to_float"></a>`to_float(v)` | string/int → Float; a string that is not a number raises (`str.parse_float` is the `Result` form) |
 | <a id="len"></a>`len(v)` | length of a list, a string (in characters), a tuple, or `Bytes`; a map raises, and its entry count is `map_len` |
 | <a id="implements"></a>`implements(v, "Trait")` | does the value's type implement the trait? |
+| <a id="same"></a>`same(a, b)` | are `a` and `b` one value in memory, not just two equal ones? For an Int, a Float, a Bool or `()`, which have no identity, it is `==` |
 
 `to_string` and `show` render the same text: a string is returned as
 itself (`to_string("hi")` is `hi`, never `"hi"`), and every other value
@@ -233,6 +234,19 @@ use. Strings *inside* a container keep their quotes in that form, so
 println(to_string("hi") + " " + show("hi") + " " + to_string(["hi"]))
 println(typeof(3.5) + " " + show(to_int(3.9)) + " " + show(to_float("2.5")))
 println(show(len([1, 2, 3])) + " " + show(len("abcd")))
+```
+
+`same` is the cheap first question to ask before a deep comparison:
+when it answers `true`, the two are equal and nothing needs comparing.
+A `false` says nothing about equality, since an equal copy, built
+separately, is a different value. It is a hint for skipping work, never
+something a program's meaning should rest on; the two tiers may keep
+one value where the other made a copy.
+
+```olang
+let xs = [1, 2, 3]
+let ys = xs
+println(`${same(xs, ys)} ${same(xs, [1, 2] + [3])} ${xs == [1, 2] + [3]}`)  // true false true
 ```
 
 ### Lists

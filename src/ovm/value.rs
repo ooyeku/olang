@@ -825,6 +825,59 @@ thread_local! {
 }
 
 impl OvmValue {
+    /// `same(a, b)` on the VM's values, as `ast::Value::same` is on the
+    /// interpreter's: one allocation, or for a scalar `==`. A list in its
+    /// typed layout is the same as itself only.
+    pub fn same(&self, other: &OvmValue) -> bool {
+        use ValueData as D;
+        match (&self.data, &other.data) {
+            (D::Integer(a), D::Integer(b)) => a == b,
+            (D::Float(a), D::Float(b)) => a == b,
+            (D::Integer(a), D::Float(b)) | (D::Float(b), D::Integer(a)) => {
+                crate::interpreter::ops::int_float_eq(*a, *b)
+            }
+            (D::Boolean(a), D::Boolean(b)) => a == b,
+            (D::Unit, D::Unit) => true,
+            (D::String(a), D::String(b)) => Arc::ptr_eq(a, b),
+            (D::List(a), D::List(b)) | (D::Tuple(a), D::Tuple(b)) => Arc::ptr_eq(a, b),
+            (D::FloatList(a), D::FloatList(b)) => Arc::ptr_eq(a, b),
+            (D::IntList(a), D::IntList(b)) => Arc::ptr_eq(a, b),
+            (D::AstList(a), D::AstList(b)) => Arc::ptr_eq(a, b),
+            (D::AstMap(a), D::AstMap(b)) => Arc::ptr_eq(a, b),
+            (D::AstStruct(a, k), D::AstStruct(b, l)) => k == l && Arc::ptr_eq(a, b),
+            (D::Function(a), D::Function(b)) => Arc::ptr_eq(a, b),
+            (D::AstFunction(a), D::AstFunction(b)) => Arc::ptr_eq(a, b),
+            (D::Map(a), D::Map(b)) => Arc::ptr_eq(a, b),
+            (D::Enum(a), D::Enum(b)) => {
+                Arc::ptr_eq(a, b)
+                    || (matches!(a.data, EnumData::Unit)
+                        && matches!(b.data, EnumData::Unit)
+                        && a.type_name == b.type_name
+                        && a.variant_name == b.variant_name)
+            }
+            (D::Closure(a), D::Closure(b)) => Arc::ptr_eq(a, b),
+            (D::Struct(a), D::Struct(b)) => Arc::ptr_eq(a, b),
+            (D::Range(a), D::Range(b)) => {
+                a.start == b.start && a.end == b.end && a.inclusive == b.inclusive
+            }
+            (D::Builtin(a), D::Builtin(b)) => Arc::ptr_eq(a, b) || a.name == b.name,
+            (D::Error(a), D::Error(b)) => Arc::ptr_eq(a, b),
+            (D::Result(a), D::Result(b)) => {
+                Arc::ptr_eq(a, b)
+                    || match (&a.ok, &a.err, &b.ok, &b.err) {
+                        (Some(x), None, Some(y), None) | (None, Some(x), None, Some(y)) => {
+                            x.same(y)
+                        }
+                        _ => false,
+                    }
+            }
+            (D::Native(a), D::Native(b)) => Arc::ptr_eq(&a.0, &b.0),
+            _ => false,
+        }
+    }
+}
+
+impl OvmValue {
     /// The value's layout in the VM, by name (`OLANG_TIER_STATS`' bridged
     /// calls name their arguments' layouts: a wrapped interpreter list is
     /// why a `map` bridged).

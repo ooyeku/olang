@@ -1281,6 +1281,23 @@ impl HelpSystem {
             see_also: vec!["to_string".to_string()],
         });
 
+        self.add_function(FunctionDoc {
+            name: "same".to_string(),
+            description: "Whether a and b are one value in memory: the same list, map, struct or closure, not merely two equal ones. A scalar (an Int, a Float, a Bool, `()`) has no identity, so for one it is `==`. Use it as a cheap \"unchanged\" check before an expensive comparison: `true` always means `a == b`, but `false` says nothing, since an equal copy is not the same value. It never changes what a program means, only how much work it skips".to_string(),
+            syntax: "same(a, b)".to_string(),
+            parameters: vec![
+                "a: Any - A value".to_string(),
+                "b: Any - Another value".to_string(),
+            ],
+            return_type: "Bool".to_string(),
+            examples: vec![
+                "let xs = [1, 2, 3]\nsame(xs, xs)  // true".to_string(),
+                "same([1, 2, 3], [1, 2] + [3])  // false — equal, but two lists".to_string(),
+            ],
+            category: "Introspection".to_string(),
+            see_also: vec!["typeof".to_string()],
+        });
+
         // List manipulation utilities
         self.add_function(FunctionDoc {
             name: "reverse".to_string(),

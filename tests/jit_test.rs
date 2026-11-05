@@ -1911,3 +1911,37 @@ fn integer_operations_run_native() {
         );
     }
 }
+
+// ── same(a, b): identity (OL-471) ───────────────────────────────────
+
+#[test]
+fn same_agrees_on_both_tiers() {
+    let src = r#"
+type P = struct { x: Int, y: Int }
+fn ids(xs, m, p) = {
+    let ys = xs
+    let n = m
+    let f = (v) => v + 1
+    let g = f
+    [same(xs, ys), same(m, n), same(p, p), same(f, g),
+     same(1, 1), same(1, 1.0), same(2, 3), same(true, true), same((), ()),
+     same(Ok(xs), Ok(ys)), same(xs, m), same([1, 2], [1, 2]), same(f, (v) => v + 1)]
+}
+let xs = map(range(0, 100), (i) => i * 2)
+let m = #{ "a": 1, "b": [1, 2] }
+let p = P { x: 1, y: 2 }
+let mut out = []
+for i in 0..3 { out = ids(xs, m, p) }
+out
+"#;
+    assert_jit_transparent(src);
+    let expected = [
+        true, true, true, true, true, true, false, true, true, true, false, false, false,
+    ];
+    assert_eq!(
+        eval(src, Some(1)),
+        Ok(Value::List(std::sync::Arc::new(
+            expected.iter().map(|b| Value::Boolean(*b)).collect()
+        )))
+    );
+}
