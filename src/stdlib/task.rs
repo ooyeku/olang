@@ -15,15 +15,20 @@
 //! Joining several is just `map`, since every task is already running:
 //! `tasks |> map(task.join)`.
 //!
-//! ## Joining is not cancelling
+//! ## Joining is not cancelling; interrupting is
 //!
 //! `task.join_timeout(t, ms)` bounds how long you *wait*. It does not stop
-//! the task: an OS thread cannot be cancelled from outside without leaving
-//! whatever it was touching in an unknown state, so olang does not pretend
-//! otherwise. A timed-out task keeps running to completion; its result is
-//! memoized, so a later `task.join` on the same handle still collects it.
-//! When you need work that genuinely stops, have the task poll a condition
-//! it can see — a channel, or a value it re-reads each iteration.
+//! the task: a timed-out task keeps running; its result is memoized, so a
+//! later `task.join` on the same handle still collects it.
+//!
+//! `task.interrupt(t, reason?)` stops it. The task raises "interrupted"
+//! (or "interrupted: reason") at its next poll: the next statement, loop
+//! iteration or call, on every tier, or at once when it is waiting in
+//! `chan.recv`, `chan.ask`, a full `chan.send`, `task.join`, `time.sleep`
+//! or a `proc` read. The error unwinds like any other, so an `attempt`
+//! can catch it and clean up, and it is asked once: code that catches it
+//! runs on. A task inside a system call that cannot be woken raises once
+//! the call returns; `task.list` shows it as "interrupting" until then.
 //!
 //! ## Lifetime
 //!
@@ -91,6 +96,7 @@ pub fn create_task_module() -> Value {
     for (name, arity) in [
         ("join", 1),
         ("join_timeout", 2),
+        ("interrupt", 1),
         ("list", 0),
         ("parked", 0),
         ("watch", 2),
@@ -144,6 +150,7 @@ pub fn call_task_function(name: &str, args: Vec<Value>) -> Result<Value, Interpr
     match name {
         "join" => task_join(args),
         "join_timeout" => task_join_timeout(args),
+        "interrupt" => task_interrupt(args),
         "watch" => task_watch(args),
         "list" => task_list(args),
         "parked" => task_parked(args),
@@ -228,10 +235,36 @@ fn task_join(args: Vec<Value>) -> Result<Value, InterpreterError> {
         ));
     }
     let id = task_id(&args[0]).map_err(raise)?;
-    match spawn_registry::join(id) {
+    match spawn_registry::join(id).map_err(raise)? {
         Some(outcome) => Ok(settle(outcome)),
         None => Err(raise(
             "task.join: this task is no longer available (its handle was already released)"
+                .to_string(),
+        )),
+    }
+}
+
+/// `task.interrupt(t, reason?)`: ask task `t` to stop. It raises
+/// "interrupted" (with ": reason" when given) at its next poll, or at once
+/// in a wait. `true` when the task was running and is now asked, `false`
+/// when it had already ended.
+fn task_interrupt(args: Vec<Value>) -> Result<Value, InterpreterError> {
+    let reason = match args.as_slice() {
+        [_] => None,
+        [_, Value::String(s)] => Some(s.as_ref().clone()),
+        [_, Value::Unit] => None,
+        [_, other] => Some(other.to_string()),
+        _ => {
+            return Err(raise(
+                "task.interrupt expects a task and, optionally, a reason".to_string(),
+            ));
+        }
+    };
+    let id = task_id(&args[0]).map_err(raise)?;
+    match spawn_registry::interrupt(id, reason) {
+        Some(asked) => Ok(Value::Boolean(asked)),
+        None => Err(raise(
+            "task.interrupt: this task is no longer available (its handle was already released)"
                 .to_string(),
         )),
     }
@@ -250,7 +283,7 @@ fn task_join_timeout(args: Vec<Value>) -> Result<Value, InterpreterError> {
     })?;
     let id = task_id(&args[0]).map_err(raise)?;
     let deadline = crate::clock::Instant::now() + std::time::Duration::from_millis(ms);
-    match spawn_registry::join_until(id, deadline) {
+    match spawn_registry::join_until(id, deadline).map_err(raise)? {
         // Finished in time: `Ok` of what `task.join` answers (`Ok(v)`, or
         // `Err(failure)` when it raised); `Err("timed out")` is the wait
         // given up, never the task's own answer.

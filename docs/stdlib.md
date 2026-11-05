@@ -1513,6 +1513,7 @@ The model is covered in
 |---|---|
 | <a id="task-join"></a>`task.join(t)` | `Ok(value)` when the task returned (a value that is itself an `Err` included), `Err(message)` when it raised — blocks until it finishes |
 | <a id="task-join_timeout"></a>`task.join_timeout(t, ms)` / `task.join_timeout(t, #{ timeout_ms })` | `Ok` of what `task.join` answers (`Ok(Ok(v))`, `Ok(Err(e))`) if it finished within `ms`, else `Err("timed out")` |
+| <a id="task-interrupt"></a>`task.interrupt(t, reason?)` | stop the task: it raises `"interrupted"` (`"interrupted: reason"`) at its next statement, loop iteration or call, or at once when it waits (`chan.recv`, `chan.ask`, a full `chan.send`, `task.join`, `time.sleep`, a `proc` read). Asked once, so an `attempt` in the task can catch it. `true` when asked, `false` when the task had already ended |
 | <a id="task-watch"></a>`task.watch(t, c)` | the channel dies with the task: when `t` ends, however it ends, `c` is closed, so a `chan.recv` on it returns `Err` instead of waiting forever. Ownership is declared here, not inferred — any task may hold either end of a channel |
 | <a id="task-list"></a>`task.list()` | every task a live handle still watches: `#{ id, state, elapsed_ms }` |
 | <a id="task-parked"></a>`task.parked()` | threads blocked on unbounded waits: `#{ thread, on, waited_ms }` |

@@ -39,6 +39,7 @@ const NEEDS: &[(&str, &str)] = &[
     ("spawn", "threads"),
     ("task.join", "threads"),
     ("task.join_timeout", "threads"),
+    ("task.interrupt", "threads"),
     ("task.watch", "threads"),
 ];
 

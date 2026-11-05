@@ -2560,16 +2560,30 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 if let Some(timeline) = &self.timeline {
                     worker.set_timeline(timeline.child_for_thread(task_id));
                 }
+                // The task's stop slot: its handle can stop it
+                // (`task.interrupt`), whatever tier it runs on.
+                let stop = crate::interrupt::Handle::fresh();
+                let thread_stop = stop.clone();
                 let handle = std::thread::Builder::new()
                     .name(format!("olang-spawn-{}", task_id))
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
+                        crate::interrupt::adopt(&thread_stop);
                         // In the stall detector's census for its whole
                         // life: this thread runs olang code.
                         let _live = crate::stdlib::chan::live_guard();
                         let _counted =
                             crate::memory::enter_task(&format!("olang-spawn-{}", task_id));
                         let outcome = worker.eval_expr(&expr).map_err(|e| e.to_string());
+                        // Interrupted inside a call that could not be woken
+                        // (a system call), and nothing polled after it: the
+                        // task still ends with the interrupt, once it returns.
+                        let outcome = match outcome {
+                            Ok(_) if thread_stop.interrupt_pending() => {
+                                Err(crate::interrupt::interpreter_error().to_string())
+                            }
+                            other => other,
+                        };
                         // A task that ends by raising says so, once, on
                         // stderr — as an uncaught error in main would. The
                         // Err still reaches `task.join`; what this adds is
@@ -2589,7 +2603,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     .map_err(|e| InterpreterError::RuntimeError {
                         message: format!("spawn: could not start thread: {}", e),
                     })?;
-                spawn_registry::register(task_id, handle);
+                spawn_registry::register(task_id, handle, stop);
                 Ok(crate::stdlib::task::handle(task_id))
             }
 

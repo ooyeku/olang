@@ -1975,15 +1975,20 @@ pub fn spawn(interpreter: &Interpreter, expr: &Expr) -> Result<Value, Interprete
     let mut worker = interpreter.thread_safe_clone();
     let expr = expr.clone();
     let global = crate::interpreter::spawn_registry::next_id();
+    let stop = crate::interrupt::Handle::fresh();
+    let thread_stop = stop.clone();
     let (_, handle) = spawn_task(
         &ctx.world,
         ctx.task,
         ctx.node,
         Some(global),
         "",
-        move || worker.eval_expr(&expr).map_err(|e| e.to_string()),
+        move || {
+            crate::interrupt::adopt(&thread_stop);
+            worker.eval_expr(&expr).map_err(|e| e.to_string())
+        },
     )?;
-    crate::interpreter::spawn_registry::register(global, handle);
+    crate::interpreter::spawn_registry::register(global, handle, stop);
     let value = crate::stdlib::task::handle(global);
     ctx.world.yield_point(ctx.task)?;
     Ok(value)

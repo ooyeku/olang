@@ -3020,6 +3020,15 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             ],
         );
         self.doc_ex(
+            "task.interrupt",
+            "task.interrupt(t, reason?)",
+            "Bool",
+            "task",
+            "Stop task t: it raises \"interrupted\" (or \"interrupted: reason\") at its next statement, loop iteration or call, on every tier, and at once when it waits (chan.recv, chan.ask, a full chan.send, task.join, time.sleep, a proc read). Asked once: an attempt in the task can catch it and carry on. true when the task was running and is now asked, false when it had already ended. A task in a system call raises once the call returns; task.list shows it as \"interrupting\" until then.",
+            &[r##"task.interrupt(worker, "restart")
+task.join(worker)   // Err("interrupted: restart")"##],
+        );
+        self.doc_ex(
             "task.watch",
             "task.watch(t, c)",
             "Unit",

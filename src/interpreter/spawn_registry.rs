@@ -27,6 +27,8 @@ struct Entry {
     /// channel itself — no window in which a channel is watched by
     /// nobody.
     finished: bool,
+    /// The task's thread's stop slot: what `task.interrupt` asks.
+    stop: crate::interrupt::Handle,
 }
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
@@ -47,6 +49,9 @@ pub(crate) fn list() -> Vec<(u64, &'static str, u64)> {
         .map(|(id, e)| {
             let state = match &e.slot {
                 TaskSlot::Running(h) if h.is_finished() => "done",
+                // asked to stop, and not there yet: in a system call,
+                // say, it raises once the call returns
+                TaskSlot::Running(_) if e.stop.interrupt_pending() => "interrupting",
                 TaskSlot::Running(_) => "running",
                 TaskSlot::Joining => "joining",
                 TaskSlot::Done(_) => "done",
@@ -85,11 +90,36 @@ pub(crate) fn finish(id: u64) -> Vec<Value> {
     }
 }
 
+/// `task.interrupt`: ask task `id` to stop at its next poll. `Some(true)`
+/// when it was asked, `Some(false)` when it had already ended, `None`
+/// for an unknown id.
+pub(crate) fn interrupt(id: u64, reason: Option<String>) -> Option<bool> {
+    let stop = {
+        let map = lock_tasks();
+        let e = map.get(&id)?;
+        let running = !e.finished && matches!(&e.slot, TaskSlot::Running(h) if !h.is_finished());
+        if !running {
+            return Some(false);
+        }
+        e.stop.clone()
+    };
+    stop.interrupt(reason);
+    Some(true)
+}
+
+fn lock_tasks() -> std::sync::MutexGuard<'static, HashMap<u64, Entry>> {
+    tasks().lock().unwrap_or_else(|e| e.into_inner())
+}
+
 pub(crate) fn next_id() -> u64 {
     NEXT_ID.fetch_add(1, Ordering::Relaxed)
 }
 
-pub(crate) fn register(id: u64, handle: JoinHandle<Result<Value, String>>) {
+pub(crate) fn register(
+    id: u64,
+    handle: JoinHandle<Result<Value, String>>,
+    stop: crate::interrupt::Handle,
+) {
     tasks().lock().unwrap().insert(
         id,
         Entry {
@@ -97,6 +127,7 @@ pub(crate) fn register(id: u64, handle: JoinHandle<Result<Value, String>>) {
             started: crate::clock::Instant::now(),
             watched: Vec::new(),
             finished: false,
+            stop,
         },
     );
 }
@@ -158,13 +189,13 @@ fn forget(id: u64) {
 pub(crate) fn join_until(
     id: u64,
     deadline: crate::clock::Instant,
-) -> Option<Option<Result<Value, String>>> {
+) -> Result<Option<Option<Result<Value, String>>>, String> {
     loop {
         let ready = {
             let map = tasks().lock().unwrap();
             match map.get(&id).map(|e| &e.slot) {
-                None => return None,
-                Some(TaskSlot::Done(r)) => return Some(Some(r.clone())),
+                None => return Ok(None),
+                Some(TaskSlot::Done(r)) => return Ok(Some(Some(r.clone()))),
                 Some(TaskSlot::Running(h)) => h.is_finished(),
                 // Another thread is mid-join; treat as not-yet-ready and
                 // come back for its memoized result.
@@ -172,10 +203,13 @@ pub(crate) fn join_until(
             }
         };
         if ready {
-            return Some(join(id));
+            return join(id).map(Some);
+        }
+        if crate::interrupt::pending() {
+            return Err(crate::interrupt::stop_message());
         }
         if crate::clock::Instant::now() >= deadline {
-            return Some(None);
+            return Ok(Some(None));
         }
         crate::clock::sleep(std::time::Duration::from_millis(1));
     }
@@ -185,7 +219,9 @@ pub(crate) fn join_until(
 /// unknown id. The registry lock is never held across the join itself —
 /// a spawned task may join other tasks, and holding the lock while
 /// blocking would deadlock.
-pub(crate) fn join(id: u64) -> Option<Result<Value, String>> {
+/// `Err` is the joiner's own stop (an interrupt, a budget's trip, a
+/// cancel), which ends the wait; the task runs on.
+pub(crate) fn join(id: u64) -> Result<Option<Result<Value, String>>, String> {
     // An unbounded wait: park it so the stall detector counts this
     // thread among the blocked. Sound to include — a join wakes when
     // its target finishes, which requires the target to be running, so
@@ -199,14 +235,18 @@ pub(crate) fn join(id: u64) -> Option<Result<Value, String>> {
 fn join_inner(
     id: u64,
     park: Option<&crate::stdlib::chan::ParkToken>,
-) -> Option<Result<Value, String>> {
+) -> Result<Option<Result<Value, String>>, String> {
     loop {
         let handle = {
             let mut map = tasks().lock().unwrap();
             let started = map.get(&id).map(|e| e.started);
+            let stop = match map.get(&id) {
+                Some(e) => e.stop.clone(),
+                None => return Ok(None),
+            };
             match (map.get(&id).map(|e| &e.slot), started) {
-                (None, _) => return None,
-                (Some(TaskSlot::Done(r)), _) => return Some(r.clone()),
+                (None, _) => return Ok(None),
+                (Some(TaskSlot::Done(r)), _) => return Ok(Some(r.clone())),
                 (Some(TaskSlot::Joining), _) => None,
                 (Some(TaskSlot::Running(h)), Some(started)) => {
                     if h.is_finished() {
@@ -219,12 +259,13 @@ fn join_inner(
                                 started,
                                 watched: Vec::new(),
                                 finished: true,
+                                stop: stop.clone(),
                             },
                         ) {
                             Some(Entry {
                                 slot: TaskSlot::Running(h),
                                 ..
-                            }) => Some((h, started)),
+                            }) => Some((h, started, stop)),
                             _ => unreachable!("slot state checked under the same lock"),
                         }
                     } else {
@@ -235,7 +276,7 @@ fn join_inner(
             }
         };
         match handle {
-            Some((h, started)) => {
+            Some((h, started, stop)) => {
                 let result = h
                     .join()
                     .unwrap_or_else(|_| Err("task thread panicked".to_string()));
@@ -246,13 +287,17 @@ fn join_inner(
                         started,
                         watched: Vec::new(),
                         finished: true,
+                        stop,
                     },
                 );
-                return Some(result);
+                return Ok(Some(result));
             }
             // Still running, or someone else is mid-join: tick the
             // stall detector and look again.
             None => {
+                if crate::interrupt::pending() {
+                    return Err(crate::interrupt::stop_message());
+                }
                 if let Some(p) = park {
                     p.tick();
                 }

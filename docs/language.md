@@ -2306,9 +2306,9 @@ if the task finished within `ms` milliseconds (`Ok(Ok(v))`, or
 `Ok(Err(e))` when it raised) and `Err("timed out")` otherwise. The
 budget can also be given as `#{ timeout_ms }`.
 
-It bounds how long you *wait*, not how long the task *works*: olang
-has no task cancellation. A timed-out task runs to completion and its
-result stays collectible from the same handle:
+It bounds how long you *wait*, not how long the task *works*. A
+timed-out task runs on, and its result stays collectible from the same
+handle:
 
 ```olang
 fn slow(n) = { time.sleep(80); n }
@@ -2317,8 +2317,32 @@ println(show(task.join_timeout(t, 5)))                      // Err("timed out")
 println(show(task.join_timeout(t, #{ "timeout_ms": 5000 })))   // Ok(Ok(7)) — it kept running
 ```
 
-When you need work that genuinely stops early, give the task something
-to check: a channel it polls, or a value it re-reads each iteration.
+### Stopping a task
+
+`task.interrupt(t, reason?)` stops a task from outside. The task raises
+`"interrupted"` (or `"interrupted: reason"`) at its next statement, loop
+iteration or call, whichever tier runs it. A task waiting in
+`chan.recv`, `chan.ask`, a full `chan.send`, `task.join`, `time.sleep`
+or a `proc` read stops waiting at once. The answer is `true` when the
+task was running and has been asked, `false` when it had already ended.
+
+```olang
+fn worker() = { let mut n = 0; while true { n = n + 1 }; n }
+let t = spawn worker()
+time.sleep(20)
+task.interrupt(t, "restart")
+println(show(task.join(t)))   // Err("interrupted: restart")
+```
+
+The error unwinds like any other, so the task's `attempt` can catch it
+to clean up. It is asked once: code that catches it and carries on is
+not stopped again. A task inside a system call that cannot be woken
+(a long `os.exec`, a blocking read of a socket) raises once the call
+returns; until then `task.list()` shows it as `"interrupting"`.
+
+When a task should choose its own stopping points, give it something to
+check instead: a `cancel` token, a channel it polls, or a value it
+re-reads each iteration.
 
 ### Channels
 

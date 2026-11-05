@@ -1,4 +1,5 @@
-//! Stopping one thread's work: budgets per thread (OL-494). Every program
+//! Stopping one thread's work: budgets per thread (OL-494) and
+//! `task.interrupt` (OL-493). Every program
 //! here runs twice, on the default tiers (bytecode VM and native code)
 //! and on the interpreter alone (`--no-ovm`), and must print the same
 //! lines on both. Runs the real binary, as a user would.
@@ -144,5 +145,126 @@ println(map_get(unwrap(task.join(t)), "over"))
          Ok(499500)\n\
          Err(\"Runtime error: budget exceeded: the evaluation ran past its timeout_ms (50 ms)\")\n\
          true\n"
+    );
+}
+
+#[test]
+fn an_interrupt_stops_a_task_on_every_tier_with_its_reason() {
+    // olang had no task cancellation: the only interrupt API aimed at the
+    // calling thread.
+    let out = run_both(
+        "interrupt",
+        &format!(
+            r#"{HELPERS}
+let t = spawn spin()
+time.sleep(30)
+let t0 = time.monotonic()
+println(task.interrupt(t, "restart"))
+println(task.join(t))
+println("quick " + show(time.monotonic() - t0 < 300))
+let _w = count(1000)
+let n = spawn count(100000000000)
+time.sleep(30)
+task.interrupt(n)
+println(task.join(n))
+let done = spawn count(3)
+time.sleep(30)
+println(task.interrupt(done))
+"#
+        ),
+    );
+    assert_eq!(
+        out,
+        concat!(
+            "true\n",
+            "Err(\"Runtime error: interrupted: restart\")\n",
+            "quick true\n",
+            "Err(\"Runtime error: interrupted\")\n",
+            "false\n"
+        )
+    );
+}
+
+#[test]
+fn an_interrupted_task_stops_waiting_at_once() {
+    let out = run_both(
+        "interrupt_waits",
+        &format!(
+            r#"{HELPERS}
+let never = chan.new()
+let svc = chan.new()
+let full = chan.bounded(0)
+let inner = spawn spin()
+let p = unwrap(proc.spawn(["sleep", "30"]))
+let waits = [
+    spawn chan.recv(never),
+    spawn chan.recv_timeout(never, 60000),
+    spawn time.sleep(60000),
+    spawn task.join(inner),
+    spawn task.join_timeout(inner, 60000),
+    spawn chan.send(full, 1),
+    spawn chan.ask(svc, 1),
+    spawn proc.read_line(p),
+    spawn proc.wait(p),
+]
+time.sleep(30)
+let t0 = time.monotonic()
+for w in waits {{ task.interrupt(w, "stop") }}
+for w in waits {{ println(task.join(w)) }}
+println("quick " + show(time.monotonic() - t0 < 500))
+task.interrupt(inner)
+println(task.join(inner))
+proc.kill(p)
+"#
+        ),
+    );
+    let stopped = "Err(\"Runtime error: interrupted: stop\")\n".repeat(9);
+    assert_eq!(
+        out,
+        format!("{stopped}quick true\nErr(\"Runtime error: interrupted\")\n")
+    );
+}
+
+#[test]
+fn an_interrupt_is_asked_once_so_attempt_can_catch_it() {
+    let out = run_both(
+        "interrupt_once",
+        &format!(
+            r#"{HELPERS}
+fn careful() = {{
+    let first = attempt(() => spin())
+    let mut k = 0
+    while k < 1000 {{ k = k + 1 }}
+    show(first) + " then " + show(k)
+}}
+let c = spawn careful()
+time.sleep(20)
+task.interrupt(c, "once")
+println(task.join(c))
+"#
+        ),
+    );
+    assert_eq!(out, "Ok(\"Err(\\\"interrupted: once\\\") then 1000\")\n");
+}
+
+#[test]
+fn a_task_in_a_system_call_raises_once_the_call_returns() {
+    let out = run_both(
+        "interrupt_syscall",
+        r#"
+fn stuck() = {
+    let r = os.exec(["sleep", "1"])
+    "after " + show(r)
+}
+let t = spawn stuck()
+time.sleep(50)
+println(task.interrupt(t, "go"))
+println(map(task.list(), (row) => row.state))
+println(task.join(t))
+"#,
+    );
+    assert_eq!(
+        out,
+        "true\n[\"interrupting\"]\nErr(\"Runtime error: interrupted: go\")\n"
     );
 }
