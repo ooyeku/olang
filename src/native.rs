@@ -244,6 +244,8 @@ pub fn registered_modules() -> &'static [Arc<dyn OvmModule>] {
         modules.push(Arc::new(crate::stdlib::dates::DatesModule));
         // Operators for BigInt values — same arrangement as dates.
         modules.push(Arc::new(crate::stdlib::bigint::BigIntModule));
+        // `==` for pmap, pvec and psorted against Maps and Lists.
+        modules.push(Arc::new(crate::stdlib::persistent::PersistentModule));
         modules
     });
     &MODULES

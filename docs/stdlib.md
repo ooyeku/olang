@@ -50,6 +50,7 @@ the sentence that documents the function in its module's section.
 - [`cancel` — cancellation tokens](#cancel--cancellation-tokens)
 - [`shared` — one value, every thread](#shared--one-value-every-thread)
 - [`weak` — weak references](#weak--weak-references)
+- [`pmap`, `pvec`, `psorted` — persistent collections](#pmap-pvec-psorted--persistent-collections)
 - [`random` — randomness](#random--randomness)
 - [`crypto` — hashing and encryption](#crypto--hashing-and-encryption)
 - [`bytes` — binary data](#bytes--binary-data)
@@ -1781,6 +1782,50 @@ let kept = make()
 let w = weak.new(kept)
 let gone = weak.new(make())
 println(`${len(weak.get(w))} ${weak.get(gone)}`)   // 100 ()
+```
+
+## `pmap`, `pvec`, `psorted` — persistent collections
+
+A Map or a List is copied whole the first time it changes while an older
+version of it is still held. An undo history, a store that keeps its last
+snapshot, a cache of earlier results: each pays for a full copy on every
+update. The persistent collections share what did not change instead, so
+an update with every older version kept costs O(log n), and every version
+stays a value that never changes.
+
+- `pmap`: a hash map. Keys are Ints or Strings.
+- `pvec`: a vector, with O(log n) `get`, `set`, `push`, `pop`, `slice` and `concat`.
+- `psorted`: a map kept in key order (Ints before Strings), with `first`, `last` and `range`.
+
+They behave like the Map and List they stand for. `==` compares what
+they hold, at once when both sides are the same object, and a pmap or a
+psorted equals a Map with the same entries, a pvec a List with the same
+items, at any depth. `hash`, `json.stringify` and `value.encode` treat
+them the same way. `len`, `p[k]`, `p.k` (a pmap or a psorted) and
+`for x in v` (a pvec) work as on a Map or a List. `show` writes them as
+`pmap#{…}`, `pvec[…]` and `psorted#{…}`, keys in order.
+
+| <a id="pmap-new"></a><a id="pmap-of"></a><a id="pmap-get"></a><a id="pmap-set"></a><a id="pmap-remove"></a><a id="pmap-has"></a><a id="pmap-len"></a><a id="pmap-keys"></a><a id="pmap-values"></a><a id="pmap-entries"></a><a id="pmap-to_map"></a><a id="pmap-diff"></a><a id="psorted-new"></a><a id="psorted-of"></a><a id="psorted-get"></a><a id="psorted-set"></a><a id="psorted-remove"></a><a id="psorted-has"></a><a id="psorted-len"></a><a id="psorted-keys"></a><a id="psorted-values"></a><a id="psorted-entries"></a><a id="psorted-to_map"></a><a id="psorted-diff"></a><a id="psorted-first"></a><a id="psorted-last"></a><a id="psorted-range"></a><a id="pvec-new"></a><a id="pvec-of"></a><a id="pvec-get"></a><a id="pvec-set"></a><a id="pvec-push"></a><a id="pvec-pop"></a><a id="pvec-last"></a><a id="pvec-len"></a><a id="pvec-slice"></a><a id="pvec-concat"></a><a id="pvec-to_list"></a>Function | Returns |
+|---|---|
+| `pmap.new()`, `pmap.of(m)` | an empty pmap, or one holding a Map's entries (`psorted.new`, `psorted.of`, `pvec.new`, `pvec.of(xs)` alike) |
+| `get(p, k)` `has(p, k)` `len(p)` | the value or `()`, whether the key is there, the entry count |
+| `set(p, k, v)` `remove(p, k)` | a new version; `p` is unchanged |
+| `keys(p)` `values(p)` `entries(p)` `to_map(p)` | lists in key order, or a plain Map |
+| `diff(old, new)` | `#{ "added", "removed", "changed" }`, each a list of keys; for a psorted, the walk skips the subtrees both versions share |
+| `psorted.first(p)` `psorted.last(p)` `psorted.range(p, lo, hi)` | the pair with the smallest or largest key, or the pairs with `lo <= key < hi` (`()` leaves an end open) |
+| `pvec.get(v, i)` `pvec.set(v, i, x)` `pvec.push(v, x)` `pvec.pop(v)` `pvec.last(v)` | an item, or a new version |
+| `pvec.slice(v, from, to)` `pvec.concat(a, b)` `pvec.to_list(v)` | a new pvec sharing storage, or a plain List |
+
+```olang
+let v1 = pmap.of(#{ "title": "draft", "words": 10 })
+let v2 = pmap.set(v1, "words", 12)
+println(v1.words, v2.words)                     // 10 12
+println(v2 == #{ "title": "draft", "words": 12 })  // true
+println(pmap.diff(v1, v2).changed)              // ["words"]
+let s = psorted.of(#{ "b": 2, "a": 1, "c": 3 })
+println(psorted.range(s, "b", ()))              // [("b", 2), ("c", 3)]
+let v = pvec.push(pvec.of([1, 2]), 3)
+println(v, v == [1, 2, 3])                      // pvec[1, 2, 3] true
 ```
 
 ## `random` — randomness

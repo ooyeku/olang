@@ -3165,6 +3165,312 @@ task.watch(service, inbox)   // a dead service is an Err at the next recv, not a
             &[r##"weak.alive(w)"##],
         );
 
+        // pmap, pvec, psorted — persistent collections (OL-424)
+        self.doc_ex(
+            "pmap.new",
+            "pmap.new()",
+            "PMap",
+            "pmap",
+            "an empty pmap: a map that keeps every older version when updated",
+            &[r##"pmap.new()"##],
+        );
+        self.doc_ex(
+            "pmap.of",
+            "pmap.of(m)",
+            "PMap",
+            "pmap",
+            "a pmap holding the entries of a Map (or another pmap or psorted)",
+            &[r##"pmap.of(#{ "a": 1 })"##],
+        );
+        self.doc_ex(
+            "pmap.get",
+            "pmap.get(p, k)",
+            "Any",
+            "pmap",
+            "the value at key k (an Int or a String), or () when absent; p[k] and p.k read the same",
+            &[r##"pmap.get(p, "a")"##],
+        );
+        self.doc_ex(
+            "pmap.set",
+            "pmap.set(p, k, v)",
+            "PMap",
+            "pmap",
+            "p with k set to v, in O(log n); p itself, and every older version, is unchanged",
+            &[r##"pmap.set(p, "b", 2)"##],
+        );
+        self.doc_ex(
+            "pmap.remove",
+            "pmap.remove(p, k)",
+            "PMap",
+            "pmap",
+            "p without key k, in O(log n); p itself is unchanged",
+            &[r##"pmap.remove(p, "a")"##],
+        );
+        self.doc_ex(
+            "pmap.has",
+            "pmap.has(p, k)",
+            "Bool",
+            "pmap",
+            "whether p has an entry at key k (an Int or a String)",
+            &[r##"pmap.has(p, "a")"##],
+        );
+        self.doc_ex(
+            "pmap.len",
+            "pmap.len(p)",
+            "Int",
+            "pmap",
+            "the number of entries (len(p) answers the same)",
+            &[r##"pmap.len(p)"##],
+        );
+        self.doc_ex(
+            "pmap.keys",
+            "pmap.keys(p)",
+            "List",
+            "pmap",
+            "the keys, in key order (Ints first, then Strings)",
+            &[r##"pmap.keys(p)"##],
+        );
+        self.doc_ex(
+            "pmap.values",
+            "pmap.values(p)",
+            "List",
+            "pmap",
+            "the values, in key order",
+            &[r##"pmap.values(p)"##],
+        );
+        self.doc_ex(
+            "pmap.entries",
+            "pmap.entries(p)",
+            "List",
+            "pmap",
+            "the (key, value) pairs, in key order",
+            &[r##"pmap.entries(p)"##],
+        );
+        self.doc_ex(
+            "pmap.to_map",
+            "pmap.to_map(p)",
+            "Map",
+            "pmap",
+            "p as a plain Map (an Int key becomes its text)",
+            &[r##"pmap.to_map(p)"##],
+        );
+        self.doc_ex(
+            "pmap.diff",
+            "pmap.diff(old, new)",
+            "Map",
+            "pmap",
+            "what changed from old to new: #{ \"added\", \"removed\", \"changed\" }, each a list of keys in key order",
+            &[r##"pmap.diff(p, pmap.set(p, "a", 2))"##],
+        );
+        self.doc_ex(
+            "psorted.new",
+            "psorted.new()",
+            "PSorted",
+            "psorted",
+            "an empty psorted: a map kept in key order (Ints before Strings)",
+            &[r##"psorted.new()"##],
+        );
+        self.doc_ex(
+            "psorted.of",
+            "psorted.of(m)",
+            "PSorted",
+            "psorted",
+            "a psorted holding the entries of a Map (or a pmap or another psorted)",
+            &[r##"psorted.of(#{ "b": 2, "a": 1 })"##],
+        );
+        self.doc_ex(
+            "psorted.get",
+            "psorted.get(p, k)",
+            "Any",
+            "psorted",
+            "the value at key k, or () when absent",
+            &[r##"psorted.get(s, 3)"##],
+        );
+        self.doc_ex(
+            "psorted.set",
+            "psorted.set(p, k, v)",
+            "PSorted",
+            "psorted",
+            "p with k set to v, in O(log n); older versions are unchanged",
+            &[r##"psorted.set(s, 3, "c")"##],
+        );
+        self.doc_ex(
+            "psorted.remove",
+            "psorted.remove(p, k)",
+            "PSorted",
+            "psorted",
+            "p without key k, in O(log n); p itself is unchanged",
+            &[r##"psorted.remove(s, 3)"##],
+        );
+        self.doc_ex(
+            "psorted.has",
+            "psorted.has(p, k)",
+            "Bool",
+            "psorted",
+            "whether p has an entry at key k (an Int or a String)",
+            &[r##"psorted.has(s, 3)"##],
+        );
+        self.doc_ex(
+            "psorted.len",
+            "psorted.len(p)",
+            "Int",
+            "psorted",
+            "the number of entries",
+            &[r##"psorted.len(s)"##],
+        );
+        self.doc_ex(
+            "psorted.keys",
+            "psorted.keys(p)",
+            "List",
+            "psorted",
+            "the keys, in key order (Ints first, then Strings)",
+            &[r##"psorted.keys(s)"##],
+        );
+        self.doc_ex(
+            "psorted.values",
+            "psorted.values(p)",
+            "List",
+            "psorted",
+            "the values, in key order",
+            &[r##"psorted.values(s)"##],
+        );
+        self.doc_ex(
+            "psorted.entries",
+            "psorted.entries(p)",
+            "List",
+            "psorted",
+            "the (key, value) pairs in key order",
+            &[r##"psorted.entries(s)"##],
+        );
+        self.doc_ex(
+            "psorted.to_map",
+            "psorted.to_map(p)",
+            "Map",
+            "psorted",
+            "p as a plain Map (an Int key becomes its text)",
+            &[r##"psorted.to_map(s)"##],
+        );
+        self.doc_ex(
+            "psorted.diff",
+            "psorted.diff(old, new)",
+            "Map",
+            "psorted",
+            "what changed: #{ \"added\", \"removed\", \"changed\" }, found by walking both trees and skipping what they share",
+            &[r##"psorted.diff(s, psorted.set(s, 1, 0))"##],
+        );
+        self.doc_ex(
+            "psorted.first",
+            "psorted.first(p)",
+            "Tuple",
+            "psorted",
+            "the (key, value) pair with the smallest key, or () when empty",
+            &[r##"psorted.first(s)"##],
+        );
+        self.doc_ex(
+            "psorted.last",
+            "psorted.last(p)",
+            "Tuple",
+            "psorted",
+            "the (key, value) pair with the largest key, or () when empty",
+            &[r##"psorted.last(s)"##],
+        );
+        self.doc_ex(
+            "psorted.range",
+            "psorted.range(p, lo, hi)",
+            "List",
+            "psorted",
+            "the (key, value) pairs with lo <= key < hi, in order; () for either end leaves it open",
+            &[r##"psorted.range(s, 10, 20)"##],
+        );
+        self.doc_ex(
+            "pvec.new",
+            "pvec.new()",
+            "PVec",
+            "pvec",
+            "an empty pvec: a vector that keeps every older version when updated",
+            &[r##"pvec.new()"##],
+        );
+        self.doc_ex(
+            "pvec.of",
+            "pvec.of(xs)",
+            "PVec",
+            "pvec",
+            "a pvec holding the items of a List",
+            &[r##"pvec.of([1, 2, 3])"##],
+        );
+        self.doc_ex(
+            "pvec.get",
+            "pvec.get(v, i)",
+            "Any",
+            "pvec",
+            "the item at position i (v[i] reads the same); out of range raises",
+            &[r##"pvec.get(v, 0)"##],
+        );
+        self.doc_ex(
+            "pvec.set",
+            "pvec.set(v, i, x)",
+            "PVec",
+            "pvec",
+            "v with position i set to x, in O(log n); older versions are unchanged",
+            &[r##"pvec.set(v, 0, 9)"##],
+        );
+        self.doc_ex(
+            "pvec.push",
+            "pvec.push(v, x)",
+            "PVec",
+            "pvec",
+            "v with x added at the end",
+            &[r##"pvec.push(v, 4)"##],
+        );
+        self.doc_ex(
+            "pvec.pop",
+            "pvec.pop(v)",
+            "PVec",
+            "pvec",
+            "v without its last item (an empty pvec stays empty)",
+            &[r##"pvec.pop(v)"##],
+        );
+        self.doc_ex(
+            "pvec.last",
+            "pvec.last(v)",
+            "Any",
+            "pvec",
+            "the last item, or () when empty",
+            &[r##"pvec.last(v)"##],
+        );
+        self.doc_ex(
+            "pvec.len",
+            "pvec.len(v)",
+            "Int",
+            "pvec",
+            "the number of items (len(v) answers the same)",
+            &[r##"pvec.len(v)"##],
+        );
+        self.doc_ex(
+            "pvec.slice",
+            "pvec.slice(v, from, to)",
+            "PVec",
+            "pvec",
+            "items from up to to, in O(log n), sharing v's storage; past the end stops at the end",
+            &[r##"pvec.slice(v, 1, 3)"##],
+        );
+        self.doc_ex(
+            "pvec.concat",
+            "pvec.concat(a, b)",
+            "PVec",
+            "pvec",
+            "a then b, in O(log n)",
+            &[r##"pvec.concat(a, b)"##],
+        );
+        self.doc_ex(
+            "pvec.to_list",
+            "pvec.to_list(v)",
+            "List",
+            "pvec",
+            "v as a plain List, with the same items in the same order",
+            &[r##"pvec.to_list(v)"##],
+        );
+
         // value — the binary value codec
         self.doc_ex(
             "value.encode",
@@ -11672,7 +11978,7 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
         ));
         o.push_str(&format!("  core       {c}str col math json toml re dates time random crypto base64 bytes bigint value{r}\n"));
         o.push_str(&format!(
-            "  system     {c}fs os proc http db chan task cell cancel shared weak caps meta testing{r}\n"
+            "  system     {c}fs os proc http db chan task cell cancel shared weak pmap pvec psorted caps meta testing{r}\n"
         ));
         o.push_str(&format!(
             "  data       {c}ods stats plot csv collections{r}\n"

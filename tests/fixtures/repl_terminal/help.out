@@ -13,7 +13,7 @@ olang help
 
 Modules (:help <module> to open one)
   core       str col math json toml re dates time random crypto base64 bytes bigint value
-  system     fs os proc http db chan task cell cancel shared weak caps meta testing
+  system     fs os proc http db chan task cell cancel shared weak pmap pvec psorted caps meta testing
   data       ods stats plot csv collections
   via use    cli term ui viz dash colx mathx
 
@@ -150,61 +150,61 @@ Examples:
    A copy with key set to f(the old value) — f is given Unit for an absent key. The old value is moved into f when nothing else holds the map.
    Syntax: map_update(value, key, f)
 
-7. FUZZY map_get (Maps)
+7. FUZZY pmap.new (pmap)
+   an empty pmap: a map that keeps every older version when updated
+   Syntax: pmap.new()
+
+8. FUZZY pmap.of (pmap)
+   a pmap holding the entries of a Map (or another pmap or psorted)
+   Syntax: pmap.of(m)
+
+9. FUZZY pmap.to_map (pmap)
+   p as a plain Map (an Int key becomes its text)
+   Syntax: pmap.to_map(p)
+
+10. FUZZY map_get (Maps)
    The value under key, or Unit () when the key is absent — a missing key is                  not an error. Reads maps, structs, objects, and parsed JSON uniformly.
    Syntax: map_get(map, key)
 
-8. FUZZY map_get_in (Maps)
+11. FUZZY map_get_in (Maps)
    The value at the end of a key path, or Unit at the first missing hop — map_set_in's reading half.
    Syntax: map_get_in(value, keys)
 
-9. FUZZY map_get_or (Maps)
+12. FUZZY map_get_or (Maps)
    The value under key, or the default when the key is absent — the one-call form of the missing-key-with-default idiom (map_get returns Unit for absence, which unwrap_or cannot take).
    Syntax: map_get_or(map, key, default)
 
-10. FUZZY map_keys (Maps)
+13. FUZZY map_keys (Maps)
    Every key, in the map's order (each where it was first set) — the order entries uses.
    Syntax: map_keys(map)
 
-11. FUZZY map_values (Maps)
+14. FUZZY map_values (Maps)
    Every value, in the order map_keys reports.
    Syntax: map_values(map)
 
-12. FUZZY par_map (List)
+15. FUZZY psorted.to_map (psorted)
+   p as a plain Map (an Int key becomes its text)
+   Syntax: psorted.to_map(p)
+
+16. FUZZY par_map (List)
    map fanned out across OS threads: same results in the same order, one worker interpreter per thread (no GIL). The function runs against worker snapshots like spawn, so mutations to enclosing state are not visible to the caller
    Syntax: par_map(list, function)
 
-13. FUZZY col.flat_map (Collections)
+17. FUZZY col.flat_map (Collections)
    Map then flatten one level.
    Syntax: col.flat_map(list, fn)
 
-14. FUZZY colx.flat_map (colx)
+18. FUZZY colx.flat_map (colx)
    map f over xs and concatenate the resulting lists
    Syntax: colx.flat_map(xs, f)
 
-15. FUZZY map_filtered (Higher-Order)
+19. FUZZY map_filtered (Higher-Order)
    Filter then map in one pass: function applied to each element the                  predicate accepts.
    Syntax: map_filtered(list, predicate, function)
 
-16. FUZZY plot.heatmap (plot)
+20. FUZZY plot.heatmap (plot)
    a heatmap of the row-major value grid, as an SVG string
    Syntax: plot.heatmap(x_labels, y_labels, rows, title:, x_label:, y_label:, width:, height:, theme:, paper:, ink:, responsive:, interactive:, colors:, vary:, scale:, font_size:, font:)
-
-17. FUZZY map_has_key (Maps)
-   Whether key is present — the way to tell an absent key from one stored                  with a Unit value.
-   Syntax: map_has_key(map, key)
-
-18. FUZZY map_len (Maps)
-   The number of entries (an object's or a parsed JSON object's fields).
-   Syntax: map_len(map)
-
-19. EXACT map (List)
-   Applies a function to each element in a list, returning a new list
-   Syntax: map(list, function)
-
-20. FUZZY result_map (Result)
-   Transform the Ok value of a Result using a function, leaving Err values unchanged
-   Syntax: result_map(result, function)
 
 TIP: Use ':help <function>' for detailed documentation
 

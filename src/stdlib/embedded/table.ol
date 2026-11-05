@@ -2,13 +2,14 @@
 // the `collections.table` submodule. Fully qualified with no `use`, or
 // `use collections { table }` for the short name.
 //
-// Keys are Ints or Strings; values are any olang value. Against the
-// builtin persistent Map, this table trades structural sharing for flat
-// probing: no per-entry allocation, one contiguous list, and O(1)
-// writes through the sole-owner fusion — the right shape for counting,
-// indexing, and hot loops that hammer one table. Where snapshots and
-// sharing matter more than write rate, the builtin `#{}` Map remains
-// the right tool.
+// Keys are Ints or Strings; values are any olang value. Flat probing:
+// no per-entry allocation, one contiguous list, and O(1) writes through
+// the sole-owner fusion — the right shape for counting, indexing, and
+// hot loops that hammer one table. A `#{}` Map shares nothing either: an
+// update while an older version is held copies it whole. Where
+// snapshots and sharing matter more than write rate, `pmap` (a
+// persistent map: O(log n) updates with every version kept) is the
+// tool.
 //
 // Representation: one flat list, `[count, used, cap, s0,k0,v0, ...]` —
 // live entries, occupied-or-tombstoned slots, slot count, then `cap`

@@ -5360,6 +5360,22 @@ the function it shadows is the usual cause; `olang check` names the parameter",
 
                 result
             }
+            Value::Native(_) if crate::stdlib::persistent::items(&iterable_value).is_some() => {
+                // a pvec iterates as a List does (OL-424)
+                let items = crate::stdlib::persistent::items(&iterable_value).unwrap_or_default();
+                let parent_env = std::mem::take(&mut self.environment);
+                self.environment.owner = parent_env.owner.clone();
+                self.environment.run = parent_env.run.clone();
+                self.environment.scope_id = parent_env.scope_id;
+                self.environment.lexical_parent = parent_env.lexical_parent;
+                self.environment.parent = Some(Arc::new(parent_env));
+                self.environment.is_frame = true;
+                let result = self.run_loop_body(body, items.into_iter(), Some(variable));
+                if let Some(parent) = self.environment.parent.take() {
+                    self.environment = Arc::try_unwrap(parent).unwrap_or_else(|arc| (*arc).clone());
+                }
+                result
+            }
             _ => {
                 // Never dump the value's Debug representation — it leaks the
                 // internal `Map({"a": Integer(1)})` shape. Name the type, and

@@ -43,6 +43,9 @@ const T_BYTES: u8 = 13;
 const T_RANGE: u8 = 14;
 const T_DATE: u8 = 15;
 const T_BIGINT: u8 = 16;
+const T_PMAP: u8 = 17;
+const T_PVEC: u8 = 18;
+const T_PSORTED: u8 = 19;
 
 const E_UNIT: u8 = 0;
 const E_TUPLE: u8 = 1;
@@ -251,7 +254,45 @@ fn write(out: &mut Vec<u8>, v: &Value, canonical: bool) -> Result<(), String> {
         }
         Value::Native(h) => {
             let any = h.0.as_any();
-            if let Some(b) = any.downcast_ref::<crate::stdlib::bytes::BytesObject>() {
+            if let Some(p) = crate::stdlib::persistent::of(v) {
+                use crate::stdlib::persistent::Persistent as P;
+                match p {
+                    P::Vec(items) => {
+                        out.push(T_PVEC);
+                        varint(out, items.len() as u64);
+                        for x in items.iter() {
+                            write(out, x, canonical)?;
+                        }
+                    }
+                    P::Map(_) | P::Sorted(_) => {
+                        out.push(if matches!(p, P::Map(_)) {
+                            T_PMAP
+                        } else {
+                            T_PSORTED
+                        });
+                        // keys in order: canonical without asking
+                        let listed = crate::stdlib::persistent::call_keyed(
+                            if matches!(p, P::Map(_)) {
+                                "pmap"
+                            } else {
+                                "psorted"
+                            },
+                            "entries",
+                            vec![v.clone()],
+                        )?;
+                        let Value::List(entries) = &listed else {
+                            unreachable!("entries is a list")
+                        };
+                        varint(out, entries.len() as u64);
+                        for e in entries.iter() {
+                            if let Value::Tuple(kv) = e {
+                                write(out, &kv[0], canonical)?;
+                                write(out, &kv[1], canonical)?;
+                            }
+                        }
+                    }
+                }
+            } else if let Some(b) = any.downcast_ref::<crate::stdlib::bytes::BytesObject>() {
                 out.push(T_BYTES);
                 bytes(out, b.as_slice());
             } else if let Some(d) = any.downcast_ref::<crate::stdlib::dates::DateObject>() {
@@ -461,6 +502,23 @@ impl<'a> Reader<'a> {
             T_BIGINT => {
                 let b = self.slice()?;
                 crate::stdlib::bigint::bigint_value(num_bigint::BigInt::from_signed_bytes_le(b))
+            }
+            T_PVEC => {
+                let items = self.items(depth)?;
+                crate::stdlib::persistent::call_vec("of", vec![Value::List(Arc::new(items))])
+                    .map_err(|e| format!("value.decode: {e}"))?
+            }
+            tag @ (T_PMAP | T_PSORTED) => {
+                let n = self.len()?;
+                let prefix = if tag == T_PMAP { "pmap" } else { "psorted" };
+                let mut p = crate::stdlib::persistent::call_keyed(prefix, "new", vec![])?;
+                for _ in 0..n {
+                    let k = self.value(depth + 1)?;
+                    let v = self.value(depth + 1)?;
+                    p = crate::stdlib::persistent::call_keyed(prefix, "set", vec![p, k, v])
+                        .map_err(|e| format!("value.decode: {e}"))?;
+                }
+                p
             }
             _ => return self.fail("an unknown tag"),
         })

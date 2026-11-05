@@ -10518,6 +10518,9 @@ impl BytecodeVm {
             }
             // Strings iterate by character, matching the interpreter.
             ValueData::String(s) => Ok(s.chars().count() as i64),
+            ValueData::Native(h) if crate::stdlib::persistent::vec_len(h).is_some() => {
+                Ok(crate::stdlib::persistent::vec_len(h).unwrap_or(0) as i64)
+            }
             _ => {
                 let hint = match &source.data {
                     ValueData::Map(_)
@@ -10577,6 +10580,14 @@ impl BytecodeVm {
                 .ok_or_else(|| {
                     BytecodeError::RuntimeError("Integer overflow iterating range".to_string())
                 }),
+            ValueData::Native(h) if crate::stdlib::persistent::vec_len(h).is_some() => {
+                crate::stdlib::persistent::vec_item(h, idx as usize)
+                    .map(OvmValue::from_ast)
+                    .ok_or_else(|| BytecodeError::IndexOutOfBounds {
+                        index: idx,
+                        length: crate::stdlib::persistent::vec_len(h).unwrap_or(0),
+                    })
+            }
             // Strings iterate by character, matching the interpreter.
             ValueData::String(s) => s
                 .chars()

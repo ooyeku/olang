@@ -117,6 +117,13 @@ fn entries<'a, V: 'a>(
 }
 
 fn native(h: &mut Xxh3, n: &crate::native::NativeHandle) -> Result<(), String> {
+    // pmap, pvec, psorted hash as the Map or List they equal
+    if let Some(p) =
+        n.0.as_any()
+            .downcast_ref::<crate::stdlib::persistent::PersistentObject>()
+    {
+        return feed(h, &p.0.to_plain());
+    }
     let x = n.0.hash64().ok_or_else(|| no_hash(n.0.type_name()))?;
     h.update(&[NATIVE]);
     string(h, n.0.type_name());

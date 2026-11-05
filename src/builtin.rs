@@ -895,6 +895,20 @@ impl BuiltinFunctions {
             return crate::stdlib::shared::call_shared_function(f, arguments, interpreter);
         }
 
+        // Persistent collections
+        if let Some(f) = name.strip_prefix("pmap.") {
+            return crate::stdlib::persistent::call_keyed("pmap", f, arguments)
+                .map_err(InterpreterError::runtime);
+        }
+        if let Some(f) = name.strip_prefix("psorted.") {
+            return crate::stdlib::persistent::call_keyed("psorted", f, arguments)
+                .map_err(InterpreterError::runtime);
+        }
+        if let Some(f) = name.strip_prefix("pvec.") {
+            return crate::stdlib::persistent::call_vec(f, arguments)
+                .map_err(InterpreterError::runtime);
+        }
+
         // The binary value codec
         if let Some(f) = name.strip_prefix("value.") {
             return crate::stdlib::value_codec::call_value_function(f, arguments)

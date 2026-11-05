@@ -40,6 +40,7 @@ pub mod meta;
 #[cfg(feature = "native")]
 pub mod os;
 pub mod peg;
+pub mod persistent;
 #[cfg(feature = "native")]
 pub mod proc;
 #[cfg(feature = "native")]
@@ -123,6 +124,9 @@ pub fn get_stdlib() -> crate::ast::ValueMap {
     stdlib.insert("cancel".to_string(), cancel::create_cancel_module());
     stdlib.insert("weak".to_string(), weak::create_weak_module());
     stdlib.insert("shared".to_string(), shared::create_shared_module());
+    stdlib.insert("pmap".to_string(), persistent::create_pmap_module());
+    stdlib.insert("pvec".to_string(), persistent::create_pvec_module());
+    stdlib.insert("psorted".to_string(), persistent::create_psorted_module());
     stdlib.insert("value".to_string(), value_codec::create_value_module());
     stdlib.insert("task".to_string(), task::create_task_module());
     stdlib.insert("math".to_string(), math::create_math_module());

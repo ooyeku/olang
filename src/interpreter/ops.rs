@@ -783,6 +783,11 @@ pub fn loose_eq(a: &Value, b: &Value) -> bool {
     if note_uncomparable(uncomparable_kind(a).or_else(|| uncomparable_kind(b))) {
         return true;
     }
+    // A persistent collection equals the Map or List it stands for, at
+    // any depth (OL-424).
+    if let Some(eq) = crate::stdlib::persistent::equals(a, b) {
+        return eq;
+    }
     // A collection is equal to itself without a walk.
     match (a, b) {
         (Value::List(x), Value::List(y)) | (Value::Tuple(x), Value::Tuple(y))

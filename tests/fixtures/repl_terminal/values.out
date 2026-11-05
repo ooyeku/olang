@@ -45,18 +45,19 @@ User Environment (4):
     x : int = 5
     z : int = 3
 
-Modules (47):
+Modules (50):
   asset  base64  bigint  bytes  cancel  caps  cell  chan
   col  collections  compress  crypto  csv  dates  db  dom
   fs  gui  http  json  learn  mat  math  md
-  meta  ods  os  plot  proc  pty  random  re
-  runtime  shared  sim  stats  str  task  testing  time
-  toad  toml  tty  value  vec  vt  weak
+  meta  ods  os  plot  pmap  proc  psorted  pty
+  pvec  random  re  runtime  shared  sim  stats  str
+  task  testing  time  toad  toml  tty  value  vec
+  vt  weak
 
 
 === Memory ===
   Values are reference-counted and reclaimed deterministically.
-  User bindings: 51
+  User bindings: 54
 Current configuration:
   prompt: olang> 
   show_types: false
