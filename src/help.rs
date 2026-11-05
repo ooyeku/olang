@@ -7197,6 +7197,16 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             see_also: vec!["bytes.decode".to_string()],
         });
         self.add_function(FunctionDoc {
+            name: "str.line_starts".to_string(),
+            description: "The byte offset where each line starts: 0, and one past every \"\\n\" — an editor's line index, so a text ending in a line break has an empty last line. Line n is str.slice_bytes(s, starts[n], starts[n + 1]).".to_string(),
+            syntax: "str.line_starts(s)".to_string(),
+            parameters: vec![],
+            return_type: "List[Int]".to_string(),
+            examples: vec!["str.line_starts(\"ab\\ncd\\n\")  // [0, 3, 6]".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.lines".to_string(), "str.slice_bytes".to_string()],
+        });
+        self.add_function(FunctionDoc {
             name: "str.index_of".to_string(),
             description:
                 "Character index of the first match, or Unit when absent (test with != ())."
@@ -7366,11 +7376,11 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
         });
         self.add_function(FunctionDoc {
             name: "str.lines".to_string(),
-            description: "Split into a list of lines.".to_string(),
-            syntax: "str.lines(s)".to_string(),
+            description: "The lines of a text. A line ends at \"\\n\" or \"\\r\\n\"; by default the ends are dropped and a final line break starts no line. With #{\"keep_ends\": true} each line keeps its own end, so joined back they are the text exactly.".to_string(),
+            syntax: "str.lines(s, opts)".to_string(),
             parameters: vec![],
             return_type: "List".to_string(),
-            examples: vec!["str.lines(text)".to_string()],
+            examples: vec!["str.lines(\"a\\r\\nb\\n\")  // [\"a\", \"b\"]".to_string(), "str.lines(\"a\\r\\nb\\n\", #{\"keep_ends\": true})  // [\"a\\r\\n\", \"b\\n\"]".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });

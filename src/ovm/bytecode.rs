@@ -1699,6 +1699,7 @@ impl BytecodeVm {
             "str.byte_to_char",
             "str.utf16_len",
             "str.chunks",
+            "str.line_starts",
             // map builtins — maps round-trip losslessly now, so builders
             // and readers both bridge safely
             "entries",

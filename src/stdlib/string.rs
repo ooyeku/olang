@@ -25,7 +25,6 @@ pub(crate) const UNARY: &[&str] = &[
     "graphemes",
     "width",
     "cell_width",
-    "lines",
     "words",
     "capitalize",
     "is_empty",
@@ -115,7 +114,6 @@ pub(crate) const MAX_ARGS: &[(&str, usize)] = &[
     ("graphemes", 1),
     ("width", 1),
     ("cell_width", 1),
-    ("lines", 1),
     ("words", 1),
     ("capitalize", 1),
     ("is_empty", 1),
@@ -171,7 +169,6 @@ pub fn call_string_function(
         "graphemes" => str_graphemes(args),
         "width" => str_width(args),
         "cell_width" => str_cell_width(args),
-        "lines" => str_lines(args),
         "words" => str_words(args),
         "capitalize" => str_capitalize(args),
         "is_empty" => str_is_empty(args),
@@ -439,12 +436,6 @@ fn str_cell_width(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
 fn str_chars(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let s = arg_str(&args, 0, "chars")?;
     let list: Vec<Value> = s.chars().map(|c| ok_string(c.to_string())).collect();
-    Ok(Value::List(list.into()))
-}
-
-fn str_lines(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    let s = arg_str(&args, 0, "lines")?;
-    let list: Vec<Value> = s.lines().map(|l| ok_string(l.to_string())).collect();
     Ok(Value::List(list.into()))
 }
 

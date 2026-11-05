@@ -291,3 +291,39 @@ main()
     let err = agree_tiered(&format!(r#"fs.chunks("{path}", 0)"#)).unwrap_err();
     assert!(err.contains("at least 1"), "{err}");
 }
+
+// ── OL-472: lines with their ends, and line starts ──────────────────
+#[test]
+fn lines_keep_their_ends_and_line_starts_index_them() {
+    let src = r#"
+fn main() = {
+    let t = "a\r\nb\n\nc"
+    [str.lines(t), str.lines(t, #{"keep_ends": true}), str.join(str.lines(t, #{"keep_ends": true}), "") == t,
+     str.lines("x\n", #{"keep_ends": true}), str.lines("", #{"keep_ends": true}), str.lines("x\n")]
+}
+main()
+"#;
+    let v = ok(src);
+    assert_eq!(
+        v,
+        Value::List(std::sync::Arc::new(vec![
+            strs(&["a", "b", "", "c"]),
+            strs(&["a\r\n", "b\n", "\n", "c"]),
+            Value::Boolean(true),
+            strs(&["x\n"]),
+            strs(&[]),
+            strs(&["x"]),
+        ]))
+    );
+    let src = r#"
+fn main() = [str.line_starts("a\r\nbé\n\nc"), str.line_starts(""), str.line_starts("x\n")]
+main()
+"#;
+    assert_eq!(
+        ok(src),
+        Value::List(std::sync::Arc::new(vec![ints(&[0, 3, 7, 8]), ints(&[0]), ints(&[0, 2])]))
+    );
+    let err = agree("fn main() = str.lines(\"a\", #{\"keep\": true})\nmain()\n").unwrap_err();
+    assert!(err.contains("unknown option \"keep\""), "{err}");
+}
+

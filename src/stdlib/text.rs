@@ -27,6 +27,8 @@ pub(crate) const MAX_ARGS: &[(&str, usize)] = &[
     ("utf16_len", 1),
     ("chunks", 3),
     ("encode", 2),
+    ("lines", 2),
+    ("line_starts", 1),
 ];
 
 /// The fewest arguments each takes (what the module registers, which
@@ -39,6 +41,8 @@ pub(crate) const MIN_ARGS: &[(&str, usize)] = &[
     ("utf16_len", 1),
     ("chunks", 2),
     ("encode", 2),
+    ("lines", 1),
+    ("line_starts", 1),
 ];
 
 /// Calls one of this file's functions, or `None` when `name` is not one.
@@ -51,6 +55,8 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<R> {
         "utf16_len" => utf16_len_fn(args),
         "chunks" => chunks(args),
         "encode" => encode(args),
+        "lines" => lines(args),
+        "line_starts" => line_starts(args),
         _ => return None,
     })
 }
@@ -107,6 +113,22 @@ pub(crate) fn arg_opts<'a>(
         Some(other) => Err(format!(
             "str.{func}: argument {} must be a map of options, got {}",
             i + 1,
+            other.type_name()
+        )),
+    }
+}
+
+pub(crate) fn opt_bool(
+    opts: Option<&ValueMap>,
+    key: &str,
+    func: &str,
+    default: bool,
+) -> Result<bool, String> {
+    match opts.and_then(|m| m.get(key)) {
+        None | Some(Value::Unit) => Ok(default),
+        Some(Value::Boolean(b)) => Ok(*b),
+        Some(other) => Err(format!(
+            "str.{func}: option {key} must be true or false, got {}",
             other.type_name()
         )),
     }
@@ -280,3 +302,36 @@ fn encode(args: &[Value]) -> R {
         Err(e) => Value::Err(Box::new(string(&e))),
     })
 }
+
+// ── lines (OL-472) ──────────────────────────────────────────────────
+
+/// `str.lines(s, #{keep_ends})`: the lines of `s`. A line ends at "\n"
+/// or "\r\n". By default the ends are dropped and a final line break
+/// starts no line (Rust's `lines`): "a\r\nb\n" is ["a", "b"]. With
+/// `keep_ends: true` every line keeps its own terminator, so joined back
+/// they are `s` exactly: ["a\r\n", "b\n"] — what an exact patch needs
+/// ("\ No newline at end of file" is a last line without one).
+fn lines(args: &[Value]) -> R {
+    let s = arg_str(args, 0, "lines")?;
+    let opts = arg_opts(args, 1, "lines", &["keep_ends"])?;
+    let keep = opt_bool(opts, "keep_ends", "lines", false)?;
+    let out: Vec<Value> = if keep {
+        s.split_inclusive('\n').map(string).collect()
+    } else {
+        s.lines().map(string).collect()
+    };
+    Ok(Value::List(Arc::new(out)))
+}
+
+/// `str.line_starts(s)`: the byte offset where each line starts — 0, and
+/// one past every "\n". An editor's line index: a text ending in a line
+/// break has an empty last line, so there is always one more start than
+/// there are "\n"s. Line `n` is `str.slice_bytes(s, starts[n], starts[n + 1])`.
+fn line_starts(args: &[Value]) -> R {
+    let s = arg_str(args, 0, "line_starts")?;
+    let mut out = Vec::with_capacity(s.len() / 32 + 1);
+    out.push(Value::Integer(0));
+    out.extend(memchr::memchr_iter(b'\n', s.as_bytes()).map(|i| Value::Integer(i as i64 + 1)));
+    Ok(Value::List(Arc::new(out)))
+}
+

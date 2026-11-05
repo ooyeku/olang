@@ -472,7 +472,8 @@ every function returns a new string.
 | <a id="str-fuzzy_score"></a>`str.fuzzy_score(query, text)` | a fuzzy finder's score (every query character in order; runs, word starts, the last path segment count more), or `()` |
 | <a id="str-starts_with"></a><a id="str-ends_with"></a>`str.starts_with` / `str.ends_with` | affix tests |
 | <a id="str-split"></a><a id="str-join"></a>`str.split(s, sep)` / `str.join(xs, sep)` | list conversion |
-| <a id="str-lines"></a><a id="str-words"></a>`str.lines(s)` / `str.words(s)` | split on newlines / whitespace |
+| <a id="str-lines"></a><a id="str-words"></a>`str.lines(s, #{"keep_ends"})` / `str.words(s)` | split on line breaks (`"\n"` or `"\r\n"`) / whitespace; with `keep_ends: true` each line keeps its own end, so joined they are `s` exactly (a last line without one is the "no newline at end of file" case) |
+| <a id="str-line_starts"></a>`str.line_starts(s)` | the byte offset where each line starts: `0` and one past every `"\n"`, so a text ending in a line break has an empty last line, as in an editor |
 | <a id="str-trim"></a><a id="str-trim_start"></a><a id="str-trim_end"></a>`str.trim` / `str.trim_start` / `str.trim_end` | strip whitespace |
 | <a id="str-pad_start"></a><a id="str-pad_end"></a>`str.pad_start(s, n, fill)` / `str.pad_end` | pad to width |
 | <a id="str-repeat"></a>`str.repeat(s, n)` | repetition |
