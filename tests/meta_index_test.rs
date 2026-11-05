@@ -94,3 +94,64 @@ let whole = first(filter(meta.parse({}, #{{"recover": true}}).items, (n) => n.na
         ]))
     );
 }
+
+#[test]
+fn resolve_names_what_each_name_reads() {
+    let file = "fn add(a, b) = a + b\nlet x = add(1, len([2]))\nlet y = str.trim(\" z \") + q\n";
+    let src = format!(
+        r#"map(unwrap(meta.resolve({})), (n) => [n.name, n.start, n.def ?? (), n.builtin ?? false, n.module ?? false, n.unresolved ?? false])"#,
+        lit(file)
+    );
+    let v = eval(&src);
+    let Value::List(rows) = &v else { panic!() };
+    let find = |name: &str, nth: usize| {
+        rows.iter()
+            .filter(|r| matches!(r, Value::List(c) if c[0] == s(name)))
+            .nth(nth)
+            .cloned()
+            .unwrap_or_else(|| panic!("{name} #{nth}"))
+    };
+    let at = |name: &str, nth: usize| file.match_indices(name).nth(nth).unwrap().0 as i64;
+    let def = |a: i64, b: i64| {
+        let mut m = olang::ast::ValueMap::default();
+        m.insert("start".into(), Value::Integer(a));
+        m.insert("end".into(), Value::Integer(b));
+        Value::Map(std::sync::Arc::new(m))
+    };
+    let f = Value::Boolean(false);
+    let t = Value::Boolean(true);
+    let row = |n: &str, start: i64, d: Value, b: &Value, m: &Value, u: &Value| {
+        Value::List(std::sync::Arc::new(vec![
+            s(n),
+            Value::Integer(start),
+            d,
+            b.clone(),
+            m.clone(),
+            u.clone(),
+        ]))
+    };
+    // the call of `add` reads the fn's name
+    let add_def = def(at("add", 0), at("add", 0) + 3);
+    assert_eq!(
+        find("add", 1),
+        row("add", at("add", 1), add_def, &f, &f, &f)
+    );
+    // `a` in the body reads the parameter
+    let a_def = def(at("a", 1), at("a", 1) + 1);
+    assert_eq!(
+        find("a", 1),
+        row("a", file.find("= a").unwrap() as i64 + 2, a_def, &f, &f, &f)
+    );
+    assert_eq!(
+        find("len", 0),
+        row("len", at("len", 0), Value::Unit, &t, &f, &f)
+    );
+    assert_eq!(
+        find("str", 0),
+        row("str", at("str", 0), Value::Unit, &f, &t, &f)
+    );
+    assert_eq!(find("q", 0), row("q", at("q", 0), Value::Unit, &f, &f, &t));
+    let err = eval(r#"is_err(meta.resolve("fn ( = "))"#);
+    assert_eq!(err, Value::Boolean(true));
+}
+

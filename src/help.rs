@@ -1747,6 +1747,18 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             see_also: vec!["meta.parse".to_string()],
         });
         self.add_function(FunctionDoc {
+            name: "meta.resolve".to_string(),
+            description: "Every name in a program, in order, with what it reads: #{name, start, end} and def: #{start, end} (where its binding is defined; is_def marks the definition itself), or builtin, module or unresolved set to true. The language server's references and rename walk the same scopes, so the two agree. Err when the source does not parse. Native only.".to_string(),
+            syntax: "meta.resolve(source)".to_string(),
+            parameters: vec!["source: String - olang source text".to_string()],
+            return_type: "Result<List<Map>, String>".to_string(),
+            examples: vec![
+                "unwrap(meta.resolve(\"let x = 1\\nx + 1\"))  // x at 0 (is_def) and at 10, both def #{start: 4, end: 5}".to_string(),
+            ],
+            category: "Meta".to_string(),
+            see_also: vec!["meta.unresolved".to_string(), "meta.rename".to_string()],
+        });
+        self.add_function(FunctionDoc {
             name: "meta.parse".to_string(),
             description: "Parse olang source into its syntax tree as ordinary olang values: a list of kind-tagged node maps. The AST shapes are a stable, documented format, so linters, codemods, and import extractors are written in olang rather than as compiler changes. Read nodes with map_get; every node carries a \"kind\" key, and every statement and expression node its byte range as \"start\" and \"end\" (a statement also its \"line\" and \"column\", and a declaration its name's \"name_span\").".to_string(),
             syntax: "meta.parse(source, opts)".to_string(),

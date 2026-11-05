@@ -28,6 +28,8 @@ struct Occ {
     end: usize,
     name: String,
     binding: Option<usize>,
+    /// This place binds the name (a declaration, a parameter, a pattern).
+    def: bool,
 }
 
 /// What a name at a place reads.
@@ -75,6 +77,7 @@ impl<'a> Walker<'a> {
             end: self.base + end,
             name: name.to_string(),
             binding: Some(id),
+            def: true,
         });
     }
 
@@ -94,6 +97,7 @@ impl<'a> Walker<'a> {
             end: self.base + span.end(),
             name,
             binding,
+            def: false,
         });
     }
 
@@ -334,6 +338,7 @@ impl<'a> Walker<'a> {
                     end: self.base + span.end(),
                     name: n.to_string(),
                     binding: Some(id),
+                    def: true,
                 }),
                 None => self.bind(n, span.start(), span.end()),
             }
@@ -557,6 +562,48 @@ pub fn resolve_top(src: &str, name: &str) -> Option<Resolved> {
         .iter()
         .find(|o| o.name == name && o.binding.is_some_and(|b| binds[b].1))?;
     Some(resolved(src, &occs, &binds, hit))
+}
+
+/// One name in a program as `meta.resolve` reports it: its byte range,
+/// whether this place binds it, and where its binding is defined (`None`
+/// for a name bound nowhere in the program: a builtin, a module, or one
+/// nothing defines).
+#[derive(Debug, Clone, PartialEq)]
+pub struct NameRef {
+    pub name: String,
+    pub start: usize,
+    pub end: usize,
+    pub is_def: bool,
+    pub def: Option<(usize, usize)>,
+    pub top_level: bool,
+}
+
+/// Every name in `src` in order, read as the language server reads
+/// them (the same walk as references and rename): `None` when `src`
+/// does not parse.
+pub fn names(src: &str) -> Option<Vec<NameRef>> {
+    let (occs, binds) = occurrences(src)?;
+    let mut def_of: Vec<Option<(usize, usize)>> = vec![None; binds.len()];
+    for o in &occs {
+        if o.def
+            && let Some(b) = o.binding
+            && def_of[b].is_none()
+        {
+            def_of[b] = Some((o.start, o.end));
+        }
+    }
+    Some(
+        occs.iter()
+            .map(|o| NameRef {
+                name: o.name.clone(),
+                start: o.start,
+                end: o.end,
+                is_def: o.def,
+                def: o.binding.and_then(|b| def_of[b]),
+                top_level: o.binding.is_none_or(|b| binds[b].1),
+            })
+            .collect(),
+    )
 }
 
 fn resolved(src: &str, occs: &[Occ], binds: &[(String, bool)], hit: &Occ) -> Resolved {

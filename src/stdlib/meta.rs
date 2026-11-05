@@ -43,6 +43,7 @@ pub fn create_meta_module() -> Value {
     module.insert("fresh".to_string(), builtin("fresh", 1));
     module.insert("exports".to_string(), builtin("exports", 1));
     module.insert("unresolved".to_string(), builtin("unresolved", 1));
+    module.insert("resolve".to_string(), builtin("resolve", 1));
     module.insert("rename".to_string(), builtin("rename", 2));
     module.insert("tokens".to_string(), builtin("tokens", 1));
     module.insert("highlight".to_string(), builtin("highlight", 1));
@@ -73,6 +74,7 @@ pub fn call_meta_function(
         "fresh" => meta_fresh(args),
         "exports" => meta_exports(args),
         "unresolved" => meta_unresolved(args),
+        "resolve" => meta_resolve(args),
         "rename" => meta_rename(args),
         "tokens" | "highlight" => {
             let src = match args.first() {
@@ -218,6 +220,71 @@ fn tokens_with_options(
     } else {
         tokens_value_of(src, toks)
     })
+}
+
+/// `meta.resolve(source)`: `Ok([#{name, start, end, ...}])`, every name in
+/// the program in order, with what it refers to — `def: #{start, end}`
+/// (where its binding is defined; `is_def` marks the defining place
+/// itself), `builtin: true`, `module: true`, or `unresolved: true` —
+/// by the walk the language server's references and rename take, so the
+/// two agree. `Err` when the source does not parse.
+#[cfg(feature = "native")]
+fn meta_resolve(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let source = match args.first() {
+        Some(Value::String(s)) if args.len() == 1 => s.clone(),
+        _ => return Err("meta.resolve expects the source string".into()),
+    };
+    let Some(names) = crate::tools::scope_refs::names(&source) else {
+        let message = match crate::parser::Parser::new().parse_raw(&source) {
+            Err(e) => e.to_string(),
+            Ok(_) => "the source does not parse".to_string(),
+        };
+        return Ok(Value::Err(Box::new(s(&message))));
+    };
+    let builtins = crate::builtin::BuiltinFunctions::new();
+    let modules = crate::stdlib::native_members();
+    let embedded = crate::stdlib::embedded::names();
+    let out = names
+        .into_iter()
+        .map(|n| {
+            let mut pairs = vec![
+                ("name", s(&n.name)),
+                ("start", Value::Integer(n.start as i64)),
+                ("end", Value::Integer(n.end as i64)),
+            ];
+            match n.def {
+                Some((a, b)) => {
+                    pairs.push((
+                        "def",
+                        map(vec![
+                            ("start", Value::Integer(a as i64)),
+                            ("end", Value::Integer(b as i64)),
+                        ]),
+                    ));
+                    if n.is_def {
+                        pairs.push(("is_def", Value::Boolean(true)));
+                    }
+                    if n.top_level {
+                        pairs.push(("top_level", Value::Boolean(true)));
+                    }
+                }
+                None if modules.contains_key(&n.name) || embedded.contains(&n.name.as_str()) => {
+                    pairs.push(("module", Value::Boolean(true)))
+                }
+                None if builtins.get_functions().contains_key(&n.name) => {
+                    pairs.push(("builtin", Value::Boolean(true)))
+                }
+                None => pairs.push(("unresolved", Value::Boolean(true))),
+            }
+            map(pairs)
+        })
+        .collect();
+    Ok(Value::Ok(Box::new(list(out))))
+}
+
+#[cfg(not(feature = "native"))]
+fn meta_resolve(_: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    Err("meta.resolve needs the language server's scope walk, which the browser runtime does not carry".into())
 }
 
 /// `meta.unresolved(source)` → Ok(list of names) | Err(message): every
