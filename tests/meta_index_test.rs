@@ -155,3 +155,37 @@ fn resolve_names_what_each_name_reads() {
     assert_eq!(err, Value::Boolean(true));
 }
 
+#[test]
+fn types_are_what_hover_shows() {
+    let file = "/// Doubles.\nfn double(x: Int) -> Int = x * 2\nshare fn half(x) = x / 2\nlet n = 3\ntype P = struct { a: Int }\n";
+    let src = format!(
+        r#"map(unwrap(meta.types({})), (d) => [d.name, d.signature, d.doc, d.name_start])"#,
+        lit(file)
+    );
+    let all = eval(&src);
+    let Value::List(rows) = &all else { panic!() };
+    let names: Vec<_> = rows
+        .iter()
+        .map(|r| match r {
+            Value::List(c) => (c[0].clone(), c[1].clone()),
+            _ => panic!(),
+        })
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            (s("double"), s("fn double(x: Int) -> Int")),
+            (s("half"), s("share fn half(x)")),
+            (s("n"), s("let n: Int")),
+            (s("P"), s("type P")),
+        ]
+    );
+    let Value::List(first) = &rows[0] else {
+        panic!()
+    };
+    assert_eq!(first[2], s("Doubles."));
+    assert_eq!(
+        first[3],
+        Value::Integer(file.find("double").unwrap() as i64)
+    );
+}

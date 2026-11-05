@@ -44,6 +44,7 @@ pub fn create_meta_module() -> Value {
     module.insert("exports".to_string(), builtin("exports", 1));
     module.insert("unresolved".to_string(), builtin("unresolved", 1));
     module.insert("resolve".to_string(), builtin("resolve", 1));
+    module.insert("types".to_string(), builtin("types", 1));
     module.insert("rename".to_string(), builtin("rename", 2));
     module.insert("tokens".to_string(), builtin("tokens", 1));
     module.insert("highlight".to_string(), builtin("highlight", 1));
@@ -75,6 +76,7 @@ pub fn call_meta_function(
         "exports" => meta_exports(args),
         "unresolved" => meta_unresolved(args),
         "resolve" => meta_resolve(args),
+        "types" => meta_types(args),
         "rename" => meta_rename(args),
         "tokens" | "highlight" => {
             let src = match args.first() {
@@ -285,6 +287,51 @@ fn meta_resolve(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 #[cfg(not(feature = "native"))]
 fn meta_resolve(_: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     Err("meta.resolve needs the language server's scope walk, which the browser runtime does not carry".into())
+}
+
+/// `meta.types(source)`: `Ok([#{name, signature, doc, name_start, line,
+/// column}])`, each top-level declaration with the signature hover
+/// shows for it (the checker's types where it knows them) and its `///`
+/// doc — the language server's own code (`lsp::signatures`).
+#[cfg(feature = "native")]
+fn meta_types(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let source = match args.first() {
+        Some(Value::String(s)) if args.len() == 1 => s.clone(),
+        _ => return Err("meta.types expects the source string".into()),
+    };
+    let starts = line_starts_of(&source);
+    let out = crate::tools::lsp::signatures(&source)
+        .into_iter()
+        .map(|d| {
+            let (line, column) = d.span;
+            let name_start = starts
+                .get((line as usize).saturating_sub(1))
+                .and_then(|ls| {
+                    source[*ls..]
+                        .char_indices()
+                        .nth((column as usize).saturating_sub(1))
+                        .map(|(i, _)| ls + i)
+                })
+                .unwrap_or(0);
+            map(vec![
+                ("name", s(&d.name)),
+                ("signature", s(&d.code)),
+                ("doc", s(&d.doc)),
+                ("name_start", Value::Integer(name_start as i64)),
+                ("line", Value::Integer(line as i64)),
+                ("column", Value::Integer(column as i64)),
+            ])
+        })
+        .collect();
+    Ok(Value::Ok(Box::new(list(out))))
+}
+
+#[cfg(not(feature = "native"))]
+fn meta_types(_: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    Err(
+        "meta.types needs the language server's checker, which the browser runtime does not carry"
+            .into(),
+    )
 }
 
 /// `meta.unresolved(source)` → Ok(list of names) | Err(message): every

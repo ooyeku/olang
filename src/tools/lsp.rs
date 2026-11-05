@@ -2189,11 +2189,7 @@ fn hover(text: &str, pos: Position, doc_dir: Option<&std::path::Path>) -> Option
             .parse_raw(text)
             .ok()
             .and_then(|program| crate::tools::check::hover_types(&program).remove(&name));
-        let sig = match typed {
-            Some(t) if t.len() >= detail.len() => t,
-            _ => detail,
-        };
-        return Some(decl_hover(text, &name, sig, None));
+        return Some(decl_hover(text, &name, best_sig(typed, detail), None));
     }
     if let Some(d) = help().get_function(&word) {
         return Some(help_hover(d));
@@ -2220,16 +2216,34 @@ fn hover(text: &str, pos: Position, doc_dir: Option<&std::path::Path>) -> Option
 /// A user declaration's hover: the real signature, and the author's
 /// `///` doc block when one exists — the editor speaks with the same
 /// voice as `:help`, which reads the identical convention.
-fn decl_hover(source: &str, name: &str, sig: String, from: Option<&str>) -> lsp_types::Hover {
-    let item = crate::tools::doc::extract(source)
-        .items
-        .into_iter()
-        .find(|i| i.name == name);
-    let shared = item.as_ref().map(|i| i.shared).unwrap_or(false);
+/// A declaration of this file as hover shows it: the signature line and
+/// its `///` doc. What `meta.types` answers, so the two agree.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeclSig {
+    pub name: String,
+    pub code: String,
+    pub doc: String,
+    /// 1-based line and character column of the name.
+    pub span: (u32, u32),
+}
+
+/// The richer of the checker's typed signature and the declaration's
+/// plain one: the checker keeps annotation types but degrades an
+/// unannotated `fn double(x)` to `fn double`.
+fn best_sig(typed: Option<String>, detail: String) -> String {
+    match typed {
+        Some(t) if t.len() >= detail.len() => t,
+        _ => detail,
+    }
+}
+
+/// The signature line hover shows for `sig`, with its doc item.
+fn sig_code(item: Option<&crate::tools::doc::Item>, sig: String) -> (String, String) {
+    let shared = item.map(|i| i.shared).unwrap_or(false);
     // In a file that does not currently parse, the declaration scanner
     // degrades to bare names; the doc extractor's signature is
     // text-level and keeps the parameter list — prefer it when richer.
-    let sig = match &item {
+    let sig = match item {
         Some(i) if !sig.contains('(') && i.signature.contains('(') => {
             format!("{} {}", i.kind, i.signature)
         }
@@ -2240,11 +2254,44 @@ fn decl_hover(source: &str, name: &str, sig: String, from: Option<&str>) -> lsp_
         code.push_str("share ");
     }
     code.push_str(&sig);
+    (code, item.map(|i| i.doc.clone()).unwrap_or_default())
+}
+
+/// Every top-level declaration of `text` with the signature hover shows
+/// for it, in order.
+pub fn signatures(text: &str) -> Vec<DeclSig> {
+    let typed = OlangParser::new()
+        .parse_raw(text)
+        .ok()
+        .map(|program| crate::tools::check::hover_types(&program))
+        .unwrap_or_default();
+    let items = crate::tools::doc::extract(text).items;
+    declarations(text)
+        .into_iter()
+        .map(|(name, detail, span)| {
+            let sig = best_sig(typed.get(&name).cloned(), detail);
+            let (code, doc) = sig_code(items.iter().find(|i| i.name == name), sig);
+            DeclSig {
+                name,
+                code,
+                doc,
+                span,
+            }
+        })
+        .collect()
+}
+
+fn decl_hover(source: &str, name: &str, sig: String, from: Option<&str>) -> lsp_types::Hover {
+    let item = crate::tools::doc::extract(source)
+        .items
+        .into_iter()
+        .find(|i| i.name == name);
+    let (mut code, doc) = sig_code(item.as_ref(), sig);
     if let Some(from) = from {
         code.push_str("    // from ");
         code.push_str(from);
     }
-    match item.map(|i| i.doc).filter(|d| !d.is_empty()) {
+    match Some(doc).filter(|d| !d.is_empty()) {
         Some(doc) => lsp_types::Hover {
             contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
                 kind: lsp_types::MarkupKind::Markdown,
