@@ -1300,8 +1300,8 @@ fn crypto_ed25519_keypair(args: Vec<Value>) -> Result<Value, Box<dyn std::error:
     pair.insert("public_key".to_string(), b64(key.verifying_key().as_bytes()));
     seed.fill(0);
     Ok(Value::Ok(Box::new(Value::Struct {
-        type_name: "KeyPair".to_string(),
-        fields: Arc::new(pair),
+        type_name: "KeyPair".into(),
+        fields: Arc::new(pair).into(),
     })))
 }
 

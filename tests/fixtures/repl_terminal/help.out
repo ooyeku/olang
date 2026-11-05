@@ -43,17 +43,21 @@ See Also: head, tail
 
 
 ═══ Module: str ═══
-  40 function(s), call as str.<fn>(...):
-    capitalize, cell_width, char_at, char_code
-    chars, contains, count, ends_with
-    fixed, fmt, from_char_code, fuzzy_score
-    graphemes, hash, index_of, is_ascii
-    is_empty, join, last_index_of, length
-    lines, pad_end, pad_start, parse_float
-    parse_int, repeat, replace, replace_first
-    reverse, split, starts_with, substring
+  54 function(s), call as str.<fn>(...):
+    bidi_runs, byte_len, byte_to_char, capitalize
+    cell_width, char_at, char_code, char_to_byte
+    chars, chunks, contains, count
+    encode, ends_with, fixed, fmt
+    fold, from_char_code, fuzzy_score, graphemes
+    hash, index_of, is_ascii, is_empty
+    join, last_index_of, length, line_breaks
+    line_starts, lines, normalize, pad_end
+    pad_start, parse_float, parse_int, repeat
+    replace, replace_first, reverse, slice_bytes
+    split, starts_with, stats, substring
     thousands, to_lower, to_upper, trim
-    trim_end, trim_start, width, words
+    trim_end, trim_start, utf16_len, width
+    word_bounds, words
 
   Try :help str.<fn> for a function's documentation.
 === olang Syntax Reference ===
