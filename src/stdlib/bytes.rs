@@ -74,6 +74,9 @@ impl NativeObject for BytesObject {
     fn length(&self) -> Option<usize> {
         Some(self.0.len())
     }
+    fn hash64(&self) -> Option<u64> {
+        Some(xxhash_rust::xxh3::xxh3_64(&self.0))
+    }
     fn index(&self, key: &Value) -> Option<Result<Value, String>> {
         let i = match key {
             Value::Integer(i) => *i,

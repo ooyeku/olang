@@ -225,6 +225,7 @@ helpers are aliases of the same function, never a second definition.
 | <a id="to_float"></a>`to_float(v)` | string/int → Float; a string that is not a number raises (`str.parse_float` is the `Result` form) |
 | <a id="len"></a>`len(v)` | length of a list, a string (in characters), a tuple, or `Bytes`; a map raises, and its entry count is `map_len` |
 | <a id="implements"></a>`implements(v, "Trait")` | does the value's type implement the trait? |
+| <a id="hash"></a>`hash(v)` | a 64-bit Int hash of the value, the same for values that are `==`, and the same in every run |
 | <a id="same"></a>`same(a, b)` | are `a` and `b` one value in memory, not just two equal ones? For an Int, a Float, a Bool or `()`, which have no identity, it is `==` |
 
 `to_string` and `show` render the same text: a string is returned as
@@ -237,6 +238,21 @@ use. Strings *inside* a container keep their quotes in that form, so
 println(to_string("hi") + " " + show("hi") + " " + to_string(["hi"]))
 println(typeof(3.5) + " " + show(to_int(3.9)) + " " + show(to_float("2.5")))
 println(show(len([1, 2, 3])) + " " + show(len("abcd")))
+```
+
+`hash` agrees with `==`: a map hashes the same whatever order its keys
+were added in, a parsed JSON object the same as the map with its keys
+and values, a whole Float the same as its Int. It is XXH3 over a fixed
+encoding of the value, so a hash stored on disk in one run finds its
+entry in the next, and in later releases. Unequal values may share a
+hash, rarely, so a hash table still compares the values that collide. A
+function has no hash, nor has a cell or a channel (they are compared by
+identity), and hashing one raises.
+
+```olang
+println(hash(#{ "x": 1, "y": 2 }) == hash(#{ "y": 2, "x": 1 }))  // true
+println(hash(1) == hash(1.0))                                    // true
+println(hash([1, 2]) == hash([2, 1]))                            // false
 ```
 
 `same` is the cheap first question to ask before a deep comparison:
@@ -503,6 +519,7 @@ every function returns a new string.
 | <a id="str-reverse"></a>`str.reverse(s)` | reversed by visible character — clusters stay whole |
 | <a id="str-is_empty"></a>`str.is_empty(s)` | `""` test |
 | <a id="str-is_ascii"></a>`str.is_ascii(s)` | every character ASCII? (true for `""`) — one pass over the bytes |
+| <a id="str-hash"></a>`str.hash(s)` | the XXH3 hash of the string's UTF-8 as an Int, the same in every run (`crypto.xxh3(s)`) |
 | <a id="str-parse_int"></a><a id="str-parse_float"></a>`str.parse_int(s)` / `str.parse_float(s)` | `Result` parses |
 | <a id="str-fmt"></a>`str.fmt(template, ...)` | fill `{}` placeholders, display form; `{{`/`}}` escape |
 | <a id="str-fixed"></a>`str.fixed(x, digits)` | exactly `digits` decimals, never exponent form, never `-0.00` — the column form `to_string` is not |
@@ -1813,7 +1830,8 @@ secrets, because `==` can leak information through its timing.
 
 | Group | Functions |
 |---|---|
-| <a id="crypto-md5"></a><a id="crypto-sha1"></a><a id="crypto-sha256"></a><a id="crypto-sha512"></a>Digests | `md5` `sha1` `sha256` `sha512` |
+| <a id="crypto-md5"></a><a id="crypto-sha1"></a><a id="crypto-sha256"></a><a id="crypto-sha512"></a><a id="crypto-blake3"></a>Digests | `md5` `sha1` `sha256` `sha512` `blake3` |
+| <a id="crypto-xxh3"></a>Fast hashing | `xxh3`: a 64-bit Int, not a cryptographic digest |
 | <a id="crypto-hmac_sha512"></a>MACs | `hmac_sha256` `hmac_sha512` |
 | <a id="crypto-hash_password"></a><a id="crypto-verify_password"></a><a id="crypto-derive_key"></a>Passwords | `hash_password` `verify_password` `derive_key` |
 | Symmetric | `encrypt_aes` `decrypt_aes` |
@@ -1850,6 +1868,12 @@ source and reseeded from it periodically; in the browser the seed comes
 from the page's `getRandomValues` — so they are the functions to mint a
 session secret, a share token, or a nonce. `random`, the module, is the
 seedable generator for simulations and is not.
+
+Every digest takes a String (its UTF-8) or `Bytes`. `blake3` is a
+cryptographic digest like `sha256`, several times faster. `xxh3` is
+not cryptographic: it is the quick 64-bit fingerprint of some bytes,
+for a cache key or a change check, where nobody is trying to forge a
+collision. It answers an Int, the same in every run and release.
 
 <a id="crypto-hmac_sha256"></a>`crypto.hmac_sha256(key, message)` answers the HMAC as a hexadecimal
 string; compare a received MAC against it with `secure_compare`, never

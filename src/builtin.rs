@@ -267,6 +267,15 @@ impl BuiltinFunctions {
             },
         );
 
+        // A structural hash that agrees with == (OL-425)
+        functions.insert(
+            "hash".to_string(),
+            BuiltinFunction {
+                name: "hash".to_string(),
+                arity: 1,
+            },
+        );
+
         // Identity: one allocation, not two equal values (OL-471)
         functions.insert(
             "same".to_string(),
@@ -1403,6 +1412,17 @@ impl BuiltinFunctions {
             "range" => builtins.range(arguments),
             "zip" => builtins.zip(arguments),
             "typeof" => builtins.type_of(arguments),
+            "hash" => {
+                if arguments.len() != 1 {
+                    return Err(InterpreterError::ArityMismatch {
+                        expected: 1,
+                        got: arguments.len(),
+                    });
+                }
+                crate::value_hash::hash_value(&arguments[0])
+                    .map(Value::Integer)
+                    .map_err(InterpreterError::runtime)
+            }
             "same" => {
                 if arguments.len() != 2 {
                     return Err(InterpreterError::ArityMismatch {
@@ -1916,6 +1936,7 @@ impl BuiltinFunctions {
         "to_float",
         "typeof",
         "same",
+        "hash",
         "head",
         "tail",
         "cons",

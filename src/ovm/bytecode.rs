@@ -1583,6 +1583,7 @@ impl BytecodeVm {
             "to_float",
             "typeof",
             "same",
+            "hash",
             "len",
             // list access and construction
             "head",
@@ -8620,7 +8621,10 @@ impl BytecodeVm {
         // compiled lambda ran the lambda on the tree-walker, the list
         // converted in and the answer converted back out, per call.
         if args.iter().any(|a| matches!(a.data, ValueData::AstList(_)))
-            && !matches!(name, "len" | "head" | "first" | "last" | "typeof" | "same")
+            && !matches!(
+                name,
+                "len" | "head" | "first" | "last" | "typeof" | "same" | "hash"
+            )
             && !(matches!(name, "map" | "filter" | "col.any" | "col.all" | "contains")
                 && args.len() == 2
                 && matches!(&args[0].data, ValueData::AstList(l) if !crate::parallel::should_parallelize(l.len()))
@@ -8632,10 +8636,12 @@ impl BytecodeVm {
         // below; everything else sees the boxed form — one O(n)
         // conversion in front of an O(n) operation.
         let normalized: Vec<OvmValue>;
-        let args: &[OvmValue] = if !matches!(name, "len" | "head" | "first" | "last" | "typeof" | "same")
-            && args
-                .iter()
-                .any(|a| matches!(a.data, ValueData::FloatList(_) | ValueData::IntList(_)))
+        let args: &[OvmValue] = if !matches!(
+            name,
+            "len" | "head" | "first" | "last" | "typeof" | "same" | "hash"
+        ) && args
+            .iter()
+            .any(|a| matches!(a.data, ValueData::FloatList(_) | ValueData::IntList(_)))
         {
             normalized = args
                 .iter()
@@ -9178,6 +9184,13 @@ impl BytecodeVm {
             // Identity, without converting either side: `same(a, b)` on
             // the bridge compared two converted copies, never one.
             "same" if args.len() == 2 => Some(Ok(OvmValue::new_boolean(args[0].same(&args[1])))),
+            // Hashed in the VM's own form: bridged, the whole value was
+            // converted to be read once.
+            "hash" if args.len() == 1 => Some(
+                crate::value_hash::hash_ovm(&args[0])
+                    .map(OvmValue::new_integer)
+                    .map_err(BytecodeError::RuntimeError),
+            ),
             "typeof" if args.len() == 1 => {
                 let t = match &args[0].data {
                     ValueData::List(_)
@@ -9707,6 +9720,7 @@ impl BytecodeVm {
                 "last",
                 "typeof",
                 "same",
+                "hash",
             ]
             .map(String::from),
         );

@@ -1282,6 +1282,19 @@ impl HelpSystem {
         });
 
         self.add_function(FunctionDoc {
+            name: "hash".to_string(),
+            description: "A 64-bit hash of the value, as an Int, that agrees with `==`: a map hashes the same whatever order its keys were added in, a parsed JSON object as the map with its keys and values, a whole Float as its Int. It is XXH3 over a fixed encoding, the same in every run and release, so it can key a cache on disk. Unequal values rarely share a hash. A function, a cell or a channel has no hash, and hashing one raises".to_string(),
+            syntax: "hash(v)".to_string(),
+            parameters: vec!["v: Any - The value to hash".to_string()],
+            return_type: "Int".to_string(),
+            examples: vec![
+                "hash(#{ \"x\": 1, \"y\": 2 }) == hash(#{ \"y\": 2, \"x\": 1 })  // true".to_string(),
+                "hash(1) == hash(1.0)  // true".to_string(),
+            ],
+            category: "Introspection".to_string(),
+            see_also: vec!["str.hash".to_string(), "crypto.xxh3".to_string()],
+        });
+        self.add_function(FunctionDoc {
             name: "same".to_string(),
             description: "Whether a and b are one value in memory: the same list, map, struct or closure, not merely two equal ones. A scalar (an Int, a Float, a Bool, `()`) has no identity, so for one it is `==`. Use it as a cheap \"unchanged\" check before an expensive comparison: `true` always means `a == b`, but `false` says nothing, since an equal copy is not the same value. It never changes what a program means, only how much work it skips".to_string(),
             syntax: "same(a, b)".to_string(),
@@ -7865,6 +7878,16 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             see_also: vec!["str.width".to_string()],
         });
         self.add_function(FunctionDoc {
+            name: "str.hash".to_string(),
+            description: "The XXH3 hash of the string's UTF-8 bytes, as an Int: quick, and the same in every run and release. Not cryptographic (crypto.blake3 is). The same as crypto.xxh3(s)".to_string(),
+            syntax: "str.hash(s)".to_string(),
+            parameters: vec!["s: String".to_string()],
+            return_type: "Int".to_string(),
+            examples: vec!["str.hash(\"\") == crypto.xxh3(\"\")  // true".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["hash".to_string(), "crypto.xxh3".to_string()],
+        });
+        self.add_function(FunctionDoc {
             name: "str.length".to_string(),
             description: "Length in characters.".to_string(),
             syntax: "str.length(s)".to_string(),
@@ -12766,6 +12789,29 @@ For function-specific syntax, use: {}:help <function_name>{}",
             ],
             category: "Crypto".to_string(),
             see_also: vec!["crypto.sha256".to_string(), "crypto.hmac_sha512".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "crypto.blake3".to_string(),
+            description: "The BLAKE3 digest of a String (its UTF-8) or Bytes, as a hex string: a cryptographic digest like sha256, several times faster".to_string(),
+            syntax: "crypto.blake3(input)".to_string(),
+            parameters: vec!["input: String or Bytes - What to hash".to_string()],
+            return_type: "String".to_string(),
+            examples: vec![
+                "crypto.blake3(\"\")  // \"af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262\"".to_string(),
+            ],
+            category: "Crypto".to_string(),
+            see_also: vec!["crypto.sha256".to_string(), "crypto.xxh3".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "crypto.xxh3".to_string(),
+            description: "The XXH3 64-bit hash of a String (its UTF-8) or Bytes, as an Int: a quick fingerprint for a cache key or a change check, the same in every run and release. Not cryptographic: use blake3 or sha256 where someone might forge a collision".to_string(),
+            syntax: "crypto.xxh3(input)".to_string(),
+            parameters: vec!["input: String or Bytes - What to hash".to_string()],
+            return_type: "Int".to_string(),
+            examples: vec!["crypto.xxh3(\"\")  // 3244421341483603138".to_string()],
+            category: "Crypto".to_string(),
+            see_also: vec!["str.hash".to_string(), "hash".to_string(), "crypto.blake3".to_string()],
         });
 
         // HMAC functions

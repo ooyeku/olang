@@ -57,6 +57,14 @@ pub trait NativeObject: fmt::Debug + Send + Sync {
         None
     }
 
+    /// This value's part of `hash(v)`: 64 bits that two values equal by
+    /// `native_eq` share, the same in every run. `None` — the default —
+    /// means it has no hash (a cell, a channel: compared by identity), and
+    /// `hash` raises naming the type.
+    fn hash64(&self) -> Option<u64> {
+        None
+    }
+
     /// The length `len(value)` reports, when this value has one. `None` —
     /// the default — keeps the language's "len: argument must be ..."
     /// error; a sequence-like native (Bytes) answers here and `len`

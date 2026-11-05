@@ -60,6 +60,10 @@ impl NativeObject for DateObject {
             .map(|o| self.0 == o.0)
             .unwrap_or(false)
     }
+    fn hash64(&self) -> Option<u64> {
+        use chrono::Datelike;
+        Some(self.0.num_days_from_ce() as i64 as u64)
+    }
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

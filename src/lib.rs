@@ -75,6 +75,7 @@ pub mod stdlib;
 pub mod tier_stats; // Where each function ran: `--ovm-stats=json`, pins
 pub mod timeline;
 pub mod tools;
+pub mod value_hash; // hash(v): a structural hash that agrees with ==
 pub mod version;
 pub mod vfs;
 

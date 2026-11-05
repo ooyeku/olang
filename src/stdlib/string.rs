@@ -29,6 +29,7 @@ pub(crate) const UNARY: &[&str] = &[
     "capitalize",
     "is_empty",
     "is_ascii",
+    "hash",
     "length",
     "parse_int",
     "parse_float",
@@ -118,6 +119,7 @@ pub(crate) const MAX_ARGS: &[(&str, usize)] = &[
     ("capitalize", 1),
     ("is_empty", 1),
     ("is_ascii", 1),
+    ("hash", 1),
     ("length", 1),
     ("parse_int", 1),
     ("parse_float", 1),
@@ -173,6 +175,10 @@ pub fn call_string_function(
         "capitalize" => str_capitalize(args),
         "is_empty" => str_is_empty(args),
         "is_ascii" => Ok(Value::Boolean(arg_str(&args, 0, "is_ascii")?.is_ascii())),
+        // XXH3 of the UTF-8, the same in every run (value_hash.rs)
+        "hash" => Ok(Value::Integer(crate::value_hash::hash_bytes(
+            arg_str(&args, 0, "hash")?.as_bytes(),
+        ))),
         "length" => str_length(args),
         "parse_int" => str_parse_int(args),
         "parse_float" => str_parse_float(args),

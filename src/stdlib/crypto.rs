@@ -61,6 +61,8 @@ pub fn create_crypto_module() -> Value {
     module.insert("sha1".to_string(), create_builtin_function("sha1", 1));
     module.insert("sha256".to_string(), create_builtin_function("sha256", 1));
     module.insert("sha512".to_string(), create_builtin_function("sha512", 1));
+    module.insert("xxh3".to_string(), create_builtin_function("xxh3", 1));
+    module.insert("blake3".to_string(), create_builtin_function("blake3", 1));
 
     // HMAC functions
     module.insert(
@@ -197,6 +199,21 @@ pub fn call_crypto_function(
         "sha1" => crypto_sha1(args),
         "sha256" => crypto_sha256(args),
         "sha512" => crypto_sha512(args),
+        // XXH3-64, an Int: fast and stable, not a cryptographic hash
+        "xxh3" => match args.as_slice() {
+            [v] => Ok(Value::Integer(crate::value_hash::hash_bytes(digest_input(
+                v, "xxh3",
+            )?))),
+            _ => Err(format!("xxh3 expects 1 argument, got {}", args.len()).into()),
+        },
+        "blake3" => match args.as_slice() {
+            [v] => Ok(Value::String(Arc::new(
+                blake3::hash(digest_input(v, "blake3")?)
+                    .to_hex()
+                    .to_string(),
+            ))),
+            _ => Err(format!("blake3 expects 1 argument, got {}", args.len()).into()),
+        },
         "hmac_sha256" => crypto_hmac_sha256(args),
         "hmac_sha512" => crypto_hmac_sha512(args),
         "hash_password" => crypto_hash_password(args),
