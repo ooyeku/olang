@@ -57,6 +57,16 @@ pub fn create_fs_module() -> Value {
         "read_bytes".to_string(),
         create_builtin_function("read_bytes", 1),
     );
+    // Part of a file, and a file a chunk at a time (OL-473).
+    module.insert(
+        "read_range".to_string(),
+        create_builtin_function("read_range", 3),
+    );
+    module.insert("chunks".to_string(), create_builtin_function("chunks", 2));
+    module.insert(
+        "next_chunk".to_string(),
+        create_builtin_function("next_chunk", 1),
+    );
     module.insert(
         "write_bytes".to_string(),
         create_builtin_function("write_bytes", 2),
@@ -175,6 +185,9 @@ pub fn call_fs_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn s
         "read_file" => read_file(args),
         "write_file" => write_file(args),
         "read_bytes" => read_bytes(args),
+        "read_range" => read_range(args),
+        "chunks" => chunks(args),
+        "next_chunk" => next_chunk(args),
         "write_bytes" => write_bytes(args),
         "append_file" => append_file(args),
         "exists" => exists(args),
@@ -338,6 +351,173 @@ fn read_bytes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             path_str, e
         )))))),
     }
+}
+
+// ── part of a file (OL-473) ─────────────────────────────────────────
+//
+// `read_bytes` holds the whole file, which is right until the file is a
+// gigabyte. `read_range` reads one stretch of it; `chunks` opens it for
+// reading a piece at a time, so a hash or a scan of any size holds one
+// piece.
+
+fn path_of<'a>(args: &'a [Value], func: &str) -> Result<&'a str, Box<dyn std::error::Error>> {
+    match args.first() {
+        Some(Value::String(s)) => Ok(s.as_str()),
+        Some(other) => Err(format!(
+            "fs.{func}: the path must be a string, got {}",
+            other.type_name()
+        )
+        .into()),
+        None => Err(format!("fs.{func}: missing the path").into()),
+    }
+}
+
+fn count_arg(
+    args: &[Value],
+    i: usize,
+    func: &str,
+    what: &str,
+    least: i64,
+) -> Result<u64, Box<dyn std::error::Error>> {
+    match args.get(i) {
+        Some(Value::Integer(n)) if *n >= least => Ok(*n as u64),
+        Some(Value::Integer(n)) => {
+            Err(format!("fs.{func}: {what} must be at least {least}, got {n}").into())
+        }
+        Some(other) => Err(format!(
+            "fs.{func}: {what} must be an integer, got {}",
+            other.type_name()
+        )
+        .into()),
+        None => Err(format!("fs.{func}: missing {what}").into()),
+    }
+}
+
+fn io_err(path: &str, e: std::io::Error) -> Value {
+    Value::Err(Box::new(Value::String(Arc::new(format!(
+        "Failed to read file '{path}': {e}"
+    )))))
+}
+
+/// Up to `len` bytes from `file`, fewer only at its end.
+fn read_up_to(file: &mut fs::File, len: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut out = Vec::with_capacity(len.min(1 << 30) as usize);
+    file.take(len).read_to_end(&mut out)?;
+    Ok(out)
+}
+
+/// `fs.read_range(path, offset, len)`: `Ok(Bytes)` of up to `len` bytes
+/// from `offset` — fewer at the end of the file, none past it.
+fn read_range(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    use std::io::{Seek, SeekFrom};
+    if args.len() != 3 {
+        return Err(format!("fs.read_range expects 3 arguments, got {}", args.len()).into());
+    }
+    let path = path_of(&args, "read_range")?;
+    let offset = count_arg(&args, 1, "read_range", "the offset", 0)?;
+    let len = count_arg(&args, 2, "read_range", "the length", 0)?;
+    let mut file = match fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) => return Ok(io_err(path, e)),
+    };
+    if let Err(e) = file.seek(SeekFrom::Start(offset)) {
+        return Ok(io_err(path, e));
+    }
+    Ok(match read_up_to(&mut file, len) {
+        Ok(b) => Value::Ok(Box::new(crate::stdlib::bytes::to_value(b))),
+        Err(e) => io_err(path, e),
+    })
+}
+
+/// An open file read a chunk at a time: `fs.chunks` makes one and
+/// `fs.next_chunk` reads from it. The file closes at its end or when the
+/// last reference to the reader goes.
+struct ChunkReader {
+    path: String,
+    size: u64,
+    file: std::sync::Mutex<Option<fs::File>>,
+}
+
+impl std::fmt::Debug for ChunkReader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", crate::native::NativeObject::display(self))
+    }
+}
+
+impl crate::native::NativeObject for ChunkReader {
+    fn module(&self) -> &'static str {
+        "fs"
+    }
+    fn type_name(&self) -> &'static str {
+        "ChunkReader"
+    }
+    fn display(&self) -> String {
+        format!("ChunkReader({:?}, {} bytes a chunk)", self.path, self.size)
+    }
+    fn native_eq(&self, other: &dyn crate::native::NativeObject) -> bool {
+        // Identity: a reader is its open file.
+        other
+            .as_any()
+            .downcast_ref::<ChunkReader>()
+            .is_some_and(|o| std::ptr::eq(self, o))
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// `fs.chunks(path, size)`: `Ok(reader)` over the file, for
+/// `fs.next_chunk`, or `Err` when it cannot be opened.
+fn chunks(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 2 {
+        return Err(format!("fs.chunks expects 2 arguments, got {}", args.len()).into());
+    }
+    let path = path_of(&args, "chunks")?;
+    let size = count_arg(&args, 1, "chunks", "the chunk size", 1)?;
+    Ok(match fs::File::open(path) {
+        Ok(file) => Value::Ok(Box::new(Value::Native(crate::native::NativeHandle::new(
+            ChunkReader {
+                path: path.to_string(),
+                size,
+                file: std::sync::Mutex::new(Some(file)),
+            },
+        )))),
+        Err(e) => io_err(path, e),
+    })
+}
+
+/// `fs.next_chunk(reader)`: `Ok(Bytes)` of the next chunk (the last may
+/// be short), `Ok(())` once the file is read, `Err` on a read that fails.
+fn next_chunk(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 1 {
+        return Err(format!("fs.next_chunk expects 1 argument, got {}", args.len()).into());
+    }
+    let reader = match &args[0] {
+        Value::Native(h) => h.0.as_any().downcast_ref::<ChunkReader>(),
+        _ => None,
+    }
+    .ok_or_else(|| {
+        format!(
+            "fs.next_chunk: expects the reader fs.chunks made, got {}",
+            args[0].type_name()
+        )
+    })?;
+    let mut slot = reader.file.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(file) = slot.as_mut() else {
+        return Ok(Value::Ok(Box::new(Value::Unit)));
+    };
+    Ok(match read_up_to(file, reader.size) {
+        Ok(b) if b.is_empty() => {
+            *slot = None;
+            Value::Ok(Box::new(Value::Unit))
+        }
+        Ok(b) => Value::Ok(Box::new(crate::stdlib::bytes::to_value(b))),
+        Err(e) => {
+            *slot = None;
+            io_err(&reader.path, e)
+        }
+    })
 }
 
 /// Write raw bytes to a file — the binary twin of write_file.

@@ -8252,6 +8252,30 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
         });
 
         self.doc_ex(
+            "fs.read_range",
+            "fs.read_range(path, offset, len)",
+            "Result",
+            "Filesystem",
+            "Read up to len bytes of a file from byte offset: Ok(Bytes), fewer at the end of the file and none past it, or Err with the OS error. Requires the fs capability at read level.",
+            &[r##"unwrap(fs.read_range("big.bin", 1048576, 4096))"##],
+        );
+        self.doc_ex(
+            "fs.chunks",
+            "fs.chunks(path, size)",
+            "Result",
+            "Filesystem",
+            "Open a file to read size bytes at a time: Ok(reader) for fs.next_chunk, or Err when it cannot be opened. A file of any size is read holding one chunk. Requires the fs capability at read level.",
+            &[r##"let r = unwrap(fs.chunks("big.log", 1048576))"##],
+        );
+        self.doc_ex(
+            "fs.next_chunk",
+            "fs.next_chunk(reader)",
+            "Result",
+            "Filesystem",
+            "The next chunk of the reader fs.chunks opened: Ok(Bytes) (the last may be short), Ok(()) once the whole file is read, or Err when a read fails.",
+            &[r##"match unwrap(fs.next_chunk(r)) { () => "done", b => to_string(len(b)) }"##],
+        );
+        self.doc_ex(
             "fs.read_bytes",
             "fs.read_bytes(path)",
             "Result",

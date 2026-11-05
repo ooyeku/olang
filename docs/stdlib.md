@@ -1825,6 +1825,7 @@ a `Bool`, and the path functions `join`, `dirname`, `basename`, and
 | Group | Functions |
 |---|---|
 | <a id="fs-read_file"></a><a id="fs-write_file"></a><a id="fs-read_bytes"></a><a id="fs-write_bytes"></a><a id="fs-append_file"></a><a id="fs-remove_file"></a><a id="fs-copy_file"></a>Files | `read_file` `write_file` `append_file` `copy_file` `move_file` `remove_file` `trash` — and `read_bytes` / `write_bytes` for [binary data](#bytes--binary-data) |
+| <a id="fs-read_range"></a><a id="fs-chunks"></a><a id="fs-next_chunk"></a>Large files | `read_range(path, offset, len)`: `Ok(Bytes)` of up to `len` bytes from `offset` (fewer at the end, none past it). `chunks(path, size)`: `Ok(reader)`, and `next_chunk(reader)` answers each `size`-byte piece as `Ok(Bytes)`, then `Ok(())` at the end, so a file of any size is read holding one piece |
 | <a id="fs-list_dir"></a><a id="fs-create_dir"></a><a id="fs-create_dir_all"></a><a id="fs-remove_dir"></a><a id="fs-remove_dir_all"></a>Directories | `create_dir` `create_dir_all` `list_dir` `walk` `glob` `remove_dir` `remove_dir_all` |
 | <a id="fs-exists"></a><a id="fs-is_file"></a><a id="fs-is_dir"></a>Queries | `exists` `is_file` `is_dir` `file_size` `file_info` |
 | Durability | `sync(path)`: a file's bytes (fsync), or a folder's entries, on the disk before it returns |
@@ -1834,6 +1835,20 @@ a `Bool`, and the path functions `join`, `dirname`, `basename`, and
 `fs.read_file(path, #{"lossy": true})` reads a file that is not all
 valid UTF-8, and `#{"encoding": "latin1"}` one in another encoding
 (see [text that isn't UTF-8](#bytes--binary-data)).
+
+A file too large to hold is read a piece at a time:
+
+```olang no-run
+let reader = unwrap(fs.chunks("big.log", 1048576))
+let mut total = 0
+let mut more = true
+while more {
+    match unwrap(fs.next_chunk(reader)) {
+        () => { more = false },
+        b => { total = total + len(b) },
+    }
+}
+```
 
 <a id="fs-trash"></a>`fs.trash(path)` moves a file or a folder to the Trash as the Finder's
 Move to Trash does (macOS's NSFileManager) — never a permanent delete —

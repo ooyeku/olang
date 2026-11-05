@@ -466,8 +466,11 @@ pub fn expansion_blocked(full_name: &str) -> bool {
 
 /// Pure helpers inside gated modules: never gated — they compute, they
 /// don't touch the world.
+///
+/// `next_chunk` reads from a reader `fs.chunks` opened under a grant, the
+/// way `ods.next_chunk` and a Unix read(2) on an open fd need none.
 fn fs_pure(name: &str) -> bool {
-    matches!(name, "join" | "basename" | "dirname" | "ext")
+    matches!(name, "join" | "basename" | "dirname" | "ext" | "next_chunk")
 }
 
 fn fs_read_only(name: &str) -> bool {
@@ -475,6 +478,8 @@ fn fs_read_only(name: &str) -> bool {
         name,
         "read_file"
             | "read_bytes"
+            | "read_range"
+            | "chunks"
             | "exists"
             | "is_dir"
             | "is_file"

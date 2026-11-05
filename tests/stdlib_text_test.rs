@@ -248,3 +248,46 @@ fn read_file_reads_lossy_and_latin1() {
     assert!(err.contains("unknown option \"lossless\""), "{err}");
 }
 
+// ── OL-473: part of a file, a chunk at a time ───────────────────────
+#[test]
+fn read_range_and_chunks_read_parts_of_a_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("data.bin");
+    let data: Vec<u8> = (0..10_000u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(&p, &data).unwrap();
+    let path = p.to_str().unwrap();
+    let src = format!(
+        r#"
+fn total(r, acc, n) = match unwrap(fs.next_chunk(r)) {{
+    () => [acc, n],
+    b => total(r, acc + len(b), n + 1),
+}}
+fn main() = {{
+    let r = unwrap(fs.chunks("{path}", 4096))
+    let counted = total(r, 0, 0)
+    [bytes.to_list(unwrap(fs.read_range("{path}", 251, 3))),
+     len(unwrap(fs.read_range("{path}", 9998, 100))),
+     len(unwrap(fs.read_range("{path}", 20000, 10))),
+     counted,
+     unwrap(fs.next_chunk(r)),
+     is_err(fs.read_range("{path}.missing", 0, 1)),
+     is_err(fs.chunks("{path}.missing", 1))]
+}}
+main()
+"#
+    );
+    assert_eq!(
+        tiered_ok(&src),
+        Value::List(std::sync::Arc::new(vec![
+            ints(&[0, 1, 2]),
+            Value::Integer(2),
+            Value::Integer(0),
+            ints(&[10_000, 3]),
+            Value::Unit,
+            Value::Boolean(true),
+            Value::Boolean(true),
+        ]))
+    );
+    let err = agree_tiered(&format!(r#"fs.chunks("{path}", 0)"#)).unwrap_err();
+    assert!(err.contains("at least 1"), "{err}");
+}
