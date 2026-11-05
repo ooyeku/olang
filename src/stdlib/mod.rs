@@ -63,6 +63,7 @@ pub mod tty;
 pub mod vec;
 #[cfg(feature = "native")]
 pub mod vt;
+pub mod weak;
 
 /// The native modules' names (`str`, `math`, `ods`, `plot`, ...) and each
 /// one's members, built once per process from `get_stdlib`.
@@ -118,6 +119,7 @@ pub fn get_stdlib() -> crate::ast::ValueMap {
     stdlib.insert("caps".to_string(), caps_mod::create_caps_module());
     stdlib.insert("cell".to_string(), cell::create_cell_module());
     stdlib.insert("cancel".to_string(), cancel::create_cancel_module());
+    stdlib.insert("weak".to_string(), weak::create_weak_module());
     stdlib.insert("task".to_string(), task::create_task_module());
     stdlib.insert("math".to_string(), math::create_math_module());
     #[cfg(feature = "native")]

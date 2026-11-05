@@ -880,6 +880,12 @@ impl BuiltinFunctions {
             return crate::stdlib::peg::call(peg_function, arguments, interpreter);
         }
 
+        // Weak references
+        if let Some(f) = name.strip_prefix("weak.") {
+            return crate::stdlib::weak::call_weak_function(f, arguments)
+                .map_err(InterpreterError::runtime);
+        }
+
         // Cancellation tokens
         if let Some(f) = name.strip_prefix("cancel.") {
             return crate::stdlib::cancel::call_cancel_function(f, arguments)

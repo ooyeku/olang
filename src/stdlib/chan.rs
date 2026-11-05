@@ -412,6 +412,7 @@ pub fn create_chan_module() -> Value {
         ("ask", 2),
         ("close", 1),
         ("stat", 1),
+        ("on_drop", 2),
     ] {
         module.insert(
             name.to_string(),
@@ -441,8 +442,84 @@ pub fn call_chan_function(
         "ask" => chan_ask(args),
         "close" => chan_close(args),
         "stat" => chan_stat(args),
+        "on_drop" => chan_on_drop(args),
         _ => Err(format!("Unknown chan function: {}", name).into()),
     }
+}
+
+/// A drop guard (`chan.on_drop(c, msg)`): when the last copy of it is
+/// dropped, `msg` is sent on the channel. How a subscription learns its
+/// owner went away (a live query whose view closed) without the owner
+/// remembering to say so (OL-467).
+struct GuardObject {
+    chan: Arc<Chan>,
+    msg: Mutex<Option<Value>>,
+}
+
+impl std::fmt::Debug for GuardObject {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<drop guard>")
+    }
+}
+
+impl NativeObject for GuardObject {
+    fn module(&self) -> &'static str {
+        "chan"
+    }
+    fn type_name(&self) -> &'static str {
+        "DropGuard"
+    }
+    fn display(&self) -> String {
+        format!("<drop guard: channel #{}>", self.chan.id)
+    }
+    fn native_eq(&self, other: &dyn NativeObject) -> bool {
+        other
+            .as_any()
+            .downcast_ref::<GuardObject>()
+            .is_some_and(|o| std::ptr::eq(self, o))
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+impl Drop for GuardObject {
+    fn drop(&mut self) {
+        let Some(msg) = self.msg.get_mut().ok().and_then(|m| m.take()) else {
+            return;
+        };
+        let tx = self.chan.tx.lock().ok().and_then(|t| t.clone());
+        // Never blocks: a drop can happen anywhere, a full bounded
+        // channel or a closed one loses the message.
+        let sent = match tx {
+            Some(Tx::Unbounded(t)) | Some(Tx::Bounded(t)) => t.try_send(msg).is_ok(),
+            None => false,
+        };
+        if sent {
+            self.chan.depth.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
+/// `chan.on_drop(c, msg)`: a guard that sends `msg` on `c` when its last
+/// copy is dropped. The message is checked as a send's is.
+fn chan_on_drop(mut args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 2 {
+        return Err("chan.on_drop expects a channel and a message".into());
+    }
+    let msg = args.pop().expect("len checked");
+    if let Some(kind) = crate::stdlib::cell::confined_within(&msg) {
+        return Err(format!(
+            "chan.on_drop: a {kind} cannot be sent through a channel — it belongs to \
+             the thread that created it"
+        )
+        .into());
+    }
+    let chan = chan_of(&args[0])?;
+    Ok(Value::Native(NativeHandle::new(GuardObject {
+        chan,
+        msg: Mutex::new(Some(msg)),
+    })))
 }
 
 fn handle(chan: Arc<Chan>) -> Value {

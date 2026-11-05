@@ -6281,6 +6281,12 @@ impl BytecodeVm {
                     {
                         // the VM's own values kept in the cell as they are
                         r.map_err(BytecodeError::RuntimeError)
+                    } else if let Some(op) = function_name.strip_prefix("weak.")
+                        && let Some(r) = crate::stdlib::weak::vm_call(op, &arg_values)
+                    {
+                        // a weak reference to the VM's own value, not to a
+                        // converted copy that dies at once
+                        r.map_err(BytecodeError::RuntimeError)
                     } else if self.builtin_names.contains(function_name)
                         || function_name.contains('.')
                         || (self.known_function_values.contains_key(function_name)

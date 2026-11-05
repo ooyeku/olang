@@ -47,6 +47,7 @@ the sentence that documents the function in its module's section.
 - [`cell` — mutable locations](#cell--mutable-locations)
 - [`chan` — channels](#chan--channels)
 - [`cancel` — cancellation tokens](#cancel--cancellation-tokens)
+- [`weak` — weak references](#weak--weak-references)
 - [`random` — randomness](#random--randomness)
 - [`crypto` — hashing and encryption](#crypto--hashing-and-encryption)
 - [`bytes` — binary data](#bytes--binary-data)
@@ -1567,6 +1568,7 @@ boundary like anything else.
 | <a id="chan-ask"></a>`chan.ask(service, request)` | the reply pattern in one call: sends `#{ "req": request, "reply": r }` on a fresh reply channel and answers `Ok(reply)` — spinning briefly before it parks, so a service that answers in microseconds costs no thread wake-up |
 | <a id="chan-stat"></a>`chan.stat(c)` | a snapshot map: `id`, `queued`, `closed`, `recv_waiting`, `send_waiting` |
 | <a id="chan-close"></a>`chan.close(c)` | closes the sending side (idempotent) |
+| <a id="chan-on_drop"></a>`chan.on_drop(c, msg)` | a guard: when the last copy of it is dropped, `msg` is sent on `c`. Keep the guard in whatever owns a subscription (its model, its record), and the service hears when the owner goes. A guard is dropped once nothing uses it any more, which can be before the end of the block that made it. The send never blocks: on a full bounded channel, or a closed one, the message is lost |
 
 Closing is cooperative and drains: after `chan.close(c)` new sends
 fail, but messages already queued are still received before `recv`
@@ -1666,6 +1668,32 @@ let r = runtime.call_cancellable((x) => x * 2, [21], cancel.token())
 println(`${r.ok} ${r.value} ${r.cancelled}`)   // true 42 false
 let stopped = runtime.call_cancellable((x) => x * 2, [21], t)
 println(`${stopped.ok} ${stopped.error}`)      // false cancelled
+```
+
+## `weak` — weak references
+
+A weak reference refers to a value without keeping it alive. Once
+nothing else holds the value, it is freed and the reference answers
+`()`. A memo table keyed by them forgets the entries nobody uses any
+more.
+
+| Function | Returns |
+|---|---|
+| <a id="weak-new"></a>`weak.new(v)` | a weak reference to `v` |
+| <a id="weak-get"></a>`weak.get(w)` | `v` while something else still holds it, `()` once it has been freed |
+| <a id="weak-alive"></a>`weak.alive(w)` | whether `v` is still held |
+
+Only a value with memory of its own can be freed: a list, a map, a
+struct, a tuple, a string, a closure, an enum with a payload, a native
+value such as a channel. An Int, a Float, a Bool or `()` is kept, and
+`weak.get` always answers it.
+
+```olang
+fn make() = map(range(0, 100), (i) => i * i)
+let kept = make()
+let w = weak.new(kept)
+let gone = weak.new(make())
+println(`${len(weak.get(w))} ${weak.get(gone)}`)   // 100 ()
 ```
 
 ## `random` — randomness

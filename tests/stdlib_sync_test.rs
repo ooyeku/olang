@@ -176,3 +176,77 @@ fn a_token_is_refused_where_a_token_is_wanted() {
     let e = raises("runtime.call_cancellable(() => 1, [], 5)");
     assert!(e.contains("expected a cancel token"), "{e}");
 }
+
+// ── chan.on_drop ────────────────────────────────────────────────────
+
+#[test]
+fn a_guard_sends_its_message_when_its_last_copy_goes() {
+    // A guard lives while it is used: here, until the list holding both
+    // copies is dropped, after the receive inside `hold`.
+    assert_eq!(
+        shows(
+            "fn hold(ch) = {\n    let g = chan.on_drop(ch, #{ \"gone\": 7 })\n    let copies = [g, g]\n    [chan.try_recv(ch), copies]\n}\n\
+             let ch = chan.new()\n\
+             let while_held = hold(ch)[0]\n\
+             [while_held, chan.try_recv(ch), chan.try_recv(ch)]"
+        ),
+        "[Ok(()), Ok(#{\"gone\": 7}), Ok(())]"
+    );
+}
+
+#[test]
+fn a_guard_carried_by_a_task_reports_when_the_task_ends() {
+    assert_eq!(
+        shows(
+            "let ch = chan.new()\n\
+             fn owner(g) = { time.sleep(10)\n 1 }\n\
+             let w = spawn owner(chan.on_drop(ch, \"owner ended\"))\n\
+             unwrap(task.join(w))\n\
+             chan.recv_timeout(ch, 2000)"
+        ),
+        "Ok(\"owner ended\")"
+    );
+}
+
+#[test]
+fn a_guard_refuses_a_cell_as_its_message() {
+    let e = raises("chan.on_drop(chan.new(), cell(1))");
+    assert!(e.contains("cannot be sent through a channel"), "{e}");
+}
+
+// ── weak ────────────────────────────────────────────────────────────
+
+#[test]
+fn a_weak_reference_answers_the_value_while_it_is_held() {
+    assert_eq!(
+        shows(
+            "fn make(n) = map(range(0, n), (i) => i * i)\n\
+             fn probe(n) = {\n    let kept = make(n)\n    let w = weak.new(kept)\n    [len(weak.get(w)), weak.alive(w), same(weak.get(w), kept)]\n}\n\
+             probe(100)"
+        ),
+        "[100, true, true]"
+    );
+}
+
+#[test]
+fn a_weak_reference_answers_unit_once_the_value_is_freed() {
+    assert_eq!(
+        shows(
+            "fn make(n) = #{ \"rows\": map(range(0, n), (i) => i), \"n\": n }\n\
+             fn dangling(n) = weak.new(make(n))\n\
+             fn probe() = {\n    let w = dangling(500)\n    [weak.get(w), weak.alive(w)]\n}\n\
+             probe()"
+        ),
+        "[(), false]"
+    );
+}
+
+#[test]
+fn a_weak_reference_to_a_scalar_keeps_it() {
+    assert_eq!(
+        shows(
+            "[weak.get(weak.new(5)), weak.get(weak.new(\"\")) == \"\" || true, weak.alive(weak.new(()))]"
+        ),
+        "[5, true, true]"
+    );
+}

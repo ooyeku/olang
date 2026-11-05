@@ -3075,6 +3075,41 @@ task.watch(service, inbox)   // a dead service is an Err at the next recv, not a
             &[r##"cell.update(counter, (n) => n + 1)  // returns the new value"##],
         );
 
+        self.doc_ex(
+            "chan.on_drop",
+            "chan.on_drop(c, msg)",
+            "DropGuard",
+            "chan",
+            "a guard that sends msg on c when its last copy is dropped: kept with whatever owns a subscription, it tells the service the owner went away. The send never blocks; on a full bounded channel or a closed one the message is lost",
+            &[r##"let guard = chan.on_drop(service, #{ "unsubscribe": id })"##],
+        );
+
+        // weak — weak references
+        self.doc_ex(
+            "weak.new",
+            "weak.new(v)",
+            "Weak",
+            "weak",
+            "a reference to v that does not keep it alive. An Int, a Float, a Bool or () has nothing to free and is kept",
+            &[r##"let w = weak.new(rows)"##],
+        );
+        self.doc_ex(
+            "weak.get",
+            "weak.get(w)",
+            "Any",
+            "weak",
+            "the value while something else still holds it, () once it has been freed",
+            &[r##"weak.get(w) ?? recompute()"##],
+        );
+        self.doc_ex(
+            "weak.alive",
+            "weak.alive(w)",
+            "Bool",
+            "weak",
+            "whether the value is still held somewhere",
+            &[r##"weak.alive(w)"##],
+        );
+
         // cancel — cancellation tokens
         self.doc_ex(
             "cancel.token",
