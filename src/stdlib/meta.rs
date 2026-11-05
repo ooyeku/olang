@@ -35,6 +35,7 @@ use std::sync::Arc;
 pub fn create_meta_module() -> Value {
     let mut module = crate::ast::ValueMap::default();
     module.insert("parse".to_string(), builtin("parse", 1));
+    module.insert("parse_items".to_string(), builtin("parse_items", 1));
     module.insert("eval".to_string(), builtin("eval", 1));
     module.insert("lit".to_string(), builtin("lit", 1));
     module.insert("expand".to_string(), builtin("expand", 1));
@@ -64,6 +65,7 @@ pub fn call_meta_function(
 ) -> Result<Value, Box<dyn std::error::Error>> {
     match name {
         "parse" => meta_parse(args),
+        "parse_items" => meta_parse_items(args),
         "eval" => meta_eval(args),
         "lit" => meta_lit(args),
         "expand" => meta_expand(args),
@@ -235,26 +237,12 @@ fn meta_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             .into());
         }
     };
-    match args.get(1) {
-        None | Some(Value::Unit) => {}
-        Some(Value::Map(opts)) => {
-            if let Some(k) = opts.keys().find(|k| k.as_str() != "recover") {
-                return Err(
-                    format!("meta.parse: unknown option \"{k}\" (it takes recover)").into(),
-                );
-            }
-            match opts.get("recover") {
-                Some(Value::Boolean(true)) => return Ok(parse_recovering(&source)),
-                None | Some(Value::Boolean(false)) | Some(Value::Unit) => {}
-                Some(other) => {
-                    return Err(format!(
-                        "meta.parse: option recover must be true or false, got {}",
-                        other.type_name()
-                    )
-                    .into());
-                }
-            }
-        }
+    if args.len() > 2 {
+        return Err(format!("meta.parse expects 1 or 2 arguments, got {}", args.len()).into());
+    }
+    let opts = match args.get(1) {
+        None | Some(Value::Unit) => None,
+        Some(Value::Map(opts)) => Some(opts),
         Some(other) => {
             return Err(format!(
                 "meta.parse: the options must be a map, got {}",
@@ -262,17 +250,55 @@ fn meta_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             )
             .into());
         }
+    };
+    let Some(opts) = opts else {
+        return Ok(match parse_spanned(&source) {
+            Ok(nodes) => Value::Ok(Box::new(list(nodes))),
+            Err(e) => Value::Err(Box::new(s(&e))),
+        });
+    };
+    if let Some(k) = opts
+        .keys()
+        .find(|k| !["recover", "byte_offset", "line_offset"].contains(&k.as_str()))
+    {
+        return Err(format!(
+            "meta.parse: unknown option \"{k}\" (it takes recover, byte_offset and line_offset)"
+        )
+        .into());
     }
-    if args.len() > 2 {
-        return Err(format!("meta.parse expects 1 or 2 arguments, got {}", args.len()).into());
+    // An item parsed on its own (`meta.parse_items` found it): its spans
+    // and lines in the whole file's coordinates.
+    let offset = |key: &str| -> Result<usize, String> {
+        match opts.get(key) {
+            None | Some(Value::Unit) => Ok(0),
+            Some(Value::Integer(n)) if *n >= 0 => Ok(*n as usize),
+            Some(other) => Err(format!(
+                "meta.parse: option {key} must be an Int of at least 0, got {other}"
+            )),
+        }
+    };
+    let (shift, line_shift) = (offset("byte_offset")?, offset("line_offset")?);
+    let recover = match opts.get("recover") {
+        None | Some(Value::Unit) => false,
+        Some(Value::Boolean(b)) => *b,
+        Some(other) => {
+            return Err(format!(
+                "meta.parse: option recover must be true or false, got {}",
+                other.type_name()
+            )
+            .into());
+        }
+    };
+    if recover {
+        return Ok(parse_recovering(&source, shift, line_shift));
     }
-    Ok(match parse_spanned(&source) {
+    Ok(match parse_nodes(&source, shift, line_shift) {
         Ok(nodes) => Value::Ok(Box::new(list(nodes))),
-        Err(e) => Value::Err(Box::new(s(&e))),
+        Err(e) => Value::Err(Box::new(s(&e.to_string()))),
     })
 }
 
-// ── Recovery: a file mid-edit keeps its other items (OL-435) ────────
+// ── Items one at a time, and recovery (OL-435, OL-436) ──────────────
 
 /// The declaration a top-level item opens with, and its name: read from
 /// its first words, without parsing it.
@@ -386,6 +412,29 @@ fn line_of(line_starts: &[usize], offset: usize) -> usize {
     line_starts.partition_point(|s| *s <= offset)
 }
 
+/// `meta.parse_items(source)`: `[#{kind, name, start, end, line}]`, one per
+/// top-level item (see `item_ranges`): what an index reparses one of.
+fn meta_parse_items(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let source = match args.first() {
+        Some(Value::String(s)) if args.len() == 1 => s.clone(),
+        _ => return Err("meta.parse_items expects the source string".into()),
+    };
+    let starts = line_starts_of(&source);
+    let items = item_ranges(&source)
+        .into_iter()
+        .map(|(a, b, kind, name)| {
+            map(vec![
+                ("kind", s(kind)),
+                ("name", name.map(|n| s(&n)).unwrap_or(Value::Unit)),
+                ("start", Value::Integer(a as i64)),
+                ("end", Value::Integer(b as i64)),
+                ("line", Value::Integer(line_of(&starts, a) as i64)),
+            ])
+        })
+        .collect();
+    Ok(list(items))
+}
+
 /// One parse error as a node: its message and where it is, in the whole
 /// file's coordinates.
 fn error_node(e: &crate::parser::ParseError, text: &str, shift: usize, line_shift: usize) -> Value {
@@ -435,8 +484,8 @@ fn parse_nodes(
 /// file when it parses; otherwise each top-level item parsed on its own,
 /// so a file mid-edit keeps every item but the broken one, and each
 /// error says where it is.
-fn parse_recovering(source: &str) -> Value {
-    if let Ok(nodes) = parse_nodes(source, 0, 0) {
+fn parse_recovering(source: &str, shift: usize, line_shift: usize) -> Value {
+    if let Ok(nodes) = parse_nodes(source, shift, line_shift) {
         return map(vec![("items", list(nodes)), ("errors", list(Vec::new()))]);
     }
     let starts = line_starts_of(source);
@@ -444,10 +493,10 @@ fn parse_recovering(source: &str) -> Value {
     let mut errors = Vec::new();
     for (a, b, _, _) in item_ranges(source) {
         let text = &source[a..b];
-        let line_shift = line_of(&starts, a) - 1;
-        match parse_nodes(text, a, line_shift) {
+        let item_lines = line_shift + line_of(&starts, a) - 1;
+        match parse_nodes(text, shift + a, item_lines) {
             Ok(nodes) => items.extend(nodes),
-            Err(e) => errors.push(error_node(&e, text, a, line_shift)),
+            Err(e) => errors.push(error_node(&e, text, shift + a, item_lines)),
         }
     }
     map(vec![("items", list(items)), ("errors", list(errors))])

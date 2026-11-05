@@ -1735,10 +1735,22 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             see_also: vec!["meta.parse".to_string(), "meta.expand".to_string()],
         });
         self.add_function(FunctionDoc {
+            name: "meta.parse_items".to_string(),
+            description: "Each top-level item of a source, found by a scan rather than a parse: #{kind, name, start, end, line}, the byte ranges tiling the file (a doc comment goes with the item under it). An index reparses only the item an edit is in, with meta.parse(text, #{\"byte_offset\": item.start, \"line_offset\": item.line - 1}). A file with an unclosed bracket still shows the items after it.".to_string(),
+            syntax: "meta.parse_items(source)".to_string(),
+            parameters: vec!["source: String - olang source text".to_string()],
+            return_type: "List<Map>".to_string(),
+            examples: vec![
+                "meta.parse_items(\"fn f() = 1\\nlet x = 2\\n\")  // [#{kind: \"fn\", name: \"f\", start: 0, end: 11, line: 1}, ...]".to_string(),
+            ],
+            category: "Meta".to_string(),
+            see_also: vec!["meta.parse".to_string()],
+        });
+        self.add_function(FunctionDoc {
             name: "meta.parse".to_string(),
             description: "Parse olang source into its syntax tree as ordinary olang values: a list of kind-tagged node maps. The AST shapes are a stable, documented format, so linters, codemods, and import extractors are written in olang rather than as compiler changes. Read nodes with map_get; every node carries a \"kind\" key, and every statement and expression node its byte range as \"start\" and \"end\" (a statement also its \"line\" and \"column\", and a declaration its name's \"name_span\").".to_string(),
             syntax: "meta.parse(source, opts)".to_string(),
-            parameters: vec!["source: String - olang source text to parse".to_string(), "opts: Map - optional: #{\"recover\": true} answers #{items, errors}, each top-level item parsed on its own when the whole does not parse".to_string()],
+            parameters: vec!["source: String - olang source text to parse".to_string(), "opts: Map - optional: #{\"recover\": true} answers #{items, errors}, each top-level item parsed on its own when the whole does not parse; #{\"byte_offset\", \"line_offset\"} puts an item parsed on its own at its place in its file".to_string()],
             return_type: "Result<List<Map>, Error>".to_string(),
             examples: vec![
                 "let prog = unwrap(meta.parse(\"use fmt\\nfn f() = 1\"))".to_string(),
