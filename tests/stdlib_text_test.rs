@@ -95,13 +95,14 @@ fn s(text: &str) -> Value {
     Value::String(std::sync::Arc::new(text.to_string()))
 }
 
-
 fn ok(source: &str) -> Value {
     agree(source).unwrap_or_else(|e| panic!("{e}\n{source}"))
 }
 
 fn ints(xs: &[i64]) -> Value {
-    Value::List(std::sync::Arc::new(xs.iter().map(|x| Value::Integer(*x)).collect()))
+    Value::List(std::sync::Arc::new(
+        xs.iter().map(|x| Value::Integer(*x)).collect(),
+    ))
 }
 
 fn strs(xs: &[&str]) -> Value {
@@ -129,12 +130,17 @@ main()
 
 #[test]
 fn a_byte_offset_inside_a_character_raises() {
-    let err = agree(r#"
+    let err = agree(
+        r#"
 fn main() = str.slice_bytes("naïve", 0, 3)
 main()
-"#)
+"#,
+    )
     .unwrap_err();
-    assert!(err.contains("byte 3 is inside the character \"ï\""), "{err}");
+    assert!(
+        err.contains("byte 3 is inside the character \"ï\""),
+        "{err}"
+    );
     let err = agree("fn main() = str.byte_to_char(\"é\", 1)\nmain()\n").unwrap_err();
     assert!(err.contains("inside the character"), "{err}");
     let err = agree("fn main() = str.slice_bytes(\"abc\", -1, 2)\nmain()\n").unwrap_err();
@@ -160,7 +166,8 @@ main()
     );
     let err = agree("fn main() = str.chunks(\"abc\", 0)\nmain()\n").unwrap_err();
     assert!(err.contains("at least 1"), "{err}");
-    let err = agree("fn main() = str.chunks(\"abc\", 2, #{\"perfer\": \"x\"})\nmain()\n").unwrap_err();
+    let err =
+        agree("fn main() = str.chunks(\"abc\", 2, #{\"perfer\": \"x\"})\nmain()\n").unwrap_err();
     assert!(err.contains("unknown option"), "{err}");
 }
 
@@ -244,7 +251,8 @@ fn read_file_reads_lossy_and_latin1() {
             s("ok\u{FF}\n\u{E9}"),
         ]))
     );
-    let err = agree_tiered(&format!(r#"fs.read_file("{path}", #{{"lossless": true}})"#)).unwrap_err();
+    let err =
+        agree_tiered(&format!(r#"fs.read_file("{path}", #{{"lossless": true}})"#)).unwrap_err();
     assert!(err.contains("unknown option \"lossless\""), "{err}");
 }
 
@@ -321,7 +329,11 @@ main()
 "#;
     assert_eq!(
         ok(src),
-        Value::List(std::sync::Arc::new(vec![ints(&[0, 3, 7, 8]), ints(&[0]), ints(&[0, 2])]))
+        Value::List(std::sync::Arc::new(vec![
+            ints(&[0, 3, 7, 8]),
+            ints(&[0]),
+            ints(&[0, 2])
+        ]))
     );
     let err = agree("fn main() = str.lines(\"a\", #{\"keep\": true})\nmain()\n").unwrap_err();
     assert!(err.contains("unknown option \"keep\""), "{err}");
@@ -392,7 +404,11 @@ main()
         m.insert("level".into(), Value::Integer(l));
         Value::Map(std::sync::Arc::new(m))
     };
-    let logical = Value::List(std::sync::Arc::new(vec![run(0, 4, 0), run(4, 12, 1), run(12, 16, 0)]));
+    let logical = Value::List(std::sync::Arc::new(vec![
+        run(0, 4, 0),
+        run(4, 12, 1),
+        run(12, 16, 0),
+    ]));
     let visual = logical.clone();
     assert_eq!(
         agree_tiered(src).unwrap(),
@@ -421,4 +437,44 @@ main()
     );
     let err = agree("fn main() = str.normalize(\"a\", \"nfx\")\nmain()\n").unwrap_err();
     assert!(err.contains("unknown form"), "{err}");
+}
+
+// ── OL-458: md.parse, a tree with source ranges ─────────────────────
+#[test]
+fn md_parse_gives_every_node_its_range() {
+    let src = r##"
+let doc = "# Héllo\n\nSome *text* and `code`.\n\n- [x] done\n- todo\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"
+let t = md.parse(doc)
+let h = t.children[0]
+let p = t.children[1]
+let em = p.children[1]
+let evs = md.parse(doc, #{"events": true})
+[t.kind, t.end == str.byte_len(doc), h.kind, h.level, h.start, h.end, h.char_end,
+ str.slice_bytes(doc, em.start, em.end), em.children[0].text,
+ t.children[2].children[0].children[0].kind, t.children[3].kind,
+ first(evs).event, first(evs).kind, last(evs).event,
+ md.parse("~~x~~", #{"gfm": false}).children[0].children[0].kind]
+"##;
+    let v = tiered_ok(src);
+    let i = |n: i64| Value::Integer(n);
+    assert_eq!(
+        v,
+        Value::List(std::sync::Arc::new(vec![
+            s("document"),
+            Value::Boolean(true),
+            s("heading"),
+            i(1),
+            i(0),
+            i(9),
+            i(8),
+            s("*text*"),
+            s("text"),
+            s("task"),
+            s("table"),
+            s("start"),
+            s("heading"),
+            s("end"),
+            s("text"),
+        ]))
+    );
 }

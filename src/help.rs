@@ -8147,6 +8147,14 @@ route("GET", "/olang." + map_get(rt, "hash") + ".wasm", (req, p) => { status: 20
             &[r##"unwrap(md.front("---\ntitle: Hi\n---\nBody")).data.title  // "Hi""##],
         );
         self.doc_ex(
+            "md.parse",
+            "md.parse(src, opts)",
+            "Map",
+            "md",
+            "The document as a tree with source ranges: every node #{ \"kind\", \"start\", \"end\", \"char_start\", \"char_end\" } (bytes and characters), containers with \"children\", leaves with \"text\". #{ \"gfm\": false } reads CommonMark alone; #{ \"events\": true } answers the flat event stream (start, end and leaf events) instead of the tree.",
+            &[r##"md.parse("# Hi\n\nSome *text*.").children[0].kind  // "heading""##],
+        );
+        self.doc_ex(
             "md.text",
             "md.text(src)",
             "String",

@@ -1179,6 +1179,7 @@ pub fn create_md_module() -> Value {
         ("slug", 1),
         ("front", 1),
         ("text", 1),
+        ("parse", 1),
     ] {
         module.insert(
             name.to_string(),
@@ -1295,7 +1296,7 @@ pub fn rendered_value(r: Rendered) -> Value {
 /// The arity check every function shares.
 pub fn check_arity(name: &str, args: &[Value]) -> Result<(), String> {
     let ok = match name {
-        "render" => (1..=2).contains(&args.len()),
+        "render" | "parse" => (1..=2).contains(&args.len()),
         _ => args.len() == 1,
     };
     if ok {
@@ -1303,7 +1304,11 @@ pub fn check_arity(name: &str, args: &[Value]) -> Result<(), String> {
     } else {
         Err(format!(
             "md.{name} expects {} argument(s), got {}",
-            if name == "render" { "1 or 2" } else { "1" },
+            if matches!(name, "render" | "parse") {
+                "1 or 2"
+            } else {
+                "1"
+            },
             args.len()
         ))
     }
@@ -1313,7 +1318,15 @@ pub fn check_arity(name: &str, args: &[Value]) -> Result<(), String> {
 /// interpreter's: src/builtin.rs).
 pub fn call_md_function(name: &str, args: Vec<Value>) -> Result<Value, String> {
     check_arity(name, &args)?;
-    let src = text_arg(name, &args, if name == "render" { "1 or 2" } else { "1" })?;
+    let src = text_arg(
+        name,
+        &args,
+        if matches!(name, "render" | "parse") {
+            "1 or 2"
+        } else {
+            "1"
+        },
+    )?;
     match name {
         "render" => {
             let (opts, hooks) = read_options(args.get(1))?;
@@ -1326,6 +1339,10 @@ pub fn call_md_function(name: &str, args: Vec<Value>) -> Result<Value, String> {
             headings(src).iter().map(heading_value).collect(),
         ))),
         "slug" => Ok(Value::String(Arc::new(slug(src)))),
+        "parse" => {
+            let (gfm, events) = parse_options(args.get(1))?;
+            Ok(parse_tree(src, gfm, events))
+        }
         "text" => Ok(Value::String(Arc::new(text(src)))),
         "front" => Ok(match front(src) {
             Ok((data, body, format)) => {
@@ -1339,6 +1356,299 @@ pub fn call_md_function(name: &str, args: Vec<Value>) -> Result<Value, String> {
         }),
         other => Err(format!("md has no function `{other}`")),
     }
+}
+
+// ── md.parse: the document as a tree with source ranges (OL-458) ────
+
+/// Character offsets of byte offsets in one text, in O(1) after one pass:
+/// the characters before every 64th byte, then a count of at most 64.
+struct CharIndex<'a> {
+    text: &'a [u8],
+    blocks: Vec<usize>,
+}
+
+impl<'a> CharIndex<'a> {
+    fn new(text: &'a str) -> Self {
+        let b = text.as_bytes();
+        let mut blocks = Vec::with_capacity(b.len() / 64 + 1);
+        let mut n = 0;
+        for chunk in b.chunks(64) {
+            blocks.push(n);
+            n += chunk.iter().filter(|c| (**c as i8) >= -0x40).count();
+        }
+        blocks.push(n);
+        CharIndex { text: b, blocks }
+    }
+    fn at(&self, byte: usize) -> usize {
+        let byte = byte.min(self.text.len());
+        let block = byte / 64;
+        self.blocks[block]
+            + self.text[block * 64..byte]
+                .iter()
+                .filter(|c| (**c as i8) >= -0x40)
+                .count()
+    }
+}
+
+/// A node under construction: its fields and its children so far.
+struct Open {
+    fields: Vec<(&'static str, Value)>,
+    children: Vec<Value>,
+}
+
+fn md_node(fields: Vec<(&'static str, Value)>, children: Option<Vec<Value>>) -> Value {
+    let mut m = crate::ast::ValueMap::default();
+    for (k, v) in fields {
+        m.insert(k.to_string(), v);
+    }
+    if let Some(c) = children {
+        m.insert("children".to_string(), Value::List(Arc::new(c)));
+    }
+    Value::Map(Arc::new(m))
+}
+
+fn int(n: usize) -> Value {
+    Value::Integer(n as i64)
+}
+
+/// What a start tag says: its kind and attributes.
+fn tag_fields(tag: pulldown_cmark::Tag) -> Vec<(&'static str, Value)> {
+    use pulldown_cmark::{CodeBlockKind, Tag};
+    match tag {
+        Tag::Paragraph => vec![("kind", str_value("paragraph"))],
+        Tag::Heading { level, id, .. } => {
+            let mut f = vec![
+                ("kind", str_value("heading")),
+                ("level", int(level as usize)),
+            ];
+            if let Some(id) = id {
+                f.push(("id", str_value(&id)));
+            }
+            f
+        }
+        Tag::BlockQuote(kind) => {
+            let mut f = vec![("kind", str_value("blockquote"))];
+            if let Some(k) = kind {
+                f.push(("alert", str_value(&format!("{k:?}").to_lowercase())));
+            }
+            f
+        }
+        Tag::CodeBlock(kind) => {
+            let (fenced, info) = match kind {
+                CodeBlockKind::Fenced(info) => (true, info.to_string()),
+                CodeBlockKind::Indented => (false, String::new()),
+            };
+            vec![
+                ("kind", str_value("code_block")),
+                ("fenced", Value::Boolean(fenced)),
+                ("info", str_value(&info)),
+                (
+                    "lang",
+                    str_value(info.split_whitespace().next().unwrap_or("")),
+                ),
+            ]
+        }
+        Tag::HtmlBlock => vec![("kind", str_value("html_block"))],
+        Tag::List(start) => match start {
+            Some(n) => vec![
+                ("kind", str_value("list")),
+                ("ordered", Value::Boolean(true)),
+                ("first", int(n as usize)),
+            ],
+            None => vec![
+                ("kind", str_value("list")),
+                ("ordered", Value::Boolean(false)),
+            ],
+        },
+        Tag::Item => vec![("kind", str_value("item"))],
+        Tag::FootnoteDefinition(label) => vec![
+            ("kind", str_value("footnote_def")),
+            ("label", str_value(&label)),
+        ],
+        Tag::Table(aligns) => vec![
+            ("kind", str_value("table")),
+            (
+                "align",
+                Value::List(Arc::new(
+                    aligns
+                        .iter()
+                        .map(|a| {
+                            str_value(match a {
+                                pulldown_cmark::Alignment::Left => "left",
+                                pulldown_cmark::Alignment::Center => "center",
+                                pulldown_cmark::Alignment::Right => "right",
+                                pulldown_cmark::Alignment::None => "",
+                            })
+                        })
+                        .collect(),
+                )),
+            ),
+        ],
+        Tag::TableHead => vec![("kind", str_value("table_head"))],
+        Tag::TableRow => vec![("kind", str_value("table_row"))],
+        Tag::TableCell => vec![("kind", str_value("table_cell"))],
+        Tag::Emphasis => vec![("kind", str_value("emphasis"))],
+        Tag::Strong => vec![("kind", str_value("strong"))],
+        Tag::Strikethrough => vec![("kind", str_value("strikethrough"))],
+        Tag::Link {
+            dest_url, title, ..
+        } => vec![
+            ("kind", str_value("link")),
+            ("url", str_value(&dest_url)),
+            ("title", str_value(&title)),
+        ],
+        Tag::Image {
+            dest_url, title, ..
+        } => vec![
+            ("kind", str_value("image")),
+            ("url", str_value(&dest_url)),
+            ("title", str_value(&title)),
+        ],
+        Tag::MetadataBlock(_) => vec![("kind", str_value("front_matter"))],
+        other => vec![(
+            "kind",
+            str_value(&slug(&format!("{other:?}")).replace('-', "_")),
+        )],
+    }
+}
+
+/// `md.parse(src, #{"gfm"})`: the document as a tree. Every node is
+/// `#{kind, start, end, char_start, char_end, ...}` with its source range
+/// in bytes and in characters; a container has `children`, a leaf its
+/// `text` (`text`, `code`, `html`, `math`). With `gfm: false`, CommonMark
+/// alone (no tables, strikethrough, task lists or footnotes). With
+/// `events: true`, the stream instead: a flat list in document order,
+/// a container as a `start` and an `end` event (`event` says which) and
+/// a leaf as one `leaf` event, each with its node's fields and range.
+pub fn parse_tree(src: &str, gfm: bool, events: bool) -> Value {
+    use pulldown_cmark::{Event, Parser};
+    let opts = if gfm {
+        cm_options()
+    } else {
+        CmOptions::empty()
+    };
+    let chars = CharIndex::new(src);
+    let range = |r: &std::ops::Range<usize>| {
+        vec![
+            ("start", int(r.start)),
+            ("end", int(r.end)),
+            ("char_start", int(chars.at(r.start))),
+            ("char_end", int(chars.at(r.end))),
+        ]
+    };
+    let mut stack: Vec<Open> = vec![Open {
+        fields: {
+            let mut f = vec![("kind", str_value("document"))];
+            f.extend(range(&(0..src.len())));
+            f
+        },
+        children: Vec::new(),
+    }];
+    let leaf = |kind: &str, text: Option<&str>, r: &std::ops::Range<usize>| {
+        let mut f = vec![("kind", str_value(kind))];
+        if let Some(t) = text {
+            f.push(("text", str_value(t)));
+        }
+        f.extend(range(r));
+        md_node(f, None)
+    };
+    let mut flat: Vec<Value> = Vec::new();
+    for (event, r) in Parser::new_ext(src, opts).into_offset_iter() {
+        let node = match event {
+            Event::Start(tag) => {
+                let mut fields = tag_fields(tag);
+                fields.extend(range(&r));
+                if events {
+                    let mut f = vec![("event", str_value("start"))];
+                    f.extend(fields.iter().cloned());
+                    flat.push(md_node(f, None));
+                }
+                stack.push(Open {
+                    fields,
+                    children: Vec::new(),
+                });
+                continue;
+            }
+            Event::End(_) => {
+                let Some(open) = stack.pop() else { continue };
+                if events {
+                    let mut f = vec![("event", str_value("end"))];
+                    f.extend(open.fields.iter().cloned());
+                    flat.push(md_node(f, None));
+                    continue;
+                }
+                md_node(open.fields, Some(open.children))
+            }
+            Event::Text(t) => leaf("text", Some(&t), &r),
+            Event::Code(t) => leaf("code", Some(&t), &r),
+            Event::Html(t) => leaf("html", Some(&t), &r),
+            Event::InlineHtml(t) => leaf("inline_html", Some(&t), &r),
+            Event::InlineMath(t) => leaf("math", Some(&t), &r),
+            Event::DisplayMath(t) => leaf("display_math", Some(&t), &r),
+            Event::FootnoteReference(label) => leaf("footnote_ref", Some(&label), &r),
+            Event::SoftBreak => leaf("soft_break", None, &r),
+            Event::HardBreak => leaf("hard_break", None, &r),
+            Event::Rule => leaf("rule", None, &r),
+            Event::TaskListMarker(done) => {
+                let mut f = vec![
+                    ("kind", str_value("task")),
+                    ("checked", Value::Boolean(done)),
+                ];
+                f.extend(range(&r));
+                md_node(f, None)
+            }
+        };
+        if events {
+            // a leaf: its node with `event: "leaf"`
+            if let Value::Map(m) = &node {
+                let mut m = m.as_ref().clone();
+                m.shift_insert(0, "event".to_string(), str_value("leaf"));
+                flat.push(Value::Map(Arc::new(m)));
+            }
+            continue;
+        }
+        if let Some(top) = stack.last_mut() {
+            top.children.push(node);
+        }
+    }
+    if events {
+        return Value::List(Arc::new(flat));
+    }
+    // the document (and anything a malformed stream left open)
+    let mut done: Option<Value> = None;
+    while let Some(mut open) = stack.pop() {
+        if let Some(child) = done.take() {
+            open.children.push(child);
+        }
+        done = Some(md_node(open.fields, Some(open.children)));
+    }
+    done.unwrap_or(Value::Unit)
+}
+
+/// `md.parse`'s options: `gfm` (default true) and `events` (default false).
+fn parse_options(v: Option<&Value>) -> Result<(bool, bool), String> {
+    let m = match v {
+        None | Some(Value::Unit) => return Ok((true, false)),
+        Some(Value::Map(m)) => m,
+        Some(other) => {
+            return Err(format!(
+                "md.parse: the options must be a map, got {}",
+                other.type_name()
+            ));
+        }
+    };
+    let flag = |key: &str, default: bool| match m.get(key) {
+        None | Some(Value::Unit) => Ok(default),
+        Some(Value::Boolean(b)) => Ok(*b),
+        Some(other) => Err(format!(
+            "md.parse: option {key} must be true or false, got {}",
+            other.type_name()
+        )),
+    };
+    if let Some(k) = m.keys().find(|k| !["gfm", "events"].contains(&k.as_str())) {
+        return Err(format!("md.parse: unknown option `{k}` (gfm, events)"));
+    }
+    Ok((flag("gfm", true)?, flag("events", false)?))
 }
 
 #[cfg(test)]
