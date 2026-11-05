@@ -3283,6 +3283,7 @@ struct RowReader {
     owner: std::thread::ThreadId,
     owner_label: String,
     state: std::sync::Mutex<ReaderState>,
+    _live: crate::native::ConfinedLive,
 }
 
 struct ReaderState {
@@ -3417,6 +3418,7 @@ fn into_reader(path: &str, source: Source) -> Value {
             delivered: 0,
             done: false,
         }),
+        _live: crate::native::ConfinedLive::new(),
     };
     Value::Ok(Box::new(Value::Native(NativeHandle::new(reader))))
 }

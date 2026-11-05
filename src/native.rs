@@ -101,6 +101,43 @@ pub trait NativeObject: fmt::Debug + Send + Sync {
 #[derive(Clone)]
 pub struct NativeHandle(pub Arc<Box<dyn NativeObject>>);
 
+/// How many thread-confined natives (cells, row readers: those whose
+/// `confined_to` is `Some`) are alive in the process. While it is 0 no
+/// value can hold one, so `chan.send` skips the walk that looks for one
+/// and a send costs the same for any message size (OL-429).
+static CONFINED_LIVE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Held by every confined native for as long as it lives: counted in
+/// [`CONFINED_LIVE`] while it is.
+pub struct ConfinedLive(());
+
+impl ConfinedLive {
+    pub fn new() -> ConfinedLive {
+        CONFINED_LIVE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        ConfinedLive(())
+    }
+}
+
+impl Default for ConfinedLive {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for ConfinedLive {
+    fn drop(&mut self) {
+        CONFINED_LIVE.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Whether any thread-confined native is alive in the process. A value
+/// made on another thread is visible here only after a send or a join,
+/// which synchronises, so a confined value inside a value in hand is
+/// always counted.
+pub fn any_confined_live() -> bool {
+    CONFINED_LIVE.load(std::sync::atomic::Ordering::Relaxed) != 0
+}
+
 impl NativeHandle {
     pub fn new(obj: impl NativeObject + 'static) -> Self {
         Self(Arc::new(Box::new(obj)))

@@ -39,7 +39,13 @@
 //! on use is both sound and precise: a cell that merely sits in scope while
 //! a task runs is harmless and stays legal, and only an actual cross-thread
 //! access fails. `chan.send` is the one crossing where the value *is* in
-//! hand, so that one is refused at the send, where the mistake is.
+//! hand, so that one is refused at the send, where the mistake is: a cell
+//! anywhere inside the message, a closure's captured one included.
+//!
+//! The send looks only while some confined value is alive in the process
+//! (`native::any_confined_live`, a count every cell and row reader holds
+//! a place in): with none alive no message can hold one, and a send costs
+//! the same for any message size (OL-429).
 //!
 //! ## Re-entrancy
 //!
@@ -123,6 +129,7 @@ struct CellObject {
     /// thread is `main`.
     owner_label: String,
     state: Mutex<CellState>,
+    _live: crate::native::ConfinedLive,
 }
 
 /// How a thread names itself in an escape error.
@@ -260,26 +267,62 @@ fn cell_of(value: &Value) -> Result<&CellObject, String> {
 /// The name of the thread-confined value inside `value`, if there is one.
 /// Used by `chan.send`, the one thread crossing that holds the value being
 /// sent — a confined value nested in a list or a struct field is exactly
-/// the case a shallow check would wave through.
+/// the case a shallow check would wave through, and so is one a closure
+/// captured (`let c = cell(0)` then `() => cell.get(c)` sent to a task).
 ///
 /// Asks each native whether it is confined rather than naming the types it
 /// knows about, so a new confined native is refused here without anyone
 /// remembering to come back and add it.
+///
+/// While no confined native is alive in the process (the usual case: no
+/// cell made, or all of them dropped) nothing can hold one, and the
+/// answer is `None` without looking at the value, so a send costs the same
+/// for a ten-entry map and a million-entry one (OL-429).
 pub fn confined_within(value: &Value) -> Option<&'static str> {
-    fn first<'a>(mut it: impl Iterator<Item = &'a Value>) -> Option<&'static str> {
-        it.find_map(confined_within)
+    if !crate::native::any_confined_live() {
+        return None;
+    }
+    let mut seen = rustc_hash::FxHashSet::default();
+    confined_walk(value, &mut seen)
+}
+
+/// `confined_within`'s walk; `seen` holds the closures already looked in,
+/// so functions capturing one another are walked once each.
+fn confined_walk(value: &Value, seen: &mut rustc_hash::FxHashSet<usize>) -> Option<&'static str> {
+    fn first<'a>(
+        items: impl Iterator<Item = &'a Value>,
+        seen: &mut rustc_hash::FxHashSet<usize>,
+    ) -> Option<&'static str> {
+        for v in items {
+            if let Some(kind) = confined_walk(v, seen) {
+                return Some(kind);
+            }
+        }
+        None
     }
     match value {
         Value::Native(h) => h.0.confined_to().map(|_| h.0.type_name()),
-        Value::List(items) | Value::Tuple(items) => first(items.iter()),
-        Value::Map(entries) => first(entries.values()),
-        Value::Struct { fields, .. } => first(fields.values()),
-        Value::Ok(inner) | Value::Err(inner) => confined_within(inner),
+        Value::List(items) | Value::Tuple(items) => first(items.iter(), seen),
+        Value::Map(entries) => first(entries.values(), seen),
+        Value::Struct { fields, .. } => first(fields.values(), seen),
+        Value::Ok(inner) | Value::Err(inner) => confined_walk(inner, seen),
         Value::Enum(e) => match &e.variant_data {
-            crate::ast::EnumVariantData::Tuple(items) => first(items.iter()),
-            crate::ast::EnumVariantData::Struct(fields) => first(fields.values()),
+            crate::ast::EnumVariantData::Tuple(items) => first(items.iter(), seen),
+            crate::ast::EnumVariantData::Struct(fields) => first(fields.values(), seen),
             crate::ast::EnumVariantData::Unit => None,
         },
+        // A closure holds what it captured: the local names its body
+        // mentions (a top-level name is read where the function runs).
+        Value::Function(f) => {
+            if !seen.insert(std::sync::Arc::as_ptr(&f.closure) as usize) {
+                return None;
+            }
+            first(f.closure.values(), seen).map(|kind| match kind {
+                "Cell" => "Cell captured by a closure",
+                k if k.ends_with("captured by a closure") => k,
+                _ => "thread-confined value captured by a closure",
+            })
+        }
         _ => None,
     }
 }
@@ -320,6 +363,7 @@ fn cell_new(mut args: Vec<Value>) -> Result<Value, String> {
             vm: None,
             updating: false,
         }),
+        _live: crate::native::ConfinedLive::new(),
     })))
 }
 
@@ -386,6 +430,7 @@ pub fn vm_call(op: &str, args: &mut [OvmValue], vm: u64) -> Option<Result<OvmVal
                 vm: Some((v, vm)),
                 updating: false,
             }),
+            _live: crate::native::ConfinedLive::new(),
         };
         return Some(Ok(OvmValue {
             data: ValueData::Native(NativeHandle::new(cell)),

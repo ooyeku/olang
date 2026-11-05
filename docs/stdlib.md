@@ -1516,8 +1516,8 @@ println(to_string(cell.get(seen).ok))   // 3
 
 **Confinement.** A cell belongs to the thread that created it. Reading
 or writing it from another thread raises, and `chan.send` refuses to
-send one (including one nested inside a list, map, struct, or `Result`)
-— the language's no-shared-mutable-state guarantee is what makes
+send one (including one nested inside a list, map, struct, or `Result`,
+and one a closure captured) — the language's no-shared-mutable-state guarantee is what makes
 `spawn` and `par_map` lock-free, and cells do not weaken it. Send the
 *contents* instead:
 
