@@ -250,3 +250,64 @@ fn a_weak_reference_to_a_scalar_keeps_it() {
         "[5, true, true]"
     );
 }
+
+// ── shared ──────────────────────────────────────────────────────────
+
+#[test]
+fn a_shared_reference_is_read_and_replaced() {
+    assert_eq!(
+        shows(
+            "let s = shared.new(#{ \"rev\": 0 })\n\
+             let first = shared.get(s)\n\
+             shared.set(s, #{ \"rev\": 1 })\n\
+             let swapped = shared.swap(s, (m) => map_set(m, \"rev\", m.rev + 1))\n\
+             let hit = shared.compare_and_set(s, #{ \"rev\": 2 }, #{ \"rev\": 10 })\n\
+             let miss = shared.compare_and_set(s, #{ \"rev\": 2 }, #{ \"rev\": 20 })\n\
+             [first.rev, swapped.rev, hit, miss, shared.get(s).rev]"
+        ),
+        "[0, 2, true, false, 10]"
+    );
+}
+
+#[test]
+fn swaps_from_many_tasks_lose_no_update() {
+    assert_eq!(
+        shows(
+            "fn bump(s, n) = {\n    for k in range(0, n) { shared.swap(s, (v) => v + 1) }\n    n\n}\n\
+             let s = shared.new(0)\n\
+             let ws = map(range(0, 8), (i) => spawn bump(s, 500))\n\
+             for w in ws { unwrap(task.join(w)) }\n\
+             shared.get(s)"
+        ),
+        "4000"
+    );
+}
+
+#[test]
+fn readers_see_whole_values_while_a_writer_replaces_them() {
+    // Every read is one of the values written, all of whose entries agree.
+    assert_eq!(
+        shows(
+            "fn writer(s, n) = {\n    for k in range(1, n) { shared.set(s, map(range(0, 50), (i) => k)) }\n    n\n}\n\
+             fn reader(s, n) = {\n    let mut bad = 0\n    for k in range(0, n) {\n        let v = shared.get(s)\n        if !col.all(v, (x) => x == v[0]) => { bad = bad + 1 }\n    }\n    bad\n}\n\
+             let s = shared.new(map(range(0, 50), (i) => 0))\n\
+             let w = spawn writer(s, 2000)\n\
+             let rs = map(range(0, 3), (i) => spawn reader(s, 2000))\n\
+             unwrap(task.join(w))\n\
+             sum(map(rs, (r) => unwrap(task.join(r))))"
+        ),
+        "0"
+    );
+}
+
+#[test]
+fn a_shared_reference_refuses_a_cell() {
+    for src in [
+        "shared.new(cell(1))",
+        "let s = shared.new(0)\nshared.set(s, [cell(1)])",
+        "let s = shared.new(0)\nshared.swap(s, (v) => cell(v))",
+    ] {
+        let e = raises(src);
+        assert!(e.contains("cannot be shared between threads"), "{src}: {e}");
+    }
+}

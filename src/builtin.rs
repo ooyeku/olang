@@ -880,6 +880,12 @@ impl BuiltinFunctions {
             return crate::stdlib::peg::call(peg_function, arguments, interpreter);
         }
 
+        // A shared reference across threads. Takes the interpreter:
+        // `shared.swap` applies a caller-supplied function.
+        if let Some(f) = name.strip_prefix("shared.") {
+            return crate::stdlib::shared::call_shared_function(f, arguments, interpreter);
+        }
+
         // Weak references
         if let Some(f) = name.strip_prefix("weak.") {
             return crate::stdlib::weak::call_weak_function(f, arguments)

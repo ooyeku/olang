@@ -3084,6 +3084,48 @@ task.watch(service, inbox)   // a dead service is an Err at the next recv, not a
             &[r##"let guard = chan.on_drop(service, #{ "unsubscribe": id })"##],
         );
 
+        // shared — one immutable value, readable from every thread
+        self.doc_ex(
+            "shared.new",
+            "shared.new(v)",
+            "Shared",
+            "shared",
+            "a reference holding v that every thread can read and replace. The value inside never changes; what changes is which value the reference holds, so no thread ever sees a half-made one. A cell is refused",
+            &[r##"let latest = shared.new(#{ "rev": 0 })"##],
+        );
+        self.doc_ex(
+            "shared.get",
+            "shared.get(s)",
+            "Any",
+            "shared",
+            "the value the reference holds now; cheap, and never waits for a writer's work",
+            &[r##"shared.get(latest).rev"##],
+        );
+        self.doc_ex(
+            "shared.set",
+            "shared.set(s, v)",
+            "Unit",
+            "shared",
+            "make the reference hold v from now on",
+            &[r##"shared.set(latest, #{ "rev": 1 })"##],
+        );
+        self.doc_ex(
+            "shared.swap",
+            "shared.swap(s, f)",
+            "Any",
+            "shared",
+            "make the reference hold f(current), and answer it. If another thread replaced the value while f ran, f runs again on the newer one, so f should only compute",
+            &[r##"shared.swap(counter, (n) => n + 1)"##],
+        );
+        self.doc_ex(
+            "shared.compare_and_set",
+            "shared.compare_and_set(s, old, new)",
+            "Bool",
+            "shared",
+            "make the reference hold new if it still holds a value equal to old: true if it did, false (changing nothing) if not",
+            &[r##"shared.compare_and_set(counter, 400, 0)"##],
+        );
+
         // weak — weak references
         self.doc_ex(
             "weak.new",

@@ -49,6 +49,7 @@ pub mod random;
 pub mod regex_mod;
 #[cfg(feature = "native")]
 pub mod runtime;
+pub mod shared;
 pub mod string;
 pub mod task;
 pub mod text;
@@ -120,6 +121,7 @@ pub fn get_stdlib() -> crate::ast::ValueMap {
     stdlib.insert("cell".to_string(), cell::create_cell_module());
     stdlib.insert("cancel".to_string(), cancel::create_cancel_module());
     stdlib.insert("weak".to_string(), weak::create_weak_module());
+    stdlib.insert("shared".to_string(), shared::create_shared_module());
     stdlib.insert("task".to_string(), task::create_task_module());
     stdlib.insert("math".to_string(), math::create_math_module());
     #[cfg(feature = "native")]

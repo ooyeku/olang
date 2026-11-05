@@ -47,6 +47,7 @@ the sentence that documents the function in its module's section.
 - [`cell` — mutable locations](#cell--mutable-locations)
 - [`chan` — channels](#chan--channels)
 - [`cancel` — cancellation tokens](#cancel--cancellation-tokens)
+- [`shared` — one value, every thread](#shared--one-value-every-thread)
 - [`weak` — weak references](#weak--weak-references)
 - [`random` — randomness](#random--randomness)
 - [`crypto` — hashing and encryption](#crypto--hashing-and-encryption)
@@ -1668,6 +1669,37 @@ let r = runtime.call_cancellable((x) => x * 2, [21], cancel.token())
 println(`${r.ok} ${r.value} ${r.cancelled}`)   // true 42 false
 let stopped = runtime.call_cancellable((x) => x * 2, [21], t)
 println(`${stopped.ok} ${stopped.error}`)      // false cancelled
+```
+
+## `shared` — one value, every thread
+
+A shared reference holds one value that every thread can read, and any
+thread can replace. Reading it is cheap and never waits for a writer's
+work, so many readers can follow one writer without a channel round
+trip.
+
+| Function | Returns |
+|---|---|
+| <a id="shared-new"></a>`shared.new(v)` | a reference holding `v` |
+| <a id="shared-get"></a>`shared.get(s)` | the value it holds now |
+| <a id="shared-set"></a>`shared.set(s, v)` | `()`; it holds `v` from now on |
+| <a id="shared-swap"></a>`shared.swap(s, f)` | the new value: it holds `f(current)` from now on. If another thread replaced the value while `f` ran, `f` runs again on the newer one, so `f` should only compute |
+| <a id="shared-compare_and_set"></a>`shared.compare_and_set(s, old, new)` | `true` if it still held a value equal to `old` and now holds `new`; `false`, changing nothing, if not |
+
+This keeps the rule that threads share no mutable data. The value
+inside never changes: what changes is which value the reference holds.
+A reader always gets a whole value, the old or the new, and keeps it as
+long as it likes. Like a channel, a shared reference refuses a cell.
+
+```olang
+let counter = shared.new(0)
+let workers = map(range(0, 4), (i) => spawn {
+    for k in range(0, 100) { shared.swap(counter, (n) => n + 1) }
+})
+for w in workers { unwrap(task.join(w)) }
+println(shared.get(counter))                              // 400
+println(shared.compare_and_set(counter, 400, 0))          // true
+println(shared.compare_and_set(counter, 400, 1))          // false
 ```
 
 ## `weak` — weak references
