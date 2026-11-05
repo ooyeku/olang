@@ -1,6 +1,7 @@
 [package]
 name = "web"
 version = "0.1.0"
+public = ["lib.server", "lib.html", "lib.store", "lib.state"]
 description = "web-sdk — the foundation layer for building full-stack olang web applications"
 
 [dependencies]
