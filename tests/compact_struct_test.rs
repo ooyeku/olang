@@ -160,6 +160,27 @@ fn a_struct_the_interpreter_renames_or_writes_keeps_its_own_fields() {
     assert_eq!(v.to_string(), "[3, 0, \"n3\", \"z\", \"n3\"]");
 }
 
+#[test]
+fn a_struct_holding_a_closure_is_callable_from_another_task() {
+    // A spawned task runs on its own VM, which cannot resolve the
+    // building VM's function ids: such a struct crosses as the
+    // interpreter's own map, its closures as interpreter functions. It
+    // used to cross wrapped and fail "Function not found" (work-scheduler,
+    // loom). The scalar struct beside it still crosses wrapped.
+    let v = agree(
+        "fn mk(n) = { id: n, job: { f: (x, cx) => x + n, cost: 1 }, fs: [(x) => x * n] }\n\
+         fn call(r) = r.job.f(1, ()) + r.fs[0](2)\n\
+         fn pt(i) = { a: i, b: i + 1 }\n\
+         fn sum(p) = p.a + p.b\n\
+         let r = mk(5)\n\
+         let p = pt(3)\n\
+         let t = spawn call(r)\n\
+         let u = spawn sum(p)\n\
+         [task.join(t), task.join(u), call(r)]",
+    );
+    assert_eq!(v.to_string(), "[Ok(16), Ok(7), 16]");
+}
+
 /// The probe of OL-431: five fields, built in a compiled loop, measured in
 /// real allocator bytes inside compiled code and once returned to the
 /// top level.

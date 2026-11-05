@@ -1984,10 +1984,30 @@ impl OvmValue {
             // The object itself, wrapped (OL-431): O(1), no field copied
             // and no name allocated. Its fields convert when an
             // interpreter reader first needs them as a map, once.
-            ValueData::Struct(obj) => Ok(Value::Struct {
-                type_name: obj.shape.type_name.clone(),
-                fields: crate::ast::StructFields::Vm(obj.clone()),
-            }),
+            //
+            // Not one that holds a compiled function, at any depth: its
+            // `FunctionId` names a function of the module that built it,
+            // and the wrapped object would cross back into another VM
+            // (a module's, a task's) that cannot find it. That struct
+            // converts field by field as before, its functions becoming
+            // interpreter closures any VM can call.
+            ValueData::Struct(obj) if !obj.has_nested() || !holds_vm_code(self, 0) => {
+                Ok(Value::Struct {
+                    type_name: obj.shape.type_name.clone(),
+                    fields: crate::ast::StructFields::Vm(obj.clone()),
+                })
+            }
+            ValueData::Struct(obj) => {
+                let mut fields = crate::ast::ValueMap::default();
+                fields.reserve(obj.len());
+                for (name, v) in obj.iter() {
+                    fields.insert(name.clone(), v.to_ast()?);
+                }
+                Ok(Value::Struct {
+                    type_name: obj.shape.type_name.clone(),
+                    fields: crate::ast::StructFields::new(fields),
+                })
+            }
             ValueData::Range(gc_ptr) => Ok(Value::Range {
                 start: gc_ptr.start,
                 end: gc_ptr.end,
@@ -2110,6 +2130,38 @@ const _: () = {
     const fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<OvmValue>()
 };
+
+/// Whether a VM value holds a compiled function (a `Function` or a
+/// `Closure`, whose `FunctionId` only the module that built it can
+/// resolve) anywhere inside its VM containers. Interpreter values inside
+/// it (an `AstList`, an `AstFunction`) are callable from any VM. Past a
+/// depth it answers yes, the safe side.
+fn holds_vm_code(v: &OvmValue, depth: usize) -> bool {
+    if depth > 64 {
+        return true;
+    }
+    match &v.data {
+        ValueData::Function(_) | ValueData::Closure(_) => true,
+        ValueData::List(items) | ValueData::Tuple(items) => {
+            items.iter().any(|x| holds_vm_code(x, depth + 1))
+        }
+        ValueData::Map(m) => m.values().any(|x| holds_vm_code(x, depth + 1)),
+        ValueData::Struct(st) => {
+            st.has_nested() && st.values().any(|x| holds_vm_code(&x, depth + 1))
+        }
+        ValueData::Enum(e) => match &e.data {
+            EnumData::Unit => false,
+            EnumData::Tuple(items) => items.iter().any(|x| holds_vm_code(x, depth + 1)),
+            EnumData::Struct(fields) => fields.iter().any(|(_, x)| holds_vm_code(x, depth + 1)),
+        },
+        ValueData::Result(r) => {
+            r.ok.iter()
+                .chain(r.err.iter())
+                .any(|x| holds_vm_code(x, depth + 1))
+        }
+        _ => false,
+    }
+}
 
 #[cfg(test)]
 mod tests {
