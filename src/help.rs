@@ -7207,6 +7207,16 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             see_also: vec!["str.lines".to_string(), "str.slice_bytes".to_string()],
         });
         self.add_function(FunctionDoc {
+            name: "str.stats".to_string(),
+            description: "A text's numbers in one call, at memory speed for ASCII: #{bytes, chars, lines, graphemes, utf16, width, last_line_len}, each what its own function answers (lines is len(str.line_starts(s)); last_line_len counts the characters after the last \"\\n\").".to_string(),
+            syntax: "str.stats(s)".to_string(),
+            parameters: vec![],
+            return_type: "Map".to_string(),
+            examples: vec!["str.stats(\"héllo\\nwörld\").graphemes  // 11".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.length".to_string(), "str.width".to_string(), "str.line_starts".to_string()],
+        });
+        self.add_function(FunctionDoc {
             name: "str.index_of".to_string(),
             description:
                 "Character index of the first match, or Unit when absent (test with != ())."

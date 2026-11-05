@@ -29,6 +29,7 @@ pub(crate) const MAX_ARGS: &[(&str, usize)] = &[
     ("encode", 2),
     ("lines", 2),
     ("line_starts", 1),
+    ("stats", 1),
 ];
 
 /// The fewest arguments each takes (what the module registers, which
@@ -43,6 +44,7 @@ pub(crate) const MIN_ARGS: &[(&str, usize)] = &[
     ("encode", 2),
     ("lines", 1),
     ("line_starts", 1),
+    ("stats", 1),
 ];
 
 /// Calls one of this file's functions, or `None` when `name` is not one.
@@ -57,6 +59,7 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<R> {
         "encode" => encode(args),
         "lines" => lines(args),
         "line_starts" => line_starts(args),
+        "stats" => stats_fn(args),
         _ => return None,
     })
 }
@@ -333,5 +336,118 @@ fn line_starts(args: &[Value]) -> R {
     out.push(Value::Integer(0));
     out.extend(memchr::memchr_iter(b'\n', s.as_bytes()).map(|i| Value::Integer(i as i64 + 1)));
     Ok(Value::List(Arc::new(out)))
+}
+
+// ── one-pass numbers (OL-452) ───────────────────────────────────────
+
+/// A text's numbers, each what its own function would answer.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct Stats {
+    pub bytes: usize,
+    pub chars: usize,
+    /// `str.line_starts`'s count: one more than the "\n"s.
+    pub lines: usize,
+    pub graphemes: usize,
+    pub utf16: usize,
+    /// `str.width`.
+    pub width: usize,
+    /// Characters after the last "\n" (all of them without one).
+    pub last_line_len: usize,
+}
+
+/// Graphemes and width of an ASCII stretch: every byte is a cluster but
+/// a "\r\n" pair, and a cluster is a cell unless it holds a control.
+fn ascii_clusters(b: &[u8]) -> (usize, usize) {
+    let crlf = b.windows(2).filter(|w| w[0] == b'\r' && w[1] == b'\n').count();
+    let printable = b.iter().filter(|&&c| (0x20..0x7F).contains(&c)).count();
+    (b.len() - crlf, printable)
+}
+
+/// Graphemes and width of any stretch, by UAX #29.
+fn segmented_clusters(s: &str) -> (usize, usize) {
+    use unicode_segmentation::UnicodeSegmentation;
+    let mut n = 0;
+    let mut w = 0;
+    for g in s.graphemes(true) {
+        n += 1;
+        w += super::string::cell_width_of(g);
+    }
+    (n, w)
+}
+
+/// `s`'s numbers in passes over memory. ASCII stretches are counted a
+/// byte at a time (vectorised); the rest is segmented, each stretch
+/// taking the ASCII character either side of it, which is the most a
+/// cluster can reach into ASCII (a base before combining marks, a
+/// character after a Prepend), and a "\r\n" whole.
+pub(crate) fn stats(s: &str) -> Stats {
+    let b = s.as_bytes();
+    let newlines = memchr::memchr_iter(b'\n', b).count();
+    let last_start = memchr::memrchr(b'\n', b).map(|i| i + 1).unwrap_or(0);
+    let (graphemes, width) = if b.is_ascii() {
+        ascii_clusters(b)
+    } else {
+        let (mut n, mut w) = (0, 0);
+        let mut i = 0;
+        while i < b.len() {
+            // the ASCII run from i
+            let run_end = b[i..].iter().position(|c| !c.is_ascii()).map_or(b.len(), |p| i + p);
+            if run_end == b.len() {
+                let (a, c) = ascii_clusters(&b[i..]);
+                n += a;
+                w += c;
+                break;
+            }
+            // keep the run's last character (and a "\r\n") for the segment
+            let mut keep = run_end;
+            if keep > i {
+                keep -= 1;
+                if keep > i && b[keep] == b'\n' && b[keep - 1] == b'\r' {
+                    keep -= 1;
+                }
+            }
+            let (a, c) = ascii_clusters(&b[i..keep]);
+            n += a;
+            w += c;
+            // the non-ASCII stretch, and the ASCII character after it
+            let mut end = b[run_end..].iter().position(|c| c.is_ascii()).map_or(b.len(), |p| run_end + p);
+            if end < b.len() {
+                end += if b[end] == b'\r' && b.get(end + 1) == Some(&b'\n') { 2 } else { 1 };
+            }
+            let (a, c) = segmented_clusters(&s[keep..end]);
+            n += a;
+            w += c;
+            i = end;
+        }
+        (n, w)
+    };
+    Stats {
+        bytes: b.len(),
+        chars: count_chars(b),
+        lines: newlines + 1,
+        graphemes,
+        utf16: utf16_units(b),
+        width,
+        last_line_len: count_chars(&b[last_start..]),
+    }
+}
+
+/// `str.stats(s)`: `#{bytes, chars, lines, graphemes, utf16, width,
+/// last_line_len}` in one call, at memory speed for ASCII.
+fn stats_fn(args: &[Value]) -> R {
+    let st = stats(arg_str(args, 0, "stats")?);
+    let mut m = ValueMap::default();
+    for (k, v) in [
+        ("bytes", st.bytes),
+        ("chars", st.chars),
+        ("lines", st.lines),
+        ("graphemes", st.graphemes),
+        ("utf16", st.utf16),
+        ("width", st.width),
+        ("last_line_len", st.last_line_len),
+    ] {
+        m.insert(k.to_string(), Value::Integer(v as i64));
+    }
+    Ok(Value::Map(Arc::new(m)))
 }
 

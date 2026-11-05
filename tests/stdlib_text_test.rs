@@ -327,3 +327,34 @@ main()
     assert!(err.contains("unknown option \"keep\""), "{err}");
 }
 
+// ── OL-452: a text's numbers in one call ────────────────────────────
+#[test]
+fn stats_agree_with_each_count() {
+    for text in [
+        "",
+        "plain ascii\r\nline two\n",
+        "naïve café 😀\n中文 e\u{301} 👋🏽 🇫🇷\tend",
+        "e\u{301}\u{301}x\r\n\r\ny",
+        "\u{0600}1 prepend",
+    ] {
+        let lit = format!("{text:?}").replace("\\u{", "\\u{");
+        let src = format!(
+            r#"
+fn main() = {{
+    let t = {lit}
+    let st = str.stats(t)
+    [st.bytes == str.byte_len(t), st.chars == str.length(t), st.graphemes == len(str.graphemes(t)),
+     st.width == str.width(t), st.utf16 == str.utf16_len(t), st.lines == len(str.line_starts(t)),
+     st.last_line_len == str.length(last(str.split(t, "\n")) ?? "")]
+}}
+main()
+"#
+        );
+        assert_eq!(
+            ok(&src),
+            Value::List(std::sync::Arc::new(vec![Value::Boolean(true); 7])),
+            "{text:?}"
+        );
+    }
+}
+

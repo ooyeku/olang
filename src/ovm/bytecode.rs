@@ -1700,6 +1700,10 @@ impl BytecodeVm {
             "str.utf16_len",
             "str.chunks",
             "str.line_starts",
+            "str.stats",
+            // the counts str.stats answers at once, for code that asks one
+            "str.graphemes",
+            "str.width",
             // map builtins — maps round-trip losslessly now, so builders
             // and readers both bridge safely
             "entries",
