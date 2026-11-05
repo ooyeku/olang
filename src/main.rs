@@ -3023,6 +3023,26 @@ enum Bundle {
 /// source (rung A). `None` for the plain `olang` binary.
 fn embedded_program() -> Option<Result<Bundle, String>> {
     let exe = std::env::current_exe().ok()?;
+    // A code layer outside the bundle, when the application names one and
+    // its active layer passes every check (src/layers.rs): its verified
+    // bytes run, read from memory. Otherwise the bundled program below.
+    if let Some(bytes) = olang::layers::choose(&exe, |bytes| {
+        let mut c = std::io::Cursor::new(bytes);
+        match bundle_record_from(&mut c, bytes.len() as u64) {
+            Some(BundleRecord::Ast(meta)) => match runtime_mismatch(meta.as_ref()) {
+                None => Ok(()),
+                Some(why) => Err(why),
+            },
+            Some(BundleRecord::Source) => Ok(()),
+            None => Err("its app.olb is not an olang payload".to_string()),
+        }
+    }) {
+        let total = bytes.len() as u64;
+        if let Some(b) = read_bundle_from(&mut std::io::Cursor::new(bytes), total, false) {
+            olang::boot_trace::mark("the application's code layer read and checked");
+            return Some(Ok(b));
+        }
+    }
     let sidecar = app_sidecar(&exe);
     let candidates = std::iter::once(exe).chain(sidecar);
     for at in candidates {
@@ -3066,9 +3086,13 @@ enum BundleRecord {
 /// and the record are read. `None` when it carries no bundle, or its
 /// record does not read.
 fn bundle_record(path: &std::path::Path) -> Option<BundleRecord> {
-    use std::io::{Read, Seek, SeekFrom};
     let mut f = std::fs::File::open(path).ok()?;
     let total = f.metadata().ok()?.len();
+    bundle_record_from(&mut f, total)
+}
+
+fn bundle_record_from<R: std::io::Read + std::io::Seek>(f: &mut R, total: u64) -> Option<BundleRecord> {
+    use std::io::SeekFrom;
     if total < 16 {
         return None;
     }
@@ -3160,9 +3184,20 @@ fn read_bundle(path: &std::path::Path) -> Option<Bundle> {
 /// (`inspect`); else, when it says each file's sum, its files are checked
 /// as they are read (a launch).
 fn read_bundle_with(path: &std::path::Path, whole: bool) -> Option<Bundle> {
-    use std::io::{Read, Seek, SeekFrom};
     let mut f = std::fs::File::open(path).ok()?;
     let total = f.metadata().ok()?.len();
+    read_bundle_from(&mut f, total, whole)
+}
+
+/// `read_bundle_with` over any seekable bytes: a file, or a code layer
+/// already read and verified (src/layers.rs), so what runs is exactly
+/// what was checked.
+fn read_bundle_from<R: std::io::Read + std::io::Seek>(
+    f: &mut R,
+    total: u64,
+    whole: bool,
+) -> Option<Bundle> {
+    use std::io::SeekFrom;
     if total < 16 {
         return None;
     }

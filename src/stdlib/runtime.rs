@@ -32,6 +32,8 @@ pub fn create_runtime_module() -> Value {
     module.insert("build".to_string(), builtin("build", 0));
     // a panic or a fatal signal leaves a report: src/crash.rs
     module.insert("on_crash".to_string(), builtin("on_crash", 1));
+    // which code layer this application booted: src/layers.rs
+    module.insert("code_layer".to_string(), builtin("code_layer", 0));
     // A host loading code it did not write (olang Studio's plugins):
     // see `call_host`.
     module.insert("load_module".to_string(), builtin("load_module", 2));
@@ -71,6 +73,7 @@ pub fn call_runtime_function(
         "profile_live_stop" => runtime_profile_live_stop(args),
         "build" => runtime_build(args),
         "on_crash" => runtime_on_crash(args),
+        "code_layer" => runtime_code_layer(args),
         _ => Err(format!("Unknown runtime function: {}", name).into()),
     }
 }
@@ -109,6 +112,35 @@ fn runtime_on_crash(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
         let _ = (dir, opts);
         Ok(err_value("runtime.on_crash: crash reports are not in this build".to_string()))
     }
+}
+
+/// `runtime.code_layer()`: how this application booted, `()` outside an
+/// application whose Info.plist names a layers folder; else `#{ "layers",
+/// "active", "running", "tries", "max_tries", "fallback" }` — `running` the
+/// layer that runs (`()` when the bundled program does), `fallback` why
+/// the active layer is not it.
+fn runtime_code_layer(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if !args.is_empty() {
+        return Err(format!("runtime.code_layer expects 0 arguments, got {}", args.len()).into());
+    }
+    let Some(st) = crate::layers::status() else {
+        return Ok(Value::Unit);
+    };
+    let text = |s: &Option<String>| match s {
+        Some(s) => Value::String(Arc::new(s.clone())),
+        None => Value::Unit,
+    };
+    let mut m = crate::ast::ValueMap::default();
+    m.insert(
+        "layers".to_string(),
+        text(&st.layers.as_ref().map(|p| p.display().to_string())),
+    );
+    m.insert("active".to_string(), text(&st.active));
+    m.insert("running".to_string(), text(&st.running));
+    m.insert("tries".to_string(), Value::Integer(st.tries as i64));
+    m.insert("max_tries".to_string(), Value::Integer(st.max_tries as i64));
+    m.insert("fallback".to_string(), text(&st.fallback));
+    Ok(Value::Map(Arc::new(m)))
 }
 
 fn err_value(message: String) -> Value {

@@ -35,6 +35,7 @@ pub mod expand;
 pub mod help;
 pub mod home;
 pub mod interpreter;
+pub mod layers; // Code layers: an application booting a signed program from outside its bundle
 pub mod interrupt; // Stopping a running evaluation (`olang repl --serve`)
 pub mod log;
 pub mod memory; // The accounting behind `runtime.memory()`

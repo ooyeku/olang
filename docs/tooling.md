@@ -1716,6 +1716,40 @@ A built binary also embeds its exact source, its `olang.toml` and
 which `olang inspect` reads and verifies: see
 [The transparent binary](packages.md#the-transparent-binary).
 
+### Code layers
+
+A macOS application can run a newer program than the one sealed in its
+bundle, without re-signing the bundle: an updater writes the new program
+to a folder outside it, signed with the publisher's Ed25519 key, and
+the next launch runs it. Two Info.plist keys turn this on:
+
+| Key | Holds |
+|---|---|
+| `OlangLayersDirectory` | the layers folder: an absolute path, or one starting `~/` (`~/Library/Application Support/MyApp/layers`) |
+| `OlangLayersPublicKey` | the name of a file in `Contents/Resources` holding the 32-byte Ed25519 public key in base64 (default `layers.pub`) |
+
+The key is inside the bundle, so the bundle's own signature covers it.
+The folder holds a state file and one folder per layer:
+
+```text
+layers/state.json         {"active": "1.4.0", "tries": 0, "max_tries": 3}
+layers/1.4.0/app.olb      olang build --payload
+layers/1.4.0/app.olb.sig  crypto.ed25519_sign of app.olb's bytes, base64
+```
+
+At launch the runtime reads `state.json` and runs the `active` layer
+only when it has been tried fewer than `max_tries` times (3 when the file
+says none), its signature verifies with the bundle's key, and its
+payload was built by this olang ([The runtime it runs on](packages.md#the-runtime-it-runs-on)).
+It adds one to `tries` before the program starts, and runs the bytes it
+verified, read once. Otherwise it runs the bundled
+`Contents/Resources/app.olb`. `runtime.code_layer()` tells the program
+which ran and, when the bundled one did, why. Everything else is the
+program's: it chooses the active layer, sets `tries` back to 0 once it
+is satisfied the layer works (a layer that crashes before then is given
+up after `max_tries` launches), and keeps any other keys it likes in
+`state.json`, which the runtime leaves as they are.
+
 ## `olang doc`
 
 `olang doc` turns your doc comments into an API reference:

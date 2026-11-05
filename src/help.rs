@@ -8016,6 +8016,15 @@ for row in take(map_get(p, "rows"), 5) { println(map_get(row, "function") + " " 
             &[r##"unwrap(runtime.profile_live_start(fs.join(os.temp_dir(), "me")))"##],
         );
         self.doc_ex(
+            "runtime.code_layer",
+            "runtime.code_layer()",
+            "Map",
+            "runtime",
+            "How this macOS application booted, when its Info.plist names a code layers folder (OlangLayersDirectory): #{ \"layers\", \"active\", \"running\", \"tries\", \"max_tries\", \"fallback\" }. running is the layer that runs, or () when the bundled program does; fallback says why the active layer is not running (its tries used up, a signature that does not verify, a payload built by another olang). () in any other program. The runtime counts each try in state.json; the program sets tries back to 0 once the layer works.",
+            &[r##"let boot = runtime.code_layer()
+if boot != () && boot.running != () => println("running layer " + boot.running) else => {}"##],
+        );
+        self.doc_ex(
             "runtime.on_crash",
             "runtime.on_crash(dir)",
             "Result",
