@@ -6412,6 +6412,86 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             "least common multiple of two integers",
             &[r##"math.lcm(4, 6)  // 12"##],
         );
+        self.doc_ex(
+            "math.wrapping_add",
+            "math.wrapping_add(a, b)",
+            "Int",
+            "math",
+            "a + b on two Ints, wrapping around at 64 bits instead of raising an overflow: the arithmetic hash functions are written in",
+            &[r##"math.wrapping_add(9223372036854775807, 1)  // -9223372036854775808"##],
+        );
+        self.doc_ex(
+            "math.wrapping_sub",
+            "math.wrapping_sub(a, b)",
+            "Int",
+            "math",
+            "a - b on two Ints, wrapping around at 64 bits instead of raising an overflow",
+            &[r##"math.wrapping_sub(-9223372036854775808, 1)  // 9223372036854775807"##],
+        );
+        self.doc_ex(
+            "math.wrapping_mul",
+            "math.wrapping_mul(a, b)",
+            "Int",
+            "math",
+            "a * b on two Ints, keeping the low 64 bits instead of raising an overflow",
+            &[r##"math.wrapping_mul(1099511628211, 1099511628211)  // 956575116354345"##],
+        );
+        self.doc_ex(
+            "math.wrapping_shl",
+            "math.wrapping_shl(a, n)",
+            "Int",
+            "math",
+            "a shifted left by n bits (0 to 63), the bits shifted past bit 63 dropped; `<<` raises instead when a bit is lost",
+            &[r##"math.wrapping_shl(1, 63)  // -9223372036854775808"##],
+        );
+        self.doc_ex(
+            "math.ushr",
+            "math.ushr(a, n)",
+            "Int",
+            "math",
+            "a shifted right by n bits (0 to 63) as an unsigned number, filling with zeros; `>>` keeps the sign",
+            &[r##"math.ushr(-1, 60)  // 15"##],
+        );
+        self.doc_ex(
+            "math.rotl",
+            "math.rotl(a, n)",
+            "Int",
+            "math",
+            "the 64 bits of a rotated left by n (0 to 63): the bits leaving the top come back at the bottom",
+            &[r##"math.rotl(math.wrapping_shl(1, 63), 1)  // 1"##],
+        );
+        self.doc_ex(
+            "math.rotr",
+            "math.rotr(a, n)",
+            "Int",
+            "math",
+            "the 64 bits of a rotated right by n (0 to 63)",
+            &[r##"math.rotr(1, 1)  // -9223372036854775808"##],
+        );
+        self.doc_ex(
+            "math.popcount",
+            "math.popcount(a)",
+            "Int",
+            "math",
+            "how many of the 64 bits of a are set (a negative Int counts its sign bit)",
+            &[r##"math.popcount(255)  // 8"##],
+        );
+        self.doc_ex(
+            "math.clz",
+            "math.clz(a)",
+            "Int",
+            "math",
+            "how many zero bits lead the 64 bits of a, from the top: 64 for 0, 0 for a negative Int",
+            &[r##"math.clz(1)  // 63"##],
+        );
+        self.doc_ex(
+            "math.ctz",
+            "math.ctz(a)",
+            "Int",
+            "math",
+            "how many zero bits trail the 64 bits of a, from the bottom: 64 for 0",
+            &[r##"math.ctz(8)  // 3"##],
+        );
 
         // --- fs: path helpers and directory walking ---
         self.doc_ex(

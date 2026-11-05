@@ -3524,6 +3524,11 @@ pub(crate) fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         Instruction::CallBuiltin {
             builtin_id, args, ..
         } => {
+            // The integer operations compile too: a shift or rotation
+            // count out of range deopts, and the VM raises.
+            if let Some(i) = crate::ovm::bytecode::BytecodeVm::int_math_index(*builtin_id) {
+                return args.len() == crate::stdlib::math::INT_OPS[i].1;
+            }
             matches!(
                 crate::ovm::bytecode::BytecodeVm::FLOAT_MATH.get(*builtin_id as usize),
                 Some((_, arity)) if args.len() == *arity && *arity <= 2
@@ -5582,27 +5587,35 @@ impl PlanFn {
                     args,
                     builtin_id,
                 } => {
-                    for a in args.iter() {
-                        narrow!(a.0, K_NUM);
-                    }
-                    let id = *builtin_id as usize;
-                    if crate::ovm::bytecode::BytecodeVm::float_math_whole(id) {
-                        // floor, ceil, round, trunc answer an Int.
+                    if crate::ovm::bytecode::BytecodeVm::int_math_index(*builtin_id).is_some() {
+                        // Ints in, an Int out.
+                        for a in args.iter() {
+                            narrow!(a.0, K_INT);
+                        }
                         grow!(self.writes[dst.0 as usize], K_INT);
-                    } else if id == crate::ovm::bytecode::BytecodeVm::FLOAT_MATH_POW {
-                        // pow of two Ints is an Int (translation refuses
-                        // it: the checked power is the VM's); any Float
-                        // makes it a Float.
-                        let l = self.writes[args[0].0 as usize];
-                        let r = self.writes[args[1].0 as usize];
-                        if (l | r) & K_FLOAT != 0 {
+                    } else {
+                        for a in args.iter() {
+                            narrow!(a.0, K_NUM);
+                        }
+                        let id = *builtin_id as usize;
+                        if crate::ovm::bytecode::BytecodeVm::float_math_whole(id) {
+                            // floor, ceil, round, trunc answer an Int.
+                            grow!(self.writes[dst.0 as usize], K_INT);
+                        } else if id == crate::ovm::bytecode::BytecodeVm::FLOAT_MATH_POW {
+                            // pow of two Ints is an Int (translation refuses
+                            // it: the checked power is the VM's); any Float
+                            // makes it a Float.
+                            let l = self.writes[args[0].0 as usize];
+                            let r = self.writes[args[1].0 as usize];
+                            if (l | r) & K_FLOAT != 0 {
+                                grow!(self.writes[dst.0 as usize], K_FLOAT);
+                            }
+                            if l & K_INT != 0 && r & K_INT != 0 {
+                                grow!(self.writes[dst.0 as usize], K_INT);
+                            }
+                        } else {
                             grow!(self.writes[dst.0 as usize], K_FLOAT);
                         }
-                        if l & K_INT != 0 && r & K_INT != 0 {
-                            grow!(self.writes[dst.0 as usize], K_INT);
-                        }
-                    } else {
-                        grow!(self.writes[dst.0 as usize], K_FLOAT);
                     }
                 }
                 Instruction::Jump { .. }
@@ -6726,6 +6739,45 @@ fn translate_body(
                     }
                     _ => return None,
                 }
+            }
+            Instruction::CallBuiltin {
+                dst,
+                builtin_id,
+                args,
+            } if crate::ovm::bytecode::BytecodeVm::int_math_index(*builtin_id).is_some() => {
+                let id = crate::ovm::bytecode::BytecodeVm::int_math_index(*builtin_id)?;
+                let mut vals = [None, None];
+                for (i, a) in args.iter().enumerate().take(2) {
+                    if r#gen.kind(a.0)? != Kind::Int {
+                        return None;
+                    }
+                    vals[i] = Some(builder.use_var(Variable::from_u32(a.0)));
+                }
+                let a = vals[0]?;
+                if crate::stdlib::math::int_op_has_count(id) {
+                    // A count outside 0..=63 deopts; the VM raises.
+                    let b = vals[1]?;
+                    let out = builder
+                        .ins()
+                        .icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, b, 64);
+                    let cont = builder.create_block();
+                    builder.ins().brif(out, deopt_block, &[], cont, &[]);
+                    builder.switch_to_block(cont);
+                }
+                let val = match id {
+                    0 => builder.ins().iadd(a, vals[1]?),
+                    1 => builder.ins().isub(a, vals[1]?),
+                    2 => builder.ins().imul(a, vals[1]?),
+                    3 => builder.ins().ishl(a, vals[1]?),
+                    4 => builder.ins().ushr(a, vals[1]?),
+                    5 => builder.ins().rotl(a, vals[1]?),
+                    6 => builder.ins().rotr(a, vals[1]?),
+                    7 => builder.ins().popcnt(a),
+                    8 => builder.ins().clz(a),
+                    9 => builder.ins().ctz(a),
+                    _ => return None,
+                };
+                r#gen.write(builder, dst.0, val);
             }
             Instruction::CallBuiltin {
                 dst,

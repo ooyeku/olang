@@ -640,6 +640,7 @@ all the way to native code (see [the OVM chapter](ovm.md#the-jit)).
 | <a id="math-sqrt"></a><a id="math-cbrt"></a><a id="mathx-sqrt"></a>Basics | `abs` `sign` `min` `max` `pow` `sqrt` `cbrt` |
 | Rounding | `floor` `ceil` `round` `trunc` `fract` |
 | <a id="math-gcd"></a><a id="math-lcm"></a><a id="math-factorial"></a><a id="mathx-gcd"></a><a id="mathx-lcm"></a><a id="mathx-factorial"></a>Integers | `gcd` `lcm` `factorial` |
+| <a id="math-wrapping_add"></a><a id="math-wrapping_sub"></a><a id="math-wrapping_mul"></a><a id="math-wrapping_shl"></a><a id="math-ushr"></a><a id="math-rotl"></a><a id="math-rotr"></a><a id="math-popcount"></a><a id="math-clz"></a><a id="math-ctz"></a>Bits | `wrapping_add` `wrapping_sub` `wrapping_mul` `wrapping_shl` `ushr` `rotl` `rotr` `popcount` `clz` `ctz` |
 | <a id="math-exp"></a><a id="math-exp2"></a><a id="math-ln"></a><a id="math-log"></a><a id="math-log2"></a><a id="math-log10"></a>Exp/log | `exp` `exp2` `ln` `log` `log2` `log10` |
 | <a id="math-sin"></a><a id="math-cos"></a><a id="math-tan"></a><a id="math-asin"></a><a id="math-acos"></a><a id="math-atan"></a><a id="math-atan2"></a>Trig | `sin` `cos` `tan` `asin` `acos` `atan` `atan2` |
 | <a id="math-sinh"></a><a id="math-cosh"></a><a id="math-tanh"></a>Hyperbolic | `sinh` `cosh` `tanh` |
@@ -653,6 +654,16 @@ println(`${math.round(2.6)} ${math.fract(2.75)}`)
 println(to_string((math.PI > 3.14159) && (math.TAU > 6.28)))
 ```
 
+The bit functions treat an Int as its 64 bits. With them, the usual
+hash functions can be written in olang; this is FNV-1a over a list of
+bytes:
+
+```olang
+fn fnv1a(bytes) = fold(bytes, -3750763034362895579, (h, b) => math.wrapping_mul(h ^ b, 1099511628211))
+println(fnv1a([104, 105]))                               // 628919584683901914
+println(`${math.ushr(-1, 60)} ${math.popcount(255)} ${math.ctz(8)}`)  // 15 8 3
+```
+
 What a function answers:
 
 | Function | Answers |
@@ -663,6 +674,9 @@ What a function answers:
 | <a id="math-sign"></a><a id="mathx-sign"></a>`sign` | an Int, -1, 0 or 1, for an Int or a Float |
 | <a id="math-abs"></a><a id="mathx-abs"></a>`abs` | the kind it is given |
 | <a id="math-min"></a><a id="math-max"></a><a id="mathx-min"></a><a id="mathx-max"></a>`min` `max` | as the global `min` and `max`, for numbers: two or more numbers or one list, the first of equal values (`math.min(1, 2.5)` is 1) |
+| `wrapping_add` `wrapping_sub` `wrapping_mul` | an Int, the low 64 bits of the answer: where `+`, `-` and `*` raise an overflow, these wrap around, which is what hash functions want |
+| `wrapping_shl` `ushr` `rotl` `rotr` | an Int: the 64 bits shifted left (dropping what leaves the top), shifted right filling with zeros, or rotated. The count is 0 to 63; any other count raises |
+| `popcount` `clz` `ctz` | an Int: how many bits are set, how many zero bits lead, how many trail. `clz(0)` and `ctz(0)` are 64 |
 | <a id="math-fract"></a><a id="mathx-fract"></a>`fract` and the rest | a Float |
 
 `mathx` (`use mathx`) is an olang-source module covering the integer and
@@ -757,7 +771,7 @@ it. (A binding of your own named `collections` always wins.)
 | `collections.deque` | double-ended queue over a ring buffer | BFS frontiers, sliding windows, work lists |
 | `collections.table` | flat hash table, open addressing | counting, indexing, hot single-table loops |
 | `collections.dsu` | disjoint sets (union–find), by rank + compression | connectivity, Kruskal, clustering |
-| `collections.bitset` | dense integer set, 63 members per word | sieves, visited-sets, set algebra |
+| `collections.bitset` | dense integer set, 64 members per word | sieves, visited-sets, set algebra |
 | `collections.alg` | sort / bisect / select / graphs / Dijkstra | the classic algorithms over the above |
 
 Code that leans on a few submodules imports their short names — the

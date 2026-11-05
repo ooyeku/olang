@@ -1653,6 +1653,16 @@ impl BytecodeVm {
             "math.gcd",
             "math.lcm",
             "math.factorial",
+            "math.wrapping_add",
+            "math.wrapping_sub",
+            "math.wrapping_mul",
+            "math.wrapping_shl",
+            "math.ushr",
+            "math.rotl",
+            "math.rotr",
+            "math.popcount",
+            "math.clz",
+            "math.ctz",
             "math.min",
             "math.max",
             // pure `str` module functions — strings and lists of strings in
@@ -5652,6 +5662,42 @@ impl BytecodeVm {
                     args,
                 } => {
                     let id = *builtin_id as usize;
+                    // The integer operations (math.wrapping_add, popcount,
+                    // ...): two Ints compute here; anything else, or a
+                    // count out of range, takes the module's path, which
+                    // raises the interpreter's error.
+                    if let Some(int_id) = Self::int_math_index(*builtin_id) {
+                        let (name, arity) = crate::stdlib::math::INT_OPS[int_id];
+                        let mut ints = [0i64; 2];
+                        let mut all_int = args.len() == arity;
+                        if all_int {
+                            for (i, arg_reg) in args.iter().enumerate() {
+                                match &self.execution_state.register_ref(*arg_reg)?.data {
+                                    crate::ovm::value::ValueData::Integer(n) => ints[i] = *n,
+                                    _ => {
+                                        all_int = false;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        let fast = all_int
+                            .then(|| crate::stdlib::math::eval_int_op(int_id, ints[0], ints[1]))
+                            .flatten();
+                        let result = match fast {
+                            Some(n) => OvmValue::new_integer(n),
+                            None => {
+                                let mut arg_values = Vec::with_capacity(args.len());
+                                for arg_reg in args {
+                                    arg_values.push(self.execution_state.get_register(*arg_reg)?);
+                                }
+                                self.execute_builtin_call(name, &arg_values, false)?
+                            }
+                        };
+                        self.execution_state.set_register(*dst, result)?;
+                        pc += 1;
+                        continue;
+                    }
                     let (name, arity) = *Self::FLOAT_MATH.get(id).ok_or_else(|| {
                         BytecodeError::RuntimeError(format!(
                             "unknown builtin id {} in CallBuiltin",
@@ -9625,6 +9671,7 @@ impl BytecodeVm {
     pub(crate) fn natives_without_bridge() -> Vec<String> {
         let mut out: Vec<String> = Self::FLOAT_MATH
             .iter()
+            .chain(crate::stdlib::math::INT_OPS)
             .map(|(n, _)| n.to_string())
             .collect();
         out.extend(
@@ -9687,6 +9734,25 @@ impl BytecodeVm {
         ("math.pow", 2),
         ("math.atan2", 2),
     ];
+
+    /// `CallBuiltin` ids from here up name `math::INT_OPS` entries
+    /// (math.wrapping_add, popcount, ...), below it `FLOAT_MATH` ones.
+    pub(crate) const INT_MATH_BASE: u32 = 1 << 16;
+
+    /// The `math::INT_OPS` index a `CallBuiltin` id names, if it names one.
+    pub(crate) fn int_math_index(builtin_id: u32) -> Option<usize> {
+        builtin_id
+            .checked_sub(Self::INT_MATH_BASE)
+            .map(|i| i as usize)
+            .filter(|i| *i < crate::stdlib::math::INT_OPS.len())
+    }
+
+    fn int_math_id(name: &str, arity: usize) -> Option<u32> {
+        crate::stdlib::math::INT_OPS
+            .iter()
+            .position(|(n, a)| *n == name && *a == arity)
+            .map(|i| Self::INT_MATH_BASE + i as u32)
+    }
 
     /// floor, ceil, round, trunc: FLOAT_MATH ids whose answer is an Int.
     pub(crate) fn float_math_whole(id: usize) -> bool {
@@ -12244,6 +12310,7 @@ impl BytecodeCompiler {
                 if self.q_builtin(&function_name) && !closure_shadows_builtin {
                     if let Some(builtin_id) =
                         BytecodeVm::float_math_id(&function_name, arg_regs.len())
+                            .or_else(|| BytecodeVm::int_math_id(&function_name, arg_regs.len()))
                     {
                         self.emitter.instructions.push(Instruction::CallBuiltin {
                             dst: dst_reg,
