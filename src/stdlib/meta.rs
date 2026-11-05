@@ -235,10 +235,222 @@ fn meta_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             .into());
         }
     };
+    match args.get(1) {
+        None | Some(Value::Unit) => {}
+        Some(Value::Map(opts)) => {
+            if let Some(k) = opts.keys().find(|k| k.as_str() != "recover") {
+                return Err(
+                    format!("meta.parse: unknown option \"{k}\" (it takes recover)").into(),
+                );
+            }
+            match opts.get("recover") {
+                Some(Value::Boolean(true)) => return Ok(parse_recovering(&source)),
+                None | Some(Value::Boolean(false)) | Some(Value::Unit) => {}
+                Some(other) => {
+                    return Err(format!(
+                        "meta.parse: option recover must be true or false, got {}",
+                        other.type_name()
+                    )
+                    .into());
+                }
+            }
+        }
+        Some(other) => {
+            return Err(format!(
+                "meta.parse: the options must be a map, got {}",
+                other.type_name()
+            )
+            .into());
+        }
+    }
+    if args.len() > 2 {
+        return Err(format!("meta.parse expects 1 or 2 arguments, got {}", args.len()).into());
+    }
     Ok(match parse_spanned(&source) {
         Ok(nodes) => Value::Ok(Box::new(list(nodes))),
         Err(e) => Value::Err(Box::new(s(&e))),
     })
+}
+
+// ── Recovery: a file mid-edit keeps its other items (OL-435) ────────
+
+/// The declaration a top-level item opens with, and its name: read from
+/// its first words, without parsing it.
+fn item_head(text: &str) -> (&'static str, Option<String>) {
+    let mut rest = text;
+    // A doc comment and decorators belong to the item under them.
+    loop {
+        let t = rest.trim_start();
+        if t.starts_with("//") {
+            rest = t.split_once('\n').map_or("", |(_, r)| r);
+        } else if t.starts_with('@') && !t.starts_with("@{") {
+            let line = t.split_once('\n').map_or(t, |(l, _)| l);
+            // `@derive(...)` on its own line decorates what follows; an
+            // `@macro(...)` that is the whole item is an expression.
+            match t.split_once('\n') {
+                Some((_, r)) if !r.trim_start().is_empty() && !line.contains('=') => rest = r,
+                _ => return ("expr", None),
+            }
+        } else {
+            rest = t;
+            break;
+        }
+    }
+    let word = |s: &str| -> Option<String> {
+        let s = s.trim_start();
+        let end = s
+            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .unwrap_or(s.len());
+        (end > 0).then(|| s[..end].to_string())
+    };
+    let after = |kw: &str| rest.strip_prefix(kw).filter(|r| r.starts_with([' ', '\t']));
+    for (kw, kind) in [
+        ("fn", "fn"),
+        ("let", "let"),
+        ("type", "type"),
+        ("error", "error"),
+        ("trait", "trait"),
+        ("impl", "impl"),
+        ("test", "test"),
+        ("use", "use"),
+    ] {
+        if let Some(r) = after(kw) {
+            let r = r.trim_start();
+            let r = r.strip_prefix("mut ").unwrap_or(r);
+            let name = if kind == "test" {
+                r.strip_prefix('"')
+                    .and_then(|t| t.split_once('"'))
+                    .map(|(n, _)| n.to_string())
+            } else if kind == "use" {
+                Some(
+                    r.split(|c: char| c.is_whitespace() || c == '{')
+                        .next()
+                        .unwrap_or("")
+                        .to_string(),
+                )
+            } else {
+                word(r)
+            };
+            return (kind, name);
+        }
+    }
+    if let Some(r) = after("share") {
+        let (kind, name) = item_head(r);
+        return (if kind == "expr" { "share" } else { kind }, name);
+    }
+    if let Some(r) = after("meta") {
+        return ("meta_fn", r.trim_start().strip_prefix("fn").and_then(word));
+    }
+    ("expr", None)
+}
+
+/// The top-level items of `source`, without a full parse: each item's
+/// byte range (they tile the file, a doc comment going with the item
+/// under it), its kind and name, and its first line. Found by the scan
+/// the parser splits large files with, which also restarts at a line that
+/// opens with a declaration keyword, so a file mid-edit (an unclosed
+/// bracket) still shows the items after the break.
+pub(crate) fn item_ranges(source: &str) -> Vec<(usize, usize, &'static str, Option<String>)> {
+    let starts = crate::parser::item_starts(source, true);
+    let mut bounds: Vec<usize> = Vec::with_capacity(starts.len() + 1);
+    bounds.push(0);
+    bounds.extend(starts.into_iter().filter(|s| *s > 0));
+    bounds.push(source.len());
+    // Comment-only pieces join the item after them.
+    let mut out: Vec<(usize, usize, &'static str, Option<String>)> = Vec::new();
+    let mut from = 0;
+    for w in bounds.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let text = &source[from..b];
+        let only_comments = source[a..b]
+            .lines()
+            .all(|l| l.trim().is_empty() || l.trim_start().starts_with("//"));
+        if only_comments && b < source.len() {
+            continue;
+        }
+        if text.trim().is_empty() {
+            if let Some(last) = out.last_mut() {
+                last.1 = b;
+            }
+            from = b;
+            continue;
+        }
+        let (kind, name) = item_head(text);
+        out.push((from, b, kind, name));
+        from = b;
+    }
+    out
+}
+
+fn line_of(line_starts: &[usize], offset: usize) -> usize {
+    line_starts.partition_point(|s| *s <= offset)
+}
+
+/// One parse error as a node: its message and where it is, in the whole
+/// file's coordinates.
+fn error_node(e: &crate::parser::ParseError, text: &str, shift: usize, line_shift: usize) -> Value {
+    let message = format!("{}", e);
+    let (line, column) = e.line_column().unwrap_or((1, 1));
+    let starts = line_starts_of(text);
+    let at = starts
+        .get(line.saturating_sub(1))
+        .map(|ls| {
+            ls + text[*ls..]
+                .char_indices()
+                .nth(column.saturating_sub(1))
+                .map_or(text.len() - ls, |(i, _)| i)
+        })
+        .unwrap_or(0)
+        .min(text.len());
+    map(vec![
+        ("kind", s("error")),
+        ("message", s(&message)),
+        ("line", Value::Integer((line + line_shift) as i64)),
+        ("column", Value::Integer(column as i64)),
+        ("at", Value::Integer((at + shift) as i64)),
+        ("start", Value::Integer(shift as i64)),
+        ("end", Value::Integer((shift + text.len()) as i64)),
+    ])
+}
+
+/// The nodes of `text` parsed with spans, shifted to where it sits in its
+/// file: `Ok(nodes)` or the parse error.
+fn parse_nodes(
+    text: &str,
+    shift: usize,
+    line_shift: usize,
+) -> Result<Vec<Value>, crate::parser::ParseError> {
+    let parsed = crate::parser::Parser::new().parse_with_spans(text)?;
+    let ctx = SpanContext {
+        statements: parsed.statement_spans,
+        line_starts: line_starts_of(text),
+        source: Arc::new(text.to_string()),
+        shift: (shift + parsed.offset as usize) as i64,
+        line_shift: line_shift as i64,
+    };
+    Ok(spanned_nodes(&parsed.program, ctx))
+}
+
+/// `meta.parse(source, #{"recover": true})`: `#{items, errors}`. The whole
+/// file when it parses; otherwise each top-level item parsed on its own,
+/// so a file mid-edit keeps every item but the broken one, and each
+/// error says where it is.
+fn parse_recovering(source: &str) -> Value {
+    if let Ok(nodes) = parse_nodes(source, 0, 0) {
+        return map(vec![("items", list(nodes)), ("errors", list(Vec::new()))]);
+    }
+    let starts = line_starts_of(source);
+    let mut items = Vec::new();
+    let mut errors = Vec::new();
+    for (a, b, _, _) in item_ranges(source) {
+        let text = &source[a..b];
+        let line_shift = line_of(&starts, a) - 1;
+        match parse_nodes(text, a, line_shift) {
+            Ok(nodes) => items.extend(nodes),
+            Err(e) => errors.push(error_node(&e, text, a, line_shift)),
+        }
+    }
+    map(vec![("items", list(items)), ("errors", list(errors))])
 }
 
 /// What `meta.parse(source)` answers, from Rust: the nodes with their

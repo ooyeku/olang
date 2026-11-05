@@ -205,6 +205,29 @@ const CHUNK_BYTES: usize = 8 * 1024;
 /// chunk is longer); one that is wrong leaves a chunk that does not
 /// parse, and the source is then parsed whole.
 fn top_level_starts(input: &str) -> Vec<usize> {
+    item_starts(input, false)
+}
+
+/// Whether `rest` (a line's text) opens with a declaration keyword: what
+/// a file mid-edit is resynchronized at.
+fn opens_declaration(rest: &str) -> bool {
+    const KEYWORDS: &[&str] = &[
+        "fn", "let", "type", "use", "share", "test", "trait", "impl", "error", "meta",
+    ];
+    KEYWORDS.iter().any(|k| {
+        rest.strip_prefix(k)
+            .is_some_and(|after| after.starts_with([' ', '\t']))
+    }) || (rest.starts_with('@') && rest[1..].starts_with(|c: char| c.is_ascii_alphabetic()))
+}
+
+/// The byte offsets where the top-level items of `input` start, as
+/// `top_level_starts` finds them. With `resync`, a line that opens with a
+/// declaration keyword at its first column starts an item whatever came
+/// before it, and the bracket count starts over there: in a file mid-edit
+/// (`fn g( = 3`) the unclosed bracket would otherwise hide every item
+/// after it. That can split a valid file wrongly (a body's `let` written
+/// at column 1), so it is for a source that does not parse whole.
+pub fn item_starts(input: &str, resync: bool) -> Vec<usize> {
     #[derive(PartialEq)]
     enum In {
         Code,
@@ -240,6 +263,10 @@ fn top_level_starts(input: &str) -> Vec<usize> {
                 || matches!(last_code, b'_' | b')' | b']' | b'}' | b'"' | b'`' | b'?');
             if depth == 0 && opens && !is_else && finished && last_line_opener != b'@' {
                 starts.push(i);
+            } else if resync && last_line_opener != b'@' && opens_declaration(&input[i..]) {
+                starts.push(i);
+                depth = 0;
+                last_code = 0;
             }
         }
         match state {
@@ -766,6 +793,21 @@ fn template_has_unclosed_interpolation(content: &str) -> bool {
 }
 
 impl ParseError {
+    /// The 1-based line and column the error is at, when it says.
+    pub fn line_column(&self) -> Option<(usize, usize)> {
+        match self {
+            ParseError::Pest(e) => Some(match e.line_col {
+                pest::error::LineColLocation::Pos(p) => p,
+                pest::error::LineColLocation::Span(p, _) => p,
+            }),
+            ParseError::InvalidSyntaxWithPosition { line, column, .. }
+            | ParseError::UnexpectedTokenWithPosition { line, column, .. } => {
+                Some((*line, *column))
+            }
+            _ => None,
+        }
+    }
+
     pub fn invalid_syntax_at(message: String, position: PositionInfo) -> Self {
         Self::InvalidSyntaxWithPosition {
             message,
