@@ -11670,9 +11670,9 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
         o.push_str(&format!(
             "{y}Modules{r} {d}(:help <module> to open one){r}\n"
         ));
-        o.push_str(&format!("  core       {c}str col math json toml re dates time random crypto base64 bytes bigint{r}\n"));
+        o.push_str(&format!("  core       {c}str col math json toml re dates time random crypto base64 bytes bigint value{r}\n"));
         o.push_str(&format!(
-            "  system     {c}fs os proc http db chan task cell caps meta testing{r}\n"
+            "  system     {c}fs os proc http db chan task cell cancel shared weak caps meta testing{r}\n"
         ));
         o.push_str(&format!(
             "  data       {c}ods stats plot csv collections{r}\n"
