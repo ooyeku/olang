@@ -2286,6 +2286,12 @@ let p = spawn heavy(21)
 println(to_string(task.join(p) == task.join(p)))   // memoized: true
 ```
 
+A join wakes the moment the task's thread ends: it does not look again
+on a timer. Starting a task and joining it costs tens of microseconds
+(about 30 µs interpreted on an M-series Mac). On the default tiers a new
+thread compiles the functions it calls afresh, which adds about 85 µs to
+a task's first call of each.
+
 **Failure is a value.** A task that raises yields `Err(message)` from
 `task.join` rather than aborting the program, so worker failure is
 handled with the ordinary Result toolkit and one bad task never kills

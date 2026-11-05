@@ -121,7 +121,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 //   send against a full queue, a `task.join`) registers a park entry
 //   naming its thread and site for as long as it blocks.
 //
-// Blocking waits are polls under the hood (a short timeout per tick).
+// A blocking wait wakes the moment what it waits for happens (a
+// message, room in the queue, the task's end) or its thread is asked to
+// stop; besides, it wakes once per tick for the stall check alone.
 // On each tick the waiter samples (generation, parked, live), where
 // the generation counter bumps on every park and unpark, and when a
 // thread joins or leaves the census. If two consecutive samples agree,
@@ -147,7 +149,7 @@ static CHAN_SEQ: AtomicU64 = AtomicU64::new(1);
 
 /// How often a parked thread wakes to run the stall check, and the
 /// resolution of the deadlock proof (two stable consecutive ticks).
-const STALL_TICK_MS: u64 = 250;
+pub(crate) const STALL_TICK_MS: u64 = 250;
 
 #[derive(Clone)]
 struct ParkSite {

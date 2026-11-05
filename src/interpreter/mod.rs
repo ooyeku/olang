@@ -2564,10 +2564,14 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 // (`task.interrupt`), whatever tier it runs on.
                 let stop = crate::interrupt::Handle::fresh();
                 let thread_stop = stop.clone();
+                // Its thread holds the only sender, dropped as the thread
+                // ends: a join waits on it instead of polling.
+                let (done_tx, done) = crossbeam_channel::bounded::<()>(0);
                 let handle = std::thread::Builder::new()
                     .name(format!("olang-spawn-{}", task_id))
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
+                        let _done = done_tx;
                         crate::interrupt::adopt(&thread_stop);
                         // In the stall detector's census for its whole
                         // life: this thread runs olang code.
@@ -2603,7 +2607,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     .map_err(|e| InterpreterError::RuntimeError {
                         message: format!("spawn: could not start thread: {}", e),
                     })?;
-                spawn_registry::register(task_id, handle, stop);
+                spawn_registry::register(task_id, handle, stop, done);
                 Ok(crate::stdlib::task::handle(task_id))
             }
 

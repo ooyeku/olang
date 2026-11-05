@@ -1,5 +1,6 @@
 //! Stopping one thread's work: budgets per thread (OL-494) and
-//! `task.interrupt` (OL-493). Every program
+//! `task.interrupt` (OL-493); joins and full sends that wake instead of
+//! polling (OL-498). Every program
 //! here runs twice, on the default tiers (bytecode VM and native code)
 //! and on the interpreter alone (`--no-ovm`), and must print the same
 //! lines on both. Runs the real binary, as a user would.
@@ -266,5 +267,40 @@ println(task.join(t))
     assert_eq!(
         out,
         "true\n[\"interrupting\"]\nErr(\"Runtime error: interrupted: go\")\n"
+    );
+}
+
+#[test]
+fn a_join_and_a_full_send_wake_without_polling() {
+    // Both slept 1 ms between looks: a spawn plus a join took 1.3 ms
+    // serially, and backpressure added about 1 ms per send. The bounds
+    // here are loose, for a loaded machine; quiet, they are 28-45 µs and
+    // 5 µs.
+    let out = run_both(
+        "wakeups",
+        r#"
+fn one(x) = x + 1
+let _w = task.join(spawn one(1))
+let t0 = time.monotonic()
+for i in range(0, 500) { let _ = task.join(spawn one(i)) }
+let per_join = (time.monotonic() - t0) * 1000.0 / 500.0
+let c = chan.bounded(1)
+let consumer = spawn { let mut k = 0; while k < 2000 { let _ = chan.recv(c); k = k + 1 }; k }
+let t1 = time.monotonic()
+for i in range(0, 2000) { chan.send(c, i) }
+println(task.join(consumer))
+let per_send = (time.monotonic() - t1) * 1000.0 / 2000.0
+println("join quick " + show(per_join < 500.0))
+println("send quick " + show(per_send < 300.0))
+fn later() = { time.sleep(10); 7 }
+let t = spawn later()
+let t2 = time.monotonic()
+println(task.join_timeout(t, 5000))
+println("join_timeout quick " + show(time.monotonic() - t2 < 200))
+"#,
+    );
+    assert_eq!(
+        out,
+        "Ok(2000)\njoin quick true\nsend quick true\nOk(Ok(7))\njoin_timeout quick true\n"
     );
 }
