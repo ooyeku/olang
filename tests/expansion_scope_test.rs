@@ -89,11 +89,12 @@ fn a_test_body_statement_carries_its_own_position() {
     write(
         &ws,
         "t.ol",
-        "test \"t\" {\n    let fs = 1\n    assert_eq(fs, 1)\n}\n",
+        "test \"t\" {\n    let fs = 1\n    assert_eq(fs.exists(\".\"), true)\n}\n",
     );
     let (out, err, _) = olang(&ws, &["check", "t.ol"]);
     let all = out + &err;
-    // The shadow warning is placed at the `let`, line 2, not the block's line 1.
+    // The shadow warning (said because `fs.exists` later reaches the
+    // binding: OL-530) is placed at the `let`, line 2, not the block's line 1.
     assert!(all.contains("t.ol:2:"), "{all}");
     let (out, _, rc) = olang(
         &ws,
