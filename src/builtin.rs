@@ -880,6 +880,12 @@ impl BuiltinFunctions {
             return crate::stdlib::peg::call(peg_function, arguments, interpreter);
         }
 
+        // Cancellation tokens
+        if let Some(f) = name.strip_prefix("cancel.") {
+            return crate::stdlib::cancel::call_cancel_function(f, arguments)
+                .map_err(InterpreterError::runtime);
+        }
+
         // Handle chan functions
         if let Some(chan_function) = name.strip_prefix("chan.") {
             return crate::stdlib::chan::call_chan_function(chan_function, arguments)

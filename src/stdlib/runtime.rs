@@ -41,6 +41,10 @@ pub fn create_runtime_module() -> Value {
     module.insert("module_grant".to_string(), builtin("module_grant", 1));
     module.insert("module_permits".to_string(), builtin("module_permits", 3));
     module.insert("call_budget".to_string(), builtin("call_budget", 3));
+    module.insert(
+        "call_cancellable".to_string(),
+        builtin("call_cancellable", 3),
+    );
     module.insert("last_error".to_string(), builtin("last_error", 0));
     module.insert("shape".to_string(), builtin("shape", 1));
     // a control a host binds (ui.slider and its kin): src/controls.rs
@@ -577,6 +581,7 @@ pub fn call_host(
         })(),
         "module_permits" => host_module_permits(args),
         "call_budget" => host_call_budget(args, interpreter),
+        "call_cancellable" => host_call_cancellable(args, interpreter),
         "last_error" if !args.is_empty() => {
             Err(host_err("runtime.last_error expects no arguments"))
         }
@@ -757,6 +762,80 @@ fn host_call_budget(
                 ("error", Value::String(Arc::new(message))),
                 ("frames", crate::errtrace::frames_value(&frames)),
                 ("over", Value::Boolean(over)),
+                ("us", us),
+            ]))
+        }
+    }
+}
+
+/// `runtime.call_cancellable(f, args, token)`: `f(args…)`, stopped (as
+/// an interrupt, on this thread only) once `token` is set, and its
+/// failures caught. Answers a Map, as `call_budget` does: `ok`, `value`
+/// (when ok), `error` and `frames` (when not), `cancelled` (the token was
+/// set), `us`.
+fn host_call_cancellable(
+    args: &[Value],
+    interpreter: &mut crate::interpreter::Interpreter,
+) -> Result<Value, crate::interpreter::InterpreterError> {
+    let f = match args.first() {
+        Some(v @ (Value::Function(_) | Value::Builtin(_))) => v.clone(),
+        other => {
+            return Err(host_err(format!(
+                "runtime.call_cancellable: argument 1 must be a function, got {}",
+                other
+                    .map(|v| v.type_name())
+                    .unwrap_or_else(|| "nothing".into())
+            )));
+        }
+    };
+    let call_args: Vec<Value> = match args.get(1) {
+        Some(Value::List(items)) => items.iter().cloned().collect(),
+        Some(Value::Unit) | None => Vec::new(),
+        Some(other) => {
+            return Err(host_err(format!(
+                "runtime.call_cancellable: argument 2 must be a List of arguments, got {}",
+                other.type_name()
+            )));
+        }
+    };
+    let token = crate::stdlib::cancel::token_of(
+        args.get(2).unwrap_or(&Value::Unit),
+        "runtime.call_cancellable: argument 3",
+    )
+    .map_err(host_err)?;
+    crate::errtrace::begin();
+    let started = std::time::Instant::now();
+    // A token already set stops the call before it starts.
+    crate::interrupt::cancel_begin(token);
+    let result = if crate::interrupt::should_stop() {
+        Err(crate::interrupt::interpreter_error())
+    } else {
+        interpreter.call_function(f, call_args)
+    };
+    let cancelled = crate::interrupt::cancel_end();
+    let us = Value::Integer(started.elapsed().as_micros() as i64);
+    match result {
+        Ok(v) => Ok(map_value(vec![
+            ("ok", Value::Boolean(true)),
+            ("value", v),
+            ("cancelled", Value::Boolean(cancelled)),
+            ("us", us),
+        ])),
+        Err(e) if crate::interpreter::Interpreter::is_control_signal(&e) => Err(e),
+        Err(e) => {
+            interpreter.clear_pending_error();
+            let raw = crate::builtin::strip_error_prefixes(&e.to_string());
+            let message = if cancelled && crate::interrupt::is_interrupt(&raw) {
+                crate::interrupt::CANCEL_MESSAGE.to_string()
+            } else {
+                raw
+            };
+            let frames = crate::errtrace::caught(&message);
+            Ok(map_value(vec![
+                ("ok", Value::Boolean(false)),
+                ("error", Value::String(Arc::new(message))),
+                ("frames", crate::errtrace::frames_value(&frames)),
+                ("cancelled", Value::Boolean(cancelled)),
                 ("us", us),
             ]))
         }

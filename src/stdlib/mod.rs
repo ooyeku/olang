@@ -8,6 +8,7 @@ pub mod asset;
 pub mod base64;
 pub mod bigint;
 pub mod bytes;
+pub mod cancel;
 pub mod caps_mod;
 pub mod cell;
 pub mod chan;
@@ -116,6 +117,7 @@ pub fn get_stdlib() -> crate::ast::ValueMap {
     stdlib.insert("chan".to_string(), chan::create_chan_module());
     stdlib.insert("caps".to_string(), caps_mod::create_caps_module());
     stdlib.insert("cell".to_string(), cell::create_cell_module());
+    stdlib.insert("cancel".to_string(), cancel::create_cancel_module());
     stdlib.insert("task".to_string(), task::create_task_module());
     stdlib.insert("math".to_string(), math::create_math_module());
     #[cfg(feature = "native")]

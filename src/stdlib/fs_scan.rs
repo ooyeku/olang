@@ -211,6 +211,15 @@ impl Only {
     }
 }
 
+/// A walk cut short because the calling thread was asked to stop raises
+/// the interrupt, as the evaluators' polls do.
+fn stopped() -> Result<(), Box<dyn std::error::Error>> {
+    if crate::interrupt::should_stop() {
+        return Err(crate::interrupt::MESSAGE.into());
+    }
+    Ok(())
+}
+
 /// The files under `root` the walk keeps, relative to it with `/`
 /// between folders, sorted.
 fn walk(root: &Path, w: &Walk) -> (Vec<String>, Vec<String>) {
@@ -236,7 +245,13 @@ fn walk(root: &Path, w: &Walk) -> (Vec<String>, Vec<String>) {
     };
     let only_f = only.clone();
     let root_f: Arc<PathBuf> = Arc::new(root.to_path_buf());
+    // A stop asked of the calling thread (a cancelled token, a budget)
+    // prunes the rest of the walk; the caller then raises (`stopped`).
+    let probe = crate::interrupt::StopProbe::here();
     b.filter_entry(move |e| {
+        if probe.should_stop() {
+            return false;
+        }
         let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
         if is_dir
             && e.depth() > 0
@@ -435,12 +450,15 @@ pub fn scan(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if w.empty_dirs == 2 {
         // one walk, both: #{ files, empty_dirs }
         let (files, empties) = walk(&root, &w);
+        stopped()?;
         let mut m = ValueMap::default();
         m.insert("files".to_string(), strs(files));
         m.insert("empty_dirs".to_string(), strs(empties));
         return Ok(Value::Ok(Box::new(Value::Map(Arc::new(m)))));
     }
-    Ok(Value::Ok(Box::new(strs(walk_files(&root, &w)))))
+    let files = walk_files(&root, &w);
+    stopped()?;
+    Ok(Value::Ok(Box::new(strs(files))))
 }
 
 /// How a line is searched.
@@ -804,6 +822,7 @@ pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         },
         None => walk_files(&root, &w),
     };
+    stopped()?;
     use rayon::prelude::*;
     let per: Vec<(usize, Vec<Found>)> = files
         .par_iter()

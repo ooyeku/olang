@@ -29,20 +29,61 @@
 //! past it. A request with no target (the REPL's interrupt) stops every
 //! thread's evaluation, as before. The poll's fast path is unchanged: one
 //! relaxed load, false while nothing is asked.
+//!
+//! **Cancellation.** `runtime.call_cancellable(f, args, token)` runs `f`
+//! watching a `cancel` token: setting the token stops the threads running
+//! a cancellable call on it, through the same flag and polls. A thread
+//! watching nothing, or a token not set, polls past it.
 
 use crate::clock::Instant;
+use crate::stdlib::cancel::Token;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Condvar, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
 static ARMED: AtomicBool = AtomicBool::new(false);
+/// The polls' flag: true while anything may be asking some thread to
+/// stop (an interrupt, a budget's trip, a set token a cancellable call
+/// watches). Only `pending`'s slow path asks whether it is this thread.
+/// Written only under `FLAG_LOCK`, by `refresh` or with the interrupt.
 static REQUESTED: AtomicBool = AtomicBool::new(false);
+/// An interrupt or a budget's trip stands, for `TARGET`.
+static INTERRUPT: AtomicBool = AtomicBool::new(false);
+static FLAG_LOCK: Mutex<()> = Mutex::new(());
 /// The thread a request is for (a number of `thread_no`), 0 for every one.
 static TARGET: AtomicU64 = AtomicU64::new(0);
 static NEXT_THREAD: AtomicU64 = AtomicU64::new(1);
 
 thread_local! {
     static THREAD_NO: u64 = NEXT_THREAD.fetch_add(1, Ordering::Relaxed);
+    /// The tokens this thread's cancellable calls watch, outermost first.
+    static WATCHING: std::cell::RefCell<Vec<Arc<Token>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Every cancellable call running: (its thread, its token).
+static WATCHES: Mutex<Vec<(u64, Arc<Token>)>> = Mutex::new(Vec::new());
+
+/// Set the polls' flag from what stands: the interrupt, or a watched
+/// token that is set.
+fn refresh() {
+    let _g = FLAG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let cancelled = WATCHES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .any(|(_, t)| t.is_set());
+    REQUESTED.store(
+        INTERRUPT.load(Ordering::SeqCst) || cancelled,
+        Ordering::SeqCst,
+    );
+}
+
+/// Raise the interrupt for `target` (0: every thread).
+fn raise_interrupt(target: u64) {
+    let _g = FLAG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    TARGET.store(target, Ordering::SeqCst);
+    INTERRUPT.store(true, Ordering::SeqCst);
+    REQUESTED.store(true, Ordering::SeqCst);
 }
 
 /// This thread's number (never 0): what a budget's trip is aimed at.
@@ -67,14 +108,15 @@ pub fn armed() -> bool {
 
 /// Ask the running evaluation to stop (every thread's).
 pub fn request() {
-    TARGET.store(0, Ordering::SeqCst);
-    REQUESTED.store(true, Ordering::SeqCst);
+    raise_interrupt(0);
 }
 
-/// Forget a request (at the start of an evaluation).
+/// Forget a request (at the start of an evaluation). A cancellable call
+/// still running keeps its token's say.
 pub fn clear() {
-    REQUESTED.store(false, Ordering::SeqCst);
+    INTERRUPT.store(false, Ordering::SeqCst);
     TARGET.store(0, Ordering::SeqCst);
+    refresh();
 }
 
 /// Whether a stop was asked for this thread: one relaxed load, a
@@ -88,8 +130,93 @@ pub fn pending() -> bool {
 #[cold]
 #[inline(never)]
 fn aimed_here() -> bool {
-    let t = TARGET.load(Ordering::SeqCst);
-    t == 0 || t == thread_no()
+    if INTERRUPT.load(Ordering::SeqCst) {
+        let t = TARGET.load(Ordering::SeqCst);
+        if t == 0 || t == thread_no() {
+            return true;
+        }
+    }
+    WATCHING.with(|w| w.borrow().iter().any(|t| t.is_set()))
+}
+
+// ── cancellation ────────────────────────────────────────────────────
+/// The message a cancelled call's error carries once caught.
+pub const CANCEL_MESSAGE: &str = "cancelled";
+
+/// A cancellable call begun on this thread: once `token` is set, this
+/// thread's evaluation is stopped as an interrupt is, until
+/// `cancel_end`. Arms the process, so native code compiled from now on
+/// polls too.
+pub fn cancel_begin(token: Arc<Token>) {
+    arm();
+    WATCHING.with(|w| w.borrow_mut().push(token.clone()));
+    WATCHES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push((thread_no(), token));
+    refresh();
+}
+
+/// The cancellable call begun last on this thread ended: whether its
+/// token was set.
+pub fn cancel_end() -> bool {
+    let me = thread_no();
+    let token = WATCHING.with(|w| w.borrow_mut().pop());
+    if let Some(token) = &token {
+        let mut watches = WATCHES.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = watches
+            .iter()
+            .rposition(|(t, k)| *t == me && Arc::ptr_eq(k, token))
+        {
+            watches.remove(i);
+        }
+    }
+    refresh();
+    token.is_some_and(|t| t.is_set())
+}
+
+/// `cancel.set(token)` just set it: the threads watching it stop at their
+/// next poll.
+pub fn cancel_set(_token: &Arc<Token>) {
+    refresh();
+}
+
+/// Whether this thread runs inside a cancellable call whose token is
+/// set, or was asked to stop otherwise: what a long builtin checks
+/// between its steps (the same answer the evaluators' polls get).
+pub fn should_stop() -> bool {
+    pending()
+}
+
+/// This thread's stop question, for helper threads working on its behalf
+/// (a file walk's workers): it asks what `should_stop` would ask here.
+#[derive(Clone)]
+pub struct StopProbe {
+    thread: u64,
+    tokens: Vec<Arc<Token>>,
+}
+
+impl StopProbe {
+    pub fn here() -> StopProbe {
+        StopProbe {
+            thread: thread_no(),
+            tokens: WATCHING.with(|w| w.borrow().clone()),
+        }
+    }
+
+    #[inline]
+    pub fn should_stop(&self) -> bool {
+        if !REQUESTED.load(Ordering::Relaxed) {
+            return false;
+        }
+        if INTERRUPT.load(Ordering::SeqCst) {
+            let t = TARGET.load(Ordering::SeqCst);
+            if t == 0 || t == self.thread {
+                return true;
+            }
+        }
+        self.tokens.iter().any(|t| t.is_set())
+    }
 }
 
 // ── budgets ─────────────────────────────────────────────────────────
@@ -137,8 +264,7 @@ fn watchdog() {
                 if now >= deadline {
                     if w.tripped != Some(w.generation) {
                         w.tripped = Some(w.generation);
-                        TARGET.store(thread, Ordering::SeqCst);
-                        REQUESTED.store(true, Ordering::SeqCst);
+                        raise_interrupt(thread);
                     }
                     w = cv.wait(w).unwrap();
                 } else {
@@ -173,8 +299,9 @@ pub fn budget_end() -> bool {
     if tripped {
         w.tripped = None;
         if TARGET.load(Ordering::SeqCst) == thread_no() {
-            REQUESTED.store(false, Ordering::SeqCst);
+            INTERRUPT.store(false, Ordering::SeqCst);
             TARGET.store(0, Ordering::SeqCst);
+            refresh();
         }
     }
     cv.notify_all();

@@ -3075,6 +3075,32 @@ task.watch(service, inbox)   // a dead service is an Err at the next recv, not a
             &[r##"cell.update(counter, (n) => n + 1)  // returns the new value"##],
         );
 
+        // cancel — cancellation tokens
+        self.doc_ex(
+            "cancel.token",
+            "cancel.token()",
+            "CancelToken",
+            "cancel",
+            "a new cancellation token, not set: how one task tells another its work is no longer wanted. It crosses spawn and channels like any value",
+            &[r##"let t = cancel.token()"##],
+        );
+        self.doc_ex(
+            "cancel.set",
+            "cancel.set(t)",
+            "Unit",
+            "cancel",
+            "set the token, from any thread; it stays set. Work checking it sees it at once, and a runtime.call_cancellable on it stops",
+            &[r##"cancel.set(t)"##],
+        );
+        self.doc_ex(
+            "cancel.is_set",
+            "cancel.is_set(t)",
+            "Bool",
+            "cancel",
+            "whether the token has been set: one atomic read, cheap enough for a tight loop",
+            &[r##"while !cancel.is_set(t) { step() }"##],
+        );
+
         self.doc_ex(
             "chan.new",
             "chan.new()",
@@ -8390,6 +8416,15 @@ if boot != () && boot.running != () => println("running layer " + boot.running) 
             "Call f(args…) with a time budget: past `ms` milliseconds its evaluation is stopped — as an interrupt, on this thread only — and any failure is caught. #{ \"ok\", \"value\" (when ok), \"error\" and \"frames\" (when not: each #{ \"file\", \"line\", \"fn\" }, innermost first), \"over\" (it ran past its budget), \"us\" (microseconds it took) }. How a host calls code it does not trust to finish.",
             &[r##"let r = runtime.call_budget((n) => n * 2, [21], 50)
 println(show(map_get(r, "value")) + " in " + show(map_get(r, "us")) + " µs")"##],
+        );
+        self.doc_ex(
+            "runtime.call_cancellable",
+            "runtime.call_cancellable(f, args, t)",
+            "Map",
+            "runtime",
+            "Call f(args…) so that setting the cancel token t stops it wherever it is: the interpreter at its next statement, compiled code at its next loop iteration or call, the file walks, os.exec and http reads between their steps. Only the threads running a cancellable call on t stop. Answers, as runtime.call_budget does, #{ \"ok\", \"value\" (when ok), \"error\" (\"cancelled\" when stopped) and \"frames\" (when not), \"cancelled\" (t was set), \"us\" }.",
+            &[r##"let r = runtime.call_cancellable((n) => n * 2, [21], cancel.token())
+println(show(map_get(r, "value")))  // 42"##],
         );
         self.doc_ex(
             "runtime.last_error",

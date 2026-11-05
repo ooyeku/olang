@@ -309,6 +309,9 @@ fn perform(
         builder = builder.body(body.to_string());
     }
 
+    if crate::interrupt::should_stop() {
+        return Err(crate::interrupt::MESSAGE.into());
+    }
     match builder.send() {
         Ok(response) => {
             let status = response.status().as_u16() as i64;
@@ -320,12 +323,42 @@ fn perform(
                     .ok()
                     .map(|v| (name.as_str().to_lowercase(), v.to_string()))
             }));
-            let body = if opts.bytes {
+            // Where a call can be stopped (a cancellable call, a budget,
+            // the REPL's interrupt), the body is read a chunk at a time,
+            // and a stop between chunks raises as the evaluators do.
+            let body: Result<Value, String> = if crate::interrupt::armed() {
+                use std::io::Read;
+                let mut response = response;
+                let mut all = Vec::new();
+                let mut chunk = vec![0u8; 64 * 1024];
+                loop {
+                    if crate::interrupt::should_stop() {
+                        return Err(crate::interrupt::MESSAGE.into());
+                    }
+                    match response.read(&mut chunk) {
+                        Ok(0) => break Ok(()),
+                        Ok(n) => all.extend_from_slice(&chunk[..n]),
+                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                        Err(e) => break Err(e.to_string()),
+                    }
+                }
+                .map(|()| {
+                    if opts.bytes {
+                        crate::stdlib::bytes::to_value(all)
+                    } else {
+                        Value::String(Arc::new(String::from_utf8_lossy(&all).into_owned()))
+                    }
+                })
+            } else if opts.bytes {
                 response
                     .bytes()
                     .map(|b| crate::stdlib::bytes::to_value(b.to_vec()))
+                    .map_err(|e| e.to_string())
             } else {
-                response.text().map(|t| Value::String(Arc::new(t)))
+                response
+                    .text()
+                    .map(|t| Value::String(Arc::new(t)))
+                    .map_err(|e| e.to_string())
             };
             match body {
                 Ok(response_body) => {

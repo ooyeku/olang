@@ -46,6 +46,7 @@ the sentence that documents the function in its module's section.
 - [`task` — background threads](#task--background-threads)
 - [`cell` — mutable locations](#cell--mutable-locations)
 - [`chan` — channels](#chan--channels)
+- [`cancel` — cancellation tokens](#cancel--cancellation-tokens)
 - [`random` — randomness](#random--randomness)
 - [`crypto` — hashing and encryption](#crypto--hashing-and-encryption)
 - [`bytes` — binary data](#bytes--binary-data)
@@ -1626,6 +1627,45 @@ while going {
     }
 }
 println(`${total} from ${unwrap(task.join(worker))} squares`)
+```
+
+## `cancel` — cancellation tokens
+
+A token is how one task tells another that its work is no longer
+wanted: a newer revision arrived, or a query was superseded. It starts
+clear and can be set once, from any thread. It holds no value, only
+"asked to stop", so it crosses `spawn` and channels like any value.
+
+| Function | Returns |
+|---|---|
+| <a id="cancel-token"></a>`cancel.token()` | a new token, not set |
+| <a id="cancel-set"></a>`cancel.set(t)` | `()`; the token is set from now on (setting it again does nothing) |
+| <a id="cancel-is_set"></a>`cancel.is_set(t)` | whether it has been set: one atomic read, cheap enough to check in a tight loop |
+| <a id="runtime-call_cancellable"></a>`runtime.call_cancellable(f, args, t)` | `f(args…)`, stopped wherever it is once `t` is set, with its failure caught: `#{ ok, value, error, frames, cancelled, us }`. A stopped call's `error` is `"cancelled"` |
+
+Work can check the token itself, which lets it stop at a point of its
+choosing. `runtime.call_cancellable` stops code that does not check: the
+interpreter at its next statement, compiled code at its next loop
+iteration or call, and the long builtins between their steps (the file
+walks `fs.walk`, `fs.scan` and `fs.search`, `os.exec`, which kills the
+child, and http reads). It is the same stop `runtime.call_budget` makes
+when time runs out, and it stops only the threads running a cancellable
+call on that token.
+
+```olang
+let t = cancel.token()
+fn count_until_stopped(t) = {
+    let mut n = 0
+    while !cancel.is_set(t) && n < 1000 { n = n + 1 }
+    n
+}
+println(count_until_stopped(t))          // 1000
+cancel.set(t)
+println(count_until_stopped(t))          // 0
+let r = runtime.call_cancellable((x) => x * 2, [21], cancel.token())
+println(`${r.ok} ${r.value} ${r.cancelled}`)   // true 42 false
+let stopped = runtime.call_cancellable((x) => x * 2, [21], t)
+println(`${stopped.ok} ${stopped.error}`)      // false cancelled
 ```
 
 ## `random` — randomness
