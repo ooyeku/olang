@@ -778,15 +778,16 @@ fn the_application_hears_what_it_is_asked_to_open_and_the_tab_bar() {
         let ev = gui.events()
         gui.input(w, #{ "kind": "open", "paths": ["/tmp/a.ol", "/tmp/folder"] })
         gui.input(w, #{ "kind": "new_tab" })
+        gui.input(w, #{ "kind": "open_url", "urls": ["myapp://hand-off?doc=1"] })
         let mut seen = []
         let mut more = true
-        while more { match chan.try_recv(ev) { Ok(()) => { more = false }, Ok(e) => { seen = seen + [map_get(e, "kind") + (if map_get(e, "paths") == () => "" else => ":" + join(map_get(e, "paths"), ","))] }, _ => { more = false } } }
+        while more { match chan.try_recv(ev) { Ok(()) => { more = false }, Ok(e) => { seen = seen + [map_get(e, "kind") + (if map_get(e, "paths") == () => "" else => ":" + join(map_get(e, "paths"), ",")) + (if map_get(e, "urls") == () => "" else => ":" + join(map_get(e, "urls"), ","))] }, _ => { more = false } } }
         let bare = match attempt(() => gui.input(w, #{ "kind": "open" })) { Ok(v) => "taken", Err(e) => "refused" }
         gui.close(w2)
         gui.close(w)
-        [contains(seen, "open:/tmp/a.ol,/tmp/folder"), contains(seen, "new_tab"), bare]
+        [contains(seen, "open:/tmp/a.ol,/tmp/folder"), contains(seen, "new_tab"), contains(seen, "open_url:myapp://hand-off?doc=1"), bare]
     "##);
-    assert_eq!(text(&v), r#"[true, true, "refused"]"#);
+    assert_eq!(text(&v), r#"[true, true, true, "refused"]"#);
 }
 
 #[test]
