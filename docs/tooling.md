@@ -1692,8 +1692,8 @@ distribute it.
 
 A release build of olang writes `olang.dSYM` beside the binary
 (`target/release/olang.dSYM`): the debug symbols a crash report's native
-addresses are read back with, `atos -o olang.dSYM/Contents/Resources/DWARF/olang
--l <load_address> <address>…`. Keep the dSYM of each binary you ship; its
+addresses are read back with, `atos -o olang.dSYM -l <load_address>
+<address>…`. Keep the dSYM of each binary you ship; its
 UUID is the one the report names.
 
 Signed with the hardened runtime (which notarisation needs), the runtime
