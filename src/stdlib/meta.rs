@@ -30,10 +30,12 @@ use crate::ast::{
     Argument, Expr, FieldValue, FunctionDecl, LetDecl, MatchArm, Parameter, Pattern, ShareDecl,
     Statement, TemplatePart, UseDecl, UseItem, Value,
 };
+use std::sync::Arc;
 
 pub fn create_meta_module() -> Value {
     let mut module = crate::ast::ValueMap::default();
     module.insert("parse".to_string(), builtin("parse", 1));
+    module.insert("parse_items".to_string(), builtin("parse_items", 1));
     module.insert("eval".to_string(), builtin("eval", 1));
     module.insert("lit".to_string(), builtin("lit", 1));
     module.insert("expand".to_string(), builtin("expand", 1));
@@ -41,6 +43,9 @@ pub fn create_meta_module() -> Value {
     module.insert("fresh".to_string(), builtin("fresh", 1));
     module.insert("exports".to_string(), builtin("exports", 1));
     module.insert("unresolved".to_string(), builtin("unresolved", 1));
+    module.insert("resolve".to_string(), builtin("resolve", 1));
+    module.insert("types".to_string(), builtin("types", 1));
+    module.insert("fingerprint".to_string(), builtin("fingerprint", 1));
     module.insert("rename".to_string(), builtin("rename", 2));
     module.insert("tokens".to_string(), builtin("tokens", 1));
     module.insert("highlight".to_string(), builtin("highlight", 1));
@@ -63,6 +68,7 @@ pub fn call_meta_function(
 ) -> Result<Value, Box<dyn std::error::Error>> {
     match name {
         "parse" => meta_parse(args),
+        "parse_items" => meta_parse_items(args),
         "eval" => meta_eval(args),
         "lit" => meta_lit(args),
         "expand" => meta_expand(args),
@@ -70,6 +76,9 @@ pub fn call_meta_function(
         "fresh" => meta_fresh(args),
         "exports" => meta_exports(args),
         "unresolved" => meta_unresolved(args),
+        "resolve" => meta_resolve(args),
+        "types" => meta_types(args),
+        "fingerprint" => meta_fingerprint(args),
         "rename" => meta_rename(args),
         "tokens" | "highlight" => {
             let src = match args.first() {
@@ -89,6 +98,13 @@ pub fn call_meta_function(
                     .into());
                 }
             };
+            // `#{from, state, packed, lang}`: packed Int lists in bytes,
+            // from an offset with the lexer's state there (OL-454)
+            if name == "tokens"
+                && let Some(Value::Map(opts)) = args.get(1)
+            {
+                return tokens_with_options(&src, opts);
+            }
             // the language: olang unless named
             let lang = match args.get(1) {
                 None | Some(Value::Unit) => "olang",
@@ -119,6 +135,332 @@ pub fn call_meta_function(
         }
         _ => Err(format!("Unknown meta function: {}", name).into()),
     }
+}
+
+/// `meta.tokens(source, #{"from", "state", "packed", "lang"})`: with
+/// `packed: true`, `#{kind, start, end, kinds, state}` — three Int lists
+/// in bytes (a kind is its index in `kinds`) and the lexer's state at the
+/// end ("code", "string", "raw" or "template"); `from` (a byte offset)
+/// and `state` (the state there, as a previous call answered it) relex
+/// from a line instead of from the start.
+fn tokens_with_options(
+    src: &str,
+    opts: &crate::ast::ValueMap,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    use crate::stdlib::tokens::{LexState, packed_value, tokens_from, tokens_value_of};
+    if let Some(k) = opts
+        .keys()
+        .find(|k| !["from", "state", "packed", "lang"].contains(&k.as_str()))
+    {
+        return Err(format!(
+            "meta.tokens: unknown option \"{k}\" (it takes from, state, packed and lang)"
+        )
+        .into());
+    }
+    let from = match opts.get("from") {
+        None | Some(Value::Unit) => 0,
+        Some(Value::Integer(n)) if *n >= 0 && (*n as usize) <= src.len() => *n as usize,
+        Some(Value::Integer(n)) => {
+            return Err(format!(
+                "meta.tokens: from {n} is outside the source (0 to {})",
+                src.len()
+            )
+            .into());
+        }
+        Some(other) => {
+            return Err(format!(
+                "meta.tokens: from must be an Int, got {}",
+                other.type_name()
+            )
+            .into());
+        }
+    };
+    if !src.is_char_boundary(from) {
+        return Err(format!("meta.tokens: from {from} is inside a character").into());
+    }
+    let state = match opts.get("state") {
+        None | Some(Value::Unit) => LexState::Code,
+        Some(Value::String(s)) => LexState::from_name(s).ok_or_else(|| {
+            format!("meta.tokens: unknown state \"{s}\" (code, string, raw or template)")
+        })?,
+        Some(other) => {
+            return Err(format!(
+                "meta.tokens: state must be a string, got {}",
+                other.type_name()
+            )
+            .into());
+        }
+    };
+    let packed = match opts.get("packed") {
+        None | Some(Value::Unit) => false,
+        Some(Value::Boolean(b)) => *b,
+        Some(other) => {
+            return Err(format!(
+                "meta.tokens: packed must be true or false, got {}",
+                other.type_name()
+            )
+            .into());
+        }
+    };
+    match opts.get("lang") {
+        None | Some(Value::Unit) => {}
+        Some(Value::String(l)) if crate::stdlib::lexers::language(l) == Some("olang") => {}
+        Some(Value::String(l)) if from == 0 && state == LexState::Code && !packed => {
+            let lang = crate::stdlib::lexers::language(l).ok_or_else(|| {
+                format!(
+                    "meta.tokens: no tokenizer for '{l}' (it knows {})",
+                    crate::stdlib::lexers::LANGUAGES
+                )
+            })?;
+            return Ok(crate::stdlib::tokens::tokens_value_in(src, lang));
+        }
+        Some(_) => {
+            return Err("meta.tokens: from, state and packed are for olang source".into());
+        }
+    }
+    let (toks, end) = tokens_from(src, from, state);
+    Ok(if packed {
+        packed_value(&toks, end)
+    } else {
+        tokens_value_of(src, toks)
+    })
+}
+
+/// `meta.resolve(source)`: `Ok([#{name, start, end, ...}])`, every name in
+/// the program in order, with what it refers to — `def: #{start, end}`
+/// (where its binding is defined; `is_def` marks the defining place
+/// itself), `builtin: true`, `module: true`, or `unresolved: true` —
+/// by the walk the language server's references and rename take, so the
+/// two agree. `Err` when the source does not parse.
+#[cfg(feature = "native")]
+fn meta_resolve(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let source = match args.first() {
+        Some(Value::String(s)) if args.len() == 1 => s.clone(),
+        _ => return Err("meta.resolve expects the source string".into()),
+    };
+    let Some(names) = crate::tools::scope_refs::names(&source) else {
+        let message = match crate::parser::Parser::new().parse_raw(&source) {
+            Err(e) => e.to_string(),
+            Ok(_) => "the source does not parse".to_string(),
+        };
+        return Ok(Value::Err(Box::new(s(&message))));
+    };
+    let builtins = crate::builtin::BuiltinFunctions::new();
+    let modules = crate::stdlib::native_members();
+    let embedded = crate::stdlib::embedded::names();
+    let out = names
+        .into_iter()
+        .map(|n| {
+            let mut pairs = vec![
+                ("name", s(&n.name)),
+                ("start", Value::Integer(n.start as i64)),
+                ("end", Value::Integer(n.end as i64)),
+            ];
+            match n.def {
+                Some((a, b)) => {
+                    pairs.push((
+                        "def",
+                        map(vec![
+                            ("start", Value::Integer(a as i64)),
+                            ("end", Value::Integer(b as i64)),
+                        ]),
+                    ));
+                    if n.is_def {
+                        pairs.push(("is_def", Value::Boolean(true)));
+                    }
+                    if n.top_level {
+                        pairs.push(("top_level", Value::Boolean(true)));
+                    }
+                }
+                None if modules.contains_key(&n.name) || embedded.contains(&n.name.as_str()) => {
+                    pairs.push(("module", Value::Boolean(true)))
+                }
+                None if builtins.get_functions().contains_key(&n.name) => {
+                    pairs.push(("builtin", Value::Boolean(true)))
+                }
+                None => pairs.push(("unresolved", Value::Boolean(true))),
+            }
+            map(pairs)
+        })
+        .collect();
+    Ok(Value::Ok(Box::new(list(out))))
+}
+
+#[cfg(not(feature = "native"))]
+fn meta_resolve(_: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    Err("meta.resolve needs the language server's scope walk, which the browser runtime does not carry".into())
+}
+
+/// `meta.types(source)`: `Ok([#{name, signature, doc, name_start, line,
+/// column}])`, each top-level declaration with the signature hover
+/// shows for it (the checker's types where it knows them) and its `///`
+/// doc — the language server's own code (`lsp::signatures`).
+#[cfg(feature = "native")]
+fn meta_types(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let source = match args.first() {
+        Some(Value::String(s)) if args.len() == 1 => s.clone(),
+        _ => return Err("meta.types expects the source string".into()),
+    };
+    let starts = line_starts_of(&source);
+    let out = crate::tools::lsp::signatures(&source)
+        .into_iter()
+        .map(|d| {
+            let (line, column) = d.span;
+            let name_start = starts
+                .get((line as usize).saturating_sub(1))
+                .and_then(|ls| {
+                    source[*ls..]
+                        .char_indices()
+                        .nth((column as usize).saturating_sub(1))
+                        .map(|(i, _)| ls + i)
+                })
+                .unwrap_or(0);
+            map(vec![
+                ("name", s(&d.name)),
+                ("signature", s(&d.code)),
+                ("doc", s(&d.doc)),
+                ("name_start", Value::Integer(name_start as i64)),
+                ("line", Value::Integer(line as i64)),
+                ("column", Value::Integer(column as i64)),
+            ])
+        })
+        .collect();
+    Ok(Value::Ok(Box::new(list(out))))
+}
+
+#[cfg(not(feature = "native"))]
+fn meta_types(_: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    Err(
+        "meta.types needs the language server's checker, which the browser runtime does not carry"
+            .into(),
+    )
+}
+
+// ── Fingerprints (OL-455) ───────────────────────────────────────────
+
+/// Fields that say where a node is, not what it is.
+const PLACE_KEYS: &[&str] = &["line", "column", "start", "end", "name_span"];
+
+/// 64-bit FNV-1a, fed a node's canonical bytes. A fixed function, so a
+/// fingerprint is the same in every process and every release that keeps
+/// the node format (the values batch's `hash(v)` is per process).
+struct Fnv(u64);
+
+impl Fnv {
+    fn new() -> Self {
+        Fnv(0xcbf2_9ce4_8422_2325)
+    }
+    fn bytes(&mut self, b: &[u8]) {
+        for x in b {
+            self.0 ^= *x as u64;
+            self.0 = self.0.wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+    fn tag(&mut self, t: u8, len: usize) {
+        self.bytes(&[t]);
+        self.bytes(&(len as u64).to_le_bytes());
+    }
+    fn value(&mut self, v: &Value, skip: &[&str]) {
+        match v {
+            Value::Unit => self.tag(0, 0),
+            Value::Boolean(b) => self.tag(1, *b as usize),
+            Value::Integer(n) => {
+                self.tag(2, 8);
+                self.bytes(&n.to_le_bytes());
+            }
+            Value::Float(f) => {
+                self.tag(3, 8);
+                self.bytes(&f.to_bits().to_le_bytes());
+            }
+            Value::String(s) => {
+                self.tag(4, s.len());
+                self.bytes(s.as_bytes());
+            }
+            Value::List(items) => {
+                self.tag(5, items.len());
+                items.iter().for_each(|x| self.value(x, &[]));
+            }
+            Value::Map(m) => {
+                let keys: Vec<_> = m
+                    .iter()
+                    .filter(|(k, _)| {
+                        !PLACE_KEYS.contains(&k.as_str()) && !skip.contains(&k.as_str())
+                    })
+                    .collect();
+                self.tag(6, keys.len());
+                for (k, x) in keys {
+                    self.tag(7, k.len());
+                    self.bytes(k.as_bytes());
+                    self.value(x, &[]);
+                }
+            }
+            other => {
+                let shown = other.to_string();
+                self.tag(8, shown.len());
+                self.bytes(shown.as_bytes());
+            }
+        }
+    }
+    fn hex(&self) -> String {
+        format!("{:016x}", self.0)
+    }
+}
+
+/// `meta.fingerprint(item)`: `#{sig, body}` for one item (its source, or
+/// its node from `meta.parse`), each a 16-digit hex hash of the node with
+/// every position left out, so moving the item, or adding a line above
+/// it, changes neither. `sig` is the declaration without its body (a
+/// `fn`'s name, parameters, types and `share`; a `let`'s binding and
+/// type), `body` the body alone (a `let`'s value; for a `type`, a `use` or
+/// any other item, the whole of it): a change inside a body leaves `sig`.
+fn meta_fingerprint(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let node = match args.first() {
+        Some(Value::String(src)) if args.len() == 1 => {
+            let program = match crate::parser::Parser::new().parse_raw(src) {
+                Ok(p) => p,
+                Err(e) => return Ok(Value::Err(Box::new(s(&e.to_string())))),
+            };
+            match program.statements.as_slice() {
+                [one] => stmt_to_value(one),
+                [] => return Err("meta.fingerprint: the source holds no item".into()),
+                more => {
+                    return Err(format!(
+                        "meta.fingerprint: the source holds {} items, not one (meta.parse_items splits a file)",
+                        more.len()
+                    )
+                    .into());
+                }
+            }
+        }
+        Some(v @ Value::Map(_)) if args.len() == 1 => v.clone(),
+        _ => {
+            return Err(
+                "meta.fingerprint expects one item: its source, or its node from meta.parse".into(),
+            );
+        }
+    };
+    let Value::Map(m) = &node else { unreachable!() };
+    let body_key = match m.get("kind") {
+        Some(Value::String(k)) if matches!(k.as_str(), "fn" | "meta_fn" | "test") => Some("body"),
+        Some(Value::String(k)) if k.as_str() == "let" => Some("value"),
+        _ => None,
+    };
+    let mut sig = Fnv::new();
+    let mut body = Fnv::new();
+    match body_key {
+        Some(key) => {
+            sig.value(&node, &[key]);
+            body.value(m.get(key).unwrap_or(&Value::Unit), &[]);
+        }
+        None => {
+            sig.value(&node, &[]);
+            body.value(&node, &[]);
+        }
+    }
+    Ok(Value::Ok(Box::new(map(vec![
+        ("sig", s(&sig.hex())),
+        ("body", s(&body.hex())),
+    ]))))
 }
 
 /// `meta.unresolved(source)` → Ok(list of names) | Err(message): every
@@ -234,13 +576,292 @@ fn meta_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             .into());
         }
     };
-    match crate::parser::Parser::new().parse_raw(&source) {
-        Ok(program) => {
-            let nodes: Vec<Value> = program.statements.iter().map(stmt_to_value).collect();
-            Ok(Value::Ok(Box::new(list(nodes))))
-        }
-        Err(e) => Ok(Value::Err(Box::new(s(&format!("{}", e))))),
+    if args.len() > 2 {
+        return Err(format!("meta.parse expects 1 or 2 arguments, got {}", args.len()).into());
     }
+    let opts = match args.get(1) {
+        None | Some(Value::Unit) => None,
+        Some(Value::Map(opts)) => Some(opts),
+        Some(other) => {
+            return Err(format!(
+                "meta.parse: the options must be a map, got {}",
+                other.type_name()
+            )
+            .into());
+        }
+    };
+    let Some(opts) = opts else {
+        return Ok(match parse_spanned(&source) {
+            Ok(nodes) => Value::Ok(Box::new(list(nodes))),
+            Err(e) => Value::Err(Box::new(s(&e))),
+        });
+    };
+    if let Some(k) = opts
+        .keys()
+        .find(|k| !["recover", "byte_offset", "line_offset"].contains(&k.as_str()))
+    {
+        return Err(format!(
+            "meta.parse: unknown option \"{k}\" (it takes recover, byte_offset and line_offset)"
+        )
+        .into());
+    }
+    // An item parsed on its own (`meta.parse_items` found it): its spans
+    // and lines in the whole file's coordinates.
+    let offset = |key: &str| -> Result<usize, String> {
+        match opts.get(key) {
+            None | Some(Value::Unit) => Ok(0),
+            Some(Value::Integer(n)) if *n >= 0 => Ok(*n as usize),
+            Some(other) => Err(format!(
+                "meta.parse: option {key} must be an Int of at least 0, got {other}"
+            )),
+        }
+    };
+    let (shift, line_shift) = (offset("byte_offset")?, offset("line_offset")?);
+    let recover = match opts.get("recover") {
+        None | Some(Value::Unit) => false,
+        Some(Value::Boolean(b)) => *b,
+        Some(other) => {
+            return Err(format!(
+                "meta.parse: option recover must be true or false, got {}",
+                other.type_name()
+            )
+            .into());
+        }
+    };
+    if recover {
+        return Ok(parse_recovering(&source, shift, line_shift));
+    }
+    Ok(match parse_nodes(&source, shift, line_shift) {
+        Ok(nodes) => Value::Ok(Box::new(list(nodes))),
+        Err(e) => Value::Err(Box::new(s(&e.to_string()))),
+    })
+}
+
+// ── Items one at a time, and recovery (OL-435, OL-436) ──────────────
+
+/// The declaration a top-level item opens with, and its name: read from
+/// its first words, without parsing it.
+fn item_head(text: &str) -> (&'static str, Option<String>) {
+    let mut rest = text;
+    // A doc comment and decorators belong to the item under them.
+    loop {
+        let t = rest.trim_start();
+        if t.starts_with("//") {
+            rest = t.split_once('\n').map_or("", |(_, r)| r);
+        } else if t.starts_with('@') && !t.starts_with("@{") {
+            let line = t.split_once('\n').map_or(t, |(l, _)| l);
+            // `@derive(...)` on its own line decorates what follows; an
+            // `@macro(...)` that is the whole item is an expression.
+            match t.split_once('\n') {
+                Some((_, r)) if !r.trim_start().is_empty() && !line.contains('=') => rest = r,
+                _ => return ("expr", None),
+            }
+        } else {
+            rest = t;
+            break;
+        }
+    }
+    let word = |s: &str| -> Option<String> {
+        let s = s.trim_start();
+        let end = s
+            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .unwrap_or(s.len());
+        (end > 0).then(|| s[..end].to_string())
+    };
+    let after = |kw: &str| rest.strip_prefix(kw).filter(|r| r.starts_with([' ', '\t']));
+    for (kw, kind) in [
+        ("fn", "fn"),
+        ("let", "let"),
+        ("type", "type"),
+        ("error", "error"),
+        ("trait", "trait"),
+        ("impl", "impl"),
+        ("test", "test"),
+        ("use", "use"),
+    ] {
+        if let Some(r) = after(kw) {
+            let r = r.trim_start();
+            let r = r.strip_prefix("mut ").unwrap_or(r);
+            let name = if kind == "test" {
+                r.strip_prefix('"')
+                    .and_then(|t| t.split_once('"'))
+                    .map(|(n, _)| n.to_string())
+            } else if kind == "use" {
+                Some(
+                    r.split(|c: char| c.is_whitespace() || c == '{')
+                        .next()
+                        .unwrap_or("")
+                        .to_string(),
+                )
+            } else {
+                word(r)
+            };
+            return (kind, name);
+        }
+    }
+    if let Some(r) = after("share") {
+        let (kind, name) = item_head(r);
+        return (if kind == "expr" { "share" } else { kind }, name);
+    }
+    if let Some(r) = after("meta") {
+        return ("meta_fn", r.trim_start().strip_prefix("fn").and_then(word));
+    }
+    ("expr", None)
+}
+
+/// The top-level items of `source`, without a full parse: each item's
+/// byte range (they tile the file, a doc comment going with the item
+/// under it), its kind and name, and its first line. Found by the scan
+/// the parser splits large files with, which also restarts at a line that
+/// opens with a declaration keyword, so a file mid-edit (an unclosed
+/// bracket) still shows the items after the break.
+pub(crate) fn item_ranges(source: &str) -> Vec<(usize, usize, &'static str, Option<String>)> {
+    let starts = crate::parser::item_starts(source, true);
+    let mut bounds: Vec<usize> = Vec::with_capacity(starts.len() + 1);
+    bounds.push(0);
+    bounds.extend(starts.into_iter().filter(|s| *s > 0));
+    bounds.push(source.len());
+    // Comment-only pieces join the item after them.
+    let mut out: Vec<(usize, usize, &'static str, Option<String>)> = Vec::new();
+    let mut from = 0;
+    for w in bounds.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let text = &source[from..b];
+        let only_comments = source[a..b]
+            .lines()
+            .all(|l| l.trim().is_empty() || l.trim_start().starts_with("//"));
+        if only_comments && b < source.len() {
+            continue;
+        }
+        if text.trim().is_empty() {
+            if let Some(last) = out.last_mut() {
+                last.1 = b;
+            }
+            from = b;
+            continue;
+        }
+        let (kind, name) = item_head(text);
+        out.push((from, b, kind, name));
+        from = b;
+    }
+    out
+}
+
+fn line_of(line_starts: &[usize], offset: usize) -> usize {
+    line_starts.partition_point(|s| *s <= offset)
+}
+
+/// `meta.parse_items(source)`: `[#{kind, name, start, end, line}]`, one per
+/// top-level item (see `item_ranges`): what an index reparses one of.
+fn meta_parse_items(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let source = match args.first() {
+        Some(Value::String(s)) if args.len() == 1 => s.clone(),
+        _ => return Err("meta.parse_items expects the source string".into()),
+    };
+    let starts = line_starts_of(&source);
+    let items = item_ranges(&source)
+        .into_iter()
+        .map(|(a, b, kind, name)| {
+            map(vec![
+                ("kind", s(kind)),
+                ("name", name.map(|n| s(&n)).unwrap_or(Value::Unit)),
+                ("start", Value::Integer(a as i64)),
+                ("end", Value::Integer(b as i64)),
+                ("line", Value::Integer(line_of(&starts, a) as i64)),
+            ])
+        })
+        .collect();
+    Ok(list(items))
+}
+
+/// One parse error as a node: its message and where it is, in the whole
+/// file's coordinates.
+fn error_node(e: &crate::parser::ParseError, text: &str, shift: usize, line_shift: usize) -> Value {
+    let message = format!("{}", e);
+    let (line, column) = e.line_column().unwrap_or((1, 1));
+    let starts = line_starts_of(text);
+    let at = starts
+        .get(line.saturating_sub(1))
+        .map(|ls| {
+            ls + text[*ls..]
+                .char_indices()
+                .nth(column.saturating_sub(1))
+                .map_or(text.len() - ls, |(i, _)| i)
+        })
+        .unwrap_or(0)
+        .min(text.len());
+    map(vec![
+        ("kind", s("error")),
+        ("message", s(&message)),
+        ("line", Value::Integer((line + line_shift) as i64)),
+        ("column", Value::Integer(column as i64)),
+        ("at", Value::Integer((at + shift) as i64)),
+        ("start", Value::Integer(shift as i64)),
+        ("end", Value::Integer((shift + text.len()) as i64)),
+    ])
+}
+
+/// The nodes of `text` parsed with spans, shifted to where it sits in its
+/// file: `Ok(nodes)` or the parse error.
+fn parse_nodes(
+    text: &str,
+    shift: usize,
+    line_shift: usize,
+) -> Result<Vec<Value>, crate::parser::ParseError> {
+    let parsed = crate::parser::Parser::new().parse_with_spans(text)?;
+    let ctx = SpanContext {
+        statements: parsed.statement_spans,
+        line_starts: line_starts_of(text),
+        source: Arc::new(text.to_string()),
+        shift: (shift + parsed.offset as usize) as i64,
+        line_shift: line_shift as i64,
+    };
+    Ok(spanned_nodes(&parsed.program, ctx))
+}
+
+/// `meta.parse(source, #{"recover": true})`: `#{items, errors}`. The whole
+/// file when it parses; otherwise each top-level item parsed on its own,
+/// so a file mid-edit keeps every item but the broken one, and each
+/// error says where it is.
+fn parse_recovering(source: &str, shift: usize, line_shift: usize) -> Value {
+    if let Ok(nodes) = parse_nodes(source, shift, line_shift) {
+        return map(vec![("items", list(nodes)), ("errors", list(Vec::new()))]);
+    }
+    let starts = line_starts_of(source);
+    let mut items = Vec::new();
+    let mut errors = Vec::new();
+    for (a, b, _, _) in item_ranges(source) {
+        let text = &source[a..b];
+        let item_lines = line_shift + line_of(&starts, a) - 1;
+        match parse_nodes(text, shift + a, item_lines) {
+            Ok(nodes) => items.extend(nodes),
+            Err(e) => errors.push(error_node(&e, text, shift + a, item_lines)),
+        }
+    }
+    map(vec![("items", list(items)), ("errors", list(errors))])
+}
+
+/// What `meta.parse(source)` answers, from Rust: the nodes with their
+/// spans, or the parse error's message.
+pub fn parse_spanned(source: &str) -> Result<Vec<Value>, String> {
+    let parsed = crate::parser::Parser::new()
+        .parse_with_spans(source)
+        .map_err(|e| e.to_string())?;
+    let ctx = SpanContext {
+        statements: parsed.statement_spans,
+        line_starts: line_starts_of(source),
+        source: Arc::new(source.to_string()),
+        shift: parsed.offset as i64,
+        line_shift: 0,
+    };
+    Ok(spanned_nodes(&parsed.program, ctx))
+}
+
+/// The byte offset of each line of `text`.
+pub(crate) fn line_starts_of(text: &str) -> Vec<usize> {
+    std::iter::once(0)
+        .chain(memchr::memchr_iter(b'\n', text.as_bytes()).map(|i| i + 1))
+        .collect()
 }
 
 /// `meta.encode(source)`: the program as an image (src/olb.rs) — parsed
@@ -353,6 +974,153 @@ fn names(v: &[String]) -> Value {
     list(v.iter().map(|n| s(n)).collect())
 }
 
+// ── Spans (OL-434) ──────────────────────────────────────────────────
+//
+// `meta.parse` parses with spans (`Parser::parse_with_spans`): every
+// expression comes wrapped in `Expr::At` with its byte range, and each
+// statement's range is in a table keyed by its line and column. The
+// converter below reads them through this context, which also holds the
+// shift an item parsed on its own adds to put its spans in the whole
+// file's coordinates (`#{"byte_offset", "line_offset"}`).
+
+pub(crate) struct SpanContext {
+    pub statements: rustc_hash::FxHashMap<(u32, u32), (u32, u32)>,
+    /// Byte offset of each line of the parsed text.
+    pub line_starts: Vec<usize>,
+    pub source: std::sync::Arc<String>,
+    /// Added to every byte offset (a BOM, an item's place in its file).
+    pub shift: i64,
+    /// Added to every line.
+    pub line_shift: i64,
+}
+
+impl SpanContext {
+    /// The byte range of a declaration's name, from the 1-based line and
+    /// character column the AST keeps for it.
+    fn name_span(&self, stmt: &Statement) -> Option<Value> {
+        let (pos, name) = match stmt.unwrapped() {
+            Statement::FunctionDecl(d) | Statement::MetaFnDecl { decl: d, .. } => {
+                (d.name_span?, d.name.clone())
+            }
+            Statement::ShareDecl(ShareDecl::Function(d)) => (d.name_span?, d.name.clone()),
+            Statement::LetDecl(d) | Statement::ShareDecl(ShareDecl::Let(d)) => {
+                (d.name_span?, pattern_name(&d.pattern))
+            }
+            Statement::TypeDecl(d) => (d.name_span?, d.name.clone()),
+            _ => return None,
+        };
+        let (line, column) = pos;
+        let line_start = *self.line_starts.get((line as usize).checked_sub(1)?)?;
+        let text = self.source.get(line_start..)?;
+        let col = text
+            .char_indices()
+            .nth((column as usize).checked_sub(1)?)
+            .map(|(i, _)| i)?;
+        let start = line_start + col;
+        let len = if self.source[start..].starts_with(name.as_str()) {
+            name.len()
+        } else {
+            self.source[start..]
+                .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .unwrap_or(self.source.len() - start)
+        };
+        Some(map(vec![
+            ("start", Value::Integer(start as i64 + self.shift)),
+            ("end", Value::Integer((start + len) as i64 + self.shift)),
+        ]))
+    }
+}
+
+thread_local! {
+    static SPANS: std::cell::RefCell<Option<SpanContext>> = const { std::cell::RefCell::new(None) };
+}
+
+/// `node` with `start` and `end`, unless it has its own.
+fn with_span(mut node: Value, start: usize, end: usize) -> Value {
+    let shift = SPANS.with(|c| c.borrow().as_ref().map_or(0, |c| c.shift));
+    if let Value::Map(m) = &mut node
+        && !m.contains_key("start")
+    {
+        // A node just built is held only here: no copy.
+        let m = Arc::make_mut(m);
+        m.insert("start".to_string(), Value::Integer(start as i64 + shift));
+        m.insert("end".to_string(), Value::Integer(end as i64 + shift));
+    }
+    node
+}
+
+/// Convert `program` with `ctx` in place for the spans it holds.
+pub(crate) fn spanned_nodes(program: &crate::ast::Program, ctx: SpanContext) -> Vec<Value> {
+    SPANS.with(|c| *c.borrow_mut() = Some(ctx));
+    let nodes = program
+        .statements
+        .iter()
+        .map(|st| inherit_spans(stmt_to_value(st), None))
+        .collect();
+    SPANS.with(|c| *c.borrow_mut() = None);
+    nodes
+}
+
+/// The node kinds that are parts of a construct rather than statements or
+/// expressions: they carry no span (their expressions do).
+const UNSPANNED: &[&str] = &[
+    "arm",
+    "named_arg",
+    "entry",
+    "field_value",
+    "pattern",
+    "type",
+];
+
+/// Give every statement and expression node a span: one the parser built
+/// rather than read (a desugaring's call, the `()` a block that ends in a
+/// `let` gains, a destructured parameter's `let`, a statement inside a
+/// template's `${}`) takes the span of the nearest node around it, the
+/// construct it was made from.
+fn inherit_spans(mut node: Value, around: Option<(Value, Value)>) -> Value {
+    match &mut node {
+        Value::List(items) => {
+            let items = Arc::make_mut(items);
+            for item in items.iter_mut() {
+                let taken = std::mem::replace(item, Value::Unit);
+                *item = inherit_spans(taken, around.clone());
+            }
+        }
+        Value::Map(m) => {
+            let kind = match m.get("kind") {
+                Some(Value::String(k)) => Some(k.clone()),
+                _ => None,
+            };
+            let spanned = kind
+                .as_ref()
+                .is_some_and(|k| !UNSPANNED.contains(&k.as_str()));
+            let m = Arc::make_mut(m);
+            if spanned
+                && !m.contains_key("start")
+                && let Some((a, b)) = &around
+            {
+                m.insert("start".to_string(), a.clone());
+                m.insert("end".to_string(), b.clone());
+            }
+            let here = match (m.get("start"), m.get("end")) {
+                (Some(a @ Value::Integer(_)), Some(b @ Value::Integer(_))) if spanned => {
+                    Some((a.clone(), b.clone()))
+                }
+                _ => around,
+            };
+            for (k, v) in m.iter_mut() {
+                if k == "name_span" || ((k == "start" || k == "end") && spanned) {
+                    continue;
+                }
+                let taken = std::mem::replace(v, Value::Unit);
+                *v = inherit_spans(taken, here.clone());
+            }
+        }
+        _ => {}
+    }
+    node
+}
+
 // ── Statements ──────────────────────────────────────────────────────
 fn stmt_to_value(stmt: &Statement) -> Value {
     match stmt {
@@ -392,11 +1160,28 @@ fn stmt_to_value(stmt: &Statement) -> Value {
             ("decl", s(decl_src)),
         ]),
         Statement::Located { line, column, stmt } => {
-            // Attach position to the inner node.
+            // Attach position to the inner node: its line and column, and
+            // in a spans parse its byte range and its name's.
             let inner = stmt_to_value(stmt);
             if let Value::Map(m) = &inner {
                 let mut m = (**m).clone();
-                m.insert("line".to_string(), Value::Integer(*line as i64));
+                SPANS.with(|c| {
+                    let c = c.borrow();
+                    let Some(c) = c.as_ref() else { return };
+                    m.insert(
+                        "line".to_string(),
+                        Value::Integer(*line as i64 + c.line_shift),
+                    );
+                    if let Some((a, b)) = c.statements.get(&(*line, *column)) {
+                        m.insert("start".to_string(), Value::Integer(*a as i64 + c.shift));
+                        m.insert("end".to_string(), Value::Integer(*b as i64 + c.shift));
+                    }
+                    if let Some(name_span) = c.name_span(stmt) {
+                        m.insert("name_span".to_string(), name_span);
+                    }
+                });
+                m.entry("line".to_string())
+                    .or_insert(Value::Integer(*line as i64));
                 m.insert("column".to_string(), Value::Integer(*column as i64));
                 return Value::Map(std::sync::Arc::new(m));
             }
@@ -748,8 +1533,9 @@ fn pattern_to_value(p: &Pattern) -> Value {
             inclusive,
         } => {
             pairs.push(("form", s("range")));
-            pairs.push(("start", pattern_to_value(start)));
-            pairs.push(("end", pattern_to_value(end)));
+            // `from` and `to`: `start` and `end` are a node's byte span.
+            pairs.push(("from", pattern_to_value(start)));
+            pairs.push(("to", pattern_to_value(end)));
             pairs.push(("inclusive", Value::Boolean(*inclusive)));
         }
         Pattern::Or { alternatives } => {
@@ -868,6 +1654,12 @@ fn pattern_name(p: &Pattern) -> String {
 // ── Expressions ─────────────────────────────────────────────────────
 fn expr_to_value(e: &Expr) -> Value {
     match e {
+        // A spans parse's range: the node inside carries it. The node's
+        // own (innermost) range wins over a wrapper's of the same node.
+        Expr::At { start, end, expr } => {
+            let inner = expr_to_value(expr);
+            with_span(inner, *start as usize, *end as usize)
+        }
         Expr::MacroCall { name, args_src, .. } => map(vec![
             ("kind", s("macro_call")),
             ("name", s(name)),
@@ -884,7 +1676,7 @@ fn expr_to_value(e: &Expr) -> Value {
         Expr::LocalRef { name, .. } => map(vec![("kind", s("ident")), ("name", s(name))]),
         // The forms the parser builds as calls of hidden builtins are
         // nodes of their own: a literal with spreads, and `xs[i] = v`.
-        Expr::Call { callee, arguments } if matches!(callee.as_ref(), Expr::Identifier(n) if n == crate::parser::SPREAD_BUILTIN) => {
+        Expr::Call { callee, arguments } if matches!(callee.bare(), Expr::Identifier(n) if n == crate::parser::SPREAD_BUILTIN) => {
             spread_to_value(arguments)
         }
         Expr::Assignment { target, value } if index_assign_parts(value).is_some() => {
@@ -1008,8 +1800,9 @@ fn expr_to_value(e: &Expr) -> Value {
             inclusive,
         } => map(vec![
             ("kind", s("range")),
-            ("start", expr_to_value(start)),
-            ("end", expr_to_value(end)),
+            // `from` and `to`: `start` and `end` are a node's byte span.
+            ("from", expr_to_value(start)),
+            ("to", expr_to_value(end)),
             ("inclusive", Value::Boolean(*inclusive)),
         ]),
         Expr::ResultOk(inner) => map(vec![("kind", s("ok")), ("value", expr_to_value(inner))]),
@@ -1136,9 +1929,10 @@ fn spread_to_value(arguments: &[Argument]) -> Value {
     let arg = |a: &Argument| match a {
         Argument::Positional(e) | Argument::Named { value: e, .. } => e.clone(),
     };
+    let bare_arg = |a: &Argument| arg(a).into_bare();
     // The first argument is the empty literal the parts are laid over.
     let args = arguments.iter().skip(1).map(arg);
-    let of = match arguments.first().map(arg) {
+    let of = match arguments.first().map(bare_arg) {
         Some(Expr::List(_)) => "list",
         Some(Expr::MapLiteral { .. }) => "map",
         _ => "object",
@@ -1146,7 +1940,7 @@ fn spread_to_value(arguments: &[Argument]) -> Value {
     let parts = args
         .map(|e| {
             let same_kind = matches!(
-                (&e, of),
+                (e.bare(), of),
                 (Expr::List(_), "list")
                     | (Expr::MapLiteral { .. }, "map")
                     | (Expr::AnonymousObject { .. }, "object")
@@ -1168,10 +1962,10 @@ fn spread_to_value(arguments: &[Argument]) -> Value {
 /// `xs[i] = v` (`Assignment` of `__index_set(xs, i, v)`) and `m.k[i] = v`
 /// (`__index_set_in(m, "k", i, v)`): the field, the index and the value.
 fn index_assign_parts(value: &Expr) -> Option<(Option<&str>, &Expr, &Expr)> {
-    let Expr::Call { callee, arguments } = value else {
+    let Expr::Call { callee, arguments } = value.bare() else {
         return None;
     };
-    let Expr::Identifier(name) = callee.as_ref() else {
+    let Expr::Identifier(name) = callee.bare() else {
         return None;
     };
     let positional = |i: usize| match arguments.get(i) {
@@ -1181,7 +1975,7 @@ fn index_assign_parts(value: &Expr) -> Option<(Option<&str>, &Expr, &Expr)> {
     if name == crate::parser::INDEX_SET_BUILTIN {
         Some((None, positional(1)?, positional(2)?))
     } else if name == crate::parser::INDEX_SET_IN_BUILTIN {
-        match positional(1)? {
+        match positional(1)?.bare() {
             Expr::String(field) => Some((Some(field.as_str()), positional(2)?, positional(3)?)),
             _ => None,
         }
@@ -1239,7 +2033,7 @@ fn fields_to_value(fields: &[FieldValue]) -> Value {
 /// a field chain (`fs.read_file`, `unwrap`) — the field tools look at most.
 /// Empty when the callee is a more complex expression.
 fn call_target(callee: &Expr) -> String {
-    match callee {
+    match callee.bare() {
         Expr::Identifier(n) => n.clone(),
         Expr::LocalRef { name, .. } => name.clone(),
         Expr::FieldAccess { object, field } => {

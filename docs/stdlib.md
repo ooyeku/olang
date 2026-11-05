@@ -461,12 +461,23 @@ every function returns a new string.
 | <a id="str-width"></a>`str.width(s)` | display width in terminal cells (see below) |
 | <a id="str-cell_width"></a>`str.cell_width(g)` | the cells one grapheme occupies: 0, 1 or 2; more than one grapheme raises |
 | <a id="str-substring"></a>`str.substring(s, from, to)` | half-open slice by the slices' one rule: a position past the end stops at the end, `to` at or before `from` is `""`, a negative position raises (`col.slice` and `bytes.slice` alike) |
+| <a id="str-byte_len"></a>`str.byte_len(s)` | bytes the UTF-8 takes, in O(1) (`str.length` counts characters) |
+| <a id="str-slice_bytes"></a>`str.slice_bytes(s, a, b)` | bytes `a` to `b`, by the same rule as `substring`; an offset inside a character raises |
+| <a id="str-char_to_byte"></a><a id="str-byte_to_char"></a>`str.char_to_byte(s, i)` / `str.byte_to_char(s, b)` | convert a character position to a byte offset and back; past the end answers the end, a byte inside a character raises |
+| <a id="str-utf16_len"></a>`str.utf16_len(s)` | UTF-16 code units, as an LSP client or a browser counts (an emoji is 2) |
+| <a id="str-encode"></a>`str.encode(s, encoding)` | the text as `Bytes` in `"utf-8"`, `"utf-16le"`, `"utf-16be"` or `"latin1"`: a `Result`, `Err` for a character Latin-1 has no byte for (`bytes.decode` reads it back) |
+| <a id="str-chunks"></a>`str.chunks(s, max_bytes, #{prefer})` | pieces of at most `max_bytes` bytes, cut between characters in one pass; with `prefer: "\n"` a piece ends after the window's last newline when it has one. Joined, they are `s` |
 | <a id="str-index_of"></a><a id="str-last_index_of"></a>`str.index_of(s, sub)` / `str.last_index_of` | position, or `()` when absent |
 | <a id="str-contains"></a><a id="str-count"></a>`str.contains(s, sub)` / `str.count(s, sub)` | search |
 | <a id="str-fuzzy_score"></a>`str.fuzzy_score(query, text)` | a fuzzy finder's score (every query character in order; runs, word starts, the last path segment count more), or `()` |
 | <a id="str-starts_with"></a><a id="str-ends_with"></a>`str.starts_with` / `str.ends_with` | affix tests |
 | <a id="str-split"></a><a id="str-join"></a>`str.split(s, sep)` / `str.join(xs, sep)` | list conversion |
-| <a id="str-lines"></a><a id="str-words"></a>`str.lines(s)` / `str.words(s)` | split on newlines / whitespace |
+| <a id="str-lines"></a><a id="str-words"></a>`str.lines(s, #{"keep_ends"})` / `str.words(s)` | split on line breaks (`"\n"` or `"\r\n"`) / whitespace; with `keep_ends: true` each line keeps its own end, so joined they are `s` exactly (a last line without one is the "no newline at end of file" case) |
+| <a id="str-line_starts"></a>`str.line_starts(s)` | the byte offset where each line starts: `0` and one past every `"\n"`, so a text ending in a line break has an empty last line, as in an editor |
+| <a id="str-stats"></a>`str.stats(s)` | `#{bytes, chars, lines, graphemes, utf16, width, last_line_len}` in one call, at memory speed for ASCII: what each count's own function answers |
+| <a id="str-word_bounds"></a><a id="str-line_breaks"></a>`str.word_bounds(s)` / `str.line_breaks(s, #{"hard"})` | byte offsets of the UAX #29 word boundaries, and of the UAX #14 places a line may wrap (only the forced ones with `hard: true`) |
+| <a id="str-bidi_runs"></a>`str.bidi_runs(s, #{"direction", "visual"})` | runs of one bidirectional level, `#{start, end, level}` in bytes (an odd level is right-to-left), in logical order or, with `visual: true`, the order a line shows them |
+| <a id="str-normalize"></a><a id="str-fold"></a>`str.normalize(s, form)` / `str.fold(s)` | Unicode normalization (`"nfc"`, `"nfd"`, `"nfkc"`, `"nfkd"`) and full case folding: the forms to compare text in |
 | <a id="str-trim"></a><a id="str-trim_start"></a><a id="str-trim_end"></a>`str.trim` / `str.trim_start` / `str.trim_end` | strip whitespace |
 | <a id="str-pad_start"></a><a id="str-pad_end"></a>`str.pad_start(s, n, fill)` / `str.pad_end` | pad to width |
 | <a id="str-repeat"></a>`str.repeat(s, n)` | repetition |
@@ -494,6 +505,43 @@ println(str.fmt(0.0731, ".1%"))                       // 7.3%
 println(str.fmt("{} of {:,d} ({:.1%})", "won", 12500, 0.42))   // won of 12,500 (42.0%)
 println(str.money(1234567.8))                         // $1,234,568
 println(str.pct(0.25, 0))                             // 25%
+```
+
+**Byte offsets.** Every position above counts characters, which is
+what a reader means and costs a walk from the start of the text to
+find. An editor, a diff or a rope keeps byte offsets instead, because
+slicing at one is O(1). `str.byte_len`, `str.slice_bytes`,
+`str.char_to_byte`, `str.byte_to_char` and `str.utf16_len` work in
+those units. A byte offset that falls inside a character raises,
+because a slice there would not be text. `str.chunks(s, n)` cuts a
+text into pieces of at most `n` bytes in a single pass (100 MB in
+about the time it takes to copy it). Pass `#{"prefer": "\n"}` to end
+each piece at a line break where the window has one.
+
+```olang
+let s = "naïve café"
+println(str.byte_len(s))                  // 12
+println(str.char_to_byte(s, 3))           // 4
+println(str.slice_bytes(s, 0, 4))         // naï
+println(str.chunks("ab\ncd\nefgh", 5, #{"prefer": "\n"}))  // ["ab\n", "cd\n", "efgh"]
+```
+
+**Comparing text as a reader does.** `==` compares code points, so
+`"é"` typed as one character and `"e\u{301}"` (an `e` and a combining
+accent) differ, and `to_lower` is a display rule, not a comparison one
+(`to_lower("İ")` keeps the dot as a separate mark). Normalize both sides
+to NFC with `str.normalize` before comparing or storing. To ignore case,
+compare `str.fold` of both, which also folds `ß` to `ss`. Word motion and
+word diffs step over `str.word_bounds`, and wrapping cuts only at
+`str.line_breaks`. Right-to-left text is laid out by `str.bidi_runs`.
+
+```olang
+println(str.normalize("e\u{301}", "nfc") == "é")              // true
+println(str.fold("Straße") == str.fold("STRASSE"))            // true
+println(str.word_bounds("can't stop"))                        // [0, 5, 6, 10]
+println(str.lines("a\r\nb\n", #{"keep_ends": true}) == ["a\r\n", "b\n"])   // true
+println(str.line_starts("ab\ncd\n"))                         // [0, 3, 6]
+println(str.stats("héllo\nwörld").graphemes)                  // 11
 ```
 
 **Display width.** `str.length` counts code points and `str.graphemes`
@@ -885,6 +933,7 @@ and every build includes it, the browser's too.
 | <a id="md-slug"></a>`md.slug(text)` | the anchor GitHub gives a heading whose text is `text`: lower-cased; letters, digits, `-` and `_` kept; a space a `-`; the rest dropped |
 | <a id="md-front"></a>`md.front(src)` | `Ok(#{ "data", "body", "format" })`: the front matter as a Map, the text after it, and `"yaml"` (a `---` block), `"toml"` (`+++`) or `""` when there is none (`data` is then `#{}`). `Err(message)` naming the line of a block that does not parse |
 | <a id="md-text"></a>`md.text(src)` | the document's plain text, a block a line: what a search index or a page description reads |
+| <a id="md-parse"></a>`md.parse(src, opts?)` | the document as a tree of nodes, each `#{ "kind", "start", "end", "char_start", "char_end", ... }` with its source range in bytes and in characters. The root is `document`. A container (`paragraph`, `heading` with `level`, `blockquote`, `code_block` with `lang` and `info`, `list` with `ordered` and `first`, `item`, `table` with `align`, `table_head`, `table_row`, `table_cell`, `emphasis`, `strong`, `strikethrough`, `link` and `image` with `url` and `title`, `footnote_def`, `html_block`, `front_matter`) has `children`. A leaf (`text`, `code`, `html`, `inline_html`, `math`, `footnote_ref`, `soft_break`, `hard_break`, `rule`, `task` with `checked`) has its `text`. `#{ "gfm": false }` reads CommonMark alone, with no tables, strikethrough, task lists or footnotes. `#{ "events": true }` answers the stream instead: a flat list in document order, each container a `start` and an `end` event (`event` says which) and each leaf a `leaf` event |
 
 `render`'s options, every one optional:
 
@@ -1713,6 +1762,8 @@ preview. `fs.read_bytes`/`fs.write_bytes` move it to and from disk;
 | <a id="bytes-from_list"></a><a id="bytes-to_list"></a>`bytes.from_list(ints)` / `bytes.to_list(b)` | to and from a list of Ints 0..=255 |
 | <a id="bytes-from_string"></a>`bytes.from_string(s)` | a string's UTF-8 bytes |
 | <a id="bytes-to_string"></a>`bytes.to_string(b)` | decode as UTF-8 — `Result`, since bytes may not be text |
+| <a id="bytes-to_string_lossy"></a>`bytes.to_string_lossy(b)` | decode as UTF-8, each sequence that is not UTF-8 replaced by U+FFFD (`�`); never fails |
+| <a id="bytes-decode"></a>`bytes.decode(b, encoding, #{"lossy"})` | decode as `"utf-8"`, `"utf-16le"`, `"utf-16be"` or `"latin1"`: a `Result`, and always `Ok` with `lossy: true` (U+FFFD for what is not text). Latin-1 never fails, since every byte is a character |
 | <a id="bytes-len"></a>`bytes.len(b)` | byte count (the global `len` works too) |
 | <a id="bytes-slice"></a>`bytes.slice(b, from, to)` | half-open, by `str.substring`'s rule: past the end stops at the end, a negative position raises |
 | <a id="bytes-concat"></a>`bytes.concat(a, b)` | concatenation |
@@ -1725,6 +1776,25 @@ println(unwrap(bytes.to_string(b)))                    // hi!
 println(show(bytes.to_list(bytes.slice(b, 0, 2))))     // [104, 105]
 println(base64.encode(b))                              // aGkh
 println(show(bytes.from_string("hi!") == b))           // true
+```
+
+**Text that isn't UTF-8.** `fs.read_file` and `bytes.to_string` are
+strict: one bad byte makes the whole read an `Err`. That is the right
+default for data, but an editor or a diff has to open whatever file a
+person has. `fs.read_file(path, #{"lossy": true})` reads it anyway and
+puts U+FFFD where a sequence was not UTF-8. `#{"encoding": "latin1"}`
+(or `"utf-16le"`, `"utf-16be"`) reads a file written in another
+encoding, and `str.encode(s, encoding)` writes one (a `Result`, since
+Latin-1 has no byte for most characters).
+
+To tell a binary file from text, look for a zero byte near the start.
+Text almost never contains one, and nearly every binary format does:
+
+```olang
+fn is_binary(b) = contains(bytes.to_list(bytes.slice(b, 0, 8000)), 0)
+println(is_binary(bytes.from_list([137, 80, 78, 71, 0, 0])))   // true
+println(bytes.to_string_lossy(bytes.from_list([104, 255, 105])))   // h�i
+println(unwrap(bytes.decode(unwrap(str.encode("café", "utf-16le")), "utf-16le")))   // café
 ```
 
 ## `compress` — gzip, brotli and deflate
@@ -1796,11 +1866,30 @@ a `Bool`, and the path functions `join`, `dirname`, `basename`, and
 | Group | Functions |
 |---|---|
 | <a id="fs-read_file"></a><a id="fs-write_file"></a><a id="fs-read_bytes"></a><a id="fs-write_bytes"></a><a id="fs-append_file"></a><a id="fs-remove_file"></a><a id="fs-copy_file"></a>Files | `read_file` `write_file` `append_file` `copy_file` `move_file` `remove_file` `trash` — and `read_bytes` / `write_bytes` for [binary data](#bytes--binary-data) |
+| <a id="fs-read_range"></a><a id="fs-chunks"></a><a id="fs-next_chunk"></a>Large files | `read_range(path, offset, len)`: `Ok(Bytes)` of up to `len` bytes from `offset` (fewer at the end, none past it). `chunks(path, size)`: `Ok(reader)`, and `next_chunk(reader)` answers each `size`-byte piece as `Ok(Bytes)`, then `Ok(())` at the end, so a file of any size is read holding one piece |
 | <a id="fs-list_dir"></a><a id="fs-create_dir"></a><a id="fs-create_dir_all"></a><a id="fs-remove_dir"></a><a id="fs-remove_dir_all"></a>Directories | `create_dir` `create_dir_all` `list_dir` `walk` `glob` `remove_dir` `remove_dir_all` |
 | <a id="fs-exists"></a><a id="fs-is_file"></a><a id="fs-is_dir"></a>Queries | `exists` `is_file` `is_dir` `file_size` `file_info` |
 | Durability | `sync(path)`: a file's bytes (fsync), or a folder's entries, on the disk before it returns |
 | Watching | `watch` `watch_next` `watch_close`: a folder's whole tree followed as it changes |
 | <a id="fs-abs_path"></a><a id="fs-real_path"></a>Paths | `join(parts)` `dirname` `basename` `ext`: pure string surgery, answering the string itself. `abs_path` answers a **`Result`** (`Ok(path)`): it resolves against the current directory, which can fail, and normalizes `.`/`..` without requiring the file to exist. `real_path` (a `Result` too) also resolves symbolic links (`/tmp/x` is `/private/tmp/x` on macOS); for a path that does not exist yet it makes the nearest existing folder real and keeps the rest |
+
+`fs.read_file(path, #{"lossy": true})` reads a file that is not all
+valid UTF-8, and `#{"encoding": "latin1"}` one in another encoding
+(see [text that isn't UTF-8](#bytes--binary-data)).
+
+A file too large to hold is read a piece at a time:
+
+```olang no-run
+let reader = unwrap(fs.chunks("big.log", 1048576))
+let mut total = 0
+let mut more = true
+while more {
+    match unwrap(fs.next_chunk(reader)) {
+        () => { more = false },
+        b => { total = total + len(b) },
+    }
+}
+```
 
 <a id="fs-trash"></a>`fs.trash(path)` moves a file or a folder to the Trash as the Finder's
 Move to Trash does (macOS's NSFileManager) — never a permanent delete —
@@ -1928,18 +2017,29 @@ over these nodes, beside the type checker
 
 | Function | Result |
 |---|---|
-| <a id="meta-parse"></a>`meta.parse(source)` | `Ok(list of node maps)` \| `Err(message)` — a syntax error is a normal `Err`, never a crash |
+| <a id="meta-parse"></a>`meta.parse(source, options?)` | `Ok(list of node maps)` \| `Err(message)` — a syntax error is a normal `Err`, never a crash. `#{ "recover": true }` answers `#{ "items", "errors" }` instead: when the file does not parse whole, each top-level item is parsed on its own, so a file mid-edit keeps every item but the broken one, and each error is `#{ "message", "line", "column", "at", "start", "end" }` (`at` the byte the parser stopped at, `start` and `end` the broken item's range). `#{ "byte_offset", "line_offset" }` gives an item parsed on its own (its text sliced out of a file) the spans and lines it has in the file |
+| <a id="meta-parse_items"></a>`meta.parse_items(source)` | `[#{ "kind", "name", "start", "end", "line" }]`, one per top-level item, found by a scan rather than a parse. The byte ranges tile the file (a doc comment goes with the item under it), so an index reparses only the item an edit is in. The scan restarts at a line that opens with a declaration keyword, so a file with an unclosed bracket still shows the items after it |
 | <a id="meta-rename"></a>`meta.rename(source, names)` | `Ok(text)`: `source` with each name that is a key of the map `names` renamed to its value wherever it binds or refers to a value — declarations, parameters, pattern binders, uses, template interpolations — and kept where it names something else: a field after `.`, an object's, struct literal's or named argument's key, a struct pattern's field, a type, a variant, a trait's or impl's method, an import. Comments and strings are untouched; `Err` when the source does not parse |
 | <a id="meta-eval"></a>`meta.eval(source, options?)` | evaluate source; `options` bounds untrusted code — `#{ "max_steps": n }` (loop iterations and calls, deterministic) and `#{ "timeout_ms": ms }` (wall clock) — returning `Err("budget exceeded …")` instead of a hung thread |
 | <a id="meta-expand"></a>`meta.expand(source)` | `Ok(text)` \| `Err(message)` — the program after macro expansion, as source: every `meta fn` removed and every `@` site replaced by what it generated (what `olang expand FILE` prints) |
 | <a id="meta-encode"></a>`meta.encode(source, options?)` | `Ok(bytes)` \| `Err(message)` — the parsed program (macros expanded) as a program image: bytes the runtime loads without parsing, behind a header naming the olang version that wrote it, which is the only version that loads it. `#{ "hot": [names] }` names the functions the loading runtime compiles at declaration rather than at their first call. What the web SDK's `serve` hands the browser in place of the source bundle |
 | <a id="meta-unresolved"></a>`meta.unresolved(source)` | `Ok(list)` of every name the program uses that nothing in it defines or imports and the language does not provide, in order of first use; `Err` when the source does not parse. How the web SDK's bundler warns of a module that uses a name it does not import, undefined in the browser as natively |
-| <a id="meta-tokens"></a>`meta.tokens(source, lang?)` | the source as tokens that cover it exactly — their `text`s joined are `source` — `[#{ "kind", "text", "start", "end", "line" }]`, `start` and `end` in characters, `line` from 1. `kind` is one of `keyword` `constant` (`true`, `Ok`, an ALL-CAPS name) `ident` `function` (a call's or a definition's name) `type` `module` `property` `string` (a template's text pieces; a string a line) `interpolation` (`${` and its `}`) `number` `comment` `operator` `punct` `macro` (`@name`) `space`. Any text lexes, finished or not: the language server's lexer. `lang` names another language, with the same kinds and the same guarantee: `"python"` (`py`), `"rust"` (`rs`), `"js"` (`javascript`, `ts`), `"shell"` (`sh`, `bash`, `console`), `"toml"`, `"json"` or `"markdown"` (`md`); a name it does not know raises |
+| <a id="meta-resolve"></a>`meta.resolve(source)` | `Ok([#{ "name", "start", "end", ... }])`, every name in the program in order, with what it reads: `def` (`#{ "start", "end" }` of the binding's definition; `is_def` marks the definition itself), or `builtin`, `module` or `unresolved` set to `true`. The language server's references and rename walk the same scopes, so the two agree. `Err` when it does not parse. Native only |
+| <a id="meta-types"></a>`meta.types(source)` | `Ok([#{ "name", "signature", "doc", "name_start", "line", "column" }])`, each top-level declaration with the signature a hover shows for it (`fn double(x: Int) -> Int`, `let n: Int`) and its `///` doc. The language server's own code. Native only |
+| <a id="meta-fingerprint"></a>`meta.fingerprint(item)` | `Ok(#{ "sig", "body" })` for one item, given as its source or its node from `meta.parse`: two 16-digit hex hashes of the node with every position left out, so moving an item, or adding lines above it, changes neither. `sig` covers the declaration without its body (a `fn`'s name, parameters, types and `share`), `body` the body (a `let`'s value); an edit inside a body leaves `sig` as it was |
+| <a id="meta-tokens"></a>`meta.tokens(source, lang?)` | the source as tokens that cover it exactly — their `text`s joined are `source` — `[#{ "kind", "text", "start", "end", "line" }]`, `start` and `end` in characters, `line` from 1. `kind` is one of `keyword` `constant` (`true`, `Ok`, an ALL-CAPS name) `ident` `function` (a call's or a definition's name) `type` `module` `property` `string` (a template's text pieces; a string a line) `interpolation` (`${` and its `}`) `number` `comment` `operator` `punct` `macro` (`@name`) `space`. Any text lexes, finished or not: the language server's lexer. `lang` names another language, with the same kinds and the same guarantee: `"python"` (`py`), `"rust"` (`rs`), `"js"` (`javascript`, `ts`), `"shell"` (`sh`, `bash`, `console`), `"toml"`, `"json"` or `"markdown"` (`md`); a name it does not know raises. `meta.tokens(source, #{ "packed": true })` answers `#{ "kind", "start", "end", "kinds", "state" }` instead: three Int lists, offsets in bytes and each kind its index in `kinds`, and the lexer's `state` at the end (`"code"`, or `"string"`, `"raw"` or `"template"` when the text ends inside one). `"from"` (a byte offset) and `"state"` (the state there, as an earlier call answered it) lex from a line rather than from the start, which is what an editor relexing after an edit needs |
 | <a id="meta-highlight"></a>`meta.highlight(source, lang?)` | the source as HTML for inside a `<code>`: each token but a space a `<span class="ol-KIND">`, its text escaped; `lang` as `meta.tokens` takes it. The same in the browser runtime, so a page's build and its playground colour alike |
 | <a id="meta-exports"></a>`meta.exports(path)` | at expansion time, `Ok(map)` of the literal values the module the expanding file imports as `path` binds at its top level (`let`/`share let` of a number, string, list, map, or tuple literal), by name; `Err` for a path the file does not import, and at runtime |
 
-Nodes are discriminated-union maps. Top-level statements carry `line` and
-`column`; expressions nest (a `call`'s `callee` and `args` are themselves
+Nodes are discriminated-union maps. Statements carry `line` and
+`column`. Every statement and expression node also carries `start` and
+`end`, its byte range in the source (`str.slice_bytes(source, n.start,
+n.end)` is its text), and a statement that names something (`fn`, `let`,
+`type`, `meta fn`) carries `name_span`, `#{start, end}` of the name.
+Identifiers and calls carry their own: a call's span covers its callee
+and arguments, a field access the object and the field. The parts that
+are not expressions — an arm, a named argument, a map entry, a field
+value, a pattern, a type — carry none; their expressions do. Expressions nest (a `call`'s `callee` and `args` are themselves
 node maps; `target` is the dotted callee, like `fs.read_file`). The table
 lists every `kind` and the fields a node of it has; a pattern node is
 `pattern/<form>` and a type node `type/<form>` (their `kind` is `pattern`
@@ -2002,13 +2102,13 @@ table to what `meta.parse` produces.
 | `pattern/literal` | `text`, `value` |
 | `pattern/ok` | `inner`, `text` |
 | `pattern/or` | `alternatives`, `text` |
-| `pattern/range` | `end`, `inclusive`, `start`, `text` |
+| `pattern/range` | `from`, `inclusive`, `text`, `to` |
 | `pattern/record` | `fields`, `text` |
 | `pattern/struct` | `fields`, `text`, `type` |
 | `pattern/tuple` | `items`, `text` |
 | `pattern/wildcard` | `text` |
 | `pipeline` | `left`, `right` |
-| `range` | `end`, `inclusive`, `start` |
+| `range` | `from`, `inclusive`, `to` |
 | `return` | `value` |
 | `spawn` | `value` |
 | `spread` | `value` |

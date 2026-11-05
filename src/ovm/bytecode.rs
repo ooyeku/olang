@@ -1691,6 +1691,24 @@ impl BytecodeVm {
             "str.pad_end",
             "str.join",
             "str.fmt",
+            // byte offsets and one-pass counts (stdlib/text.rs): strings,
+            // Ints, lists of strings and maps of Ints in and out
+            "str.byte_len",
+            "str.slice_bytes",
+            "str.char_to_byte",
+            "str.byte_to_char",
+            "str.utf16_len",
+            "str.chunks",
+            "str.line_starts",
+            "str.stats",
+            // the counts str.stats answers at once, for code that asks one
+            "str.graphemes",
+            "str.width",
+            "str.word_bounds",
+            "str.line_breaks",
+            "str.bidi_runs",
+            "str.normalize",
+            "str.fold",
             // map builtins — maps round-trip losslessly now, so builders
             // and readers both bridge safely
             "entries",
@@ -14019,6 +14037,7 @@ impl BytecodeCompiler {
     /// refusal names the construct, never an enum discriminant.
     fn construct_name(e: &Expr) -> String {
         match e {
+            Expr::At { expr, .. } => Self::construct_name(expr),
             Expr::MacroCall { name, .. } => format!("an unexpanded macro call `@{name}`"),
             Expr::Integer(_) | Expr::Float(_) | Expr::String(_) | Expr::Boolean(_) => {
                 "a literal".to_string()

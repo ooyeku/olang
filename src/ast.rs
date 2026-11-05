@@ -415,6 +415,16 @@ pub enum Expr {
         expression: Box<Expr>,
         message: Option<String>,
     },
+    /// An expression with its byte range in the source (start inclusive,
+    /// end exclusive). Only a parse that asks for spans builds one
+    /// (`Parser::parse_with_spans`, behind `meta.parse`); a program the
+    /// interpreter or any tier runs never holds one, so every walker but
+    /// `meta`'s may treat it as unreachable and see through it.
+    At {
+        start: u32,
+        end: u32,
+        expr: Box<Expr>,
+    },
 }
 
 /// Argument types for function calls
@@ -2572,5 +2582,33 @@ mod body_tests {
         let back: Body = postcard::from_bytes(&bytes).unwrap();
         assert!(back.is_built());
         assert_eq!(back, lazy);
+    }
+}
+
+impl Expr {
+    /// The expression without the spans a spans parse wraps it in.
+    pub fn bare(&self) -> &Expr {
+        let mut e = self;
+        while let Expr::At { expr, .. } = e {
+            e = expr;
+        }
+        e
+    }
+
+    /// The owned expression without its span wrappers.
+    pub fn into_bare(self) -> Expr {
+        let mut e = self;
+        while let Expr::At { expr, .. } = e {
+            e = *expr;
+        }
+        e
+    }
+
+    /// The byte range a spans parse recorded for this expression.
+    pub fn span(&self) -> Option<(u32, u32)> {
+        match self {
+            Expr::At { start, end, .. } => Some((*start, *end)),
+            _ => None,
+        }
     }
 }

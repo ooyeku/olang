@@ -12,7 +12,7 @@ fn meta_parse_has_a_full_help_entry() {
     let doc = help
         .find_function_by_name("meta.parse")
         .expect(":help meta.parse must resolve");
-    assert!(doc.syntax.contains("meta.parse(source)"));
+    assert!(doc.syntax.starts_with("meta.parse(source"));
     assert!(!doc.examples.is_empty(), "meta.parse help carries examples");
 }
 

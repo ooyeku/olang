@@ -50,6 +50,7 @@ pub mod regex_mod;
 pub mod runtime;
 pub mod string;
 pub mod task;
+pub mod text;
 pub mod testing;
 pub mod time;
 #[cfg(feature = "toad")]
@@ -335,6 +336,7 @@ mod max_args_tests {
         let help = crate::help::HelpSystem::new();
         for (module, table) in [
             ("str", super::string::MAX_ARGS),
+            ("str", super::text::MAX_ARGS),
             ("re", super::regex_mod::MAX_ARGS),
             ("col", super::collections::MAX_ARGS),
         ] {

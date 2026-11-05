@@ -25,7 +25,6 @@ pub(crate) const UNARY: &[&str] = &[
     "graphemes",
     "width",
     "cell_width",
-    "lines",
     "words",
     "capitalize",
     "is_empty",
@@ -82,6 +81,10 @@ pub fn create_string_module() -> Value {
     // `str.money(1234.5)` "$1,235" (a Series of them a String Series).
     module.insert("pct".to_string(), create_builtin_function("pct", 1));
     module.insert("money".to_string(), create_builtin_function("money", 1));
+    // Byte offsets and one-pass numbers (stdlib/text.rs).
+    for (name, fewest) in super::text::MIN_ARGS {
+        module.insert(name.to_string(), create_builtin_function(name, *fewest));
+    }
 
     Value::Struct {
         type_name: "Module".to_string(),
@@ -111,7 +114,6 @@ pub(crate) const MAX_ARGS: &[(&str, usize)] = &[
     ("graphemes", 1),
     ("width", 1),
     ("cell_width", 1),
-    ("lines", 1),
     ("words", 1),
     ("capitalize", 1),
     ("is_empty", 1),
@@ -150,6 +152,12 @@ pub fn call_string_function(
     if let Some(e) = super::too_many_args("str", name, args.len(), MAX_ARGS) {
         return Err(e.into());
     }
+    if let Some(e) = super::too_many_args("str", name, args.len(), super::text::MAX_ARGS) {
+        return Err(e.into());
+    }
+    if let Some(result) = super::text::call(name, &args) {
+        return result;
+    }
     match name {
         "to_upper" => str_to_upper(args),
         "to_lower" => str_to_lower(args),
@@ -161,7 +169,6 @@ pub fn call_string_function(
         "graphemes" => str_graphemes(args),
         "width" => str_width(args),
         "cell_width" => str_cell_width(args),
-        "lines" => str_lines(args),
         "words" => str_words(args),
         "capitalize" => str_capitalize(args),
         "is_empty" => str_is_empty(args),
@@ -432,12 +439,6 @@ fn str_chars(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     Ok(Value::List(list.into()))
 }
 
-fn str_lines(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    let s = arg_str(&args, 0, "lines")?;
-    let list: Vec<Value> = s.lines().map(|l| ok_string(l.to_string())).collect();
-    Ok(Value::List(list.into()))
-}
-
 fn str_words(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let s = arg_str(&args, 0, "words")?;
     let list: Vec<Value> = s
@@ -644,7 +645,7 @@ fn str_replace(args: Vec<Value>, first_only: bool) -> Result<Value, Box<dyn std:
 /// (which is character `from_char`); `s.len()` past the end. Characters
 /// are counted a block of bytes at a time (a byte that does not continue
 /// a character starts one), not decoded one by one.
-fn char_to_byte(s: &str, from: usize, from_char: usize, n: usize) -> usize {
+pub(crate) fn char_to_byte(s: &str, from: usize, from_char: usize, n: usize) -> usize {
     let bytes = s.as_bytes();
     let mut at = from;
     let mut count = from_char;

@@ -1735,15 +1735,64 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             see_also: vec!["meta.parse".to_string(), "meta.expand".to_string()],
         });
         self.add_function(FunctionDoc {
+            name: "meta.parse_items".to_string(),
+            description: "Each top-level item of a source, found by a scan rather than a parse: #{kind, name, start, end, line}, the byte ranges tiling the file (a doc comment goes with the item under it). An index reparses only the item an edit is in, with meta.parse(text, #{\"byte_offset\": item.start, \"line_offset\": item.line - 1}). A file with an unclosed bracket still shows the items after it.".to_string(),
+            syntax: "meta.parse_items(source)".to_string(),
+            parameters: vec!["source: String - olang source text".to_string()],
+            return_type: "List<Map>".to_string(),
+            examples: vec![
+                "meta.parse_items(\"fn f() = 1\\nlet x = 2\\n\")  // [#{kind: \"fn\", name: \"f\", start: 0, end: 11, line: 1}, ...]".to_string(),
+            ],
+            category: "Meta".to_string(),
+            see_also: vec!["meta.parse".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "meta.resolve".to_string(),
+            description: "Every name in a program, in order, with what it reads: #{name, start, end} and def: #{start, end} (where its binding is defined; is_def marks the definition itself), or builtin, module or unresolved set to true. The language server's references and rename walk the same scopes, so the two agree. Err when the source does not parse. Native only.".to_string(),
+            syntax: "meta.resolve(source)".to_string(),
+            parameters: vec!["source: String - olang source text".to_string()],
+            return_type: "Result<List<Map>, String>".to_string(),
+            examples: vec![
+                "unwrap(meta.resolve(\"let x = 1\\nx + 1\"))  // x at 0 (is_def) and at 10, both def #{start: 4, end: 5}".to_string(),
+            ],
+            category: "Meta".to_string(),
+            see_also: vec!["meta.unresolved".to_string(), "meta.rename".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "meta.types".to_string(),
+            description: "Each top-level declaration with the signature a hover shows for it: #{name, signature, doc, name_start, line, column}, the checker's types where it knows them (fn double(x: Int) -> Int, let n: Int) and its /// doc. The language server's own code. Native only.".to_string(),
+            syntax: "meta.types(source)".to_string(),
+            parameters: vec!["source: String - olang source text".to_string()],
+            return_type: "Result<List<Map>, String>".to_string(),
+            examples: vec![
+                "map(unwrap(meta.types(\"fn double(x: Int) -> Int = x * 2\")), (d) => d.signature)  // [\"fn double(x: Int) -> Int\"]".to_string(),
+            ],
+            category: "Meta".to_string(),
+            see_also: vec!["meta.resolve".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "meta.fingerprint".to_string(),
+            description: "Two hashes of one item that ignore where it is: Ok(#{sig, body}), each 16 hex digits, of the item's node with every position left out, so moving it or adding lines above it changes neither. sig covers the declaration without its body (a fn's name, parameters, types, share), body the body (a let's value); an edit inside a body leaves sig as it was. Takes the item's source or its node from meta.parse.".to_string(),
+            syntax: "meta.fingerprint(item)".to_string(),
+            parameters: vec!["item: String | Map - one item's source, or its meta.parse node".to_string()],
+            return_type: "Result<Map, String>".to_string(),
+            examples: vec![
+                "unwrap(meta.fingerprint(\"fn f(x) = x + 1\")).sig == unwrap(meta.fingerprint(\"fn f(x) = x + 2\")).sig  // true".to_string(),
+            ],
+            category: "Meta".to_string(),
+            see_also: vec!["meta.parse_items".to_string()],
+        });
+        self.add_function(FunctionDoc {
             name: "meta.parse".to_string(),
-            description: "Parse olang source into its syntax tree as ordinary olang values: a list of kind-tagged node maps. The AST shapes are a stable, documented format, so linters, codemods, and import extractors are written in olang rather than as compiler changes. Read nodes with map_get; every node carries a \"kind\" key and a \"line\" number.".to_string(),
-            syntax: "meta.parse(source)".to_string(),
-            parameters: vec!["source: String - olang source text to parse".to_string()],
+            description: "Parse olang source into its syntax tree as ordinary olang values: a list of kind-tagged node maps. The AST shapes are a stable, documented format, so linters, codemods, and import extractors are written in olang rather than as compiler changes. Read nodes with map_get; every node carries a \"kind\" key, and every statement and expression node its byte range as \"start\" and \"end\" (a statement also its \"line\" and \"column\", and a declaration its name's \"name_span\").".to_string(),
+            syntax: "meta.parse(source, opts)".to_string(),
+            parameters: vec!["source: String - olang source text to parse".to_string(), "opts: Map - optional: #{\"recover\": true} answers #{items, errors}, each top-level item parsed on its own when the whole does not parse; #{\"byte_offset\", \"line_offset\"} puts an item parsed on its own at its place in its file".to_string()],
             return_type: "Result<List<Map>, Error>".to_string(),
             examples: vec![
                 "let prog = unwrap(meta.parse(\"use fmt\\nfn f() = 1\"))".to_string(),
                 "prog |> filter((n) => map_get(n, \"kind\") == \"use\")  // the imports".to_string(),
                 "meta.parse(\"fn (\")  // Err(parse error text)".to_string(),
+                "meta.parse(\"fn f() = 1\\nfn g( = 3\", #{\"recover\": true}).items  // f's node: the rest of a file mid-edit".to_string(),
             ],
             category: "Meta".to_string(),
             see_also: vec![
@@ -7127,6 +7176,146 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             see_also: vec![],
         });
         self.add_function(FunctionDoc {
+            name: "str.byte_len".to_string(),
+            description: "How many bytes a string's UTF-8 takes: O(1), where str.length counts characters.".to_string(),
+            syntax: "str.byte_len(s)".to_string(),
+            parameters: vec![],
+            return_type: "Int".to_string(),
+            examples: vec!["str.byte_len(\"héllo\")  // 6".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.length".to_string(), "str.slice_bytes".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.slice_bytes".to_string(),
+            description: "Bytes a to b of a string, by the slices' one rule (past the end stops at the end, b at or before a is \"\", a negative position raises); an offset inside a character raises. O(the slice).".to_string(),
+            syntax: "str.slice_bytes(s, a, b)".to_string(),
+            parameters: vec![],
+            return_type: "String".to_string(),
+            examples: vec!["str.slice_bytes(\"héllo\", 0, 3)  // \"hé\"".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.substring".to_string(), "str.char_to_byte".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.char_to_byte".to_string(),
+            description: "The byte offset where character i starts; str.length(s) and past it answer str.byte_len(s).".to_string(),
+            syntax: "str.char_to_byte(s, i)".to_string(),
+            parameters: vec![],
+            return_type: "Int".to_string(),
+            examples: vec!["str.char_to_byte(\"héllo\", 2)  // 3".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.byte_to_char".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.byte_to_char".to_string(),
+            description: "How many characters come before byte b; past the end answers str.length(s), and an offset inside a character raises.".to_string(),
+            syntax: "str.byte_to_char(s, b)".to_string(),
+            parameters: vec![],
+            return_type: "Int".to_string(),
+            examples: vec!["str.byte_to_char(\"héllo\", 3)  // 2".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.char_to_byte".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.utf16_len".to_string(),
+            description: "How many UTF-16 code units the string takes, as an LSP client or a browser counts: one per character, two for one outside the Basic Multilingual Plane (an emoji).".to_string(),
+            syntax: "str.utf16_len(s)".to_string(),
+            parameters: vec![],
+            return_type: "Int".to_string(),
+            examples: vec!["str.utf16_len(\"a😀\")  // 3".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.byte_len".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.chunks".to_string(),
+            description: "The string cut into pieces of at most max_bytes bytes, each cut between characters, in one pass. With #{\"prefer\": \"\\n\"} a piece ends just after the last \"\\n\" in its window when there is one. Joined back, the pieces are the string; a character wider than max_bytes is a piece of its own.".to_string(),
+            syntax: "str.chunks(s, max_bytes, opts)".to_string(),
+            parameters: vec![],
+            return_type: "List[String]".to_string(),
+            examples: vec!["str.chunks(\"ab\\ncd\\nefgh\", 5, #{\"prefer\": \"\\n\"})  // [\"ab\\n\", \"cd\\n\", \"efgh\"]".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.slice_bytes".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.encode".to_string(),
+            description: "The string as Bytes in \"utf-8\", \"utf-16le\", \"utf-16be\" or \"latin1\": Ok(bytes), or Err naming the first character Latin-1 has no byte for. bytes.decode is the way back.".to_string(),
+            syntax: "str.encode(s, encoding)".to_string(),
+            parameters: vec![],
+            return_type: "Result".to_string(),
+            examples: vec!["unwrap(str.encode(\"café\", \"latin1\"))  // 4 bytes".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["bytes.decode".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.line_starts".to_string(),
+            description: "The byte offset where each line starts: 0, and one past every \"\\n\" — an editor's line index, so a text ending in a line break has an empty last line. Line n is str.slice_bytes(s, starts[n], starts[n + 1]).".to_string(),
+            syntax: "str.line_starts(s)".to_string(),
+            parameters: vec![],
+            return_type: "List[Int]".to_string(),
+            examples: vec!["str.line_starts(\"ab\\ncd\\n\")  // [0, 3, 6]".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.lines".to_string(), "str.slice_bytes".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.stats".to_string(),
+            description: "A text's numbers in one call, at memory speed for ASCII: #{bytes, chars, lines, graphemes, utf16, width, last_line_len}, each what its own function answers (lines is len(str.line_starts(s)); last_line_len counts the characters after the last \"\\n\").".to_string(),
+            syntax: "str.stats(s)".to_string(),
+            parameters: vec![],
+            return_type: "Map".to_string(),
+            examples: vec!["str.stats(\"héllo\\nwörld\").graphemes  // 11".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.length".to_string(), "str.width".to_string(), "str.line_starts".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.word_bounds".to_string(),
+            description: "The byte offsets of every UAX #29 word boundary, 0 and the end included. Between two neighbours is a word, a run of spaces or one punctuation mark: what word motion and a word diff step over.".to_string(),
+            syntax: "str.word_bounds(s)".to_string(),
+            parameters: vec![],
+            return_type: "List[Int]".to_string(),
+            examples: vec!["str.word_bounds(\"can't stop\")  // [0, 5, 6, 10]".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.words".to_string(), "str.line_breaks".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.line_breaks".to_string(),
+            description: "The byte offsets where UAX #14 lets a line break (where a wrap may cut), the end of the text included. With #{\"hard\": true}, only the breaks that must happen, after a line break.".to_string(),
+            syntax: "str.line_breaks(s, opts)".to_string(),
+            parameters: vec![],
+            return_type: "List[Int]".to_string(),
+            examples: vec!["str.line_breaks(\"a b-c\")  // [2, 4, 5]".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.word_bounds".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.bidi_runs".to_string(),
+            description: "The text's runs of one UAX #9 embedding level as #{start, end, level} in bytes; an odd level is right-to-left. A paragraph's direction comes from its first strong character unless #{\"direction\": \"ltr\"} or \"rtl\" says. Logical order, or the order a line shows them with #{\"visual\": true}.".to_string(),
+            syntax: "str.bidi_runs(s, opts)".to_string(),
+            parameters: vec![],
+            return_type: "List[Map]".to_string(),
+            examples: vec!["str.bidi_runs(\"abc שלום\")  // [#{start: 0, end: 4, level: 0}, #{start: 4, end: 12, level: 1}]".to_string()],
+            category: "String".to_string(),
+            see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.normalize".to_string(),
+            description: "The text in Unicode normalization form \"nfc\", \"nfd\", \"nfkc\" or \"nfkd\". Compare and store NFC: \"é\" typed as one character and as \"e\" plus a combining accent are equal once both are NFC.".to_string(),
+            syntax: "str.normalize(s, form)".to_string(),
+            parameters: vec![],
+            return_type: "String".to_string(),
+            examples: vec!["str.normalize(\"e\\u{301}\", \"nfc\") == \"é\"  // true".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.fold".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.fold".to_string(),
+            description: "Unicode full case folding: the form to compare text in when case should not matter (\"Straße\" and \"STRASSE\" fold alike). Not for display; to_lower is.".to_string(),
+            syntax: "str.fold(s)".to_string(),
+            parameters: vec![],
+            return_type: "String".to_string(),
+            examples: vec!["str.fold(\"Straße\") == str.fold(\"STRASSE\")  // true".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.to_lower".to_string(), "str.normalize".to_string()],
+        });
+        self.add_function(FunctionDoc {
             name: "str.index_of".to_string(),
             description:
                 "Character index of the first match, or Unit when absent (test with != ())."
@@ -7296,11 +7485,11 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
         });
         self.add_function(FunctionDoc {
             name: "str.lines".to_string(),
-            description: "Split into a list of lines.".to_string(),
-            syntax: "str.lines(s)".to_string(),
+            description: "The lines of a text. A line ends at \"\\n\" or \"\\r\\n\"; by default the ends are dropped and a final line break starts no line. With #{\"keep_ends\": true} each line keeps its own end, so joined back they are the text exactly.".to_string(),
+            syntax: "str.lines(s, opts)".to_string(),
             parameters: vec![],
             return_type: "List".to_string(),
-            examples: vec!["str.lines(text)".to_string()],
+            examples: vec!["str.lines(\"a\\r\\nb\\n\")  // [\"a\", \"b\"]".to_string(), "str.lines(\"a\\r\\nb\\n\", #{\"keep_ends\": true})  // [\"a\\r\\n\", \"b\\n\"]".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -7836,6 +8025,22 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             &[r##"unwrap(bytes.to_string(b))  // Err if not valid UTF-8"##],
         );
         self.doc_ex(
+            "bytes.to_string_lossy",
+            "bytes.to_string_lossy(b)",
+            "String",
+            "Bytes",
+            "Decode Bytes as UTF-8 text, putting U+FFFD where a sequence is not UTF-8. Never fails: the way to open a file that is mostly text.",
+            &[r##"bytes.to_string_lossy(bytes.from_list([104, 255, 105]))  // "h\u{FFFD}i""##],
+        );
+        self.doc_ex(
+            "bytes.decode",
+            "bytes.decode(b, encoding, opts)",
+            "Result",
+            "Bytes",
+            "Decode Bytes as \"utf-8\", \"utf-16le\", \"utf-16be\" or \"latin1\": Ok(string), or Err at the first sequence that is not text. With #{\"lossy\": true} each such sequence is U+FFFD and the answer is always Ok.",
+            &[r##"unwrap(bytes.decode(b, "utf-16le"))"##, r##"bytes.decode(b, "latin1")  // never Err"##],
+        );
+        self.doc_ex(
             "bytes.len",
             "bytes.len(b)",
             "Int",
@@ -7942,6 +8147,14 @@ route("GET", "/olang." + map_get(rt, "hash") + ".wasm", (req, p) => { status: 20
             &[r##"unwrap(md.front("---\ntitle: Hi\n---\nBody")).data.title  // "Hi""##],
         );
         self.doc_ex(
+            "md.parse",
+            "md.parse(src, opts)",
+            "Map",
+            "md",
+            "The document as a tree with source ranges: every node #{ \"kind\", \"start\", \"end\", \"char_start\", \"char_end\" } (bytes and characters), containers with \"children\", leaves with \"text\". #{ \"gfm\": false } reads CommonMark alone; #{ \"events\": true } answers the flat event stream (start, end and leaf events) instead of the tree.",
+            &[r##"md.parse("# Hi\n\nSome *text*.").children[0].kind  // "heading""##],
+        );
+        self.doc_ex(
             "md.text",
             "md.text(src)",
             "String",
@@ -7954,8 +8167,8 @@ route("GET", "/olang." + map_get(rt, "hash") + ".wasm", (req, p) => { status: 20
             "meta.tokens(source, lang?)",
             "List",
             "meta",
-            "Source as tokens covering it exactly: [#{ \"kind\", \"text\", \"start\", \"end\", \"line\" }], offsets in characters, the texts joined are the source. Kinds: keyword constant ident function type module property string interpolation number comment operator punct macro space. lang is olang unless named: python, rust, js, shell, toml, json or markdown.",
-            &[r##"map(meta.tokens("let x = 1"), (t) => t.kind)  // ["keyword", "space", "ident", ...]"##],
+            "Source as tokens covering it exactly: [#{ \"kind\", \"text\", \"start\", \"end\", \"line\" }], offsets in characters, the texts joined are the source. Kinds: keyword constant ident function type module property string interpolation number comment operator punct macro space. lang is olang unless named: python, rust, js, shell, toml, json or markdown. The second argument may instead be options: #{\"packed\": true} answers #{kind, start, end, kinds, state}, three Int lists in bytes (a kind is its index in kinds) and the lexer's state at the end; \"from\" (a byte offset) and \"state\" (the state there) lex from a line.",
+            &[r##"map(meta.tokens("let x = 1"), (t) => t.kind)  // ["keyword", "space", "ident", ...]"##, r##"meta.tokens(src, #{"packed": true, "from": 120, "state": "code"}).start"##],
         );
         self.doc_ex(
             "meta.highlight",
@@ -8152,9 +8365,9 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
         // File I/O operations
         self.add_function(FunctionDoc {
             name: "fs.read_file".to_string(),
-            description: "Read the entire contents of a file as a string".to_string(),
-            syntax: "fs.read_file(path)".to_string(),
-            parameters: vec!["path: String - The file path to read from".to_string()],
+            description: "Read the entire contents of a file as a string. #{\"lossy\": true} puts U+FFFD where the file is not valid UTF-8 instead of answering Err; #{\"encoding\": \"latin1\"} (or \"utf-16le\", \"utf-16be\") reads another encoding.".to_string(),
+            syntax: "fs.read_file(path, opts)".to_string(),
+            parameters: vec!["path: String - The file path to read from".to_string(), "opts: Map - optional: lossy (Bool), encoding (String)".to_string()],
             return_type: "Result<String, Error>".to_string(),
             examples: vec![
                 "fs.read_file(\"config.txt\")  // Ok(\"file contents\")".to_string(),
@@ -8182,6 +8395,30 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
             see_also: vec!["fs.read_file".to_string(), "fs.append_file".to_string()],
         });
 
+        self.doc_ex(
+            "fs.read_range",
+            "fs.read_range(path, offset, len)",
+            "Result",
+            "Filesystem",
+            "Read up to len bytes of a file from byte offset: Ok(Bytes), fewer at the end of the file and none past it, or Err with the OS error. Requires the fs capability at read level.",
+            &[r##"unwrap(fs.read_range("big.bin", 1048576, 4096))"##],
+        );
+        self.doc_ex(
+            "fs.chunks",
+            "fs.chunks(path, size)",
+            "Result",
+            "Filesystem",
+            "Open a file to read size bytes at a time: Ok(reader) for fs.next_chunk, or Err when it cannot be opened. A file of any size is read holding one chunk. Requires the fs capability at read level.",
+            &[r##"let r = unwrap(fs.chunks("big.log", 1048576))"##],
+        );
+        self.doc_ex(
+            "fs.next_chunk",
+            "fs.next_chunk(reader)",
+            "Result",
+            "Filesystem",
+            "The next chunk of the reader fs.chunks opened: Ok(Bytes) (the last may be short), Ok(()) once the whole file is read, or Err when a read fails.",
+            &[r##"match unwrap(fs.next_chunk(r)) { () => "done", b => to_string(len(b)) }"##],
+        );
         self.doc_ex(
             "fs.read_bytes",
             "fs.read_bytes(path)",

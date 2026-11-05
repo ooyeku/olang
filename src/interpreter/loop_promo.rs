@@ -404,6 +404,8 @@ impl Walker {
             | Expr::Spawn(_)
             | Expr::ParForLoop { .. }
             | Expr::MacroCall { .. } => self.hazard = true,
+            // Only a spans parse (meta.parse) makes one; no run sees it.
+            Expr::At { expr, .. } => self.walk(expr),
         }
     }
 
