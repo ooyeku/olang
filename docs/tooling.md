@@ -1683,6 +1683,16 @@ smaller from a `--release` olang than a debug one). On macOS the
 appended data invalidates any code signature; re-sign the output if you
 distribute it.
 
+Signed with the hardened runtime (which notarisation needs), the runtime
+needs one entitlement, `com.apple.security.cs.allow-jit`: the JIT writes
+its machine code into memory mapped with `MAP_JIT`, which that
+entitlement allows. [`dist/macos/entitlements.plist`](../dist/macos/entitlements.plist)
+holds exactly that. A binary signed without it still runs every program,
+on bytecode alone: the runtime asks for a `MAP_JIT` page once, and when
+the system refuses it the JIT stays off. Neither
+`allow-unsigned-executable-memory` nor `disable-library-validation` is
+needed, and olang loads no libraries signed by anyone else.
+
 [`examples/tools/watch/main.ol`](../examples/tools/watch/main.ol) is a
 self-contained tool built exactly this way — `cli` for its arguments,
 `term` for color, `proc` and `os` for the commands it runs, and nothing
@@ -2151,6 +2161,7 @@ nothing should depend on them.
 | `OLANG_BOOT_TRACE` | no | `1`, the same as `--trace`: where a program's start goes — a line on stderr at each landmark (the interpreter's thread started, the entry parsed, the program starting, the platform's loop, a window asked for and made, the first frame presented), stamped from the process's start, each module a `use` found and where, and at the first frame the modules read and loaded and the compiles, with their times. |
 | `OLANG_LAZY_COMPILE` | no | `0`: compile every callee with its caller (the eager route) instead of at its first call, for A/B measurement. |
 | `OLANG_JIT_DEBUG` | no | `1`: JIT compilation decisions: what compiled, what refused, and the instruction or register that refused it. |
+| `OLANG_NO_JIT` | no | `1`: no native code; hot functions stay on bytecode, as in a hardened binary signed without `allow-jit`. |
 | `OLANG_OSR_DEBUG`, `OLANG_OSR_OFF` | no | On-stack-replacement decisions; `1` disables on-stack replacement. |
 | `OLANG_BRIDGE_TIER_OFF` | no | `1`: disable the bridge interpreter's bytecode tier. |
 | `OLANG_COLLECTIONS_ON_INTERP` | no | Keep the auto-loaded `collections` on the tree-walker. |

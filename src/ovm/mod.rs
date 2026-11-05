@@ -24,6 +24,8 @@ pub mod gc; // Safepoint coordination flags
 #[cfg(feature = "native")]
 pub mod jit; // Baseline JIT: pure-integer hot functions to native code
 #[cfg(feature = "native")]
+pub mod jit_memory; // MAP_JIT executable memory, and whether the JIT may run
+#[cfg(feature = "native")]
 pub mod osr; // On-stack replacement: hot loop regions to native, mid-frame
 pub mod tier; // Hot-function promotion to the bytecode tier
 pub mod value; // Reference-counted runtime values
