@@ -1771,6 +1771,18 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             see_also: vec!["meta.resolve".to_string()],
         });
         self.add_function(FunctionDoc {
+            name: "meta.fingerprint".to_string(),
+            description: "Two hashes of one item that ignore where it is: Ok(#{sig, body}), each 16 hex digits, of the item's node with every position left out, so moving it or adding lines above it changes neither. sig covers the declaration without its body (a fn's name, parameters, types, share), body the body (a let's value); an edit inside a body leaves sig as it was. Takes the item's source or its node from meta.parse.".to_string(),
+            syntax: "meta.fingerprint(item)".to_string(),
+            parameters: vec!["item: String | Map - one item's source, or its meta.parse node".to_string()],
+            return_type: "Result<Map, String>".to_string(),
+            examples: vec![
+                "unwrap(meta.fingerprint(\"fn f(x) = x + 1\")).sig == unwrap(meta.fingerprint(\"fn f(x) = x + 2\")).sig  // true".to_string(),
+            ],
+            category: "Meta".to_string(),
+            see_also: vec!["meta.parse_items".to_string()],
+        });
+        self.add_function(FunctionDoc {
             name: "meta.parse".to_string(),
             description: "Parse olang source into its syntax tree as ordinary olang values: a list of kind-tagged node maps. The AST shapes are a stable, documented format, so linters, codemods, and import extractors are written in olang rather than as compiler changes. Read nodes with map_get; every node carries a \"kind\" key, and every statement and expression node its byte range as \"start\" and \"end\" (a statement also its \"line\" and \"column\", and a declaration its name's \"name_span\").".to_string(),
             syntax: "meta.parse(source, opts)".to_string(),

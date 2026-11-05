@@ -45,6 +45,7 @@ pub fn create_meta_module() -> Value {
     module.insert("unresolved".to_string(), builtin("unresolved", 1));
     module.insert("resolve".to_string(), builtin("resolve", 1));
     module.insert("types".to_string(), builtin("types", 1));
+    module.insert("fingerprint".to_string(), builtin("fingerprint", 1));
     module.insert("rename".to_string(), builtin("rename", 2));
     module.insert("tokens".to_string(), builtin("tokens", 1));
     module.insert("highlight".to_string(), builtin("highlight", 1));
@@ -77,6 +78,7 @@ pub fn call_meta_function(
         "unresolved" => meta_unresolved(args),
         "resolve" => meta_resolve(args),
         "types" => meta_types(args),
+        "fingerprint" => meta_fingerprint(args),
         "rename" => meta_rename(args),
         "tokens" | "highlight" => {
             let src = match args.first() {
@@ -332,6 +334,133 @@ fn meta_types(_: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         "meta.types needs the language server's checker, which the browser runtime does not carry"
             .into(),
     )
+}
+
+// ── Fingerprints (OL-455) ───────────────────────────────────────────
+
+/// Fields that say where a node is, not what it is.
+const PLACE_KEYS: &[&str] = &["line", "column", "start", "end", "name_span"];
+
+/// 64-bit FNV-1a, fed a node's canonical bytes. A fixed function, so a
+/// fingerprint is the same in every process and every release that keeps
+/// the node format (the values batch's `hash(v)` is per process).
+struct Fnv(u64);
+
+impl Fnv {
+    fn new() -> Self {
+        Fnv(0xcbf2_9ce4_8422_2325)
+    }
+    fn bytes(&mut self, b: &[u8]) {
+        for x in b {
+            self.0 ^= *x as u64;
+            self.0 = self.0.wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+    fn tag(&mut self, t: u8, len: usize) {
+        self.bytes(&[t]);
+        self.bytes(&(len as u64).to_le_bytes());
+    }
+    fn value(&mut self, v: &Value, skip: &[&str]) {
+        match v {
+            Value::Unit => self.tag(0, 0),
+            Value::Boolean(b) => self.tag(1, *b as usize),
+            Value::Integer(n) => {
+                self.tag(2, 8);
+                self.bytes(&n.to_le_bytes());
+            }
+            Value::Float(f) => {
+                self.tag(3, 8);
+                self.bytes(&f.to_bits().to_le_bytes());
+            }
+            Value::String(s) => {
+                self.tag(4, s.len());
+                self.bytes(s.as_bytes());
+            }
+            Value::List(items) => {
+                self.tag(5, items.len());
+                items.iter().for_each(|x| self.value(x, &[]));
+            }
+            Value::Map(m) => {
+                let keys: Vec<_> = m
+                    .iter()
+                    .filter(|(k, _)| {
+                        !PLACE_KEYS.contains(&k.as_str()) && !skip.contains(&k.as_str())
+                    })
+                    .collect();
+                self.tag(6, keys.len());
+                for (k, x) in keys {
+                    self.tag(7, k.len());
+                    self.bytes(k.as_bytes());
+                    self.value(x, &[]);
+                }
+            }
+            other => {
+                let shown = other.to_string();
+                self.tag(8, shown.len());
+                self.bytes(shown.as_bytes());
+            }
+        }
+    }
+    fn hex(&self) -> String {
+        format!("{:016x}", self.0)
+    }
+}
+
+/// `meta.fingerprint(item)`: `#{sig, body}` for one item (its source, or
+/// its node from `meta.parse`), each a 16-digit hex hash of the node with
+/// every position left out, so moving the item, or adding a line above
+/// it, changes neither. `sig` is the declaration without its body (a
+/// `fn`'s name, parameters, types and `share`; a `let`'s binding and
+/// type), `body` the body alone (a `let`'s value; for a `type`, a `use` or
+/// any other item, the whole of it): a change inside a body leaves `sig`.
+fn meta_fingerprint(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let node = match args.first() {
+        Some(Value::String(src)) if args.len() == 1 => {
+            let program = match crate::parser::Parser::new().parse_raw(src) {
+                Ok(p) => p,
+                Err(e) => return Ok(Value::Err(Box::new(s(&e.to_string())))),
+            };
+            match program.statements.as_slice() {
+                [one] => stmt_to_value(one),
+                [] => return Err("meta.fingerprint: the source holds no item".into()),
+                more => {
+                    return Err(format!(
+                        "meta.fingerprint: the source holds {} items, not one (meta.parse_items splits a file)",
+                        more.len()
+                    )
+                    .into());
+                }
+            }
+        }
+        Some(v @ Value::Map(_)) if args.len() == 1 => v.clone(),
+        _ => {
+            return Err(
+                "meta.fingerprint expects one item: its source, or its node from meta.parse".into(),
+            );
+        }
+    };
+    let Value::Map(m) = &node else { unreachable!() };
+    let body_key = match m.get("kind") {
+        Some(Value::String(k)) if matches!(k.as_str(), "fn" | "meta_fn" | "test") => Some("body"),
+        Some(Value::String(k)) if k.as_str() == "let" => Some("value"),
+        _ => None,
+    };
+    let mut sig = Fnv::new();
+    let mut body = Fnv::new();
+    match body_key {
+        Some(key) => {
+            sig.value(&node, &[key]);
+            body.value(m.get(key).unwrap_or(&Value::Unit), &[]);
+        }
+        None => {
+            sig.value(&node, &[]);
+            body.value(&node, &[]);
+        }
+    }
+    Ok(Value::Ok(Box::new(map(vec![
+        ("sig", s(&sig.hex())),
+        ("body", s(&body.hex())),
+    ]))))
 }
 
 /// `meta.unresolved(source)` → Ok(list of names) | Err(message): every

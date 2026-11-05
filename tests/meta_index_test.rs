@@ -96,6 +96,31 @@ let whole = first(filter(meta.parse({}, #{{"recover": true}}).items, (n) => n.na
 }
 
 #[test]
+fn fingerprints_ignore_where_an_item_is() {
+    let src = r#"
+let a = unwrap(meta.fingerprint("fn f(x) = x + 1"))
+let moved = unwrap(meta.fingerprint("\n\n   fn f(x) =\n  x + 1"))
+let body = unwrap(meta.fingerprint("fn f(x) = x + 2"))
+let sig = unwrap(meta.fingerprint("fn f(x, y) = x + 1"))
+let node = unwrap(meta.fingerprint(first(unwrap(meta.parse("\nfn f(x) = x + 1")))))
+[a == moved, a.sig == body.sig, a.body != body.body, a.sig != sig.sig, a.body == sig.body, a == node, str.length(a.sig)]
+"#;
+    let t = Value::Boolean(true);
+    assert_eq!(
+        eval(src),
+        Value::List(std::sync::Arc::new(vec![
+            t.clone(),
+            t.clone(),
+            t.clone(),
+            t.clone(),
+            t.clone(),
+            t,
+            Value::Integer(16)
+        ]))
+    );
+}
+
+#[test]
 fn resolve_names_what_each_name_reads() {
     let file = "fn add(a, b) = a + b\nlet x = add(1, len([2]))\nlet y = str.trim(\" z \") + q\n";
     let src = format!(
