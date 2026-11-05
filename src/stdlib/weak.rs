@@ -29,7 +29,7 @@ enum Referent {
     List(Weak<Vec<Value>>),
     Tuple(Weak<Vec<Value>>),
     Map(Weak<crate::ast::ValueMap>),
-    Struct(String, Weak<crate::ast::ValueMap>),
+    Struct(crate::ast::TypeName, Weak<crate::ast::ValueMap>),
     Function(Weak<crate::ast::Function>),
     Enum(Weak<crate::ast::EnumValue>),
     Native(Weak<Box<dyn NativeObject>>),
@@ -113,7 +113,7 @@ impl WeakObject {
                 .upgrade()
                 .map(|fields| Value::Struct {
                     type_name: t.clone(),
-                    fields,
+                    fields: fields.into(),
                 })
                 .unwrap_or(Value::Unit),
             Referent::Function(w) => w.upgrade().map(Value::Function).unwrap_or(Value::Unit),
@@ -155,8 +155,10 @@ fn referent_of(v: &Value) -> Referent {
         Value::List(a) => Referent::List(Arc::downgrade(a)),
         Value::Tuple(a) => Referent::Tuple(Arc::downgrade(a)),
         Value::Map(a) => Referent::Map(Arc::downgrade(a)),
+        // A struct the VM built is referred to through its map, which
+        // the object keeps for its life (and lets go when it dies).
         Value::Struct { type_name, fields } => {
-            Referent::Struct(type_name.clone(), Arc::downgrade(fields))
+            Referent::Struct(type_name.clone(), Arc::downgrade(&fields.to_arc()))
         }
         Value::Function(a) => Referent::Function(Arc::downgrade(a)),
         // A unit variant is a constant, as a scalar is.
@@ -210,8 +212,8 @@ pub fn create_weak_module() -> Value {
         );
     }
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: Arc::new(module),
+        type_name: "Module".into(),
+        fields: Arc::new(module).into(),
     }
 }
 

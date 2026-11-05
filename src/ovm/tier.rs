@@ -59,7 +59,12 @@ impl CachedOwner {
                 Arc::as_ptr(fields) as *const u8 as usize,
                 CachedOwner::Map(Arc::downgrade(fields)),
             )),
-            Value::Struct { fields, .. } => Some((
+            // A struct the VM built crosses back in O(1) (it is the VM's
+            // object): nothing to cache.
+            Value::Struct {
+                fields: crate::ast::StructFields::Map(fields),
+                ..
+            } => Some((
                 Arc::as_ptr(fields) as *const u8 as usize,
                 CachedOwner::Struct(Arc::downgrade(fields)),
             )),
@@ -85,9 +90,13 @@ impl CachedOwner {
                 w.upgrade().is_some_and(|live| Arc::ptr_eq(&live, items))
             }
             (CachedOwner::Map(w), Value::Map(fields))
-            | (CachedOwner::Struct(w), Value::Struct { fields, .. }) => {
-                w.upgrade().is_some_and(|live| Arc::ptr_eq(&live, fields))
-            }
+            | (
+                CachedOwner::Struct(w),
+                Value::Struct {
+                    fields: crate::ast::StructFields::Map(fields),
+                    ..
+                },
+            ) => w.upgrade().is_some_and(|live| Arc::ptr_eq(&live, fields)),
             _ => false,
         }
     }
@@ -1477,8 +1486,8 @@ mod tests {
         fields.insert("a".to_string(), Value::Integer(1));
         let fields = Arc::new(fields);
         let as_struct = Value::Struct {
-            type_name: "T".to_string(),
-            fields: fields.clone(),
+            type_name: "T".into(),
+            fields: fields.clone().into(),
         };
         let as_map = Value::Map(fields);
         let (skey, owner) = CachedOwner::of(&as_struct).expect("structs are cached");

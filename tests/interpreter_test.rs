@@ -243,14 +243,14 @@ fn a_struct_shares_its_fields_rather_than_copying_them() {
     let mut fields = olang::ast::ValueMap::default();
     fields.insert("payload".to_string(), Value::Integer(1));
     let original = Value::Struct {
-        type_name: "Box".to_string(),
-        fields: std::sync::Arc::new(fields),
+        type_name: "Box".into(),
+        fields: std::sync::Arc::new(fields).into(),
     };
     let copy = original.clone();
     match (&original, &copy) {
         (Value::Struct { fields: a, .. }, Value::Struct { fields: b, .. }) => {
             assert!(
-                std::sync::Arc::ptr_eq(a, b),
+                olang::ast::StructFields::ptr_eq(a, b),
                 "cloning a struct must share its fields, not rebuild them"
             );
         }

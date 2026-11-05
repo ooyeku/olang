@@ -341,7 +341,9 @@ fn same_binding(now: Option<&Value>, then: &Value) -> bool {
         (Value::List(a), Value::List(b)) if Arc::ptr_eq(a, b) => true,
         (Value::Map(a), Value::Map(b)) if Arc::ptr_eq(a, b) => true,
         (Value::String(a), Value::String(b)) if Arc::ptr_eq(a, b) => true,
-        (Value::Struct { fields: a, .. }, Value::Struct { fields: b, .. }) if Arc::ptr_eq(a, b) => {
+        (Value::Struct { fields: a, .. }, Value::Struct { fields: b, .. })
+            if crate::ast::StructFields::ptr_eq(a, b) =>
+        {
             true
         }
         _ => now == then,
@@ -1502,7 +1504,7 @@ fn hof_value_same(a: &crate::ast::Value, b: &crate::ast::Value) -> bool {
                 type_name: t2,
                 fields: f2,
             },
-        ) => t1 == t2 && Arc::ptr_eq(f1, f2),
+        ) => t1 == t2 && crate::ast::StructFields::ptr_eq(f1, f2),
         (V::Enum(x), V::Enum(y)) => Arc::ptr_eq(x, y),
         (V::EnumConstructor(x), V::EnumConstructor(y)) => Arc::ptr_eq(x, y),
         (V::TypeInfo(x), V::TypeInfo(y)) => Arc::ptr_eq(x, y),
@@ -3724,7 +3726,7 @@ impl BytecodeVm {
                     kinds[i] = JitKind::Float;
                 }
                 Ok(crate::ovm::value::ValueData::Struct(obj)) => {
-                    bits[i] = std::sync::Arc::as_ptr(obj) as i64;
+                    bits[i] = obj.as_ptr() as i64;
                     kinds[i] = JitKind::Struct(obj.shape.id);
                     any_ref = true;
                 }
@@ -3872,7 +3874,7 @@ impl BytecodeVm {
                 .and_then(|s| s.clone())
                 .or_else(|| cache.read().ok().and_then(|c| c.get(&id).cloned()))
         };
-        let mut struct_args: Vec<std::sync::Arc<crate::ovm::value::StructObject>> = Vec::new();
+        let mut struct_args: Vec<crate::ovm::value::StructObject> = Vec::new();
         let mut str_args: Vec<std::sync::Arc<String>> = Vec::new();
         let mut result_args: Vec<std::sync::Arc<crate::ovm::value::ResultObject>> = Vec::new();
         let mut list_args: Vec<std::sync::Arc<Vec<crate::ovm::value::OvmValue>>> = Vec::new();
@@ -4105,7 +4107,7 @@ impl BytecodeVm {
                         kinds[i] = JitKind::Float;
                     }
                     Ok(crate::ovm::value::ValueData::Struct(obj)) => {
-                        bits[i] = std::sync::Arc::as_ptr(obj) as i64;
+                        bits[i] = obj.as_ptr() as i64;
                         kinds[i] = JitKind::Struct(obj.shape.id);
                         any_ref = true;
                     }
@@ -4192,8 +4194,7 @@ impl BytecodeVm {
                         .and_then(|s| s.clone())
                         .or_else(|| cache.read().ok().and_then(|c| c.get(&id).cloned()))
                 };
-                let mut struct_args: Vec<std::sync::Arc<crate::ovm::value::StructObject>> =
-                    Vec::new();
+                let mut struct_args: Vec<crate::ovm::value::StructObject> = Vec::new();
                 let mut str_args: Vec<std::sync::Arc<String>> = Vec::new();
                 let mut result_args: Vec<std::sync::Arc<crate::ovm::value::ResultObject>> =
                     Vec::new();
@@ -5264,12 +5265,12 @@ impl BytecodeVm {
                                 pairs.push((key_str.to_string(), v));
                                 self.execution_state.set_register(
                                     *target,
-                                    OvmValue::new_struct(std::sync::Arc::new(
+                                    OvmValue::new_struct(
                                         crate::ovm::value::StructObject::from_pairs(
                                             kind.type_name(),
                                             pairs,
                                         ),
-                                    )),
+                                    ),
                                 )?;
                             }
                         },
@@ -5282,11 +5283,9 @@ impl BytecodeVm {
                             pairs.push((key_str.to_string(), v));
                             self.execution_state.set_register(
                                 *target,
-                                OvmValue::new_struct(std::sync::Arc::new(
-                                    crate::ovm::value::StructObject::from_pairs(
-                                        st.type_name(),
-                                        pairs,
-                                    ),
+                                OvmValue::new_struct(crate::ovm::value::StructObject::from_pairs(
+                                    st.type_name(),
+                                    pairs,
                                 )),
                             )?;
                         }
@@ -5791,17 +5790,14 @@ impl BytecodeVm {
                     field_regs,
                     field_types,
                 } => {
-                    let mut values = Vec::with_capacity(field_regs.len());
-                    for reg in field_regs {
-                        values.push(self.execution_state.get_register(*reg)?);
-                    }
                     // Enforce declared field types where the runtime can check
                     // them — the same rule and the same message the
                     // interpreter raises. `field_types` is in shape order, so
-                    // it aligns with `values` and `shape.field_names`.
+                    // it aligns with `field_regs` and `shape.field_names`.
                     for (i, check) in field_types.iter().enumerate() {
                         if let Some(check) = check {
-                            let (actual, payload, fn_arity, scalar) = ovm_value_view(&values[i]);
+                            let value = self.execution_state.register_ref(field_regs[i])?;
+                            let (actual, payload, fn_arity, scalar) = ovm_value_view(value);
                             if let Some((expected, got)) =
                                 check.check_value(actual, payload, fn_arity, scalar)
                             {
@@ -5817,12 +5813,24 @@ impl BytecodeVm {
                             }
                         }
                     }
-                    let obj = crate::ovm::value::StructObject {
-                        shape: shape.clone(),
-                        values,
-                    };
+                    // Each field written straight into the struct's one
+                    // allocation (OL-431): no vector of values between.
+                    for reg in field_regs {
+                        self.execution_state.register_ref(*reg)?;
+                    }
+                    let state = &self.execution_state;
+                    let obj = crate::ovm::value::StructObject::from_fn(
+                        shape.clone(),
+                        field_regs.len(),
+                        |i| {
+                            state
+                                .register_ref(field_regs[i])
+                                .map(OvmValue::clone)
+                                .unwrap_or_else(|_| OvmValue::new_unit())
+                        },
+                    );
                     self.execution_state
-                        .set_register(*dst, OvmValue::new_struct(Arc::new(obj)))?;
+                        .set_register(*dst, OvmValue::new_struct(obj))?;
                 }
 
                 Instruction::MakeMap { dst, entries } => {
@@ -5905,7 +5913,7 @@ impl BytecodeVm {
                         .is_some();
                     let field_callee = match &receiver.data {
                         _ if fit_method => None,
-                        crate::ovm::value::ValueData::Struct(st) => st.field(method).cloned(),
+                        crate::ovm::value::ValueData::Struct(st) => st.field(method),
                         crate::ovm::value::ValueData::AstStruct(m, _)
                         | crate::ovm::value::ValueData::AstMap(m) => m
                             .get(method.as_str())
@@ -6660,8 +6668,8 @@ impl BytecodeVm {
                     let hit = match &object_value.data {
                         crate::ovm::value::ValueData::Struct(st) => {
                             let (cached_shape, cached_idx) = cache.load();
-                            if cached_shape == st.shape.id {
-                                st.values.get(cached_idx as usize).cloned()
+                            if cached_shape == st.shape.id && (cached_idx as usize) < st.len() {
+                                Some(st.get(cached_idx as usize))
                             } else {
                                 None
                             }
@@ -8392,10 +8400,7 @@ impl BytecodeVm {
                 .get(key_str)
                 .map(|v| OvmValue::from_ast(v.clone()))
                 .unwrap_or_else(OvmValue::new_unit),
-            Recv::Struct(st) => st
-                .field(key_str)
-                .cloned()
-                .unwrap_or_else(OvmValue::new_unit),
+            Recv::Struct(st) => st.field(key_str).unwrap_or_else(OvmValue::new_unit),
         })
     }
 
@@ -9265,7 +9270,7 @@ impl BytecodeVm {
                         "map_values" => {
                             OvmValue::new_list(st.iter().map(|(_, v)| v.clone()).collect())
                         }
-                        _ => OvmValue::new_integer(st.values.len() as i64),
+                        _ => OvmValue::new_integer(st.len() as i64),
                     },
                     _ => {
                         return Some(Err(BytecodeError::TypeError(format!(
@@ -9527,9 +9532,9 @@ impl BytecodeVm {
                             .filter(|(name, _)| **name != key)
                             .map(|(name, v)| (name.clone(), v.clone()))
                             .collect();
-                        Ok(OvmValue::new_struct(Arc::new(
+                        Ok(OvmValue::new_struct(
                             crate::ovm::value::StructObject::from_pairs(st.type_name(), pairs),
-                        )))
+                        ))
                     }
                     _ => Err(BytecodeError::TypeError(
                         "map_remove: first argument must be a map or object".to_string(),
@@ -9601,19 +9606,19 @@ impl BytecodeVm {
                         Err(_) => {
                             let st = OvmValue::force_ast_struct(m, *kind);
                             let pairs = st.set_pairs(key, args[2].clone());
-                            Ok(OvmValue::new_struct(Arc::new(
+                            Ok(OvmValue::new_struct(
                                 crate::ovm::value::StructObject::from_pairs(
                                     kind.type_name(),
                                     pairs,
                                 ),
-                            )))
+                            ))
                         }
                     },
                     ValueData::Struct(st) => {
                         let pairs = st.set_pairs(key, args[2].clone());
-                        Ok(OvmValue::new_struct(Arc::new(
+                        Ok(OvmValue::new_struct(
                             crate::ovm::value::StructObject::from_pairs(st.type_name(), pairs),
-                        )))
+                        ))
                     }
                     _ => Err(BytecodeError::TypeError(
                         "map_set: first argument must be a map or object".to_string(),
@@ -10852,7 +10857,7 @@ impl BytecodeVm {
                 .map(|v| OvmValue::from_ast(v.clone()))
                 .unwrap_or_else(OvmValue::new_unit)),
             ValueData::Struct(s) if matches!(s.type_name(), "JsonObject" | "Object") => {
-                Ok(s.field(field).cloned().unwrap_or_else(OvmValue::new_unit))
+                Ok(s.field(field).unwrap_or_else(OvmValue::new_unit))
             }
             // A native value's field (a Frame's column), unless the name
             // is one of its methods: the interpreter's rule (L6).
@@ -10863,9 +10868,8 @@ impl BytecodeVm {
             // called, in the interpreter's words.
             ValueData::Struct(s) if s.type_name() == "Module" => s
                 .field(field)
-                .cloned()
                 .ok_or_else(|| BytecodeError::TypeError(vm_module_miss(s, field))),
-            ValueData::Struct(s) => s.field(field).cloned().ok_or_else(|| {
+            ValueData::Struct(s) => s.field(field).ok_or_else(|| {
                 BytecodeError::TypeError(self.no_field_or_method(s.type_name(), field))
             }),
             _ => Err(BytecodeError::TypeError(format!(
@@ -16194,10 +16198,14 @@ impl crate::native_sig::BindValue for OvmValue {
 /// A module value's missing member's message (the VM's values), in the
 /// interpreter's words (`crate::interpreter::module_member_miss`).
 fn vm_module_miss(st: &crate::ovm::value::StructObject, field: &str) -> String {
-    let module = crate::interpreter::module_name_of(st.iter().filter_map(|(_, v)| match &v.data {
-        crate::ovm::value::ValueData::Builtin(b) => Some(b.name.as_str()),
-        _ => None,
-    }));
+    let builtins: Vec<String> = st
+        .values()
+        .filter_map(|v| match &v.data {
+            crate::ovm::value::ValueData::Builtin(b) => Some(b.name.clone()),
+            _ => None,
+        })
+        .collect();
+    let module = crate::interpreter::module_name_of(builtins.iter().map(|s| s.as_str()));
     crate::interpreter::module_member_miss(
         module.as_deref(),
         field,

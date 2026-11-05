@@ -4875,8 +4875,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         }
 
         Ok(Value::Struct {
-            type_name: struct_literal.type_name.clone(),
-            fields: std::sync::Arc::new(fields),
+            type_name: crate::ast::TypeName::new(&struct_literal.type_name),
+            fields: std::sync::Arc::new(fields).into(),
         })
     }
 
@@ -4893,8 +4893,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
 
         // Use a generic type name for anonymous objects
         Ok(Value::Struct {
-            type_name: "Object".to_string(),
-            fields: std::sync::Arc::new(fields),
+            type_name: "Object".into(),
+            fields: std::sync::Arc::new(fields).into(),
         })
     }
 
@@ -4961,7 +4961,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             let receiver = self.callee_value(object)?;
             if let Value::Struct { type_name, fields } = &receiver
                 && type_name == "Module"
-                && !fields.contains_key(field.as_str())
+                && !fields.has(field.as_str())
             {
                 return Err(InterpreterError::TypeError {
                     message: module_miss_of(fields, field),
@@ -5004,12 +5004,12 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     // An object and a parsed JSON object read as a map
                     // does: `o.key` is `map_get(o, "key")`, and an absent
                     // key is `()`. A declared struct's fields are fixed.
-                    Ok(fields.get(field).cloned().unwrap_or(Value::Unit))
+                    Ok(fields.get_value(field).unwrap_or(Value::Unit))
                 } else {
-                    // Handle regular struct field access
+                    // A declared struct's field: read where it is when the
+                    // VM built it (`StructFields::get_value`).
                     fields
-                        .get(field)
-                        .cloned()
+                        .get_value(field)
                         .ok_or_else(|| InterpreterError::TypeError {
                             message: self.no_field_or_method(type_name, field),
                         })
@@ -7254,8 +7254,8 @@ mod tests {
 
         // Cache a module
         let test_module = Value::Struct {
-            type_name: "Module".to_string(),
-            fields: std::sync::Arc::new(crate::ast::ValueMap::default()),
+            type_name: "Module".into(),
+            fields: std::sync::Arc::new(crate::ast::ValueMap::default()).into(),
         };
 
         interpreter
@@ -7329,12 +7329,12 @@ mod tests {
 
         // Cache some modules with dependencies
         let module_a = Value::Struct {
-            type_name: "Module".to_string(),
-            fields: std::sync::Arc::new(crate::ast::ValueMap::default()),
+            type_name: "Module".into(),
+            fields: std::sync::Arc::new(crate::ast::ValueMap::default()).into(),
         };
         let module_b = Value::Struct {
-            type_name: "Module".to_string(),
-            fields: std::sync::Arc::new(crate::ast::ValueMap::default()),
+            type_name: "Module".into(),
+            fields: std::sync::Arc::new(crate::ast::ValueMap::default()).into(),
         };
 
         interpreter
@@ -7396,8 +7396,8 @@ mod tests {
 
         // Cache some modules
         let test_module = Value::Struct {
-            type_name: "Module".to_string(),
-            fields: std::sync::Arc::new(crate::ast::ValueMap::default()),
+            type_name: "Module".into(),
+            fields: std::sync::Arc::new(crate::ast::ValueMap::default()).into(),
         };
 
         interpreter

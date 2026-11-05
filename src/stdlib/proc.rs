@@ -214,8 +214,8 @@ pub fn create_proc_module() -> Value {
         );
     }
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: std::sync::Arc::new(module),
+        type_name: "Module".into(),
+        fields: std::sync::Arc::new(module).into(),
     }
 }
 
@@ -258,8 +258,8 @@ fn handle(id: i64) -> Value {
     let mut fields = crate::ast::ValueMap::default();
     fields.insert("id".to_string(), Value::Integer(id));
     Value::Struct {
-        type_name: "Process".to_string(),
-        fields: std::sync::Arc::new(fields),
+        type_name: "Process".into(),
+        fields: std::sync::Arc::new(fields).into(),
     }
 }
 
@@ -816,8 +816,8 @@ fn proc_wait(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             fields.insert("code".to_string(), code);
             fields.insert("signal".to_string(), signal);
             Ok(ok(Value::Struct {
-                type_name: "Object".to_string(),
-                fields: std::sync::Arc::new(fields),
+                type_name: "Object".into(),
+                fields: std::sync::Arc::new(fields).into(),
             }))
         }
         Err(e) => Ok(err(format!("wait: {}", e))),
@@ -1123,8 +1123,8 @@ fn proc_pipeline(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     fields.insert("stderr".to_string(), text_or_bytes(stderr_all, bytes));
     fields.insert("codes".to_string(), Value::List(codes.into()));
     Ok(ok(Value::Struct {
-        type_name: "Object".to_string(),
-        fields: std::sync::Arc::new(fields),
+        type_name: "Object".into(),
+        fields: std::sync::Arc::new(fields).into(),
     }))
 }
 

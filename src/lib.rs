@@ -76,6 +76,7 @@ pub mod tier_stats; // Where each function ran: `--ovm-stats=json`, pins
 pub mod timeline;
 pub mod tools;
 pub mod value_hash; // hash(v): a structural hash that agrees with ==
+pub mod value_struct; // A struct's interned type name and its fields (OL-431)
 pub mod version;
 pub mod vfs;
 

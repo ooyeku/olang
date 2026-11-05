@@ -822,13 +822,21 @@ pub fn loose_eq(a: &Value, b: &Value) -> bool {
                 type_name: tm,
                 fields: fy,
             },
-        ) => {
-            tn == tm
-                && fx.len() == fy.len()
-                && fx
-                    .iter()
-                    .all(|(k, v)| fy.get(k).is_some_and(|w| loose_eq(v, w)))
-        }
+        ) => match (fx.vm(), fy.vm()) {
+            // Two structs the VM built, of one shape: compared where they
+            // are, field by field, without building either's map.
+            (Some(x), Some(y)) if x.shape.id == y.shape.id && tn == tm => {
+                crate::ovm::value::OvmValue::new_struct(x.clone())
+                    .structural_eq(&crate::ovm::value::OvmValue::new_struct(y.clone()))
+            }
+            _ => {
+                tn == tm
+                    && fx.len() == fy.len()
+                    && fx
+                        .iter()
+                        .all(|(k, v)| fy.get(k).is_some_and(|w| loose_eq(v, w)))
+            }
+        },
         (Value::Ok(x), Value::Ok(y)) | (Value::Err(x), Value::Err(y)) => loose_eq(x, y),
         (Value::Enum(x), Value::Enum(y)) => {
             x.type_name == y.type_name

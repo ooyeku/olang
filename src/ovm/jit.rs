@@ -71,9 +71,9 @@ type NativeEntry = unsafe extern "C" fn(*const i64, i64, *mut ScratchCtx, *mut i
 /// hands back. Registered args make returning a parameter sound.
 #[derive(Default)]
 pub struct ScratchCtx {
-    allocs: Vec<Arc<crate::ovm::value::StructObject>>,
-    args: Vec<Arc<crate::ovm::value::StructObject>>,
-    retained: Option<Arc<crate::ovm::value::StructObject>>,
+    allocs: Vec<crate::ovm::value::StructObject>,
+    args: Vec<crate::ovm::value::StructObject>,
+    retained: Option<crate::ovm::value::StructObject>,
     str_allocs: Vec<Arc<String>>,
     str_args: Vec<Arc<String>>,
     retained_str: Option<Arc<String>>,
@@ -279,8 +279,8 @@ pub fn note_shapes(v: &OvmValue, shapes: &mut HashMap<u32, ShapeSpec>) {
 }
 
 fn observe_struct(obj: &crate::ovm::value::StructObject) -> Option<(Kind, ShapeSpec)> {
-    let mut field_kinds = Vec::with_capacity(obj.values.len());
-    for v in &obj.values {
+    let mut field_kinds = Vec::with_capacity(obj.len());
+    for v in obj.values() {
         field_kinds.push(match &v.data {
             ValueData::Integer(_) => Kind::Int,
             ValueData::Float(_) => Kind::Float,
@@ -575,7 +575,7 @@ unsafe extern "C" fn olang_jit_index(
                 0
             }
             (ValueData::Struct(s), EXPECT_STRUCT) if s.shape.id as u64 == expect_shape => {
-                *out = Arc::as_ptr(s) as i64;
+                *out = s.as_ptr() as i64;
                 0
             }
             (ValueData::String(v), FIELD_STR) => {
@@ -612,15 +612,6 @@ unsafe extern "C" fn olang_jit_make_struct(
     kinds: i64,
 ) -> i64 {
     unsafe {
-        let mut values = Vec::with_capacity(n as usize);
-        for i in 0..n as usize {
-            let bits = *fields.add(i);
-            values.push(match (kinds >> (i * 4)) & 0xF {
-                0 => OvmValue::new_integer(bits),
-                2 => OvmValue::new_boolean(bits != 0),
-                _ => OvmValue::new_float(f64::from_bits(bits as u64)),
-            });
-        }
         let ctx = &mut *ctx;
         // Everything allocated in one native call lives until the call
         // resolves; cap it so allocation-heavy loops deopt to bytecode
@@ -628,11 +619,17 @@ unsafe extern "C" fn olang_jit_make_struct(
         if ctx.allocs.len() >= 1_000_000 {
             return 0;
         }
-        let obj = Arc::new(crate::ovm::value::StructObject {
-            shape: (*shape).clone(),
-            values,
+        // The raw bits go straight into the struct's slots (OL-431).
+        use crate::ovm::struct_object::kind;
+        let bits = std::slice::from_raw_parts(fields, n as usize);
+        let obj = crate::ovm::value::StructObject::from_scalar_bits((*shape).clone(), bits, |i| {
+            match (kinds >> (i * 4)) & 0xF {
+                0 => kind::INT,
+                2 => kind::BOOL,
+                _ => kind::FLOAT,
+            }
         });
-        let ptr = Arc::as_ptr(&obj) as i64;
+        let ptr = obj.as_ptr() as i64;
         ctx.allocs.push(obj);
         ptr
     }
@@ -651,16 +648,16 @@ unsafe extern "C" fn olang_jit_retain(ctx: *mut ScratchCtx, ptr: i64) -> i64 {
         // Called exactly once, at the entry boundary. The returned struct is
         // almost always the newest allocation; check it first, then scan.
         if let Some(last) = ctx.allocs.last()
-            && Arc::as_ptr(last) as i64 == ptr
+            && last.as_ptr() as i64 == ptr
         {
             ctx.retained = Some(last.clone());
             return 0;
         }
-        if let Some(a) = ctx.allocs.iter().find(|a| Arc::as_ptr(a) as i64 == ptr) {
+        if let Some(a) = ctx.allocs.iter().find(|a| a.as_ptr() as i64 == ptr) {
             ctx.retained = Some(a.clone());
             return 0;
         }
-        if let Some(a) = ctx.args.iter().find(|a| Arc::as_ptr(a) as i64 == ptr) {
+        if let Some(a) = ctx.args.iter().find(|a| a.as_ptr() as i64 == ptr) {
             ctx.retained = Some(a.clone());
             return 0;
         }
@@ -997,8 +994,8 @@ unsafe extern "C" fn olang_jit_make_list_structs(
                 .allocs
                 .iter()
                 .rev()
-                .find(|a| Arc::as_ptr(a) as i64 == ptr)
-                .or_else(|| ctx.args.iter().find(|a| Arc::as_ptr(a) as i64 == ptr));
+                .find(|a| a.as_ptr() as i64 == ptr)
+                .or_else(|| ctx.args.iter().find(|a| a.as_ptr() as i64 == ptr));
             match arc {
                 Some(a) => values.push(OvmValue::new_struct(a.clone())),
                 None => return 0,
@@ -1682,28 +1679,30 @@ unsafe extern "C" fn olang_jit_release(ctx: *mut ScratchCtx) {
 }
 
 unsafe extern "C" fn olang_jit_field(
-    obj: *const crate::ovm::value::StructObject,
+    obj: *const crate::ovm::value::StructHeader,
     idx: u64,
     expect: u64,
     out: *mut i64,
 ) -> i64 {
+    // The field's kind byte and word, read where they are (OL-431): a
+    // scalar's word is its bits, a string's the `String`'s address.
+    use crate::ovm::struct_object::kind;
     unsafe {
-        let obj = &*obj;
-        match obj.values.get(idx as usize).map(|v| &v.data) {
-            Some(ValueData::Integer(i)) if expect == FIELD_INT => {
-                *out = *i;
+        match crate::ovm::value::StructObject::raw_at(obj, idx as usize) {
+            Some((kind::INT, bits)) if expect == FIELD_INT => {
+                *out = bits as i64;
                 0
             }
-            Some(ValueData::Float(f)) if expect == FIELD_FLOAT => {
-                *out = f.to_bits() as i64;
+            Some((kind::FLOAT, bits)) if expect == FIELD_FLOAT => {
+                *out = bits as i64;
                 0
             }
-            Some(ValueData::Boolean(b)) if expect == FIELD_BOOL => {
-                *out = *b as i64;
+            Some((kind::BOOL, bits)) if expect == FIELD_BOOL => {
+                *out = (bits != 0) as i64;
                 0
             }
-            Some(ValueData::String(s)) if expect == FIELD_STR => {
-                *out = Arc::as_ptr(s) as i64;
+            Some((kind::STRING, bits)) if expect == FIELD_STR => {
+                *out = bits as i64;
                 0
             }
             _ => 1,
@@ -1970,7 +1969,7 @@ impl JitCache {
                     kinds[i] = Kind::Float;
                 }
                 ValueData::Struct(obj) => {
-                    bits[i] = Arc::as_ptr(obj) as i64;
+                    bits[i] = obj.as_ptr() as i64;
                     kinds[i] = Kind::Struct(obj.shape.id);
                     any_ref = true;
                 }
@@ -2045,7 +2044,7 @@ impl JitCache {
                 }
             }
         }
-        let mut struct_args: Vec<Arc<crate::ovm::value::StructObject>> = Vec::new();
+        let mut struct_args: Vec<crate::ovm::value::StructObject> = Vec::new();
         let mut str_args: Vec<Arc<String>> = Vec::new();
         let mut result_args: Vec<Arc<crate::ovm::value::ResultObject>> = Vec::new();
         let mut list_args: Vec<Arc<Vec<OvmValue>>> = Vec::new();
@@ -2208,7 +2207,7 @@ impl JitCache {
         remaining_depth: u32,
         lookup: &BytecodeLookup,
         shapes: &HashMap<u32, ShapeSpec>,
-        args_for_ctx: &[Arc<crate::ovm::value::StructObject>],
+        args_for_ctx: &[crate::ovm::value::StructObject],
         str_args_for_ctx: &[Arc<String>],
         result_args_for_ctx: &[Arc<crate::ovm::value::ResultObject>],
         list_args_for_ctx: &[Arc<Vec<OvmValue>>],

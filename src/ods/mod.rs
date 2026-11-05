@@ -128,15 +128,15 @@ impl OvmModule for OdsModule {
             (
                 "ods".to_string(),
                 Value::Struct {
-                    type_name: "Module".to_string(),
-                    fields: std::sync::Arc::new(module),
+                    type_name: "Module".into(),
+                    fields: std::sync::Arc::new(module).into(),
                 },
             ),
             (
                 "__ods_test".to_string(),
                 Value::Struct {
-                    type_name: "Module".to_string(),
-                    fields: std::sync::Arc::new(hooks),
+                    type_name: "Module".into(),
+                    fields: std::sync::Arc::new(hooks).into(),
                 },
             ),
         ]
@@ -329,8 +329,8 @@ impl OvmModule for PlotModule {
         vec![(
             "plot".to_string(),
             Value::Struct {
-                type_name: "Module".to_string(),
-                fields: std::sync::Arc::new(module),
+                type_name: "Module".into(),
+                fields: std::sync::Arc::new(module).into(),
             },
         )]
     }

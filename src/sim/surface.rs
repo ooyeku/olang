@@ -200,8 +200,8 @@ pub fn create_sim_module() -> Value {
         module.insert(
             ty.to_string(),
             Value::Struct {
-                type_name: "Module".to_string(),
-                fields: Arc::new(m),
+                type_name: "Module".into(),
+                fields: Arc::new(m).into(),
             },
         );
     }
@@ -229,13 +229,13 @@ pub fn create_sim_module() -> Value {
     module.insert(
         "World".to_string(),
         Value::Struct {
-            type_name: "Module".to_string(),
-            fields: Arc::new(world),
+            type_name: "Module".into(),
+            fields: Arc::new(world).into(),
         },
     );
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: Arc::new(module),
+        type_name: "Module".into(),
+        fields: Arc::new(module).into(),
     }
 }
 

@@ -2802,12 +2802,9 @@ impl<'a> R<'a> {
                 ValueData::AstMap(m) | ValueData::AstStruct(m, _) => {
                     m.get(k).map(R::A).unwrap_or(R::U)
                 }
-                ValueData::Struct(st) => st
-                    .shape
-                    .field_index(k)
-                    .and_then(|i| st.values.get(i as usize))
-                    .map(R::V)
-                    .unwrap_or(R::U),
+                // A struct's fields are not `OvmValue`s where they are
+                // (OL-431): read through its interpreter map, built once.
+                ValueData::Struct(st) => st.ast_map().get(k).map(R::A).unwrap_or(R::U),
                 _ => R::U,
             },
             R::A(v) => match fields(v) {

@@ -227,7 +227,7 @@ pub fn window_value(id: u64, headless: bool) -> Value {
     f.insert("id".to_string(), Value::Integer(id as i64));
     f.insert("headless".to_string(), Value::Boolean(headless));
     Value::Struct {
-        type_name: "Window".to_string(),
-        fields: Arc::new(f),
+        type_name: "Window".into(),
+        fields: Arc::new(f).into(),
     }
 }

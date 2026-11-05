@@ -1133,8 +1133,8 @@ already binds — an import never replaces a program's own name. Alias the impor
                 );
             }
             let module = Value::Struct {
-                type_name: "Module".to_string(),
-                fields: std::sync::Arc::new(exports),
+                type_name: "Module".into(),
+                fields: std::sync::Arc::new(exports).into(),
             };
 
             // Cache the module
@@ -1870,7 +1870,7 @@ fn same_binding(a: &Value, b: &Value) -> bool {
         (Value::Function(x), Value::Function(y)) => std::sync::Arc::ptr_eq(x, y),
         (Value::Builtin(x), Value::Builtin(y)) => x.name == y.name,
         (Value::Struct { fields: x, .. }, Value::Struct { fields: y, .. }) => {
-            std::sync::Arc::ptr_eq(x, y)
+            crate::ast::StructFields::ptr_eq(x, y)
         }
         (Value::TypeInfo(x), Value::TypeInfo(y)) => std::sync::Arc::ptr_eq(x, y),
         // An enum's variants, which importing its type binds too.

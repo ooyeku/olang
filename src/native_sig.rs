@@ -658,7 +658,7 @@ pub fn bind(
 /// The entries of an options value: a map (`#{ "k": v }`), or an
 /// anonymous or JSON object (`{ k: v }`), which are the same thing
 /// written another way. A declared struct is not options.
-pub fn options_fields(v: &Value) -> Option<&Arc<ValueMap>> {
+pub fn options_fields(v: &Value) -> Option<&ValueMap> {
     match v {
         Value::Map(m) => Some(m),
         Value::Struct { type_name, fields }
@@ -679,7 +679,7 @@ pub fn options_map(
 ) -> Result<Value, String> {
     let mut map: ValueMap = match base {
         None | Some(Value::Unit) => ValueMap::default(),
-        Some(ref v) if options_fields(v).is_some() => options_fields(v).unwrap().as_ref().clone(),
+        Some(ref v) if options_fields(v).is_some() => options_fields(v).unwrap().clone(),
         Some(other) => {
             return Err(format!(
                 "{}: the options must be a map (#{{...}}) or an object ({{ k: v }}), got {}",

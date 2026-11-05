@@ -27,6 +27,7 @@ pub mod jit; // Baseline JIT: pure-integer hot functions to native code
 pub mod jit_memory; // MAP_JIT executable memory, and whether the JIT may run
 #[cfg(feature = "native")]
 pub mod osr; // On-stack replacement: hot loop regions to native, mid-frame
+pub mod struct_object; // The VM's struct: one allocation, raw scalar fields (OL-431)
 pub mod tier; // Hot-function promotion to the bytecode tier
 pub mod value; // Reference-counted runtime values
 pub mod warm; // Warm start: cross-run tier profiles

@@ -51,8 +51,8 @@ pub fn create_runtime_module() -> Value {
     module.insert("bind".to_string(), builtin("bind", 2));
     module.insert("preset".to_string(), builtin("preset", 2));
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: Arc::new(module),
+        type_name: "Module".into(),
+        fields: Arc::new(module).into(),
     }
 }
 

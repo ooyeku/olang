@@ -166,8 +166,8 @@ pub fn create_fs_module() -> Value {
     module.insert("sync".to_string(), create_builtin_function("sync", 1));
 
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: std::sync::Arc::new(module),
+        type_name: "Module".into(),
+        fields: std::sync::Arc::new(module).into(),
     }
 }
 
@@ -1274,8 +1274,8 @@ fn file_info(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             info.insert("modified_ms".to_string(), modified);
 
             Ok(Value::Ok(Box::new(Value::Struct {
-                type_name: "Object".to_string(),
-                fields: std::sync::Arc::new(info),
+                type_name: "Object".into(),
+                fields: std::sync::Arc::new(info).into(),
             })))
         }
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(

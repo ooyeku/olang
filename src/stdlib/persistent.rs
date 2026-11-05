@@ -369,7 +369,7 @@ fn module(prefix: &str, fns: &[&[(&str, usize)]]) -> Value {
     }
     Value::Struct {
         type_name: "Module".into(),
-        fields: Arc::new(m),
+        fields: Arc::new(m).into(),
     }
 }
 
@@ -407,7 +407,7 @@ fn entries_of(v: &Value, who: &str) -> Result<Vec<(PKey, Value)>, String> {
         Value::Struct { type_name, fields }
             if type_name == "Object" || type_name == "JsonObject" =>
         {
-            fields.clone()
+            fields.to_arc()
         }
         other => {
             return Err(format!("{who}: expected a Map, got {}", other.type_name()));

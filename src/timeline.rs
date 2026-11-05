@@ -467,8 +467,8 @@ fn portable(v: &Value) -> Value {
                     ))),
                 );
                 return Value::Struct {
-                    type_name: HANDLE_MARKER.to_string(),
-                    fields: Arc::new(fields),
+                    type_name: HANDLE_MARKER.into(),
+                    fields: Arc::new(fields).into(),
                 };
             }
             if matches!(
@@ -492,8 +492,8 @@ fn portable(v: &Value) -> Value {
                     fields.insert("sql".to_string(), Value::String(Arc::new(sql)));
                 }
                 Value::Struct {
-                    type_name: HANDLE_MARKER.to_string(),
-                    fields: Arc::new(fields),
+                    type_name: HANDLE_MARKER.into(),
+                    fields: Arc::new(fields).into(),
                 }
             } else {
                 v.clone()
@@ -508,8 +508,9 @@ fn portable(v: &Value) -> Value {
                 fields
                     .iter()
                     .map(|(k, x)| (k.clone(), portable(x)))
-                    .collect(),
-            ),
+                    .collect::<crate::ast::ValueMap>(),
+            )
+            .into(),
         },
         Value::List(items) if items.iter().any(holds_handle) => {
             Value::List(Arc::new(items.iter().map(portable).collect()))
@@ -598,7 +599,13 @@ fn revive(v: &Value) -> Value {
         }
         Value::Struct { type_name, fields } => Value::Struct {
             type_name: type_name.clone(),
-            fields: Arc::new(fields.iter().map(|(k, x)| (k.clone(), revive(x))).collect()),
+            fields: Arc::new(
+                fields
+                    .iter()
+                    .map(|(k, x)| (k.clone(), revive(x)))
+                    .collect::<crate::ast::ValueMap>(),
+            )
+            .into(),
         },
         Value::Map(m) => Value::Map(Arc::new(
             m.iter().map(|(k, x)| (k.clone(), revive(x))).collect(),

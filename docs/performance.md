@@ -153,8 +153,9 @@ practice:
 - **Bridged builtins in the hot path.** The native set covers the
   collection core, the higher-order loops, `math`, and `str`; other
   builtins convert their arguments at the tier boundary per call. Maps
-  and long lists cross as wrappers in O(1); a short list of records or a
-  struct converts one level per call. Move such calls out of inner
+  and long lists cross as wrappers in O(1), and so does a struct that
+  compiled code built; a short list of records, or a struct the
+  interpreter built, converts one level per call. Move such calls out of inner
   loops.
 - **What the tier refused.** A function the bytecode compiler refuses
   runs on the tree-walker, correctly and several times slower, and its
@@ -754,6 +755,19 @@ type are each one shared allocation the value points at. A closure
 captures the bindings its body can name, not every binding in scope,
 and every closure made from one lambda expression shares one resolved
 body.
+
+A struct that compiled code builds is one allocation: a 24-byte header
+and then 9 bytes a field, an Int, Float, Bool or `()` field stored as
+its raw 8 bytes and any other field as the one pointer its value holds.
+In a list, a struct of five Int and Float fields costs about 90 bytes
+(it was 149). When such a struct reaches interpreted code it stays the
+same object, and its fields are copied into a map only the first time
+something needs all of them; reading one scalar or string field, `==`
+between two of one type, and `hash` read it where it is. A list of
+100,000 of them returned to the top level costs about 110 bytes a struct
+(it was 702). Passing it back to compiled code hands over the same
+object. A struct the interpreter builds keeps a map of its fields, and
+its type name is shared, never copied.
 
 The difference between resident memory and the heap is memory that was
 freed and is still resident, most of it the parser's. A binary

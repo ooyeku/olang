@@ -59,8 +59,8 @@ pub fn create_tty_module() -> Value {
         );
     }
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: Arc::new(module),
+        type_name: "Module".into(),
+        fields: Arc::new(module).into(),
     }
 }
 
@@ -137,8 +137,8 @@ impl Options {
         let mut o = Options::default();
         let map = match v {
             None | Some(Value::Unit) => return Ok(o),
-            Some(Value::Map(m)) => m,
-            Some(Value::Struct { type_name, fields }) if type_name == "Object" => fields,
+            Some(Value::Map(m)) => &**m,
+            Some(Value::Struct { type_name, fields }) if type_name == "Object" => &**fields,
             Some(other) => {
                 return Err(crate::stdlib::misuse::arg_type(
                     "tty.enter",
@@ -429,8 +429,8 @@ fn handle(id: i64) -> Value {
     let mut fields = crate::ast::ValueMap::default();
     fields.insert("id".to_string(), Value::Integer(id));
     Value::Struct {
-        type_name: "Tty".to_string(),
-        fields: Arc::new(fields),
+        type_name: "Tty".into(),
+        fields: Arc::new(fields).into(),
     }
 }
 

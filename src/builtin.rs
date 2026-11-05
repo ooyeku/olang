@@ -48,7 +48,8 @@ impl Default for BuiltinFunctions {
 /// interpreter map it holds wrapped the same way.
 pub(crate) fn set_in(at: &mut Value, keys: &[String], value: Value) -> Result<(), String> {
     let fields = match at {
-        Value::Map(fields) | Value::Struct { fields, .. } => std::sync::Arc::make_mut(fields),
+        Value::Map(fields) => std::sync::Arc::make_mut(fields),
+        Value::Struct { fields, .. } => fields.make_mut(),
         other => {
             return Err(format!(
                 "map_set_in: cannot set key '{}' in {}",
@@ -3830,14 +3831,11 @@ impl BuiltinFunctions {
         if matches!(args[0], Value::Unit) {
             return Ok(Value::Unit);
         }
-        let map = match Self::field_map(&args[0]) {
-            Some(map) => map,
-            None => {
-                return Err(InterpreterError::TypeError {
-                    message: "map_get: first argument must be a map or object".to_string(),
-                });
-            }
-        };
+        if !matches!(args[0], Value::Map(_) | Value::Struct { .. }) {
+            return Err(InterpreterError::TypeError {
+                message: "map_get: first argument must be a map or object".to_string(),
+            });
+        }
 
         let key = match &args[1] {
             Value::String(s) => s.as_ref(),
@@ -3851,7 +3849,12 @@ impl BuiltinFunctions {
             }
         };
 
-        Ok(map.get(key).cloned().unwrap_or(Value::Unit))
+        // A struct the VM built reads the one field where it is.
+        Ok(match &args[0] {
+            Value::Struct { fields, .. } => fields.get_value(key),
+            other => Self::field_map(other).and_then(|m| m.get(key).cloned()),
+        }
+        .unwrap_or(Value::Unit))
     }
 
     /// `map_get_or(m, k, default)` — the value at `k`, or `default` when
@@ -4038,15 +4041,16 @@ impl BuiltinFunctions {
         let key = Self::key_text("map_update", &args[1])?;
         let mut target = args.swap_remove(0);
         let old = match &mut target {
-            Value::Map(fields) | Value::Struct { fields, .. } => {
-                match std::sync::Arc::get_mut(fields) {
-                    Some(owned) => owned
-                        .get_mut(&key)
-                        .map(|v| std::mem::replace(v, Value::Unit))
-                        .unwrap_or(Value::Unit),
-                    None => fields.get(&key).cloned().unwrap_or(Value::Unit),
-                }
-            }
+            Value::Map(_) | Value::Struct { .. } => match target.record_fields_owned() {
+                Some(owned) => owned
+                    .get_mut(&key)
+                    .map(|v| std::mem::replace(v, Value::Unit))
+                    .unwrap_or(Value::Unit),
+                None => target
+                    .record_fields()
+                    .and_then(|f| f.get(&key).cloned())
+                    .unwrap_or(Value::Unit),
+            },
             _ => {
                 return Err(InterpreterError::TypeError {
                     message: "map_update: first argument must be a map or object".to_string(),
@@ -4054,11 +4058,11 @@ impl BuiltinFunctions {
             }
         };
         let new = interpreter.call_function(f, vec![old])?;
-        match &mut target {
-            Value::Map(fields) | Value::Struct { fields, .. } => {
-                std::sync::Arc::make_mut(fields).insert(key, new);
+        match target.record_fields_mut() {
+            Some(fields) => {
+                fields.insert(key, new);
             }
-            _ => unreachable!("checked above"),
+            None => unreachable!("checked above"),
         }
         Ok(target)
     }
@@ -4084,14 +4088,13 @@ impl BuiltinFunctions {
                     ),
                 });
             };
-            match &mut target {
-                Value::Map(fields) | Value::Struct { fields, .. } => {
-                    let fields = std::sync::Arc::make_mut(fields);
+            match target.record_fields_mut() {
+                Some(fields) => {
                     for (key, value) in entries.iter() {
                         fields.insert(key.clone(), value.clone());
                     }
                 }
-                _ => {
+                None => {
                     return Err(InterpreterError::TypeError {
                         message: "a spread builds a map or an object".to_string(),
                     });
@@ -4175,15 +4178,15 @@ impl BuiltinFunctions {
             _ => unreachable!("the parser passes the key as a string"),
         };
         let mut target = args.pop().expect("four arguments");
-        let (Value::Map(fields) | Value::Struct { fields, .. }) = &mut target else {
+        if !matches!(target, Value::Map(_) | Value::Struct { .. }) {
             return Err(InterpreterError::TypeError {
                 message: format!(
                     "`.{key}[i] =` writes a list held in a map or object, not in a {}",
                     target.type_name()
                 ),
             });
-        };
-        let fields = std::sync::Arc::make_mut(fields);
+        }
+        let fields = target.record_fields_mut().expect("a map or object");
         let held = fields
             .get_mut(&key)
             .map(|slot| std::mem::replace(slot, Value::Unit))
@@ -4231,12 +4234,12 @@ impl BuiltinFunctions {
         // receiver (the move-call fusion's whole point) inserts in place;
         // an aliased one copies, exactly like the list writes.
         let mut target = args.swap_remove(0);
-        match &mut target {
-            Value::Map(fields) | Value::Struct { fields, .. } => {
-                std::sync::Arc::make_mut(fields).insert(key, value);
+        match target.record_fields_mut() {
+            Some(fields) => {
+                fields.insert(key, value);
                 Ok(target)
             }
-            _ => Err(InterpreterError::TypeError {
+            None => Err(InterpreterError::TypeError {
                 message: "map_set: first argument must be a map or object".to_string(),
             }),
         }
@@ -4362,7 +4365,7 @@ impl BuiltinFunctions {
                 new_fields.shift_remove(&key);
                 Ok(Value::Struct {
                     type_name: type_name.clone(),
-                    fields: std::sync::Arc::new(new_fields),
+                    fields: std::sync::Arc::new(new_fields).into(),
                 })
             }
             _ => Err(InterpreterError::TypeError {
@@ -4402,7 +4405,7 @@ impl BuiltinFunctions {
             ))),
             Value::Struct { type_name, .. } => Ok(Value::Struct {
                 type_name: type_name.clone(),
-                fields: std::sync::Arc::new(crate::ast::ValueMap::default()),
+                fields: std::sync::Arc::new(crate::ast::ValueMap::default()).into(),
             }),
             _ => Err(InterpreterError::TypeError {
                 message: "map_clear: argument must be a map or object".to_string(),
@@ -4433,9 +4436,9 @@ impl BuiltinFunctions {
         // entries winning, as map_set answers; a sole-owner first
         // argument is extended in place.
         match &mut target {
-            Value::Map(fields) | Value::Struct { fields, .. } => {
+            Value::Map(_) | Value::Struct { .. } => {
                 if !entries.is_empty() {
-                    let fields = std::sync::Arc::make_mut(fields);
+                    let fields = target.record_fields_mut().expect("a map or object");
                     for (key, value) in entries.iter() {
                         fields.insert(key.clone(), value.clone());
                     }
@@ -4798,7 +4801,8 @@ fn testing_snapshot(
     // `HEDDLE_UPDATE_SNAPSHOTS`), beside the variables read below.
     let caller_update = match arguments.get(2) {
         None | Some(Value::Unit) => false,
-        Some(Value::Map(m)) | Some(Value::Struct { fields: m, .. }) => {
+        Some(v @ (Value::Map(_) | Value::Struct { .. })) => {
+            let m = v.record_fields().expect("a map or object");
             for key in m.keys() {
                 if key != "update" {
                     return Err(InterpreterError::RuntimeError {

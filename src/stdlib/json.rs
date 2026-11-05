@@ -91,8 +91,8 @@ pub fn create_json_module() -> Value {
     );
 
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: std::sync::Arc::new(module),
+        type_name: "Module".into(),
+        fields: std::sync::Arc::new(module).into(),
     }
 }
 
@@ -306,7 +306,8 @@ fn serialize_nested<S: serde::Serializer>(value: &Value, serializer: S) -> Resul
             seq.end()
         }
         // Structs, anonymous objects, and maps are all JSON objects.
-        Value::Struct { fields, .. } | Value::Map(fields) => {
+        Value::Struct { .. } | Value::Map(_) => {
+            let fields = value.record_fields().expect("a map or struct");
             // A `db` connection's handle is its owner, not its data: the
             // connection writes as the id and path it always did.
             // in the map's (the record's) own order
@@ -985,8 +986,8 @@ pub(crate) fn json_to_olang_value(json_value: serde_json::Value) -> Result<Value
                 fields.insert(key, json_to_olang_value(value)?);
             }
             Value::Struct {
-                type_name: "JsonObject".to_string(),
-                fields: std::sync::Arc::new(fields),
+                type_name: "JsonObject".into(),
+                fields: std::sync::Arc::new(fields).into(),
             }
         }
     })

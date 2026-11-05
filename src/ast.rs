@@ -6,6 +6,8 @@ use std::collections::HashMap;
 
 use std::sync::Arc;
 
+pub use crate::value_struct::{StructFields, TypeName};
+
 /// Represents a complete olang program
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Program {
@@ -619,15 +621,17 @@ pub enum Value {
     Function(Arc<Function>),
     Builtin(BuiltinFunction),
     Struct {
-        type_name: String,
-        /// `Arc`, like the `Map` two lines up. Without it a struct passed
+        /// Interned: building or copying a struct never allocates it.
+        type_name: TypeName,
+        /// Behind an `Arc`, like the `Map` two lines up. Without it a struct passed
         /// to a function copied every field, so the language punished its
         /// own type system: a recursive structure written the readable
         /// way — `type Node = struct { k, v, l, r }` — copied the whole
         /// tree on every descent, and bare lists were the only way to get
         /// a tree that behaved like one. Reads are unaffected; `Arc`
-        /// derefs to the same map.
-        fields: Arc<ValueMap>,
+        /// derefs to the same map. A struct the VM built crosses in as
+        /// the VM's object (`StructFields::Vm`), which derefs to a map too.
+        fields: StructFields,
     },
     // Range values for range expressions like 1..50
     Range {
@@ -768,9 +772,13 @@ impl Value {
             Value::List(items) | Value::Tuple(items) => {
                 !items.is_empty() && Arc::strong_count(items) == 1
             }
-            Value::Map(fields) | Value::Struct { fields, .. } => {
-                !fields.is_empty() && Arc::strong_count(fields) == 1
-            }
+            Value::Map(fields) => !fields.is_empty() && Arc::strong_count(fields) == 1,
+            // The VM's object frees its own fields, bounded as any
+            // `OvmValue`'s are.
+            Value::Struct { fields, .. } => match fields {
+                StructFields::Map(fields) => !fields.is_empty() && Arc::strong_count(fields) == 1,
+                StructFields::Vm(_) => false,
+            },
             Value::Enum(e) => {
                 !matches!(e.variant_data, EnumVariantData::Unit) && Arc::strong_count(e) == 1
             }
@@ -796,8 +804,13 @@ impl Value {
                     items.clear();
                 }
             }
-            Value::Map(fields) | Value::Struct { fields, .. } => {
+            Value::Map(fields) => {
                 if let Some(fields) = Arc::get_mut(fields) {
+                    fields.clear();
+                }
+            }
+            Value::Struct { fields, .. } => {
+                if let Some(fields) = fields.get_mut() {
                     fields.clear();
                 }
             }
@@ -836,6 +849,35 @@ pub struct TypeInfoValue {
 }
 
 impl Value {
+    /// A map's or struct's fields, to read.
+    pub fn record_fields(&self) -> Option<&ValueMap> {
+        match self {
+            Value::Map(m) => Some(m),
+            Value::Struct { fields, .. } => Some(fields),
+            _ => None,
+        }
+    }
+
+    /// A map's or struct's fields, to write: this value's own (copied
+    /// when shared, as `Arc::make_mut` copies).
+    pub fn record_fields_mut(&mut self) -> Option<&mut ValueMap> {
+        match self {
+            Value::Map(m) => Some(Arc::make_mut(m)),
+            Value::Struct { fields, .. } => Some(fields.make_mut()),
+            _ => None,
+        }
+    }
+
+    /// A map's or struct's fields when this value is their only owner
+    /// (`Arc::get_mut`).
+    pub fn record_fields_owned(&mut self) -> Option<&mut ValueMap> {
+        match self {
+            Value::Map(m) => Arc::get_mut(m),
+            Value::Struct { fields, .. } => fields.get_mut(),
+            _ => None,
+        }
+    }
+
     /// `same(a, b)`: whether the two are one value in memory — the same
     /// list, map, struct or closure, not two equal ones. A scalar (an
     /// Int, a Float, a Bool, `()`) has no identity, so for one this is
@@ -856,7 +898,7 @@ impl Value {
                     type_name: u,
                     fields: b,
                 },
-            ) => t == u && Arc::ptr_eq(a, b),
+            ) => t == u && StructFields::ptr_eq(a, b),
             (V::Function(a), V::Function(b)) => Arc::ptr_eq(a, b),
             (V::Enum(a), V::Enum(b)) => {
                 Arc::ptr_eq(a, b) || (matches!(a.variant_data, EnumVariantData::Unit) && a == b)
@@ -2425,7 +2467,7 @@ impl Value {
             Value::Tuple(_) => "Tuple".to_string(),
             Value::Function(_) => "Function".to_string(),
             Value::Builtin(_) => "Builtin".to_string(),
-            Value::Struct { type_name, .. } => type_name.clone(),
+            Value::Struct { type_name, .. } => type_name.to_string(),
             Value::Range { .. } => "Range".to_string(),
             Value::Ok(_) => "Result".to_string(),
             Value::Err(_) => "Result".to_string(),

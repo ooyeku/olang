@@ -36,8 +36,8 @@ pub fn create_compress_module() -> Value {
         );
     }
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: Arc::new(module),
+        type_name: "Module".into(),
+        fields: Arc::new(module).into(),
     }
 }
 

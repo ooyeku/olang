@@ -102,8 +102,8 @@ pub fn create_dom_module() -> Value {
         );
     }
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: std::sync::Arc::new(module),
+        type_name: "Module".into(),
+        fields: std::sync::Arc::new(module).into(),
     }
 }
 

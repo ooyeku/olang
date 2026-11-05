@@ -93,8 +93,8 @@ pub fn create_http_module() -> Value {
     );
 
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: std::sync::Arc::new(module),
+        type_name: "Module".into(),
+        fields: std::sync::Arc::new(module).into(),
     }
 }
 
@@ -371,8 +371,8 @@ fn perform(
                         Value::Boolean((200..300).contains(&status)),
                     );
                     Ok(Value::Ok(Box::new(Value::Struct {
-                        type_name: "HttpResponse".to_string(),
-                        fields: std::sync::Arc::new(response_map),
+                        type_name: "HttpResponse".into(),
+                        fields: std::sync::Arc::new(response_map).into(),
                     })))
                 }
                 Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
@@ -809,8 +809,8 @@ fn request_to_value(req: &ParsedRequest, remote_addr: &str) -> Value {
     );
 
     Value::Struct {
-        type_name: "HttpRequest".to_string(),
-        fields: std::sync::Arc::new(fields),
+        type_name: "HttpRequest".into(),
+        fields: std::sync::Arc::new(fields).into(),
     }
 }
 
@@ -1340,8 +1340,8 @@ fn http_defer(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let mut fields = crate::ast::ValueMap::default();
     fields.insert("ticket".to_string(), Value::Integer(id as i64));
     Ok(Value::Struct {
-        type_name: "HttpDeferred".to_string(),
-        fields: Arc::new(fields),
+        type_name: "HttpDeferred".into(),
+        fields: Arc::new(fields).into(),
     })
 }
 
@@ -1830,8 +1830,8 @@ fn http_response(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     );
 
     Ok(Value::Struct {
-        type_name: "HttpResponse".to_string(),
-        fields: std::sync::Arc::new(response_map),
+        type_name: "HttpResponse".into(),
+        fields: std::sync::Arc::new(response_map).into(),
     })
 }
 
@@ -1874,8 +1874,8 @@ fn http_response_with_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::er
     );
 
     Ok(Value::Struct {
-        type_name: "HttpResponse".to_string(),
-        fields: std::sync::Arc::new(response_map),
+        type_name: "HttpResponse".into(),
+        fields: std::sync::Arc::new(response_map).into(),
     })
 }
 
@@ -1928,8 +1928,8 @@ fn parse_url(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             );
 
             Ok(Value::Ok(Box::new(Value::Struct {
-                type_name: "Object".to_string(),
-                fields: std::sync::Arc::new(url_map),
+                type_name: "Object".into(),
+                fields: std::sync::Arc::new(url_map).into(),
             })))
         }
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
@@ -2087,8 +2087,8 @@ mod tests {
 
     fn struct_val(type_name: &str, fields: crate::ast::ValueMap) -> Value {
         Value::Struct {
-            type_name: type_name.to_string(),
-            fields: std::sync::Arc::new(fields),
+            type_name: type_name.to_string().into(),
+            fields: std::sync::Arc::new(fields).into(),
         }
     }
 
@@ -2401,8 +2401,8 @@ mod tests {
             crate::stdlib::bytes::to_value(vec![0, 159, 146, 150]),
         );
         let resp = Value::Struct {
-            type_name: "Response".to_string(),
-            fields: std::sync::Arc::new(fields),
+            type_name: "Response".into(),
+            fields: std::sync::Arc::new(fields).into(),
         };
         let out = render_handler_result(&resp, false, crate::caps::FsCap::Full);
         assert!(
@@ -2424,8 +2424,8 @@ mod tests {
         fields.insert("status".to_string(), int_val(200));
         fields.insert("body_file".to_string(), string_val("/etc/hostname"));
         let resp = Value::Struct {
-            type_name: "Response".to_string(),
-            fields: std::sync::Arc::new(fields),
+            type_name: "Response".into(),
+            fields: std::sync::Arc::new(fields).into(),
         };
         // fs = None: denied.
         let denied = String::from_utf8(render_handler_result(

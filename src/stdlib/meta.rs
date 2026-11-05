@@ -50,8 +50,8 @@ pub fn create_meta_module() -> Value {
     module.insert("tokens".to_string(), builtin("tokens", 1));
     module.insert("highlight".to_string(), builtin("highlight", 1));
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: std::sync::Arc::new(module),
+        type_name: "Module".into(),
+        fields: std::sync::Arc::new(module).into(),
     }
 }
 

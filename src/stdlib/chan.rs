@@ -424,8 +424,8 @@ pub fn create_chan_module() -> Value {
         );
     }
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: std::sync::Arc::new(module),
+        type_name: "Module".into(),
+        fields: std::sync::Arc::new(module).into(),
     }
 }
 
@@ -1090,7 +1090,7 @@ fn carriable(v: &OvmValue, depth: usize) -> bool {
         }
         D::List(items) | D::Tuple(items) => items.iter().all(|x| carriable(x, depth + 1)),
         D::Map(m) => m.values().all(|x| carriable(x, depth + 1)),
-        D::Struct(st) => st.values.iter().all(|x| carriable(x, depth + 1)),
+        D::Struct(st) => st.values().all(|x| carriable(&x, depth + 1)),
         D::Enum(e) => match &e.data {
             EnumData::Unit => true,
             EnumData::Tuple(items) => items.iter().all(|x| carriable(x, depth + 1)),

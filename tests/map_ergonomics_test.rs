@@ -650,7 +650,7 @@ main()
                     "o".into(),
                     Value::Struct {
                         type_name: "Object".into(),
-                        fields: std::sync::Arc::new(o),
+                        fields: std::sync::Arc::new(o).into(),
                     },
                 );
                 m

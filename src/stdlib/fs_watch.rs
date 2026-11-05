@@ -181,8 +181,8 @@ fn handle(id: i64) -> Value {
     let mut fields = ValueMap::default();
     fields.insert("id".to_string(), Value::Integer(id));
     Value::Struct {
-        type_name: "Watch".to_string(),
-        fields: Arc::new(fields),
+        type_name: "Watch".into(),
+        fields: Arc::new(fields).into(),
     }
 }
 

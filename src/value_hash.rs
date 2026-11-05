@@ -94,11 +94,11 @@ fn header(h: &mut Xxh3, tag: u8, len: usize) {
 }
 
 /// An unordered collection of entries: each hashed alone, then summed.
-fn entries<'a, V: 'a>(
+fn entries<'a, V: 'a, R: std::ops::Deref<Target = V>>(
     h: &mut Xxh3,
     tag: u8,
     name: Option<&str>,
-    items: impl ExactSizeIterator<Item = (&'a str, &'a V)>,
+    items: impl ExactSizeIterator<Item = (&'a str, R)>,
     each: impl Fn(&mut Xxh3, &V) -> Result<(), String>,
 ) -> Result<(), String> {
     header(h, tag, items.len());
@@ -109,7 +109,7 @@ fn entries<'a, V: 'a>(
     for (k, v) in items {
         let mut e = Xxh3::new();
         string(&mut e, k);
-        each(&mut e, v)?;
+        each(&mut e, &v)?;
         sum = sum.wrapping_add(e.digest());
     }
     h.update(&sum.to_le_bytes());
@@ -151,6 +151,14 @@ fn feed(h: &mut Xxh3, v: &Value) -> Result<(), String> {
             }
         }
         Value::Map(m) => entries(h, MAP, None, m.iter().map(|(k, v)| (k.as_str(), v)), feed)?,
+        // A struct the VM built hashes where it is, as the VM hashes it
+        // (the two agree), without building its map.
+        Value::Struct {
+            fields: crate::ast::StructFields::Vm(obj),
+            type_name,
+        } if obj.shape.type_name == *type_name => {
+            feed_ovm(h, &crate::ovm::value::OvmValue::new_struct(obj.clone()))?
+        }
         Value::Struct { type_name, fields } => {
             // The map kinds hash as maps, since they are `==` to them.
             let name = (type_name != "Object" && type_name != "JsonObject").then_some(type_name);
@@ -270,7 +278,7 @@ fn feed_ovm(h: &mut Xxh3, v: &OvmValue) -> Result<(), String> {
                     .field_names
                     .iter()
                     .map(|k| k.as_str())
-                    .zip(st.values.iter()),
+                    .zip(st.values()),
                 feed_ovm,
             )?
         }
@@ -358,8 +366,9 @@ mod tests {
                     ("y".to_string(), Value::Integer(2)),
                 ]
                 .into_iter()
-                .collect(),
-            ),
+                .collect::<crate::ast::ValueMap>(),
+            )
+            .into(),
         };
         assert_eq!(hash_value(&a), hash_value(&obj));
     }

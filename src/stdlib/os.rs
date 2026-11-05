@@ -123,8 +123,8 @@ pub fn create_os_module() -> Value {
     );
 
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: std::sync::Arc::new(module),
+        type_name: "Module".into(),
+        fields: std::sync::Arc::new(module).into(),
     }
 }
 
@@ -683,8 +683,8 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             fields.insert("stderr".to_string(), stderr);
             fields.insert("timed_out".to_string(), Value::Boolean(timed_out));
             Ok(Value::Ok(Box::new(Value::Struct {
-                type_name: "Object".to_string(),
-                fields: std::sync::Arc::new(fields),
+                type_name: "Object".into(),
+                fields: std::sync::Arc::new(fields).into(),
             })))
         }
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(

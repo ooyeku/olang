@@ -176,8 +176,8 @@ pub fn create_crypto_module() -> Value {
     );
 
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: std::sync::Arc::new(module),
+        type_name: "Module".into(),
+        fields: std::sync::Arc::new(module).into(),
     }
 }
 
@@ -1068,8 +1068,8 @@ fn crypto_generate_key_pair(args: Vec<Value>) -> Result<Value, Box<dyn std::erro
     );
 
     Ok(Value::Ok(Box::new(Value::Struct {
-        type_name: "KeyPair".to_string(),
-        fields: std::sync::Arc::new(key_pair),
+        type_name: "KeyPair".into(),
+        fields: std::sync::Arc::new(key_pair).into(),
     })))
 }
 
@@ -1135,8 +1135,8 @@ fn crypto_import_public_key(args: Vec<Value>) -> Result<Value, Box<dyn std::erro
             );
 
             Ok(Value::Ok(Box::new(Value::Struct {
-                type_name: "PublicKey".to_string(),
-                fields: std::sync::Arc::new(key_struct),
+                type_name: "PublicKey".into(),
+                fields: std::sync::Arc::new(key_struct).into(),
             })))
         }
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(

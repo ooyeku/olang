@@ -67,8 +67,8 @@ pub fn create_value_module() -> Value {
         );
     }
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: Arc::new(module),
+        type_name: "Module".into(),
+        fields: Arc::new(module).into(),
     }
 }
 
@@ -108,7 +108,7 @@ pub fn call_value_function(name: &str, args: Vec<Value>) -> Result<Value, String
 fn canonical_opt(opts: &Value) -> Result<bool, String> {
     let fields = match opts {
         Value::Map(m) => m.clone(),
-        Value::Struct { type_name, fields } if type_name == "Object" => fields.clone(),
+        Value::Struct { type_name, fields } if type_name == "Object" => fields.to_arc(),
         other => {
             return Err(format!(
                 "value.encode: options must be a map, got {}",
@@ -457,8 +457,8 @@ impl<'a> Reader<'a> {
             T_STRUCT => {
                 let type_name = self.text()?;
                 Value::Struct {
-                    type_name,
-                    fields: Arc::new(self.fields(depth)?),
+                    type_name: type_name.into(),
+                    fields: Arc::new(self.fields(depth)?).into(),
                 }
             }
             T_ENUM => {
@@ -553,7 +553,7 @@ mod tests {
             crate::stdlib::bytes::to_value(vec![0, 255, 7]),
             Value::Struct {
                 type_name: "P".into(),
-                fields: Arc::new(m),
+                fields: Arc::new(m).into(),
             },
         ]));
         let back = decode(&encode(&v, false).unwrap()).unwrap();

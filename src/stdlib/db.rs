@@ -283,8 +283,8 @@ pub fn create_db_module() -> Value {
     }
 
     Value::Struct {
-        type_name: "Module".to_string(),
-        fields: std::sync::Arc::new(module),
+        type_name: "Module".into(),
+        fields: std::sync::Arc::new(module).into(),
     }
 }
 
@@ -1347,8 +1347,8 @@ fn open_with(
     fields.insert("path".to_string(), string(path));
     fields.insert("handle".to_string(), connection_owner(id));
     Ok(ok(Value::Struct {
-        type_name: "Connection".to_string(),
-        fields: std::sync::Arc::new(fields),
+        type_name: "Connection".into(),
+        fields: std::sync::Arc::new(fields).into(),
     }))
 }
 
