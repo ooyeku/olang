@@ -7127,6 +7127,66 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             see_also: vec![],
         });
         self.add_function(FunctionDoc {
+            name: "str.byte_len".to_string(),
+            description: "How many bytes a string's UTF-8 takes: O(1), where str.length counts characters.".to_string(),
+            syntax: "str.byte_len(s)".to_string(),
+            parameters: vec![],
+            return_type: "Int".to_string(),
+            examples: vec!["str.byte_len(\"héllo\")  // 6".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.length".to_string(), "str.slice_bytes".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.slice_bytes".to_string(),
+            description: "Bytes a to b of a string, by the slices' one rule (past the end stops at the end, b at or before a is \"\", a negative position raises); an offset inside a character raises. O(the slice).".to_string(),
+            syntax: "str.slice_bytes(s, a, b)".to_string(),
+            parameters: vec![],
+            return_type: "String".to_string(),
+            examples: vec!["str.slice_bytes(\"héllo\", 0, 3)  // \"hé\"".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.substring".to_string(), "str.char_to_byte".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.char_to_byte".to_string(),
+            description: "The byte offset where character i starts; str.length(s) and past it answer str.byte_len(s).".to_string(),
+            syntax: "str.char_to_byte(s, i)".to_string(),
+            parameters: vec![],
+            return_type: "Int".to_string(),
+            examples: vec!["str.char_to_byte(\"héllo\", 2)  // 3".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.byte_to_char".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.byte_to_char".to_string(),
+            description: "How many characters come before byte b; past the end answers str.length(s), and an offset inside a character raises.".to_string(),
+            syntax: "str.byte_to_char(s, b)".to_string(),
+            parameters: vec![],
+            return_type: "Int".to_string(),
+            examples: vec!["str.byte_to_char(\"héllo\", 3)  // 2".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.char_to_byte".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.utf16_len".to_string(),
+            description: "How many UTF-16 code units the string takes, as an LSP client or a browser counts: one per character, two for one outside the Basic Multilingual Plane (an emoji).".to_string(),
+            syntax: "str.utf16_len(s)".to_string(),
+            parameters: vec![],
+            return_type: "Int".to_string(),
+            examples: vec!["str.utf16_len(\"a😀\")  // 3".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.byte_len".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.chunks".to_string(),
+            description: "The string cut into pieces of at most max_bytes bytes, each cut between characters, in one pass. With #{\"prefer\": \"\\n\"} a piece ends just after the last \"\\n\" in its window when there is one. Joined back, the pieces are the string; a character wider than max_bytes is a piece of its own.".to_string(),
+            syntax: "str.chunks(s, max_bytes, opts)".to_string(),
+            parameters: vec![],
+            return_type: "List[String]".to_string(),
+            examples: vec!["str.chunks(\"ab\\ncd\\nefgh\", 5, #{\"prefer\": \"\\n\"})  // [\"ab\\n\", \"cd\\n\", \"efgh\"]".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.slice_bytes".to_string()],
+        });
+        self.add_function(FunctionDoc {
             name: "str.index_of".to_string(),
             description:
                 "Character index of the first match, or Unit when absent (test with != ())."

@@ -82,6 +82,10 @@ pub fn create_string_module() -> Value {
     // `str.money(1234.5)` "$1,235" (a Series of them a String Series).
     module.insert("pct".to_string(), create_builtin_function("pct", 1));
     module.insert("money".to_string(), create_builtin_function("money", 1));
+    // Byte offsets and one-pass numbers (stdlib/text.rs).
+    for (name, fewest) in super::text::MIN_ARGS {
+        module.insert(name.to_string(), create_builtin_function(name, *fewest));
+    }
 
     Value::Struct {
         type_name: "Module".to_string(),
@@ -149,6 +153,12 @@ pub fn call_string_function(
 ) -> Result<Value, Box<dyn std::error::Error>> {
     if let Some(e) = super::too_many_args("str", name, args.len(), MAX_ARGS) {
         return Err(e.into());
+    }
+    if let Some(e) = super::too_many_args("str", name, args.len(), super::text::MAX_ARGS) {
+        return Err(e.into());
+    }
+    if let Some(result) = super::text::call(name, &args) {
+        return result;
     }
     match name {
         "to_upper" => str_to_upper(args),
@@ -644,7 +654,7 @@ fn str_replace(args: Vec<Value>, first_only: bool) -> Result<Value, Box<dyn std:
 /// (which is character `from_char`); `s.len()` past the end. Characters
 /// are counted a block of bytes at a time (a byte that does not continue
 /// a character starts one), not decoded one by one.
-fn char_to_byte(s: &str, from: usize, from_char: usize, n: usize) -> usize {
+pub(crate) fn char_to_byte(s: &str, from: usize, from_char: usize, n: usize) -> usize {
     let bytes = s.as_bytes();
     let mut at = from;
     let mut count = from_char;

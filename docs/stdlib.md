@@ -461,6 +461,11 @@ every function returns a new string.
 | <a id="str-width"></a>`str.width(s)` | display width in terminal cells (see below) |
 | <a id="str-cell_width"></a>`str.cell_width(g)` | the cells one grapheme occupies: 0, 1 or 2; more than one grapheme raises |
 | <a id="str-substring"></a>`str.substring(s, from, to)` | half-open slice by the slices' one rule: a position past the end stops at the end, `to` at or before `from` is `""`, a negative position raises (`col.slice` and `bytes.slice` alike) |
+| <a id="str-byte_len"></a>`str.byte_len(s)` | bytes the UTF-8 takes, in O(1) (`str.length` counts characters) |
+| <a id="str-slice_bytes"></a>`str.slice_bytes(s, a, b)` | bytes `a` to `b`, by the same rule as `substring`; an offset inside a character raises |
+| <a id="str-char_to_byte"></a><a id="str-byte_to_char"></a>`str.char_to_byte(s, i)` / `str.byte_to_char(s, b)` | convert a character position to a byte offset and back; past the end answers the end, a byte inside a character raises |
+| <a id="str-utf16_len"></a>`str.utf16_len(s)` | UTF-16 code units, as an LSP client or a browser counts (an emoji is 2) |
+| <a id="str-chunks"></a>`str.chunks(s, max_bytes, #{prefer})` | pieces of at most `max_bytes` bytes, cut between characters in one pass; with `prefer: "\n"` a piece ends after the window's last newline when it has one. Joined, they are `s` |
 | <a id="str-index_of"></a><a id="str-last_index_of"></a>`str.index_of(s, sub)` / `str.last_index_of` | position, or `()` when absent |
 | <a id="str-contains"></a><a id="str-count"></a>`str.contains(s, sub)` / `str.count(s, sub)` | search |
 | <a id="str-fuzzy_score"></a>`str.fuzzy_score(query, text)` | a fuzzy finder's score (every query character in order; runs, word starts, the last path segment count more), or `()` |
@@ -494,6 +499,25 @@ println(str.fmt(0.0731, ".1%"))                       // 7.3%
 println(str.fmt("{} of {:,d} ({:.1%})", "won", 12500, 0.42))   // won of 12,500 (42.0%)
 println(str.money(1234567.8))                         // $1,234,568
 println(str.pct(0.25, 0))                             // 25%
+```
+
+**Byte offsets.** Every position above counts characters, which is
+what a reader means and costs a walk from the start of the text to
+find. An editor, a diff or a rope keeps byte offsets instead, because
+slicing at one is O(1). `str.byte_len`, `str.slice_bytes`,
+`str.char_to_byte`, `str.byte_to_char` and `str.utf16_len` work in
+those units. A byte offset that falls inside a character raises,
+because a slice there would not be text. `str.chunks(s, n)` cuts a
+text into pieces of at most `n` bytes in a single pass (100 MB in
+about the time it takes to copy it). Pass `#{"prefer": "\n"}` to end
+each piece at a line break where the window has one.
+
+```olang
+let s = "naïve café"
+println(str.byte_len(s))                  // 12
+println(str.char_to_byte(s, 3))           // 4
+println(str.slice_bytes(s, 0, 4))         // naï
+println(str.chunks("ab\ncd\nefgh", 5, #{"prefer": "\n"}))  // ["ab\n", "cd\n", "efgh"]
 ```
 
 **Display width.** `str.length` counts code points and `str.graphemes`

@@ -1691,6 +1691,14 @@ impl BytecodeVm {
             "str.pad_end",
             "str.join",
             "str.fmt",
+            // byte offsets and one-pass counts (stdlib/text.rs): strings,
+            // Ints, lists of strings and maps of Ints in and out
+            "str.byte_len",
+            "str.slice_bytes",
+            "str.char_to_byte",
+            "str.byte_to_char",
+            "str.utf16_len",
+            "str.chunks",
             // map builtins — maps round-trip losslessly now, so builders
             // and readers both bridge safely
             "entries",
