@@ -8123,8 +8123,8 @@ route("GET", "/olang." + map_get(rt, "hash") + ".wasm", (req, p) => { status: 20
             "meta.tokens(source, lang?)",
             "List",
             "meta",
-            "Source as tokens covering it exactly: [#{ \"kind\", \"text\", \"start\", \"end\", \"line\" }], offsets in characters, the texts joined are the source. Kinds: keyword constant ident function type module property string interpolation number comment operator punct macro space. lang is olang unless named: python, rust, js, shell, toml, json or markdown.",
-            &[r##"map(meta.tokens("let x = 1"), (t) => t.kind)  // ["keyword", "space", "ident", ...]"##],
+            "Source as tokens covering it exactly: [#{ \"kind\", \"text\", \"start\", \"end\", \"line\" }], offsets in characters, the texts joined are the source. Kinds: keyword constant ident function type module property string interpolation number comment operator punct macro space. lang is olang unless named: python, rust, js, shell, toml, json or markdown. The second argument may instead be options: #{\"packed\": true} answers #{kind, start, end, kinds, state}, three Int lists in bytes (a kind is its index in kinds) and the lexer's state at the end; \"from\" (a byte offset) and \"state\" (the state there) lex from a line.",
+            &[r##"map(meta.tokens("let x = 1"), (t) => t.kind)  // ["keyword", "space", "ident", ...]"##, r##"meta.tokens(src, #{"packed": true, "from": 120, "state": "code"}).start"##],
         );
         self.doc_ex(
             "meta.highlight",

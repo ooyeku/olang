@@ -92,6 +92,13 @@ pub fn call_meta_function(
                     .into());
                 }
             };
+            // `#{from, state, packed, lang}`: packed Int lists in bytes,
+            // from an offset with the lexer's state there (OL-454)
+            if name == "tokens"
+                && let Some(Value::Map(opts)) = args.get(1)
+            {
+                return tokens_with_options(&src, opts);
+            }
             // the language: olang unless named
             let lang = match args.get(1) {
                 None | Some(Value::Unit) => "olang",
@@ -122,6 +129,95 @@ pub fn call_meta_function(
         }
         _ => Err(format!("Unknown meta function: {}", name).into()),
     }
+}
+
+/// `meta.tokens(source, #{"from", "state", "packed", "lang"})`: with
+/// `packed: true`, `#{kind, start, end, kinds, state}` — three Int lists
+/// in bytes (a kind is its index in `kinds`) and the lexer's state at the
+/// end ("code", "string", "raw" or "template"); `from` (a byte offset)
+/// and `state` (the state there, as a previous call answered it) relex
+/// from a line instead of from the start.
+fn tokens_with_options(
+    src: &str,
+    opts: &crate::ast::ValueMap,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    use crate::stdlib::tokens::{LexState, packed_value, tokens_from, tokens_value_of};
+    if let Some(k) = opts
+        .keys()
+        .find(|k| !["from", "state", "packed", "lang"].contains(&k.as_str()))
+    {
+        return Err(format!(
+            "meta.tokens: unknown option \"{k}\" (it takes from, state, packed and lang)"
+        )
+        .into());
+    }
+    let from = match opts.get("from") {
+        None | Some(Value::Unit) => 0,
+        Some(Value::Integer(n)) if *n >= 0 && (*n as usize) <= src.len() => *n as usize,
+        Some(Value::Integer(n)) => {
+            return Err(format!(
+                "meta.tokens: from {n} is outside the source (0 to {})",
+                src.len()
+            )
+            .into());
+        }
+        Some(other) => {
+            return Err(format!(
+                "meta.tokens: from must be an Int, got {}",
+                other.type_name()
+            )
+            .into());
+        }
+    };
+    if !src.is_char_boundary(from) {
+        return Err(format!("meta.tokens: from {from} is inside a character").into());
+    }
+    let state = match opts.get("state") {
+        None | Some(Value::Unit) => LexState::Code,
+        Some(Value::String(s)) => LexState::from_name(s).ok_or_else(|| {
+            format!("meta.tokens: unknown state \"{s}\" (code, string, raw or template)")
+        })?,
+        Some(other) => {
+            return Err(format!(
+                "meta.tokens: state must be a string, got {}",
+                other.type_name()
+            )
+            .into());
+        }
+    };
+    let packed = match opts.get("packed") {
+        None | Some(Value::Unit) => false,
+        Some(Value::Boolean(b)) => *b,
+        Some(other) => {
+            return Err(format!(
+                "meta.tokens: packed must be true or false, got {}",
+                other.type_name()
+            )
+            .into());
+        }
+    };
+    match opts.get("lang") {
+        None | Some(Value::Unit) => {}
+        Some(Value::String(l)) if crate::stdlib::lexers::language(l) == Some("olang") => {}
+        Some(Value::String(l)) if from == 0 && state == LexState::Code && !packed => {
+            let lang = crate::stdlib::lexers::language(l).ok_or_else(|| {
+                format!(
+                    "meta.tokens: no tokenizer for '{l}' (it knows {})",
+                    crate::stdlib::lexers::LANGUAGES
+                )
+            })?;
+            return Ok(crate::stdlib::tokens::tokens_value_in(src, lang));
+        }
+        Some(_) => {
+            return Err("meta.tokens: from, state and packed are for olang source".into());
+        }
+    }
+    let (toks, end) = tokens_from(src, from, state);
+    Ok(if packed {
+        packed_value(&toks, end)
+    } else {
+        tokens_value_of(src, toks)
+    })
 }
 
 /// `meta.unresolved(source)` → Ok(list of names) | Err(message): every

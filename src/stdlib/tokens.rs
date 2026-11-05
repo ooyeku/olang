@@ -235,7 +235,8 @@ pub fn tokens_value_in(src: &str, lang: &str) -> Value {
     tokens_value_of(src, super::lexers::tokens(src, lang))
 }
 
-fn tokens_value_of(src: &str, toks: Vec<Tok>) -> Value {
+/// Tokens as `meta.tokens` answers them: maps with character offsets.
+pub fn tokens_value_of(src: &str, toks: Vec<Tok>) -> Value {
     let mut items = Vec::with_capacity(toks.len());
     let (mut chars, mut line, mut at) = (0usize, 1usize, 0usize);
     for t in toks {
@@ -260,6 +261,193 @@ fn tokens_value_of(src: &str, toks: Vec<Tok>) -> Value {
         at = t.b;
     }
     Value::List(Arc::new(items))
+}
+
+// ── Packed tokens from an offset (OL-454) ───────────────────────────
+
+/// The kinds `meta.tokens(src, #{"packed": true})` numbers its tokens by:
+/// a token's kind is its index here.
+pub const KINDS: &[&str] = &[
+    "space",
+    "punct",
+    "ident",
+    "keyword",
+    "constant",
+    "string",
+    "number",
+    "comment",
+    "operator",
+    "function",
+    "type",
+    "module",
+    "property",
+    "interpolation",
+    "macro",
+];
+
+fn kind_code(kind: &str) -> i64 {
+    KINDS.iter().position(|k| *k == kind).unwrap_or(2) as i64
+}
+
+/// Where the lexer is between two tokens: in code, or inside a string,
+/// a raw string or a template that the text so far has not closed.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LexState {
+    Code,
+    Text,
+    Raw,
+    Template,
+}
+
+impl LexState {
+    pub fn name(self) -> &'static str {
+        match self {
+            LexState::Code => "code",
+            LexState::Text => "string",
+            LexState::Raw => "raw",
+            LexState::Template => "template",
+        }
+    }
+    pub fn from_name(s: &str) -> Option<Self> {
+        Some(match s {
+            "code" => LexState::Code,
+            "string" => LexState::Text,
+            "raw" => LexState::Raw,
+            "template" => LexState::Template,
+            _ => return None,
+        })
+    }
+}
+
+/// Scan `src` from `state`: the byte where the construct `state` is in
+/// closes (0 for code), and the state at the end of `src`. A `//` comment
+/// ends at its line, so it is never a state.
+pub fn scan_state(src: &str, state: LexState) -> (usize, LexState) {
+    let b = src.as_bytes();
+    let mut st = state;
+    let mut close = if state == LexState::Code {
+        Some(0)
+    } else {
+        None
+    };
+    // `${` depth inside a template, so a `}` in code closes only its own
+    let mut i = 0;
+    let mut interp: Vec<usize> = Vec::new();
+    let mut depth = 0usize;
+    while i < b.len() {
+        let c = b[i];
+        match st {
+            LexState::Code => match c {
+                b'/' if b.get(i + 1) == Some(&b'/') => {
+                    i = memchr::memchr(b'\n', &b[i..]).map_or(b.len(), |n| i + n);
+                    continue;
+                }
+                b'"' => st = LexState::Text,
+                b'r' if b.get(i + 1) == Some(&b'"')
+                    && !(i > 0 && (b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_')) =>
+                {
+                    st = LexState::Raw;
+                    i += 1;
+                }
+                b'`' => st = LexState::Template,
+                b'{' => depth += 1,
+                b'}' => {
+                    if interp.last() == Some(&depth) {
+                        interp.pop();
+                        st = LexState::Template;
+                    } else {
+                        depth = depth.saturating_sub(1);
+                    }
+                }
+                _ => {}
+            },
+            LexState::Text => match c {
+                b'\\' => i += 1,
+                b'"' => {
+                    st = LexState::Code;
+                    close.get_or_insert(i + 1);
+                }
+                _ => {}
+            },
+            LexState::Raw => match c {
+                b'\\' if b.get(i + 1) == Some(&b'"') => i += 1,
+                b'"' => {
+                    st = LexState::Code;
+                    close.get_or_insert(i + 1);
+                }
+                _ => {}
+            },
+            LexState::Template => match c {
+                b'\\' => i += 1,
+                b'`' => {
+                    st = LexState::Code;
+                    if interp.is_empty() {
+                        close.get_or_insert(i + 1);
+                    }
+                }
+                b'$' if b.get(i + 1) == Some(&b'{') => {
+                    interp.push(depth);
+                    st = LexState::Code;
+                    i += 1;
+                }
+                _ => {}
+            },
+        }
+        i += 1;
+    }
+    (close.unwrap_or(b.len()), st)
+}
+
+/// The tokens of `src[from..]` lexed from `state`, in the whole text's
+/// byte offsets, and the state at the end. A construct `state` says is
+/// open is one token up to where it closes; the rest is lexed as code.
+pub fn tokens_from(src: &str, from: usize, state: LexState) -> (Vec<Tok>, LexState) {
+    let rest = &src[from..];
+    let (close, end_state) = scan_state(rest, state);
+    let mut out = Vec::new();
+    if close > 0 {
+        out.push(Tok {
+            kind: "string",
+            a: from,
+            b: from + close,
+        });
+    }
+    if close < rest.len() {
+        out.extend(tokens(&rest[close..]).into_iter().map(|t| Tok {
+            a: t.a + from + close,
+            b: t.b + from + close,
+            ..t
+        }));
+    }
+    (out, end_state)
+}
+
+/// `#{kind, start, end, kinds, state}`: the tokens as three Int lists
+/// (a kind is its index in `kinds`), in bytes, and the state at the end.
+pub fn packed_value(toks: &[Tok], state: LexState) -> Value {
+    let ints = |f: &dyn Fn(&Tok) -> i64| {
+        Value::List(Arc::new(
+            toks.iter().map(|t| Value::Integer(f(t))).collect(),
+        ))
+    };
+    let mut m = crate::ast::ValueMap::default();
+    m.insert("kind".into(), ints(&|t| kind_code(t.kind)));
+    m.insert("start".into(), ints(&|t| t.a as i64));
+    m.insert("end".into(), ints(&|t| t.b as i64));
+    m.insert(
+        "kinds".into(),
+        Value::List(Arc::new(
+            KINDS
+                .iter()
+                .map(|k| Value::String(Arc::new(k.to_string())))
+                .collect(),
+        )),
+    );
+    m.insert(
+        "state".into(),
+        Value::String(Arc::new(state.name().to_string())),
+    );
+    Value::Map(Arc::new(m))
 }
 
 #[cfg(test)]
