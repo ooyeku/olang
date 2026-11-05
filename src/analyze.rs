@@ -1424,6 +1424,7 @@ impl Analyzer {
     fn mark_expression_reachable(&mut self, expr: &Expr, reachable: &mut HashSet<usize>) {
         match expr {
             Expr::MacroCall { .. } => {}
+            Expr::At { expr, .. } => self.mark_expression_reachable(expr, reachable),
             Expr::Block(statements) => {
                 let mut statements_reachable = true;
                 for statement in statements {

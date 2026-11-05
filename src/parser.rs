@@ -809,6 +809,26 @@ pub struct Parser {
     meta_fn_count: std::cell::Cell<usize>,
     /// How deep inside other expressions the one being built is.
     expr_depth: std::cell::Cell<usize>,
+    /// A spans parse (`parse_with_spans`): each expression is wrapped in
+    /// `Expr::At` with its byte range, and each statement's range goes in
+    /// `stmt_spans`, keyed by the line and column its `Located` carries.
+    spans: std::cell::Cell<bool>,
+    stmt_spans: std::cell::RefCell<rustc_hash::FxHashMap<(u32, u32), (u32, u32)>>,
+    /// Where the text being parsed starts in the file: a template's
+    /// interpolation is parsed on its own, and its spans are the file's.
+    span_base: std::cell::Cell<usize>,
+}
+
+/// A program parsed with spans (`Parser::parse_with_spans`): its
+/// expressions are wrapped in `Expr::At`, and each statement's byte range
+/// is here, keyed by the 1-based line and column of its `Located`.
+#[derive(Debug, Clone)]
+pub struct SpannedProgram {
+    pub program: Program,
+    pub statement_spans: rustc_hash::FxHashMap<(u32, u32), (u32, u32)>,
+    /// Bytes the parse dropped before the text (a UTF-8 byte order mark):
+    /// add them to every span for offsets into the text as given.
+    pub offset: u32,
 }
 
 /// Line starts of `input`: byte offsets, the first always 0.
@@ -854,6 +874,9 @@ impl Parser {
             saw_decorated: std::cell::Cell::new(false),
             meta_fn_count: std::cell::Cell::new(0),
             expr_depth: std::cell::Cell::new(0),
+            spans: std::cell::Cell::new(false),
+            stmt_spans: std::cell::RefCell::new(Default::default()),
+            span_base: std::cell::Cell::new(0),
             line_starts: std::cell::RefCell::new(Vec::new()),
             source: std::cell::RefCell::new(String::new()),
         }
@@ -1042,6 +1065,54 @@ impl Parser {
         self.saw_macro_call.get() || self.saw_meta_fn.get() || self.saw_decorated.get()
     }
 
+    /// `parse_raw` that also records where everything is: each expression
+    /// wrapped in `Expr::At` with its byte range, each statement's range in
+    /// the answer's table. For `meta.parse` and tools; never run such a
+    /// tree (no tier knows `Expr::At`).
+    pub fn parse_with_spans(&self, input: &str) -> Result<SpannedProgram, ParseError> {
+        self.spans.set(true);
+        self.span_base.set(0);
+        self.stmt_spans.borrow_mut().clear();
+        let parsed = self.parse_raw(input);
+        self.spans.set(false);
+        let statement_spans = std::mem::take(&mut *self.stmt_spans.borrow_mut());
+        let offset = if input.starts_with('\u{feff}') { 3 } else { 0 };
+        parsed.map(|program| SpannedProgram {
+            program,
+            statement_spans,
+            offset,
+        })
+    }
+
+    /// `e` wrapped with its byte range, in a spans parse; `e` itself
+    /// otherwise. A wrapper of the same range is not wrapped again.
+    fn at(&self, e: Expr, start: usize, end: usize) -> Expr {
+        let (start, end) = (start + self.span_base.get(), end + self.span_base.get());
+        if !self.spans.get() || e.span() == Some((start as u32, end as u32)) {
+            return e;
+        }
+        Expr::At {
+            start: start as u32,
+            end: end as u32,
+            expr: Box::new(e),
+        }
+    }
+
+    /// Record a statement's byte range under its `Located` line and column.
+    fn note_statement(&self, line: usize, column: usize, span: pest::Span) {
+        if self.spans.get() {
+            let base = self.span_base.get();
+            // A statement inside an interpolation is keyed in its own
+            // text's lines: it is not one of the file's.
+            if base == 0 {
+                self.stmt_spans.borrow_mut().insert(
+                    (line as u32, column as u32),
+                    ((span.start() + base) as u32, (span.end() + base) as u32),
+                );
+            }
+        }
+    }
+
     pub fn parse_raw(&self, input: &str) -> Result<Program, ParseError> {
         self.saw_macro_call.set(false);
         self.saw_meta_fn.set(false);
@@ -1164,6 +1235,11 @@ impl Parser {
                 for inner_pair in pair.into_inner() {
                     if inner_pair.as_rule() == Rule::statement {
                         let position_info = self.position_info(&inner_pair);
+                        self.note_statement(
+                            position_info.line,
+                            position_info.column,
+                            inner_pair.as_span(),
+                        );
                         let stmt_inner = inner_pair.into_inner().next().ok_or_else(|| {
                             ParseError::invalid_syntax_at(
                                 "Empty statement".to_string(),
@@ -1198,9 +1274,11 @@ impl Parser {
                     ..
                 },
             ] = pair
-                && let Statement::Expression(Expr::Identifier(name)) = stmt.as_ref()
+                && let Statement::Expression(e) = stmt.as_ref()
+                && let Expr::Identifier(name) = e.bare()
                 && name == "impl"
-                && let Statement::Expression(Expr::Identifier(ty)) = next.as_ref()
+                && let Statement::Expression(e) = next.as_ref()
+                && let Expr::Identifier(ty) = e.bare()
                 && next_line == line
             {
                 let source_line = input
@@ -1240,7 +1318,8 @@ impl Parser {
         // `use` line.
         for statement in statements {
             if let Statement::Located { stmt, line, column } = statement
-                && let Statement::Expression(Expr::Identifier(name)) = stmt.as_ref()
+                && let Statement::Expression(e) = stmt.as_ref()
+                && let Expr::Identifier(name) = e.bare()
                 && name == "share"
             {
                 let source_line = input
@@ -1381,9 +1460,11 @@ impl Parser {
             // An assertion is a statement form, so it reaches here from any
             // block — a loop body, an `if`, a function — not only from the
             // top level of a test block.
-            Rule::assertion => Ok(Statement::Expression(
-                self.build_assertion(pair.into_inner())?,
-            )),
+            Rule::assertion => Ok(Statement::Expression({
+                let (a, b) = (pair.as_span().start(), pair.as_span().end());
+                let e = self.build_assertion(pair.into_inner())?;
+                self.at(e, a, b)
+            })),
             Rule::expr => Ok(Statement::Expression(self.build_expr(pair.into_inner())?)),
             // `test_statement` wraps a plain `statement`, so unwrap one level
             // rather than rejecting (this blocked `let` inside test blocks)
@@ -1563,9 +1644,27 @@ impl Parser {
             });
         }
         self.expr_depth.set(depth);
+        let range = if self.spans.get() {
+            Self::pairs_range(&pairs)
+        } else {
+            None
+        };
         let built = self.build_expr_at(pairs);
         self.expr_depth.set(depth - 1);
-        built
+        match (built, range) {
+            (Ok(e), Some((a, b))) => Ok(self.at(e, a, b)),
+            (built, _) => built,
+        }
+    }
+
+    /// The byte range a run of sibling pairs covers.
+    fn pairs_range(pairs: &Pairs<Rule>) -> Option<(usize, usize)> {
+        let mut it = pairs.clone();
+        let first = it.next()?;
+        let end = it
+            .last()
+            .map_or(first.as_span().end(), |p| p.as_span().end());
+        Some((first.as_span().start(), end))
     }
 
     fn build_expr_at(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
@@ -1658,7 +1757,11 @@ impl Parser {
                             operators.extend(spill_ops);
                             operands.extend(spill_operands);
                         }
-                        _ => operands.push(self.build_unary_expr(pair.into_inner())?),
+                        _ => {
+                            let (a, b) = (pair.as_span().start(), pair.as_span().end());
+                            let e = self.build_unary_expr(pair.into_inner())?;
+                            operands.push(self.at(e, a, b));
+                        }
                     }
                     after_pipe = false;
                 }
@@ -1930,6 +2033,10 @@ impl Parser {
                     ),
                 });
             }
+            let joined = match (left.span(), right.span()) {
+                (Some((a, _)), Some((_, b))) => Some((a, b)),
+                _ => None,
+            };
             left = match rule {
                 Rule::pipe_op => Expr::Pipeline {
                     left: Box::new(left),
@@ -1986,6 +2093,14 @@ impl Parser {
                     right: Box::new(right),
                 },
             };
+            // A spans parse: the operation covers its operands.
+            if let Some((start, end)) = joined {
+                left = Expr::At {
+                    start,
+                    end,
+                    expr: Box::new(left),
+                };
+            }
         }
         Ok(left)
     }
@@ -1994,12 +2109,17 @@ impl Parser {
         let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing primary expression in call expression".to_string(),
         })?;
+        let start = first_pair.as_span().start();
+        let mut last_end = first_pair.as_span().end();
         let mut expr = self.build_primary(first_pair.into_inner())?;
 
         // Process all operations in sequence
         let mut pending_args = Vec::new();
 
         for pair in pairs {
+            let pair_end = pair.as_span().end();
+            let step = pair.as_rule() != Rule::primary;
+            last_end = pair_end;
             match pair.as_rule() {
                 Rule::primary => {
                     // Space-separated argument - collect for function call
@@ -2008,7 +2128,7 @@ impl Parser {
                 }
                 Rule::function_call => {
                     // Special case: Check if this is Ok(...) or Err(...) pattern
-                    if let Expr::Identifier(ref name) = expr
+                    if let Expr::Identifier(name) = expr.bare()
                         && (name == "Ok" || name == "Err")
                         && pending_args.is_empty()
                     {
@@ -2144,6 +2264,11 @@ impl Parser {
                 }
                 _ => {}
             }
+            // A spans parse: each call, field and index covers the chain
+            // so far.
+            if step {
+                expr = self.at(expr, start, pair_end);
+            }
         }
 
         // Handle any remaining space-separated arguments
@@ -2154,7 +2279,7 @@ impl Parser {
             };
         }
 
-        Ok(expr)
+        Ok(self.at(expr, start, last_end))
     }
 
     fn build_arg_list(&self, pairs: Pairs<Rule>) -> Result<Vec<Argument>, ParseError> {
@@ -2217,7 +2342,19 @@ impl Parser {
         }
     }
 
-    fn build_primary(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+    fn build_primary(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        if !self.spans.get() {
+            return self.build_primary_at(pairs);
+        }
+        let range = Self::pairs_range(&pairs);
+        let e = self.build_primary_at(pairs)?;
+        Ok(match range {
+            Some((a, b)) => self.at(e, a, b),
+            None => e,
+        })
+    }
+
+    fn build_primary_at(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
         // Check for unary expressions
         if let Some(first) = pairs.peek()
             && first.as_rule() == Rule::unary_op
@@ -2437,7 +2574,7 @@ impl Parser {
             return body;
         }
         let mut statements = lets;
-        match body {
+        match body.into_bare() {
             Expr::Block(inner) => statements.extend(inner),
             other => statements.push(Statement::Expression(other)),
         }
@@ -3670,6 +3807,7 @@ impl Parser {
         for pair in pairs {
             if pair.as_rule() == Rule::statement {
                 let (line, column) = self.line_col(pair.as_span().start_pos());
+                self.note_statement(line, column, pair.as_span());
                 last_end = Some((pair.as_span().get_input(), pair.as_span().end()));
                 let inner = pair
                     .into_inner()
@@ -4520,38 +4658,39 @@ impl Parser {
     }
 
     fn build_template_string(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let raw_content = pairs
+        let raw = pairs
             .into_iter()
             .find(|p| p.as_rule() == Rule::template_raw_content)
             .ok_or_else(|| ParseError::InvalidSyntax {
                 message: "Missing template content".to_string(),
-            })?
-            .as_str();
+            })?;
+        let raw_content = raw.as_str();
 
         // Manually parse the template content to preserve all spaces
-        self.parse_template_content(raw_content)
+        let base = self.span_base.get() + raw.as_span().start();
+        self.parse_template_content(raw_content, base)
     }
 
-    fn parse_template_content(&self, content: &str) -> Result<Expr, ParseError> {
+    fn parse_template_content(&self, content: &str, base: usize) -> Result<Expr, ParseError> {
         let mut parts = Vec::new();
         let mut current_literal = String::new();
-        let mut chars = content.chars().peekable();
+        let mut chars = content.char_indices().peekable();
 
-        while let Some(ch) = chars.next() {
+        while let Some((at, ch)) = chars.next() {
             // The three template escapes: \` \$ \\ produce the bare
             // character (an escaped $ never starts an interpolation). Any
             // other backslash pair passes through untouched — `\n` stays
             // two characters, as template literals have always behaved.
             if ch == '\\' {
-                match chars.peek() {
+                match chars.peek().map(|c| c.1) {
                     Some('`') | Some('$') | Some('\\') => {
-                        current_literal.push(chars.next().expect("peeked"));
+                        current_literal.push(chars.next().expect("peeked").1);
                     }
                     _ => current_literal.push('\\'),
                 }
                 continue;
             }
-            if ch == '$' && chars.peek() == Some(&'{') {
+            if ch == '$' && chars.peek().map(|c| c.1) == Some('{') {
                 // Found interpolation start
                 chars.next(); // consume '{'
 
@@ -4568,7 +4707,7 @@ impl Parser {
                 let mut in_string = false;
                 let mut prev_escape = false;
 
-                for ch in chars.by_ref() {
+                for (_, ch) in chars.by_ref() {
                     if in_string {
                         if prev_escape {
                             prev_escape = false;
@@ -4604,7 +4743,13 @@ impl Parser {
                 }
 
                 // Parse the expression content
-                let expr = self.parse_expression_from_string(&expr_content)?;
+                // In a spans parse, the expression's spans are the file's:
+                // its text starts after `${` and the spaces it trims.
+                let lead = expr_content.len() - expr_content.trim_start().len();
+                let saved_base = self.span_base.replace(base + at + 2 + lead);
+                let expr = self.parse_expression_from_string(&expr_content);
+                self.span_base.set(saved_base);
+                let expr = expr?;
                 parts.push(TemplatePart::Interpolation(Box::new(expr)));
             } else {
                 // Regular character - add to literal
@@ -5000,6 +5145,7 @@ impl Parser {
                 // statement, so a failure or a lint inside one names its
                 // own line rather than the block's.
                 let (line, column) = self.line_col(statement_pair.as_span().start_pos());
+                self.note_statement(line, column, statement_pair.as_span());
                 let inner = statement_pair.into_inner().next().unwrap();
                 body.push(Statement::Located {
                     line: line as u32,

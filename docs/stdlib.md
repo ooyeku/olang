@@ -2009,8 +2009,15 @@ over these nodes, beside the type checker
 | <a id="meta-highlight"></a>`meta.highlight(source, lang?)` | the source as HTML for inside a `<code>`: each token but a space a `<span class="ol-KIND">`, its text escaped; `lang` as `meta.tokens` takes it. The same in the browser runtime, so a page's build and its playground colour alike |
 | <a id="meta-exports"></a>`meta.exports(path)` | at expansion time, `Ok(map)` of the literal values the module the expanding file imports as `path` binds at its top level (`let`/`share let` of a number, string, list, map, or tuple literal), by name; `Err` for a path the file does not import, and at runtime |
 
-Nodes are discriminated-union maps. Top-level statements carry `line` and
-`column`; expressions nest (a `call`'s `callee` and `args` are themselves
+Nodes are discriminated-union maps. Statements carry `line` and
+`column`. Every statement and expression node also carries `start` and
+`end`, its byte range in the source (`str.slice_bytes(source, n.start,
+n.end)` is its text), and a statement that names something (`fn`, `let`,
+`type`, `meta fn`) carries `name_span`, `#{start, end}` of the name.
+Identifiers and calls carry their own: a call's span covers its callee
+and arguments, a field access the object and the field. The parts that
+are not expressions — an arm, a named argument, a map entry, a field
+value, a pattern, a type — carry none; their expressions do. Expressions nest (a `call`'s `callee` and `args` are themselves
 node maps; `target` is the dotted callee, like `fs.read_file`). The table
 lists every `kind` and the fields a node of it has; a pattern node is
 `pattern/<form>` and a type node `type/<form>` (their `kind` is `pattern`
@@ -2073,13 +2080,13 @@ table to what `meta.parse` produces.
 | `pattern/literal` | `text`, `value` |
 | `pattern/ok` | `inner`, `text` |
 | `pattern/or` | `alternatives`, `text` |
-| `pattern/range` | `end`, `inclusive`, `start`, `text` |
+| `pattern/range` | `from`, `inclusive`, `text`, `to` |
 | `pattern/record` | `fields`, `text` |
 | `pattern/struct` | `fields`, `text`, `type` |
 | `pattern/tuple` | `items`, `text` |
 | `pattern/wildcard` | `text` |
 | `pipeline` | `left`, `right` |
-| `range` | `end`, `inclusive`, `start` |
+| `range` | `from`, `inclusive`, `to` |
 | `return` | `value` |
 | `spawn` | `value` |
 | `spread` | `value` |

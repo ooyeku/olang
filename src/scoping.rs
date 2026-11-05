@@ -353,6 +353,7 @@ impl Validator {
     fn expr(&mut self, e: &Expr) {
         match e {
             Expr::MacroCall { .. } => {}
+            Expr::At { expr, .. } => self.expr(expr),
             Expr::Assignment { target, value } => self.assign(target, value),
             Expr::LocalAssign { name, value, .. } => self.assign(name, value),
 

@@ -14037,6 +14037,7 @@ impl BytecodeCompiler {
     /// refusal names the construct, never an enum discriminant.
     fn construct_name(e: &Expr) -> String {
         match e {
+            Expr::At { expr, .. } => Self::construct_name(expr),
             Expr::MacroCall { name, .. } => format!("an unexpanded macro call `@{name}`"),
             Expr::Integer(_) | Expr::Float(_) | Expr::String(_) | Expr::Boolean(_) => {
                 "a literal".to_string()

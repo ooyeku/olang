@@ -1846,6 +1846,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
 
     pub(crate) fn eval_expr(&mut self, expr: &Expr) -> Result<Value, InterpreterError> {
         match expr {
+            // Only a spans parse (meta.parse) makes one; see through it.
+            Expr::At { expr, .. } => self.eval_expr(expr),
             Expr::MacroCall { name, .. } => Err(InterpreterError::RuntimeError {
                 message: format!(
                     "macro '@{}' reached the interpreter without expansion — parse the \

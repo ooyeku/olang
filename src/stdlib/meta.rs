@@ -30,6 +30,7 @@ use crate::ast::{
     Argument, Expr, FieldValue, FunctionDecl, LetDecl, MatchArm, Parameter, Pattern, ShareDecl,
     Statement, TemplatePart, UseDecl, UseItem, Value,
 };
+use std::sync::Arc;
 
 pub fn create_meta_module() -> Value {
     let mut module = crate::ast::ValueMap::default();
@@ -234,13 +235,33 @@ fn meta_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             .into());
         }
     };
-    match crate::parser::Parser::new().parse_raw(&source) {
-        Ok(program) => {
-            let nodes: Vec<Value> = program.statements.iter().map(stmt_to_value).collect();
-            Ok(Value::Ok(Box::new(list(nodes))))
-        }
-        Err(e) => Ok(Value::Err(Box::new(s(&format!("{}", e))))),
-    }
+    Ok(match parse_spanned(&source) {
+        Ok(nodes) => Value::Ok(Box::new(list(nodes))),
+        Err(e) => Value::Err(Box::new(s(&e))),
+    })
+}
+
+/// What `meta.parse(source)` answers, from Rust: the nodes with their
+/// spans, or the parse error's message.
+pub fn parse_spanned(source: &str) -> Result<Vec<Value>, String> {
+    let parsed = crate::parser::Parser::new()
+        .parse_with_spans(source)
+        .map_err(|e| e.to_string())?;
+    let ctx = SpanContext {
+        statements: parsed.statement_spans,
+        line_starts: line_starts_of(source),
+        source: Arc::new(source.to_string()),
+        shift: parsed.offset as i64,
+        line_shift: 0,
+    };
+    Ok(spanned_nodes(&parsed.program, ctx))
+}
+
+/// The byte offset of each line of `text`.
+pub(crate) fn line_starts_of(text: &str) -> Vec<usize> {
+    std::iter::once(0)
+        .chain(memchr::memchr_iter(b'\n', text.as_bytes()).map(|i| i + 1))
+        .collect()
 }
 
 /// `meta.encode(source)`: the program as an image (src/olb.rs) — parsed
@@ -353,6 +374,153 @@ fn names(v: &[String]) -> Value {
     list(v.iter().map(|n| s(n)).collect())
 }
 
+// ── Spans (OL-434) ──────────────────────────────────────────────────
+//
+// `meta.parse` parses with spans (`Parser::parse_with_spans`): every
+// expression comes wrapped in `Expr::At` with its byte range, and each
+// statement's range is in a table keyed by its line and column. The
+// converter below reads them through this context, which also holds the
+// shift an item parsed on its own adds to put its spans in the whole
+// file's coordinates (`#{"byte_offset", "line_offset"}`).
+
+pub(crate) struct SpanContext {
+    pub statements: rustc_hash::FxHashMap<(u32, u32), (u32, u32)>,
+    /// Byte offset of each line of the parsed text.
+    pub line_starts: Vec<usize>,
+    pub source: std::sync::Arc<String>,
+    /// Added to every byte offset (a BOM, an item's place in its file).
+    pub shift: i64,
+    /// Added to every line.
+    pub line_shift: i64,
+}
+
+impl SpanContext {
+    /// The byte range of a declaration's name, from the 1-based line and
+    /// character column the AST keeps for it.
+    fn name_span(&self, stmt: &Statement) -> Option<Value> {
+        let (pos, name) = match stmt.unwrapped() {
+            Statement::FunctionDecl(d) | Statement::MetaFnDecl { decl: d, .. } => {
+                (d.name_span?, d.name.clone())
+            }
+            Statement::ShareDecl(ShareDecl::Function(d)) => (d.name_span?, d.name.clone()),
+            Statement::LetDecl(d) | Statement::ShareDecl(ShareDecl::Let(d)) => {
+                (d.name_span?, pattern_name(&d.pattern))
+            }
+            Statement::TypeDecl(d) => (d.name_span?, d.name.clone()),
+            _ => return None,
+        };
+        let (line, column) = pos;
+        let line_start = *self.line_starts.get((line as usize).checked_sub(1)?)?;
+        let text = self.source.get(line_start..)?;
+        let col = text
+            .char_indices()
+            .nth((column as usize).checked_sub(1)?)
+            .map(|(i, _)| i)?;
+        let start = line_start + col;
+        let len = if self.source[start..].starts_with(name.as_str()) {
+            name.len()
+        } else {
+            self.source[start..]
+                .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .unwrap_or(self.source.len() - start)
+        };
+        Some(map(vec![
+            ("start", Value::Integer(start as i64 + self.shift)),
+            ("end", Value::Integer((start + len) as i64 + self.shift)),
+        ]))
+    }
+}
+
+thread_local! {
+    static SPANS: std::cell::RefCell<Option<SpanContext>> = const { std::cell::RefCell::new(None) };
+}
+
+/// `node` with `start` and `end`, unless it has its own.
+fn with_span(mut node: Value, start: usize, end: usize) -> Value {
+    let shift = SPANS.with(|c| c.borrow().as_ref().map_or(0, |c| c.shift));
+    if let Value::Map(m) = &mut node
+        && !m.contains_key("start")
+    {
+        // A node just built is held only here: no copy.
+        let m = Arc::make_mut(m);
+        m.insert("start".to_string(), Value::Integer(start as i64 + shift));
+        m.insert("end".to_string(), Value::Integer(end as i64 + shift));
+    }
+    node
+}
+
+/// Convert `program` with `ctx` in place for the spans it holds.
+pub(crate) fn spanned_nodes(program: &crate::ast::Program, ctx: SpanContext) -> Vec<Value> {
+    SPANS.with(|c| *c.borrow_mut() = Some(ctx));
+    let nodes = program
+        .statements
+        .iter()
+        .map(|st| inherit_spans(stmt_to_value(st), None))
+        .collect();
+    SPANS.with(|c| *c.borrow_mut() = None);
+    nodes
+}
+
+/// The node kinds that are parts of a construct rather than statements or
+/// expressions: they carry no span (their expressions do).
+const UNSPANNED: &[&str] = &[
+    "arm",
+    "named_arg",
+    "entry",
+    "field_value",
+    "pattern",
+    "type",
+];
+
+/// Give every statement and expression node a span: one the parser built
+/// rather than read (a desugaring's call, the `()` a block that ends in a
+/// `let` gains, a destructured parameter's `let`, a statement inside a
+/// template's `${}`) takes the span of the nearest node around it, the
+/// construct it was made from.
+fn inherit_spans(mut node: Value, around: Option<(Value, Value)>) -> Value {
+    match &mut node {
+        Value::List(items) => {
+            let items = Arc::make_mut(items);
+            for item in items.iter_mut() {
+                let taken = std::mem::replace(item, Value::Unit);
+                *item = inherit_spans(taken, around.clone());
+            }
+        }
+        Value::Map(m) => {
+            let kind = match m.get("kind") {
+                Some(Value::String(k)) => Some(k.clone()),
+                _ => None,
+            };
+            let spanned = kind
+                .as_ref()
+                .is_some_and(|k| !UNSPANNED.contains(&k.as_str()));
+            let m = Arc::make_mut(m);
+            if spanned
+                && !m.contains_key("start")
+                && let Some((a, b)) = &around
+            {
+                m.insert("start".to_string(), a.clone());
+                m.insert("end".to_string(), b.clone());
+            }
+            let here = match (m.get("start"), m.get("end")) {
+                (Some(a @ Value::Integer(_)), Some(b @ Value::Integer(_))) if spanned => {
+                    Some((a.clone(), b.clone()))
+                }
+                _ => around,
+            };
+            for (k, v) in m.iter_mut() {
+                if k == "name_span" || ((k == "start" || k == "end") && spanned) {
+                    continue;
+                }
+                let taken = std::mem::replace(v, Value::Unit);
+                *v = inherit_spans(taken, here.clone());
+            }
+        }
+        _ => {}
+    }
+    node
+}
+
 // ── Statements ──────────────────────────────────────────────────────
 fn stmt_to_value(stmt: &Statement) -> Value {
     match stmt {
@@ -392,11 +560,28 @@ fn stmt_to_value(stmt: &Statement) -> Value {
             ("decl", s(decl_src)),
         ]),
         Statement::Located { line, column, stmt } => {
-            // Attach position to the inner node.
+            // Attach position to the inner node: its line and column, and
+            // in a spans parse its byte range and its name's.
             let inner = stmt_to_value(stmt);
             if let Value::Map(m) = &inner {
                 let mut m = (**m).clone();
-                m.insert("line".to_string(), Value::Integer(*line as i64));
+                SPANS.with(|c| {
+                    let c = c.borrow();
+                    let Some(c) = c.as_ref() else { return };
+                    m.insert(
+                        "line".to_string(),
+                        Value::Integer(*line as i64 + c.line_shift),
+                    );
+                    if let Some((a, b)) = c.statements.get(&(*line, *column)) {
+                        m.insert("start".to_string(), Value::Integer(*a as i64 + c.shift));
+                        m.insert("end".to_string(), Value::Integer(*b as i64 + c.shift));
+                    }
+                    if let Some(name_span) = c.name_span(stmt) {
+                        m.insert("name_span".to_string(), name_span);
+                    }
+                });
+                m.entry("line".to_string())
+                    .or_insert(Value::Integer(*line as i64));
                 m.insert("column".to_string(), Value::Integer(*column as i64));
                 return Value::Map(std::sync::Arc::new(m));
             }
@@ -748,8 +933,9 @@ fn pattern_to_value(p: &Pattern) -> Value {
             inclusive,
         } => {
             pairs.push(("form", s("range")));
-            pairs.push(("start", pattern_to_value(start)));
-            pairs.push(("end", pattern_to_value(end)));
+            // `from` and `to`: `start` and `end` are a node's byte span.
+            pairs.push(("from", pattern_to_value(start)));
+            pairs.push(("to", pattern_to_value(end)));
             pairs.push(("inclusive", Value::Boolean(*inclusive)));
         }
         Pattern::Or { alternatives } => {
@@ -868,6 +1054,12 @@ fn pattern_name(p: &Pattern) -> String {
 // ── Expressions ─────────────────────────────────────────────────────
 fn expr_to_value(e: &Expr) -> Value {
     match e {
+        // A spans parse's range: the node inside carries it. The node's
+        // own (innermost) range wins over a wrapper's of the same node.
+        Expr::At { start, end, expr } => {
+            let inner = expr_to_value(expr);
+            with_span(inner, *start as usize, *end as usize)
+        }
         Expr::MacroCall { name, args_src, .. } => map(vec![
             ("kind", s("macro_call")),
             ("name", s(name)),
@@ -884,7 +1076,7 @@ fn expr_to_value(e: &Expr) -> Value {
         Expr::LocalRef { name, .. } => map(vec![("kind", s("ident")), ("name", s(name))]),
         // The forms the parser builds as calls of hidden builtins are
         // nodes of their own: a literal with spreads, and `xs[i] = v`.
-        Expr::Call { callee, arguments } if matches!(callee.as_ref(), Expr::Identifier(n) if n == crate::parser::SPREAD_BUILTIN) => {
+        Expr::Call { callee, arguments } if matches!(callee.bare(), Expr::Identifier(n) if n == crate::parser::SPREAD_BUILTIN) => {
             spread_to_value(arguments)
         }
         Expr::Assignment { target, value } if index_assign_parts(value).is_some() => {
@@ -1008,8 +1200,9 @@ fn expr_to_value(e: &Expr) -> Value {
             inclusive,
         } => map(vec![
             ("kind", s("range")),
-            ("start", expr_to_value(start)),
-            ("end", expr_to_value(end)),
+            // `from` and `to`: `start` and `end` are a node's byte span.
+            ("from", expr_to_value(start)),
+            ("to", expr_to_value(end)),
             ("inclusive", Value::Boolean(*inclusive)),
         ]),
         Expr::ResultOk(inner) => map(vec![("kind", s("ok")), ("value", expr_to_value(inner))]),
@@ -1136,9 +1329,10 @@ fn spread_to_value(arguments: &[Argument]) -> Value {
     let arg = |a: &Argument| match a {
         Argument::Positional(e) | Argument::Named { value: e, .. } => e.clone(),
     };
+    let bare_arg = |a: &Argument| arg(a).into_bare();
     // The first argument is the empty literal the parts are laid over.
     let args = arguments.iter().skip(1).map(arg);
-    let of = match arguments.first().map(arg) {
+    let of = match arguments.first().map(bare_arg) {
         Some(Expr::List(_)) => "list",
         Some(Expr::MapLiteral { .. }) => "map",
         _ => "object",
@@ -1146,7 +1340,7 @@ fn spread_to_value(arguments: &[Argument]) -> Value {
     let parts = args
         .map(|e| {
             let same_kind = matches!(
-                (&e, of),
+                (e.bare(), of),
                 (Expr::List(_), "list")
                     | (Expr::MapLiteral { .. }, "map")
                     | (Expr::AnonymousObject { .. }, "object")
@@ -1168,10 +1362,10 @@ fn spread_to_value(arguments: &[Argument]) -> Value {
 /// `xs[i] = v` (`Assignment` of `__index_set(xs, i, v)`) and `m.k[i] = v`
 /// (`__index_set_in(m, "k", i, v)`): the field, the index and the value.
 fn index_assign_parts(value: &Expr) -> Option<(Option<&str>, &Expr, &Expr)> {
-    let Expr::Call { callee, arguments } = value else {
+    let Expr::Call { callee, arguments } = value.bare() else {
         return None;
     };
-    let Expr::Identifier(name) = callee.as_ref() else {
+    let Expr::Identifier(name) = callee.bare() else {
         return None;
     };
     let positional = |i: usize| match arguments.get(i) {
@@ -1181,7 +1375,7 @@ fn index_assign_parts(value: &Expr) -> Option<(Option<&str>, &Expr, &Expr)> {
     if name == crate::parser::INDEX_SET_BUILTIN {
         Some((None, positional(1)?, positional(2)?))
     } else if name == crate::parser::INDEX_SET_IN_BUILTIN {
-        match positional(1)? {
+        match positional(1)?.bare() {
             Expr::String(field) => Some((Some(field.as_str()), positional(2)?, positional(3)?)),
             _ => None,
         }
@@ -1239,7 +1433,7 @@ fn fields_to_value(fields: &[FieldValue]) -> Value {
 /// a field chain (`fs.read_file`, `unwrap`) — the field tools look at most.
 /// Empty when the callee is a more complex expression.
 fn call_target(callee: &Expr) -> String {
-    match callee {
+    match callee.bare() {
         Expr::Identifier(n) => n.clone(),
         Expr::LocalRef { name, .. } => name.clone(),
         Expr::FieldAccess { object, field } => {
