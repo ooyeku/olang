@@ -2567,11 +2567,15 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 // Its thread holds the only sender, dropped as the thread
                 // ends: a join waits on it instead of polling.
                 let (done_tx, done) = crossbeam_channel::bounded::<()>(0);
+                // A task starts with its spawner's QoS class (a thread
+                // made with attributes does not inherit it on its own).
+                let qos = crate::stdlib::task::spawner_qos();
                 let handle = std::thread::Builder::new()
                     .name(format!("olang-spawn-{}", task_id))
                     .stack_size(64 * 1024 * 1024)
                     .spawn(move || {
                         let _done = done_tx;
+                        crate::stdlib::task::inherit_qos(qos);
                         crate::interrupt::adopt(&thread_stop);
                         // In the stall detector's census for its whole
                         // life: this thread runs olang code.

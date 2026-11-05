@@ -110,6 +110,11 @@ pub(crate) fn interrupt(id: u64, reason: Option<String>) -> Option<bool> {
     Some(true)
 }
 
+/// Task `id`'s stop slot, for asking things of its thread.
+pub(crate) fn stop_handle(id: u64) -> Option<crate::interrupt::Handle> {
+    lock_tasks().get(&id).map(|e| e.stop.clone())
+}
+
 fn lock_tasks() -> std::sync::MutexGuard<'static, HashMap<u64, Entry>> {
     tasks().lock().unwrap_or_else(|e| e.into_inner())
 }

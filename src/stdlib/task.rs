@@ -97,6 +97,8 @@ pub fn create_task_module() -> Value {
         ("join", 1),
         ("join_timeout", 2),
         ("interrupt", 1),
+        ("set_qos", 1),
+        ("qos", 0),
         ("list", 0),
         ("parked", 0),
         ("watch", 2),
@@ -151,6 +153,8 @@ pub fn call_task_function(name: &str, args: Vec<Value>) -> Result<Value, Interpr
         "join" => task_join(args),
         "join_timeout" => task_join_timeout(args),
         "interrupt" => task_interrupt(args),
+        "set_qos" => task_set_qos(args),
+        "qos" => task_qos(args),
         "watch" => task_watch(args),
         "list" => task_list(args),
         "parked" => task_parked(args),
@@ -245,6 +249,142 @@ fn task_join(args: Vec<Value>) -> Result<Value, InterpreterError> {
                 .to_string(),
         )),
     }
+}
+
+// ── QoS classes (OL-507) ────────────────────────────────────────────
+/// The macOS quality-of-service classes, by name, with the codes
+/// `pthread_set_qos_class_self_np` takes. The scheduler gives a thread
+/// that does less urgent work a lower class: it then yields the CPU (and
+/// on Apple silicon the performance cores) to the higher ones.
+pub const QOS_CLASSES: [(&str, u8); 5] = [
+    ("user-interactive", 0x21),
+    ("user-initiated", 0x19),
+    ("default", 0x15),
+    ("utility", 0x11),
+    ("background", 0x09),
+];
+
+fn qos_code(name: &str) -> Option<u8> {
+    QOS_CLASSES
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, c)| *c)
+}
+
+fn qos_name(code: u8) -> &'static str {
+    QOS_CLASSES
+        .iter()
+        .find(|(_, c)| *c == code)
+        .map(|(n, _)| *n)
+        .unwrap_or("default")
+}
+
+/// Give the calling thread QoS class `code`. Does nothing off macOS.
+pub fn apply_qos(code: u8) {
+    #[cfg(target_os = "macos")]
+    {
+        use libc::qos_class_t::*;
+        let class = match code {
+            0x21 => QOS_CLASS_USER_INTERACTIVE,
+            0x19 => QOS_CLASS_USER_INITIATED,
+            0x11 => QOS_CLASS_UTILITY,
+            0x09 => QOS_CLASS_BACKGROUND,
+            _ => QOS_CLASS_DEFAULT,
+        };
+        // SAFETY: sets the calling thread's own class; no pointers.
+        unsafe {
+            libc::pthread_set_qos_class_self_np(class, 0);
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = code;
+}
+
+/// What a spawned task inherits: the spawner's class, unless it is the
+/// default one.
+pub fn spawner_qos() -> Option<u8> {
+    let code = current_qos();
+    (code != 0x15).then_some(code)
+}
+
+/// A new task's first act: take the class its spawner had.
+pub fn inherit_qos(code: Option<u8>) {
+    if let Some(code) = code {
+        apply_qos(code);
+    }
+}
+
+/// The calling thread's QoS class code (`default` off macOS).
+fn current_qos() -> u8 {
+    #[cfg(target_os = "macos")]
+    {
+        let mut class = libc::qos_class_t::QOS_CLASS_UNSPECIFIED;
+        let mut rel: libc::c_int = 0;
+        // SAFETY: reads the calling thread's class into two locals.
+        unsafe {
+            libc::pthread_get_qos_class_np(libc::pthread_self(), &mut class, &mut rel);
+        }
+        let code = class as u32 as u8;
+        if qos_name(code) == "default" {
+            0x15
+        } else {
+            code
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    0x15
+}
+
+fn qos_arg(value: &Value) -> Result<u8, InterpreterError> {
+    match value {
+        Value::String(s) => qos_code(s).ok_or_else(|| {
+            raise(format!(
+                "task.set_qos: no QoS class {:?} (user-interactive, user-initiated, default, utility, background)",
+                s.as_str()
+            ))
+        }),
+        other => Err(raise(format!(
+            "task.set_qos: the class is a String, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+/// `task.set_qos(class)` gives the calling thread a QoS class;
+/// `task.set_qos(t, class)` gives it to task `t`, which takes it at its
+/// next poll, or at once when it waits. Answers the class.
+fn task_set_qos(args: Vec<Value>) -> Result<Value, InterpreterError> {
+    match args.as_slice() {
+        [class] => {
+            let code = qos_arg(class)?;
+            apply_qos(code);
+            Ok(Value::String(Arc::new(qos_name(code).to_string())))
+        }
+        [t, class] => {
+            let code = qos_arg(class)?;
+            let id = task_id(t).map_err(raise)?;
+            spawn_registry::stop_handle(id)
+                .ok_or_else(|| {
+                    raise(
+                        "task.set_qos: this task is no longer available (its handle was already released)"
+                            .to_string(),
+                    )
+                })?
+                .request_qos(code);
+            Ok(Value::String(Arc::new(qos_name(code).to_string())))
+        }
+        _ => Err(raise(
+            "task.set_qos expects a QoS class, or a task and a QoS class".to_string(),
+        )),
+    }
+}
+
+/// `task.qos()`: the calling thread's QoS class.
+fn task_qos(args: Vec<Value>) -> Result<Value, InterpreterError> {
+    if !args.is_empty() {
+        return Err(raise("task.qos takes no arguments".to_string()));
+    }
+    Ok(Value::String(Arc::new(qos_name(current_qos()).to_string())))
 }
 
 /// `task.interrupt(t, reason?)`: ask task `t` to stop. It raises

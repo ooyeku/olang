@@ -2354,6 +2354,14 @@ not stopped again. A task inside a system call that cannot be woken
 (a long `os.exec`, a blocking read of a socket) raises once the call
 returns; until then `task.list()` shows it as `"interrupting"`.
 
+**Priority.** On macOS a task can run at a lower or higher
+quality-of-service class. `task.set_qos("background")` inside a task, or
+`task.set_qos(t, "background")` from outside, makes it yield the CPU to
+the program's interactive work under load; `"user-interactive"` is the
+top class, for the work a person is waiting on. A task starts with the
+class of the thread that spawned it, and `task.qos()` says the current
+one.
+
 When a task should choose its own stopping points, give it something to
 check instead: a `cancel` token, a channel it polls, or a value it
 re-reads each iteration.

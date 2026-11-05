@@ -1,7 +1,8 @@
 //! Stopping one thread's work: budgets per thread (OL-494) and
 //! `task.interrupt` (OL-493); joins and full sends that wake instead of
 //! polling (OL-498); a Rust panic kept to its task or boundary (OL-499);
-//! the stall detector leaving waits on outside sources alone (OL-512).
+//! the stall detector leaving waits on outside sources alone (OL-512);
+//! macOS QoS classes for tasks (OL-507).
 //! Every program
 //! here runs twice, on the default tiers (bytecode VM and native code)
 //! and on the interpreter alone (`--no-ovm`), and must print the same
@@ -465,4 +466,83 @@ fn a_wait_on_a_channel_fed_from_outside_is_no_deadlock() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&out.stdout), "waiting\n");
+}
+
+#[test]
+fn qos_classes_are_set_and_read() {
+    let out = run_both(
+        "qos",
+        r#"
+println(task.qos())
+println(task.set_qos("utility"))
+println(task.qos())
+let t = spawn task.qos()
+println(task.join(t))
+fn idle(c) = { let _ = chan.recv(c); task.qos() }
+let c = chan.new()
+let w = spawn idle(c)
+time.sleep(20)
+println(task.set_qos(w, "background"))
+time.sleep(20)
+chan.send(c, 1)
+println(task.join(w))
+println(attempt(() => task.set_qos("fast")))
+"#,
+    );
+    let expect = if cfg!(target_os = "macos") {
+        "default\nutility\nutility\nOk(\"utility\")\nbackground\nOk(\"background\")\n"
+    } else {
+        "default\nutility\ndefault\nOk(\"default\")\nbackground\nOk(\"default\")\n"
+    };
+    assert!(out.starts_with(expect), "{out}");
+    assert!(out.contains("no QoS class \\\"fast\\\""), "{out}");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_background_task_is_scheduled_below_an_interactive_one_under_load() {
+    // Twice as many busy tasks as cores, half of them background and half
+    // user-interactive: the interactive half gets most of the CPU.
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(8);
+    let ws = workspace("qos_load");
+    std::fs::write(
+        ws.join("main.ol"),
+        format!(
+            r#"
+fn busy(class, until) = {{
+    task.set_qos(class)
+    let mut n = 0
+    while time.monotonic_ms() < until {{
+        let mut i = 0
+        while i < 10000 {{ i = i + 1 }}
+        n = n + 1
+    }}
+    n
+}}
+let until = time.monotonic_ms() + 1500
+let bg = map(range(0, {cores}), (i) => spawn busy("background", until))
+let fg = map(range(0, {cores}), (i) => spawn busy("user-interactive", until))
+let sum = (ts) => fold(map(ts, (t) => unwrap(task.join(t))), 0, (a, b) => a + b)
+let b = sum(bg)
+let f = sum(fg)
+println("interactive " + show(f) + " background " + show(b))
+println(f > b * 2)
+"#
+        ),
+    )
+    .unwrap();
+    let out = Command::new(olang())
+        .current_dir(&ws)
+        .arg("main.ol")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(stdout.ends_with("true\n"), "{stdout}");
 }

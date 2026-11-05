@@ -166,6 +166,10 @@ struct ParkSite {
     /// it waits on a channel: while one lives, a value may still arrive
     /// from outside the program's threads.
     producers: Option<Arc<AtomicUsize>>,
+    /// Whether what the wait waits for is already there (a message in
+    /// the queue, room in a full one) and its thread has only not run
+    /// yet: a starved thread (a low QoS class under load) is no deadlock.
+    ready: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
 }
 
 impl ParkSite {
@@ -177,6 +181,7 @@ impl ParkSite {
                 .producers
                 .as_ref()
                 .is_some_and(|p| p.load(Ordering::SeqCst) > 0)
+            || self.ready.as_ref().is_some_and(|r| r())
     }
 }
 
@@ -239,12 +244,16 @@ impl Drop for ExternalWaker {
 /// Enter the parked set. The token unparks; the guard pattern is not
 /// used because unpark order interleaves with lock scopes.
 fn park(what: String) -> u64 {
-    park_on(what, None)
+    park_on(what, None, None)
 }
 
-/// `park`, for a wait on a channel whose Rust-side producers are counted
-/// by `producers`.
-fn park_on(what: String, producers: Option<Arc<AtomicUsize>>) -> u64 {
+/// `park`, for a wait on a channel: whose Rust-side producers are counted
+/// by `producers`, and that `ready` says can go on.
+fn park_on(
+    what: String,
+    producers: Option<Arc<AtomicUsize>>,
+    ready: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+) -> u64 {
     let token = PARK_SEQ.fetch_add(1, Ordering::SeqCst);
     let site = ParkSite {
         thread: std::thread::current().name().unwrap_or("?").to_string(),
@@ -252,6 +261,7 @@ fn park_on(what: String, producers: Option<Arc<AtomicUsize>>) -> u64 {
         since: crate::clock::Instant::now(),
         slot: crate::interrupt::current(),
         producers,
+        ready,
     };
     parked()
         .lock()
@@ -837,7 +847,12 @@ fn chan_send(mut args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
             // Full: wait for room, woken by the receiver that makes it
             // (no sleep loop), or by this thread being asked to stop.
             let _parked_mark = crate::profile::blocked();
-            let token = park(format!("chan.send on full channel #{}", chan.id));
+            let room = t.clone();
+            let token = park_on(
+                format!("chan.send on full channel #{}", chan.id),
+                None,
+                Some(Arc::new(move || !room.is_full())),
+            );
             chan.send_waiting.fetch_add(1, Ordering::Relaxed);
             let wake = crate::interrupt::wake_receiver();
             let tick = std::time::Duration::from_millis(STALL_TICK_MS);
@@ -919,7 +934,12 @@ fn chan_ask(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             }
         }
         let _parked = crate::profile::blocked();
-        let token = park(format!("chan.ask waiting on channel #{}", reply_chan.id));
+        let answered = reply_chan.clone();
+        let token = park_on(
+            format!("chan.ask waiting on channel #{}", reply_chan.id),
+            None,
+            Some(Arc::new(move || !answered.rx.is_empty())),
+        );
         let mut last_gen: Option<u64> = None;
         let outcome = wait_recv(rx, None, || stall_tick(&mut last_gen));
         unpark(token);
@@ -946,9 +966,11 @@ fn chan_recv(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _parked = crate::profile::blocked();
+        let queued = chan.clone();
         let token = park_on(
             format!("chan.recv on channel #{}", chan.id),
             Some(chan.producers.clone()),
+            Some(Arc::new(move || !queued.rx.is_empty())),
         );
         chan.recv_waiting.fetch_add(1, Ordering::Relaxed);
         let mut last_gen: Option<u64> = None;

@@ -3029,6 +3029,22 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
 task.join(worker)   // Err("interrupted: restart")"##],
         );
         self.doc_ex(
+            "task.set_qos",
+            "task.set_qos(class) / task.set_qos(t, class)",
+            "String",
+            "task",
+            "Give the calling thread, or task t, a macOS quality-of-service class: \"user-interactive\", \"user-initiated\", \"default\", \"utility\" or \"background\". A lower class yields the CPU to higher ones under load, and on Apple silicon runs on the efficiency cores. Task t takes it at its next statement, loop iteration or call, or at once when it waits. A task starts with the class of the thread that spawned it. Answers the class; does nothing on other systems.",
+            &[r##"spawn { task.set_qos("background"); reindex(files) }"##, r##"task.set_qos(worker, "user-interactive")"##],
+        );
+        self.doc_ex(
+            "task.qos",
+            "task.qos()",
+            "String",
+            "task",
+            "The calling thread's quality-of-service class (see task.set_qos); \"default\" on other systems.",
+            &[r##"task.qos()  // "default""##],
+        );
+        self.doc_ex(
             "task.watch",
             "task.watch(t, c)",
             "Unit",

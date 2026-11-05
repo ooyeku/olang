@@ -65,6 +65,9 @@ static NEXT_BUDGET: AtomicU64 = AtomicU64::new(1);
 /// A slot's request bits.
 const ASKED: u8 = 1;
 const BUDGET: u8 = 2;
+/// Not a stop: a QoS class asked for the thread (`task.set_qos`), which
+/// it takes at its next poll or wake.
+const QOS: u8 = 4;
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
@@ -88,6 +91,8 @@ pub struct Slot {
     reason: Mutex<Option<String>>,
     /// This thread's budgets, outermost first.
     budgets: Mutex<Vec<Budget>>,
+    /// The QoS class asked for the thread by another, when `QOS` is set.
+    qos: AtomicU8,
     #[cfg(not(target_arch = "wasm32"))]
     wake_tx: crossbeam_channel::Sender<()>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -113,6 +118,7 @@ impl Slot {
             bits: AtomicU8::new(0),
             reason: Mutex::new(None),
             budgets: Mutex::new(Vec::new()),
+            qos: AtomicU8::new(0),
             #[cfg(not(target_arch = "wasm32"))]
             wake_tx,
             #[cfg(not(target_arch = "wasm32"))]
@@ -147,8 +153,18 @@ impl Slot {
         let _ = self.wake_tx.try_send(());
     }
 
+    /// Whether a stop is asked of the thread (not a QoS class).
     fn asked_here(&self) -> bool {
-        self.bits.load(Ordering::SeqCst) != 0
+        self.bits.load(Ordering::SeqCst) & (ASKED | BUDGET) != 0
+    }
+
+    /// On the slot's own thread: take a QoS class asked for it.
+    fn take_qos(&self) {
+        if self.bits.load(Ordering::SeqCst) & QOS != 0 {
+            let class = self.qos.load(Ordering::SeqCst);
+            self.clear_bit(QOS);
+            crate::stdlib::task::apply_qos(class);
+        }
     }
 }
 
@@ -177,6 +193,13 @@ impl Handle {
         used();
         *lock(&self.0.reason) = reason;
         self.0.set_bit(ASKED);
+    }
+
+    /// Ask the thread to take QoS class `class` (a `task::QOS_CLASSES`
+    /// code): it does at its next poll, or at once when it waits.
+    pub fn request_qos(&self, class: u8) {
+        self.0.qos.store(class, Ordering::SeqCst);
+        self.0.set_bit(QOS);
     }
 
     /// Whether a deadline runs on the thread (a budget, a `meta.eval`
@@ -332,7 +355,10 @@ fn aimed_here() -> bool {
     if EVERYONE.load(Ordering::SeqCst) {
         return true;
     }
-    if with_slot(|s| s.asked_here()) {
+    if with_slot(|s| {
+        s.take_qos();
+        s.asked_here()
+    }) {
         return true;
     }
     if METER.with(|m| m.borrow().iter().any(|(_, left)| *left == 0)) {
