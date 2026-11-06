@@ -529,7 +529,7 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if let Some(mut se) = child.stderr.take() {
         let sink = stderr_buf.clone();
         std::thread::spawn(move || {
-            *sink.lock().unwrap() = drain_bounded(&mut se, STDERR_KEEP);
+            *sink.lock().unwrap_or_else(|e| e.into_inner()) = drain_bounded(&mut se, STDERR_KEEP);
         });
     }
 
@@ -544,7 +544,10 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         group,
     });
     let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
-    procs().lock().unwrap().insert(id, proc);
+    procs()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(id, proc);
     Ok(ok(handle(id)))
 }
 
@@ -610,7 +613,7 @@ fn proc_write(args: Vec<Value>, newline: bool) -> Result<Value, Box<dyn std::err
             )));
         }
     };
-    let mut guard = p.stdin.lock().unwrap();
+    let mut guard = p.stdin.lock().unwrap_or_else(|e| e.into_inner());
     match guard.as_mut() {
         Some(stdin) => {
             let res = stdin
@@ -639,7 +642,7 @@ fn proc_close_stdin(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
         return Err(misuse("close_stdin expects (process)"));
     }
     let p = proc_of(&args[0])?;
-    *p.stdin.lock().unwrap() = None;
+    *p.stdin.lock().unwrap_or_else(|e| e.into_inner()) = None;
     Ok(unit_ok())
 }
 
@@ -657,12 +660,28 @@ fn proc_read_line(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
                 .into(),
         );
     }
-    let rx = p.out_rx.lock().unwrap();
-    match rx.recv() {
-        Ok(line) => Ok(ok(Value::String(Arc::new(
+    let rx = p.out_rx.lock().unwrap_or_else(|e| e.into_inner());
+    match recv_or_stop(&rx)? {
+        Some(line) => Ok(ok(Value::String(Arc::new(
             String::from_utf8_lossy(&line).into_owned(),
         )))),
-        Err(_) => Ok(err("eof")),
+        None => Ok(err("eof")),
+    }
+}
+
+/// The next chunk of a child's output, `None` once it closes; `Err` (the
+/// stop's message) when this thread is asked to stop meanwhile (an
+/// interrupt, a budget, a cancel), looked at every 20 ms of waiting.
+fn recv_or_stop(rx: &Receiver<Vec<u8>>) -> Result<Option<Vec<u8>>, String> {
+    loop {
+        if crate::interrupt::pending() {
+            return Err(crate::interrupt::stop_message());
+        }
+        match rx.recv_timeout(std::time::Duration::from_millis(20)) {
+            Ok(chunk) => return Ok(Some(chunk)),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(None),
+        }
     }
 }
 
@@ -673,16 +692,16 @@ fn proc_read_all(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         return Err(misuse("read_all expects (process)"));
     }
     let p = proc_of(&args[0])?;
-    let rx = p.out_rx.lock().unwrap();
+    let rx = p.out_rx.lock().unwrap_or_else(|e| e.into_inner());
     if p.bytes {
         let mut all = Vec::new();
-        while let Ok(chunk) = rx.recv() {
+        while let Some(chunk) = recv_or_stop(&rx)? {
             all.extend_from_slice(&chunk);
         }
         return Ok(ok(crate::stdlib::bytes::to_value(all)));
     }
     let mut lines = Vec::new();
-    while let Ok(line) = rx.recv() {
+    while let Some(line) = recv_or_stop(&rx)? {
         lines.push(String::from_utf8_lossy(&line).into_owned());
     }
     Ok(ok(Value::String(Arc::new(lines.join("\n")))))
@@ -738,7 +757,7 @@ fn proc_stderr(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         return Err(misuse("stderr expects (process)"));
     }
     let p = proc_of(&args[0])?;
-    let s = p.stderr.lock().unwrap().clone();
+    let s = p.stderr.lock().unwrap_or_else(|e| e.into_inner()).clone();
     Ok(ok(text_or_bytes(s, p.bytes)))
 }
 
@@ -807,9 +826,8 @@ fn proc_wait(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let p = proc_of(&args[0])?;
     // Close stdin first if still open, so a filter waiting on more input
     // can reach EOF and exit instead of hanging the wait forever.
-    *p.stdin.lock().unwrap() = None;
-    let mut child = p.child.lock().unwrap();
-    match child.wait() {
+    *p.stdin.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    match wait_or_stop(&p.child)? {
         Ok(status) => {
             let (code, signal) = exit_parts(&status);
             let mut fields = crate::ast::ValueMap::default();
@@ -821,6 +839,91 @@ fn proc_wait(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             }))
         }
         Err(e) => Ok(err(format!("wait: {}", e))),
+    }
+}
+
+/// Wait for `child` to exit, ending with `Err` (the stop's message) when
+/// this thread is asked to stop meanwhile; the child runs on then. On
+/// macOS the exit is met at once through kqueue, in 20 ms slices between
+/// which the stop is looked for; elsewhere `try_wait` is polled, every 1
+/// ms at first and then less often, up to every 20 ms. The child's lock
+/// is held only to look, so a `proc.kill` from another task gets in.
+fn wait_or_stop(child: &Mutex<Child>) -> Result<std::io::Result<std::process::ExitStatus>, String> {
+    #[cfg(target_os = "macos")]
+    let kq = exit_queue(child.lock().unwrap_or_else(|e| e.into_inner()).id());
+    let mut nap = std::time::Duration::from_millis(1);
+    loop {
+        match child.lock().unwrap_or_else(|e| e.into_inner()).try_wait() {
+            Ok(Some(status)) => return Ok(Ok(status)),
+            Ok(None) => {}
+            Err(e) => return Ok(Err(e)),
+        }
+        if crate::interrupt::pending() {
+            return Err(crate::interrupt::stop_message());
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(kq) = &kq {
+            kq.wait(std::time::Duration::from_millis(20));
+            continue;
+        }
+        crate::interrupt::sleep(nap)?;
+        nap = (nap * 2).min(std::time::Duration::from_millis(20));
+    }
+}
+
+/// A kqueue watching one process for its exit.
+#[cfg(target_os = "macos")]
+struct ExitQueue(i32);
+
+#[cfg(target_os = "macos")]
+fn exit_queue(pid: u32) -> Option<ExitQueue> {
+    // SAFETY: plain kqueue calls on a descriptor this function owns; the
+    // event names the child's pid, which stays ours until it is reaped.
+    unsafe {
+        let kq = libc::kqueue();
+        if kq < 0 {
+            return None;
+        }
+        let ev = libc::kevent {
+            ident: pid as usize,
+            filter: libc::EVFILT_PROC,
+            flags: libc::EV_ADD | libc::EV_ONESHOT,
+            fflags: libc::NOTE_EXIT,
+            data: 0,
+            udata: std::ptr::null_mut(),
+        };
+        if libc::kevent(kq, &ev, 1, std::ptr::null_mut(), 0, std::ptr::null()) < 0 {
+            // already gone (ESRCH): try_wait reaps it next
+            libc::close(kq);
+            return None;
+        }
+        Some(ExitQueue(kq))
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl ExitQueue {
+    /// Wait up to `d` for the exit.
+    fn wait(&self, d: std::time::Duration) {
+        let ts = libc::timespec {
+            tv_sec: d.as_secs() as libc::time_t,
+            tv_nsec: d.subsec_nanos() as libc::c_long,
+        };
+        let mut out: libc::kevent = unsafe { std::mem::zeroed() };
+        // SAFETY: one event out, into a zeroed struct of the right type.
+        unsafe {
+            libc::kevent(self.0, std::ptr::null(), 0, &mut out, 1, &ts);
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for ExitQueue {
+    fn drop(&mut self) {
+        // SAFETY: the descriptor is ours and closed once.
+        unsafe {
+            libc::close(self.0);
+        }
     }
 }
 
@@ -930,7 +1033,7 @@ fn proc_kill(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if tree && !p.group {
         return Ok(err(NO_GROUP));
     }
-    let mut child = p.child.lock().unwrap();
+    let mut child = p.child.lock().unwrap_or_else(|e| e.into_inner());
     if tree {
         kill_tree(&mut child);
     } else {

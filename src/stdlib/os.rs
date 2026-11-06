@@ -663,7 +663,7 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if let Err(e) = &outcome
         && e.kind() == std::io::ErrorKind::Interrupted
     {
-        return Err(crate::interrupt::MESSAGE.into());
+        return Err(crate::interrupt::stop_message().into());
     }
 
     match outcome {

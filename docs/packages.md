@@ -1032,12 +1032,14 @@ match runtime.load_module("/work/plugins/tier-map/plugin.ol", grant) {
   the host's authority. Its pure computation still answers. A later
   `load_module` of the folder replaces the tombstone with the new grant.
 - **A time budget per call.** `runtime.call_budget(f, args, ms)` stops
-  the call past `ms` — an interrupt aimed at the calling thread only, so
-  the program's other threads run on — catches its failure, and answers
-  `#{ ok, value | error, frames, over, us }`. Native code compiled after
-  the first budget polls for it too. A builtin that blocks (a long
-  `os.exec`, a sleep) is not interrupted until it returns, and a thread
-  the module starts is not under the budget.
+  the call past `ms`, catches its failure, and answers
+  `#{ ok, value | error, frames, over, us }`. Each thread has its own
+  budgets: one task's long budget never holds back another's short one,
+  and the program's other threads run on. Every tier stops: the
+  interpreter, the VM, and native code, including code compiled before
+  the first budget. A wait stops too: `chan.recv`, `chan.ask`, a full
+  `chan.send`, `chan.recv_timeout` and `time.sleep` end as soon as the
+  budget runs out. A thread the module starts is not under the budget.
 - **Where a failure happened.** A caught error's frames — each `#{ file,
   line, fn }`, innermost first — come with `call_budget`'s answer, and
   `runtime.last_error()` keeps the last one any boundary on the thread

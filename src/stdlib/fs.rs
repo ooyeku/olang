@@ -280,8 +280,7 @@ fn read_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 fn read_file_options(
     opts: Option<&Value>,
 ) -> Result<(&'static str, bool), Box<dyn std::error::Error>> {
-    let lossy =
-        crate::stdlib::bytes::lossy_option(opts, "fs.read_file", &["lossy", "encoding"])?;
+    let lossy = crate::stdlib::bytes::lossy_option(opts, "fs.read_file", &["lossy", "encoding"])?;
     let encoding = match opts {
         Some(Value::Map(m)) => match m.get("encoding") {
             None | Some(Value::Unit) => "utf-8",
@@ -817,7 +816,7 @@ fn walk(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let mut found: Vec<String> = Vec::new();
     if let Err(e) = walk_into(std::path::Path::new(&root), &mut found) {
         if e.kind() == std::io::ErrorKind::Interrupted && crate::interrupt::should_stop() {
-            return Err(crate::interrupt::MESSAGE.into());
+            return Err(crate::interrupt::stop_message().into());
         }
         return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
             "walk: {}",

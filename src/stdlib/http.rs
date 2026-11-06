@@ -310,7 +310,7 @@ fn perform(
     }
 
     if crate::interrupt::should_stop() {
-        return Err(crate::interrupt::MESSAGE.into());
+        return Err(crate::interrupt::stop_message().into());
     }
     match builder.send() {
         Ok(response) => {
@@ -333,7 +333,7 @@ fn perform(
                 let mut chunk = vec![0u8; 64 * 1024];
                 loop {
                     if crate::interrupt::should_stop() {
-                        return Err(crate::interrupt::MESSAGE.into());
+                        return Err(crate::interrupt::stop_message().into());
                     }
                     match response.read(&mut chunk) {
                         Ok(0) => break Ok(()),

@@ -18,8 +18,6 @@
 use crate::ast::Value;
 use crate::native::{NativeHandle, NativeObject};
 use crate::ovm::value::OvmValue;
-#[cfg(not(target_arch = "wasm32"))]
-use crossbeam_channel::RecvTimeoutError;
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 #[cfg(target_arch = "wasm32")]
 use hosted as crossbeam_channel;
@@ -121,9 +119,14 @@ use std::sync::{Arc, Mutex, OnceLock};
 //   a program serving traffic never aborts (external input may arrive).
 // - The *parked set*: every unbounded wait (a blocking recv, a bounded
 //   send against a full queue, a `task.join`) registers a park entry
-//   naming its thread and site for as long as it blocks.
+//   naming its thread and site for as long as it blocks. An entry that
+//   an outside source may end (OL-512) does not count toward the proof:
+//   its thread has a deadline running (a budget), or its channel is fed
+//   by Rust code on a thread of its own (`ChannelSender`).
 //
-// Blocking waits are polls under the hood (a short timeout per tick).
+// A blocking wait wakes the moment what it waits for happens (a
+// message, room in the queue, the task's end) or its thread is asked to
+// stop; besides, it wakes once per tick for the stall check alone.
 // On each tick the waiter samples (generation, parked, live), where
 // the generation counter bumps on every park and unpark, and when a
 // thread joins or leaves the census. If two consecutive samples agree,
@@ -149,13 +152,37 @@ static CHAN_SEQ: AtomicU64 = AtomicU64::new(1);
 
 /// How often a parked thread wakes to run the stall check, and the
 /// resolution of the deadlock proof (two stable consecutive ticks).
-const STALL_TICK_MS: u64 = 250;
+pub(crate) const STALL_TICK_MS: u64 = 250;
 
 #[derive(Clone)]
 struct ParkSite {
     thread: String,
     what: String,
     since: crate::clock::Instant,
+    /// The parked thread's stop slot: a deadline running on it (a
+    /// budget, a `meta.eval` timeout) is a wake that will come.
+    slot: crate::interrupt::Handle,
+    /// The channel's Rust-side producers (`tty.events`, `gui.events`), when
+    /// it waits on a channel: while one lives, a value may still arrive
+    /// from outside the program's threads.
+    producers: Option<Arc<AtomicUsize>>,
+    /// Whether what the wait waits for is already there (a message in
+    /// the queue, room in a full one) and its thread has only not run
+    /// yet: a starved thread (a low QoS class under load) is no deadlock.
+    ready: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+}
+
+impl ParkSite {
+    /// Whether this wait can be ended by something outside the program's
+    /// threads (OL-512): it then proves nothing about a deadlock.
+    fn outside(&self) -> bool {
+        self.slot.has_deadline()
+            || self
+                .producers
+                .as_ref()
+                .is_some_and(|p| p.load(Ordering::SeqCst) > 0)
+            || self.ready.as_ref().is_some_and(|r| r())
+    }
 }
 
 fn parked() -> &'static Mutex<HashMap<u64, ParkSite>> {
@@ -217,19 +244,38 @@ impl Drop for ExternalWaker {
 /// Enter the parked set. The token unparks; the guard pattern is not
 /// used because unpark order interleaves with lock scopes.
 fn park(what: String) -> u64 {
+    park_on(what, None, None)
+}
+
+/// `park`, for a wait on a channel: whose Rust-side producers are counted
+/// by `producers`, and that `ready` says can go on.
+fn park_on(
+    what: String,
+    producers: Option<Arc<AtomicUsize>>,
+    ready: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+) -> u64 {
     let token = PARK_SEQ.fetch_add(1, Ordering::SeqCst);
     let site = ParkSite {
         thread: std::thread::current().name().unwrap_or("?").to_string(),
         what,
         since: crate::clock::Instant::now(),
+        slot: crate::interrupt::current(),
+        producers,
+        ready,
     };
-    parked().lock().unwrap().insert(token, site);
+    parked()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(token, site);
     PARK_GEN.fetch_add(1, Ordering::SeqCst);
     token
 }
 
 fn unpark(token: u64) {
-    parked().lock().unwrap().remove(&token);
+    parked()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&token);
     PARK_GEN.fetch_add(1, Ordering::SeqCst);
 }
 
@@ -242,7 +288,15 @@ fn stall_tick(last_gen: &mut Option<u64>) {
     }
     let generation = PARK_GEN.load(Ordering::SeqCst);
     let live = LIVE.load(Ordering::SeqCst);
-    let parked_count = parked().lock().unwrap().len();
+    // A wait an outside source can end (a deadline running on its
+    // thread, a channel fed from Rust) is not blocked for good: it
+    // counts as a live thread, as an `os.on_shutdown` handler does.
+    let parked_count = parked()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+        .filter(|s| !s.outside())
+        .count();
     let stable = *last_gen == Some(generation);
     *last_gen = Some(generation);
     if !(stable && live > 0 && parked_count == live) {
@@ -257,7 +311,7 @@ fn stall_tick(last_gen: &mut Option<u64>) {
     // The terminal back first, so the report is readable.
     #[cfg(feature = "native")]
     crate::stdlib::tty::restore_terminal();
-    let sites = parked().lock().unwrap().clone();
+    let sites = parked().lock().unwrap_or_else(|e| e.into_inner()).clone();
     let mut lines: Vec<String> = sites
         .values()
         .map(|s| {
@@ -339,6 +393,68 @@ pub fn parked_sites() -> Vec<(String, String, u64)> {
     out
 }
 
+/// What a wait on a receiver came to.
+#[cfg(not(target_arch = "wasm32"))]
+enum Waited {
+    Got(Value),
+    Closed,
+    TimedOut,
+}
+
+/// Receive from `rx`, until `deadline` when one is given, ending at once
+/// with `Err` (the stop's message) when this thread is asked to stop: an
+/// interrupt, a budget's trip or a cancel wakes the wait through the
+/// thread's wake channel, which it selects on next to `rx`. `on_tick`
+/// runs every `STALL_TICK_MS` of an unbounded wait (the stall check).
+#[cfg(not(target_arch = "wasm32"))]
+fn wait_recv(
+    rx: &Receiver<Value>,
+    deadline: Option<crate::clock::Instant>,
+    mut on_tick: impl FnMut(),
+) -> Result<Waited, String> {
+    match rx.try_recv() {
+        Ok(v) => return Ok(Waited::Got(v)),
+        Err(TryRecvError::Disconnected) => return Ok(Waited::Closed),
+        Err(TryRecvError::Empty) => {}
+    }
+    let wake = crate::interrupt::wake_receiver();
+    let tick = std::time::Duration::from_millis(STALL_TICK_MS);
+    loop {
+        if crate::interrupt::pending() {
+            return Err(crate::interrupt::stop_message());
+        }
+        let wait = match deadline {
+            Some(d) => {
+                let now = crate::clock::Instant::now();
+                if now >= d {
+                    return Ok(Waited::TimedOut);
+                }
+                (d - now).min(tick)
+            }
+            None => tick,
+        };
+        let mut sel = crossbeam_channel::Select::new();
+        let at_rx = sel.recv(rx);
+        sel.recv(&wake);
+        match sel.select_timeout(wait) {
+            Ok(op) if op.index() == at_rx => {
+                return Ok(match op.recv(rx) {
+                    Ok(v) => Waited::Got(v),
+                    Err(_) => Waited::Closed,
+                });
+            }
+            Ok(op) => {
+                let _ = op.recv(&wake);
+            }
+            Err(_) => {
+                if deadline.is_none() {
+                    on_tick();
+                }
+            }
+        }
+    }
+}
+
 /// One channel's two ends. The sender is cloned out of its lock before
 /// use so a blocking bounded send never holds it. The receiver is a
 /// multi-consumer one, shared without a lock: concurrent consumers wait
@@ -359,6 +475,10 @@ struct Chan {
     /// rendezvous channel. A simulated world (`sim`) reads it to keep a
     /// channel's semantics while it runs every operation as a try.
     cap: Option<usize>,
+    /// How many `ChannelSender`s (Rust code feeding the channel from a
+    /// thread of its own) are alive: while any is, a receive waits on an
+    /// outside source and is no deadlock.
+    producers: Arc<AtomicUsize>,
 }
 
 #[derive(Clone)]
@@ -567,6 +687,7 @@ fn register_with_cap(tx: Tx, rx: Receiver<Value>, cap: Option<usize>) -> Value {
         recv_waiting: AtomicUsize::new(0),
         send_waiting: AtomicUsize::new(0),
         cap,
+        producers: Arc::new(AtomicUsize::new(0)),
     }))
 }
 
@@ -581,8 +702,26 @@ pub fn fresh_channel() -> Value {
 /// thread) that feeds olang code: `tty.events` is one. Sends go through
 /// the channel's own sender, so `chan.close` from either side closes it,
 /// and the depth `chan.stat` reports stays true.
-#[derive(Clone)]
 pub struct ChannelSender(Arc<Chan>);
+
+impl ChannelSender {
+    fn new(chan: Arc<Chan>) -> ChannelSender {
+        chan.producers.fetch_add(1, Ordering::SeqCst);
+        ChannelSender(chan)
+    }
+}
+
+impl Clone for ChannelSender {
+    fn clone(&self) -> Self {
+        ChannelSender::new(self.0.clone())
+    }
+}
+
+impl Drop for ChannelSender {
+    fn drop(&mut self) {
+        self.0.producers.fetch_sub(1, Ordering::SeqCst);
+    }
+}
 
 /// A send that never waits: `false` when the channel is closed (or a
 /// bounded one is full).
@@ -600,7 +739,7 @@ fn send_now(t: &Sender<Value>, value: Value) -> bool {
 impl ChannelSender {
     /// Send a value; `false` once the channel is closed.
     pub fn send(&self, value: Value) -> bool {
-        let tx = self.0.tx.lock().unwrap().clone();
+        let tx = self.0.tx.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let sent = match tx {
             // try_send: a full bounded queue is a send refused, never a
             // wait, and crossbeam's waiting send (which reads std's
@@ -617,7 +756,7 @@ impl ChannelSender {
     /// Close the channel: queued values are still received, then `recv`
     /// reports the close.
     pub fn close(&self) {
-        *self.0.tx.lock().unwrap() = None;
+        *self.0.tx.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 }
 
@@ -626,7 +765,7 @@ pub fn channel_with_sender() -> (Value, ChannelSender) {
     let (tx, rx) = crossbeam_channel::unbounded();
     let value = register(Tx::Unbounded(tx), rx);
     let chan = chan_of(&value).expect("a fresh channel");
-    (value, ChannelSender(chan))
+    (value, ChannelSender::new(chan))
 }
 
 fn chan_new(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
@@ -667,7 +806,7 @@ fn chan_send(mut args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     let chan = chan_of(&args[0])?;
     // Clone the sender out of its lock: a bounded send may block until a
     // receiver drains, and holding the lock would stall chan.close.
-    let tx = chan.tx.lock().unwrap().clone();
+    let tx = chan.tx.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let Some(tx) = tx else {
         return Ok(err("channel is closed"));
     };
@@ -697,39 +836,55 @@ fn chan_send(mut args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         #[cfg(not(target_arch = "wasm32"))]
         Tx::Bounded(t) => {
             use crossbeam_channel::TrySendError;
-            let mut value = value;
-            let mut parked_mark: Option<crate::profile::Blocked> = None;
-            let mut token: Option<u64> = None;
+            let value = match t.try_send(value) {
+                Ok(()) => {
+                    chan.depth.fetch_add(1, Ordering::Relaxed);
+                    return Ok(ok(Value::Unit));
+                }
+                Err(TrySendError::Disconnected(_)) => return Ok(err("channel is closed")),
+                Err(TrySendError::Full(v)) => v,
+            };
+            // Full: wait for room, woken by the receiver that makes it
+            // (no sleep loop), or by this thread being asked to stop.
+            let _parked_mark = crate::profile::blocked();
+            let room = t.clone();
+            let token = park_on(
+                format!("chan.send on full channel #{}", chan.id),
+                None,
+                Some(Arc::new(move || !room.is_full())),
+            );
+            chan.send_waiting.fetch_add(1, Ordering::Relaxed);
+            let wake = crate::interrupt::wake_receiver();
+            let tick = std::time::Duration::from_millis(STALL_TICK_MS);
             let mut last_gen: Option<u64> = None;
-            let mut last_tick = crate::clock::Instant::now();
+            let mut value = Some(value);
             let outcome = loop {
-                match t.try_send(value) {
-                    Ok(()) => {
-                        chan.depth.fetch_add(1, Ordering::Relaxed);
-                        break ok(Value::Unit);
+                if crate::interrupt::pending() {
+                    break Err(crate::interrupt::stop_message());
+                }
+                let mut sel = crossbeam_channel::Select::new();
+                let at_tx = sel.send(&t);
+                sel.recv(&wake);
+                match sel.select_timeout(tick) {
+                    Ok(op) if op.index() == at_tx => {
+                        let v = value.take().expect("sent once");
+                        break Ok(match op.send(&t, v) {
+                            Ok(()) => {
+                                chan.depth.fetch_add(1, Ordering::Relaxed);
+                                ok(Value::Unit)
+                            }
+                            Err(_) => err("channel is closed"),
+                        });
                     }
-                    Err(TrySendError::Disconnected(_)) => break err("channel is closed"),
-                    Err(TrySendError::Full(v)) => {
-                        value = v;
-                        if token.is_none() {
-                            parked_mark = Some(crate::profile::blocked());
-                            token = Some(park(format!("chan.send on full channel #{}", chan.id)));
-                            chan.send_waiting.fetch_add(1, Ordering::Relaxed);
-                        }
-                        if last_tick.elapsed().as_millis() as u64 >= STALL_TICK_MS {
-                            last_tick = crate::clock::Instant::now();
-                            stall_tick(&mut last_gen);
-                        }
-                        crate::clock::sleep(std::time::Duration::from_millis(1));
+                    Ok(op) => {
+                        let _ = op.recv(&wake);
                     }
+                    Err(_) => stall_tick(&mut last_gen),
                 }
             };
-            if let Some(t) = token {
-                unpark(t);
-                chan.send_waiting.fetch_sub(1, Ordering::Relaxed);
-            }
-            drop(parked_mark);
-            Ok(outcome)
+            unpark(token);
+            chan.send_waiting.fetch_sub(1, Ordering::Relaxed);
+            Ok(outcome?)
         }
     }
 }
@@ -779,20 +934,22 @@ fn chan_ask(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             }
         }
         let _parked = crate::profile::blocked();
-        let token = park(format!("chan.ask waiting on channel #{}", reply_chan.id));
+        let answered = reply_chan.clone();
+        let token = park_on(
+            format!("chan.ask waiting on channel #{}", reply_chan.id),
+            None,
+            Some(Arc::new(move || !answered.rx.is_empty())),
+        );
         let mut last_gen: Option<u64> = None;
-        let outcome = loop {
-            match rx.recv_timeout(std::time::Duration::from_millis(STALL_TICK_MS)) {
-                Ok(v) => {
-                    reply_chan.depth.fetch_sub(1, Ordering::Relaxed);
-                    break got(v);
-                }
-                Err(RecvTimeoutError::Timeout) => stall_tick(&mut last_gen),
-                Err(RecvTimeoutError::Disconnected) => break err("channel is closed"),
-            }
-        };
+        let outcome = wait_recv(rx, None, || stall_tick(&mut last_gen));
         unpark(token);
-        Ok(outcome)
+        Ok(match outcome? {
+            Waited::Got(v) => {
+                reply_chan.depth.fetch_sub(1, Ordering::Relaxed);
+                got(v)
+            }
+            _ => err("channel is closed"),
+        })
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -809,23 +966,24 @@ fn chan_recv(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _parked = crate::profile::blocked();
-        let token = park(format!("chan.recv on channel #{}", chan.id));
+        let queued = chan.clone();
+        let token = park_on(
+            format!("chan.recv on channel #{}", chan.id),
+            Some(chan.producers.clone()),
+            Some(Arc::new(move || !queued.rx.is_empty())),
+        );
         chan.recv_waiting.fetch_add(1, Ordering::Relaxed);
-        let rx = &chan.rx;
         let mut last_gen: Option<u64> = None;
-        let outcome = loop {
-            match rx.recv_timeout(std::time::Duration::from_millis(STALL_TICK_MS)) {
-                Ok(v) => {
-                    chan.depth.fetch_sub(1, Ordering::Relaxed);
-                    break got(v);
-                }
-                Err(RecvTimeoutError::Timeout) => stall_tick(&mut last_gen),
-                Err(RecvTimeoutError::Disconnected) => break err("channel is closed"),
-            }
-        };
+        let outcome = wait_recv(&chan.rx, None, || stall_tick(&mut last_gen));
         unpark(token);
         chan.recv_waiting.fetch_sub(1, Ordering::Relaxed);
-        Ok(outcome)
+        Ok(match outcome? {
+            Waited::Got(v) => {
+                chan.depth.fetch_sub(1, Ordering::Relaxed);
+                got(v)
+            }
+            _ => err("channel is closed"),
+        })
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -895,25 +1053,24 @@ fn chan_recv_timeout(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
     #[cfg(target_arch = "wasm32")]
     return Ok(wait_hosted(&chan, Some(ms)));
     #[cfg(not(target_arch = "wasm32"))]
-    let _parked = crate::profile::blocked();
-    #[cfg(not(target_arch = "wasm32"))]
-    let rx = &chan.rx;
-    #[cfg(not(target_arch = "wasm32"))]
-    Ok(
-        match rx.recv_timeout(std::time::Duration::from_millis(ms)) {
-            Ok(v) => {
+    {
+        let _parked = crate::profile::blocked();
+        let deadline = crate::clock::Instant::now() + std::time::Duration::from_millis(ms);
+        Ok(match wait_recv(&chan.rx, Some(deadline), || {})? {
+            Waited::Got(v) => {
                 chan.depth.fetch_sub(1, Ordering::Relaxed);
                 got(v)
             }
-            Err(RecvTimeoutError::Timeout) => err("timed out"),
-            Err(RecvTimeoutError::Disconnected) => err("channel is closed"),
-        },
-    )
+            Waited::TimedOut => err("timed out"),
+            Waited::Closed => err("channel is closed"),
+        })
+    }
 }
 
 /// Advisory channel state for the REPL and the profiler: reads race
 /// concurrent sends by design, so treat the numbers as a snapshot.
 fn chan_stat(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    crate::contain::inject("chan.stat");
     if args.len() != 1 {
         return Err("chan.stat expects a channel".into());
     }
@@ -926,7 +1083,7 @@ fn chan_stat(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     );
     m.insert(
         "closed".to_string(),
-        Value::Boolean(chan.tx.lock().unwrap().is_none()),
+        Value::Boolean(chan.tx.lock().unwrap_or_else(|e| e.into_inner()).is_none()),
     );
     m.insert(
         "recv_waiting".to_string(),
@@ -949,7 +1106,7 @@ pub(crate) fn is_channel(value: &Value) -> bool {
 /// does to the channels it was watching (`task.watch`).
 pub(crate) fn close_value(value: &Value) {
     if let Ok(chan) = chan_of(value) {
-        *chan.tx.lock().unwrap() = None;
+        *chan.tx.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 }
 
@@ -958,7 +1115,7 @@ fn chan_close(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         return Err("chan.close expects a channel".into());
     }
     let chan = chan_of(&args[0])?;
-    *chan.tx.lock().unwrap() = None;
+    *chan.tx.lock().unwrap_or_else(|e| e.into_inner()) = None;
     Ok(Value::Unit)
 }
 
@@ -1001,7 +1158,7 @@ pub(crate) fn sim_rendezvous() -> Value {
 /// Send without waiting. The confinement rule is the caller's to check.
 pub(crate) fn sim_try_send(channel: &Value, value: Value) -> Result<SimSend, String> {
     let chan = chan_of(channel).map_err(|e| e.to_string())?;
-    let tx = chan.tx.lock().unwrap().clone();
+    let tx = chan.tx.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let Some(tx) = tx else {
         return Ok(SimSend::Closed);
     };

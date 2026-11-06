@@ -2133,6 +2133,13 @@ println(show(attempt(() => map_get(5, "k"))))   // Err("map_get: first argument 
 println(show(attempt(() => 41 + 1)))            // Ok(42)
 ```
 
+The same boundary holds for a bug in olang itself. A Rust panic inside
+`attempt`, `runtime.call_budget`, `runtime.call_cancellable` or a
+spawned task becomes that call's or that task's `Err`, with the message
+`"internal error: …"` saying what panicked and where. The rest of the
+program runs on. A panic anywhere else still ends the process, with a
+report.
+
 A library raises one of its own with `raise(message)`: a runtime error
 whose message is `message`, word for word. It is for the caller that
 used the library wrongly — an unknown option, a missing node in a test
@@ -2286,7 +2293,14 @@ let p = spawn heavy(21)
 println(to_string(task.join(p) == task.join(p)))   // memoized: true
 ```
 
-**Failure is a value.** A task that raises yields `Err(message)` from
+A join wakes the moment the task's thread ends: it does not look again
+on a timer. Starting a task and joining it costs tens of microseconds
+(about 30 µs interpreted on an M-series Mac). On the default tiers a new
+thread compiles the functions it calls afresh, which adds about 85 µs to
+a task's first call of each.
+
+**Failure is a value.** A task that raises (or that meets a bug in
+olang itself, an `"internal error: …"`) yields `Err(message)` from
 `task.join` rather than aborting the program, so worker failure is
 handled with the ordinary Result toolkit and one bad task never kills
 the batch. A task that *returns* an `Err` joins as `Ok(Err(…))`, so the
@@ -2306,9 +2320,9 @@ if the task finished within `ms` milliseconds (`Ok(Ok(v))`, or
 `Ok(Err(e))` when it raised) and `Err("timed out")` otherwise. The
 budget can also be given as `#{ timeout_ms }`.
 
-It bounds how long you *wait*, not how long the task *works*: olang
-has no task cancellation. A timed-out task runs to completion and its
-result stays collectible from the same handle:
+It bounds how long you *wait*, not how long the task *works*. A
+timed-out task runs on, and its result stays collectible from the same
+handle:
 
 ```olang
 fn slow(n) = { time.sleep(80); n }
@@ -2317,8 +2331,40 @@ println(show(task.join_timeout(t, 5)))                      // Err("timed out")
 println(show(task.join_timeout(t, #{ "timeout_ms": 5000 })))   // Ok(Ok(7)) — it kept running
 ```
 
-When you need work that genuinely stops early, give the task something
-to check: a channel it polls, or a value it re-reads each iteration.
+### Stopping a task
+
+`task.interrupt(t, reason?)` stops a task from outside. The task raises
+`"interrupted"` (or `"interrupted: reason"`) at its next statement, loop
+iteration or call, whichever tier runs it. A task waiting in
+`chan.recv`, `chan.ask`, a full `chan.send`, `task.join`, `time.sleep`
+or a `proc` read stops waiting at once. The answer is `true` when the
+task was running and has been asked, `false` when it had already ended.
+
+```olang
+fn worker() = { let mut n = 0; while true { n = n + 1 }; n }
+let t = spawn worker()
+time.sleep(20)
+task.interrupt(t, "restart")
+println(show(task.join(t)))   // Err("interrupted: restart")
+```
+
+The error unwinds like any other, so the task's `attempt` can catch it
+to clean up. It is asked once: code that catches it and carries on is
+not stopped again. A task inside a system call that cannot be woken
+(a long `os.exec`, a blocking read of a socket) raises once the call
+returns; until then `task.list()` shows it as `"interrupting"`.
+
+**Priority.** On macOS a task can run at a lower or higher
+quality-of-service class. `task.set_qos("background")` inside a task, or
+`task.set_qos(t, "background")` from outside, makes it yield the CPU to
+the program's interactive work under load; `"user-interactive"` is the
+top class, for the work a person is waiting on. A task starts with the
+class of the thread that spawned it, and `task.qos()` says the current
+one.
+
+When a task should choose its own stopping points, give it something to
+check instead: a `cancel` token, a channel it polls, or a value it
+re-reads each iteration.
 
 ### Channels
 

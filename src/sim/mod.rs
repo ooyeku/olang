@@ -1975,15 +1975,22 @@ pub fn spawn(interpreter: &Interpreter, expr: &Expr) -> Result<Value, Interprete
     let mut worker = interpreter.thread_safe_clone();
     let expr = expr.clone();
     let global = crate::interpreter::spawn_registry::next_id();
+    let stop = crate::interrupt::Handle::fresh();
+    let thread_stop = stop.clone();
+    let (done_tx, done) = crossbeam_channel::bounded::<()>(0);
     let (_, handle) = spawn_task(
         &ctx.world,
         ctx.task,
         ctx.node,
         Some(global),
         "",
-        move || worker.eval_expr(&expr).map_err(|e| e.to_string()),
+        move || {
+            let _done = done_tx;
+            crate::interrupt::adopt(&thread_stop);
+            worker.eval_expr(&expr).map_err(|e| e.to_string())
+        },
     )?;
-    crate::interpreter::spawn_registry::register(global, handle);
+    crate::interpreter::spawn_registry::register(global, handle, stop, done);
     let value = crate::stdlib::task::handle(global);
     ctx.world.yield_point(ctx.task)?;
     Ok(value)
@@ -2018,8 +2025,8 @@ where
             });
             let _counted = crate::memory::enter_task(&format!("olang-sim-{local}"));
             let outcome = match world.wait_first_turn(local) {
-                Ok(()) => std::panic::catch_unwind(std::panic::AssertUnwindSafe(body))
-                    .unwrap_or_else(|_| Err("task thread panicked".to_string())),
+                Ok(()) => crate::contain::catch("a world's task", body)
+                    .unwrap_or_else(|panic| Err(format!("internal error: {panic}"))),
                 Err(e) => Err(InterpreterError::from(e).to_string()),
             };
             // `task.watch`ed channels close as the task ends, under its

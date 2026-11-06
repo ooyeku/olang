@@ -110,6 +110,7 @@ fn time_monotonic(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
 }
 
 /// How long a sleep goes before it looks for an interrupt again, ms.
+#[cfg(target_arch = "wasm32")]
 const SLEEP_SLICE_MS: u64 = 20;
 
 /// Block for the given number of milliseconds.
@@ -130,26 +131,27 @@ fn time_sleep(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         }
     };
     let _parked = crate::profile::blocked();
-    // In slices, the interrupt asked between them: a REPL's ⌘. (or a
-    // call's time budget) stops a long sleep as it stops a loop — one
-    // sleep of the whole time could not be stopped at all.
-    // Each slice is measured against one deadline, not counted: a slice
-    // ends late (the system's timer slack, more of it in a busy or
-    // backgrounded process), and counting slices added every lateness
-    // up, so a sleep in Studio ran 4–10 times what was asked (OL-331).
-    let deadline = std::time::Duration::from_millis(ms);
-    let start = crate::clock::Instant::now();
-    loop {
-        if crate::interrupt::pending() {
-            return Err(crate::interrupt::MESSAGE.into());
+    // A stop asked of this thread (a REPL's ⌘., a call's time budget,
+    // `task.interrupt`) ends the sleep at once: the wait is on the
+    // thread's wake channel, measured against one deadline (OL-331).
+    #[cfg(not(target_arch = "wasm32"))]
+    crate::interrupt::sleep(std::time::Duration::from_millis(ms))?;
+    #[cfg(target_arch = "wasm32")]
+    {
+        let deadline = std::time::Duration::from_millis(ms);
+        let start = crate::clock::Instant::now();
+        loop {
+            if crate::interrupt::pending() {
+                return Err(crate::interrupt::stop_message().into());
+            }
+            let Some(left) = deadline.checked_sub(start.elapsed()) else {
+                break;
+            };
+            if left.is_zero() {
+                break;
+            }
+            crate::clock::sleep(left.min(std::time::Duration::from_millis(SLEEP_SLICE_MS)));
         }
-        let Some(left) = deadline.checked_sub(start.elapsed()) else {
-            break;
-        };
-        if left.is_zero() {
-            break;
-        }
-        crate::clock::sleep(left.min(std::time::Duration::from_millis(SLEEP_SLICE_MS)));
     }
     Ok(Value::Unit)
 }

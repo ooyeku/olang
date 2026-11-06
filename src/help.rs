@@ -1681,7 +1681,7 @@ impl HelpSystem {
             syntax: "meta.eval(source, options?)".to_string(),
             parameters: vec![
                 "source: String - olang source text to evaluate".to_string(),
-                "options: Map - optional budget for untrusted or user-authored source: `max_steps` (loop iterations and calls, deterministic) and `timeout_ms` (wall clock); exceeding either yields Err(\"budget exceeded ...\") instead of a hung thread".to_string(),
+                "options: Map - optional budget for untrusted or user-authored source: `max_steps` (loop iterations and calls, deterministic, counted on every tier) and `timeout_ms` (wall clock); exceeding either yields Err(\"budget exceeded ...\") instead of a hung thread".to_string(),
             ],
             return_type: "Result<value, Error>".to_string(),
             examples: vec![
@@ -3020,6 +3020,31 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             ],
         );
         self.doc_ex(
+            "task.interrupt",
+            "task.interrupt(t, reason?)",
+            "Bool",
+            "task",
+            "Stop task t: it raises \"interrupted\" (or \"interrupted: reason\") at its next statement, loop iteration or call, on every tier, and at once when it waits (chan.recv, chan.ask, a full chan.send, task.join, time.sleep, a proc read). Asked once: an attempt in the task can catch it and carry on. true when the task was running and is now asked, false when it had already ended. A task in a system call raises once the call returns; task.list shows it as \"interrupting\" until then.",
+            &[r##"task.interrupt(worker, "restart")
+task.join(worker)   // Err("interrupted: restart")"##],
+        );
+        self.doc_ex(
+            "task.set_qos",
+            "task.set_qos(class) / task.set_qos(t, class)",
+            "String",
+            "task",
+            "Give the calling thread, or task t, a macOS quality-of-service class: \"user-interactive\", \"user-initiated\", \"default\", \"utility\" or \"background\". A lower class yields the CPU to higher ones under load, and on Apple silicon runs on the efficiency cores. Task t takes it at its next statement, loop iteration or call, or at once when it waits. A task starts with the class of the thread that spawned it. Answers the class; does nothing on other systems.",
+            &[r##"spawn { task.set_qos("background"); reindex(files) }"##, r##"task.set_qos(worker, "user-interactive")"##],
+        );
+        self.doc_ex(
+            "task.qos",
+            "task.qos()",
+            "String",
+            "task",
+            "The calling thread's quality-of-service class (see task.set_qos); \"default\" on other systems.",
+            &[r##"task.qos()  // "default""##],
+        );
+        self.doc_ex(
             "task.watch",
             "task.watch(t, c)",
             "Unit",
@@ -4028,7 +4053,7 @@ task.watch(service, inbox)   // a dead service is an Err at the next recv, not a
             "time.sleep(ms)",
             "Unit",
             "time",
-            "block for ms milliseconds",
+            "block for ms milliseconds; ends early, raising, when the thread is asked to stop (a budget running out, task.interrupt, a cancel)",
             &[r##"time.sleep(250)"##],
         );
 
@@ -7714,7 +7739,9 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
         });
         self.add_function(FunctionDoc {
             name: "str.byte_len".to_string(),
-            description: "How many bytes a string's UTF-8 takes: O(1), where str.length counts characters.".to_string(),
+            description:
+                "How many bytes a string's UTF-8 takes: O(1), where str.length counts characters."
+                    .to_string(),
             syntax: "str.byte_len(s)".to_string(),
             parameters: vec![],
             return_type: "Int".to_string(),
@@ -8981,7 +9008,7 @@ if boot != () && boot.running != () => println("running layer " + boot.running) 
             "runtime.call_budget(f, args, ms)",
             "Map",
             "runtime",
-            "Call f(args…) with a time budget: past `ms` milliseconds its evaluation is stopped — as an interrupt, on this thread only — and any failure is caught. #{ \"ok\", \"value\" (when ok), \"error\" and \"frames\" (when not: each #{ \"file\", \"line\", \"fn\" }, innermost first), \"over\" (it ran past its budget), \"us\" (microseconds it took) }. How a host calls code it does not trust to finish.",
+            "Call f(args…) with a time budget: past `ms` milliseconds its evaluation is stopped — as an interrupt, on this thread only (each thread's budgets are its own) — and any failure is caught. Every tier stops, and so does a wait inside the call (chan.recv, chan.ask, a full chan.send, time.sleep). #{ \"ok\", \"value\" (when ok), \"error\" and \"frames\" (when not: each #{ \"file\", \"line\", \"fn\" }, innermost first), \"over\" (it ran past its budget), \"us\" (microseconds it took) }. A Rust panic inside is the error too (\"internal error: …\"). How a host calls code it does not trust to finish.",
             &[r##"let r = runtime.call_budget((n) => n * 2, [21], 50)
 println(show(map_get(r, "value")) + " in " + show(map_get(r, "us")) + " µs")"##],
         );
@@ -13653,15 +13680,18 @@ For function-specific syntax, use: {}:help <function_name>{}",
 
         self.add_function(FunctionDoc {
             name: "crypto.ed25519_keypair".to_string(),
-            description: "A new Ed25519 key pair; each key is base64 (the private key is its 32-byte seed)".to_string(),
+            description:
+                "A new Ed25519 key pair; each key is base64 (the private key is its 32-byte seed)"
+                    .to_string(),
             syntax: "crypto.ed25519_keypair()".to_string(),
             parameters: vec![],
             return_type: "Result<{private_key: String, public_key: String}, Error>".to_string(),
-            examples: vec![
-                "let keys = unwrap(crypto.ed25519_keypair())".to_string(),
-            ],
+            examples: vec!["let keys = unwrap(crypto.ed25519_keypair())".to_string()],
             category: "Crypto".to_string(),
-            see_also: vec!["crypto.ed25519_sign".to_string(), "crypto.ed25519_verify".to_string()],
+            see_also: vec![
+                "crypto.ed25519_sign".to_string(),
+                "crypto.ed25519_verify".to_string(),
+            ],
         });
 
         self.add_function(FunctionDoc {
@@ -13673,7 +13703,8 @@ For function-specific syntax, use: {}:help <function_name>{}",
             ],
             return_type: "Result<String, Error>".to_string(),
             examples: vec![
-                "crypto.ed25519_public_key(keys.private_key) == Ok(keys.public_key)  // true".to_string(),
+                "crypto.ed25519_public_key(keys.private_key) == Ok(keys.public_key)  // true"
+                    .to_string(),
             ],
             category: "Crypto".to_string(),
             see_also: vec!["crypto.ed25519_keypair".to_string()],
@@ -13681,7 +13712,8 @@ For function-specific syntax, use: {}:help <function_name>{}",
 
         self.add_function(FunctionDoc {
             name: "crypto.ed25519_sign".to_string(),
-            description: "Sign data with an Ed25519 private key: the 64-byte signature, base64".to_string(),
+            description: "Sign data with an Ed25519 private key: the 64-byte signature, base64"
+                .to_string(),
             syntax: "crypto.ed25519_sign(data, private_key)".to_string(),
             parameters: vec![
                 "data: String or Bytes - what to sign".to_string(),
@@ -13689,7 +13721,8 @@ For function-specific syntax, use: {}:help <function_name>{}",
             ],
             return_type: "Result<String, Error>".to_string(),
             examples: vec![
-                "let sig = unwrap(crypto.ed25519_sign(\"release 1.2.0\", keys.private_key))".to_string(),
+                "let sig = unwrap(crypto.ed25519_sign(\"release 1.2.0\", keys.private_key))"
+                    .to_string(),
             ],
             category: "Crypto".to_string(),
             see_also: vec!["crypto.ed25519_verify".to_string()],
@@ -13892,7 +13925,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
         });
         self.add_function(FunctionDoc {
             name: "attempt".to_string(),
-            description: "The boundary-recovery form: f() runs; a raise inside it becomes Err(message) and any other outcome Ok(value). For the one place a long-lived loop or a compute thread must answer \"500\" rather than end — every other error stays a Result or a raise, by the error model. Control flow (`return`, `break`, `?`) passes through untouched.".to_string(),
+            description: "The boundary-recovery form: f() runs; a raise inside it becomes Err(message) and any other outcome Ok(value). For the one place a long-lived loop or a compute thread must answer \"500\" rather than end — every other error stays a Result or a raise, by the error model. A bug in olang itself (a Rust panic) inside f is the Err too, \"internal error: …\", and the program runs on. Control flow (`return`, `break`, `?`) passes through untouched.".to_string(),
             syntax: "attempt(f)".to_string(),
             parameters: vec!["f: () => value - the call that may raise".to_string()],
             return_type: "Result<value, String>".to_string(),

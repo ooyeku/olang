@@ -27,6 +27,11 @@ struct Entry {
     /// channel itself — no window in which a channel is watched by
     /// nobody.
     finished: bool,
+    /// The task's thread's stop slot: what `task.interrupt` asks.
+    stop: crate::interrupt::Handle,
+    /// Disconnected once the task's thread ends (it holds the only
+    /// sender): what a join waits on.
+    done: crossbeam_channel::Receiver<()>,
 }
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
@@ -41,12 +46,15 @@ fn tasks() -> &'static Mutex<HashMap<u64, Entry>> {
 /// thread has already finished reports "done" — the memoized join just
 /// has not collected it yet, and "running" would be a lie.
 pub(crate) fn list() -> Vec<(u64, &'static str, u64)> {
-    let map = tasks().lock().unwrap();
+    let map = tasks().lock().unwrap_or_else(|e| e.into_inner());
     let mut out: Vec<(u64, &'static str, u64)> = map
         .iter()
         .map(|(id, e)| {
             let state = match &e.slot {
                 TaskSlot::Running(h) if h.is_finished() => "done",
+                // asked to stop, and not there yet: in a system call,
+                // say, it raises once the call returns
+                TaskSlot::Running(_) if e.stop.interrupt_pending() => "interrupting",
                 TaskSlot::Running(_) => "running",
                 TaskSlot::Joining => "joining",
                 TaskSlot::Done(_) => "done",
@@ -62,7 +70,7 @@ pub(crate) fn list() -> Vec<(u64, &'static str, u64)> {
 /// still running and now holds the channel; false when the task is gone
 /// (or unknown), in which case the caller closes the channel itself.
 pub(crate) fn watch(id: u64, channel: Value) -> bool {
-    let mut map = tasks().lock().unwrap();
+    let mut map = tasks().lock().unwrap_or_else(|e| e.into_inner());
     match map.get_mut(&id) {
         Some(entry) if !entry.finished => {
             entry.watched.push(channel);
@@ -75,7 +83,7 @@ pub(crate) fn watch(id: u64, channel: Value) -> bool {
 /// The task's own thread, ending: mark it finished and take the channels
 /// it was watching, in one lock acquisition.
 pub(crate) fn finish(id: u64) -> Vec<Value> {
-    let mut map = tasks().lock().unwrap();
+    let mut map = tasks().lock().unwrap_or_else(|e| e.into_inner());
     match map.get_mut(&id) {
         Some(entry) => {
             entry.finished = true;
@@ -85,18 +93,51 @@ pub(crate) fn finish(id: u64) -> Vec<Value> {
     }
 }
 
+/// `task.interrupt`: ask task `id` to stop at its next poll. `Some(true)`
+/// when it was asked, `Some(false)` when it had already ended, `None`
+/// for an unknown id.
+pub(crate) fn interrupt(id: u64, reason: Option<String>) -> Option<bool> {
+    let stop = {
+        let map = lock_tasks();
+        let e = map.get(&id)?;
+        let running = !e.finished && matches!(&e.slot, TaskSlot::Running(h) if !h.is_finished());
+        if !running {
+            return Some(false);
+        }
+        e.stop.clone()
+    };
+    stop.interrupt(reason);
+    Some(true)
+}
+
+/// Task `id`'s stop slot, for asking things of its thread.
+pub(crate) fn stop_handle(id: u64) -> Option<crate::interrupt::Handle> {
+    lock_tasks().get(&id).map(|e| e.stop.clone())
+}
+
+fn lock_tasks() -> std::sync::MutexGuard<'static, HashMap<u64, Entry>> {
+    tasks().lock().unwrap_or_else(|e| e.into_inner())
+}
+
 pub(crate) fn next_id() -> u64 {
     NEXT_ID.fetch_add(1, Ordering::Relaxed)
 }
 
-pub(crate) fn register(id: u64, handle: JoinHandle<Result<Value, String>>) {
-    tasks().lock().unwrap().insert(
+pub(crate) fn register(
+    id: u64,
+    handle: JoinHandle<Result<Value, String>>,
+    stop: crate::interrupt::Handle,
+    done: crossbeam_channel::Receiver<()>,
+) {
+    tasks().lock().unwrap_or_else(|e| e.into_inner()).insert(
         id,
         Entry {
             slot: TaskSlot::Running(handle),
             started: crate::clock::Instant::now(),
             watched: Vec::new(),
             finished: false,
+            stop,
+            done,
         },
     );
 }
@@ -142,50 +183,126 @@ impl Drop for SpawnGuard {
 /// still join the task, so this never races an in-flight join.
 fn forget(id: u64) {
     if let Some(map) = TASKS.get() {
-        map.lock().unwrap().remove(&id);
+        map.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
     }
+}
+
+/// What a look at a task found.
+enum Look {
+    /// Gone from the registry.
+    Unknown,
+    /// Finished and collected: its memoized result.
+    Done(Result<Value, String>),
+    /// Finished, and this caller now owns the join.
+    Collect(JoinHandle<Result<Value, String>>),
+    /// Still running (wait on its done channel), or another thread is
+    /// mid-join (`None`: look again shortly).
+    Wait(Option<crossbeam_channel::Receiver<()>>),
+}
+
+fn look(id: u64) -> Look {
+    let mut map = lock_tasks();
+    let Some(entry) = map.get_mut(&id) else {
+        return Look::Unknown;
+    };
+    match &entry.slot {
+        TaskSlot::Done(r) => Look::Done(r.clone()),
+        TaskSlot::Joining => Look::Wait(None),
+        TaskSlot::Running(h) => {
+            let ended = h.is_finished()
+                || matches!(
+                    entry.done.try_recv(),
+                    Err(crossbeam_channel::TryRecvError::Disconnected)
+                );
+            if !ended {
+                return Look::Wait(Some(entry.done.clone()));
+            }
+            // The thread is finished, so it has drained its watched
+            // channels already.
+            entry.finished = true;
+            match std::mem::replace(&mut entry.slot, TaskSlot::Joining) {
+                TaskSlot::Running(h) => Look::Collect(h),
+                _ => unreachable!("slot state checked under the same lock"),
+            }
+        }
+    }
+}
+
+/// Join a finished thread and memoize its result.
+fn collect(id: u64, h: JoinHandle<Result<Value, String>>) -> Result<Value, String> {
+    let result = h
+        .join()
+        .unwrap_or_else(|_| Err("task thread panicked".to_string()));
+    if let Some(entry) = lock_tasks().get_mut(&id) {
+        entry.slot = TaskSlot::Done(result.clone());
+    }
+    result
+}
+
+/// Wait on a task's done channel for up to `wait`, ending at once when the
+/// task ends (its thread drops the channel's sender) or when this thread
+/// is asked to stop. `None` (another thread is mid-join) waits briefly.
+fn wait_done(done: Option<&crossbeam_channel::Receiver<()>>, wait: std::time::Duration) {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(done) = done {
+        let wake = crate::interrupt::wake_receiver();
+        let mut sel = crossbeam_channel::Select::new();
+        let at_done = sel.recv(done);
+        sel.recv(&wake);
+        if let Ok(op) = sel.select_timeout(wait) {
+            if op.index() == at_done {
+                let _ = op.recv(done);
+            } else {
+                let _ = op.recv(&wake);
+            }
+        }
+        return;
+    }
+    let _ = done;
+    crate::clock::sleep(wait.min(std::time::Duration::from_micros(50)));
 }
 
 /// Join the task if it finishes before `deadline`, otherwise report the
 /// timeout. `Some(None)` means "still running" — the thread is left
-/// alone and keeps working, because an OS thread cannot be cancelled;
-/// a timeout here stops the *waiting*, not the work. `None` means the id
-/// is unknown.
-///
-/// Polls rather than blocking, since `JoinHandle` has no timed join. The
-/// finished handle is joined normally once `is_finished` reports it, so
-/// the memoized result path is shared with `join`.
+/// alone and keeps working; a timeout here stops the *waiting*, not the
+/// work. `None` means the id is unknown. `Err` is the joiner's own stop.
 pub(crate) fn join_until(
     id: u64,
     deadline: crate::clock::Instant,
-) -> Option<Option<Result<Value, String>>> {
+) -> Result<Option<Option<Result<Value, String>>>, String> {
     loop {
-        let ready = {
-            let map = tasks().lock().unwrap();
-            match map.get(&id).map(|e| &e.slot) {
-                None => return None,
-                Some(TaskSlot::Done(r)) => return Some(Some(r.clone())),
-                Some(TaskSlot::Running(h)) => h.is_finished(),
-                // Another thread is mid-join; treat as not-yet-ready and
-                // come back for its memoized result.
-                Some(TaskSlot::Joining) => false,
-            }
+        let done = match look(id) {
+            Look::Unknown => return Ok(None),
+            Look::Done(r) => return Ok(Some(Some(r))),
+            Look::Collect(h) => return Ok(Some(Some(collect(id, h)))),
+            Look::Wait(done) => done,
         };
-        if ready {
-            return Some(join(id));
+        if crate::interrupt::pending() {
+            return Err(crate::interrupt::stop_message());
         }
-        if crate::clock::Instant::now() >= deadline {
-            return Some(None);
+        let now = crate::clock::Instant::now();
+        if now >= deadline {
+            return Ok(Some(None));
         }
-        crate::clock::sleep(std::time::Duration::from_millis(1));
+        wait_done(done.as_ref(), deadline - now);
     }
 }
 
 /// Join the task (or return its memoized result). Returns `None` for an
 /// unknown id. The registry lock is never held across the join itself —
 /// a spawned task may join other tasks, and holding the lock while
-/// blocking would deadlock.
-pub(crate) fn join(id: u64) -> Option<Result<Value, String>> {
+/// blocking would deadlock. The wait wakes when the task's thread ends,
+/// through a channel that thread holds, so a join costs no polling.
+/// `Err` is the joiner's own stop (an interrupt, a budget's trip, a
+/// cancel), which ends the wait; the task runs on.
+pub(crate) fn join(id: u64) -> Result<Option<Result<Value, String>>, String> {
+    // A task already done answers without parking.
+    match look(id) {
+        Look::Unknown => return Ok(None),
+        Look::Done(r) => return Ok(Some(r)),
+        Look::Collect(h) => return Ok(Some(collect(id, h))),
+        Look::Wait(_) => {}
+    }
     // An unbounded wait: park it so the stall detector counts this
     // thread among the blocked. Sound to include — a join wakes when
     // its target finishes, which requires the target to be running, so
@@ -199,65 +316,21 @@ pub(crate) fn join(id: u64) -> Option<Result<Value, String>> {
 fn join_inner(
     id: u64,
     park: Option<&crate::stdlib::chan::ParkToken>,
-) -> Option<Result<Value, String>> {
+) -> Result<Option<Result<Value, String>>, String> {
+    let tick = std::time::Duration::from_millis(crate::stdlib::chan::STALL_TICK_MS);
     loop {
-        let handle = {
-            let mut map = tasks().lock().unwrap();
-            let started = map.get(&id).map(|e| e.started);
-            match (map.get(&id).map(|e| &e.slot), started) {
-                (None, _) => return None,
-                (Some(TaskSlot::Done(r)), _) => return Some(r.clone()),
-                (Some(TaskSlot::Joining), _) => None,
-                (Some(TaskSlot::Running(h)), Some(started)) => {
-                    if h.is_finished() {
-                        match map.insert(
-                            id,
-                            // The thread is finished, so it has drained
-                            // its watched channels already.
-                            Entry {
-                                slot: TaskSlot::Joining,
-                                started,
-                                watched: Vec::new(),
-                                finished: true,
-                            },
-                        ) {
-                            Some(Entry {
-                                slot: TaskSlot::Running(h),
-                                ..
-                            }) => Some((h, started)),
-                            _ => unreachable!("slot state checked under the same lock"),
-                        }
-                    } else {
-                        None
-                    }
-                }
-                (Some(TaskSlot::Running(_)), None) => unreachable!("entry has a start time"),
-            }
+        let done = match look(id) {
+            Look::Unknown => return Ok(None),
+            Look::Done(r) => return Ok(Some(r)),
+            Look::Collect(h) => return Ok(Some(collect(id, h))),
+            Look::Wait(done) => done,
         };
-        match handle {
-            Some((h, started)) => {
-                let result = h
-                    .join()
-                    .unwrap_or_else(|_| Err("task thread panicked".to_string()));
-                tasks().lock().unwrap().insert(
-                    id,
-                    Entry {
-                        slot: TaskSlot::Done(result.clone()),
-                        started,
-                        watched: Vec::new(),
-                        finished: true,
-                    },
-                );
-                return Some(result);
-            }
-            // Still running, or someone else is mid-join: tick the
-            // stall detector and look again.
-            None => {
-                if let Some(p) = park {
-                    p.tick();
-                }
-                crate::clock::sleep(std::time::Duration::from_millis(1));
-            }
+        if crate::interrupt::pending() {
+            return Err(crate::interrupt::stop_message());
         }
+        if let Some(p) = park {
+            p.tick();
+        }
+        wait_done(done.as_ref(), tick);
     }
 }

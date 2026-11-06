@@ -1410,11 +1410,11 @@ panel}` renders the plot again with its horizontal axis over that range
 `{"name","file","line"}` (where the function is declared).
 
 **Interrupt.** Requests are read on a thread of their own, so
-`interrupt` reaches a running evaluation. Every tier polls one flag: the
+`interrupt` reaches a running evaluation. Every tier polls: the
 tree-walker at each statement, loop iteration and call, the VM at each
-backward jump and self tail call and at one call in 256, native code at its back edges (compiled
-with the poll only in a serving process, so a program run any other way
-compiles exactly the code it always did). The evaluation fails with
+backward jump, self tail call and call, native code at its back edges
+and self tail calls. A wait the evaluation is in (`chan.recv`,
+`time.sleep`, …) ends at once. The evaluation fails with
 "interrupted" and the session stays as it was; a loop the interpreter had
 promoted to the VM keeps the values it had when it was promoted.
 

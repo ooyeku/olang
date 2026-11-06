@@ -162,6 +162,19 @@ addresses (helpers, interned struct shapes, constants, the interrupt flag)
 and is specialized on the argument kinds its first call saw, so it
 compiles again each run.
 
+**Native code always polls.** Every native body reads one byte at each
+loop back edge and self tail call. The byte is set while any thread is
+asked to stop (a time budget ran out, `task.interrupt`, a cancel, a step
+budget running). Then the body asks whether the request is for its own
+thread; only then does it leave native code for the VM, which raises the
+error. Other threads keep running native code. It used to be compiled in
+only after the first budget, so code compiled earlier never stopped.
+
+Measured on an M-series Mac (fasttest build, 2026-11-05): about 0.1 ns
+per loop iteration. That is +20% on an empty counting loop, +16% on a
+self tail-call loop, +22% on a float loop that only adds, and nothing
+measurable on a loop that does a little integer work or on `fib(32)`.
+
 ### What can be promoted
 
 A function is eligible when its body uses only the subset the VM implements:
