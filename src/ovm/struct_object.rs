@@ -90,7 +90,11 @@ const _: () = {
     const fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<OvmValue>();
     assert_send_sync::<Value>();
+    // 24 bytes with 64-bit pointers (16 in the browser's wasm32); either
+    // way the raw fields after it stay 8-byte aligned.
+    #[cfg(target_pointer_width = "64")]
     assert!(HEADER == 24);
+    assert!(HEADER % 8 == 0);
 };
 
 #[inline]

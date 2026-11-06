@@ -514,6 +514,9 @@ struct Dog {
 fn dog() -> &'static (Mutex<Dog>, Condvar) {
     static W: OnceLock<(Mutex<Dog>, Condvar)> = OnceLock::new();
     W.get_or_init(|| {
+        // The browser has one thread and no timed wait: no watchdog there,
+        // so a budget's deadline does not trip in it (OL-543).
+        #[cfg(not(target_arch = "wasm32"))]
         std::thread::Builder::new()
             .name("olang-budget".into())
             .spawn(watchdog)
@@ -528,6 +531,7 @@ fn dog() -> &'static (Mutex<Dog>, Condvar) {
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn watchdog() {
     let (m, cv) = dog();
     let mut d = lock(m);

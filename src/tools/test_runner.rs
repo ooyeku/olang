@@ -99,7 +99,8 @@ pub fn run_paths(
     options: &Options,
 ) -> i32 {
     // An `os.exit` a test reaches raises from here on instead of ending
-    // the run (OL-351).
+    // the run (OL-351). The browser's runtime has no os module.
+    #[cfg(feature = "native")]
     crate::stdlib::os::set_exit_raises(true);
     let started = crate::clock::Instant::now();
     let path: &Path = match paths.first() {

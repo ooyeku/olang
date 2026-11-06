@@ -3609,6 +3609,7 @@ impl Checker {
                 // `str.trim_start(s, "/")` trimming whitespace (OL-257).
                 let table = match module.as_str() {
                     "str" => Some(crate::stdlib::string::MAX_ARGS),
+                    #[cfg(feature = "regex-module")]
                     "re" => Some(crate::stdlib::regex_mod::MAX_ARGS),
                     "col" => Some(crate::stdlib::collections::MAX_ARGS),
                     _ => None,
