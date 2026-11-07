@@ -1456,6 +1456,40 @@ impl BytecodeTier {
     }
 }
 
+/// The last function table a bridge's tier was seeded from, its ambiguous
+/// names, and the table less those names.
+type Unambiguous = (
+    im::HashMap<String, Arc<Function>>,
+    std::collections::HashSet<String>,
+    im::HashMap<String, Arc<Function>>,
+);
+
+static UNAMBIGUOUS: std::sync::Mutex<Option<Unambiguous>> = std::sync::Mutex::new(None);
+
+/// `functions` without the `ambiguous` names, made once per table and
+/// shared by every tier seeded from it. A spawned task's VM shares its
+/// parent's table, and each of its bridges removing the names again
+/// copied the table's nodes: 18.9 MB across OlangStudio's bridges
+/// (OL-415).
+fn unambiguous(
+    functions: &im::HashMap<String, Arc<Function>>,
+    ambiguous: &std::collections::HashSet<String>,
+) -> im::HashMap<String, Arc<Function>> {
+    let mut memo = UNAMBIGUOUS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((from, names, out)) = memo.as_ref()
+        && from.ptr_eq(functions)
+        && names == ambiguous
+    {
+        return out.clone();
+    }
+    let mut out = functions.clone();
+    for name in ambiguous {
+        out.remove(name);
+    }
+    *memo = Some((functions.clone(), ambiguous.clone(), out.clone()));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::CachedOwner;
@@ -1860,38 +1894,4 @@ let t2 = time.monotonic_ms()
             _ => panic!("division by zero should surface as an error"),
         }
     }
-}
-
-/// The last function table a bridge's tier was seeded from, its ambiguous
-/// names, and the table less those names.
-type Unambiguous = (
-    im::HashMap<String, Arc<Function>>,
-    std::collections::HashSet<String>,
-    im::HashMap<String, Arc<Function>>,
-);
-
-static UNAMBIGUOUS: std::sync::Mutex<Option<Unambiguous>> = std::sync::Mutex::new(None);
-
-/// `functions` without the `ambiguous` names, made once per table and
-/// shared by every tier seeded from it. A spawned task's VM shares its
-/// parent's table, and each of its bridges removing the names again
-/// copied the table's nodes: 18.9 MB across OlangStudio's bridges
-/// (OL-415).
-fn unambiguous(
-    functions: &im::HashMap<String, Arc<Function>>,
-    ambiguous: &std::collections::HashSet<String>,
-) -> im::HashMap<String, Arc<Function>> {
-    let mut memo = UNAMBIGUOUS.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((from, names, out)) = memo.as_ref()
-        && from.ptr_eq(functions)
-        && names == ambiguous
-    {
-        return out.clone();
-    }
-    let mut out = functions.clone();
-    for name in ambiguous {
-        out.remove(name);
-    }
-    *memo = Some((functions.clone(), ambiguous.clone(), out.clone()));
-    out
 }

@@ -99,6 +99,10 @@ impl Persistent {
         }
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn len(&self) -> usize {
         match self {
             Persistent::Map(m) => m.len(),
@@ -570,21 +574,19 @@ fn diff(old: &Persistent, new: &Persistent) -> Value {
                 }
             }
         }
-        (Persistent::Map(a), Persistent::Map(b)) => {
-            if !a.ptr_eq(b) {
-                for (k, x) in a.iter() {
-                    match b.get(k) {
-                        None => removed.push(k.clone()),
-                        Some(y) if !x.same(y) && !crate::interpreter::ops::loose_eq(x, y) => {
-                            changed.push(k.clone())
-                        }
-                        _ => {}
+        (Persistent::Map(a), Persistent::Map(b)) if !a.ptr_eq(b) => {
+            for (k, x) in a.iter() {
+                match b.get(k) {
+                    None => removed.push(k.clone()),
+                    Some(y) if !x.same(y) && !crate::interpreter::ops::loose_eq(x, y) => {
+                        changed.push(k.clone())
                     }
+                    _ => {}
                 }
-                for k in b.keys() {
-                    if !a.contains_key(k) {
-                        added.push(k.clone());
-                    }
+            }
+            for k in b.keys() {
+                if !a.contains_key(k) {
+                    added.push(k.clone());
                 }
             }
         }

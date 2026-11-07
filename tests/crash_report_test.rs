@@ -172,6 +172,7 @@ fn a_fatal_signal_writes_a_report_and_the_process_still_dies_of_it() {
     }
     let Some(status) = status else {
         let _ = child.kill();
+        let _ = child.wait();
         panic!("the process lived on after SIGSEGV");
     };
     use std::os::unix::process::ExitStatusExt;

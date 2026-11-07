@@ -94,7 +94,7 @@ const _: () = {
     // way the raw fields after it stay 8-byte aligned.
     #[cfg(target_pointer_width = "64")]
     assert!(HEADER == 24);
-    assert!(HEADER % 8 == 0);
+    assert!(HEADER.is_multiple_of(8));
 };
 
 #[inline]

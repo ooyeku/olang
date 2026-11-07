@@ -3083,6 +3083,7 @@ fn embedded_program() -> Option<Result<Bundle, String>> {
 }
 
 /// What a bundle's footer says before its program is read.
+#[allow(clippy::large_enum_variant)] // one, read once at start
 enum BundleRecord {
     /// Rung A: source, parsed by whichever runtime runs it.
     Source,
@@ -3827,7 +3828,7 @@ fn inspect_json(
             "olang": m.olang_version,
             "ast_format": m.ast_format,
             "build_commit": m.build_commit,
-            "runs_here": runtime_mismatch(Some(&m)).is_none(),
+            "runs_here": runtime_mismatch(Some(m)).is_none(),
             "source_path": m.source_path,
             "built_os": m.built_os,
             "built_arch": m.built_arch,

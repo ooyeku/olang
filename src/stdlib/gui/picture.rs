@@ -962,7 +962,7 @@ impl Cache {
         {
             return Vec::new();
         }
-        unshown.sort_by(|a, b| b.1.cmp(&a.1));
+        unshown.sort_by_key(|u| std::cmp::Reverse(u.1));
         let mut kept = 0;
         let mut kept_bytes = 0;
         let mut gone = Vec::new();

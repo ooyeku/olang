@@ -1704,7 +1704,7 @@ impl Parser {
         let mut it = pairs.clone();
         let first = it.next()?;
         let end = it
-            .last()
+            .next_back()
             .map_or(first.as_span().end(), |p| p.as_span().end());
         Some((first.as_span().start(), end))
     }

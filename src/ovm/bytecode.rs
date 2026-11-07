@@ -5826,7 +5826,7 @@ impl BytecodeVm {
                         |i| {
                             state
                                 .register_ref(field_regs[i])
-                                .map(OvmValue::clone)
+                                .cloned()
                                 .unwrap_or_else(|_| OvmValue::new_unit())
                         },
                     );

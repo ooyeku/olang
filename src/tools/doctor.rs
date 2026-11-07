@@ -157,7 +157,7 @@ fn audit(root: &Path) -> Vec<Finding> {
                 if m.dependencies.is_empty() {
                     out.push(ok("no olang.lock: no dependencies to pin"));
                 } else {
-                    out.push(ok(no_lock_yet(&m)));
+                    out.push(ok(no_lock_yet(m)));
                 }
             }
             Ok(lock) => {
@@ -209,7 +209,7 @@ fn audit(root: &Path) -> Vec<Finding> {
                 if m.dependencies.is_empty() {
                     out.push(ok("no olang.lock: no dependencies to pin"));
                 } else {
-                    out.push(ok(no_lock_yet(&m)));
+                    out.push(ok(no_lock_yet(m)));
                 }
             }
         }

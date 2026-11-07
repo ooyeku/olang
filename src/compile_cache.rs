@@ -571,10 +571,10 @@ pub fn load(def_file: Option<&str>, key: &Key) -> impl Iterator<Item = Arc<Entry
     }))
 }
 
-fn pack_of(
-    def_file: Option<&str>,
-    key: &Key,
-) -> Option<(Vec<Arc<Entry>>, Option<Arc<Pack>>, Option<PathBuf>)> {
+/// A pack's entries, the pack itself, and where it is kept.
+type PackParts = (Vec<Arc<Entry>>, Option<Arc<Pack>>, Option<PathBuf>);
+
+fn pack_of(def_file: Option<&str>, key: &Key) -> Option<PackParts> {
     let path = pack_path(def_file)?;
     {
         let m = memo().lock().ok()?;
