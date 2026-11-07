@@ -17,8 +17,12 @@
 //! Data and read-only sections (constants the compiled code reads) are
 //! never executable, so they keep cranelift's system provider.
 
-use cranelift_jit::{BranchProtection, JITMemoryKind, JITMemoryProvider, SystemMemoryProvider};
+#[cfg(target_os = "macos")]
+use cranelift_jit::{BranchProtection, JITMemoryKind};
+use cranelift_jit::{JITMemoryProvider, SystemMemoryProvider};
+#[cfg(target_os = "macos")]
 use cranelift_module::ModuleResult;
+#[cfg(target_os = "macos")]
 use std::io;
 
 #[cfg(target_os = "macos")]
@@ -101,6 +105,7 @@ fn probe() -> bool {
     true
 }
 
+#[cfg(target_os = "macos")]
 fn page_size() -> usize {
     // SAFETY: sysconf has no preconditions.
     let n = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
