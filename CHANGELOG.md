@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [1.0.0-rc.8] - Unreleased
+## [1.0.0-rc.8] - 2026-11-07
 
 The runtime the planned libraries need, added under an exception to the
 feature freeze, with memory and speed work and bug fixes. One change
