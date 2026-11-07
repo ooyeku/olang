@@ -240,8 +240,9 @@ Conventions the code relies on:
   intercept. They are errors only if they escape to top level.
 
 Memory management is **reference counting, with no tracing collector**.
-Nothing in the language constructs a cycle of values, so a value is
-reclaimed when its last reference drops, with no pauses.
+A value is reclaimed when its last reference drops, with no pauses.
+Only a cell or a shared reference can be made to hold itself, and such
+a cycle is never freed, so do not store one inside its own contents.
 
 Freeing is iterative, so a deeply nested value (a list of a million
 links built from an enum) frees without overflowing the stack, an http
@@ -441,7 +442,11 @@ src/
                           model (value.rs), tier manager (tier.rs),
                           Cranelift JIT (jit.rs), on-stack replacement
                           (osr.rs), warm start (warm.rs)
-  parallel.rs             par_map / par_filter / par for worker config
+  parallel.rs             the parallel pool (made on first use, ended after
+                          3 s idle) and par_map / par for config
+  interrupt.rs            stops: budgets, cancels, interrupts, per thread
+  crash.rs                crash reports
+  layers.rs               code layers
   playground.rs           the wasm session engine (playground + dom)
   pkg/                    package manager (see packages.md)
   tools/                  olang test (test_runner.rs), olang fmt (fmt.rs),
