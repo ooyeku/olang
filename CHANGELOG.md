@@ -7,6 +7,174 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0-rc.8] - Unreleased
+
+The runtime the planned libraries need, added under an exception to the
+feature freeze, with memory and speed work and bug fixes. One change
+can break a program written for rc.7: a package's internals are now
+private (see Changed).
+
+### Added
+
+- **Stopping work.** `cancel.token()`, `cancel.set` and `cancel.is_set`,
+  with `runtime.call_cancellable(f, args, token)` stopping interpreted,
+  compiled and native code and the long builtins. `task.interrupt(t,
+  reason?)` stops another task, and its blocking waits end when it does.
+  Budgets are per thread: every thread's deadlines are its own, native
+  code always polls them, and waits end when a budget runs out.
+- **Sharing between threads.** `shared.new`, `get`, `swap` and
+  `compare_and_set` hold one immutable value every thread can read and
+  replace. `chan.on_drop(c, msg)` is a guard that sends `msg` when its
+  last copy goes; `weak.new` and `weak.get` are weak references, on both
+  tiers. `same(a, b)` says whether two values are one allocation, a hint
+  for skipping work.
+- **Scheduling.** `task.set_qos(class)`, `task.set_qos(t, class)` and
+  `task.qos()` put tasks in macOS's QoS classes.
+  `task.set_parallelism(n)` caps the parallel pool, which the first
+  parallel operation now makes and which ends after 3 s idle.
+- **Bytes and values.** The `bytes` module: slices that are views, a
+  builder that grows in place, `join`, `index_of`, `compare`, typed reads,
+  `pack` and `unpack`, all read natively by compiled code.
+  `value.encode` and `value.decode` are a lossless, versioned binary
+  codec with a canonical mode. `hash(v)`, `str.hash`, `crypto.xxh3` and
+  `crypto.blake3`.
+- **Persistent collections.** `pmap`, `pvec` and `psorted`, which behave
+  like Map and List and share structure between versions.
+- **Bit math.** Wrapping `add`, `sub` and `mul`, `wrapping_shl`, `ushr`,
+  `rotl`, `rotr`, `popcount`, `clz` and `ctz` on every tier, and
+  `collections.bitset` on 64-bit words.
+- **Text.** Byte offsets in `str` (`byte_len`, `slice_bytes`,
+  `char_to_byte`, `byte_to_char`, `utf16_len`) and `str.chunks`;
+  `str.lines(s, #{"keep_ends": true})` and `str.line_starts`; `str.stats`
+  in one native call; Unicode word bounds, line-break opportunities, bidi
+  runs, normalization and case folding. Text that isn't valid UTF-8:
+  `to_string_lossy`, `decode` and `str.encode` in four encodings, and
+  `fs.read_file(p, #{lossy, encoding})`.
+- **Files.** `fs.read_range(path, offset, len)`, and a chunk reader in
+  `fs.chunks` and `fs.next_chunk`.
+- **Markdown and source.** `md.parse(src, #{gfm, events})` answers a
+  document as a tree or an event stream, with source ranges. `meta.parse`
+  gives every node its byte span, and with `#{"recover": true}` keeps the
+  items of a file mid-edit with each error's place. `meta.parse_items`,
+  `meta.tokens(src, #{packed, from, state})`, `meta.resolve`,
+  `meta.types` and `meta.fingerprint` answer what an editor needs from
+  the language server's own code.
+- **Ed25519.** Key pairs, signing and strict verification over String
+  or Bytes; `sign_data` and `verify_signature` take Bytes.
+- **Code layers.** A built application boots a code layer from outside
+  its bundle when its Ed25519 signature verifies with the bundle's key
+  and it was built for this runtime, and falls back to the bundled
+  program otherwise.
+- **Crash reports.** `runtime.on_crash(dir)` or `OLANG_CRASH_DIR` makes a
+  panic or a fatal signal write a JSON report with every thread's olang
+  frames and the native backtrace; release builds write a dSYM to read it
+  with.
+- **Reproducible builds.** `olang build --app` makes the same bytes from
+  the same sources, and a tier profile goes in only with `--warm FILE`.
+  A built program refuses a payload another olang made, with exit code
+  65.
+- **URL schemes.** A URL in a scheme the application declares reaches
+  the program as an `open_url` event, at launch and while it runs.
+
+### Changed
+
+- **A package's internals are its own.** From outside a package, only
+  its root module and the modules its `[package] public` lists resolve;
+  `olang check` reports a `use` of any other.
+- **The JIT needs only `allow-jit`.** Code pages are MAP_JIT; without the
+  entitlement the JIT stays off and bytecode runs.
+- **A Rust panic inside a task, `attempt`, `call_budget` or
+  `call_cancellable`** is that task's or that call's `Err`, not the end of
+  the process.
+
+### Memory and speed
+
+- A top-level function's body is built when it is first read, and a
+  compile-cache pack's entries are decoded when their function compiles.
+- A dead register lets its value go, a loop's exit releases what it
+  held, and the typed-conversion cache holds its lists weakly.
+- A bridge shares the program's function table instead of copying it.
+- Compiled code builds a struct as one allocation of raw fields.
+- A message between compiled functions keeps the VM's form; a send skips
+  the confinement walk while no cell is alive.
+- `task.join` wakes when its task's thread ends, and a full bounded send
+  waits on the channel, instead of looking every millisecond.
+- A spawn costs about the same in a large program as in a small one.
+- One reader thread serves every child process's pipes, instead of two
+  threads a child.
+- A window's surface keeps two drawables, not three, and a picture no
+  window shows is let go with its texture.
+- The compile cache holds 256 MB by default, and the parse cache is
+  kept as it is.
+
+### Fixed
+
+- `chan.close` wakes a sender waiting on a full bounded or rendezvous
+  channel with `Err("channel is closed")` (OL-374).
+- A Ctrl-C or SIGTERM that ends olang ends the children of a timed
+  `os.exec` and a grouped `proc.spawn` too (OL-375).
+- `http.serve` answers pipelined requests on a kept-alive connection
+  (OL-372), reads a chunked request body whole (OL-362), and its status
+  lines carry their standard reason phrases (OL-379).
+- On the bytecode tier, `attempt` catches a division by zero reached
+  through a function value (OL-518), and a third loop function no longer
+  panics the JIT (OL-519).
+- A `use` inside a function resolves against its own file's package
+  (OL-538), finds the dependencies of the module it loads on the bytecode
+  tier (OL-551), and a built application carries the modules it reaches
+  (OL-531).
+- The stall detector leaves alone a wait that something outside the
+  program's threads may end (OL-512), and an installed `os.on_shutdown`
+  handler counts as such a wait (OL-363).
+- `os.exec` feeds `stdin` while it reads the output, so a child that
+  answers as it reads no longer deadlocks (OL-360).
+- `time.sleep` ends at its deadline (OL-331).
+- A local lambda is no longer run as another module's function of the
+  same name (OL-272); importing a name a module does not share names that
+  module (OL-267).
+- Native code takes `&&`, `||`, `len` of a list and `abs` (OL-271); a
+  nested table is updated in place on the bytecode tier (OL-266); a
+  lambda with an early return compiles (OL-251); a default naming a
+  top-level constant compiles (OL-320); `math.pow`, `exp`, `exp2`, `sinh`
+  and `cosh` raise for a result that is not a finite number on every
+  tier (OL-333).
+- `olang check` reports a circular import (OL-259), a `use` the run can't
+  resolve (OL-354), `!` on a module call that answers a Result (OL-265)
+  and a second argument to str's text-only functions (OL-257); a block's
+  binding of a builtin's name ends with the block (OL-177); a let named
+  like a stdlib module is reported only when it is read as the module
+  (OL-530); a `let` lambda may call itself in a block (OL-352).
+- `str`, `re` and `col` raise for an argument a function does not take
+  (OL-334); `first` and `last` take Bytes (OL-181); `col.last([])`
+  answers `()` (OL-381); "NaN" is said not to be a number (OL-383); a
+  Bool Series is 0 and 1 in arithmetic (OL-182).
+- Errors are placed better: a one-expression function's failure at its
+  declaration's line (OL-180), an unclosed `${` at its template (OL-388),
+  `olang eval`'s code at `<eval>:line:col` (OL-406), a syntax error in a
+  file using `@` as the file's (OL-178). `x += 1` hints olang's own form
+  (OL-345). Assertion failures show olang notation (OL-399).
+- Tooling: `fix maps` reads only receivers seen to be maps (OL-344) and
+  its `--dry-run` and `--check` behave as the other rewrites (OL-393);
+  `fix units` counts each rewrite under its own form (OL-394); `test
+  --only` counts the files that ran (OL-397); an `os.exit` a test reaches
+  fails that block (OL-351); `OLANG_SNAPSHOTS=ci` fails on a snapshot
+  never recorded (OL-176); `check --tier` counts the files it could not
+  check (OL-252); an empty `OLANG_HOME` is the default home (OL-263);
+  `doctor` names `otc lib add` (OL-264) and the lock rules (OL-396).
+- The REPL is styled only where it renders (OL-348) and `:env` lists only
+  the person's bindings (OL-407). The language server reads a
+  declaration's kind past `share` (OL-332) and refuses a rename to a
+  keyword or a name in use (OL-353).
+- gui: a styled field rebases a program's edit over the keys typed since
+  (OL-187); an image the engine can't read says why (OL-185); a canvas
+  text with `max_w` 0 draws nothing (OL-186); the unified title bar is
+  measured again after each turn of the loop, and `gui.set`'s
+  `fullscreen: "toggle"`.
+- sim: `http.serve`'s drain waits for the handlers in flight (OL-270).
+- The browser runtime builds again (OL-543).
+- A thread waiting on a child, the terminal or the file system is
+  profiled as blocked (OL-329).
+
 ## [1.0.0-rc.7] - 2026-11-01
 
 rc.6 with its Linux and Windows builds fixed. rc.6 was tagged but never
