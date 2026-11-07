@@ -827,7 +827,9 @@ fn request_to_value(req: &ParsedRequest, remote_addr: &str) -> Value {
 }
 
 /// A status line's reason phrase (RFC 9110's, and the registry's common
-/// others); a code with none, its class's words (OL-379).
+/// others); a code with none, its class's words (OL-379). The codes come
+/// before the classes on purpose.
+#[allow(clippy::match_overlapping_arm)]
 fn reason_phrase(status: i64) -> &'static str {
     match status {
         100 => "Continue",

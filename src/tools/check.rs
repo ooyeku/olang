@@ -2176,7 +2176,7 @@ fn unresolvable_uses(program: &Program, dir: &Path) -> Vec<CheckDiagnostic> {
         .iter()
         .filter_map(|stmt| {
             let (line, column) = match stmt {
-                Statement::Located { line, column, .. } => (*line as u32, *column as u32),
+                Statement::Located { line, column, .. } => (*line, *column),
                 _ => (1, 1),
             };
             match stmt.unwrapped() {

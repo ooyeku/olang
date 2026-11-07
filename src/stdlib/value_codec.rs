@@ -116,9 +116,10 @@ fn canonical_opt(opts: &Value) -> Result<bool, String> {
             ));
         }
     };
+    let mut canonical = false;
     for (k, v) in fields.iter() {
         match (k.as_str(), v) {
-            ("canonical", Value::Boolean(b)) => return Ok(*b),
+            ("canonical", Value::Boolean(b)) => canonical = *b,
             ("canonical", other) => {
                 return Err(format!(
                     "value.encode: canonical must be true or false, got {}",
@@ -132,7 +133,7 @@ fn canonical_opt(opts: &Value) -> Result<bool, String> {
             }
         }
     }
-    Ok(false)
+    Ok(canonical)
 }
 
 /// The encoding of `v`, header included.
