@@ -6,8 +6,8 @@
 // The coordinator walks the tree, deals the files into chunks, spawns one
 // worker thread per chunk, joins them all, and merges. It also runs the
 // same search sequentially and prints both timings — the speedup is the
-// point of the exercise. A worker that fails (e.g. a bad pattern) is
-// handled per-task with try/catch, so one bad worker cannot kill the run.
+// point of the exercise. A worker that fails (a bad pattern, say) joins as
+// an `Err`, which the merge skips, so one bad worker cannot kill the run.
 
 use lib.search { search_chunk }
 

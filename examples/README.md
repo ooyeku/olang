@@ -156,7 +156,7 @@ order, so read whichever subject interests you.
 - [`oshell/`](tools/oshell/) — a Unix-like shell written in olang: an interactive
   `os.read_line` loop with pipelines threading stdout→stdin through
   `os.exec`, redirection and globbing on `fs`, `$VAR`/`~`/`$?` expansion,
-  quoting, `;`/`&&`/`||` sequencing, 25 builtins implemented on the stdlib,
+  quoting, `;`/`&&`/`||` sequencing, 27 builtins implemented on the stdlib,
   aliases, and history persisted across sessions — the long-running
   systems-work proof (1,000 mixed commands soak through one session in
   ~1.4 s). Interactive, but it runs under the harness unattended: a

@@ -3612,7 +3612,7 @@ task.watch(service, inbox)   // a dead service is an Err at the next recv, not a
             "chan.close(c)",
             "Unit",
             "chan",
-            "close the sending side (idempotent); queued messages still drain",
+            "close the sending side (idempotent); queued messages still drain, and a sender waiting on a full channel gets Err(\"channel is closed\")",
             &[r##"chan.close(c)  // receivers drain what is queued, then Err"##],
         );
     }
@@ -12011,9 +12011,9 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
         o.push_str(&format!(
             "{y}Modules{r} {d}(:help <module> to open one){r}\n"
         ));
-        o.push_str(&format!("  core       {c}str col math json toml re dates time random crypto base64 bytes bigint value{r}\n"));
+        o.push_str(&format!("  core       {c}str col math json toml md re dates time random crypto base64 bytes bigint value{r}\n"));
         o.push_str(&format!(
-            "  system     {c}fs os proc http db chan task cell cancel shared weak pmap pvec psorted caps meta testing{r}\n"
+            "  system     {c}fs os proc http db chan task cell cancel shared weak pmap pvec psorted caps meta runtime testing{r}\n"
         ));
         o.push_str(&format!(
             "  data       {c}ods stats plot csv collections{r}\n"
