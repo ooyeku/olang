@@ -1754,7 +1754,7 @@ fn run_jobs<T: Send>(
     #[cfg(feature = "native")]
     {
         if par(rows) && n_jobs > 1 {
-            return (0..n_jobs).into_par_iter().map(job).collect();
+            return crate::parallel::install(|| (0..n_jobs).into_par_iter().map(job).collect());
         }
     }
     let _ = rows;

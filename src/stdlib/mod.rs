@@ -44,6 +44,8 @@ pub mod persistent;
 #[cfg(feature = "native")]
 pub mod proc;
 #[cfg(feature = "native")]
+pub(crate) mod proc_reader;
+#[cfg(feature = "native")]
 pub mod pty;
 pub mod random;
 #[cfg(feature = "regex-module")]

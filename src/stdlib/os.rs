@@ -738,7 +738,6 @@ fn exec_bounded(
     stdin_data: Option<String>,
     timeout_ms: Option<u64>,
 ) -> std::io::Result<(process::Output, bool)> {
-    use std::io::Read;
     use std::time::{Duration, Instant};
     // No timeout: a deadline a year out, the wait still polling for a stop.
     let deadline =
@@ -761,32 +760,33 @@ fn exec_bounded(
         });
     }
     // Each stream arrives whole at its end-of-file: when the child (and
-    // everything holding the pipe) exits, or when the kill ends them.
+    // everything holding the pipe) exits, or when the kill ends them. Both
+    // are read by the reader every child shares (OL-497).
+    use crate::stdlib::proc_reader::{Sink, watch};
     let (tx, rx) = std::sync::mpsc::channel::<(bool, Vec<u8>)>();
-    for (is_err, stream) in [
-        (
-            false,
-            child
-                .stdout
-                .take()
-                .map(|s| Box::new(s) as Box<dyn Read + Send>),
+    match child.stdout.take() {
+        Some(out) => watch(
+            out,
+            Sink::Whole {
+                tx: tx.clone(),
+                tag: false,
+            },
         ),
-        (
-            true,
-            child
-                .stderr
-                .take()
-                .map(|s| Box::new(s) as Box<dyn Read + Send>),
+        None => {
+            let _ = tx.send((false, Vec::new()));
+        }
+    }
+    match child.stderr.take() {
+        Some(err) => watch(
+            err,
+            Sink::Whole {
+                tx: tx.clone(),
+                tag: true,
+            },
         ),
-    ] {
-        let tx = tx.clone();
-        std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            if let Some(mut s) = stream {
-                let _ = s.read_to_end(&mut buf);
-            }
-            let _ = tx.send((is_err, buf));
-        });
+        None => {
+            let _ = tx.send((true, Vec::new()));
+        }
     }
     drop(tx);
 

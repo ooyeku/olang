@@ -2830,7 +2830,8 @@ impl BuiltinFunctions {
         // Use parallel processing for larger lists
         if should_parallelize(list.len()) {
             // PARALLEL VERSION - collect in reverse order using parallel iterator
-            let result: Vec<Value> = list.par_iter().rev().cloned().collect();
+            let result: Vec<Value> =
+                crate::parallel::install(|| list.par_iter().rev().cloned().collect());
             Ok(Value::List(result.into()))
         } else {
             // SEQUENTIAL VERSION for small lists
@@ -2943,7 +2944,7 @@ impl BuiltinFunctions {
         // Parallel sort for larger lists; always sequential without rayon.
         #[cfg(feature = "native")]
         if should_parallelize(result.len()) {
-            result.par_sort_by(sort_cmp);
+            crate::parallel::install(|| result.par_sort_by(sort_cmp));
         } else {
             result.sort_by(sort_cmp);
         }
@@ -3052,10 +3053,12 @@ impl BuiltinFunctions {
         let eq = crate::interpreter::ops::search_eq;
         let hit = |i: &Value| eq(i, item);
         let found = if should_parallelize(list.len()) {
-            list.par_iter()
-                .map(hit)
-                .find_any(|r| !matches!(r, Ok(false)))
-                .unwrap_or(Ok(false))
+            crate::parallel::install(|| {
+                list.par_iter()
+                    .map(hit)
+                    .find_any(|r| !matches!(r, Ok(false)))
+                    .unwrap_or(Ok(false))
+            })
         } else {
             list.iter()
                 .map(hit)
@@ -3122,56 +3125,58 @@ impl BuiltinFunctions {
             unreachable!("should_parallelize is false without the native feature");
             #[cfg(feature = "native")]
             {
-                let result = list_values
-                    .par_iter()
-                    .try_fold(
-                        || (0i64, 0.0f64, false), // (int_acc, float_acc, is_float)
-                        |mut acc, item| match item {
-                            Value::Integer(n) => {
-                                if acc.2 {
-                                    acc.1 += *n as f64;
+                let result = crate::parallel::install(|| {
+                    list_values
+                        .par_iter()
+                        .try_fold(
+                            || (0i64, 0.0f64, false), // (int_acc, float_acc, is_float)
+                            |mut acc, item| match item {
+                                Value::Integer(n) => {
+                                    if acc.2 {
+                                        acc.1 += *n as f64;
+                                    } else {
+                                        acc.0 = acc.0.checked_add(*n).ok_or_else(|| {
+                                            InterpreterError::RuntimeError {
+                                                message: "sum: integer overflow".to_string(),
+                                            }
+                                        })?;
+                                    }
+                                    Ok(acc)
+                                }
+                                Value::Float(f) => {
+                                    if !acc.2 {
+                                        // Zero the int accumulator when promoting so the
+                                        // reduce step doesn't add it a second time
+                                        acc.1 = acc.0 as f64;
+                                        acc.0 = 0;
+                                        acc.2 = true;
+                                    }
+                                    acc.1 += f;
+                                    Ok(acc)
+                                }
+                                _ => Err(InterpreterError::TypeError {
+                                    message: "sum: list must contain only numbers".to_string(),
+                                }),
+                            },
+                        )
+                        .try_reduce(
+                            || (0i64, 0.0f64, false),
+                            |mut acc1, acc2| {
+                                if acc1.2 || acc2.2 {
+                                    acc1.1 += acc1.0 as f64 + acc2.1 + acc2.0 as f64;
+                                    acc1.0 = 0;
+                                    acc1.2 = true;
                                 } else {
-                                    acc.0 = acc.0.checked_add(*n).ok_or_else(|| {
+                                    acc1.0 = acc1.0.checked_add(acc2.0).ok_or_else(|| {
                                         InterpreterError::RuntimeError {
                                             message: "sum: integer overflow".to_string(),
                                         }
                                     })?;
                                 }
-                                Ok(acc)
-                            }
-                            Value::Float(f) => {
-                                if !acc.2 {
-                                    // Zero the int accumulator when promoting so the
-                                    // reduce step doesn't add it a second time
-                                    acc.1 = acc.0 as f64;
-                                    acc.0 = 0;
-                                    acc.2 = true;
-                                }
-                                acc.1 += f;
-                                Ok(acc)
-                            }
-                            _ => Err(InterpreterError::TypeError {
-                                message: "sum: list must contain only numbers".to_string(),
-                            }),
-                        },
-                    )
-                    .try_reduce(
-                        || (0i64, 0.0f64, false),
-                        |mut acc1, acc2| {
-                            if acc1.2 || acc2.2 {
-                                acc1.1 += acc1.0 as f64 + acc2.1 + acc2.0 as f64;
-                                acc1.0 = 0;
-                                acc1.2 = true;
-                            } else {
-                                acc1.0 = acc1.0.checked_add(acc2.0).ok_or_else(|| {
-                                    InterpreterError::RuntimeError {
-                                        message: "sum: integer overflow".to_string(),
-                                    }
-                                })?;
-                            }
-                            Ok(acc1)
-                        },
-                    )?;
+                                Ok(acc1)
+                            },
+                        )
+                })?;
 
                 if result.2 {
                     Ok(Value::Float(result.1))
@@ -3389,13 +3394,15 @@ impl BuiltinFunctions {
         // Use parallel processing for larger lists
         if should_parallelize(outer_list.len()) {
             // PARALLEL VERSION - parallel flatten
-            let result: Vec<Value> = outer_list
-                .par_iter()
-                .flat_map(|elem| match elem {
-                    Value::List(inner_rc) => inner_rc.iter().cloned().collect::<Vec<_>>(),
-                    other => vec![other.clone()],
-                })
-                .collect();
+            let result: Vec<Value> = crate::parallel::install(|| {
+                outer_list
+                    .par_iter()
+                    .flat_map(|elem| match elem {
+                        Value::List(inner_rc) => inner_rc.iter().cloned().collect::<Vec<_>>(),
+                        other => vec![other.clone()],
+                    })
+                    .collect()
+            });
             Ok(Value::List(result.into()))
         } else {
             // SEQUENTIAL VERSION for small lists
