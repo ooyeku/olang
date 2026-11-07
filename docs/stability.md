@@ -85,17 +85,20 @@ arguments, lambdas, closures-by-value, `return`), pipelines, `break value`,
 structs, enums and their constructors (including cross-module), `error`
 declarations, traits and impls, `Result` + `?`, modules (`use`/`share`
 in all documented forms), `test` blocks, and the standard-library
-modules `str`, `col`, `math`, `json`, `toml`, `csv`, `re`, `dates`,
-`time`, `base64`, `fs`, `os`, `db`, `random`, `crypto`, `chan`, `task`,
-`cell`, `proc`, `meta`, `bytes`, `compress`, `bigint`, `vec`, `http`'s
+modules `str`, `col`, `math`, `json`, `value`, `toml`, `csv`, `md`,
+`re`, `dates`, `time`, `base64`, `fs`, `os`, `db`, `random`, `crypto`,
+`chan`, `task`, `cell`, `proc`, `meta`, `bytes`, `compress`, `bigint`,
+`vec`, the persistent collections `pmap`, `pvec` and `psorted`, `http`'s
 client (`http.get`, `http.post`, `http.request` and the URL and query
 helpers), `testing` (the `assert_*` family, `snapshot` and its helpers,
 `test_summary` and `reset_tests`), `set_parallel`, and the global
 builtins. The embedded olang modules (`colx`, `mathx`) and packages
 (`cli`, `term`, `ui`, `viz`, `dash`) follow the same append-mostly rule.
-`cell`'s model (one mutable location, confined to its creating thread,
-refused at `chan.send`, re-entrant `cell.update` rejected) is part of the
-scope and mutability rules below.
+`cell`'s model (the mutable location within a thread, confined to its
+creating thread, refused at `chan.send`, re-entrant `cell.update`
+rejected) is part of the scope and mutability rules below. `shared` is
+the mutable location between threads; both hold immutable values and
+replace them whole.
 
 **Scope and mutability.** These rules are checked statically before a
 program runs, and are therefore identical on every tier:
@@ -109,8 +112,9 @@ program runs, and are therefore identical on every tier:
   available.
 - Assigning to a binding *captured* from an enclosing scope is an error
   (the write could only reach the closure's snapshot), and
-  [`cell`](stdlib.md#cell--mutable-locations) is the one mutable
-  location. A closure captures the local bindings it names by value; a
+  [`cell`](stdlib.md#cell--mutable-locations) is the mutable location
+  within a thread, and [`shared`](stdlib.md#shared--one-value-every-thread)
+  the one between threads. A closure captures the local bindings it names by value; a
   top-level name is never captured, so every function reads its binding
   as it is when the function runs.
 
@@ -124,7 +128,9 @@ runtime error is a bug and stops the program: no construct catches one
 mid-expression. Recovery happens at the boundaries that already isolate a
 failing unit, each a whole call: `attempt(f)` answers `Err(message)` when
 a runtime error ended `f()`, `runtime.call_budget(f, args, ms)` reports
-the error (or the time running out) that ended its call, a spawned task's
+the error (or the time running out) that ended its call,
+`runtime.call_cancellable(f, args, token)` reports the error, or the
+cancel, that ended its call, a spawned task's
 failure becomes `Err(e)` from `task.join`, and an `http.serve` handler's
 becomes a logged 500 with the server still serving. Nothing resumes inside
 the call that failed.
@@ -203,8 +209,9 @@ changing any of them would be a 2.0.
 ### Stable in behavior, evolving in scope
 
 - **Concurrency** — the documented API (`spawn`, `task.join`,
-  `task.join_timeout`, `chan`, `par_map`, `par_filter`, `par for`) is
-  stable, and its model is threads. `spawn` runs on a real OS thread and
+  `task.join_timeout`, `task.interrupt`, `task.set_qos`,
+  `task.set_parallelism`, `chan` with `chan.on_drop`, `cancel`,
+  `shared`, `weak`, `par_map`, `par_filter`, `par for`) is stable, and its model is threads. `spawn` runs on a real OS thread and
   returns a task handle; `par_map`/`par_filter` carry spawn's snapshot
   semantics;
   `task.join_timeout` bounds the wait, never the work. The scheduling model may gain further
@@ -297,7 +304,7 @@ have a contract too, tiered as the language is:
 | Surface | Tier | What holds |
 |---|---|---|
 | Command names and documented flags (`olang --help`, tooling.md) | Stable | A command or flag keeps its name and meaning; a renamed one keeps the old spelling as an alias. A new command may take a word an extensionless script used: run such a script as `olang ./name`. |
-| Exit codes ([the table](tooling.md#exit-codes)) | Stable | `0`, `1`, `2`, `3` and `102` keep their meanings. |
+| Exit codes ([the table](tooling.md#exit-codes)) | Stable | `0`, `1`, `2`, `3`, `65` and `102` keep their meanings. |
 | The JSON envelopes: `format`, `kind`, the line-delimited event names ([the documents](tooling.md#output-flags-and-json-documents)) | Stable | A document's `format` number changes only when a field changes meaning or goes away. |
 | The JSON documents' fields | Stable, additive | Fields are added in minor releases without a new `format`; a consumer ignores fields it does not know. |
 | `repl --serve`'s protocol | Stable, additive | Its `protocol` number changes only when a request or reply changes shape; new requests, fields and `features` are added under it. |

@@ -1696,6 +1696,43 @@ addresses are read back with, `atos -o olang.dSYM -l <load_address>
 <address>…`. Keep the dSYM of each binary you ship; its
 UUID is the one the report names.
 
+### Crash reports
+
+A shipped application should leave something behind when it dies.
+Set `OLANG_CRASH_DIR=dir` in its environment, or call
+`runtime.on_crash(dir)` early in the program. From then on, a Rust
+panic that ends the process, or a fatal signal, writes one JSON file,
+`dir/olang-crash-<pid>-<time>.json`, and stderr names it. The process
+still ends as it would have. Reports are written on any Unix; elsewhere
+`runtime.on_crash` answers `Err`.
+
+```text
+{ "format": 1, "kind": "crash", "reason": "signal", "signal": "SIGSEGV",
+  "message": "...", "location": null,
+  "thread": { "name": null, "id": 7842257 },
+  "olang": { "version": "...", "commit": "..." },
+  "os": { "name": "macos", "version": "27.3" }, "arch": "aarch64",
+  "time": 1794074949, "pid": 61113,
+  "native": { "frames": ["0x..."], "images": [ { "name": ".../olang", "uuid": "...", "load_address": "0x..." } ] },
+  "threads": [ { "name": "main", "id": 7842257, "crashed": false, "depth": 2,
+                 "frames": [ { "function": "spin", "file": "app.ol", "tier": "vm" } ] } ] }
+```
+
+`threads` has every thread's olang frames, innermost first. A panic's
+frames also carry `line`. `native` is the crashing thread's backtrace
+as raw addresses. Read them back with the dSYM whose UUID the report
+names: `atos -o olang.dSYM -l <load_address> <address>...`. A report
+never holds a value, the environment or the program's arguments, so it
+can be sent home as is. `runtime.on_crash(dir, #{ "max_bytes": n })`
+caps the file (256 KiB by default, 16 KiB to 1 MiB). A report cut to
+fit stays valid JSON, with `"truncated": true`. Only the program
+itself may arm it; a module loaded with `runtime.load_module` may not.
+
+```olang no-run
+let dir = unwrap(runtime.on_crash(fs.join([os.temp_dir(), "myapp-crashes"])))
+println("crash reports go to " + dir)
+```
+
 Signed with the hardened runtime (which notarisation needs), the runtime
 needs one entitlement, `com.apple.security.cs.allow-jit`: the JIT writes
 its machine code into memory mapped with `MAP_JIT`, which that
@@ -1749,6 +1786,32 @@ program's: it chooses the active layer, sets `tries` back to 0 once it
 is satisfied the layer works (a layer that crashes before then is given
 up after `max_tries` launches), and keeps any other keys it likes in
 `state.json`, which the runtime leaves as they are.
+
+The publisher signs each build with the release key, the updater puts
+it in the layers folder and makes it active, and the program, once it
+is satisfied the new code works, sets `tries` back to 0:
+
+```olang no-run
+// On the publisher's machine: sign the new build with the release key.
+let program = unwrap(fs.read_bytes("app.olb"))
+let sig = unwrap(crypto.ed25519_sign(program, release_private_key))
+
+// In the updater: put the layer in place and make it the active one.
+unwrap(fs.create_dir_all("layers/1.4.0"))
+unwrap(fs.write_bytes("layers/1.4.0/app.olb", program))
+unwrap(fs.write_file("layers/1.4.0/app.olb.sig", sig))
+let state = #{ "active": "1.4.0", "tries": 0, "max_tries": 3 }
+unwrap(fs.write_file("layers/state.json", unwrap(json.stringify(state))))
+
+// In the program, once the new layer has shown it works.
+fn mark_good(dir) = {
+    let path = fs.join([dir, "state.json"])
+    let now = unwrap(json.parse(unwrap(fs.read_file(path))))
+    fs.write_file(path, unwrap(json.stringify(map_set(now, "tries", 0))))
+}
+let boot = runtime.code_layer()
+if boot != () && boot.running != () => { unwrap(mark_good(boot.layers)) } else => {}
+```
 
 ## `olang doc`
 
@@ -2182,7 +2245,7 @@ nothing should depend on them.
 | `OLANG_REGISTRY` | yes | The registry registry-version dependencies resolve against ([packages.md](packages.md)). |
 | `OLANG_LOCK_READONLY` | yes | `1`: resolve as usual but never write `olang.lock`. |
 | `OLANG_DENY` | yes | Deny capabilities for the run, as `--deny`: a comma list of `fs`, `fs-write`, `net`, `proc`, `db`, `env`. |
-| `OLANG_PARALLELISM` | yes | Thread count for `par_map`/`par for` and other parallel work (also `--ovm-parallelism N`). |
+| `OLANG_PARALLELISM` | yes | Thread count for `par_map`/`par for` and other parallel work (also `--ovm-parallelism N`). A program can set its own cap with [`task.set_parallelism`](stdlib.md#task--background-threads), which, unlike this variable, its child processes do not inherit. |
 | `OLANG_HTTP_WORKERS` | yes | Default worker count for `http.serve` when the options map does not set one. |
 | `OLANG_PLOT_THEME` | yes | `dark` or `light`: the theme a `plot` chart takes when its options name none (an editor's notebook kernel follows its appearance). |
 | `OLANG_ODS_WORKERS` | yes | Worker count for the ods data stack's parallel operations. |

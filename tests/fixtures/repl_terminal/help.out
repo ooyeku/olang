@@ -12,8 +12,8 @@ olang help
   :help search <q> find functions by keyword
 
 Modules (:help <module> to open one)
-  core       str col math json toml re dates time random crypto base64 bytes bigint value
-  system     fs os proc http db chan task cell cancel shared weak pmap pvec psorted caps meta testing
+  core       str col math json toml md re dates time random crypto base64 bytes bigint value
+  system     fs os proc http db chan task cell cancel shared weak pmap pvec psorted caps meta runtime testing
   data       ods stats plot csv collections
   via use    cli term ui viz dash colx mathx
 

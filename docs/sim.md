@@ -1077,7 +1077,7 @@ either answered by the world or refused:
 | Network: `http` | messages between the world's nodes, with latency, loss, duplication and partitions |
 | Files and SQLite: `fs`, `db` | each node's own disk, in memory |
 | The process: `os.args`, `os.get_env`, `os.read_line`, `os.exit`, `os.on_shutdown` | each node's own arguments, environment, standard input, exit and handlers |
-| Everything else with an effect: `os.exec`, `proc`, `pty`, `tty`, `gui`, `fs.watch`, `fs.trash`, and the `crypto` calls that need the operating system's randomness | refused |
+| Everything else with an effect: `os.exec`, `proc`, `pty`, `tty`, `gui`, `runtime`, `fs.watch`, `fs.trash`, and the `crypto` calls that need the operating system's randomness (`crypto.ed25519_keypair` among them) | refused |
 
 A refused call is an error, and the real call is never made:
 

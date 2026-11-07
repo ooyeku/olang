@@ -377,7 +377,8 @@ anything that widens the value slows every instruction.
 
 **Memory is managed by reference counting.** There is no tracing collector.
 Values are reclaimed deterministically when the last reference drops, which
-suits a language whose values are overwhelmingly immutable and acyclic.
+suits a language whose values are overwhelmingly immutable and acyclic
+(only a cell or a shared reference can be made to hold itself).
 (`src/ovm/gc.rs` holds only the safepoint flags the interpreter polls in
 loops.) Freeing a nested value recurses only to a bounded depth and
 queues the rest, so its depth is bounded by memory, not by the stack; see
@@ -891,7 +892,8 @@ These are real boundaries, stated so you can predict them:
 
 - **Tracing garbage collection.** Memory is reference-counted; `gc.rs` holds
   only the safepoint flags the interpreter polls. olang values are
-  immutable and acyclic, so there are no cycles to collect.
+  immutable, and only a cell or a shared reference can be made to hold
+  itself; such a cycle leaks rather than being collected.
 - **Automatic SIMD vectorization.** Bulk numeric work belongs in
   vectorized column operations, which
   [the ods data stack](stdlib.md#ods--series-and-frames) provides.
