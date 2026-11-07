@@ -17,7 +17,8 @@
 #   shell    an interactive shell in the same container setup
 #
 # The sibling repos are found next to olang (OLANG_WORLD, default the
-# parent of this checkout): loom, olang-track/desktop, heddle. They are
+# parent of this checkout): libraries/loom, libraries/olang-track/desktop and
+# libraries/heddle. They are
 # mounted read-write at /w (the suites write .build/ logs and snapshots'
 # .actual/.diff files there). Cargo's target and registry live in the
 # named volume $OLANG_LINUX_VOLUME (default olang-linux-target), so the
@@ -37,7 +38,8 @@ mem="${LINUX_CHECK_MEM:-8g}"
 
 # The image: Rust's official one plus what olang's Linux build links or
 # loads (the list .github/workflows install: OpenSSL, fontconfig,
-# xkbcommon, Wayland), python3 for Loom's pty check, procps (pgrep) for
+# xkbcommon, Wayland, and udev and ALSA for the gamepad and audio
+# features the default build has), python3 for Loom's pty check, procps (pgrep) for
 # Heddle's process tests, and Mesa's software Vulkan (lavapipe) so
 # gui_test's GPU-against-software comparisons run rather than skip. The
 # image is built once; LINUX_CHECK_REBUILD_IMAGE=1 builds it again.
@@ -45,7 +47,7 @@ if [ -z "$(docker images -q "$image" 2>/dev/null)" ] || [ "${LINUX_CHECK_REBUILD
   docker build -t "$image" - <<'EOF'
 FROM rust:1-bookworm
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      pkg-config libssl-dev libfontconfig1-dev libxkbcommon-dev libwayland-dev python3 procps \
+      pkg-config libssl-dev libfontconfig1-dev libxkbcommon-dev libwayland-dev libudev-dev libasound2-dev python3 procps \
       libvulkan1 mesa-vulkan-drivers \
     && rm -rf /var/lib/apt/lists/*
 EOF
@@ -68,12 +70,12 @@ for s in "$@"; do
   echo "== $s"
   case "$s" in
     build)   run 'cd olang && cargo build --release -j 4' || status=1 ;;
-    loom)    run 'cd loom && tools/verify.sh' || status=1 ;;
-    pty)     run 'cd loom && python3 tools/pty_check.py' || status=1 ;;
-    app)     run 'cd olang-track/desktop && tools/verify.sh' || status=1 ;;
+    loom)    run 'cd libraries/loom && tools/verify.sh' || status=1 ;;
+    pty)     run 'cd libraries/loom && python3 tools/pty_check.py' || status=1 ;;
+    app)     run 'cd libraries/olang-track/desktop && tools/verify.sh' || status=1 ;;
     guitest) run 'cd olang && cargo test -j 4 --test gui_test' || status=1 ;;
-    heddle)  run 'cd heddle && $OLANG test' || status=1 ;;
-    baseline) run 'cd loom && $OLANG tools/gate.ol --update' || status=1 ;;
+    heddle)  run 'cd libraries/heddle && $OLANG test' || status=1 ;;
+    baseline) run 'cd libraries/loom && $OLANG tools/gate.ol --update' || status=1 ;;
     shell)   run 'bash' ;;
     *) echo "unknown stage: $s" >&2; exit 2 ;;
   esac
