@@ -332,7 +332,8 @@ caller's thread (`olang_ods::ParClass`, and the frame kernels' own):
 | `filter` and `take` across columns | 500,000 rows | ~1.5 ms |
 
 A kernel already running on a pool worker (inside a `par_map` stage)
-never fans out again, and with `OLANG_PARALLELISM=1` nothing does.
+never fans out again, and with `OLANG_PARALLELISM=1` (or
+`task.set_parallelism(1)` inside the program) nothing does.
 `set_parallel(false)` turns all of it off; the host's own threshold
 (the REPL's `:parallel threshold`) applies on top. String kernels are
 always sequential; comparisons, math and the rest of the elementwise

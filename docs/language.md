@@ -128,6 +128,11 @@ olang is dynamically typed at runtime. Every value has a type name that
 | `bytes.from_string("a")` | `Bytes` |
 | `cell.new(0)` | `Cell` |
 | `chan.new()` | `Channel` |
+| `chan.on_drop(c, msg)` | `DropGuard` |
+| `shared.new(0)` | `Shared` |
+| `weak.new(xs)` | `Weak` |
+| `cancel.token()` | `CancelToken` |
+| `pmap.new()` / `pvec.new()` / `psorted.new()` | `PMap` / `PVec` / `PSorted` |
 | a task handle (`spawn f()`) | `Task` |
 | a module (`math`) | `Module` |
 | unit / JSON `null` / missing | `Unit` |
@@ -586,8 +591,9 @@ from `par_map` or over a channel.
 
 Because a closure owns an immutable snapshot, a closure handed to
 another thread (`spawn`, `par_map`, `par for`) cannot see another
-thread's writes: there is nothing shared to race on, and the language
-has no locks.
+thread's writes to the bindings it captured. Threads share data only
+through a [`shared`](stdlib.md#shared--one-value-every-thread)
+reference or a channel, and there are no locks.
 
 **Programming without shared mutable state.** The idiom that replaces
 "mutate an outer variable from inside a callback" is: *make the data
@@ -630,7 +636,7 @@ No handler holds state, so capture-by-value costs nothing. The
 [dom chapter](stdlib.md#dom--the-browser) develops this pattern in
 full with a working application.
 
-### Cells: the one mutable location
+### Cells: mutable state within a thread
 
 Returning the new value is the right answer most of the time. It is a
 poor one when the state is updated from deep inside a call chain, or
@@ -677,7 +683,9 @@ location. That includes a cell inside the message, however deep. A
 closure that captured a cell can still be sent; reading the cell from
 the other task is the error. A cell created *inside* a
 task, and used only there, is ordinary: the rule is about crossing, not
-about tasks.
+about tasks. For state that several threads read and replace, use
+[`shared`](stdlib.md#shared--one-value-every-thread) instead: it holds
+one immutable value any thread can read, and replaces it whole.
 
 Looking for a cell costs nothing while no cell is alive in the program:
 then no message can hold one, and a send does not look inside it, so
@@ -827,8 +835,9 @@ or `col.sort_by(rows, (r) => (r.year, r.name))`.
 
 Equality is **structural** for lists, tuples, maps, structs, and enum
 values — two values are equal when they have the same shape and equal
-parts, not when they are the same object (olang has no object identity
-to observe):
+parts, not when they are the same object. Identity never affects `==`;
+[`same(a, b)`](stdlib.md#global-builtins) asks it directly when you
+need it:
 
 ```olang
 println(to_string([1, 2] == [1, 2]))
@@ -1011,9 +1020,10 @@ and a negative position raises. `str.char_at(s, i)` raises on a negative
 `i` and answers `()` past the end.
 `split(s, "")` splits around every character, with an empty string at
 each end (`split("abc", "")` is `["", "a", "b", "c", ""]`). Strings are
-compared and searched as their code points: olang does no Unicode
-normalization, so `"é"` (one code point) and `"e\u{301}"` (two) are
-different strings. `str.to_upper` and `str.to_lower` apply Unicode's
+compared and searched as their code points, so `"é"` (one code point)
+and `"e\u{301}"` (two) are different strings. Normalize both with
+`str.normalize(s, "nfc")`, or `str.fold` for a case-insensitive
+comparison, when they should match. `str.to_upper` and `str.to_lower` apply Unicode's
 full case mapping, which may change the length (`str.to_upper("straße")`
 is `"STRASSE"`), with no locale (no Turkish dotless i).
 
@@ -2238,13 +2248,17 @@ to the nearest enclosing located statement — its call site.
 ## Concurrency
 
 olang has one model for concurrency, and it is threads. There are three
-pieces, and you always write each of them explicitly:
+main pieces, and you always write each of them explicitly:
 
 - **`spawn`** starts work on a real OS thread and hands back a task
   handle; `task.join` collects the result.
 - **`chan`** is a queue tasks use to send values to each other.
 - **`par_map`, `par_filter`, and `par for`** apply a function across a
   collection on a worker pool.
+
+`shared`, `cancel` and `weak` cover the rest: one value every thread
+reads, a flag that tells work to stop, and a reference that does not
+keep its value alive.
 
 There is no event loop, no scheduler, and no colouring of functions into
 sync and async. Any function can be spawned, because a task is a thread
@@ -2282,8 +2296,9 @@ println(to_string(jobs |> map((j) => unwrap(task.join(j)))))   // [2, 4, 6]
 ```
 
 A spawned thread sees a **snapshot** of the bindings at spawn time —
-capture by value, exactly like a closure — so no two threads share
-mutable state and no locks exist in the language. Joining the same
+capture by value, exactly like a closure — so no two threads share a
+binding. The one way they share state is a `shared` reference, which
+hands out whole immutable values, and there are no locks. Joining the same
 handle twice returns the memoized result rather than running the work
 again:
 
@@ -2407,6 +2422,25 @@ println(to_string(sum(squares)))
 
 See [`par for`](#par-for--parallel-iteration) for the loop form.
 
+The worker pool behind these, and behind the automatic parallelism in
+`sort`, `sum`, `contains`, `flatten` and `fs.search` on large inputs,
+is made by the first parallel operation and ended once it has been
+idle for three seconds. A program that never works in parallel never
+starts one, and a long-running one holds no idle workers while it
+waits. It uses a thread a core unless `OLANG_PARALLELISM` says
+otherwise. `task.set_parallelism(n)` caps it from inside the program,
+and `task.set_parallelism(())` restores the default. Unlike the
+environment variable, the cap is not inherited by processes the
+program starts.
+
+```olang
+println(task.set_parallelism(2))                          // 2
+let squares = par_map(range(0, 1000), (n) => n * n)
+println(sum(squares))                                     // 332833500
+let restored = task.set_parallelism(())
+println(restored > 0)                                     // true
+```
+
 ### Which to reach for
 
 | You want | Use |
@@ -2414,7 +2448,9 @@ See [`par for`](#par-for--parallel-iteration) for the loop form.
 | The same function over a collection | `par_map` / `par_filter` / `par for` |
 | A handful of distinct jobs, results at the end | `spawn` + `task.join` |
 | Results as they arrive, or tasks talking to each other | `chan` |
-| Mutable state within one thread | [`cell`](#cells-the-one-mutable-location) |
+| Mutable state within one thread | [`cell`](#cells-mutable-state-within-a-thread) |
+| One value many threads read, replaced now and then | [`shared`](stdlib.md#shared--one-value-every-thread) |
+| Telling running work it is no longer wanted | [`cancel`](stdlib.md#cancel--cancellation-tokens) or `task.interrupt` |
 
 ### Sharing state under `http.serve`
 
@@ -2459,6 +2495,25 @@ ever rebuild it at once, and a slow rebuild queues the askers rather
 than duplicating the work. The same shape serves a rate limiter, a
 session table, or an in-memory index — anything that would be a
 module-level mutable in a single-threaded server.
+
+When the state is read on every request and replaced only now and
+then (a configuration, a search index rebuilt in the background),
+there is a simpler shape: keep it in a `shared` reference. Every
+worker reads the current value without waiting, and a reload swaps in
+a new one. Values never change in place, so a reader keeps the version
+it read for as long as it needs.
+
+```olang
+let config = shared.new(#{ "rev": 1, "greeting": "hello" })
+fn handle(name) = {
+    let c = shared.get(config)
+    `${c.greeting}, ${name} (rev ${c.rev})`
+}
+println(handle("ada"))                                      // hello, ada (rev 1)
+let reloader = spawn { shared.set(config, #{ "rev": 2, "greeting": "hi" }) }
+unwrap(task.join(reloader))
+println(handle("ada"))                                      // hi, ada (rev 2)
+```
 
 ## Modules and sharing
 
@@ -2575,6 +2630,13 @@ builtins and the stdlib modules, nothing of its importer's) and collects
 the `share`d bindings; a module's exports can call its private
 helpers regardless of declaration order, because exports are closed
 over the module's *complete* scope after the whole file has run.
+
+A `use` at the top of a file loads its module before the file's first
+statement runs. A `use` inside a function or a block loads it when that
+code first runs, and only once, so a program can leave a module it
+needs late out of its start. It resolves as a top-level `use` in the
+file that defines the function would: against that file's folder and
+its package's dependencies, wherever the function is called from.
 
 Native stdlib modules (`str`, `col`, `math`, `json`, ...) are always in
 scope — no `use` needed. Embedded olang-source modules and packages

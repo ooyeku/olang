@@ -501,7 +501,7 @@ every function returns a new string.
 | <a id="str-char_to_byte"></a><a id="str-byte_to_char"></a>`str.char_to_byte(s, i)` / `str.byte_to_char(s, b)` | convert a character position to a byte offset and back; past the end answers the end, a byte inside a character raises |
 | <a id="str-utf16_len"></a>`str.utf16_len(s)` | UTF-16 code units, as an LSP client or a browser counts (an emoji is 2) |
 | <a id="str-encode"></a>`str.encode(s, encoding)` | the text as `Bytes` in `"utf-8"`, `"utf-16le"`, `"utf-16be"` or `"latin1"`: a `Result`, `Err` for a character Latin-1 has no byte for (`bytes.decode` reads it back) |
-| <a id="str-chunks"></a>`str.chunks(s, max_bytes, #{prefer})` | pieces of at most `max_bytes` bytes, cut between characters in one pass; with `prefer: "\n"` a piece ends after the window's last newline when it has one. Joined, they are `s` |
+| <a id="str-chunks"></a>`str.chunks(s, max_bytes, #{prefer})` | pieces of at most `max_bytes` bytes, cut between characters in one pass, so a character wider than `max_bytes` is a piece of its own. With `prefer` (any text, typically `"\n"`), a piece ends after the window's last occurrence of it, when there is one. Joined, they are `s` |
 | <a id="str-index_of"></a><a id="str-last_index_of"></a>`str.index_of(s, sub)` / `str.last_index_of` | position, or `()` when absent |
 | <a id="str-contains"></a><a id="str-count"></a>`str.contains(s, sub)` / `str.count(s, sub)` | search |
 | <a id="str-fuzzy_score"></a>`str.fuzzy_score(query, text)` | a fuzzy finder's score (every query character in order; runs, word starts, the last path segment count more), or `()` |
@@ -511,7 +511,7 @@ every function returns a new string.
 | <a id="str-line_starts"></a>`str.line_starts(s)` | the byte offset where each line starts: `0` and one past every `"\n"`, so a text ending in a line break has an empty last line, as in an editor |
 | <a id="str-stats"></a>`str.stats(s)` | `#{bytes, chars, lines, graphemes, utf16, width, last_line_len}` in one call, at memory speed for ASCII: what each count's own function answers |
 | <a id="str-word_bounds"></a><a id="str-line_breaks"></a>`str.word_bounds(s)` / `str.line_breaks(s, #{"hard"})` | byte offsets of the UAX #29 word boundaries, and of the UAX #14 places a line may wrap (only the forced ones with `hard: true`) |
-| <a id="str-bidi_runs"></a>`str.bidi_runs(s, #{"direction", "visual"})` | runs of one bidirectional level, `#{start, end, level}` in bytes (an odd level is right-to-left), in logical order or, with `visual: true`, the order a line shows them |
+| <a id="str-bidi_runs"></a>`str.bidi_runs(s, #{"direction", "visual"})` | runs of one bidirectional level, `#{start, end, level}` in bytes (an odd level is right-to-left), in logical order or, with `visual: true`, the order a line shows them. `direction` is `"ltr"`, `"rtl"` or `"auto"` (the default: the paragraph's first strong character decides) |
 | <a id="str-normalize"></a><a id="str-fold"></a>`str.normalize(s, form)` / `str.fold(s)` | Unicode normalization (`"nfc"`, `"nfd"`, `"nfkc"`, `"nfkd"`) and full case folding: the forms to compare text in |
 | <a id="str-trim"></a><a id="str-trim_start"></a><a id="str-trim_end"></a>`str.trim` / `str.trim_start` / `str.trim_end` | strip whitespace |
 | <a id="str-pad_start"></a><a id="str-pad_end"></a>`str.pad_start(s, n, fill)` / `str.pad_end` | pad to width |
@@ -1052,6 +1052,26 @@ println(str.contains(doc.html, "href=\"/book/tour/\""))
 println(md.slug("`http` — HTTP"))         // http--http
 ```
 
+`md.parse` is for tools that need to know where things are: an editor
+that folds sections, a linter that points at a bad link, a renderer of
+its own. Every node carries its range twice: in bytes, for
+`str.slice_bytes`, and in characters. With `events: true` the same
+document comes as a flat list, which suits a single pass. The
+`document` root has no events of its own.
+
+```olang
+let src = "# Hi\n\nSome *café* text.\n"
+let doc = md.parse(src)
+println(doc.kind)                                      // document
+let em = doc.children[1].children[1]
+println(em.kind)                                       // emphasis
+println(str.slice_bytes(src, em.start, em.end))        // *café*
+println(`${em.end - em.start} ${em.char_end - em.char_start}`)   // 7 6
+let events = md.parse("a *b*", #{ "events": true })
+println(map(events, (e) => e.event + " " + e.kind))
+// ["start paragraph", "leaf text", "start emphasis", "leaf text", "end emphasis", "end paragraph"]
+```
+
 ## `re` — regular expressions
 
 `re` uses Rust's regex syntax. It never backtracks, so a pattern runs in
@@ -1515,7 +1535,7 @@ The model is covered in
 | <a id="task-join_timeout"></a>`task.join_timeout(t, ms)` / `task.join_timeout(t, #{ timeout_ms })` | `Ok` of what `task.join` answers (`Ok(Ok(v))`, `Ok(Err(e))`) if it finished within `ms`, else `Err("timed out")` |
 | <a id="task-interrupt"></a>`task.interrupt(t, reason?)` | stop the task: it raises `"interrupted"` (`"interrupted: reason"`) at its next statement, loop iteration or call, or at once when it waits (`chan.recv`, `chan.ask`, a full `chan.send`, `task.join`, `time.sleep`, a `proc` read). Asked once, so an `attempt` in the task can catch it. `true` when asked, `false` when the task had already ended |
 | <a id="task-set_qos"></a>`task.set_qos(class)` / `task.set_qos(t, class)` | give the calling thread, or task `t`, a macOS quality-of-service class: `"user-interactive"`, `"user-initiated"`, `"default"`, `"utility"` or `"background"`. A lower class yields the CPU to higher ones under load (on Apple silicon it runs on the efficiency cores). `t` takes it at its next statement, loop iteration or call, or at once in a wait. A task starts with its spawner's class. Answers the class; nothing changes on other systems |
-| <a id="task-qos"></a>`task.qos()` | the calling thread's class |
+| <a id="task-qos"></a>`task.qos()` | the calling thread's class; `"default"` on other systems |
 | <a id="task-set_parallelism"></a>`task.set_parallelism(n)` | at most `n` threads for this program's parallel work (`sort`, `sum`, `contains`, `flatten`, `fs.search` and the like on large inputs); `()` gives back the default, `OLANG_PARALLELISM` or else a thread a core. Not passed to the processes the program starts, as `OLANG_PARALLELISM` is. The pool is made by the first parallel operation and ended after a few idle seconds. Answers the count in effect |
 | <a id="task-watch"></a>`task.watch(t, c)` | the channel dies with the task: when `t` ends, however it ends, `c` is closed, so a `chan.recv` on it returns `Err` instead of waiting forever. Ownership is declared here, not inferred — any task may hold either end of a channel |
 | <a id="task-list"></a>`task.list()` | every task a live handle still watches: `#{ id, state, elapsed_ms }` |
@@ -1527,9 +1547,10 @@ and one bad worker is a value to handle rather than a crash.
 `task.join_timeout` wraps that once more, because "we stopped waiting"
 (`Err("timed out")`) is a third thing.
 
-`task.list` reports each watched task's state — `"running"`,
-`"joining"` (a thread is mid-collect), or `"done"` (finished, its
-memoized result still collectible). `task.parked` is the live view
+`task.list` reports each watched task's state: `"running"`,
+`"interrupting"` (asked to stop, but still inside a system call that
+has not returned), `"joining"` (a thread is collecting it), or `"done"`
+(finished, with its memoized result still collectible). `task.parked` is the live view
 behind [the stall detector](#the-stall-detector)'s report: every thread
 currently blocked in an unbounded wait, and what it is waiting on.
 
@@ -1540,12 +1561,28 @@ let jobs = [spawn work(2), spawn work(3), spawn work(4)]
 println(to_string(jobs |> map((j) => unwrap(task.join(j)))))   // [4, 9, 16]
 ```
 
-**A timeout bounds the wait, not the work.** An OS thread cannot be
-cancelled from outside without leaving whatever it touched in an
-unknown state, so a timed-out task keeps running to completion. Its
-result is memoized, so a later `task.join` on the same handle still
-collects it. For work that genuinely stops early, give the task
-something to check — a channel, or a value it re-reads each pass.
+**A timeout bounds the wait, not the work.** A timed-out task keeps
+running. Its result is memoized, so a later `task.join` on the same
+handle still collects it. To stop the work itself, call
+`task.interrupt(t)`: the task raises `"interrupted"` at its next
+statement, loop iteration or call, or at once if it is waiting. Code
+inside the task can catch that with `attempt` and clean up. For work
+that should choose its own stopping point, pass it a
+[`cancel`](#cancel--cancellation-tokens) token to check.
+
+```olang
+let inbox = chan.new()
+let t = spawn {
+    match attempt(() => chan.recv(inbox)) {
+        Ok(v) => "got a message",
+        Err(e) => "stopped: " + e,
+    }
+}
+time.sleep(20)
+println(task.interrupt(t, "shutting down"))     // true
+println(unwrap(task.join(t)))                   // stopped: interrupted: shutting down
+println(task.interrupt(t))                      // false
+```
 
 Joining the same handle twice returns the memoized result rather than
 re-running anything. A handle dropped without ever being joined is
@@ -1554,10 +1591,12 @@ fire-and-forget: the thread detaches and finishes on its own.
 ## `cell` — mutable locations
 
 A cell holds a value that can be replaced in place. It is the language's
-only mutable location, and exists for the case that returning the new
+mutable location within one thread
+([`shared`](#shared--one-value-every-thread) is the one between
+threads), and exists for the case that returning the new
 value handles badly: state updated from deep in a call chain, or from a
 callback whose signature you do not control. The
-[language reference](language.md#cells-the-one-mutable-location) covers
+[language reference](language.md#cells-mutable-state-within-a-thread) covers
 the model; this is the API.
 
 | Function | Returns |
@@ -1634,7 +1673,29 @@ sent.
 Closing is cooperative and drains: after `chan.close(c)` new sends
 fail, but messages already queued are still received before `recv`
 starts reporting the close — so a consumer loop can simply `match` on
-`recv` and stop on `Err`.
+`recv` and stop on `Err`. A sender waiting on a full bounded channel,
+or on a rendezvous, wakes with `Err("channel is closed")`, and its
+value is never queued behind the close.
+
+`chan.on_drop` lets a service learn that a subscriber went away
+without the subscriber having to say so. Put the guard inside whatever
+owns the subscription. When the last copy of that owner is gone, the
+message arrives. A message holding a cell is refused when the guard is
+made, as `chan.send` would refuse it.
+
+```olang
+let gone = chan.new()
+fn open_view(id) = #{ "id": id, "guard": chan.on_drop(gone, #{ "closed": id }) }
+fn show_once() = {
+    let view = open_view(7)
+    view.id
+}
+println(show_once())                          // 7
+println(chan.recv_timeout(gone, 1000))        // Ok(#{"closed": 7})
+let kept = open_view(8)
+println(chan.try_recv(gone))                  // Ok(())
+println(kept.id)                              // 8
+```
 
 The browser runtime has one thread, so nothing can arrive while it
 waits: there `recv` and `ask` on an empty channel, and `send` on a full
@@ -1710,7 +1771,7 @@ clear and can be set once, from any thread. It holds no value, only
 | <a id="cancel-token"></a>`cancel.token()` | a new token, not set |
 | <a id="cancel-set"></a>`cancel.set(t)` | `()`; the token is set from now on (setting it again does nothing) |
 | <a id="cancel-is_set"></a>`cancel.is_set(t)` | whether it has been set: one atomic read, cheap enough to check in a tight loop |
-| <a id="runtime-call_cancellable"></a>`runtime.call_cancellable(f, args, t)` | `f(args…)`, stopped wherever it is once `t` is set, with its failure caught: `#{ ok, value, error, frames, cancelled, us }`. A stopped call's `error` is `"cancelled"` |
+| <a id="runtime-call_cancellable"></a>`runtime.call_cancellable(f, args, t)` | `f(args…)`, stopped wherever it is once `t` is set, with its failure caught: `#{ ok, value \| error, frames, cancelled, us }`. A stopped call's `error` is `"cancelled"` |
 
 Work can check the token itself, which lets it stop at a point of its
 choosing. `runtime.call_cancellable` stops code that does not check: the
@@ -1803,15 +1864,16 @@ update. The persistent collections share what did not change instead, so
 an update with every older version kept costs O(log n), and every version
 stays a value that never changes.
 
-- `pmap`: a hash map. Keys are Ints or Strings.
+- `pmap`: a hash map. Keys are Ints or Strings; any other key raises.
 - `pvec`: a vector, with O(log n) `get`, `set`, `push`, `pop`, `slice` and `concat`.
 - `psorted`: a map kept in key order (Ints before Strings), with `first`, `last` and `range`.
 
 They behave like the Map and List they stand for. `==` compares what
 they hold, at once when both sides are the same object, and a pmap or a
 psorted equals a Map with the same entries, a pvec a List with the same
-items, at any depth. `hash`, `json.stringify` and `value.encode` treat
-them the same way. `len`, `p[k]`, `p.k` (a pmap or a psorted) and
+items, at any depth. `hash` and `json.stringify` treat them as the Map
+or List they stand for. `value.encode` keeps what they are, so
+`value.decode` gives back a pmap, pvec or psorted. `len`, `p[k]`, `p.k` (a pmap or a psorted) and
 `for x in v` (a pvec) work as on a Map or a List. `show` writes them as
 `pmap#{…}`, `pvec[…]` and `psorted#{…}`, keys in order.
 
@@ -1943,7 +2005,11 @@ the form those feeds write; each function also takes them as `Bytes`, and
 the data signed may be a String or `Bytes`. The private key is the
 32-byte seed. `ed25519_verify` answers `Ok(false)` for a signature that
 does not verify (or is not 64 bytes) and `Err` only for a public key that
-is not one. It is strict: a signature has exactly one form that passes.
+is not one. `ed25519_keypair()` answers `Ok` of a `KeyPair` with
+`private_key` and `public_key`, and `ed25519_public_key(private_key)`
+derives the public key again from a stored seed. A key or signature may
+also be written in hex. `ed25519_sign` answers `Err` for a private key
+that is not 32 bytes. It is strict: a signature has exactly one form that passes.
 `sign_data` and `verify_signature`, the RSA pair, take `Bytes` data too.
 
 ```olang
@@ -2017,7 +2083,7 @@ preview. `fs.read_bytes`/`fs.write_bytes` move it to and from disk;
 | <a id="bytes-index_of"></a>`bytes.index_of(b, needle)` / `bytes.index_of(b, needle, from)` | where `needle` (Bytes, a String, or one byte) first occurs at or after `from`, or `()` |
 | <a id="bytes-compare"></a>`bytes.compare(a, b)` | -1, 0 or 1, comparing byte by byte (a prefix comes first) |
 | <a id="bytes-get_u8"></a><a id="bytes-get_i8"></a><a id="bytes-get_u16"></a><a id="bytes-get_i16"></a><a id="bytes-get_u32"></a><a id="bytes-get_i32"></a><a id="bytes-get_u64"></a><a id="bytes-get_i64"></a><a id="bytes-get_f32"></a><a id="bytes-get_f64"></a>`bytes.get_u16(b, at)` / `bytes.get_u16(b, at, "be")`, and `get_u8` `get_i8` `get_i16` `get_u32` `get_i32` `get_u64` `get_i64` `get_f32` `get_f64` | the number stored at byte `at`, little endian unless `"be"` is given; reading past the end raises. A `u64` past the Int range reads as the Int with the same 64 bits (negative) |
-| <a id="bytes-pack"></a><a id="bytes-unpack"></a>`bytes.pack(layout, values)` / `bytes.unpack(layout, b)` / `bytes.unpack(layout, b, at)` | numbers to bytes and back by a layout of types: `"u16 u32be f64"` is a little-endian u16, a big-endian u32 and a little-endian f64. A value that does not fit its type raises |
+| <a id="bytes-pack"></a><a id="bytes-unpack"></a>`bytes.pack(layout, values)` / `bytes.unpack(layout, b)` / `bytes.unpack(layout, b, at)` | numbers to bytes and back by a layout of types: `"u16 u32be f64"` is a little-endian u16, a big-endian u32 and a little-endian f64. The types are `u8` `i8` `u16` `i16` `u32` `i32` `u64` `i64` `f32` `f64`, each little endian unless suffixed `be` (or `le`). A value that does not fit its type raises |
 | <a id="bytes-to_hex"></a><a id="bytes-from_hex"></a>`bytes.to_hex(b)` / `bytes.from_hex(s)` | lowercase hex, two digits a byte; `from_hex` reads either case and answers a `Result` (an odd count or a character that is not a digit is `Err`) |
 
 ```olang
@@ -2291,17 +2357,17 @@ over these nodes, beside the type checker
 
 | Function | Result |
 |---|---|
-| <a id="meta-parse"></a>`meta.parse(source, options?)` | `Ok(list of node maps)` \| `Err(message)` — a syntax error is a normal `Err`, never a crash. `#{ "recover": true }` answers `#{ "items", "errors" }` instead: when the file does not parse whole, each top-level item is parsed on its own, so a file mid-edit keeps every item but the broken one, and each error is `#{ "message", "line", "column", "at", "start", "end" }` (`at` the byte the parser stopped at, `start` and `end` the broken item's range). `#{ "byte_offset", "line_offset" }` gives an item parsed on its own (its text sliced out of a file) the spans and lines it has in the file |
+| <a id="meta-parse"></a>`meta.parse(source, options?)` | `Ok(list of node maps)` \| `Err(message)` — a syntax error is a normal `Err`, never a crash. `#{ "recover": true }` answers `#{ "items", "errors" }` instead: when the file does not parse whole, each top-level item is parsed on its own, so a file mid-edit keeps every item but the broken one, and each error is `#{ "kind": "error", "message", "line", "column", "at", "start", "end" }` (`line` and `column` the file's, while the message's own position counts from the broken item; `at` the byte the parser stopped at, `start` and `end` the broken item's range). `#{ "byte_offset", "line_offset" }` gives an item parsed on its own (its text sliced out of a file) the spans and lines it has in the file |
 | <a id="meta-parse_items"></a>`meta.parse_items(source)` | `[#{ "kind", "name", "start", "end", "line" }]`, one per top-level item, found by a scan rather than a parse. The byte ranges tile the file (a doc comment goes with the item under it), so an index reparses only the item an edit is in. The scan restarts at a line that opens with a declaration keyword, so a file with an unclosed bracket still shows the items after it |
 | <a id="meta-rename"></a>`meta.rename(source, names)` | `Ok(text)`: `source` with each name that is a key of the map `names` renamed to its value wherever it binds or refers to a value — declarations, parameters, pattern binders, uses, template interpolations — and kept where it names something else: a field after `.`, an object's, struct literal's or named argument's key, a struct pattern's field, a type, a variant, a trait's or impl's method, an import. Comments and strings are untouched; `Err` when the source does not parse |
 | <a id="meta-eval"></a>`meta.eval(source, options?)` | evaluate source; `options` bounds untrusted code — `#{ "max_steps": n }` (loop iterations and calls, deterministic) and `#{ "timeout_ms": ms }` (wall clock) — returning `Err("budget exceeded …")` instead of a hung thread. Bounded code runs on the same tiers as any other code, and each tier counts its steps |
 | <a id="meta-expand"></a>`meta.expand(source)` | `Ok(text)` \| `Err(message)` — the program after macro expansion, as source: every `meta fn` removed and every `@` site replaced by what it generated (what `olang expand FILE` prints) |
 | <a id="meta-encode"></a>`meta.encode(source, options?)` | `Ok(bytes)` \| `Err(message)` — the parsed program (macros expanded) as a program image: bytes the runtime loads without parsing, behind a header naming the olang version that wrote it, which is the only version that loads it. `#{ "hot": [names] }` names the functions the loading runtime compiles at declaration rather than at their first call. What the web SDK's `serve` hands the browser in place of the source bundle |
 | <a id="meta-unresolved"></a>`meta.unresolved(source)` | `Ok(list)` of every name the program uses that nothing in it defines or imports and the language does not provide, in order of first use; `Err` when the source does not parse. How the web SDK's bundler warns of a module that uses a name it does not import, undefined in the browser as natively |
-| <a id="meta-resolve"></a>`meta.resolve(source)` | `Ok([#{ "name", "start", "end", ... }])`, every name in the program in order, with what it reads: `def` (`#{ "start", "end" }` of the binding's definition; `is_def` marks the definition itself), or `builtin`, `module` or `unresolved` set to `true`. The language server's references and rename walk the same scopes, so the two agree. `Err` when it does not parse. Native only |
+| <a id="meta-resolve"></a>`meta.resolve(source)` | `Ok([#{ "name", "start", "end", ... }])`, every name in the program in the order the scope walk meets them (a `let`'s value before its name), with what it reads: `def` (`#{ "start", "end" }` of the binding's definition; `is_def` marks the definition itself), or `builtin`, `module` or `unresolved` set to `true`; a top-level binding and its uses carry `top_level: true`. The language server's references and rename walk the same scopes, so the two agree. `Err` when it does not parse. Native only |
 | <a id="meta-types"></a>`meta.types(source)` | `Ok([#{ "name", "signature", "doc", "name_start", "line", "column" }])`, each top-level declaration with the signature a hover shows for it (`fn double(x: Int) -> Int`, `let n: Int`) and its `///` doc. The language server's own code. Native only |
 | <a id="meta-fingerprint"></a>`meta.fingerprint(item)` | `Ok(#{ "sig", "body" })` for one item, given as its source or its node from `meta.parse`: two 16-digit hex hashes of the node with every position left out, so moving an item, or adding lines above it, changes neither. `sig` covers the declaration without its body (a `fn`'s name, parameters, types and `share`), `body` the body (a `let`'s value); an edit inside a body leaves `sig` as it was |
-| <a id="meta-tokens"></a>`meta.tokens(source, lang?)` | the source as tokens that cover it exactly — their `text`s joined are `source` — `[#{ "kind", "text", "start", "end", "line" }]`, `start` and `end` in characters, `line` from 1. `kind` is one of `keyword` `constant` (`true`, `Ok`, an ALL-CAPS name) `ident` `function` (a call's or a definition's name) `type` `module` `property` `string` (a template's text pieces; a string a line) `interpolation` (`${` and its `}`) `number` `comment` `operator` `punct` `macro` (`@name`) `space`. Any text lexes, finished or not: the language server's lexer. `lang` names another language, with the same kinds and the same guarantee: `"python"` (`py`), `"rust"` (`rs`), `"js"` (`javascript`, `ts`), `"shell"` (`sh`, `bash`, `console`), `"toml"`, `"json"` or `"markdown"` (`md`); a name it does not know raises. `meta.tokens(source, #{ "packed": true })` answers `#{ "kind", "start", "end", "kinds", "state" }` instead: three Int lists, offsets in bytes and each kind its index in `kinds`, and the lexer's `state` at the end (`"code"`, or `"string"`, `"raw"` or `"template"` when the text ends inside one). `"from"` (a byte offset) and `"state"` (the state there, as an earlier call answered it) lex from a line rather than from the start, which is what an editor relexing after an edit needs |
+| <a id="meta-tokens"></a>`meta.tokens(source, lang?)` | the source as tokens that cover it exactly — their `text`s joined are `source` — `[#{ "kind", "text", "start", "end", "line" }]`, `start` and `end` in characters, `line` from 1. `kind` is one of `keyword` `constant` (`true`, `Ok`, an ALL-CAPS name) `ident` `function` (a call's or a definition's name) `type` `module` `property` `string` (a template's text pieces; a string a line) `interpolation` (`${` and its `}`) `number` `comment` `operator` `punct` `macro` (`@name`) `space`. Any text lexes, finished or not: the language server's lexer. `lang` names another language, with the same kinds and the same guarantee: `"python"` (`py`), `"rust"` (`rs`), `"js"` (`javascript`, `ts`), `"shell"` (`sh`, `bash`, `console`), `"toml"`, `"json"` or `"markdown"` (`md`); a name it does not know raises. `meta.tokens(source, #{ "packed": true })` answers `#{ "kind", "start", "end", "kinds", "state" }` instead: three Int lists, offsets in bytes and each kind its index in `kinds`, and the lexer's `state` at the end (`"code"`, or `"string"`, `"raw"` or `"template"` when the text ends inside one). `"from"` (a byte offset) and `"state"` (the state there, as an earlier call answered it) lex from a line rather than from the start, which is what an editor relexing after an edit needs. The options map may also name `lang`; `from`, `state` and `packed` are for olang source only. Without `packed`, a lex `from` an offset answers the usual maps, offsets still counted in characters from the start of `source`. An option it does not know raises |
 | <a id="meta-highlight"></a>`meta.highlight(source, lang?)` | the source as HTML for inside a `<code>`: each token but a space a `<span class="ol-KIND">`, its text escaped; `lang` as `meta.tokens` takes it. The same in the browser runtime, so a page's build and its playground colour alike |
 | <a id="meta-exports"></a>`meta.exports(path)` | at expansion time, `Ok(map)` of the literal values the module the expanding file imports as `path` binds at its top level (`let`/`share let` of a number, string, list, map, or tuple literal), by name; `Err` for a path the file does not import, and at runtime |
 
@@ -2485,6 +2551,45 @@ println(meta.highlight("x |> f"))
 println(meta.highlight("version = \"1.0\"  # pinned", "toml"))
 ```
 
+An editor or an indexer works on a file that is being changed, often
+mid-edit. `meta.parse_items` finds the items without parsing, so an
+edit reparses only its item. `#{ "recover": true }` keeps every item
+that parses, with the broken one reported in place. `meta.types` gives
+what a hover shows, and `meta.fingerprint` tells a moved item from a
+changed one.
+
+```olang
+let src = "/// Twice x.\nfn double(x: Int) -> Int = x * 2\nfn bad( = \nlet n = double(4)\n"
+let items = meta.parse_items(src)
+println(map(items, (i) => i.name))                         // ["double", "bad", "n"]
+let r = meta.parse(src, #{ "recover": true })
+println(map(r.items, (n) => n.name))                       // ["double", "n"]
+println(`${r.errors[0].line}:${r.errors[0].column}`)       // 3:9
+let types = unwrap(meta.types("/// Twice x.\nfn double(x: Int) -> Int = x * 2"))
+println(types[0].signature)                                // fn double(x: Int) -> Int
+println(types[0].doc)                                      // Twice x.
+let before = unwrap(meta.fingerprint("fn f(x) = x + 1"))
+let moved = unwrap(meta.fingerprint("\n\nfn f(x) = x + 2"))
+println(`${before.sig == moved.sig} ${before.body == moved.body}`)   // true false
+```
+
+A highlighter relexes from the line an edit starts on, not from the
+top. It keeps the `state` each line ended in and passes it back with
+`from`. `meta.resolve` links each use to its definition.
+
+```olang
+let line1 = "let b = `one\n"
+let head = meta.tokens(line1, #{ "packed": true })
+println(head.state)                                         // template
+let src = line1 + "two`\nlet c = 3\n"
+let rest = meta.tokens(src, #{ "packed": true, "from": str.byte_len(line1), "state": head.state })
+println(rest.kinds[rest.kind[0]])                           // string
+println(rest.start[0])                                      // 13
+println(rest.state)                                         // code
+let uses = filter(unwrap(meta.resolve("let x = 1\nx + x")), (n) => !(n.is_def ?? false))
+println(map(uses, (n) => n.def.start))                     // [4, 4]
+```
+
 ## `runtime` — what this binary carries
 
 The olang binary carries its own browser runtimes, which are olang
@@ -2504,13 +2609,13 @@ that serves its own routes reads the same bytes.
 | <a id="runtime-profile_start"></a>`runtime.profile_start()` / `runtime.profile_start(interval_us)` | begin sampling this process with the profiler behind `olang profile` (every 1,000 µs by default): `Ok(())`, or `Err` when a profile is already running |
 | <a id="runtime-profile_stop"></a>`runtime.profile_stop()` | end it: `Ok(#{ "interval_us", "ticks", "idle", "blocked", "samples", "rows" })`, where `rows` is `[#{ "function", "tier", "samples", "share" }]`, most first — the functions that were running when the sampler looked, the tier each ran on (`interp`, `vm`, `native`, `builtin`), and its share of the samples that landed in code. `blocked` counts thread-ticks spent parked — a receive, a sleep, a server waiting for a connection, an idle http worker — which are charged to no function. `Err` when no profile is running |
 | <a id="runtime-code_layer"></a>`runtime.code_layer()` | how this application booted, when its Info.plist names a code layers folder ([Code layers](tooling.md#code-layers)): `#{ "layers", "active", "running", "tries", "max_tries", "fallback" }`, `running` the layer that runs or `()` when the bundled program does, and `fallback` why the active layer is not running (its tries used up, its signature, another runtime's payload). `()` in any other program |
-| <a id="runtime-on_crash"></a>`runtime.on_crash(dir)` `runtime.on_crash(dir, #{ "max_bytes" })` | from now on, a crash leaves a report: a Rust panic that ends the process, or a fatal signal (SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP, SIGABRT), writes one JSON file, `dir/olang-crash-<pid>-<time>.json`, before the process goes, at most `max_bytes` (256 KiB; 16 KiB to 1 MiB). It holds the message and the place in olang's Rust (`location`), the thread, every thread's olang frames (`function`, `file`, `tier`, and for a panic the function's `line`), the crashing thread's native backtrace as addresses with each image's `uuid` and `load_address`, the olang version and commit, the macOS version, the CPU and the time, and never a value, the environment or the arguments. The process still ends as it would have, and stderr names the report. `Ok(dir)`, the folder made absolute. `OLANG_CRASH_DIR=dir` arms it from the start, which also records the frames of functions already running. Only the host may call it |
+| <a id="runtime-on_crash"></a>`runtime.on_crash(dir)` `runtime.on_crash(dir, #{ "max_bytes" })` | from now on, a crash leaves a report: a Rust panic that ends the process, or a fatal signal (SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP, SIGABRT), writes one JSON file, `dir/olang-crash-<pid>-<time>.json`, before the process goes, at most `max_bytes` (256 KiB; 16 KiB to 1 MiB). It holds the message and the place in olang's Rust (`location`), the thread, every thread's olang frames (`function`, `file`, `tier`, and for a panic the function's `line`), the crashing thread's native backtrace as addresses with each image's `uuid` and `load_address`, the olang version and commit, the system (`os`: its name and version), the CPU (`arch`) and the time, and never a value, the environment or the arguments. The process still ends as it would have, and stderr names the report. `Ok(dir)`, the folder made absolute. `OLANG_CRASH_DIR=dir` arms it from the start, which also records the frames of functions already running. Only the program itself may call it, not a module loaded with `runtime.load_module`. Unix only; elsewhere it answers `Err` ([Crash reports](tooling.md#crash-reports)) |
 | <a id="runtime-profile_live_start"></a>`runtime.profile_live_start(dir)` `runtime.profile_live_start(dir, #{ "every_ms", "interval_us", "label" })` | a live profile of this process from now — what `olang profile --format json --live DIR` makes of a program it runs: stacks sampled by tier every `interval_us` (1,000), and a snapshot of the profile and the vital signs written to `DIR/<pid>.json` every `every_ms` (500, at least 50) in that format ([`olang profile`](tooling.md#olang-profile)), cumulative and replaced atomically. `Ok(())`, or `Err` when a profile already runs (`--profile-live`, `olang profile`, `runtime.profile_start`, an earlier call). Nothing is paid until it is called: an app that draws its own profile turns it on and off |
 | <a id="runtime-profile_live_stop"></a>`runtime.profile_live_stop()` | end it: sampling stops, the final snapshot (`"done": true`) is written. `Ok(())`, or `Err` when none runs |
 | <a id="runtime-build"></a>`runtime.build()` | what this binary is: `#{ "version", "commit", "branch", "dirty", "date", "profile", "target", "rustc", "features", "crates", "exe" }` — the git commit it was built from (empty outside a checkout) and whether tracked files had changes then (`dirty`, `()` when git could not say), when its build script last ran (UTC: the last change to the sources, the lock or the commit), `release` or `debug`, the target triple, `rustc -V`, the Cargo features, the gui engine's and the stdlib's key crates from Cargo.lock as `[#{ "name", "version", "vendored" }]` (`vendored`: a patched copy under vendor/, accesskit_macos), and the binary's path |
 | <a id="runtime-load_module"></a>`runtime.load_module(path, grant)` | the olang file at `path` loaded into this program as a module, read afresh (its folder's cached modules forgotten), everything under its folder held to `grant` — `#{ name, fs: false \| "read" \| true, fs_roots: [folders], proc: false \| true \| [programs], net, db, env }`, a key left out denied, never the host's builtins (`gui`, `tty`, loading code, the profiler). `Ok(module)`, or `Err(message)` with the grant before it kept ([Modules loaded at run time](packages.md#modules-loaded-at-run-time)) |
 | <a id="runtime-unload_module"></a><a id="runtime-module_grant"></a><a id="runtime-module_permits"></a>`runtime.unload_module(path)` · `runtime.module_grant(path)` · `runtime.module_permits(path, builtin, args)` | unload a module: its grant becomes a tombstone, so its code still running (a closure kept, a thread it started) is refused every capability — "module <dir> was unloaded" — never given the host's, until a `load_module` of the folder grants it again (true when a loaded module was there); the grant as it holds (`()` when none); whether its code would be allowed `builtin(args…)` — `Ok(())` or `Err(why)`, the same gate |
-| <a id="runtime-call_budget"></a>`runtime.call_budget(f, args, ms)` | `f(args…)` stopped past `ms` (on this thread only: every thread's budgets are its own) and its failure caught: `#{ ok, value, error, frames, over, us }`. A wait inside it (`chan.recv`, `time.sleep`, a full `chan.send`) ends when the time runs out |
+| <a id="runtime-call_budget"></a>`runtime.call_budget(f, args, ms)` | `f(args…)` stopped past `ms` (on this thread only: every thread's budgets are its own) and its failure caught: `#{ ok, value, error, frames, over, us }`. A wait inside it (`chan.recv`, `chan.ask`, `chan.recv_timeout`, a full `chan.send`, `time.sleep`) ends when the time runs out, and so does an `os.exec` it is running |
 | <a id="runtime-last_error"></a>`runtime.last_error()` | the error a boundary on this thread caught last (`attempt`, `call_budget`, `load_module`) with its frames, `#{ message, frames: [#{ path, line, function }] }`, innermost first (a function whose body is one expression is placed at its declaration's line, a lambda's frame at line 0); `()` when none |
 | <a id="runtime-shape"></a>`runtime.shape(value)` | a value's shape as text — kind, a map's sorted keys with theirs, a list's first item's — what a host compares to keep a reloaded module's state |
 | <a id="runtime-bind"></a>`runtime.bind(node, value)` | a control a host binds (what `ui.slider` and its kin answer): `value` with no host; in a notebook's kernel the value the editor set for the evaluating cell's control while it still fits. Also in the browser build, where `runtime` has this, `preset` and `features` |
@@ -2632,7 +2737,9 @@ started — and the answer is `Ok` with `timed_out: true`, `code: ()`, and
 the output read before the kill. `code` is the exit code when the
 program exited by itself, `()` when it did not (a timeout, or a signal:
 `signal` names it, `()` otherwise). (Being in its own group, it does not
-receive the terminal's Ctrl-C.) Without `timeout_ms` the run is
+receive the terminal's Ctrl-C itself. If a Ctrl-C, SIGTERM or SIGHUP
+ends olang, olang kills the group on its way out; a program that traps
+the signal decides for itself.) Without `timeout_ms` the run is
 unbounded and `timed_out` is `false`. `stdout` and `stderr` are text,
 any bytes in them that are not UTF-8 replaced by U+FFFD; with `"bytes":
 true` among the options they are `Bytes`, exactly as the program wrote
@@ -2739,7 +2846,10 @@ outlive it. To end everything a child started, spawn it with
 it with `proc.kill(p, #{ "tree": true })`, which kills the whole group
 (`taskkill /T` on Windows). A tree kill of a child spawned without
 `group` is an `Err`. A grouped child does not receive the terminal's
-Ctrl-C with the program; that is the point, and the reason it is opt-in.
+Ctrl-C. A program that traps Ctrl-C (`os.on_interrupt`,
+`os.on_shutdown`) keeps it running, and that is the point of `group`;
+a Ctrl-C, SIGTERM or SIGHUP that ends olang kills the group too, so it
+never runs on with nobody waiting for it.
 
 ```olang no-run
 let p = unwrap(proc.spawn(["sh", "-c", "make test"], #{ "group": true }))
@@ -3138,7 +3248,7 @@ Native-only; on in the released binaries (the `gui` cargo feature).
 | <a id="gui-compare"></a>`gui.compare(a, b, opts?)` | two PNGs compared as a pixel snapshot is: `#{ same, differing, total, worst, diff }`; a pixel differs past `threshold` (32 of 255), the images are the same while at most `ratio` (0.001) of the pixels differ; `diff` is a PNG with the differing pixels in red |
 | <a id="gui-hold_quit"></a>`gui.hold_quit(on)` | `true`: a quit from outside the program — the Dock's Quit, AppleScript's `quit app`, a logout, a restart or a shutdown (AppKit's `applicationShouldTerminate:`) — is the program's `quit` event, and the application waits for the program to end, then exits with its status; `false` (the default): such a quit ends the process at once. The wait lasts until the program ends; meanwhile the platform runs no window handler, so `gui.open` and `gui.dialog` answer an error and what is sent to the windows waits. Loom's run loop holds quits and sends the message ⌘Q sends. macOS; `gui.platform()` says `quit_hold`. → `()` |
 | <a id="gui-turn"></a>`gui.turn(on)` | a program says a turn begins (`true`) and ends (`false`) — Loom's loop does, around each turn. One that runs past 2 s (`GUI_NOT_RESPONDING_MS`) makes every window show it is waiting (the busy cursor, a veil and a spinner over the frame) until it ends; the engine draws on meanwhile, so scrolls, looks and fields keep the refresh. → `()`. `gui.platform()` says `turn_watch` |
-| <a id="gui-set"></a>`gui.set(w, props)` | `title`, `size`, `min`, `at` (where on the screen the window is), `visible`, `cursor`, `focus`, `background`, `zoom` (the text size, 0.5 to 3: the window keeps its pixels and its boxes, reads, and events are in units of `zoom` logical pixels, so a program lays out in less room at a larger size; a `resize` event says the new size), `appearance` (`"light"`, `"dark"`, or `"system"`: the title bar and the platform's own controls in the appearance the program draws in), `scripted` (`true`: a script drives the window through `gui.input`, and a person's keys, pointer, wheel and drops on it are not taken — a test's window is not moved by the mouse passing over it), `tab` (macOS window tabs: `"next"`, `"previous"` tab chosen, `"merge"` every window into this one's tab bar, `"detach"` this tab into a window of its own, `"bar"` the bar shown or hidden; a `tabs` event follows), `corner` (`"continuous"` or `"round"`: the corners of every rounded box whose style says none), `wide` (a map of sRGB colours, `"#rrggbb"`, to the Display P3 ones the GPU draws for them, `"color(display-p3 r g b)"`; `()` none — see Colours), `flash` (`true`: the repaint rainbow — every region a frame draws tinted with that frame's colour, unseen by damage, so a region keeps the tint of the frame that last drew it; `false` draws the window whole again; `gui.platform()` says `flash`) |
+| <a id="gui-set"></a>`gui.set(w, props)` | `title`, `size`, `min`, `at` (where on the screen the window is), `visible`, `cursor`, `focus`, `background`, `zoom` (the text size, 0.5 to 3: the window keeps its pixels and its boxes, reads, and events are in units of `zoom` logical pixels, so a program lays out in less room at a larger size; a `resize` event says the new size), `appearance` (`"light"`, `"dark"`, or `"system"`: the title bar and the platform's own controls in the appearance the program draws in), `scripted` (`true`: a script drives the window through `gui.input`, and a person's keys, pointer, wheel and drops on it are not taken — a test's window is not moved by the mouse passing over it), `tab` (macOS window tabs: `"next"`, `"previous"` tab chosen, `"merge"` every window into this one's tab bar, `"detach"` this tab into a window of its own, `"bar"` the bar shown or hidden; a `tabs` event follows), `corner` (`"continuous"` or `"round"`: the corners of every rounded box whose style says none), `wide` (a map of sRGB colours, `"#rrggbb"`, to the Display P3 ones the GPU draws for them, `"color(display-p3 r g b)"`; `()` none — see Colours), `flash` (`true`: the repaint rainbow — every region a frame draws tinted with that frame's colour, unseen by damage, so a region keeps the tint of the frame that last drew it; `false` draws the window whole again; `gui.platform()` says `flash`), `fullscreen` (`"toggle"`: enters or leaves full screen in its own space, as the green button does; macOS) |
 | <a id="gui-fonts"></a>`gui.fonts(sources, opts?)` | register fonts: paths or Bytes, TTF/OTF/TTC, optionally brotli-compressed → the number of faces added. Registered fonts come before the system's. `#{ "background": true }`: the sources are read now, then decompressed and registered on a thread of their own while the program goes on — whatever shapes or measures text meanwhile waits until they are in — and it answers the number of sources (Loom's `run` registers its bundled fonts so: they were tens of milliseconds of a window's first frame) |
 | <a id="gui-clipboard_read"></a><a id="gui-clipboard_write"></a>`gui.clipboard_read()` / `gui.clipboard_write(text)` | the platform clipboard (headless windows' editing uses a private one) |
 | <a id="gui-clipboard_image"></a>`gui.clipboard_image()` | the clipboard's image (a screenshot copied, an image copied in another program) → `Ok(#{ png, width, height })`, `png` its PNG Bytes (a TIFF is turned into one), or `Err` when it holds none. macOS only: elsewhere an `Err` that says so (`gui.platform().clipboard_image`) |
@@ -3694,7 +3804,9 @@ parallelism; `OLANG_HTTP_WORKERS` overrides it. Each worker owns an isolated
 interpreter clone, while stateful native handles such as SQLite connections
 synchronize their own access.
 
-HTTP/1.1 keep-alive is honored. Idle connections time out, each connection
+HTTP/1.1 keep-alive is honored, pipelining included: requests a client
+sends back to back on one connection are each answered, in order. Idle
+connections time out, each connection
 has a request cap, and a full bounded queue receives `503` rather than growing
 threads or memory without limit. The handler receives a request struct:
 
