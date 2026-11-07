@@ -42,6 +42,7 @@ const NEEDS: &[(&str, &str)] = &[
     ("task.interrupt", "threads"),
     ("task.set_qos", "threads"),
     ("task.qos", "threads"),
+    ("task.set_parallelism", "threads"),
     ("task.watch", "threads"),
 ];
 

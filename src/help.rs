@@ -3045,6 +3045,14 @@ task.join(worker)   // Err("interrupted: restart")"##],
             &[r##"task.qos()  // "default""##],
         );
         self.doc_ex(
+            "task.set_parallelism",
+            "task.set_parallelism(n)",
+            "Int",
+            "task",
+            "At most n threads for this program's parallel work (sort, sum, contains, flatten, fs.search and the like on large inputs); () gives back the default, OLANG_PARALLELISM or else a thread a core. Unlike OLANG_PARALLELISM it is not passed to the processes the program starts. The pool is made by the first parallel operation and ended after a few idle seconds. Answers the count in effect.",
+            &[r##"task.set_parallelism(4)  // 4"##],
+        );
+        self.doc_ex(
             "task.watch",
             "task.watch(t, c)",
             "Unit",

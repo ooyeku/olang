@@ -99,6 +99,7 @@ pub fn create_task_module() -> Value {
         ("interrupt", 1),
         ("set_qos", 1),
         ("qos", 0),
+        ("set_parallelism", 1),
         ("list", 0),
         ("parked", 0),
         ("watch", 2),
@@ -155,6 +156,7 @@ pub fn call_task_function(name: &str, args: Vec<Value>) -> Result<Value, Interpr
         "interrupt" => task_interrupt(args),
         "set_qos" => task_set_qos(args),
         "qos" => task_qos(args),
+        "set_parallelism" => task_set_parallelism(args),
         "watch" => task_watch(args),
         "list" => task_list(args),
         "parked" => task_parked(args),
@@ -385,6 +387,29 @@ fn task_qos(args: Vec<Value>) -> Result<Value, InterpreterError> {
         return Err(raise("task.qos takes no arguments".to_string()));
     }
     Ok(Value::String(Arc::new(qos_name(current_qos()).to_string())))
+}
+
+/// `task.set_parallelism(n)`: at most `n` threads for this program's
+/// parallel work (`sort`, `fs.search`, ...); `()` gives back the default
+/// (`OLANG_PARALLELISM`, else a thread a core). Not passed to children.
+/// Answers the count in effect.
+fn task_set_parallelism(args: Vec<Value>) -> Result<Value, InterpreterError> {
+    let n = match args.as_slice() {
+        [Value::Integer(n)] if *n >= 1 => Some(*n as usize),
+        [Value::Unit] => None,
+        [other] => {
+            return Err(raise(format!(
+                "task.set_parallelism: a thread count of 1 or more, or (), got {}",
+                other
+            )));
+        }
+        _ => {
+            return Err(raise(
+                "task.set_parallelism expects a thread count".to_string(),
+            ));
+        }
+    };
+    Ok(Value::Integer(crate::parallel::set_parallelism(n) as i64))
 }
 
 /// `task.interrupt(t, reason?)`: ask task `t` to stop. It raises

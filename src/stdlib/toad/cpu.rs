@@ -118,89 +118,91 @@ pub fn run(p: &Program, cols: &mut Columns, uniforms: &[f32]) -> Option<Vec<bool
     let chunked = (0..chunks).into_par_iter();
     #[cfg(not(feature = "native"))]
     let chunked = (0..chunks).into_iter();
-    let results: Vec<(Vec<Vec<f32>>, Vec<bool>)> = chunked
-        .map(|ci| {
-            let lo = ci * CHUNK;
-            let len = CHUNK.min(n - lo);
-            let mut regs = vec![0.0f32; nscratch * len];
-            for (i, op) in p.ops.iter().enumerate() {
-                let Some(r) = scratch[i] else { continue };
-                // split so the op's own output is writable while earlier ones are read
-                let (before, rest) = regs.split_at_mut(r * len);
-                let out = &mut rest[..len];
-                let arg = |j: usize| -> Arg<'_> {
-                    match p.ops[j] {
-                        Op::Const(c) => Arg::S(c),
-                        Op::Uni(u) => Arg::S(uniforms.get(u).copied().unwrap_or(0.0)),
-                        Op::Col(c) => Arg::C(&src[c * cap + lo..c * cap + lo + len]),
-                        _ => {
-                            let s = scratch[j].expect("an op's operand is an op");
-                            Arg::C(&before[s * len..s * len + len])
-                        }
-                    }
-                };
-                match *op {
-                    Op::Bin(b, x, y) => match (arg(x), arg(y)) {
-                        (Arg::C(a), Arg::C(c)) => {
-                            for k in 0..len {
-                                out[k] = bin(b, a[k], c[k]);
+    let results: Vec<(Vec<Vec<f32>>, Vec<bool>)> = crate::parallel::install(|| {
+        chunked
+            .map(|ci| {
+                let lo = ci * CHUNK;
+                let len = CHUNK.min(n - lo);
+                let mut regs = vec![0.0f32; nscratch * len];
+                for (i, op) in p.ops.iter().enumerate() {
+                    let Some(r) = scratch[i] else { continue };
+                    // split so the op's own output is writable while earlier ones are read
+                    let (before, rest) = regs.split_at_mut(r * len);
+                    let out = &mut rest[..len];
+                    let arg = |j: usize| -> Arg<'_> {
+                        match p.ops[j] {
+                            Op::Const(c) => Arg::S(c),
+                            Op::Uni(u) => Arg::S(uniforms.get(u).copied().unwrap_or(0.0)),
+                            Op::Col(c) => Arg::C(&src[c * cap + lo..c * cap + lo + len]),
+                            _ => {
+                                let s = scratch[j].expect("an op's operand is an op");
+                                Arg::C(&before[s * len..s * len + len])
                             }
                         }
-                        (Arg::C(a), Arg::S(c)) => {
-                            for k in 0..len {
-                                out[k] = bin(b, a[k], c);
+                    };
+                    match *op {
+                        Op::Bin(b, x, y) => match (arg(x), arg(y)) {
+                            (Arg::C(a), Arg::C(c)) => {
+                                for k in 0..len {
+                                    out[k] = bin(b, a[k], c[k]);
+                                }
                             }
-                        }
-                        (Arg::S(a), Arg::C(c)) => {
-                            for k in 0..len {
-                                out[k] = bin(b, a, c[k]);
+                            (Arg::C(a), Arg::S(c)) => {
+                                for k in 0..len {
+                                    out[k] = bin(b, a[k], c);
+                                }
                             }
-                        }
-                        (Arg::S(a), Arg::S(c)) => out.fill(bin(b, a, c)),
-                    },
-                    Op::Un(u, x) => match arg(x) {
-                        Arg::C(a) => {
-                            for k in 0..len {
-                                out[k] = un(u, a[k]);
+                            (Arg::S(a), Arg::C(c)) => {
+                                for k in 0..len {
+                                    out[k] = bin(b, a, c[k]);
+                                }
                             }
-                        }
-                        Arg::S(a) => out.fill(un(u, a)),
-                    },
-                    Op::Sel(c, x, y) => {
-                        let (c, x, y) = (arg(c), arg(x), arg(y));
-                        let at = |a: &Arg<'_>, k: usize| match a {
-                            Arg::S(s) => *s,
-                            Arg::C(v) => v[k],
-                        };
-                        for (k, o) in out.iter_mut().enumerate().take(len) {
-                            *o = if at(&c, k) > 0.5 {
-                                at(&x, k)
-                            } else {
-                                at(&y, k)
+                            (Arg::S(a), Arg::S(c)) => out.fill(bin(b, a, c)),
+                        },
+                        Op::Un(u, x) => match arg(x) {
+                            Arg::C(a) => {
+                                for k in 0..len {
+                                    out[k] = un(u, a[k]);
+                                }
+                            }
+                            Arg::S(a) => out.fill(un(u, a)),
+                        },
+                        Op::Sel(c, x, y) => {
+                            let (c, x, y) = (arg(c), arg(x), arg(y));
+                            let at = |a: &Arg<'_>, k: usize| match a {
+                                Arg::S(s) => *s,
+                                Arg::C(v) => v[k],
                             };
+                            for (k, o) in out.iter_mut().enumerate().take(len) {
+                                *o = if at(&c, k) > 0.5 {
+                                    at(&x, k)
+                                } else {
+                                    at(&y, k)
+                                };
+                            }
                         }
+                        _ => {}
                     }
-                    _ => {}
                 }
-            }
-            let value = |j: usize, k: usize| match p.ops[j] {
-                Op::Const(c) => c,
-                Op::Uni(u) => uniforms.get(u).copied().unwrap_or(0.0),
-                Op::Col(c) => src[c * cap + lo + k],
-                _ => regs[scratch[j].unwrap() * len + k],
-            };
-            let writes: Vec<Vec<f32>> = p
-                .writes
-                .iter()
-                .map(|&(_, j)| (0..len).map(|k| value(j, k)).collect())
-                .collect();
-            let dead: Vec<bool> = match p.dead {
-                Some(j) => (0..len).map(|k| value(j, k) > 0.5).collect(),
-                None => Vec::new(),
-            };
-            (writes, dead)
-        })
-        .collect();
+                let value = |j: usize, k: usize| match p.ops[j] {
+                    Op::Const(c) => c,
+                    Op::Uni(u) => uniforms.get(u).copied().unwrap_or(0.0),
+                    Op::Col(c) => src[c * cap + lo + k],
+                    _ => regs[scratch[j].unwrap() * len + k],
+                };
+                let writes: Vec<Vec<f32>> = p
+                    .writes
+                    .iter()
+                    .map(|&(_, j)| (0..len).map(|k| value(j, k)).collect())
+                    .collect();
+                let dead: Vec<bool> = match p.dead {
+                    Some(j) => (0..len).map(|k| value(j, k) > 0.5).collect(),
+                    None => Vec::new(),
+                };
+                (writes, dead)
+            })
+            .collect()
+    });
     let mut dead = p.dead.map(|_| Vec::with_capacity(n));
     for (ci, (writes, d)) in results.into_iter().enumerate() {
         let lo = ci * CHUNK;

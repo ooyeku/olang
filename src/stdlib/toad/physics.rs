@@ -967,7 +967,7 @@ impl Grid {
 /// cores; the same result either way.
 fn each_chunk(ents: &mut [Ent], f: impl Fn(&mut [Ent]) + Sync + Send) {
     #[cfg(feature = "native")]
-    ents.par_chunks_mut(1024).for_each(f);
+    crate::parallel::install(|| ents.par_chunks_mut(1024).for_each(f));
     #[cfg(not(feature = "native"))]
     ents.chunks_mut(1024).for_each(f);
 }
@@ -1186,7 +1186,7 @@ pub fn meet(
         };
         #[cfg(feature = "native")]
         {
-            ea.par_iter().map(find).collect()
+            crate::parallel::install(|| ea.par_iter().map(find).collect())
         }
         #[cfg(not(feature = "native"))]
         {

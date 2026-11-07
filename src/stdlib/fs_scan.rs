@@ -824,24 +824,26 @@ pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     };
     stopped()?;
     use rayon::prelude::*;
-    let per: Vec<(usize, Vec<Found>)> = files
-        .par_iter()
-        .enumerate()
-        .map(|(i, rel)| {
-            (
-                i,
-                search_file(
-                    &root.join(rel),
-                    &needle,
-                    word,
-                    per_file,
-                    replace.as_deref(),
-                    max_bytes,
-                ),
-            )
-        })
-        .filter(|(_, ms)| !ms.is_empty())
-        .collect();
+    let per: Vec<(usize, Vec<Found>)> = crate::parallel::install(|| {
+        files
+            .par_iter()
+            .enumerate()
+            .map(|(i, rel)| {
+                (
+                    i,
+                    search_file(
+                        &root.join(rel),
+                        &needle,
+                        word,
+                        per_file,
+                        replace.as_deref(),
+                        max_bytes,
+                    ),
+                )
+            })
+            .filter(|(_, ms)| !ms.is_empty())
+            .collect()
+    });
     let mut out: Vec<Value> = Vec::new();
     'files: for (i, ms) in per {
         let rel = Arc::new(files[i].clone());
