@@ -124,7 +124,9 @@ fn pick(
     };
     status.active = Some(active.clone());
     if active.contains('/') || active.contains('\\') || active == "." || active == ".." {
-        return Err(format!("the active layer \"{active}\" is not a folder's name"));
+        return Err(format!(
+            "the active layer \"{active}\" is not a folder's name"
+        ));
     }
     if state.tries >= max {
         return Err(format!(
@@ -149,8 +151,12 @@ fn pick(
     // the try is counted before the program starts: one that dies on
     // its way up has used it
     state.tries += 1;
-    write_state(&state_path, &state)
-        .map_err(|e| format!("layer {active}: cannot count the try in {}: {e}", state_path.display()))?;
+    write_state(&state_path, &state).map_err(|e| {
+        format!(
+            "layer {active}: cannot count the try in {}: {e}",
+            state_path.display()
+        )
+    })?;
     status.tries = state.tries;
     status.running = Some(active);
     Ok(Some(program))
@@ -169,7 +175,9 @@ fn write_state(path: &Path, state: &State) -> std::io::Result<()> {
 fn public_key(bundle: &Path) -> Result<[u8; 32], String> {
     let name = info_string("OlangLayersPublicKey").unwrap_or_else(|| "layers.pub".to_string());
     if name.contains('/') || name == ".." {
-        return Err(format!("OlangLayersPublicKey \"{name}\" is not a file in Contents/Resources"));
+        return Err(format!(
+            "OlangLayersPublicKey \"{name}\" is not a file in Contents/Resources"
+        ));
     }
     let path = bundle.join("Contents").join("Resources").join(&name);
     let text = std::fs::read_to_string(&path)
@@ -203,8 +211,15 @@ fn info_string(key: &str) -> Option<String> {
     #[link(name = "CoreFoundation", kind = "framework")]
     unsafe extern "C" {
         fn CFBundleGetMainBundle() -> *const c_void;
-        fn CFBundleGetValueForInfoDictionaryKey(b: *const c_void, key: *const c_void) -> *const c_void;
-        fn CFStringCreateWithCString(alloc: *const c_void, s: *const c_char, enc: u32) -> *const c_void;
+        fn CFBundleGetValueForInfoDictionaryKey(
+            b: *const c_void,
+            key: *const c_void,
+        ) -> *const c_void;
+        fn CFStringCreateWithCString(
+            alloc: *const c_void,
+            s: *const c_char,
+            enc: u32,
+        ) -> *const c_void;
         fn CFStringGetCString(s: *const c_void, buf: *mut c_char, size: isize, enc: u32) -> u8;
         fn CFGetTypeID(v: *const c_void) -> usize;
         fn CFStringGetTypeID() -> usize;

@@ -230,7 +230,10 @@ fn a_let_named_like_a_module_and_never_read_as_it_is_not_reported() {
     );
     let (out, err, _) = olang(&ws, &["check", "m.ol"]);
     let all = out + &err;
-    assert!(all.contains("`let value` shadows the stdlib module `value`"), "{all}");
+    assert!(
+        all.contains("`let value` shadows the stdlib module `value`"),
+        "{all}"
+    );
 }
 
 #[test]

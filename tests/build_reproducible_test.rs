@@ -29,12 +29,18 @@ fn project(root: &Path, home: &Path) -> PathBuf {
         &app.join("main.ol"),
         "use lib.greet { greet }\nuse dep { shout }\nuse kit { twice }\nfn spin(n) = { let mut a = 0; let mut i = 0; while i < n { a = (a + i) % 7919; i = i + 1 }; a }\nlet mut t = 0\nfor k in range(0, 200) { t = t + spin(2000) }\nprintln(twice(shout(greet(\"you\"))) + \" \" + to_string(t))\n",
     );
-    write(&app.join("lib/greet.ol"), "share fn greet(w) = \"hi \" + w\n");
+    write(
+        &app.join("lib/greet.ol"),
+        "share fn greet(w) = \"hi \" + w\n",
+    );
     write(
         &root.join("dep/olang.toml"),
         "[package]\nname = \"dep\"\nversion = \"0.1.0\"\nassets = [\"data\"]\n",
     );
-    write(&root.join("dep/index.ol"), "share use lib.words { shout }\n");
+    write(
+        &root.join("dep/index.ol"),
+        "share use lib.words { shout }\n",
+    );
     write(
         &root.join("dep/lib/words.ol"),
         "share fn shout(s) = str.to_upper(s) + \"!\"\n",
@@ -49,7 +55,10 @@ fn project(root: &Path, home: &Path) -> PathBuf {
     write(&kit.join("index.ol"), "share fn twice(s) = s + s\n");
     write(
         &home.join("shelf.toml"),
-        &format!("version = 1\n\n[libraries]\nkit = {:?}\n", kit.display().to_string()),
+        &format!(
+            "version = 1\n\n[libraries]\nkit = {:?}\n",
+            kit.display().to_string()
+        ),
     );
     app
 }
@@ -89,8 +98,22 @@ fn two_builds_of_the_same_sources_are_the_same_bytes() {
         assert!(ran.starts_with("HI YOU!HI YOU!"), "{ran}");
         let payload = base.join(format!("{name}.olb"));
         let exe = base.join(format!("{name}-app"));
-        olang_in(app, home, &["build", "--app", "main.ol", "--payload", payload.to_str().unwrap()]);
-        olang_in(app, home, &["build", "--app", "main.ol", "-o", exe.to_str().unwrap()]);
+        olang_in(
+            app,
+            home,
+            &[
+                "build",
+                "--app",
+                "main.ol",
+                "--payload",
+                payload.to_str().unwrap(),
+            ],
+        );
+        olang_in(
+            app,
+            home,
+            &["build", "--app", "main.ol", "-o", exe.to_str().unwrap()],
+        );
         outputs.push((fs::read(&payload).unwrap(), fs::read(&exe).unwrap()));
     }
     let ((p1, e1), (p2, e2)) = (&outputs[0], &outputs[1]);
@@ -106,14 +129,20 @@ fn two_builds_of_the_same_sources_are_the_same_bytes() {
             place.display()
         );
     }
-    assert!(!text.contains("[[functions]]"), "no tier profile without --warm");
+    assert!(
+        !text.contains("[[functions]]"),
+        "no tier profile without --warm"
+    );
 
     // and the built application still runs with its sources gone
     fs::remove_dir_all(&root1).unwrap();
     fs::remove_dir_all(&home1).unwrap();
     let exe = base.join("one-app");
     #[cfg(target_os = "macos")]
-    let _ = Command::new("codesign").args(["--force", "-s", "-"]).arg(&exe).output();
+    let _ = Command::new("codesign")
+        .args(["--force", "-s", "-"])
+        .arg(&exe)
+        .output();
     let out = Command::new(&exe).current_dir(&base).output().unwrap();
     assert!(
         out.status.success(),

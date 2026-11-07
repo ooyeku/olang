@@ -1297,7 +1297,10 @@ fn crypto_ed25519_keypair(args: Vec<Value>) -> Result<Value, Box<dyn std::error:
     let key = ed25519_dalek::SigningKey::from_bytes(&seed);
     let mut pair = crate::ast::ValueMap::default();
     pair.insert("private_key".to_string(), b64(&seed));
-    pair.insert("public_key".to_string(), b64(key.verifying_key().as_bytes()));
+    pair.insert(
+        "public_key".to_string(),
+        b64(key.verifying_key().as_bytes()),
+    );
     seed.fill(0);
     Ok(Value::Ok(Box::new(Value::Struct {
         type_name: "KeyPair".into(),

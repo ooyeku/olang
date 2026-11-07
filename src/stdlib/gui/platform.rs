@@ -1872,10 +1872,7 @@ unsafe fn open_urls(urls: *mut objc2::runtime::AnyObject) {
     }
     let mut events = Vec::new();
     if !paths.is_empty() {
-        events.push(event(
-            "open",
-            vec![("paths", Value::List(Arc::new(paths)))],
-        ));
+        events.push(event("open", vec![("paths", Value::List(Arc::new(paths)))]));
     }
     if !others.is_empty() {
         events.push(open_url_event(others));

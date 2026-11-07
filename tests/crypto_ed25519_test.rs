@@ -40,7 +40,9 @@ fn the_rfc_8032_vectors_sign_and_verify() {
         b64(PK1)
     );
     assert_eq!(
-        run(&format!("unwrap(crypto.ed25519_verify(\"\", \"{SIG1}\", \"{PK1}\"))")),
+        run(&format!(
+            "unwrap(crypto.ed25519_verify(\"\", \"{SIG1}\", \"{PK1}\"))"
+        )),
         "true"
     );
     // test 2 signs the one byte 0x72, given as Bytes
@@ -60,11 +62,15 @@ fn the_rfc_8032_vectors_sign_and_verify() {
     );
     // the wrong key or the wrong message
     assert_eq!(
-        run(&format!("unwrap(crypto.ed25519_verify(\"\", \"{SIG1}\", \"{PK2}\"))")),
+        run(&format!(
+            "unwrap(crypto.ed25519_verify(\"\", \"{SIG1}\", \"{PK2}\"))"
+        )),
         "false"
     );
     assert_eq!(
-        run(&format!("unwrap(crypto.ed25519_verify(\"x\", \"{SIG1}\", \"{PK1}\"))")),
+        run(&format!(
+            "unwrap(crypto.ed25519_verify(\"x\", \"{SIG1}\", \"{PK1}\"))"
+        )),
         "false"
     );
 }
@@ -86,10 +92,7 @@ let raw = bytes.from_string("release 1.2.0")
   is_err(crypto.ed25519_sign("m", "short")),
 ]
 "#);
-    assert_eq!(
-        out,
-        "[true, true, false, false, true, 88, 44, true, true]"
-    );
+    assert_eq!(out, "[true, true, false, false, true, 88, 44, true, true]");
 }
 
 #[test]

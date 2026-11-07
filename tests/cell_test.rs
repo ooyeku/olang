@@ -190,10 +190,12 @@ fn a_closure_that_captured_a_cell_crosses_a_send() {
     // hands tasks to pooled workers through a channel, and their closures
     // capture cells they never read there. Reading one on the other side
     // is what fails.
-    let out = run("fn make() = {\n    let c = cell(41)\n    () => cell.get(c) + 1\n}\n\
+    let out = run(
+        "fn make() = {\n    let c = cell(41)\n    () => cell.get(c) + 1\n}\n\
                    let ch = chan.new()\n\
                    chan.send(ch, make())\n\
-                   show(unwrap(chan.recv(ch))())\n")
+                   show(unwrap(chan.recv(ch))())\n",
+    )
     .unwrap();
     assert_eq!(out, "42");
     // A closure capturing no cell crosses too.

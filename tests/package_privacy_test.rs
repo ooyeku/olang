@@ -72,7 +72,10 @@ fn an_internal_module_is_refused_from_outside_its_package() {
         text.contains("'geo.lib.area' is internal to package 'geo'"),
         "{text}"
     );
-    assert!(text.contains("[package] public"), "the fix is named:\n{text}");
+    assert!(
+        text.contains("[package] public"),
+        "the fix is named:\n{text}"
+    );
 
     // olang check says it, at the use
     let (ok, text) = run(&app, &["check", "main.ol"]);
@@ -80,7 +83,10 @@ fn an_internal_module_is_refused_from_outside_its_package() {
     assert!(text.contains("internal to package 'geo'"), "{text}");
 
     // the root module is public
-    write(&app.join("main.ol"), "use geo { area }\nprintln(area(3, 4))\n");
+    write(
+        &app.join("main.ol"),
+        "use geo { area }\nprintln(area(3, 4))\n",
+    );
     let (ok, text) = run(&app, &["main.ol"]);
     assert!(ok && text.contains("12"), "{text}");
     let (ok, text) = run(&app, &["check", "main.ol"]);

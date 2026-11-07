@@ -25,7 +25,11 @@ fn build(dir: &Path) -> PathBuf {
         .args(["build", "hi.ol", "-o", "hi"])
         .output()
         .unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     dir.join("hi")
 }
 
@@ -61,7 +65,10 @@ fn relabel(bin: &Path, field: &str, to: impl Fn(&str) -> String) -> PathBuf {
     }
     #[cfg(target_os = "macos")]
     {
-        let _ = Command::new("codesign").args(["--force", "-s", "-"]).arg(&out).output();
+        let _ = Command::new("codesign")
+            .args(["--force", "-s", "-"])
+            .arg(&out)
+            .output();
     }
     out
 }
@@ -94,7 +101,11 @@ fn a_payload_from_another_runtime_is_refused() {
         });
         let out = Command::new(&other).output().unwrap();
         let err = String::from_utf8_lossy(&out.stderr);
-        assert_eq!(out.status.code(), Some(65), "{field}: refused with its own code: {err}");
+        assert_eq!(
+            out.status.code(),
+            Some(65),
+            "{field}: refused with its own code: {err}"
+        );
         assert!(out.stdout.is_empty(), "{field}: nothing of the program ran");
         assert!(
             err.contains("refusing to run") && err.contains(says),
@@ -108,8 +119,14 @@ fn a_payload_from_another_runtime_is_refused() {
             .output()
             .unwrap();
         let text = String::from_utf8_lossy(&inspect.stdout);
-        assert!(!inspect.status.success(), "{field}: --verify fails:\n{text}");
-        assert!(text.contains("MISMATCH"), "{field}: the digest says so:\n{text}");
+        assert!(
+            !inspect.status.success(),
+            "{field}: --verify fails:\n{text}"
+        );
+        assert!(
+            text.contains("MISMATCH"),
+            "{field}: the digest says so:\n{text}"
+        );
         assert!(text.contains("runs here:    no"), "{field}:\n{text}");
     }
     let _ = std::fs::remove_dir_all(&dir);

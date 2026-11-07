@@ -203,7 +203,12 @@ fn publish_for_crash(stack: &Arc<ThreadStack>) {
     let ptr = Arc::as_ptr(stack) as *mut ThreadStack;
     for (i, slot) in CRASH_STACKS.iter().enumerate() {
         if slot
-            .compare_exchange(std::ptr::null_mut(), ptr, Ordering::AcqRel, Ordering::Relaxed)
+            .compare_exchange(
+                std::ptr::null_mut(),
+                ptr,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            )
             .is_ok()
         {
             CRASH_SLOT.with(|c| c.set(Some(i)));
