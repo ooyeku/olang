@@ -47,6 +47,9 @@ struct Proc {
     /// `bytes: true`: stdout and stderr answer Bytes, not text.
     bytes: bool,
     pid: u32,
+    /// Spawned with `#{ group: true }`: its group is killed if a signal
+    /// ends olang (OL-375).
+    _live_group: Option<LiveGroup>,
     /// Spawned as the leader of its own process group (`#{ group: true }`),
     /// so `kill(p, #{ tree: true })` can end everything it started.
     group: bool,
@@ -69,6 +72,107 @@ pub(crate) fn set_own_group(command: &mut Command) {
     }
     #[cfg(not(any(unix, windows)))]
     let _ = command;
+}
+
+/// The process groups olang started and has not seen end: a timed
+/// `os.exec` and a `proc.spawn` with `#{ group: true }`. A group does not
+/// get the terminal's Ctrl-C (it is not the foreground group), so when a
+/// SIGINT, SIGTERM or SIGHUP ends olang itself, the handler below kills
+/// these first, or they would run on with nobody waiting for them
+/// (OL-375). A fixed table of atomics: the handler reads it without a
+/// lock or an allocation.
+#[cfg(unix)]
+mod live_groups {
+    use std::sync::atomic::{AtomicI32, Ordering};
+
+    const SLOTS: usize = 256;
+    static GROUPS: [AtomicI32; SLOTS] = [const { AtomicI32::new(0) }; SLOTS];
+
+    /// Note a group by its leader's pid; the slot it took, if any.
+    pub(super) fn add(pgid: i32) -> Option<usize> {
+        install();
+        (0..SLOTS).find(|&i| {
+            GROUPS[i]
+                .compare_exchange(0, pgid, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+        })
+    }
+
+    pub(super) fn remove(slot: usize) {
+        GROUPS[slot].store(0, Ordering::SeqCst);
+    }
+
+    /// SIGKILL every group still noted. Async-signal-safe: atomics and
+    /// kill(2) only.
+    pub(crate) fn kill_all() {
+        for g in GROUPS.iter() {
+            let pgid = g.swap(0, Ordering::SeqCst);
+            if pgid > 0 {
+                // SAFETY: kill(2) with a negative pid signals a group.
+                unsafe {
+                    libc::kill(-pgid, libc::SIGKILL);
+                }
+            }
+        }
+    }
+
+    /// The handler, installed with the first group. A program that traps
+    /// the signal itself (`os.on_interrupt`, `os.on_shutdown`) keeps it:
+    /// its children are its own to end. Otherwise the groups go, then
+    /// the signal's default action ends olang as before.
+    fn install() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGTERM};
+            for sig in [SIGINT, SIGTERM, SIGHUP] {
+                // SAFETY: the action is async-signal-safe (see kill_all);
+                // emulate_default_handler is documented for use in one.
+                let _ = unsafe {
+                    signal_hook::low_level::register(sig, move || {
+                        if crate::stdlib::os::signals_trapped() {
+                            return;
+                        }
+                        kill_all();
+                        let _ = signal_hook::low_level::emulate_default_handler(sig);
+                    })
+                };
+            }
+        });
+    }
+}
+
+#[cfg(unix)]
+pub(crate) use live_groups::kill_all as kill_live_groups;
+
+/// A group noted for the signal handler while this lives.
+pub(crate) struct LiveGroup(#[cfg(unix)] Option<usize>);
+
+impl LiveGroup {
+    pub(crate) fn new(pid: u32) -> LiveGroup {
+        #[cfg(unix)]
+        {
+            LiveGroup(
+                i32::try_from(pid)
+                    .ok()
+                    .filter(|p| *p > 0)
+                    .and_then(live_groups::add),
+            )
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = pid;
+            LiveGroup()
+        }
+    }
+}
+
+impl Drop for LiveGroup {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some(slot) = self.0 {
+            live_groups::remove(slot);
+        }
+    }
 }
 
 /// Kill `child` and every process in the group it leads (spawned through
@@ -514,6 +618,7 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         stderr: stderr_buf,
         bytes,
         pid,
+        _live_group: group.then(|| LiveGroup::new(pid)),
         group,
     });
     let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
