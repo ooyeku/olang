@@ -696,6 +696,13 @@ impl BytecodeTier {
         self.vm.set_entry_file(file);
     }
 
+    pub fn set_dependency_map(
+        &mut self,
+        map: std::collections::HashMap<String, std::path::PathBuf>,
+    ) {
+        self.vm.set_dependency_map(map);
+    }
+
     /// Try to execute `func(args)` on the bytecode VM. `depth_base` is
     /// the interpreter's current call depth, seeded into the VM so both
     /// tiers spend from the one shared budget (see `set_depth_base`).
