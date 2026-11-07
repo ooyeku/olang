@@ -275,8 +275,15 @@ impl<'a> Buf<'a> {
     }
 }
 
+#[cfg(not(target_env = "musl"))]
 unsafe extern "C" {
     fn backtrace(buffer: *mut *mut libc::c_void, size: libc::c_int) -> libc::c_int;
+}
+
+/// musl's libc has no `backtrace`: a report there carries no native frames.
+#[cfg(target_env = "musl")]
+unsafe fn backtrace(_buffer: *mut *mut libc::c_void, _size: libc::c_int) -> libc::c_int {
+    0
 }
 
 /// The parts every report shares, after the header: who, where, and the
