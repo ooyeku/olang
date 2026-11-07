@@ -8745,6 +8745,21 @@ impl BytecodeVm {
                         self.clear_error_trace();
                         Ok(OvmValue::new_result(OvmValue::new_string(message), false))
                     }
+                    // The arithmetic and index errors keep a variant of
+                    // their own; one reaching here through a function value
+                    // escaped `attempt` (OL-518). They are runtime errors
+                    // like any other, worded as the interpreter words them.
+                    Err(
+                        e @ (BytecodeError::DivisionByZero
+                        | BytecodeError::ModuloByZero
+                        | BytecodeError::IndexOutOfBounds { .. }
+                        | BytecodeError::ExceptionThrown(_)),
+                    ) => {
+                        let message = crate::builtin::strip_error_prefixes(&e.to_string());
+                        crate::errtrace::caught(&message);
+                        self.clear_error_trace();
+                        Ok(OvmValue::new_result(OvmValue::new_string(message), false))
+                    }
                     Err(e) => Err(e),
                 })
             }
