@@ -138,9 +138,16 @@ fn a_built_binary_carries_and_replays_its_warm_profile() {
         .env("OLANG_WARM_DIR", &warm_dir)
         .output()
         .unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let hay = String::from_utf8_lossy(&std::fs::read(&plain).unwrap()).to_string();
-    assert!(!hay.contains("name = \\\"hot\\\""), "no profile without --warm");
+    assert!(
+        !hay.contains("name = \\\"hot\\\""),
+        "no profile without --warm"
+    );
     let profile = std::fs::read_dir(&warm_dir)
         .unwrap()
         .flatten()

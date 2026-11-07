@@ -2825,6 +2825,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         // the tier is turned on, and the tier must enforce either way.
         tier.set_capabilities(self.caps.clone());
         tier.set_entry_file(self.entry_file.clone());
+        if !self.dependency_map.is_empty() {
+            tier.set_dependency_map(self.dependency_map.clone());
+        }
         // The tiers share one logical depth cap; a tier created after
         // --max-depth was applied must inherit it.
         tier.set_max_call_depth(self.max_call_depth as u32);
@@ -4469,6 +4472,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 // through it (they capture none), on a worker as on the
                 // main thread.
                 tier.set_entry_file(self.entry_file.clone());
+                if !self.dependency_map.is_empty() {
+                    tier.set_dependency_map(self.dependency_map.clone());
+                }
                 for (file, scope) in &self.module_scopes {
                     tier.note_module_scope(file.clone(), scope.clone());
                 }

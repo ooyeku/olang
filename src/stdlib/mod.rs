@@ -55,8 +55,8 @@ pub mod runtime;
 pub mod shared;
 pub mod string;
 pub mod task;
-pub mod text;
 pub mod testing;
+pub mod text;
 pub mod time;
 #[cfg(feature = "toad")]
 pub mod toad;

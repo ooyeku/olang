@@ -148,6 +148,10 @@ pub struct BytecodeVm {
     error_trace_file: Option<String>,
     /// The program's entry file: frames from any other file name it.
     entry_file: Option<String>,
+    /// The program's packages by name, handed to the bridge: a `use` it
+    /// runs (one inside a function) loads a module whose own `use` of a
+    /// dependency resolves there (OL-551).
+    dependency_map: HashMap<String, std::path::PathBuf>,
     error_trace_frames: Vec<String>,
     /// A parameter-check failure keeps exactly one extra frame alive in
     /// the interpreter (the frame is pushed before the check and the
@@ -1852,6 +1856,7 @@ impl BytecodeVm {
             error_trace_span: None,
             error_trace_file: None,
             entry_file: None,
+            dependency_map: HashMap::new(),
             error_trace_frames: Vec::new(),
             error_trace_leak: None,
             cell_owner: crate::stdlib::cell::next_vm_owner(),
@@ -4484,6 +4489,13 @@ impl BytecodeVm {
         }
         self.compiler.entry_file = file.clone();
         self.entry_file = file;
+    }
+
+    pub fn set_dependency_map(&mut self, map: HashMap<String, std::path::PathBuf>) {
+        if let Some(bridge) = self.builtin_interpreter.as_mut() {
+            bridge.set_dependency_map(map.clone());
+        }
+        self.dependency_map = map;
     }
 
     /// Whether the user function `name` the tier knows is one `code`'s
@@ -8065,6 +8077,9 @@ impl BytecodeVm {
             // top-level names in the program's scope only when it knows
             // the program's file.
             interp.set_entry_file(self.entry_file.clone());
+            if !self.dependency_map.is_empty() {
+                interp.set_dependency_map(self.dependency_map.clone());
+            }
             // Tier first: seed_bridge_state forwards the declaration
             // tables into an existing tier, so order matters here.
             if std::env::var_os("OLANG_BRIDGE_TIER_OFF").is_none() {
@@ -8741,6 +8756,21 @@ impl BytecodeVm {
                         let message = crate::builtin::strip_error_prefixes(&message);
                         // Where it went, for `runtime.last_error()`; this
                         // error's place is the value's now, not the next's.
+                        crate::errtrace::caught(&message);
+                        self.clear_error_trace();
+                        Ok(OvmValue::new_result(OvmValue::new_string(message), false))
+                    }
+                    // The arithmetic and index errors keep a variant of
+                    // their own; one reaching here through a function value
+                    // escaped `attempt` (OL-518). They are runtime errors
+                    // like any other, worded as the interpreter words them.
+                    Err(
+                        e @ (BytecodeError::DivisionByZero
+                        | BytecodeError::ModuloByZero
+                        | BytecodeError::IndexOutOfBounds { .. }
+                        | BytecodeError::ExceptionThrown(_)),
+                    ) => {
+                        let message = crate::builtin::strip_error_prefixes(&e.to_string());
                         crate::errtrace::caught(&message);
                         self.clear_error_trace();
                         Ok(OvmValue::new_result(OvmValue::new_string(message), false))

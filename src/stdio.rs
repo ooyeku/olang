@@ -194,7 +194,10 @@ pub fn set_panic_hook() {
         }
         #[cfg(unix)]
         if let Some(path) = crash_file {
-            text.push_str(&format!("\n\nA crash report was written to {}", path.display()));
+            text.push_str(&format!(
+                "\n\nA crash report was written to {}",
+                path.display()
+            ));
         }
         err_line(format_args!("{text}"));
         std::process::abort();

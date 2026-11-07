@@ -304,3 +304,38 @@ fn a_program_waiting_on_its_shutdown_handler_is_not_a_deadlock() {
         .unwrap();
     assert!(String::from_utf8_lossy(&out.stderr).contains("deadlock"));
 }
+
+// OL-374: a sender parked on a full bounded (or rendezvous) channel wakes
+// with the close instead of waiting for a receiver, and its value is not
+// queued behind the close.
+#[test]
+fn close_releases_a_sender_blocked_on_a_full_channel() {
+    let v = eval(
+        r#"
+let b = chan.bounded(1)
+unwrap(chan.send(b, 1))
+let s = spawn chan.send(b, 2)
+time.sleep(100)
+chan.close(b)
+let sent = task.join_timeout(s, 2000)
+let first = chan.recv(b)
+let after = chan.recv(b)
+
+let r = chan.bounded(0)
+let s2 = spawn chan.send(r, "x")
+time.sleep(100)
+chan.close(r)
+let sent2 = task.join_timeout(s2, 2000)
+let after2 = chan.recv(r)
+show([sent, first, after, sent2, after2])
+"#,
+    );
+    assert_eq!(
+        v,
+        Value::String(
+            r#"[Ok(Ok(Err("channel is closed"))), Ok(1), Err("channel is closed"), Ok(Ok(Err("channel is closed"))), Err("channel is closed")]"#
+                .to_string()
+                .into()
+        )
+    );
+}

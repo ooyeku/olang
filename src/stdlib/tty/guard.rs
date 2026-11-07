@@ -217,6 +217,7 @@ fn unix_install() -> Result<(), String> {
                 return; // the program's own handler owns this signal
             }
             restore_in_handler();
+            crate::stdlib::proc::kill_live_groups();
             let _ = low_level::emulate_default_handler(sig);
         }
     };

@@ -30,7 +30,14 @@ fn signed_copy(dir: &Path, name: &str, entitlements: &Path) -> Option<PathBuf> {
     let exe = dir.join(name);
     std::fs::copy(env!("CARGO_BIN_EXE_olang"), &exe).ok()?;
     let ok = Command::new("codesign")
-        .args(["--force", "-s", "-", "--options", "runtime", "--entitlements"])
+        .args([
+            "--force",
+            "-s",
+            "-",
+            "--options",
+            "runtime",
+            "--entitlements",
+        ])
         .arg(entitlements)
         .arg(&exe)
         .output()
@@ -48,7 +55,10 @@ fn run(exe: &Path, program: &Path) -> (Option<i32>, String) {
         .env_remove("OLANG_NO_JIT")
         .output()
         .expect("run the signed copy");
-    (out.status.code(), String::from_utf8_lossy(&out.stdout).to_string())
+    (
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout).to_string(),
+    )
 }
 
 fn native_calls(stdout: &str) -> u64 {
@@ -99,7 +109,11 @@ fn the_jit_needs_allow_jit_alone_and_falls_back_without_it() {
         let exe = signed_copy(&dir, &format!("olang-{name}"), entitlements)
             .unwrap_or_else(|| panic!("sign a copy with the {name} entitlements"));
         let (code, stdout) = run(&exe, &program);
-        assert_eq!(code, Some(0), "{name}: the hot loop runs to the end:\n{stdout}");
+        assert_eq!(
+            code,
+            Some(0),
+            "{name}: the hot loop runs to the end:\n{stdout}"
+        );
         assert!(
             stdout.starts_with("290460900"),
             "{name}: the right answer:\n{stdout}"
@@ -108,7 +122,10 @@ fn the_jit_needs_allow_jit_alone_and_falls_back_without_it() {
         if *native {
             assert!(calls > 0, "{name}: the JIT ran native code:\n{stdout}");
         } else {
-            assert_eq!(calls, 0, "{name}: no native code without allow-jit:\n{stdout}");
+            assert_eq!(
+                calls, 0,
+                "{name}: no native code without allow-jit:\n{stdout}"
+            );
         }
     }
     let _ = std::fs::remove_dir_all(&dir);

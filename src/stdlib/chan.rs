@@ -479,6 +479,26 @@ struct Chan {
     /// thread of its own) are alive: while any is, a receive waits on an
     /// outside source and is no deadlock.
     producers: Arc<AtomicUsize>,
+    /// Disconnected by the close: a sender parked on a full channel holds
+    /// its own clone of the queue's sender, so the queue never reports the
+    /// close to it. It waits on this too and wakes the moment it goes.
+    close_tx: Mutex<Option<Sender<()>>>,
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    close_rx: Receiver<()>,
+}
+
+impl Chan {
+    /// Close it: new sends fail, queued messages are still received, and
+    /// a sender waiting for room wakes with the close.
+    fn shut(&self) {
+        *self.tx.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.close_tx.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    fn is_shut(&self) -> bool {
+        self.tx.lock().unwrap_or_else(|e| e.into_inner()).is_none()
+    }
 }
 
 #[derive(Clone)]
@@ -679,7 +699,10 @@ fn register(tx: Tx, rx: Receiver<Value>) -> Value {
 }
 
 fn register_with_cap(tx: Tx, rx: Receiver<Value>, cap: Option<usize>) -> Value {
+    let (close_tx, close_rx) = crossbeam_channel::bounded(0);
     handle(Arc::new(Chan {
+        close_tx: Mutex::new(Some(close_tx)),
+        close_rx,
         id: CHAN_SEQ.fetch_add(1, Ordering::Relaxed),
         tx: Mutex::new(Some(tx)),
         rx,
@@ -756,7 +779,7 @@ impl ChannelSender {
     /// Close the channel: queued values are still received, then `recv`
     /// reports the close.
     pub fn close(&self) {
-        *self.0.tx.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        self.0.shut();
     }
 }
 
@@ -858,28 +881,44 @@ fn chan_send(mut args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
             let tick = std::time::Duration::from_millis(STALL_TICK_MS);
             let mut last_gen: Option<u64> = None;
             let mut value = Some(value);
+            // Wait until the queue has room, the channel is closed, or this
+            // thread is asked to stop. `ready` only reports; the send itself
+            // is a try after the close is checked, so a sender woken by the
+            // close never puts its value behind it.
             let outcome = loop {
                 if crate::interrupt::pending() {
                     break Err(crate::interrupt::stop_message());
                 }
+                if chan.is_shut() {
+                    break Ok(err("channel is closed"));
+                }
                 let mut sel = crossbeam_channel::Select::new();
-                let at_tx = sel.send(&t);
-                sel.recv(&wake);
-                match sel.select_timeout(tick) {
-                    Ok(op) if op.index() == at_tx => {
-                        let v = value.take().expect("sent once");
-                        break Ok(match op.send(&t, v) {
-                            Ok(()) => {
-                                chan.depth.fetch_add(1, Ordering::Relaxed);
-                                ok(Value::Unit)
-                            }
-                            Err(_) => err("channel is closed"),
-                        });
+                sel.send(&t);
+                let at_close = sel.recv(&chan.close_rx);
+                let at_wake = sel.recv(&wake);
+                match sel.ready_timeout(tick) {
+                    Ok(i) if i == at_wake => {
+                        let _ = wake.try_recv();
+                        continue;
                     }
-                    Ok(op) => {
-                        let _ = op.recv(&wake);
+                    Ok(i) if i == at_close => continue,
+                    Ok(_) => {}
+                    Err(_) => {
+                        stall_tick(&mut last_gen);
+                        continue;
                     }
-                    Err(_) => stall_tick(&mut last_gen),
+                }
+                if chan.is_shut() {
+                    break Ok(err("channel is closed"));
+                }
+                let v = value.take().expect("sent once");
+                match t.try_send(v) {
+                    Ok(()) => {
+                        chan.depth.fetch_add(1, Ordering::Relaxed);
+                        break Ok(ok(Value::Unit));
+                    }
+                    Err(TrySendError::Full(v)) => value = Some(v),
+                    Err(TrySendError::Disconnected(_)) => break Ok(err("channel is closed")),
                 }
             };
             unpark(token);
@@ -1106,7 +1145,7 @@ pub(crate) fn is_channel(value: &Value) -> bool {
 /// does to the channels it was watching (`task.watch`).
 pub(crate) fn close_value(value: &Value) {
     if let Ok(chan) = chan_of(value) {
-        *chan.tx.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        chan.shut();
     }
 }
 
@@ -1115,7 +1154,7 @@ fn chan_close(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         return Err("chan.close expects a channel".into());
     }
     let chan = chan_of(&args[0])?;
-    *chan.tx.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    chan.shut();
     Ok(Value::Unit)
 }
 

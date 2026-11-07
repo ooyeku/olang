@@ -26,17 +26,17 @@ pub mod caps;
 pub mod clock;
 pub mod compile_cache; // Compiled bytecode kept between runs
 pub mod contain; // A panic turned into an error where the process must not end
+pub mod controls; // Controls a host binds: `runtime.bind`, `ui.slider` and its kin
 #[cfg(unix)]
 pub mod crash; // Crash reports: a panic or a fatal signal leaves a JSON file (`runtime.on_crash`)
-pub mod controls; // Controls a host binds: `runtime.bind`, `ui.slider` and its kin
 pub mod effects;
 pub mod errtrace; // Where a caught error went: its frames, file and line each
 pub mod expand;
 pub mod help;
 pub mod home;
 pub mod interpreter;
-pub mod layers; // Code layers: an application booting a signed program from outside its bundle
 pub mod interrupt; // Stopping a running evaluation (`olang repl --serve`)
+pub mod layers; // Code layers: an application booting a signed program from outside its bundle
 pub mod log;
 pub mod memory; // The accounting behind `runtime.memory()`
 pub mod native;

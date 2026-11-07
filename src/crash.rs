@@ -226,7 +226,14 @@ impl<'a> Buf<'a> {
                 b'\t' => self.raw(b"\\t"),
                 0..=0x1f => {
                     let hex = b"0123456789abcdef";
-                    self.raw(&[b'\\', b'u', b'0', b'0', hex[(b >> 4) as usize], hex[(b & 15) as usize]]);
+                    self.raw(&[
+                        b'\\',
+                        b'u',
+                        b'0',
+                        b'0',
+                        hex[(b >> 4) as usize],
+                        hex[(b & 15) as usize],
+                    ]);
                 }
                 _ => self.raw(&[b]),
             }
@@ -310,7 +317,10 @@ fn common(b: &mut Buf<'_>, armed: &Armed, crashed: u64, time: u64) {
             truncated = true;
             break;
         }
-        if let Some(k) = armed.images.iter().position(|im| a >= im.start && a < im.end)
+        if let Some(k) = armed
+            .images
+            .iter()
+            .position(|im| a >= im.start && a < im.end)
             && k < used.len()
         {
             used[k] = true;
@@ -454,7 +464,11 @@ fn write_file(armed: &Armed, time: u64, bytes: &[u8]) -> bool {
         }
         let mut off = 0;
         while off < bytes.len() {
-            let w = libc::write(fd, bytes[off..].as_ptr() as *const libc::c_void, bytes.len() - off);
+            let w = libc::write(
+                fd,
+                bytes[off..].as_ptr() as *const libc::c_void,
+                bytes.len() - off,
+            );
             if w <= 0 {
                 break;
             }
@@ -483,7 +497,9 @@ unsafe fn write_signal_report(armed: &Armed, sig: libc::c_int) {
     b.json(signal_name(sig));
     b.s(",\"message\":");
     b.json(match sig {
-        libc::SIGSEGV | libc::SIGBUS => "the process touched memory it may not (a stack overflow, or a fault in native code)",
+        libc::SIGSEGV | libc::SIGBUS => {
+            "the process touched memory it may not (a stack overflow, or a fault in native code)"
+        }
         libc::SIGILL => "an illegal instruction",
         libc::SIGFPE => "an arithmetic fault",
         libc::SIGTRAP => "a trap (a Rust or system check that stops the process)",
@@ -524,7 +540,11 @@ unsafe fn write_signal_report(armed: &Armed, sig: libc::c_int) {
 
 /// Called by the panic hook for a panic that will end the process: the
 /// report, when one is armed. Answers the file written.
-pub fn on_panic(message: &str, location: Option<String>, thread: &str) -> Option<std::path::PathBuf> {
+pub fn on_panic(
+    message: &str,
+    location: Option<String>,
+    thread: &str,
+) -> Option<std::path::PathBuf> {
     let armed = ARMED.load(Ordering::Acquire);
     if armed.is_null() || REPORTED.swap(true, Ordering::AcqRel) {
         return None;
@@ -595,7 +615,8 @@ fn with_lines(bytes: Vec<u8>) -> Vec<u8> {
                     if let Some(obj) = f.as_object_mut() {
                         obj.insert(
                             "line".to_string(),
-                            line.map(serde_json::Value::from).unwrap_or(serde_json::Value::Null),
+                            line.map(serde_json::Value::from)
+                                .unwrap_or(serde_json::Value::Null),
                         );
                     }
                 }
@@ -656,7 +677,9 @@ fn images() -> Vec<Image> {
                 let name = if name.is_null() {
                     String::new()
                 } else {
-                    std::ffi::CStr::from_ptr(name).to_string_lossy().into_owned()
+                    std::ffi::CStr::from_ptr(name)
+                        .to_string_lossy()
+                        .into_owned()
                 };
                 let rd32 = |p: *const u8| std::ptr::read_unaligned(p as *const u32);
                 let rd64 = |p: *const u8| std::ptr::read_unaligned(p as *const u64);

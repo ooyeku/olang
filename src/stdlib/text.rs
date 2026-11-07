@@ -160,7 +160,9 @@ pub(crate) fn string(s: &str) -> Value {
 /// cuts and the boundaries either side.
 fn not_a_boundary(func: &str, s: &str, b: usize) -> String {
     let before = (0..b).rev().find(|i| s.is_char_boundary(*i)).unwrap_or(0);
-    let after = (b..=s.len()).find(|i| s.is_char_boundary(*i)).unwrap_or(s.len());
+    let after = (b..=s.len())
+        .find(|i| s.is_char_boundary(*i))
+        .unwrap_or(s.len());
     format!(
         "str.{func}: byte {b} is inside the character {:?} (bytes {before}..{after}); a byte offset must fall between characters",
         &s[before..after]
@@ -222,7 +224,9 @@ fn slice_bytes(args: &[Value]) -> R {
 fn char_to_byte_fn(args: &[Value]) -> R {
     let s = arg_str(args, 0, "char_to_byte")?;
     let i = arg_pos(args, 1, "char_to_byte")?;
-    Ok(Value::Integer(super::string::char_to_byte(s, 0, 0, i) as i64))
+    Ok(Value::Integer(
+        super::string::char_to_byte(s, 0, 0, i) as i64
+    ))
 }
 
 /// `str.byte_to_char(s, b)`: how many characters come before byte `b`;
@@ -373,7 +377,10 @@ pub(crate) struct Stats {
 /// Graphemes and width of an ASCII stretch: every byte is a cluster but
 /// a "\r\n" pair, and a cluster is a cell unless it holds a control.
 fn ascii_clusters(b: &[u8]) -> (usize, usize) {
-    let crlf = b.windows(2).filter(|w| w[0] == b'\r' && w[1] == b'\n').count();
+    let crlf = b
+        .windows(2)
+        .filter(|w| w[0] == b'\r' && w[1] == b'\n')
+        .count();
     let printable = b.iter().filter(|&&c| (0x20..0x7F).contains(&c)).count();
     (b.len() - crlf, printable)
 }
@@ -406,7 +413,10 @@ pub(crate) fn stats(s: &str) -> Stats {
         let mut i = 0;
         while i < b.len() {
             // the ASCII run from i
-            let run_end = b[i..].iter().position(|c| !c.is_ascii()).map_or(b.len(), |p| i + p);
+            let run_end = b[i..]
+                .iter()
+                .position(|c| !c.is_ascii())
+                .map_or(b.len(), |p| i + p);
             if run_end == b.len() {
                 let (a, c) = ascii_clusters(&b[i..]);
                 n += a;
@@ -425,9 +435,16 @@ pub(crate) fn stats(s: &str) -> Stats {
             n += a;
             w += c;
             // the non-ASCII stretch, and the ASCII character after it
-            let mut end = b[run_end..].iter().position(|c| c.is_ascii()).map_or(b.len(), |p| run_end + p);
+            let mut end = b[run_end..]
+                .iter()
+                .position(|c| c.is_ascii())
+                .map_or(b.len(), |p| run_end + p);
             if end < b.len() {
-                end += if b[end] == b'\r' && b.get(end + 1) == Some(&b'\n') { 2 } else { 1 };
+                end += if b[end] == b'\r' && b.get(end + 1) == Some(&b'\n') {
+                    2
+                } else {
+                    1
+                };
             }
             let (a, c) = segmented_clusters(&s[keep..end]);
             n += a;

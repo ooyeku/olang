@@ -2843,7 +2843,12 @@ fn collect_app(
     files.sort_by(|a, b| a.0.cmp(&b.0));
     let virtual_deps = deps
         .iter()
-        .map(|(name, real)| (name.clone(), olang::vfs::virtualize(&layout, real, &entry_dir)))
+        .map(|(name, real)| {
+            (
+                name.clone(),
+                olang::vfs::virtualize(&layout, real, &entry_dir),
+            )
+        })
         .collect();
     let entry = olang::vfs::virtualize(&layout, source_abs, &entry_dir);
     Ok((files, virtual_deps, entry))
@@ -2959,7 +2964,11 @@ fn runtime_mismatch(meta: Option<&BundleMeta>) -> Option<String> {
     if m.ast_format != olang::version::AST_FORMAT {
         return Some(format!(
             "its program is in AST format {}, and this runtime reads {}",
-            if m.ast_format.is_empty() { "(none)" } else { &m.ast_format },
+            if m.ast_format.is_empty() {
+                "(none)"
+            } else {
+                &m.ast_format
+            },
             olang::version::AST_FORMAT
         ));
     }
@@ -3091,7 +3100,10 @@ fn bundle_record(path: &std::path::Path) -> Option<BundleRecord> {
     bundle_record_from(&mut f, total)
 }
 
-fn bundle_record_from<R: std::io::Read + std::io::Seek>(f: &mut R, total: u64) -> Option<BundleRecord> {
+fn bundle_record_from<R: std::io::Read + std::io::Seek>(
+    f: &mut R,
+    total: u64,
+) -> Option<BundleRecord> {
     use std::io::SeekFrom;
     if total < 16 {
         return None;
@@ -3634,7 +3646,11 @@ fn inspect_binary(args: &InspectArgs) -> i32 {
                 println!(
                     "  runtime:      AST format {}, commit {}",
                     m.ast_format,
-                    if m.build_commit.is_empty() { "(unknown)" } else { short_commit(&m.build_commit) }
+                    if m.build_commit.is_empty() {
+                        "(unknown)"
+                    } else {
+                        short_commit(&m.build_commit)
+                    }
                 );
             }
             match runtime_mismatch(Some(m)) {
@@ -3966,8 +3982,9 @@ fn build_executable(
         Some(p) => {
             let text = std::fs::read_to_string(p)
                 .map_err(|e| anyhow::anyhow!("--warm {}: {}", p.display(), e))?;
-            toml::from_str::<olang::ovm::warm::WarmProfile>(&text)
-                .map_err(|e| anyhow::anyhow!("--warm {}: not a tier profile: {}", p.display(), e))?;
+            toml::from_str::<olang::ovm::warm::WarmProfile>(&text).map_err(|e| {
+                anyhow::anyhow!("--warm {}: not a tier profile: {}", p.display(), e)
+            })?;
             Some(text)
         }
     };

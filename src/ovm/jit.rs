@@ -3147,6 +3147,7 @@ impl JitCache {
                 .ok()?
         };
         let mut clif_ids = Vec::with_capacity(plans.len());
+        let mut clif_sigs = Vec::with_capacity(plans.len());
         for (plan, inf) in plans.iter().zip(&inferences) {
             let mut sig = module.make_signature();
             for k in &plan.param_kinds {
@@ -3166,6 +3167,7 @@ impl JitCache {
             let name = format!("olang_jit_{}_g{}", plan.func_id.index(), seq);
             let id = module.declare_function(&name, Linkage::Local, &sig).ok()?;
             clif_ids.push(id);
+            clif_sigs.push(sig);
         }
 
         // Call-site resolver: group members (by plan position) override
@@ -3202,7 +3204,15 @@ impl JitCache {
         CALL_COUNTERS.with(|c| *c.borrow_mut() = counters);
 
         let mut fbc = FunctionBuilderContext::new();
-        for ((plan, inf), clif_id) in plans.iter().zip(&inferences).zip(&clif_ids) {
+        // Which members got a body. A member defined before a later one
+        // failed stays in the module, waiting for the next group's
+        // finalize, and its calls name the failed one's symbol: that
+        // finalize panicked, "can't resolve symbol" (OL-519).
+        let mut defined = vec![false; clif_ids.len()];
+        let mut failed = false;
+        for (member, ((plan, inf), clif_id)) in
+            plans.iter().zip(&inferences).zip(&clif_ids).enumerate()
+        {
             let mut ctx = module.make_context();
             ctx.func.signature = {
                 let mut sig = module.make_signature();
@@ -3272,9 +3282,14 @@ impl JitCache {
                     if jit_debug() {
                         eprintln!("[jit] fn#{} translate_body failed", plan.func_id.index());
                     }
-                    return None;
+                    failed = true;
                 }
-                builder.finalize(module.target_config());
+                if !failed {
+                    builder.finalize(module.target_config());
+                }
+            }
+            if failed {
+                break;
             }
             if let Err(e) = module.define_function(*clif_id, &mut ctx) {
                 if jit_debug() {
@@ -3285,9 +3300,40 @@ impl JitCache {
                         ctx.func
                     );
                 }
-                return None;
+                failed = true;
+                break;
             }
             module.clear_context(&mut ctx);
+            defined[member] = true;
+        }
+        if failed {
+            // The members left without a body get one that traps: never
+            // called (none is installed), it only lets what was defined
+            // resolve its calls.
+            for ((clif_id, sig), done) in clif_ids.iter().zip(&clif_sigs).zip(&defined) {
+                if *done {
+                    continue;
+                }
+                let mut ctx = module.make_context();
+                ctx.func.signature = sig.clone();
+                let mut stub_fbc = FunctionBuilderContext::new();
+                {
+                    let mut builder = FunctionBuilder::new(&mut ctx.func, &mut stub_fbc);
+                    let block = builder.create_block();
+                    builder.append_block_params_for_function_params(block);
+                    builder.switch_to_block(block);
+                    builder
+                        .ins()
+                        .trap(cranelift_codegen::ir::TrapCode::user(1).expect("a user trap code"));
+                    builder.seal_all_blocks();
+                    builder.finalize(module.target_config());
+                }
+                if module.define_function(*clif_id, &mut ctx).is_err() && jit_debug() {
+                    eprintln!("[jit] the stub for a failed group did not define");
+                }
+                module.clear_context(&mut ctx);
+            }
+            return None;
         }
 
         // Entry wrappers (C ABI) for every member, so each is directly

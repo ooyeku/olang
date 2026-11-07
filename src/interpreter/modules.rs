@@ -1314,6 +1314,9 @@ already binds — an import never replaces a program's own name. Alias the impor
     pub fn set_dependency_map(&mut self, map: HashMap<String, std::path::PathBuf>) {
         crate::vfs::note_package_roots(&map);
         self.dependency_map = map;
+        if let Some(tier) = self.bytecode_tier.as_mut() {
+            tier.set_dependency_map(self.dependency_map.clone());
+        }
     }
 
     /// The dependencies of the project holding `dir` (its nearest
@@ -1346,6 +1349,9 @@ already binds — an import never replaces a program's own name. Alias the impor
     pub fn add_to_dependency_map(&mut self, map: HashMap<String, std::path::PathBuf>) {
         crate::vfs::note_package_roots(&map);
         self.dependency_map.extend(map);
+        if let Some(tier) = self.bytecode_tier.as_mut() {
+            tier.set_dependency_map(self.dependency_map.clone());
+        }
     }
 
     /// If the first segment of the module path is a declared dependency,
@@ -1773,7 +1779,18 @@ already binds — an import never replaces a program's own name. Alias the impor
 
     pub(crate) fn eval_use_decl(&mut self, use_decl: UseDecl) -> Result<Value, InterpreterError> {
         let module_path = use_decl.path.join(".");
-        let module = self.load_module_from_file(&module_path)?;
+        // A `use` in a function body runs when the function is called, by
+        // which time the file loading is the caller's: it resolves against
+        // the file that defines the function, as a top-level `use` there
+        // would (OL-538).
+        let owner = self.defining_file();
+        let saved = self.current_module_path.clone();
+        if owner.is_some() && owner != saved {
+            self.current_module_path = owner;
+        }
+        let module = self.load_module_from_file(&module_path);
+        self.current_module_path = saved;
+        let module = module?;
         self.bind_module_imports(&module, &module_path, &Some(use_decl.items.clone()))?;
 
         // Also bind the module's own name as a namespace, so an imported

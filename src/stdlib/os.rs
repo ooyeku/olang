@@ -752,6 +752,9 @@ fn exec_bounded(
         .stderr(process::Stdio::piped());
     crate::stdlib::proc::set_own_group(&mut command);
     let mut child = command.spawn()?;
+    // Out of the terminal's group, the child misses a Ctrl-C: noted, it
+    // goes when a signal ends olang (OL-375).
+    let _live_group = crate::stdlib::proc::LiveGroup::new(child.id());
 
     if let (Some(input), Some(mut pipe)) = (stdin_data, child.stdin.take()) {
         std::thread::spawn(move || {

@@ -32,7 +32,11 @@ fn payload(dir: &Path, name: &str, who: &str) -> Vec<u8> {
         .arg(&out_file)
         .output()
         .unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     fs::read(out_file).unwrap()
 }
 
@@ -74,7 +78,11 @@ fn put_layer(app: &App, id: &str, program: &[u8], signed_by: &ed25519_dalek::Sig
     let dir = app.layers.join(id);
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("app.olb"), program).unwrap();
-    fs::write(dir.join("app.olb.sig"), b64(&signed_by.sign(program).to_bytes())).unwrap();
+    fs::write(
+        dir.join("app.olb.sig"),
+        b64(&signed_by.sign(program).to_bytes()),
+    )
+    .unwrap();
 }
 
 fn set_state(app: &App, active: &str, tries: u32, max: u32) {
@@ -94,7 +102,11 @@ fn tries(app: &App) -> u64 {
 
 fn boot(app: &App) -> String {
     let out = Command::new(&app.exe).output().unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
@@ -131,7 +143,10 @@ fn a_signed_layer_boots_counts_its_tries_and_falls_back() {
     put_layer(&app, "v3", &layer, &stranger);
     set_state(&app, "v3", 0, 3);
     let out = boot(&app);
-    assert!(out.contains("bundled") && out.contains("signature does not verify"), "{out}");
+    assert!(
+        out.contains("bundled") && out.contains("signature does not verify"),
+        "{out}"
+    );
     assert_eq!(tries(&app), 0);
 
     // a changed byte after signing
@@ -156,7 +171,10 @@ fn a_signed_layer_boots_counts_its_tries_and_falls_back() {
     put_layer(&app, "v5", &other, &app.key);
     set_state(&app, "v5", 0, 3);
     let out = boot(&app);
-    assert!(out.contains("bundled") && out.contains("built by olang 9"), "{out}");
+    assert!(
+        out.contains("bundled") && out.contains("built by olang 9"),
+        "{out}"
+    );
 
     // a name that is no folder's
     set_state(&app, "../v2", 0, 3);
@@ -166,7 +184,10 @@ fn a_signed_layer_boots_counts_its_tries_and_falls_back() {
     fs::remove_file(base.join("T.app/Contents/Resources/layers.pub")).unwrap();
     set_state(&app, "v2", 0, 3);
     let out = boot(&app);
-    assert!(out.contains("bundled") && out.contains("public key"), "{out}");
+    assert!(
+        out.contains("bundled") && out.contains("public key"),
+        "{out}"
+    );
 
     let _ = fs::remove_dir_all(&base);
 }

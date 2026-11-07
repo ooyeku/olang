@@ -49,7 +49,11 @@ fn common_checks(report: &serde_json::Value) {
     assert_eq!(report["kind"], "crash");
     assert_eq!(report["olang"]["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(report["os"]["name"], "macos");
-    assert!(report["os"]["version"].as_str().is_some_and(|v| !v.is_empty()));
+    assert!(
+        report["os"]["version"]
+            .as_str()
+            .is_some_and(|v| !v.is_empty())
+    );
     assert!(report["time"].as_u64().is_some_and(|t| t > 1_700_000_000));
     let native = report["native"]["frames"].as_array().unwrap();
     assert!(native.len() > 3, "a native backtrace: {native:?}");
@@ -96,8 +100,17 @@ fn a_panic_writes_a_report_with_every_threads_olang_frames() {
     let report = the_report(&dir.join("reports"));
     common_checks(&report);
     assert_eq!(report["reason"], "panic");
-    assert!(report["message"].as_str().unwrap().contains("crash.on_crash"), "{report}");
-    assert!(report["location"].as_str().unwrap().contains(".rs:"), "{report}");
+    assert!(
+        report["message"]
+            .as_str()
+            .unwrap()
+            .contains("crash.on_crash"),
+        "{report}"
+    );
+    assert!(
+        report["location"].as_str().unwrap().contains(".rs:"),
+        "{report}"
+    );
     assert_eq!(report["thread"]["name"], "main");
     let functions = frames_of(&report);
     for f in ["outer", "arm_again", "waiter"] {
@@ -162,7 +175,11 @@ fn a_fatal_signal_writes_a_report_and_the_process_still_dies_of_it() {
         panic!("the process lived on after SIGSEGV");
     };
     use std::os::unix::process::ExitStatusExt;
-    assert_eq!(status.signal(), Some(libc::SIGSEGV), "it still dies of the signal");
+    assert_eq!(
+        status.signal(),
+        Some(libc::SIGSEGV),
+        "it still dies of the signal"
+    );
     assert!(t0.elapsed().as_millis() < 2000);
     let report = the_report(&dir.join("reports"));
     common_checks(&report);
@@ -170,6 +187,18 @@ fn a_fatal_signal_writes_a_report_and_the_process_still_dies_of_it() {
     assert_eq!(report["signal"], "SIGSEGV");
     let functions = frames_of(&report);
     assert!(functions.iter().any(|n| n == "sleeper"), "{functions:?}");
-    assert!(std::fs::metadata(std::fs::read_dir(dir.join("reports")).unwrap().next().unwrap().unwrap().path()).unwrap().len() <= 32768);
+    assert!(
+        std::fs::metadata(
+            std::fs::read_dir(dir.join("reports"))
+                .unwrap()
+                .next()
+                .unwrap()
+                .unwrap()
+                .path()
+        )
+        .unwrap()
+        .len()
+            <= 32768
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

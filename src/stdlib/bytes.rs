@@ -586,7 +586,9 @@ fn ok_text(r: Result<String, String>) -> Value {
 fn to_string_lossy(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let b = bytes_of(one_arg(&args, "to_string_lossy")?)
         .map_err(|e| format!("bytes.to_string_lossy: {e}"))?;
-    Ok(Value::String(Arc::new(String::from_utf8_lossy(b).into_owned())))
+    Ok(Value::String(Arc::new(
+        String::from_utf8_lossy(b).into_owned(),
+    )))
 }
 
 /// `bytes.decode(b, encoding, #{lossy})`: a `Result`, always `Ok` with

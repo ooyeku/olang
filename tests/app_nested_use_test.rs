@@ -37,13 +37,21 @@ fn a_built_app_runs_its_nested_uses_from_another_folder() {
         .current_dir(&app)
         .output()
         .unwrap();
-    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
     // run where none of the sources are
     let elsewhere = tempfile::tempdir().unwrap();
     let ran = Command::new(app.join("nest"))
         .current_dir(elsewhere.path())
         .output()
         .unwrap();
-    assert!(ran.status.success(), "{}", String::from_utf8_lossy(&ran.stderr));
+    assert!(
+        ran.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&ran.stdout), "top leaf\nlate\n");
 }

@@ -492,9 +492,15 @@ struct ParsedRequest {
 /// request line, headers (keys lowercased), and a Content-Length body.
 /// Errors carry the status they deserve (400/408/413/431), so abuse is
 /// answered precisely and the connection closed.
+///
+/// `carry` holds what an earlier read took past the end of the request
+/// before: a client that pipelines (RFC 9112 §9.3) sends the next one in
+/// the same packet. It is read first, and what this read takes past its
+/// own request's end goes back into it (OL-372).
 fn read_request(
     stream: &mut std::net::TcpStream,
     limits: &ServeConfig,
+    carry: &mut Vec<u8>,
 ) -> Result<Option<ParsedRequest>, (i64, String)> {
     use std::io::Read;
 
@@ -511,7 +517,8 @@ fn read_request(
     };
 
     // Read until the blank line that ends the header block.
-    let mut buf: Vec<u8> = Vec::with_capacity(1024);
+    let mut buf: Vec<u8> = std::mem::take(carry);
+    buf.reserve(1024);
     let mut chunk = [0u8; 4096];
     let head_end = loop {
         if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
@@ -677,6 +684,9 @@ fn read_request(
             body_bytes.extend_from_slice(&pending[..size]);
             pending.drain(..size + 2);
         }
+        // the trailer's closing CRLF; what follows is the next request
+        pending.drain(..2);
+        *carry = pending;
         return Ok(Some(ParsedRequest {
             method,
             path,
@@ -721,7 +731,9 @@ fn read_request(
         }
         body_bytes.extend_from_slice(&chunk[..n]);
     }
-    body_bytes.truncate(content_length);
+    if body_bytes.len() > content_length {
+        *carry = body_bytes.split_off(content_length);
+    }
 
     Ok(Some(ParsedRequest {
         method,
@@ -1488,13 +1500,15 @@ fn serve_connection(
         config.write_timeout_ms,
     )));
 
+    // bytes read past one request's end: the start of the next (OL-372)
+    let mut carry: Vec<u8> = Vec::new();
     for served in 0..config.max_requests_per_connection {
         // A draining server reads no further request off a kept-alive
         // connection: the one in hand (if any) is the last.
         if served > 0 && SHUTDOWN.load(std::sync::atomic::Ordering::SeqCst) {
             break;
         }
-        match read_request(&mut stream, config) {
+        match read_request(&mut stream, config, &mut carry) {
             Ok(None) => break,
             Ok(Some(req)) => {
                 let client_wants_close = req
@@ -2689,9 +2703,61 @@ mod chunked_tests {
             .set_read_timeout(Some(std::time::Duration::from_millis(100)))
             .unwrap();
         let config = super::serve_config(None).unwrap();
-        let got = super::read_request(&mut stream, &config);
+        let got = super::read_request(&mut stream, &config, &mut Vec::new());
         writer.join().unwrap();
         got
+    }
+
+    /// Every request a client sent in one write, in order, as the serve
+    /// loop reads them (with the carry between).
+    fn parse_all(raw: &'static [u8]) -> Vec<super::ParsedRequest> {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let writer = std::thread::spawn(move || {
+            use std::io::Write;
+            let mut c = std::net::TcpStream::connect(addr).unwrap();
+            c.write_all(raw).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        });
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_millis(100)))
+            .unwrap();
+        let config = super::serve_config(None).unwrap();
+        let mut carry = Vec::new();
+        let mut out = Vec::new();
+        while let Ok(Some(req)) = super::read_request(&mut stream, &config, &mut carry) {
+            out.push(req);
+        }
+        writer.join().unwrap();
+        out
+    }
+
+    /// Pipelined requests (RFC 9112 §9.3) are each read, in order: the
+    /// second was lost with the rest of the first read (OL-372).
+    #[test]
+    fn pipelined_requests_are_each_read_in_order() {
+        let reqs = parse_all(
+            b"GET /q?first=1 HTTP/1.1\r\nHost: x\r\n\r\nGET /q?second=1 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+        );
+        let queries: Vec<_> = reqs.iter().map(|r| r.query[0].0.clone()).collect();
+        assert_eq!(queries, ["first", "second"]);
+
+        let reqs = parse_all(
+            b"POST /a HTTP/1.1\r\nContent-Length: 5\r\n\r\nhelloPOST /b HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\nGET /c HTTP/1.1\r\n\r\n",
+        );
+        let got: Vec<_> = reqs
+            .iter()
+            .map(|r| (r.path.clone(), String::from_utf8_lossy(&r.body).to_string()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("/a".to_string(), "hello".to_string()),
+                ("/b".to_string(), "abc".to_string()),
+                ("/c".to_string(), String::new()),
+            ]
+        );
     }
 
     /// A chunked request body arrives whole; it was read as no body and
