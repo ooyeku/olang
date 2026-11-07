@@ -20,13 +20,13 @@
 //!
 //! Handles are `Process { id }` structs into a process-wide registry, the
 //! same pattern as [`chan`](chan.rs) and [`db`](db.rs). stderr is drained
-//! by a background thread into a buffer, and stdout by another into a line
-//! channel, so a chatty child never deadlocks against a caller that is
-//! only reading one stream.
+//! into a buffer, and stdout into a line channel, by one reader thread
+//! every child shares ([`proc_reader`](proc_reader.rs)), so a chatty child
+//! never deadlocks against a caller that is only reading one stream.
 
 use crate::ast::Value;
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::mpsc::{self, Receiver};
@@ -34,7 +34,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 /// One live child. `child` is the process itself; `stdin` is its input
 /// pipe (dropped to signal EOF); `out_rx` receives stdout one line at a
-/// time from a drainer thread; `stderr` is filled by another drainer.
+/// time from the shared reader, which fills `stderr` too.
 /// Draining both streams off-thread is what keeps a child that writes a
 /// lot to one stream from blocking while the caller reads the other.
 struct Proc {
@@ -472,65 +472,38 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let pid = child.id();
 
     // Drain stdout into a line channel: read_line pops from the channel,
-    // never from the pipe, so the child can outrun a slow reader.
+    // never from the pipe, so the child can outrun a slow reader. Both
+    // pipes are read by the one reader every child shares (OL-497).
+    use crate::stdlib::proc_reader::{Sink, watch};
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
-    // `framed` first: the pipe is taken only by the branch that drains it
-    // (taking it in the test of the first branch left a plain child's
-    // stdout undrained — no lines, no EOF until it exited).
-    if framed && let Some(out) = child.stdout.take() {
-        std::thread::spawn(move || {
-            let mut r = BufReader::new(out);
-            while let Some(body) = read_frame(&mut r) {
-                if tx.send(body.into_bytes()).is_err() {
-                    break;
-                }
-            }
-        });
-    } else if bytes && let Some(mut out) = child.stdout.take() {
-        // raw chunks, as they come: `read_all` joins them
-        std::thread::spawn(move || {
-            let mut chunk = [0u8; 8192];
-            while let Ok(n) = out.read(&mut chunk) {
-                if n == 0 || tx.send(chunk[..n].to_vec()).is_err() {
-                    break;
-                }
-            }
-        });
-    } else if let Some(out) = child.stdout.take() {
-        std::thread::spawn(move || {
-            // a line at a time, its `\n` (and a `\r` before it) removed;
-            // bytes that are not UTF-8 never stop the drain (they become
-            // U+FFFD when the line is read as text)
-            let mut r = BufReader::new(out);
-            loop {
-                let mut line = Vec::new();
-                match r.read_until(b'\n', &mut line) {
-                    Ok(0) | Err(_) => break,
-                    Ok(_) => {
-                        if line.last() == Some(&b'\n') {
-                            line.pop();
-                            if line.last() == Some(&b'\r') {
-                                line.pop();
-                            }
-                        }
-                        if tx.send(line).is_err() {
-                            break; // receiver gone; stop draining
-                        }
-                    }
-                }
-            }
-            // tx dropped here → read_line sees EOF
-        });
+    if let Some(out) = child.stdout.take() {
+        watch(
+            out,
+            if framed {
+                Sink::Frames(tx)
+            } else if bytes {
+                // raw chunks, as they come: `read_all` joins them
+                Sink::Chunks(tx)
+            } else {
+                // a line at a time, its `\n` (and a `\r` before it)
+                // removed; bytes that are not UTF-8 never stop the drain
+                // (they become U+FFFD when the line is read as text)
+                Sink::Lines(tx)
+            },
+        );
     }
 
     // Drain stderr into a shared buffer so it can never fill and block the
     // child while the caller is busy reading stdout.
     let stderr_buf = Arc::new(Mutex::new(Vec::new()));
-    if let Some(mut se) = child.stderr.take() {
-        let sink = stderr_buf.clone();
-        std::thread::spawn(move || {
-            *sink.lock().unwrap_or_else(|e| e.into_inner()) = drain_bounded(&mut se, STDERR_KEEP);
-        });
+    if let Some(se) = child.stderr.take() {
+        watch(
+            se,
+            Sink::Bounded {
+                into: stderr_buf.clone(),
+                keep: STDERR_KEEP,
+            },
+        );
     }
 
     let stdin = child.stdin.take();
@@ -549,33 +522,6 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         .unwrap_or_else(|e| e.into_inner())
         .insert(id, proc);
     Ok(ok(handle(id)))
-}
-
-/// One message framed by `Content-Length` headers: its body, or `None`
-/// at the end of the stream (or a frame that cannot be read).
-fn read_frame(r: &mut impl BufRead) -> Option<String> {
-    let mut len: Option<usize> = None;
-    loop {
-        let mut line = String::new();
-        if r.read_line(&mut line).ok()? == 0 {
-            return None;
-        }
-        let t = line.trim_end_matches(['\r', '\n']);
-        if t.is_empty() {
-            if len.is_some() {
-                break;
-            }
-            continue;
-        }
-        if let Some((k, v)) = t.split_once(':')
-            && k.trim().eq_ignore_ascii_case("content-length")
-        {
-            len = v.trim().parse().ok();
-        }
-    }
-    let mut buf = vec![0u8; len?];
-    r.read_exact(&mut buf).ok()?;
-    Some(String::from_utf8_lossy(&buf).into_owned())
 }
 
 /// `proc.write_frame(p, body)` — feed the child's stdin one message,
