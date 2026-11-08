@@ -273,6 +273,10 @@ entry saying so; nothing graduates silently.
   Their surface still grows, so a node's fields, an event's payload or an
   option may change in a minor release. A program usually meets them
   through a library built on them, which absorbs those changes.
+  The menu bar's parts — `gui.status_item` and its `status_set`
+  family, a window's `panel`, `gui.accessory` and `gui.notify`, and the
+  `status`, `dismiss` and `notification` events — are the newest of
+  them (macOS only; `Err("unsupported")` elsewhere).
 - **`sim`** — simulated worlds. A seed decides every run, and the same
   seed on the same olang is the same run; that promise holds. The
   surface around it (a world's and a node's options, a run's fields,
