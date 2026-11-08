@@ -139,7 +139,7 @@ pub fn collect() -> Option<Collection> {
         }
     }
     let _done = Done;
-    let start = std::time::Instant::now();
+    let start = crate::clock::Instant::now();
     let roots: Vec<Root> = {
         let mut all = ROOTS.lock().unwrap_or_else(|e| e.into_inner());
         all.retain(|w| w.strong_count() > 0);
