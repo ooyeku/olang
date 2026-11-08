@@ -305,7 +305,9 @@ order, so read whichever subject interests you.
   `validation`) imported by dotted path, as in
   `use utils.math { calculate_average }`. It has no `main.ol`, so the
   harness does not run it.
-- `gui/window.ol` opens a window with olang's own window engine, and
+- `gui/window.ol` opens a window with olang's own window engine,
+  `gui/menubar.ol` puts a live readout in the macOS menu bar with a
+  panel and a notification, and
   `tty/` has two small terminal programs (a key echo and a size probe).
   They need a display or a terminal, so the harness leaves them out.
 - `run_all.ol` is the harness itself, written in olang. It finds every

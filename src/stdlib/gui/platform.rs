@@ -92,6 +92,9 @@ pub enum Cmd {
         text: String,
         replace: Option<(usize, usize)>,
     },
+    /// Work for the loop's thread (AppKit's): the menu bar's status
+    /// items and notifications (`tray`).
+    Main(Box<dyn FnOnce() + Send>),
 }
 
 impl From<accesskit_winit::Event> for Cmd {
@@ -310,6 +313,10 @@ pub fn capabilities() -> Value {
     map(vec![
         ("os", s(std::env::consts::OS)),
         ("native_menu", b(mac)),
+        // the menu bar's status items, their panels, an accessory
+        // application, the system's notifications (`tray`)
+        ("status_item", b(mac)),
+        ("notifications", b(mac)),
         ("clipboard_image", b(mac)),
         ("file_drop", b(mac || windows)),
         ("drop_position", b(mac)),
@@ -399,7 +406,17 @@ fn run_loop(reply: crossbeam_channel::Sender<Result<(), String>>) -> Option<i32>
         let _ = reply.send(Err(msg));
         return None;
     }
-    let event_loop = match EventLoop::<Cmd>::with_user_event().build() {
+    let mut builder = EventLoop::<Cmd>::with_user_event();
+    // an accessory (`gui.accessory`): no Dock icon, no menu bar of its
+    // own, and not brought forward as it starts
+    #[cfg(target_os = "macos")]
+    if super::tray::accessory() {
+        use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
+        builder
+            .with_activation_policy(ActivationPolicy::Accessory)
+            .with_activate_ignoring_other_apps(false);
+    }
+    let event_loop = match builder.build() {
         Ok(l) => l,
         Err(e) => {
             let msg = format!("no display: {e}");
@@ -585,6 +602,12 @@ struct PWin {
     /// The cursor the program asked for (put back when the window is
     /// responding again).
     cursor: winit::window::CursorIcon,
+    /// The status item it is the panel of (`gui.open`'s `panel`): shown
+    /// under the item, dismissed by a click outside it or Escape.
+    panel: Option<u64>,
+    /// A panel has been the key window since it was last shown: only then
+    /// does losing the key dismiss it (it is not key yet as it opens).
+    panel_keyed: bool,
 }
 
 /// A window the program closed (or every window, as the loop ends), torn
@@ -774,6 +797,15 @@ impl App {
         if let Some((x, y)) = opts.at {
             attrs = attrs.with_position(winit::dpi::LogicalPosition::new(x, y));
         }
+        if opts.panel.is_some() {
+            attrs = attrs.with_decorations(false).with_resizable(false);
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(item) = opts.panel
+            && super::tray::mac::button(item).is_none()
+        {
+            return Err(format!("status item {item} is removed"));
+        }
         #[cfg(target_os = "macos")]
         if let Some(t) = &opts.tabbing {
             use winit::platform::macos::WindowAttributesExtMacOS;
@@ -855,6 +887,15 @@ impl App {
             // SAFETY: a live NSWindow; NSWindowTabbingModeDisallowed is 2.
             let _: () = unsafe { objc2::msg_send![&**w, setTabbingMode: 2isize] };
         }
+        // a panel: borderless and rounded, under its item
+        #[cfg(target_os = "macos")]
+        if let Some(item) = opts.panel
+            && let Some(nw) = ns_window(&win)
+        {
+            super::tray::mac::panel_style(&nw);
+            super::tray::mac::anchor(&nw, item);
+            super::tray::note_panel(item, true);
+        }
         win.set_visible(true);
         #[cfg(target_os = "macos")]
         if let Some(w) = &alone {
@@ -893,6 +934,8 @@ impl App {
                 shown_size: (0, 0),
                 cursor: winit::window::CursorIcon::Default,
                 unified: opts.unified,
+                panel: opts.panel,
+                panel_keyed: false,
             },
         );
         let bar = self.sync_titlebar(id);
@@ -2027,6 +2070,39 @@ impl App {
 /// on stderr, the windows' states made usable again and drawn again —
 /// never the event loop stopped (winit stops the application on a panic
 /// in a handler and goes on unwinding as it returns) or an abort.
+impl App {
+    /// A shown panel dismissed (a click outside it, `why` "outside", or
+    /// Escape): hidden, and the program hears `dismiss`. Whether it was.
+    fn dismiss_panel(&mut self, id: u64, why: &str) -> bool {
+        let Some(pw) = self.windows.get(&id) else {
+            return false;
+        };
+        let Some(item) = pw.panel else {
+            return false;
+        };
+        if pw.win.is_visible() == Some(false) || (why == "outside" && !pw.panel_keyed) {
+            if std::env::var_os("GUI_TRACE").is_some() {
+                eprintln!("gui: panel {id} not dismissed ({why}: not shown or not yet key)");
+            }
+            return false;
+        }
+        pw.win.set_visible(false);
+        if let Some(pw) = self.windows.get_mut(&id) {
+            pw.panel_keyed = false;
+        }
+        super::tray::note_panel(item, false);
+        emit(vec![event(
+            "dismiss",
+            vec![
+                ("window", Value::Integer(id as i64)),
+                ("item", Value::Integer(item as i64)),
+                ("why", s(why)),
+            ],
+        )]);
+        true
+    }
+}
+
 impl ApplicationHandler<Cmd> for App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
         self.contained("resumed", |app| app.on_resumed(el));
@@ -2221,6 +2297,7 @@ impl App {
                 Cmd::NextFrame(_) => String::new(),
                 Cmd::ServiceText { id, .. } => format!("service text {id}"),
                 Cmd::InsertText { id, .. } => format!("insert text {id}"),
+                Cmd::Main(_) => "main".to_string(),
             };
             if !what.is_empty() {
                 eprintln!("gui: {what}");
@@ -2234,6 +2311,9 @@ impl App {
             }
             Cmd::Close(id) => {
                 if let Some(pw) = self.windows.remove(&id) {
+                    if let Some(item) = pw.panel {
+                        super::tray::note_panel(item, false);
+                    }
                     self.by_winit.remove(&pw.win.id());
                     #[cfg(target_os = "macos")]
                     edit_menu::view_closed(id);
@@ -2265,6 +2345,17 @@ impl App {
                             .set_outer_position(winit::dpi::LogicalPosition::new(x, y));
                     }
                     if let Ok(Some(b)) = get_bool(&v, "visible", "gui.set") {
+                        // a panel shown again: under its item, where it may
+                        // have moved
+                        #[cfg(target_os = "macos")]
+                        if b && let Some(item) = pw.panel
+                            && let Some(nw) = ns_window(&pw.win)
+                        {
+                            super::tray::mac::anchor(&nw, item);
+                        }
+                        if let Some(item) = pw.panel {
+                            super::tray::note_panel(item, b);
+                        }
                         pw.win.set_visible(b);
                     }
                     if let Ok(Some(c)) = get_str(&v, "cursor", "gui.set") {
@@ -2401,6 +2492,7 @@ impl App {
                     self.render(id);
                 }
             }
+            Cmd::Main(f) => f(),
             Cmd::ServiceText { id, text } => self.input(id, Input::ImeCommit(text)),
             Cmd::InsertText { id, text, replace } => {
                 if let Some((loc, len)) = replace
@@ -2560,6 +2652,12 @@ impl App {
                 );
             }
             WindowEvent::KeyboardInput { event: ke, .. } => {
+                if ke.state == ElementState::Pressed
+                    && ke.logical_key == Key::Named(NamedKey::Escape)
+                    && self.dismiss_panel(id, "escape")
+                {
+                    return;
+                }
                 {
                     use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
                     let base = ke.key_without_modifiers();
@@ -2733,6 +2831,11 @@ impl App {
             WindowEvent::Focused(on) => {
                 if !on {
                     super::keys::device_release_all();
+                    self.dismiss_panel(id, "outside");
+                } else if let Some(pw) = self.windows.get_mut(&id)
+                    && pw.panel.is_some()
+                {
+                    pw.panel_keyed = true;
                 }
                 self.input(id, Input::Focused(on));
                 // the tabs it is shown among, as they stand now
@@ -2803,6 +2906,30 @@ pub fn open(opts: OpenOpts) -> Result<u64, String> {
         .map_err(|_| "gui.open: the event loop has ended".to_string())?
         .map_err(|e| format!("gui.open: {e}"))?;
     Ok(id)
+}
+
+/// Run `f` on the loop's thread (starting the loop) and answer what it
+/// answers: AppKit's status items and notifications live there.
+pub fn on_main<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> Result<R, String> {
+    if quit_hold::asked() {
+        return Err("the application is ending".to_string());
+    }
+    let p = proxy()?;
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    p.send_event(Cmd::Main(Box::new(move || {
+        let _ = tx.send(f());
+    })))
+    .map_err(|_| "the event loop has ended".to_string())?;
+    rx.recv()
+        .map_err(|_| "the event loop has ended".to_string())
+}
+
+/// Whether the platform's loop runs now (never starts it).
+pub fn loop_running() -> bool {
+    matches!(
+        &*LOOP.lock().unwrap_or_else(|e| e.into_inner()),
+        LoopState::Running(_)
+    )
 }
 
 pub(super) fn send(cmd: Cmd) {

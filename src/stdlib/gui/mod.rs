@@ -53,6 +53,7 @@ pub mod scroll;
 pub mod shared;
 pub mod soft;
 pub mod text;
+pub mod tray;
 pub mod values;
 pub mod vector;
 pub mod wide;
@@ -106,6 +107,14 @@ const FUNCTIONS: &[(&str, usize)] = &[
     ("flat_keep", 2),
     ("flat_geo", 1),
     ("roles", 0),
+    ("status_item", 1),
+    ("status_set", 2),
+    ("status_set_title", 2),
+    ("status_set_icon", 2),
+    ("status_set_tooltip", 2),
+    ("status_remove", 1),
+    ("accessory", 1),
+    ("notify", 1),
 ];
 
 pub fn create_gui_module() -> Value {
@@ -161,6 +170,14 @@ pub fn call_gui_function(name: &str, args: Vec<Value>) -> DynRes {
                     | "clipboard_write"
                     | "clipboard_image"
                     | "image_info"
+                    | "status_item"
+                    | "status_set"
+                    | "status_set_title"
+                    | "status_set_icon"
+                    | "status_set_tooltip"
+                    | "status_remove"
+                    | "accessory"
+                    | "notify"
             ) {
                 Ok(err(said))
             } else {
@@ -248,6 +265,47 @@ fn gui_function(name: &str, args: Vec<Value>) -> DynRes {
         "spell" => gui_spell(args),
         "spelling" => gui_spelling(args),
         "replace_text" => gui_replace_text(args),
+        "status_item" => {
+            arity("gui.status_item", &args, 0, 1)?;
+            tray::gui_status_item(&args)
+        }
+        "status_set" => {
+            arity("gui.status_set", &args, 2, 2)?;
+            let look = tray::look_of("gui.status_set", args.get(1))?;
+            tray::gui_status_set("gui.status_set", args.first(), look)
+        }
+        "status_set_title" | "status_set_icon" | "status_set_tooltip" => {
+            let f = format!("gui.{name}");
+            arity(&f, &args, 2, 2)?;
+            let text = match &args[1] {
+                Value::String(t) => t.to_string(),
+                Value::Unit => String::new(),
+                other => {
+                    return Err(
+                        format!("{f}: expected a string or (), got {}", other.type_name()).into(),
+                    );
+                }
+            };
+            let mut look = tray::Look::default();
+            match name {
+                "status_set_title" => look.title = Some(text),
+                "status_set_icon" => look.icon = Some(text),
+                _ => look.tooltip = Some(text),
+            }
+            tray::gui_status_set(&f, args.first(), look)
+        }
+        "status_remove" => {
+            arity("gui.status_remove", &args, 1, 1)?;
+            tray::gui_status_remove(&args)
+        }
+        "accessory" => {
+            arity("gui.accessory", &args, 1, 1)?;
+            tray::gui_accessory(&args)
+        }
+        "notify" => {
+            arity("gui.notify", &args, 1, 1)?;
+            tray::gui_notify(&args)
+        }
         _ => Err(format!("Unknown gui function: {name}")),
     };
     r.map_err(|e| e.into())
@@ -348,6 +406,9 @@ pub struct OpenOpts {
     /// title's text hidden and the traffic lights kept (macOS); the inset
     /// to keep clear comes with `resize` as `titlebar`.
     pub unified: bool,
+    /// The status item (`gui.status_item`) this window is the panel of:
+    /// borderless, under the item, dismissed by a click outside or Escape.
+    pub panel: Option<u64>,
 }
 
 fn open_opts(function: &str, v: Option<&Value>) -> Res<OpenOpts> {
@@ -364,6 +425,7 @@ fn open_opts(function: &str, v: Option<&Value>) -> Res<OpenOpts> {
         tabbing: None,
         tab_of: None,
         unified: false,
+        panel: None,
     };
     let Some(v) = v else {
         return Ok(o);
@@ -383,6 +445,7 @@ fn open_opts(function: &str, v: Option<&Value>) -> Res<OpenOpts> {
         "tabbing",
         "tab_of",
         "titlebar",
+        "panel",
     ];
     match fields(v) {
         Some(f) => {
@@ -435,6 +498,15 @@ fn open_opts(function: &str, v: Option<&Value>) -> Res<OpenOpts> {
         Some(n) if n >= 1.0 => Some(n as u64),
         _ => None,
     };
+    if let Some(p) = get(v, "panel") {
+        if !cfg!(target_os = "macos") {
+            return Err(format!(
+                "{function}: \"panel\" is unsupported here (macOS only)"
+            ));
+        }
+        o.panel = Some(tray::status_id(function, Some(p))?);
+        o.resizable = false;
+    }
     Ok(o)
 }
 
