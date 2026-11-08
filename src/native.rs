@@ -98,6 +98,29 @@ pub trait NativeObject: fmt::Debug + Send + Sync {
     fn field(&self, _name: &str) -> Option<Result<Value, String>> {
         None
     }
+
+    /// The values this one holds, for the cycle collector
+    /// (`crate::cycles`): `visit` once for each value it holds a
+    /// reference of its own to, then `true`. The default `false` means
+    /// the value does not say, and the collector takes whatever it holds
+    /// as held from outside: a loop through it is never freed, and
+    /// nothing is freed wrongly. Must not block (take locks with
+    /// `try_lock`, answering `false` when one is busy) and must not run
+    /// olang code.
+    fn trace(&self, _visit: &mut dyn FnMut(Traced<'_>)) -> bool {
+        false
+    }
+
+    /// Let go of what this value holds: the collector found it in a loop
+    /// nothing outside reaches. Only a value that answers `trace` is
+    /// asked. Must not block.
+    fn break_cycle(&self) {}
+}
+
+/// A value a native holds, as `NativeObject::trace` reports it.
+pub enum Traced<'a> {
+    Value(&'a Value),
+    Ovm(&'a crate::ovm::value::OvmValue),
 }
 
 /// Shared handle to a native value: the single allocation both tiers hold.

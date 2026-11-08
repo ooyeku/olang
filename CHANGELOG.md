@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Loops through a cell or a shared reference are freed** (OL-570). A
+  cell holding a list that held the cell, or a closure stored in the
+  cell it read, was never freed: values are reference-counted, and a
+  loop keeps its own count up. A cycle collector now walks what the
+  live cells and shared references hold and empties the loops nothing
+  else reaches. It runs on its own as cells are made, and
+  `runtime.collect()` runs it at once. im 15.1.0 is vendored with a
+  read-only walk of a map's nodes, which the collector needs to count
+  a closure's captured scope exactly (vendor/im/OLANG.md).
+
 ## [1.0.0-rc.8] - 2026-11-07
 
 The runtime the planned libraries need, added under an exception to the

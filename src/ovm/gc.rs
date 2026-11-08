@@ -13,8 +13,8 @@
 //! The previous implementation carried a concurrent mark/sweep engine that
 //! operated on an object model the allocator never actually created (it cast
 //! payload pointers to `ValueHeader`s), so running it would have corrupted
-//! memory. If a tracing GC is ever needed (e.g. for closure cycles), it must
-//! be built on a unified header+payload object model from the start.
+//! memory. Loops, the one thing reference counting cannot free, are found
+//! by `crate::cycles` (OL-570); `force_collection` runs it.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -98,11 +98,11 @@ impl GarbageCollector {
         self.running.load(Ordering::SeqCst)
     }
 
-    /// Reference counting reclaims memory continuously; a "collection" just
-    /// snapshots the accounting so callers (REPL `:gc`, stats displays) keep
-    /// working.
+    /// Reference counting reclaims memory continuously; a collection frees
+    /// the loops it cannot (`crate::cycles`) and snapshots the accounting.
     pub fn force_collection(&self) -> Result<GcStats, GcError> {
         self.collections_requested.fetch_add(1, Ordering::Relaxed);
+        crate::cycles::collect();
         Ok(self.stats())
     }
 

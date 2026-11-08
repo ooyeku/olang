@@ -356,8 +356,11 @@ objc2-core-foundation = { version = "0.3", default-features = false, features = 
 # CustomAction request. 0.27.1 otherwise unchanged; written to go
 # upstream (vendor/accesskit_macos/OLANG.md). Drop this patch when a
 # released accesskit_macos has it.
+# im 15.1.0 with a read-only walk of a HashMap's nodes and their
+# reference counts, for the cycle collector (vendor/im/OLANG.md).
 [patch.crates-io]
 accesskit_macos = { path = "vendor/accesskit_macos" }
+im = { path = "vendor/im" }
 
 [dev-dependencies]
 criterion = "0.5"

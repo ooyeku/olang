@@ -1640,6 +1640,11 @@ println(show(chan.recv(ch)))   // Ok(11)
 A cell created inside a task and used only there is unremarkable; the
 rule concerns crossing, not tasks.
 
+**Loops.** A cell whose contents reach the cell again (a list holding
+it, a closure that reads it) still holds itself once nothing else
+does. The cycle collector frees such loops as cells are made, and
+[`runtime.collect()`](#runtime-collect) frees them at once.
+
 ## `chan` — channels
 
 Channels let `spawn`ed tasks pass messages to each other. A channel is
@@ -1817,6 +1822,9 @@ This keeps the rule that threads share no mutable data. The value
 inside never changes: what changes is which value the reference holds.
 A reader always gets a whole value, the old or the new, and keeps it as
 long as it likes. Like a channel, a shared reference refuses a cell.
+A shared reference that holds itself, directly or inside a value, is
+freed by the cycle collector once nothing else holds it, as a
+[cell](#cell--mutable-locations) is.
 
 ```olang
 let counter = shared.new(0)
@@ -2606,6 +2614,7 @@ that serves its own routes reads the same bytes.
 | <a id="runtime-features"></a>`runtime.features()` / `runtime.features(profile)` | what a runtime has: `#{ "profile", "modules", "threads", "fs", "net", "processes", "db", "gui", "dom", "jit", "needs" }` — its name, the modules a program can call there (sorted), and whether it can start threads (`spawn`, `task`, `par_map` workers), reach files, the network, processes, SQLite, windows, a page's DOM, and native code. `needs` maps each function of those modules that reaches a power the profile lacks to that power — `#{ "ods.open_csv": "fs", "gg.save": "fs", "spawn": "threads", … }` (`spawn` is the form) — and is empty natively. With no argument, this runtime; any runtime, the browser's included, also answers for `"native"`, `"browser"` and `"full"` |
 | <a id="runtime-version"></a>`runtime.version()` | the olang version string |
 | <a id="runtime-memory"></a>`runtime.memory()` | `#{ "heap", "program", "values", "embedded", "tasks" }`, in bytes — where the process's memory is (below) |
+| <a id="runtime-collect"></a>`runtime.collect()` | `#{ "freed", "scanned", "roots", "ms" }` — frees, now, the loops through cells and shared references that nothing else holds (they are also found on their own as cells are made); `()` when another thread is collecting |
 | <a id="runtime-profile_start"></a>`runtime.profile_start()` / `runtime.profile_start(interval_us)` | begin sampling this process with the profiler behind `olang profile` (every 1,000 µs by default): `Ok(())`, or `Err` when a profile is already running |
 | <a id="runtime-profile_stop"></a>`runtime.profile_stop()` | end it: `Ok(#{ "interval_us", "ticks", "idle", "blocked", "samples", "rows" })`, where `rows` is `[#{ "function", "tier", "samples", "share" }]`, most first — the functions that were running when the sampler looked, the tier each ran on (`interp`, `vm`, `native`, `builtin`), and its share of the samples that landed in code. `blocked` counts thread-ticks spent parked — a receive, a sleep, a server waiting for a connection, an idle http worker — which are charged to no function. `Err` when no profile is running |
 | <a id="runtime-code_layer"></a>`runtime.code_layer()` | how this application booted, when its Info.plist names a code layers folder ([Code layers](tooling.md#code-layers)): `#{ "layers", "active", "running", "tries", "max_tries", "fallback" }`, `running` the layer that runs or `()` when the bundled program does, and `fallback` why the active layer is not running (its tries used up, its signature, another runtime's payload). `()` in any other program |

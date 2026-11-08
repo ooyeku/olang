@@ -709,6 +709,16 @@ same cell from inside `f` is an error rather than a write that `f`'s
 return value would silently overwrite. Compute the new value from the
 argument instead.
 
+**A cell that reaches itself is freed too.** olang frees a value the
+moment nothing holds it any more, by counting references. Values never
+change and closures copy what they capture, so ordinary data cannot
+form a loop. A cell can: a cell holding a list that holds the cell, or
+a closure that reads the cell it is stored in, still holds itself after
+every name for it is gone. The cycle collector finds such loops as
+cells are made and frees them; `runtime.collect()` does it at once. A
+[`shared`](stdlib.md#shared--one-value-every-thread) reference is the
+same.
+
 Reach for a cell when the alternative is genuinely worse. Most olang
 programs need none.
 

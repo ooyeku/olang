@@ -222,6 +222,39 @@ impl NativeObject for CellObject {
     fn confined_to(&self) -> Option<ThreadId> {
         Some(self.owner)
     }
+
+    // The cycle collector may run on any thread: it only counts what the
+    // cell holds, and empties a cell no thread can reach any more.
+    fn trace(&self, visit: &mut dyn FnMut(crate::native::Traced<'_>)) -> bool {
+        let Ok(st) = self.state.try_lock() else {
+            return false;
+        };
+        if st.updating {
+            return false;
+        }
+        visit(crate::native::Traced::Value(&st.value));
+        if let Some((v, _)) = &st.vm {
+            visit(crate::native::Traced::Ovm(v));
+        }
+        true
+    }
+
+    fn break_cycle(&self) {
+        let held = match self.state.try_lock() {
+            Ok(mut st) if !st.updating => {
+                (std::mem::replace(&mut st.value, Value::Unit), st.vm.take())
+            }
+            _ => return,
+        };
+        drop(held);
+    }
+}
+
+/// A new cell's handle, known to the cycle collector.
+fn tracked(cell: CellObject) -> NativeHandle {
+    let handle = NativeHandle::new(cell);
+    crate::cycles::track(&handle);
+    handle
 }
 
 /// The `cell` module. It is *callable*: `cell(0)` is `cell.new(0)`, which
@@ -349,7 +382,7 @@ fn cell_new(mut args: Vec<Value>) -> Result<Value, String> {
         return Err("cell expects one argument: the initial value".to_string());
     }
     let value = args.pop().expect("len checked");
-    Ok(Value::Native(NativeHandle::new(CellObject {
+    Ok(Value::Native(tracked(CellObject {
         owner: std::thread::current().id(),
         owner_label: thread_label(),
         state: Mutex::new(CellState {
@@ -427,7 +460,7 @@ pub fn vm_call(op: &str, args: &mut [OvmValue], vm: u64) -> Option<Result<OvmVal
             _live: crate::native::ConfinedLive::new(),
         };
         return Some(Ok(OvmValue {
-            data: ValueData::Native(NativeHandle::new(cell)),
+            data: ValueData::Native(tracked(cell)),
         }));
     }
     let want = match op {

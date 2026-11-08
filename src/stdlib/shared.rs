@@ -71,6 +71,28 @@ impl NativeObject for SharedObject {
     fn as_any(&self) -> &dyn Any {
         self
     }
+
+    // Under the write lock no reader can copy the pointer, and only when
+    // the reference is its value's sole holder is that value its own: a
+    // `swap` in progress still holds the one it read.
+    fn trace(&self, visit: &mut dyn FnMut(crate::native::Traced<'_>)) -> bool {
+        let Some(current) = self.current.try_write() else {
+            return false;
+        };
+        if Arc::strong_count(&current) != 1 {
+            return false;
+        }
+        visit(crate::native::Traced::Value(&current));
+        true
+    }
+
+    fn break_cycle(&self) {
+        let old = match self.current.try_write() {
+            Some(mut w) => std::mem::replace(&mut *w, Arc::new(Value::Unit)),
+            None => return,
+        };
+        drop(old);
+    }
 }
 
 pub fn create_shared_module() -> Value {
@@ -149,9 +171,11 @@ pub fn call_shared_function(
         "new" => {
             let v = args.pop().expect("len checked");
             crossable(&v, "shared.new").map_err(raise)?;
-            Ok(Value::Native(NativeHandle::new(SharedObject {
+            let handle = NativeHandle::new(SharedObject {
                 current: parking_lot::RwLock::new(Arc::new(v)),
-            })))
+            });
+            crate::cycles::track(&handle);
+            Ok(Value::Native(handle))
         }
         "get" => Ok((*shared_of(&args[0], "shared.get").map_err(raise)?.load()).clone()),
         "set" => {

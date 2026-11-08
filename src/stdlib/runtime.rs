@@ -19,6 +19,8 @@ pub fn create_runtime_module() -> Value {
     module.insert("features".to_string(), builtin("features", 0));
     module.insert("version".to_string(), builtin("version", 0));
     module.insert("memory".to_string(), builtin("memory", 0));
+    // frees the loops reference counting cannot: src/cycles.rs
+    module.insert("collect".to_string(), builtin("collect", 0));
     module.insert("profile_start".to_string(), builtin("profile_start", 0));
     module.insert("profile_stop".to_string(), builtin("profile_stop", 0));
     module.insert(
@@ -71,6 +73,7 @@ pub fn call_runtime_function(
         "version" => Ok(Value::String(Arc::new(crate::version::VERSION.to_string()))),
         "wasm" => runtime_wasm(args),
         "memory" => runtime_memory(args),
+        "collect" => runtime_collect(args),
         "profile_start" => runtime_profile_start(args),
         "profile_stop" => runtime_profile_stop(args),
         "profile_live_start" => runtime_profile_live_start(args),
@@ -376,6 +379,25 @@ fn runtime_build(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 /// the binary's image carries (file-backed, not heap); and each spawned
 /// task and http worker with what it allocated and has not itself freed,
 /// largest first. See `src/memory.rs` for how attribution works.
+/// `runtime.collect()`: find the loops through cells and shared
+/// references that nothing reaches any more, and free them now (they are
+/// also found on their own, as cells are made). `#{ "freed", "scanned",
+/// "roots", "ms" }`, or `()` when another thread is collecting.
+fn runtime_collect(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if !args.is_empty() {
+        return Err(format!("runtime.collect expects 0 arguments, got {}", args.len()).into());
+    }
+    let Some(c) = crate::cycles::collect() else {
+        return Ok(Value::Unit);
+    };
+    let mut out = crate::ast::ValueMap::default();
+    out.insert("freed".to_string(), Value::Integer(c.freed as i64));
+    out.insert("scanned".to_string(), Value::Integer(c.scanned as i64));
+    out.insert("roots".to_string(), Value::Integer(c.roots as i64));
+    out.insert("ms".to_string(), Value::Float(c.millis));
+    Ok(Value::Map(Arc::new(out)))
+}
+
 fn runtime_memory(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
         return Err(format!("runtime.memory expects 0 arguments, got {}", args.len()).into());

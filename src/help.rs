@@ -8930,6 +8930,16 @@ route("GET", "/olang." + map_get(rt, "hash") + ".wasm", (req, p) => { status: 20
 println("program: " + to_string(map_get(m, "program") / 1048576) + " MB")"##],
         );
         self.doc_ex(
+            "runtime.collect",
+            "runtime.collect()",
+            "Map",
+            "runtime",
+            "Free the loops reference counting cannot, now: a cell or shared reference that reaches itself (a list holding the cell, a closure stored in the cell it reads) once nothing else holds it. They are also found on their own as cells are made. #{ \"freed\", \"scanned\", \"roots\", \"ms\" } — the cells and shared references emptied, the allocations looked at, the cells and shared references alive, and how long it took; () when another thread is collecting.",
+            &[r##"let c = cell(())
+cell.set(c, [c])
+runtime.collect()"##],
+        );
+        self.doc_ex(
             "runtime.profile_start",
             "runtime.profile_start()",
             "Result",
