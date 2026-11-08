@@ -38,14 +38,17 @@ cargo xtask wasm
 
 case "$NAME" in
     *-musl)
-        cargo build --release --locked -p olang -p otc \
-            --no-default-features --features olang/native,olang/full ;;
+        FEATURES=olang/native,olang/full ;;
     *)
         # no gamepad or audio: gilrs needs libudev and cpal needs ALSA,
         # which the manylinux image does not carry (Linux is a preview)
-        cargo build --release --locked -p olang -p otc \
-            --no-default-features --features olang/native,olang/full,olang/gui,olang/toad ;;
+        FEATURES=olang/native,olang/full,olang/gui,olang/toad ;;
 esac
+# One package at a time: the two release links (LTO, one codegen unit)
+# side by side run the arm64 runner out of memory (rc.8's builds were
+# killed with SIGKILL).
+cargo build --release --locked -p olang --no-default-features --features "$FEATURES"
+cargo build --release --locked -p otc --no-default-features --features "$FEATURES"
 
 rm -rf "$STAGE"
 mkdir "$STAGE"
