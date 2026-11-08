@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Freeing a deep value frees all of it** (OL-571). Values deeper than
+  the free's depth bound wait in a queue the outermost free drains, one
+  queue for the interpreter's values and one for the VM's. A free that
+  began at an interpreter value drained only its own: VM values it held
+  past the bound stayed alive on that thread, on a worker until the
+  process ended. OlangStudio grew by hundreds of megabytes this way.
 - **Loops through a cell or a shared reference are freed** (OL-570). A
   cell holding a list that held the cell, or a closure stored in the
   cell it read, was never freed: values are reference-counted, and a

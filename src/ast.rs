@@ -728,18 +728,39 @@ pub(crate) fn free_bounded<T>(
     FREEING.set(depth + 1);
     clear_children(value);
     if depth == 0 {
-        while let Some(next) = queue.try_with(|q| q.borrow_mut().pop()).ok().flatten() {
-            drop(next);
-        }
-        // A deep, wide value can leave the queue large; do not keep it.
-        let _ = queue.try_with(|q| {
-            let mut q = q.borrow_mut();
-            if q.capacity() > 1024 {
-                *q = Vec::new();
-            }
-        });
+        // Both kinds' queues, whichever this value was: each holds the
+        // other, so freeing one queues the other's deep parts too. A
+        // drain of its own queue alone left the VM's values an
+        // interpreter value queued waiting for the next outermost VM
+        // free on this thread — on a worker, perhaps never (Studio's
+        // pool threads held hundreds of MB of dead records: STU-137).
+        drain_queued();
     }
     FREEING.set(depth);
+}
+
+/// Everything queued for freeing on this thread, of both kinds, freed
+/// (one at a time, at the depth the outermost free left: what each frees
+/// may queue more, of either kind, and that is freed too); then the
+/// queues' room let go if large.
+fn drain_queued() {
+    loop {
+        let a = QUEUED_VALUES.try_with(|q| q.borrow_mut().pop()).ok().flatten();
+        let b = crate::ovm::value::pop_queued();
+        if a.is_none() && b.is_none() {
+            break;
+        }
+        drop(a);
+        drop(b);
+    }
+    // A deep, wide value can leave a queue large; do not keep it.
+    let _ = QUEUED_VALUES.try_with(|q| {
+        let mut q = q.borrow_mut();
+        if q.capacity() > 1024 {
+            *q = Vec::new();
+        }
+    });
+    crate::ovm::value::shrink_queued();
 }
 
 impl Value {

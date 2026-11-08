@@ -780,6 +780,29 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
+/// The next VM value queued for freeing on this thread, if any: the
+/// outermost free drains this queue and the interpreter's both
+/// (`crate::ast::drain_queued`), whichever kind of value it was.
+pub(crate) fn pop_queued() -> Option<OvmValue> {
+    QUEUED.try_with(|q| q.borrow_mut().pop()).ok().flatten()
+}
+
+/// How many VM values wait in this thread's queue (tests).
+#[cfg(test)]
+pub(crate) fn queued_len() -> usize {
+    QUEUED.with(|q| q.borrow().len())
+}
+
+/// A large queue's room let go once it is drained.
+pub(crate) fn shrink_queued() {
+    let _ = QUEUED.try_with(|q| {
+        let mut q = q.borrow_mut();
+        if q.capacity() > 1024 {
+            *q = Vec::new();
+        }
+    });
+}
+
 impl OvmValue {
     /// `same(a, b)` on the VM's values, as `ast::Value::same` is on the
     /// interpreter's: one allocation, or for a scalar `==`. A list in its
@@ -2169,6 +2192,27 @@ mod tests {
 
     fn to_ast_cache_len() -> usize {
         TO_AST_CACHE.with(|c| c.borrow().len())
+    }
+
+    /// An interpreter value freed outermost drains the VM's queue too: VM
+    /// values it held deeper than the free's depth bound are queued as
+    /// VM values, and were left there (STU-137: Studio's pool threads
+    /// kept hundreds of MB of dead records until restart).
+    #[test]
+    fn an_interpreter_free_drains_the_vm_queue() {
+        // a VM record whose field is a list 200 deep, in an interpreter list
+        let mut deep = OvmValue::new_integer(1);
+        for _ in 0..200 {
+            deep = OvmValue { data: ValueData::List(Arc::new(vec![deep])) };
+        }
+        let s = super::super::struct_object::StructObject::from_pairs("Rec", vec![("rows".to_string(), deep)]);
+        let rec = crate::ast::Value::Struct { type_name: "Rec".into(), fields: crate::value_struct::StructFields::Vm(s) };
+        let v = crate::ast::Value::List(Arc::new(vec![rec]));
+        assert_eq!(queued_len(), 0);
+        // the interpreter's list is the outermost free; the VM list's levels
+        // past the depth bound are queued as VM values
+        drop(v);
+        assert_eq!(queued_len(), 0, "every queued VM value freed with the outermost free");
     }
 
     /// The conversion cache frees dead entries a few at a time: converting
