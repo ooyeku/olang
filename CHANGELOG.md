@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A parsed JSON object passed to a callback is freed** (OL-575). A
+  compiled function called back from a builtin (`col.sort_by`'s key,
+  `col.count_by`'s) converts its arguments at the boundary and keeps the
+  conversion of a struct for the next call, until the struct dies. A
+  large `json.parse` object converts to a wrapper around itself, so its
+  entry kept it alive and was never let go: each thread held up to 512
+  such objects whole. OlangStudio profiling itself grew by 17 GB an hour.
+  Wrapped values are no longer kept.
 - **Freeing a deep value frees all of it** (OL-571). Values deeper than
   the free's depth bound wait in a queue the outermost free drains, one
   queue for the interpreter's values and one for the VM's. A free that

@@ -1426,6 +1426,22 @@ impl BytecodeTier {
                 return None;
             }
             let converted = OvmValue::from_ast(arg.clone());
+            // A value that crossed as a wrapper is not cached: the wrap is
+            // O(1), so an entry saves nothing, and the wrapper holds the
+            // very allocation the entry's `Weak` watches, so the entry
+            // kept its own value alive and never read as dead. A parsed
+            // JSON object (a wrapped struct) handed to a compiled function
+            // from a builtin stayed until 512 of them were held, each with
+            // everything under it: OlangStudio profiling itself kept a
+            // snapshot a second, 17 GB an hour (OL-575).
+            if matches!(
+                converted.data,
+                crate::ovm::value::ValueData::AstStruct(..)
+                    | crate::ovm::value::ValueData::AstMap(_)
+                    | crate::ovm::value::ValueData::AstList(_)
+            ) {
+                return Some(converted);
+            }
             // Bound the cache by sweeping what is dead, then — only if the
             // live set itself is over the bound — dropping half. A
             // wholesale clear made a loop with a few hundred live values
