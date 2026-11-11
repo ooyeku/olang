@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   none left out, where reading the frame back (`gui.read(w, "frame")`)
   gave a dozen and stopped the window drawing while it read. macOS, real
   windows.
+- **A capture as one movie, and `gui.movie` to play one** (OL-587).
+  `gui.capture`'s `movie: true` hands each frame to the Mac's hardware
+  encoder (H.264 in a QuickTime file written a fragment a second, so a
+  capture cut short still plays): a full Retina window at sixty frames a
+  second, none left out, in about a hundredth of the bytes a PNG a frame
+  took. `gui.movie` plays a movie through the system's player and
+  decoder, its frames a live picture an `image` node shows: play at any
+  rate, pause, exact seeks. AVFoundation is called by hand
+  (src/stdlib/gui/avf.rs): no new crate.
 - **`toad.tape(path)`, `toad.mic(path)`, and `toad.play`'s `at`** (with
   OL-587, for Recorder's sound). `toad.tape` writes what the mixer
   plays to a WAV from now, silence too, so its time is the clock's;

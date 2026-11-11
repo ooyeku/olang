@@ -29,6 +29,8 @@
 //! event loop, platform windows, dialogs, menus).
 
 pub mod a11y;
+#[cfg(target_os = "macos")]
+pub mod avf;
 pub mod bars;
 pub mod canvas;
 pub mod capture;
@@ -42,6 +44,8 @@ pub mod holds;
 pub mod keys;
 pub mod live;
 pub mod motion;
+#[cfg(target_os = "macos")]
+pub mod movie;
 pub mod picture;
 pub mod platform;
 pub mod raster;
@@ -80,6 +84,7 @@ const FUNCTIONS: &[(&str, usize)] = &[
     ("measure", 3),
     ("read", 3),
     ("capture", 2),
+    ("movie", 1),
     ("input", 2),
     ("set", 2),
     ("fonts", 2),
@@ -209,6 +214,7 @@ fn gui_function(name: &str, args: Vec<Value>) -> DynRes {
         "roles" => flat::gui_roles(args),
         "read" => gui_read(args),
         "capture" => gui_capture(args),
+        "movie" => gui_movie(args),
         "compare" => gui_compare(args),
         // A `wake` event on the channel: what lets a task blocked on
         // gui.events() see that it should stop, with no polling.
@@ -779,6 +785,7 @@ fn gui_capture(args: Vec<Value>) -> Res<Value> {
                     dir: std::path::PathBuf::from(dir),
                     fps: get_num(v, "fps", what)?.unwrap_or(30.0),
                     scale: get_num(v, "scale", what)?.unwrap_or(0.5),
+                    movie: get_bool(v, "movie", what)?.unwrap_or(false),
                 }))
             }
             other => {
@@ -810,6 +817,59 @@ fn gui_capture(args: Vec<Value>) -> Res<Value> {
     {
         let _ = id;
         Err("gui.capture: windows are not captured on this platform".to_string())
+    }
+}
+
+/// `gui.movie(what)`: a movie played in a window by the system's player
+/// (its hardware decoder, its own clock), its frames a live picture an
+/// `image` node shows (`("live", name)`).
+///
+/// - `#{ open: path, name }` opens it, paused at its start, its frames
+///   published as the live picture `name`: answers its status with `id`.
+/// - `#{ id, play: true | false, rate, at, close }` asks of it, any of:
+///   play (at `rate`, 1) or pause, go to `at` (ms, exactly), let it go.
+///   `#{ id }` alone asks nothing.
+///
+/// Each answers where it is: `#{ id, live, ms, length, playing, ended,
+/// width, height, frames, error }`. macOS; elsewhere it raises.
+fn gui_movie(args: Vec<Value>) -> Res<Value> {
+    arity("gui.movie", &args, 1, 1)?;
+    #[cfg(target_os = "macos")]
+    {
+        let what = "gui.movie";
+        let v = &args[0];
+        let id = match get_str(v, "open", what)? {
+            Some(path) => {
+                let name = get_str(v, "name", what)?.unwrap_or("movie");
+                movie::open(path, name)?
+            }
+            None => get_num(v, "id", what)?
+                .map(|n| n as u64)
+                .ok_or("gui.movie: `open` (a path) or `id` (a movie's) is needed")?,
+        };
+        let (s, live) = movie::ask(
+            id,
+            get_bool(v, "play", what)?,
+            get_num(v, "rate", what)?,
+            get_num(v, "at", what)?.map(|n| n as i64),
+            get_bool(v, "close", what)?.unwrap_or(false),
+        )?;
+        Ok(map(vec![
+            ("id", Value::Integer(id as i64)),
+            ("live", Value::String(live.into())),
+            ("ms", Value::Integer(s.ms)),
+            ("length", Value::Integer(s.length_ms)),
+            ("playing", Value::Boolean(s.playing)),
+            ("ended", Value::Boolean(s.ended)),
+            ("width", Value::Integer(s.width as i64)),
+            ("height", Value::Integer(s.height as i64)),
+            ("frames", Value::Integer(s.frames as i64)),
+            ("error", opt_str(s.error.as_deref())),
+        ]))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("gui.movie: movies are not played on this platform".to_string())
     }
 }
 

@@ -39,6 +39,9 @@ pub struct Opts {
     /// The frame's size against the window's pixels (0.5: a Retina
     /// window's points).
     pub scale: f32,
+    /// One movie (`movie.mov`, H.264 by the system's hardware encoder)
+    /// in place of a PNG a frame. macOS.
+    pub movie: bool,
 }
 
 /// What a capture did, so far or in all.
@@ -109,7 +112,10 @@ impl Writer {
         let st = stats.clone();
         let thread = std::thread::Builder::new()
             .name("gui-capture".to_string())
-            .spawn(move || write_loop(device, rx, back_tx, frames, index, st))
+            .spawn({
+                let o = opts.clone();
+                move || write_loop(device, rx, back_tx, frames, index, st, o)
+            })
             .map_err(|e| format!("gui.capture: its thread: {e}"))?;
         Ok(Writer {
             tx,
@@ -162,11 +168,19 @@ fn write_loop(
     frames: PathBuf,
     mut index: std::fs::File,
     stats: Arc<Stats>,
+    opts: Opts,
 ) {
     // each with when it came: one whose copy never completes is let go a second after
     let mut pending: VecDeque<(Pending, Instant)> = VecDeque::new();
     let mut stopping = false;
     let mut n: u64 = 0;
+    // the movie, begun at the first frame (its size is the frame's)
+    #[cfg(target_os = "macos")]
+    let mut movie: Option<super::avf::MovieWriter> = None;
+    let mut last_t: u64 = 0;
+    let fail = |stats: &Stats, e: String| {
+        *stats.failed.lock().unwrap_or_else(|e| e.into_inner()) = Some(e);
+    };
     loop {
         // what the render thread handed over since the last look
         let first = if pending.is_empty() && !stopping {
@@ -189,6 +203,14 @@ fn write_loop(
         }
         if pending.is_empty() {
             if stopping {
+                // the movie's file finished: its bytes are what was written
+                #[cfg(target_os = "macos")]
+                if let Some(m) = movie.take() {
+                    match m.finish(last_t as i64 + 17) {
+                        Ok(bytes) => stats.bytes.store(bytes, Ordering::Relaxed),
+                        Err(e) => fail(&stats, e),
+                    }
+                }
                 return;
             }
             continue;
@@ -221,6 +243,62 @@ fn write_loop(
         stats.in_flight.fetch_sub(1, Ordering::Relaxed);
         if p.failed.load(Ordering::Acquire) {
             stats.dropped.fetch_add(1, Ordering::Relaxed);
+            continue;
+        }
+        // a movie: the frame's rows handed to the hardware encoder
+        #[cfg(target_os = "macos")]
+        if opts.movie {
+            let slice = p.buf.slice(..);
+            let took = match slice.get_mapped_range() {
+                Err(_) => Ok(false),
+                Ok(data) => {
+                    if movie.is_none() {
+                        let path = opts.dir.join("movie.mov");
+                        match super::avf::MovieWriter::start(&path.to_string_lossy(), p.w, p.h, opts.fps) {
+                            Ok(m) => movie = Some(m),
+                            Err(e) => fail(&stats, e),
+                        }
+                    }
+                    match movie.as_mut() {
+                        // (a frame of another size, the window resized past what the capture held: left out)
+                        Some(m) if (m.width, m.height) == (p.w, p.h) => m.append(p.t_ms as i64, &data, p.row as usize),
+                        Some(_) => Ok(false),
+                        None => Err("the movie could not be begun".to_string()),
+                    }
+                }
+            };
+            p.buf.unmap();
+            let _ = back.send(p.buf);
+            match took {
+                Ok(true) => {
+                    n += 1;
+                    last_t = p.t_ms;
+                    let _ = writeln!(index, "{{\"t\":{},\"f\":{}}}", p.t_ms, n);
+                    stats.frames.store(n, Ordering::Relaxed);
+                    stats.width.store(p.w as u64, Ordering::Relaxed);
+                    stats.height.store(p.h as u64, Ordering::Relaxed);
+                    // how much is written so far, now and then (a limit watches it)
+                    if n % 30 == 0
+                        && let Ok(md) = std::fs::metadata(opts.dir.join("movie.mov"))
+                    {
+                        stats.bytes.store(md.len(), Ordering::Relaxed);
+                    }
+                }
+                Ok(false) => {
+                    stats.dropped.fetch_add(1, Ordering::Relaxed);
+                }
+                Err(e) => {
+                    fail(&stats, e);
+                    while let Some((q, _)) = pending.pop_front() {
+                        stats.in_flight.fetch_sub(1, Ordering::Relaxed);
+                        q.buf.unmap();
+                    }
+                    if let Some(m) = movie.take() {
+                        let _ = m.finish(last_t as i64 + 17);
+                    }
+                    return;
+                }
+            }
             continue;
         }
         let png = {
@@ -319,6 +397,13 @@ pub fn scaled(w: u32, h: u32, scale: f32) -> (u32, u32) {
     )
 }
 
+/// [`scaled`] for a movie: even numbers (H.264 takes no odd side), at
+/// least 16.
+pub fn scaled_even(w: u32, h: u32, scale: f32) -> (u32, u32) {
+    let (cw, ch) = scaled(w, h, scale);
+    ((cw / 2 * 2).max(16), (ch / 2 * 2).max(16))
+}
+
 /// The least time between two frames at `fps`.
 pub fn every(fps: f32) -> Duration {
     Duration::from_secs_f32(1.0 / fps.clamp(1.0, 120.0))
@@ -359,6 +444,10 @@ mod tests {
         assert_eq!(scaled(2880, 1728, 0.5), (1440, 864));
         assert_eq!(scaled(3, 3, 0.01), (1, 1));
         assert_eq!(scaled(100, 50, 4.0), (100, 50));
+        // a movie's sides are even, and never tiny
+        assert_eq!(scaled_even(2881, 1729, 1.0), (2880, 1728));
+        assert_eq!(scaled_even(1441, 865, 0.5), (720, 432));
+        assert_eq!(scaled_even(10, 10, 0.1), (16, 16));
         assert_eq!(every(60.0), Duration::from_secs_f32(1.0 / 60.0));
         assert_eq!(every(0.0), Duration::from_secs(1));
     }

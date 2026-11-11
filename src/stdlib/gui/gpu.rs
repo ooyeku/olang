@@ -2311,7 +2311,19 @@ impl Surface {
             cap.writer.stats.dropped.fetch_add(1, Ordering::Relaxed);
             return;
         }
-        let (cw, ch) = super::capture::scaled(*w, *h, cap.opts.scale);
+        // a movie keeps the size it began at (a window resized meanwhile
+        // is drawn into it whole) and takes its bytes blue first
+        let movie = cap.opts.movie;
+        let (cw, ch) = match (&cap.tex, movie) {
+            (Some(t), true) => (t.2, t.3),
+            (_, true) => super::capture::scaled_even(*w, *h, cap.opts.scale),
+            _ => super::capture::scaled(*w, *h, cap.opts.scale),
+        };
+        let cformat = if movie {
+            wgpu::TextureFormat::Bgra8Unorm
+        } else {
+            wgpu::TextureFormat::Rgba8Unorm
+        };
         if !cap.tex.as_ref().is_some_and(|t| (t.2, t.3) == (cw, ch)) {
             let tex = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("gui capture"),
@@ -2323,7 +2335,7 @@ impl Surface {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8Unorm,
+                format: cformat,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             });
@@ -2361,7 +2373,7 @@ impl Surface {
             &mut enc,
             view,
             cview,
-            wgpu::TextureFormat::Rgba8Unorm,
+            cformat,
             cw,
             ch,
             &self.gpu.linear,
