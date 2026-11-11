@@ -101,7 +101,14 @@ share fn rule_kind_chain(nodes) = {
     out
 }
 
-fn is_literal(b) = contains(["str", "int", "float", "bool", "unit", "list", "map"], b.kind)
+let LITERAL_KINDS = ["str", "int", "float", "bool", "unit", "list", "map"]
+
+// A literal all the way down: `#{ "error": show(e) }` uses the error.
+fn all_literal(v) = if typeof(v) == "List" => all(v, all_literal)
+    else if typeof(v) != "Map" => true
+    else => (v.kind == () || contains(LITERAL_KINDS, v.kind)) && all(map_values(v), all_literal)
+
+fn is_literal(b) = contains(LITERAL_KINDS, b.kind) && all_literal(b)
 
 /// `match r { Ok(v) => v, Err(e) => "" }`: the error dropped for a
 /// default. Write `unwrap_or(r, "")`, or let it rise with `?`.

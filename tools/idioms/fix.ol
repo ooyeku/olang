@@ -127,7 +127,9 @@ fn chain_of(n) = if fixed_set(n.args[0]) => chain_of(n.args[0]) + [n] else => [n
 
 fn chain_edits(src, nodes) = {
     let lines = str.lines(src)
-    let text = (x) => str.slice_bytes(src, x.start, x.end)
+    // meta.parse ends an index before its `]`: read on to it
+    let close = (x) => if x.kind != "index" => x.end else => x.end + str.byte_len(first(str.split(str.slice_bytes(src, x.end, str.byte_len(src)), "]"))) + 1
+    let text = (x) => str.slice_bytes(src, x.start, close(x))
     let inner = fold(nodes, #{}, (acc, p) =>
         if fixed_set(p[0]) && fixed_set(p[0].args[0]) => map_set(acc, to_string(p[0].args[0].start), true) else => acc)
     let mut edits = []
