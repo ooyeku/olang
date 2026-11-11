@@ -579,7 +579,8 @@ fn meta_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() > 2 {
         return Err(format!("meta.parse expects 1 or 2 arguments, got {}", args.len()).into());
     }
-    let opts = match args.get(1) {
+    let opt = args.get(1).map(|v| v.as_options());
+    let opts = match opt.as_deref() {
         None | Some(Value::Unit) => None,
         Some(Value::Map(opts)) => Some(opts),
         Some(other) => {
@@ -891,7 +892,7 @@ fn meta_encode(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     // first call — the functions a page runs once, at boot, whose one
     // call would otherwise be the tree-walker's.
     let mut hot: Vec<String> = Vec::new();
-    match args.get(1) {
+    match args.get(1).map(|v| v.as_options()).as_deref() {
         None => {}
         Some(Value::Map(options)) => {
             for (key, value) in options.iter() {
@@ -2071,7 +2072,7 @@ pub fn eval_budget(
 ) -> Result<(Option<u64>, Option<std::time::Duration>), Box<dyn std::error::Error>> {
     let mut max_steps = None;
     let mut timeout = None;
-    match args.get(1) {
+    match args.get(1).map(|v| v.as_options()).as_deref() {
         None => {}
         Some(Value::Map(options)) => {
             for (key, value) in options.iter() {

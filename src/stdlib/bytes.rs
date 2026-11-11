@@ -615,7 +615,7 @@ fn decode_fn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// The `lossy` key of an options map (`()` or absent is no options), an
 /// unknown key raising.
 pub fn lossy_option(opts: Option<&Value>, func: &str, known: &[&str]) -> Result<bool, String> {
-    match opts {
+    match opts.map(|v| v.as_options()).as_deref() {
         None | Some(Value::Unit) => Ok(false),
         Some(Value::Map(m)) => {
             if let Some(k) = m.keys().find(|k| !known.contains(&k.as_str())) {

@@ -474,7 +474,8 @@ fn parse_opts(value: &Value, who: &str) -> Result<Opts, Value> {
                     )));
                 }
             },
-            ("env", Value::Map(m)) => {
+            ("env", env @ (Value::Map(_) | Value::Struct { .. })) if env.record_fields().is_some() => {
+                let m = env.record_fields().expect("a map or a record");
                 for (k, v) in m.iter() {
                     match v {
                         Value::String(s) => opts.env.push((k.clone(), s.as_ref().clone())),

@@ -119,7 +119,8 @@ pub(crate) fn arg_opts<'a>(
 ) -> Result<Option<&'a ValueMap>, String> {
     match args.get(i) {
         None | Some(Value::Unit) => Ok(None),
-        Some(Value::Map(m)) => {
+        Some(v @ (Value::Map(_) | Value::Struct { .. })) if v.record_fields().is_some() => {
+            let m = v.record_fields().expect("a map or a record");
             if let Some(k) = m.keys().find(|k| !known.contains(&k.as_str())) {
                 return Err(format!(
                     "str.{func}: unknown option \"{k}\" (it takes {})",
