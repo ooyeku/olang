@@ -701,19 +701,23 @@ struct Taping {
     path: String,
     /// Dropped (or told) to end it.
     stop: std::sync::mpsc::Sender<()>,
-    /// What it wrote, said once it has ended.
-    done: std::sync::mpsc::Receiver<(u64, u32, u16)>,
+    /// What it wrote, said once it has ended: its frames, rate, width
+    /// and the loudest sample (0…1).
+    done: std::sync::mpsc::Receiver<(u64, u32, u16, f32)>,
+    /// The device it listens to (the microphone's), by name.
+    device: String,
 }
 
 /// Buffers of samples (interleaved, `channels` wide, at `rate`) written
-/// to `path` as a 16-bit WAV until `rx` ends: the frames written.
+/// to `path` as a 16-bit WAV until `rx` ends: the frames written and the
+/// loudest sample among them.
 fn write_wav(
     path: &str,
     rate: u32,
     channels: u16,
     rx: std::sync::mpsc::Receiver<Vec<f32>>,
     stop: std::sync::mpsc::Receiver<()>,
-) -> Result<u64, String> {
+) -> Result<(u64, f32), String> {
     let spec = hound::WavSpec {
         channels,
         sample_rate: rate,
@@ -722,8 +726,10 @@ fn write_wav(
     };
     let mut w = hound::WavWriter::create(path, spec).map_err(|e| format!("{path}: {e}"))?;
     let mut samples: u64 = 0;
-    let put = |buf: &[f32], w: &mut hound::WavWriter<_>| -> Result<(), String> {
+    let mut peak: f32 = 0.0;
+    let mut put = |buf: &[f32], w: &mut hound::WavWriter<_>| -> Result<(), String> {
         for x in buf {
+            peak = peak.max(x.abs());
             w.write_sample((x.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
                 .map_err(|e| format!("{path}: {e}"))?;
         }
@@ -748,17 +754,22 @@ fn write_wav(
         }
     }
     w.finalize().map_err(|e| format!("{path}: {e}"))?;
-    Ok(samples / channels.max(1) as u64)
+    Ok((samples / channels.max(1) as u64, peak.min(1.0)))
 }
 
 fn taped(t: Taping) -> Value {
     drop(t.stop);
-    let (frames, rate, channels) = t
+    let (frames, rate, channels, peak) = t
         .done
         .recv_timeout(std::time::Duration::from_secs(5))
-        .unwrap_or((0, 0, 0));
+        .unwrap_or((0, 0, 0, 0.0));
     let mut m = ValueMap::default();
     m.insert("path".into(), Value::String(t.path.into()));
+    // the loudest sample (0…1): a voice that was never heard is near 0
+    m.insert("peak".into(), Value::Float(peak as f64));
+    if !t.device.is_empty() {
+        m.insert("device".into(), Value::String(t.device.into()));
+    }
     m.insert("frames".into(), Value::Integer(frames as i64));
     m.insert("rate".into(), Value::Integer(rate as i64));
     m.insert("channels".into(), Value::Integer(channels as i64));
@@ -810,14 +821,14 @@ pub fn tape(what: &Value) -> Result<Value, String> {
             std::thread::Builder::new()
                 .name("toad tape".into())
                 .spawn(move || {
-                    let frames = match write_wav(&p, rate, channels, rx, stopped) {
+                    let (frames, peak) = match write_wav(&p, rate, channels, rx, stopped) {
                         Ok(n) => n,
                         Err(e) => {
                             eprintln!("toad.tape: {e}");
-                            0
+                            (0, 0.0)
                         }
                     };
-                    let _ = done_tx.send((frames, rate, channels));
+                    let _ = done_tx.send((frames, rate, channels, peak));
                 })
                 .map_err(|e| format!("toad.tape: its thread: {e}"))?;
             a.mixer.lock().unwrap_or_else(|e| e.into_inner()).tape = Some(tx);
@@ -825,6 +836,7 @@ pub fn tape(what: &Value) -> Result<Value, String> {
                 path: path.to_string(),
                 stop,
                 done,
+                device: String::new(),
             });
             Ok(began(rate, channels))
         }),
@@ -855,31 +867,208 @@ fn mic_allowed() -> Result<(), String> {
     }
 }
 
-/// `toad.mic(path)`: the microphone (the system's input) written to
-/// `path` as a WAV from now; answers `#{ rate, channels }`. The first
-/// time, macOS asks the person. `toad.mic(())` ends it and answers
-/// `#{ path, frames, rate, channels, ms }` (`()` when none was on).
+/// How each audio device of this Mac is connected, by its name
+/// (CoreAudio's transport type: cpal does not say it).
+#[cfg(target_os = "macos")]
+fn transports() -> HashMap<String, &'static str> {
+    use std::ffi::c_void;
+    #[repr(C)]
+    struct Addr {
+        selector: u32,
+        scope: u32,
+        element: u32,
+    }
+    #[link(name = "CoreAudio", kind = "framework")]
+    unsafe extern "C" {
+        fn AudioObjectGetPropertyDataSize(
+            id: u32,
+            addr: *const Addr,
+            qsize: u32,
+            q: *const c_void,
+            size: *mut u32,
+        ) -> i32;
+        fn AudioObjectGetPropertyData(
+            id: u32,
+            addr: *const Addr,
+            qsize: u32,
+            q: *const c_void,
+            size: *mut u32,
+            data: *mut c_void,
+        ) -> i32;
+    }
+    const fn cc(b: &[u8; 4]) -> u32 {
+        u32::from_be_bytes(*b)
+    }
+    let global = cc(b"glob");
+    let mut out = HashMap::new();
+    // SAFETY: CoreAudio's documented property calls: the sizes asked for
+    // first, the buffers as large as it says, the name a CFString we own.
+    unsafe {
+        let devs = Addr { selector: cc(b"dev#"), scope: global, element: 0 };
+        let mut size: u32 = 0;
+        if AudioObjectGetPropertyDataSize(1, &devs, 0, std::ptr::null(), &mut size) != 0 {
+            return out;
+        }
+        let mut ids = vec![0u32; size as usize / 4];
+        if AudioObjectGetPropertyData(1, &devs, 0, std::ptr::null(), &mut size, ids.as_mut_ptr().cast()) != 0 {
+            return out;
+        }
+        for id in ids.into_iter().take(size as usize / 4) {
+            let mut tran: u32 = 0;
+            let mut n = 4u32;
+            let a = Addr { selector: cc(b"tran"), scope: global, element: 0 };
+            if AudioObjectGetPropertyData(id, &a, 0, std::ptr::null(), &mut n, (&mut tran as *mut u32).cast()) != 0 {
+                continue;
+            }
+            let mut name: *const objc2_core_foundation::CFString = std::ptr::null();
+            let mut n = std::mem::size_of::<*const c_void>() as u32;
+            let a = Addr { selector: cc(b"lnam"), scope: global, element: 0 };
+            if AudioObjectGetPropertyData(id, &a, 0, std::ptr::null(), &mut n, (&mut name as *mut *const objc2_core_foundation::CFString).cast()) != 0 {
+                continue;
+            }
+            let Some(nn) = std::ptr::NonNull::new(name.cast_mut()) else {
+                continue;
+            };
+            let name = objc2_core_foundation::CFRetained::from_raw(nn).to_string();
+            let kind = if tran == cc(b"bltn") {
+                "built-in"
+            } else if tran == cc(b"blue") || tran == cc(b"blea") {
+                "bluetooth"
+            } else if tran == cc(b"usb ") {
+                "usb"
+            } else {
+                "other"
+            };
+            out.insert(name, kind);
+        }
+    }
+    out
+}
+
+#[cfg(not(target_os = "macos"))]
+fn transports() -> HashMap<String, &'static str> {
+    HashMap::new()
+}
+
+/// A microphone's name.
+fn name_of(d: &cpal::Device) -> String {
+    use cpal::traits::DeviceTrait;
+    d.description()
+        .map(|x| x.name().to_string())
+        .unwrap_or_else(|_| "microphone".to_string())
+}
+
+/// The microphones here: each device, its kind, its name, whether it is
+/// the system's.
+fn inputs() -> Vec<(cpal::Device, &'static str, String, bool)> {
+    use cpal::traits::HostTrait;
+    let host = cpal::default_host();
+    let sys = host.default_input_device().map(|d| name_of(&d));
+    let how = transports();
+    host.input_devices()
+        .map(|ds| {
+            ds.map(|d| {
+                let name = name_of(&d);
+                let kind = how.get(&name).copied().unwrap_or("other");
+                let is_sys = sys.as_deref() == Some(name.as_str());
+                (d, kind, name, is_sys)
+            })
+            .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The microphone a recording takes when none is named: the system's,
+/// unless that is a Bluetooth headset's and the machine has one built
+/// in. A headset's own microphone puts the headset in its call mode:
+/// everything it plays drops to telephone quality (a hiss, 24 kHz), and
+/// a voice recorded through it is poor. The built-in one leaves the
+/// headset as it was.
+fn pick_input(named: Option<&str>) -> Result<(cpal::Device, &'static str, String), String> {
+    let all = inputs();
+    if let Some(n) = named {
+        return all
+            .into_iter()
+            .find(|(_, _, name, _)| name == n)
+            .map(|(d, k, name, _)| (d, k, name))
+            .ok_or_else(|| format!("no microphone named \"{n}\""));
+    }
+    let sys_bluetooth = all.iter().any(|(_, k, _, is_sys)| *is_sys && *k == "bluetooth");
+    let at = if sys_bluetooth {
+        all.iter().position(|(_, k, _, _)| *k == "built-in")
+    } else {
+        None
+    }
+    .or_else(|| all.iter().position(|(_, _, _, is_sys)| *is_sys))
+    .or(if all.is_empty() { None } else { Some(0) })
+    .ok_or("no microphone")?;
+    let (d, k, name, _) = all.into_iter().nth(at).ok_or("no microphone")?;
+    Ok((d, k, name))
+}
+
+/// `toad.mics()`: the microphones here, `[#{ name, kind, system, chosen
+/// }]` — `kind` `"built-in"`, `"bluetooth"`, `"usb"` or `"other"`,
+/// `system` the one the system's settings name, `chosen` the one
+/// `toad.mic` takes when none is named (see [`pick_input`]). Asking
+/// opens no microphone.
+pub fn mics() -> Value {
+    let chosen = pick_input(None).map(|(_, _, n)| n).ok();
+    Value::List(Arc::new(
+        inputs()
+            .into_iter()
+            .map(|(_, kind, name, is_sys)| {
+                let mut m = ValueMap::default();
+                m.insert("kind".into(), Value::String(kind.to_string().into()));
+                m.insert("system".into(), Value::Boolean(is_sys));
+                m.insert("chosen".into(), Value::Boolean(chosen.as_deref() == Some(name.as_str())));
+                m.insert("name".into(), Value::String(name.into()));
+                Value::Map(Arc::new(m))
+            })
+            .collect(),
+    ))
+}
+
+/// `toad.mic(path)`: a microphone written to `path` as a WAV from now;
+/// answers `#{ rate, channels, device, kind }`. `toad.mic(#{ path,
+/// device })` names which (a name of `toad.mics()`); else the one
+/// `toad.mics()` says is `chosen`. The first time, macOS asks the
+/// person. `toad.mic(())` ends it and answers `#{ path, frames, rate,
+/// channels, ms, peak, device }` (`()` when none was on): `peak` the
+/// loudest sample, near 0 when nothing was heard.
 pub fn mic(what: &Value) -> Result<Value, String> {
-    match what {
-        Value::Unit => Ok(with(|st| st.mic.take()).map_or(Value::Unit, taped)),
-        Value::String(path) => {
+    let (path, named): (&str, Option<String>) = match what {
+        Value::Unit => return Ok(with(|st| st.mic.take()).map_or(Value::Unit, taped)),
+        Value::String(p) => (p.as_ref(), None),
+        Value::Map(m) => match m.get("path") {
+            Some(Value::String(p)) => (
+                p.as_ref(),
+                match m.get("device") {
+                    Some(Value::String(d)) => Some(d.to_string()),
+                    _ => None,
+                },
+            ),
+            _ => return Err("toad.mic: `path` (where to write it) is needed".to_string()),
+        },
+        _ => return Err("toad.mic: a path begins it, () ends it".to_string()),
+    };
+    {
+        {
             if with(|st| st.mic.is_some()) {
                 return Err("toad.mic: the microphone is being recorded already".to_string());
             }
             mic_allowed()?;
             let (stop, stopped) = std::sync::mpsc::channel::<()>();
             let (done_tx, done) = std::sync::mpsc::channel();
-            let (up_tx, up) = std::sync::mpsc::channel::<Result<(u32, u16), String>>();
+            let (up_tx, up) =
+                std::sync::mpsc::channel::<Result<(u32, u16, &'static str, String), String>>();
             let p = path.to_string();
             std::thread::Builder::new()
                 .name("toad mic".into())
                 .spawn(move || {
-                    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+                    use cpal::traits::{DeviceTrait, StreamTrait};
                     let (tx, rx) = std::sync::mpsc::channel::<Vec<f32>>();
-                    let made = (|| -> Result<(cpal::Stream, u32, u16), String> {
-                        let device = cpal::default_host()
-                            .default_input_device()
-                            .ok_or("no microphone")?;
+                    let made = (|| -> Result<(cpal::Stream, u32, u16, &'static str, String), String> {
+                        let (device, kind, dname) = pick_input(named.as_deref())?;
                         let config = device
                             .default_input_config()
                             .map_err(|e| format!("the microphone: {e}"))?;
@@ -914,29 +1103,29 @@ pub fn mic(what: &Value) -> Result<Value, String> {
                         }
                         .map_err(|e| format!("the microphone: {e}"))?;
                         stream.play().map_err(|e| format!("the microphone: {e}"))?;
-                        Ok((stream, rate, channels))
+                        Ok((stream, rate, channels, kind, dname))
                     })();
                     match made {
                         Err(e) => {
                             let _ = up_tx.send(Err(e));
                         }
-                        Ok((stream, rate, channels)) => {
-                            let _ = up_tx.send(Ok((rate, channels)));
+                        Ok((stream, rate, channels, kind, dname)) => {
+                            let _ = up_tx.send(Ok((rate, channels, kind, dname)));
                             // the stream listens while this thread holds it
-                            let frames = match write_wav(&p, rate, channels, rx, stopped) {
+                            let (frames, peak) = match write_wav(&p, rate, channels, rx, stopped) {
                                 Ok(n) => n,
                                 Err(e) => {
                                     eprintln!("toad.mic: {e}");
-                                    0
+                                    (0, 0.0)
                                 }
                             };
                             drop(stream);
-                            let _ = done_tx.send((frames, rate, channels));
+                            let _ = done_tx.send((frames, rate, channels, peak));
                         }
                     }
                 })
                 .map_err(|e| format!("toad.mic: its thread: {e}"))?;
-            let (rate, channels) = up
+            let (rate, channels, kind, dname) = up
                 .recv_timeout(std::time::Duration::from_secs(10))
                 .unwrap_or_else(|_| Err("the microphone did not open".into()))
                 .map_err(|e| format!("toad.mic: {e}"))?;
@@ -945,10 +1134,15 @@ pub fn mic(what: &Value) -> Result<Value, String> {
                     path: path.to_string(),
                     stop,
                     done,
+                    device: dname.clone(),
                 })
             });
-            Ok(began(rate, channels))
+            let mut m = ValueMap::default();
+            m.insert("rate".into(), Value::Integer(rate as i64));
+            m.insert("channels".into(), Value::Integer(channels as i64));
+            m.insert("device".into(), Value::String(dname.into()));
+            m.insert("kind".into(), Value::String(kind.to_string().into()));
+            Ok(Value::Map(Arc::new(m)))
         }
-        _ => Err("toad.mic: a path begins it, () ends it".to_string()),
     }
 }

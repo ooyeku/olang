@@ -64,6 +64,7 @@ pub fn create_toad_module() -> Value {
         ("listen", 2),
         ("tape", 1),
         ("mic", 1),
+        ("mics", 0),
         ("physics", 1),
         ("drop", 1),
         ("warm", 1),
@@ -519,6 +520,8 @@ pub fn call_toad_function(
         #[cfg(feature = "audio")]
         "mic" => Ok(audio::mic(a(0))?),
         #[cfg(feature = "audio")]
+        "mics" => Ok(audio::mics()),
+        #[cfg(feature = "audio")]
         "sound" => Ok(audio::sound(a(0))?),
         #[cfg(feature = "audio")]
         "sound_info" => Ok(audio::sound_info(id_of(args.first(), "sound")?)?),
@@ -549,7 +552,7 @@ pub fn call_toad_function(
         )?),
         #[cfg(not(feature = "audio"))]
         "audio" | "sound" | "sound_info" | "play" | "stop" | "tune" | "volume" | "listen" | "tape"
-        | "mic" => {
+        | "mic" | "mics" => {
             Err(format!("toad.{name}: sound needs the native build (feature `audio`)").into())
         }
         "drop" => {

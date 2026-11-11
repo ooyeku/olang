@@ -34,6 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   in its Info.plist, or it is refused rather than ended by macOS); each
   ends with `()` and answers what it wrote. `toad.play(sound, #{ at })`
   begins a sound so many seconds in.
+- **`toad.mics()`, and a microphone chosen with care.** `toad.mics()`
+  lists the microphones with how each is connected; `toad.mic` takes the
+  built-in one when the system's is a Bluetooth headset's (a headset's
+  own microphone drops it to call mode: a hiss in what it plays, and in
+  OlangStudio's first recordings a voice that was not there), or the one
+  named (`#{ path, device }`). Ending it answers `peak`, the loudest
+  sample, so a caller can say a voice was not heard.
 
 ### Fixed
 
