@@ -44,12 +44,10 @@ lib/perform.ol	rule_record_as_map	66
 lib/profiler.ol	rule_record_as_map	268
 lib/record.ol	rule_record_as_map	4
 lib/replay.ol	rule_record_as_map	11
-lib/run.ol	rule_kind_chain	1
 lib/run.ol	rule_long_fn	2
 lib/run.ol	rule_record_as_map	42
 lib/server_profile.ol	rule_record_as_map	33
 lib/sweep.ol	rule_record_as_map	13
-lib/terminal.ol	rule_kind_chain	1
 lib/terminal.ol	rule_long_fn	1
 lib/terminal.ol	rule_record_as_map	63
 lib/test.ol	rule_record_as_map	101

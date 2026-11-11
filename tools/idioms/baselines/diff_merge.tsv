@@ -10,7 +10,6 @@ lib/seq.ol	rule_record_as_map	3
 lib/structural.ol	rule_long_fn	1
 lib/structural.ol	rule_record_as_map	18
 lib/text.ol	rule_record_as_map	20
-lib/values.ol	rule_kind_chain	1
 lib/values.ol	rule_record_as_map	55
 tests/examples_test.ol	rule_record_as_map	1
 tests/fuzz_test.ol	rule_record_as_map	9

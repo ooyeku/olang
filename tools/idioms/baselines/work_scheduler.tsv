@@ -25,7 +25,6 @@ contract/conform_observe.ol	rule_long_fn	1
 contract/conform_observe.ol	rule_record_as_map	29
 contract/conform_ports.ol	rule_long_fn	1
 contract/conform_ports.ol	rule_record_as_map	11
-contract/conform_registry.ol	rule_kind_chain	1
 contract/conform_registry.ol	rule_long_fn	1
 contract/conform_registry.ol	rule_record_as_map	2
 contract/conform_scheduler.ol	rule_long_fn	1

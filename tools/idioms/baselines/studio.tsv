@@ -39,7 +39,6 @@ core/nblayout.ol	rule_long_fn	1
 core/nblayout.ol	rule_record_as_map	23
 core/nbopen.ol	rule_record_as_map	33
 core/nbruns.ol	rule_record_as_map	40
-core/nbscene.ol	rule_kind_chain	2
 core/nbscene.ol	rule_record_as_map	37
 core/nbtable.ol	rule_record_as_map	9
 core/nbtools.ol	rule_record_as_map	9
@@ -85,7 +84,6 @@ core/writing.ol	rule_record_as_map	1
 core/xprof.ol	rule_record_as_map	84
 core/xprun.ol	rule_record_as_map	43
 face/agentface.ol	rule_record_as_map	435
-face/agentview.ol	rule_kind_chain	1
 face/agentview.ol	rule_record_as_map	127
 face/app.ol	rule_long_fn	3
 face/app.ol	rule_record_as_map	94
@@ -110,7 +108,6 @@ face/fileface.ol	rule_record_as_map	50
 face/files.ol	rule_record_as_map	20
 face/find.ol	rule_record_as_map	2
 face/gameface.ol	rule_record_as_map	17
-face/gitface.ol	rule_kind_chain	1
 face/gitface.ol	rule_long_fn	1
 face/gitface.ol	rule_record_as_map	109
 face/gitpage.ol	rule_long_fn	1
@@ -124,16 +121,13 @@ face/homeface.ol	rule_record_as_map	10
 face/homeview.ol	rule_record_as_map	41
 face/lspface.ol	rule_record_as_map	27
 face/mdview.ol	rule_record_as_map	35
-face/menulive.ol	rule_kind_chain	1
 face/menulive.ol	rule_record_as_map	20
 face/model.ol	rule_record_as_map	12
 face/modes.ol	rule_record_as_map	6
 face/navhist.ol	rule_record_as_map	1
-face/nbbeyond.ol	rule_kind_chain	1
 face/nbbeyond.ol	rule_record_as_map	49
 face/nbdata.ol	rule_long_fn	1
 face/nbdata.ol	rule_record_as_map	192
-face/nbface.ol	rule_kind_chain	1
 face/nbface.ol	rule_long_fn	2
 face/nbface.ol	rule_record_as_map	122
 face/nbgallery.ol	rule_record_as_map	4
@@ -206,9 +200,7 @@ face/wspool.ol	rule_record_as_map	26
 face/wsports.ol	rule_record_as_map	13
 face/wsrun.ol	rule_record_as_map	29
 main.ol	rule_record_as_map	10
-sheet/prelude.ol	rule_kind_chain	1
 sheet/prelude.ol	rule_record_as_map	12
-sim/kernel.ol	rule_kind_chain	1
 sim/kernel.ol	rule_record_as_map	27
 sim/kernel_world.ol	rule_record_as_map	22
 tests/agent_canvas_test.ol	rule_record_as_map	24
@@ -336,7 +328,6 @@ tests/wsched_test.ol	rule_record_as_map	16
 tests/wspool_test.ol	rule_record_as_map	48
 tests/wsports_test.ol	rule_record_as_map	22
 tests/xprof_test.ol	rule_record_as_map	39
-tools/bench.ol	rule_kind_chain	1
 tools/bench.ol	rule_record_as_map	83
 tools/check_games.ol	rule_record_as_map	1
 tools/crash_writer.ol	rule_record_as_map	1
