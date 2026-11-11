@@ -1,0 +1,11 @@
+lib/app.ol	rule_record_as_map	2
+lib/appcast.ol	rule_record_as_map	2
+lib/feed.ol	rule_record_as_map	2
+lib/instance.ol	rule_record_as_map	16
+lib/stale.ol	rule_record_as_map	2
+lib/update.ol	rule_record_as_map	19
+tests/appcast_test.ol	rule_record_as_map	6
+tests/instance_test.ol	rule_record_as_map	10
+tests/kit.ol	rule_record_as_map	7
+tests/layers_test.ol	rule_record_as_map	4
+tests/update_test.ol	rule_record_as_map	7

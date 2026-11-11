@@ -1,0 +1,16 @@
+lib/backup.ol	rule_record_as_map	14
+lib/files.ol	rule_record_as_map	6
+lib/history.ol	rule_record_as_map	6
+lib/home.ol	rule_record_as_map	8
+lib/migrate.ol	rule_record_as_map	22
+lib/rules.ol	rule_record_as_map	2
+lib/secrets.ol	rule_record_as_map	3
+lib/sweep.ol	rule_record_as_map	23
+lib/unsaved.ol	rule_record_as_map	1
+tests/backup_test.ol	rule_record_as_map	2
+tests/files_test.ol	rule_record_as_map	1
+tests/home_test.ol	rule_record_as_map	6
+tests/keep_test.ol	rule_record_as_map	1
+tests/kit.ol	rule_record_as_map	21
+tests/migrate_test.ol	rule_record_as_map	2
+tests/rules_test.ol	rule_record_as_map	20
