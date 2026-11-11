@@ -8,7 +8,7 @@ worse while it is rewritten. Draft, not committed.
 
 | Rule | Finds | Write instead |
 |---|---|---|
-| `rule_map_set_chain` | `map_set(map_set(r, "a", x), "b", y)` with literal name keys | one spread of the same kind: `#{ ...m, "a": x, "b": y }` or `{ ...r, a: x, b: y }` |
+| `rule_map_set_chain` | `map_set(map_set(r, "a", x), "b", y)` with literal name keys (the rebind `m = map_set(map_set(m, …), …)`, updated in place, is left) | one spread of the same kind: `#{ ...m, "a": x, "b": y }` or `{ ...r, a: x, b: y }` |
 | `rule_record_as_map` | `#{ "kind": "x" }`, where every key is a literal name (a spread's own entries, and a map whose keys are all capitals such as an `env`, are left alone) | a record `{ kind: "x" }`; a map that a hot loop grows with `map_set` stays a map |
 | `rule_kind_chain` | three or more `if x.f == "…"` tests of one field in an `else if` chain | a `match` |
 | `rule_swallowed_err` | `match r { Ok(v) => v, Err(e) => <literal> }` | `unwrap_or(r, …)`, or `?` |

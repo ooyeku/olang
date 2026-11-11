@@ -22,6 +22,9 @@ fn is_map_set(n) = n.kind == "call" && n.target == "map_set" && len(n.args) == 3
 
 fn key_of(call) = call.args[1]
 
+// What a chain of map_set calls sets into.
+fn chain_base(n) = if is_map_set(n.args[0]) => chain_base(n.args[0]) else => n.args[0]
+
 /// `map_set(map_set(r, "a", x), "b", y)` with literal name keys: write
 /// one spread. Reported once, at the outermost call of a chain.
 share fn rule_map_set_chain(nodes) = {
@@ -31,10 +34,18 @@ share fn rule_map_set_chain(nodes) = {
             inner = map_set(inner, to_string(n.args[0].start), true)
         }
     }
+    // `m = map_set(map_set(m, …), …)` is the map updated in place
+    // (docs/idioms.md §1, performance): left.
+    let mut rebound = #{}
+    for n in nodes {
+        if n.kind == "assign" && is_map_set(n.value) && chain_base(n.value).kind == "ident" && chain_base(n.value).name == n.target => {
+            rebound = map_set(rebound, to_string(n.value.start), true)
+        }
+    }
     let mut out = []
     for n in nodes {
         if is_map_set(n) && is_map_set(n.args[0]) && is_name_key(key_of(n)) && is_name_key(key_of(n.args[0]))
-            && inner[to_string(n.start)] != true => {
+            && inner[to_string(n.start)] != true && rebound[to_string(n.start)] != true => {
             out = out + [{
                 line: n.line,
                 message: "nested map_set with fixed keys: write one spread, `#{ ...m, \"a\": x, \"b\": y }` over a map or `{ ...r, a: x, b: y }` over a record",

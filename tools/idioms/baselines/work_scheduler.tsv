@@ -50,7 +50,6 @@ kit/kt_bench.ol	rule_record_as_map	2
 kit/kt_bind_loom.ol	rule_record_as_map	22
 kit/kt_frames.ol	rule_record_as_map	3
 kit/kt_gen.ol	rule_record_as_map	9
-kit/kt_jobs.ol	rule_map_set_chain	1
 kit/kt_ports.ol	rule_record_as_map	8
 kit/kt_registry.ol	rule_record_as_map	1
 kit/kt_stress.ol	rule_record_as_map	16

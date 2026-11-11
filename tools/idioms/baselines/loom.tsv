@@ -21,7 +21,6 @@ lib/dnd.ol	rule_record_as_map	29
 lib/editor.ol	rule_record_as_map	24
 lib/effects.ol	rule_record_as_map	36
 lib/engine.ol	rule_long_fn	2
-lib/engine.ol	rule_map_set_chain	1
 lib/engine.ol	rule_record_as_map	90
 lib/flame.ol	rule_record_as_map	17
 lib/flex.ol	rule_long_fn	1
@@ -47,7 +46,6 @@ lib/record.ol	rule_record_as_map	4
 lib/replay.ol	rule_record_as_map	11
 lib/run.ol	rule_kind_chain	1
 lib/run.ol	rule_long_fn	2
-lib/run.ol	rule_map_set_chain	3
 lib/run.ol	rule_record_as_map	42
 lib/server_profile.ol	rule_record_as_map	33
 lib/sweep.ol	rule_record_as_map	13
