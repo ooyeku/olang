@@ -10,7 +10,8 @@
 //! baseline, naming each one. `update` writes the baseline from what the
 //! project has now: run it after a file improves, so the lower count
 //! holds. The baseline is `baselines/<name>.tsv` beside this file (the
-//! project folder's name by default), one `file<TAB>rule<TAB>count` a
+//! package name in its olang.toml by default, so a worktree of it
+//! reads the same baseline), one `file<TAB>rule<TAB>count` a
 //! line, sorted, so a diff of it reads as what changed.
 
 let HERE = fs.dirname(unwrap_or(fs.abs_path(os.args()[0]), os.args()[0]))
@@ -105,6 +106,15 @@ fn update(project, name) = {
     Ok(0)
 }
 
+// The `name = "…"` of the project's olang.toml, else its folder's name.
+fn package_name(project) = {
+    let toml_text = unwrap_or(fs.read_file(fs.join(project, "olang.toml")), "")
+    let found = str.lines(toml_text)
+        |> map((l) => unwrap_or(re.captures("^name\\s*=\\s*\"([^\"]+)\"", l), ()))
+        |> filter((c) => c != ())
+    if len(found) > 0 => first(found)[1] else => fs.basename(project)
+}
+
 fn usage() = {
     println("usage: olang tools/idioms/ratchet.ol check|update <project> [name]")
     2
@@ -113,7 +123,7 @@ fn usage() = {
 fn main(args) = {
     if len(args) < 3 => return usage()
     let project = unwrap_or(fs.abs_path(args[2]), args[2])
-    let name = if len(args) > 3 => args[3] else => fs.basename(project)
+    let name = if len(args) > 3 => args[3] else => package_name(project)
     let run = match args[1] {
         "check" => check(project, name),
         "update" => update(project, name),
