@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`gui.capture(window, what)`: a window captured as it draws**
+  (OL-587, the one feature let through the freeze, for OlangStudio's
+  Recorder). Each frame the window presents is drawn again smaller on
+  the GPU and copied to a buffer the render thread never waits for; a
+  thread of the capture's own writes it as a PNG beside an index of
+  when each showed. Sixty frames a second from a full Retina window with
+  none left out, where reading the frame back (`gui.read(w, "frame")`)
+  gave a dozen and stopped the window drawing while it read. macOS, real
+  windows.
+
 ### Fixed
 
 - **A parsed JSON object passed to a callback is freed** (OL-575). A

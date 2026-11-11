@@ -31,6 +31,7 @@
 pub mod a11y;
 pub mod bars;
 pub mod canvas;
+pub mod capture;
 pub mod colr;
 pub mod context;
 pub mod damage;
@@ -78,6 +79,7 @@ const FUNCTIONS: &[(&str, usize)] = &[
     ("apply", 2),
     ("measure", 3),
     ("read", 3),
+    ("capture", 2),
     ("input", 2),
     ("set", 2),
     ("fonts", 2),
@@ -206,6 +208,7 @@ fn gui_function(name: &str, args: Vec<Value>) -> DynRes {
         "flat_geo" => flat::gui_flat_geo(args),
         "roles" => flat::gui_roles(args),
         "read" => gui_read(args),
+        "capture" => gui_capture(args),
         "compare" => gui_compare(args),
         // A `wake` event on the channel: what lets a task blocked on
         // gui.events() see that it should stop, with no polling.
@@ -743,6 +746,71 @@ fn gui_measure(args: Vec<Value>) -> Res<Value> {
         ("lines", Value::Integer(shaped.lines.len() as i64)),
         ("baseline", float(baseline)),
     ]))
+}
+
+/// `gui.capture(window, what)`: the window captured as it draws, each
+/// frame it presents written as a PNG by a thread of the capture's own
+/// (the window's drawing never waits on it: OL-587).
+///
+/// - `what` a map begins it: `dir` (a folder: `frames/NNNNNN.png` and
+///   `index.jsonl`, a line `{"t": ms, "f": n}` a frame), `fps` (at most
+///   so many a second: 30), `scale` (the frame against the window's
+///   pixels: 0.5). Answers `true`.
+/// - `"stats"` answers what it did so far, `()` ends it and answers what
+///   it did in all: `#{ frames, bytes, dropped, ms, width, height,
+///   error }` (`()` when none was on).
+///
+/// Only a window drawn on the render thread (macOS, a real window) is
+/// captured: anything else raises, and a program falls back to
+/// `gui.read(window, "frame")`.
+fn gui_capture(args: Vec<Value>) -> Res<Value> {
+    arity("gui.capture", &args, 2, 2)?;
+    let id = window_id("gui.capture", args.first())?;
+    #[cfg(target_os = "macos")]
+    {
+        let what = "gui.capture";
+        let ask = match &args[1] {
+            Value::Unit => render::CaptureAsk::Stop,
+            Value::String(s) if s.as_str() == "stats" => render::CaptureAsk::Stats,
+            v @ Value::Map(_) => {
+                let dir = get_str(v, "dir", what)?
+                    .ok_or("gui.capture: `dir` (a folder for the frames) is needed")?;
+                render::CaptureAsk::Start(Box::new(capture::Opts {
+                    dir: std::path::PathBuf::from(dir),
+                    fps: get_num(v, "fps", what)?.unwrap_or(30.0),
+                    scale: get_num(v, "scale", what)?.unwrap_or(0.5),
+                }))
+            }
+            other => {
+                return Err(format!(
+                    "gui.capture: what to do must be a map (begin), \"stats\" or () (end), got {}",
+                    other.type_name()
+                ));
+            }
+        };
+        let starting = matches!(ask, render::CaptureAsk::Start(_));
+        let said = render::capture(id, ask)?;
+        if starting {
+            return Ok(Value::Boolean(true));
+        }
+        Ok(match said {
+            None => Value::Unit,
+            Some(s) => map(vec![
+                ("frames", Value::Integer(s.frames as i64)),
+                ("bytes", Value::Integer(s.bytes as i64)),
+                ("dropped", Value::Integer(s.dropped as i64)),
+                ("ms", Value::Integer(s.ms as i64)),
+                ("width", Value::Integer(s.width as i64)),
+                ("height", Value::Integer(s.height as i64)),
+                ("error", opt_str(s.error.as_deref())),
+            ]),
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = id;
+        Err("gui.capture: windows are not captured on this platform".to_string())
+    }
 }
 
 fn gui_read(args: Vec<Value>) -> Res<Value> {

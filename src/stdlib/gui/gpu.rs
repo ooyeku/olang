@@ -2244,9 +2244,171 @@ pub struct Surface {
     see_through: bool,
     /// The alpha mode of a surface drawn opaque.
     opaque: wgpu::CompositeAlphaMode,
+    /// The window captured as it draws ([`super::capture`]), while it is.
+    capture: Option<Capture>,
+}
+
+/// A surface's side of a capture: the texture each frame is drawn into
+/// again, smaller, and the writer the copies go to.
+struct Capture {
+    opts: super::capture::Opts,
+    writer: super::capture::Writer,
+    tex: Option<(wgpu::Texture, wgpu::TextureView, u32, u32)>,
+    every: std::time::Duration,
+    last: Option<std::time::Instant>,
 }
 
 impl Surface {
+    /// Capture this window as it draws: from now, each frame presented
+    /// (no oftener than `opts.fps`) is written under `opts.dir`. The frame
+    /// it shows now is the first.
+    pub fn capture_start(&mut self, opts: super::capture::Opts) -> Result<(), String> {
+        if self.capture.is_some() {
+            return Err("gui.capture: this window is being captured already".to_string());
+        }
+        let writer = super::capture::Writer::start(self.gpu.device.clone(), &opts)?;
+        self.capture = Some(Capture {
+            every: super::capture::every(opts.fps),
+            opts,
+            writer,
+            tex: None,
+            last: None,
+        });
+        self.capture_frame(true);
+        Ok(())
+    }
+
+    /// What the capture did so far (`None`: none is on).
+    pub fn capture_stats(&self) -> Option<super::capture::Summary> {
+        self.capture.as_ref().map(|c| c.writer.summary())
+    }
+
+    /// The capture ended, its last frames written: what it did.
+    pub fn capture_stop(&mut self) -> Option<super::capture::Summary> {
+        self.capture.take().map(|c| c.writer.stop())
+    }
+
+    /// The kept frame drawn into the capture's texture at its scale
+    /// (smoothly: at a half, each pixel the mean of four) and copied to a
+    /// buffer the writer takes once the GPU has filled it. Nothing here
+    /// waits for the GPU. `force`: whatever the time since the last.
+    fn capture_frame(&mut self, force: bool) {
+        use std::sync::atomic::Ordering;
+        let Some(cap) = self.capture.as_mut() else {
+            return;
+        };
+        let Some((_, view, w, h)) = &self.target.tex else {
+            return;
+        };
+        let now = std::time::Instant::now();
+        // (a little under the interval passes: frames come a refresh
+        // apart, give or take, and a frame a hair early is the one due)
+        if !force && cap.last.is_some_and(|l| now.duration_since(l) < cap.every.mul_f32(0.8)) {
+            return;
+        }
+        // the writer behind: this frame is left out, and counted
+        if cap.writer.stats.in_flight.load(Ordering::Relaxed) >= super::capture::MAX_IN_FLIGHT {
+            cap.writer.stats.dropped.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        let (cw, ch) = super::capture::scaled(*w, *h, cap.opts.scale);
+        if !cap.tex.as_ref().is_some_and(|t| (t.2, t.3) == (cw, ch)) {
+            let tex = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("gui capture"),
+                size: wgpu::Extent3d {
+                    width: cw,
+                    height: ch,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            let v = tex.create_view(&wgpu::TextureViewDescriptor::default());
+            cap.tex = Some((tex, v, cw, ch));
+        }
+        let Some((tex, cview, _, _)) = &cap.tex else {
+            return;
+        };
+        let row = (cw * 4).div_ceil(256) * 256;
+        let size = (row * ch) as u64;
+        // a buffer the writer is done with, when it is this size
+        let mut buf = None;
+        while let Ok(b) = cap.writer.back.try_recv() {
+            if b.size() == size {
+                buf = Some(b);
+                break;
+            }
+        }
+        let buf = buf.unwrap_or_else(|| {
+            self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("gui capture"),
+                size,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            })
+        });
+        let mut enc = self
+            .gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("gui capture"),
+            });
+        self.gpu.blit_with(
+            &mut enc,
+            view,
+            cview,
+            wgpu::TextureFormat::Rgba8Unorm,
+            cw,
+            ch,
+            &self.gpu.linear,
+        );
+        enc.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buf,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row),
+                    rows_per_image: Some(ch),
+                },
+            },
+            wgpu::Extent3d {
+                width: cw,
+                height: ch,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.gpu.queue.submit([enc.finish()]);
+        let ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let failed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (r2, f2) = (ready.clone(), failed.clone());
+        buf.slice(..).map_async(wgpu::MapMode::Read, move |r| match r {
+            Ok(()) => r2.store(true, Ordering::Release),
+            Err(_) => f2.store(true, Ordering::Release),
+        });
+        cap.writer.stats.in_flight.fetch_add(1, Ordering::Relaxed);
+        let t_ms = now.duration_since(cap.writer.started).as_millis() as u64;
+        let _ = cap.writer.tx.send(super::capture::Msg::Frame(super::capture::Pending {
+            t_ms,
+            buf,
+            w: cw,
+            h: ch,
+            row,
+            ready,
+            failed,
+        }));
+        cap.last = Some(now);
+    }
+
     pub fn new(
         window: Arc<winit::window::Window>,
         display: winit::event_loop::OwnedDisplayHandle,
@@ -2331,6 +2493,7 @@ impl Surface {
             presented: false,
             see_through,
             opaque,
+            capture: None,
         })
     }
 
@@ -2577,6 +2740,10 @@ impl Surface {
         self.gpu.queue.present(frame);
         self.target.commit(&p, d, shifts, next);
         self.presented = true;
+        // the window captured: this frame, drawn again small, on its way
+        if self.capture.is_some() {
+            self.capture_frame(false);
+        }
         Ok(())
     }
 }
@@ -2603,6 +2770,22 @@ impl Gpu {
         w: u32,
         h: u32,
     ) {
+        self.blit_with(enc, from, to, format, w, h, &self.sampler)
+    }
+
+    /// [`Gpu::blit`] through `sampler`, the source drawn to fill `w × h`
+    /// (smaller than it, with the linear sampler: scaled smoothly).
+    #[allow(clippy::too_many_arguments)]
+    fn blit_with(
+        &self,
+        enc: &mut wgpu::CommandEncoder,
+        from: &wgpu::TextureView,
+        to: &wgpu::TextureView,
+        format: wgpu::TextureFormat,
+        w: u32,
+        h: u32,
+        sampler: &wgpu::Sampler,
+    ) {
         use wgpu::util::DeviceExt;
         let ubuf = self.globals(w, h);
         let inst = Inst {
@@ -2622,7 +2805,7 @@ impl Gpu {
                 contents: bytemuck::bytes_of(&inst),
                 usage: wgpu::BufferUsages::VERTEX,
             });
-        let bind = self.bind(&ubuf, from, &self.sampler);
+        let bind = self.bind(&ubuf, from, sampler);
         let pipeline = self.pipeline(format, false);
         let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("gui blit"),

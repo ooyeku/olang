@@ -190,6 +190,26 @@ pub fn kept(id: u64) -> Option<(u32, u32, Vec<u8>)> {
     rx.recv_timeout(Duration::from_secs(2)).ok()
 }
 
+/// What is asked of a window's capture.
+pub enum CaptureAsk {
+    Start(Box<super::capture::Opts>),
+    Stats,
+    Stop,
+}
+
+/// Window `id` captured as it draws ([`super::capture`]): begun, asked
+/// what it did so far, or ended (its last frames written first, so a stop
+/// may take a moment). `Err` when the window is not drawn here.
+pub fn capture(id: u64, ask: CaptureAsk) -> Result<Option<super::capture::Summary>, String> {
+    if thread().is_none() {
+        return Err("gui.capture: windows are not drawn on the render thread here".to_string());
+    }
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    post(Msg::Capture(id, ask, tx));
+    rx.recv_timeout(Duration::from_secs(10))
+        .map_err(|_| "gui.capture: the render thread did not answer".to_string())?
+}
+
 /// Whether windows are drawn on the render thread (`GUI_RENDER_THREAD=0`:
 /// on the main thread, as before).
 pub fn enabled() -> bool {
@@ -236,6 +256,12 @@ enum Msg {
     Want(u64),
     /// The kept frame's size and pixels (a test's).
     Read(u64, crossbeam_channel::Sender<(u32, u32, Vec<u8>)>),
+    /// A window's capture begun, asked after, or ended ([`capture`]).
+    Capture(
+        u64,
+        CaptureAsk,
+        crossbeam_channel::Sender<Result<Option<super::capture::Summary>, String>>,
+    ),
     Remove(u64, crossbeam_channel::Sender<()>),
 }
 
@@ -517,6 +543,17 @@ fn handle(st: &mut State, m: Msg) {
             if let Some(w) = st.wins.get(&id) {
                 let _ = reply.send(w.surface.kept_rgba());
             }
+        }
+        Msg::Capture(id, ask, reply) => {
+            let r = match st.wins.get_mut(&id) {
+                None => Err("gui.capture: the window is not drawn on the render thread".to_string()),
+                Some(w) => match ask {
+                    CaptureAsk::Start(opts) => w.surface.capture_start(*opts).map(|_| None),
+                    CaptureAsk::Stats => Ok(w.surface.capture_stats()),
+                    CaptureAsk::Stop => Ok(w.surface.capture_stop()),
+                },
+            };
+            let _ = reply.send(r);
         }
         Msg::Remove(id, reply) => {
             if let Some(w) = st.wins.remove(&id) {
