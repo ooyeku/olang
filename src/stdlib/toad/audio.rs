@@ -76,6 +76,9 @@ struct Mixer {
     master: f32,
     fx: f32,
     music: f32,
+    /// What is heard, handed on as it is mixed ([`tape`]): each buffer,
+    /// interleaved as the device takes it.
+    tape: Option<std::sync::mpsc::Sender<Vec<f32>>>,
 }
 
 impl Mixer {
@@ -149,6 +152,13 @@ impl Mixer {
                 y.signum() * (0.6 + 0.4 * ((y.abs() - 0.6) / 0.4).tanh())
             };
         }
+        // taped: this buffer as it will be heard (a copy: the writer is
+        // another thread's, and this one never waits)
+        if let Some(t) = &self.tape
+            && t.send(out.to_vec()).is_err()
+        {
+            self.tape = None;
+        }
     }
 }
 
@@ -162,6 +172,10 @@ struct State {
     sounds: HashMap<i64, Arc<Sound>>,
     next: i64,
     audio: Option<Audio>,
+    /// What is heard being written to a file ([`tape`]).
+    tape: Option<Taping>,
+    /// The microphone being written to a file ([`mic`]).
+    mic: Option<Taping>,
 }
 
 fn state() -> &'static Mutex<State> {
@@ -171,6 +185,8 @@ fn state() -> &'static Mutex<State> {
             sounds: HashMap::new(),
             next: 1,
             audio: None,
+            tape: None,
+            mic: None,
         })
     })
 }
@@ -188,6 +204,7 @@ fn open() -> Audio {
         master: 1.0,
         fx: 1.0,
         music: 1.0,
+        tape: None,
     }));
     if std::env::var("TOAD_MUTE").is_ok_and(|v| v == "1") {
         return Audio {
@@ -541,8 +558,9 @@ pub fn play(id: i64, opts: &Value) -> Result<Value, String> {
         let start = if fade > 0.0 { 0.0 } else { n("volume", 1.0) };
         mx.voices.push(Voice {
             id: vid,
-            sound: s,
-            pos: 0.0,
+            sound: s.clone(),
+            // `at`: from so many seconds in (a recording played from where it is)
+            pos: (n("at", 0.0).max(0.0) as f64 * s.rate as f64).min(s.frames() as f64),
             step,
             pitch: n("pitch", 1.0).clamp(0.01, 16.0) as f64,
             gain: start,
@@ -649,6 +667,7 @@ pub fn listen(id: i64, seconds: f32) -> Result<Value, String> {
         master: 1.0,
         fx: 1.0,
         music: 1.0,
+        tape: None,
     };
     mx.voices.push(Voice {
         id: 0,
@@ -673,4 +692,263 @@ pub fn listen(id: i64, seconds: f32) -> Result<Value, String> {
     m.insert("rms".into(), Value::Float(rms as f64));
     m.insert("voices_left".into(), Value::Integer(mx.voices.len() as i64));
     Ok(Value::Map(Arc::new(m)))
+}
+
+// ── taping: what is heard, and the microphone, written as WAV ───────
+
+/// A WAV being written by a thread of its own.
+struct Taping {
+    path: String,
+    /// Dropped (or told) to end it.
+    stop: std::sync::mpsc::Sender<()>,
+    /// What it wrote, said once it has ended.
+    done: std::sync::mpsc::Receiver<(u64, u32, u16)>,
+}
+
+/// Buffers of samples (interleaved, `channels` wide, at `rate`) written
+/// to `path` as a 16-bit WAV until `rx` ends: the frames written.
+fn write_wav(
+    path: &str,
+    rate: u32,
+    channels: u16,
+    rx: std::sync::mpsc::Receiver<Vec<f32>>,
+    stop: std::sync::mpsc::Receiver<()>,
+) -> Result<u64, String> {
+    let spec = hound::WavSpec {
+        channels,
+        sample_rate: rate,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut w = hound::WavWriter::create(path, spec).map_err(|e| format!("{path}: {e}"))?;
+    let mut samples: u64 = 0;
+    let put = |buf: &[f32], w: &mut hound::WavWriter<_>| -> Result<(), String> {
+        for x in buf {
+            w.write_sample((x.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
+                .map_err(|e| format!("{path}: {e}"))?;
+        }
+        Ok(())
+    };
+    loop {
+        match rx.recv_timeout(std::time::Duration::from_millis(50)) {
+            Ok(buf) => {
+                put(&buf, &mut w)?;
+                samples += buf.len() as u64;
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        // told to end (or its teller gone): what is waiting first
+        if !matches!(stop.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty)) {
+            while let Ok(buf) = rx.try_recv() {
+                put(&buf, &mut w)?;
+                samples += buf.len() as u64;
+            }
+            break;
+        }
+    }
+    w.finalize().map_err(|e| format!("{path}: {e}"))?;
+    Ok(samples / channels.max(1) as u64)
+}
+
+fn taped(t: Taping) -> Value {
+    drop(t.stop);
+    let (frames, rate, channels) = t
+        .done
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap_or((0, 0, 0));
+    let mut m = ValueMap::default();
+    m.insert("path".into(), Value::String(t.path.into()));
+    m.insert("frames".into(), Value::Integer(frames as i64));
+    m.insert("rate".into(), Value::Integer(rate as i64));
+    m.insert("channels".into(), Value::Integer(channels as i64));
+    m.insert(
+        "ms".into(),
+        Value::Integer(if rate == 0 { 0 } else { (frames * 1000 / rate as u64) as i64 }),
+    );
+    Value::Map(Arc::new(m))
+}
+
+fn began(rate: u32, channels: u16) -> Value {
+    let mut m = ValueMap::default();
+    m.insert("rate".into(), Value::Integer(rate as i64));
+    m.insert("channels".into(), Value::Integer(channels as i64));
+    Value::Map(Arc::new(m))
+}
+
+/// `toad.tape(path)`: what is heard (the mixer's output, every bus,
+/// after the limiter) written to `path` as a WAV from now, silence too,
+/// so its time is the clock's; answers `#{ rate, channels }`.
+/// `toad.tape(())` ends it and answers `#{ path, frames, rate, channels,
+/// ms }` (`()` when none was on). With no output device (or
+/// `TOAD_MUTE=1`) nothing is mixed, so nothing can be taped: an error.
+pub fn tape(what: &Value) -> Result<Value, String> {
+    match what {
+        Value::Unit => Ok(with(|st| {
+            let t = st.tape.take();
+            if let Some(a) = &st.audio
+                && let Ok(mut m) = a.mixer.lock()
+            {
+                m.tape = None;
+            }
+            t
+        })
+        .map_or(Value::Unit, taped)),
+        Value::String(path) => with(|st| {
+            if st.tape.is_some() {
+                return Err("toad.tape: a tape is on already".to_string());
+            }
+            let a = audio(st);
+            let (rate, channels) = match &a.device {
+                Ok((_, r, c)) => (*r, *c),
+                Err(e) => return Err(format!("toad.tape: nothing is played here to tape ({e})")),
+            };
+            let (tx, rx) = std::sync::mpsc::channel::<Vec<f32>>();
+            let (stop, stopped) = std::sync::mpsc::channel::<()>();
+            let (done_tx, done) = std::sync::mpsc::channel();
+            let p = path.to_string();
+            std::thread::Builder::new()
+                .name("toad tape".into())
+                .spawn(move || {
+                    let frames = match write_wav(&p, rate, channels, rx, stopped) {
+                        Ok(n) => n,
+                        Err(e) => {
+                            eprintln!("toad.tape: {e}");
+                            0
+                        }
+                    };
+                    let _ = done_tx.send((frames, rate, channels));
+                })
+                .map_err(|e| format!("toad.tape: its thread: {e}"))?;
+            a.mixer.lock().unwrap_or_else(|e| e.into_inner()).tape = Some(tx);
+            st.tape = Some(Taping {
+                path: path.to_string(),
+                stop,
+                done,
+            });
+            Ok(began(rate, channels))
+        }),
+        _ => Err("toad.tape: a path begins it, () ends it".to_string()),
+    }
+}
+
+/// Whether this process may ask for the microphone: an application
+/// (`…/X.app/Contents/MacOS/…`) must say why in its Info.plist
+/// (`NSMicrophoneUsageDescription`), or macOS ends it at the first ask.
+fn mic_allowed() -> Result<(), String> {
+    let Ok(exe) = std::env::current_exe() else {
+        return Ok(());
+    };
+    let Some(contents) = exe.parent().and_then(|p| p.parent()) else {
+        return Ok(());
+    };
+    if contents.file_name().is_none_or(|n| n != "Contents") {
+        return Ok(());
+    }
+    match std::fs::read(contents.join("Info.plist")) {
+        Ok(b) if String::from_utf8_lossy(&b).contains("NSMicrophoneUsageDescription") => Ok(()),
+        _ => Err(
+            "toad.mic: this application does not say why it wants the microphone \
+             (NSMicrophoneUsageDescription in its Info.plist): not asked for"
+                .to_string(),
+        ),
+    }
+}
+
+/// `toad.mic(path)`: the microphone (the system's input) written to
+/// `path` as a WAV from now; answers `#{ rate, channels }`. The first
+/// time, macOS asks the person. `toad.mic(())` ends it and answers
+/// `#{ path, frames, rate, channels, ms }` (`()` when none was on).
+pub fn mic(what: &Value) -> Result<Value, String> {
+    match what {
+        Value::Unit => Ok(with(|st| st.mic.take()).map_or(Value::Unit, taped)),
+        Value::String(path) => {
+            if with(|st| st.mic.is_some()) {
+                return Err("toad.mic: the microphone is being recorded already".to_string());
+            }
+            mic_allowed()?;
+            let (stop, stopped) = std::sync::mpsc::channel::<()>();
+            let (done_tx, done) = std::sync::mpsc::channel();
+            let (up_tx, up) = std::sync::mpsc::channel::<Result<(u32, u16), String>>();
+            let p = path.to_string();
+            std::thread::Builder::new()
+                .name("toad mic".into())
+                .spawn(move || {
+                    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+                    let (tx, rx) = std::sync::mpsc::channel::<Vec<f32>>();
+                    let made = (|| -> Result<(cpal::Stream, u32, u16), String> {
+                        let device = cpal::default_host()
+                            .default_input_device()
+                            .ok_or("no microphone")?;
+                        let config = device
+                            .default_input_config()
+                            .map_err(|e| format!("the microphone: {e}"))?;
+                        let format = config.sample_format();
+                        let cfg: cpal::StreamConfig = config.into();
+                        let (rate, channels) = (cfg.sample_rate, cfg.channels);
+                        let err = |e: cpal::Error| eprintln!("toad mic: {e}");
+                        let stream = match format {
+                            cpal::SampleFormat::F32 => device.build_input_stream(
+                                cfg,
+                                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                                    let _ = tx.send(data.to_vec());
+                                },
+                                err,
+                                None,
+                            ),
+                            cpal::SampleFormat::I16 => device.build_input_stream(
+                                cfg,
+                                move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                                    let _ = tx.send(
+                                        data.iter().map(|x| *x as f32 / i16::MAX as f32).collect(),
+                                    );
+                                },
+                                err,
+                                None,
+                            ),
+                            other => {
+                                return Err(format!(
+                                    "the microphone's samples are {other}, not f32 or i16"
+                                ));
+                            }
+                        }
+                        .map_err(|e| format!("the microphone: {e}"))?;
+                        stream.play().map_err(|e| format!("the microphone: {e}"))?;
+                        Ok((stream, rate, channels))
+                    })();
+                    match made {
+                        Err(e) => {
+                            let _ = up_tx.send(Err(e));
+                        }
+                        Ok((stream, rate, channels)) => {
+                            let _ = up_tx.send(Ok((rate, channels)));
+                            // the stream listens while this thread holds it
+                            let frames = match write_wav(&p, rate, channels, rx, stopped) {
+                                Ok(n) => n,
+                                Err(e) => {
+                                    eprintln!("toad.mic: {e}");
+                                    0
+                                }
+                            };
+                            drop(stream);
+                            let _ = done_tx.send((frames, rate, channels));
+                        }
+                    }
+                })
+                .map_err(|e| format!("toad.mic: its thread: {e}"))?;
+            let (rate, channels) = up
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .unwrap_or_else(|_| Err("the microphone did not open".into()))
+                .map_err(|e| format!("toad.mic: {e}"))?;
+            with(|st| {
+                st.mic = Some(Taping {
+                    path: path.to_string(),
+                    stop,
+                    done,
+                })
+            });
+            Ok(began(rate, channels))
+        }
+        _ => Err("toad.mic: a path begins it, () ends it".to_string()),
+    }
 }

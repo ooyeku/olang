@@ -3679,11 +3679,13 @@ toad.frame([#{ "swarm": s, "color": "#ff9a3c", "radius": 6.0 }], #{ "size": (128
 | <a id="toad-audio"></a>`toad.audio()` | the sound output: `Ok(#{ device, rate, channels, voices })` or `Err(why it is silent)` |
 | <a id="toad-sound"></a>`toad.sound(spec)` | a sound from a `file` (WAV, Ogg Vorbis) or the synth (`wave`, `freq`, `to`, `attack`, `hold`, `decay`, `volume`, `cutoff`, …, or `layers`) |
 | <a id="toad-sound_info"></a>`toad.sound_info(sound)` | `#{ seconds, channels, rate, peak }` |
-| <a id="toad-play"></a>`toad.play(sound, opts)` | a voice: `volume`, `pan`, `pitch`, `loop`, `music`, `fade` |
+| <a id="toad-play"></a>`toad.play(sound, opts)` | a voice: `volume`, `pan`, `pitch`, `loop`, `music`, `fade`, `at` (begun so many seconds into the sound) |
 | <a id="toad-stop"></a>`toad.stop(voice, fade)` | fade a voice out and let it go |
 | <a id="toad-tune"></a>`toad.tune(voice, opts)` | change a playing voice's `volume`, `pan`, `pitch` |
 | <a id="toad-volume"></a>`toad.volume(bus, v)` | `master`, `fx` or `music` |
 | <a id="toad-listen"></a>`toad.listen(sound, seconds)` | mix a sound offline (tests): `#{ peak, rms, voices_left }` |
+| <a id="toad-tape"></a>`toad.tape(path)` | what is heard (the mixer's output, every bus, after the limiter) written to `path` as a 16-bit WAV from now, silence too, so its time is the clock's: `#{ rate, channels }`. `toad.tape(())` ends it: `#{ path, frames, rate, channels, ms }`, `()` when none was on. An error with no output device (or `TOAD_MUTE=1`): nothing is mixed there |
+| <a id="toad-mic"></a>`toad.mic(path)` | the system's microphone written to `path` as a WAV from now: `#{ rate, channels }`; macOS asks the person the first time. `toad.mic(())` ends it, as `toad.tape`'s. An application that does not say why it wants the microphone (`NSMicrophoneUsageDescription` in its Info.plist) is refused here, not ended by macOS at the ask |
 | <a id="toad-hold"></a>`toad.hold(keys)` | exactly these keys down, nothing pressed or let go (where a replay left them) |
 | <a id="toad-drop"></a>`toad.drop(id)` | let go of a swarm or a physics world |
 | <a id="toad-warm"></a>`toad.warm(world)` | build its collision structures now: the first step costs no more than the rest |

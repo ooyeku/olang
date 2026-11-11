@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   none left out, where reading the frame back (`gui.read(w, "frame")`)
   gave a dozen and stopped the window drawing while it read. macOS, real
   windows.
+- **`toad.tape(path)`, `toad.mic(path)`, and `toad.play`'s `at`** (with
+  OL-587, for Recorder's sound). `toad.tape` writes what the mixer
+  plays to a WAV from now, silence too, so its time is the clock's;
+  `toad.mic` writes the system's microphone (an application must say why
+  in its Info.plist, or it is refused rather than ended by macOS); each
+  ends with `()` and answers what it wrote. `toad.play(sound, #{ at })`
+  begins a sound so many seconds in.
 
 ### Fixed
 
