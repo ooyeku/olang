@@ -1241,7 +1241,7 @@ fn open_with(
     };
     let mut readonly = false;
     let mut create = None;
-    match args.get(1) {
+    match args.get(1).map(|v| v.as_options()).as_deref() {
         None | Some(Value::Unit) => {}
         Some(Value::Map(m)) => {
             for (key, value) in m.iter() {

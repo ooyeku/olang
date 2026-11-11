@@ -778,7 +778,7 @@ fn gui_capture(args: Vec<Value>) -> Res<Value> {
         let ask = match &args[1] {
             Value::Unit => render::CaptureAsk::Stop,
             Value::String(s) if s.as_str() == "stats" => render::CaptureAsk::Stats,
-            v @ Value::Map(_) => {
+            v @ (Value::Map(_) | Value::Struct { .. }) => {
                 let dir = get_str(v, "dir", what)?
                     .ok_or("gui.capture: `dir` (a folder for the frames) is needed")?;
                 render::CaptureAsk::Start(Box::new(capture::Opts {
@@ -1669,10 +1669,11 @@ fn gui_fonts(args: Vec<Value>) -> Res<Value> {
     };
     let background = match args.get(1) {
         None | Some(Value::Unit) => false,
-        Some(Value::Map(m)) => {
+        Some(v @ (Value::Map(_) | Value::Struct { .. })) => {
+            let m = values::fields(v).expect("a map or a record");
             // `families`: the faces `"body"` and `"mono"` stand for (a
             // theme's type), each a CSS family list, "" for the bundled one
-            if let Some(Value::Map(f)) = m.get("families") {
+            if let Some(f) = m.get("families").and_then(values::fields) {
                 let pick = |k: &str| match f.get(k) {
                     Some(Value::String(s)) => Some(s.to_string()),
                     Some(Value::Unit) => Some(String::new()),
@@ -1683,7 +1684,7 @@ fn gui_fonts(args: Vec<Value>) -> Res<Value> {
             matches!(m.get("background"), Some(Value::Boolean(true)))
         }
         Some(_) => {
-            return Err("gui.fonts: the options are a map (#{ \"background\": true })".into());
+            return Err("gui.fonts: the options are a map or a record ({ background: true })".into());
         }
     };
     if background {
@@ -1908,7 +1909,8 @@ fn gui_spell(args: Vec<Value>) -> Res<Value> {
             edit::set_stand_in(None);
             Value::Unit
         }
-        ("stand_in", Value::Map(m)) => {
+        ("stand_in", v @ (Value::Map(_) | Value::Struct { .. })) => {
+            let m = values::fields(v).expect("a map or a record");
             let mut words = std::collections::HashMap::new();
             for (k, v) in m.iter() {
                 let k = k.to_string();
@@ -1929,7 +1931,7 @@ fn gui_spell(args: Vec<Value>) -> Res<Value> {
             Value::Unit
         }
         ("stand_in", _) => {
-            return Err("gui.spell: \"stand_in\" takes #{ word: [guesses] } or ()".into());
+            return Err("gui.spell: \"stand_in\" takes a map or record of word to [guesses], or ()".into());
         }
         (_, Value::String(w)) => {
             let w = w.as_str();

@@ -870,6 +870,20 @@ pub struct TypeInfoValue {
 }
 
 impl Value {
+    /// This value as a native's map argument: a record (`{ k: v }`, an
+    /// anonymous object, or a parsed JSON object) as the map of its
+    /// fields, anything else as it is. A native that matches
+    /// `Value::Map` for its options or a map inside them reads records
+    /// through this, as `map_get` does (OL-594).
+    pub fn as_options(&self) -> std::borrow::Cow<'_, Value> {
+        match self {
+            Value::Struct { type_name, fields } if type_name == "Object" || type_name == "JsonObject" => {
+                std::borrow::Cow::Owned(Value::Map(Arc::new((**fields).clone())))
+            }
+            _ => std::borrow::Cow::Borrowed(self),
+        }
+    }
+
     /// A map's or struct's fields, to read.
     pub fn record_fields(&self) -> Option<&ValueMap> {
         match self {

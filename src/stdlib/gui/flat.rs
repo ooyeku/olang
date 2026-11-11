@@ -68,9 +68,9 @@ fn strs(v: Option<&Value>) -> HashSet<&str> {
 }
 
 fn a_map<'a>(v: Option<&'a Value>, what: &str) -> Res<&'a crate::ast::ValueMap> {
-    match v {
-        Some(Value::Map(m)) => Ok(m),
-        _ => Err(format!("gui.flatten: the spec's \"{what}\" must be a map")),
+    match v.and_then(fields) {
+        Some(m) => Ok(m),
+        None => Err(format!("gui.flatten: the spec's \"{what}\" must be a map or a record")),
     }
 }
 
@@ -128,12 +128,9 @@ unsafe impl Sync for UnitValue {}
 static UNIT: UnitValue = UnitValue(Value::Unit);
 
 fn props_of(node: &Value) -> Option<&crate::ast::ValueMap> {
-    match node {
-        Value::Map(m) => match m.get("props") {
-            Some(Value::Map(p)) => Some(p),
-            _ => None,
-        },
-        _ => None,
+    match fields(node) {
+        Some(m) => m.get("props").and_then(fields),
+        None => None,
     }
 }
 
@@ -151,11 +148,8 @@ fn mget_or<'a>(m: Option<&'a crate::ast::ValueMap>, k: &str, d: &'a Value) -> &'
 }
 
 fn role_of(node: &Value) -> &str {
-    match node {
-        Value::Map(m) => match m.get("role") {
-            Some(Value::String(s)) => s.as_str(),
-            _ => "",
-        },
+    match fields(node).and_then(|m| m.get("role")) {
+        Some(Value::String(s)) => s.as_str(),
         _ => "",
     }
 }
@@ -185,11 +179,8 @@ fn rigid_group(spec: &Spec, node: &Value, p: Option<&crate::ast::ValueMap>, role
 }
 
 fn children_of(node: &Value) -> &[Value] {
-    match node {
-        Value::Map(m) => match m.get("children") {
-            Some(Value::List(l)) => l,
-            _ => EMPTY,
-        },
+    match fields(node).and_then(|m| m.get("children")) {
+        Some(Value::List(l)) => l,
         _ => EMPTY,
     }
 }
@@ -241,10 +232,7 @@ fn list(xs: Vec<Value>) -> Value {
 
 /// `show_key` for `ly_gkey`: a string as itself, anything else shown.
 fn gkey_of(node: &Value, path: &str) -> String {
-    let k = match node {
-        Value::Map(m) => m.get("key").unwrap_or(&UNIT.0),
-        _ => &UNIT.0,
-    };
+    let k = fields(node).and_then(|m| m.get("key")).unwrap_or(&UNIT.0);
     match k {
         Value::Unit => format!("~{path}"),
         Value::String(s) => s.as_str().to_string(),
@@ -320,15 +308,15 @@ fn pad4(p: &Value) -> (f64, f64, f64, f64) {
 }
 
 fn border_of(p: Option<&crate::ast::ValueMap>) -> f64 {
-    match mget(p, "style") {
-        Value::Map(st) => match st.get("border") {
+    match fields(mget(p, "style")) {
+        Some(st) => match st.get("border") {
             None | Some(Value::Unit) => 0.0,
             Some(_) => match st.get("border_width") {
                 None | Some(Value::Unit) => 1.0,
                 Some(v) => fnum(v),
             },
         },
-        _ => 0.0,
+        None => 0.0,
     }
 }
 
@@ -454,14 +442,14 @@ fn font_style_v(spec: &Spec, p: Option<&crate::ast::ValueMap>, role: &str) -> Va
 }
 
 fn with_style(spec: &Spec, look: Value, style: &Value) -> Value {
-    match style {
-        Value::Map(m) => {
-            let mut s = match &look {
-                Value::Map(l) => (**l).clone(),
-                _ => crate::ast::ValueMap::default(),
+    match fields(style) {
+        Some(m) => {
+            let mut s = match fields(&look) {
+                Some(l) => l.clone(),
+                None => crate::ast::ValueMap::default(),
             };
             for (k, v) in m.iter() {
-                let v2 = if matches!(v, Value::Map(_)) {
+                let v2 = if fields(v).is_some() {
                     with_style(spec, vmap(crate::ast::ValueMap::default()), v)
                 } else {
                     tok(spec, v)
@@ -472,7 +460,7 @@ fn with_style(spec: &Spec, look: Value, style: &Value) -> Value {
         }
         // `with_style` answers the look for `()`; any other style is
         // iterated by olang's `entries` and would refuse there
-        _ => look,
+        None => look,
     }
 }
 
@@ -524,11 +512,11 @@ fn leaf_size(
     avail: f64,
 ) -> Res<(f64, f64)> {
     let p = props_of(node);
-    let rule = match spec.leaves.get(role) {
-        Some(Value::Map(r)) => r,
-        _ => return Ok((0.0, 0.0)),
+    let rule = match spec.leaves.get(role).and_then(fields) {
+        Some(r) => r,
+        None => return Ok((0.0, 0.0)),
     };
-    let r = Some(rule.as_ref());
+    let r = Some(rule);
     let num_or = |k: &str, d: f64| match mget(r, k) {
         Value::Unit => d,
         v => fnum(v),
@@ -578,8 +566,7 @@ fn leaf_size(
     if let Value::String(field) = mget(r, "rows") {
         let count = match mget(p, field.as_str()) {
             Value::List(l) => l.len() as f64,
-            Value::Map(m) => m.get("count").map(fnum).unwrap_or(0.0),
-            _ => 0.0,
+            other => fields(other).and_then(|m| m.get("count")).map(fnum).unwrap_or(0.0),
         };
         let rh = match mget(p, "row_height") {
             Value::Unit => num_or("row_h", 32.0),
@@ -1408,7 +1395,19 @@ fn own_eq(a: &Value, b: &Value) -> bool {
                         (a, b) => a == b,
                     })
         }
-        _ => a == b,
+        // a node or its props as records: the same by their fields
+        _ => match (fields(a), fields(b)) {
+            (Some(x), Some(y)) => {
+                std::ptr::eq(x, y)
+                    || (x.get("role") == y.get("role")
+                        && x.get("key") == y.get("key")
+                        && match (x.get("props").and_then(fields), y.get("props").and_then(fields)) {
+                            (Some(a), Some(b)) => std::ptr::eq(a, b) || a == b,
+                            _ => x.get("props") == y.get("props"),
+                        })
+            }
+            _ => a == b,
+        },
     }
 }
 
@@ -1445,10 +1444,7 @@ fn list_of<'a>(f: &'a crate::ast::ValueMap, k: &str) -> Res<&'a [Value]> {
 /// placed for it, a list's body or a split's divider): its `description`,
 /// and its assistive `actions` (`[#{ label, … }]`) as their labels.
 fn with_own(op: &mut crate::ast::ValueMap, gkey: &str, node: &Value) {
-    let own = match node {
-        Value::Map(m) => matches!(m.get("key"), Some(Value::String(k)) if k.as_str() == gkey),
-        _ => false,
-    };
+    let own = matches!(fields(node).and_then(|m| m.get("key")), Some(Value::String(k)) if k.as_str() == gkey);
     if !own {
         return;
     }
@@ -1473,8 +1469,8 @@ fn with_own(op: &mut crate::ast::ValueMap, gkey: &str, node: &Value) {
     {
         let labels: Vec<Value> = acts
             .iter()
-            .filter_map(|a| match a {
-                Value::Map(m) if !m.contains_key("submenu") => match m.get("label") {
+            .filter_map(|a| match fields(a) {
+                Some(m) if !m.contains_key("submenu") => match m.get("label") {
                     Some(Value::String(l)) => Some(Value::String(l.clone())),
                     _ => None,
                 },
@@ -1855,6 +1851,8 @@ fn vm_field<'a>(m: &'a OvmValue, k: &str) -> Option<Fld<'a>> {
     match &m.data {
         ValueData::Map(mm) => mm.get(k).map(Fld::Vm),
         ValueData::AstMap(mm) | ValueData::AstStruct(mm, _) => mm.get(k).map(Fld::Ast),
+        // a record the VM holds as its own object: read through its map
+        ValueData::Struct(st) => st.ast_map().get(k).map(Fld::Ast),
         _ => None,
     }
 }
@@ -2192,8 +2190,8 @@ fn with_first_path(rs: Value, path: &Value) -> Value {
     match &rs {
         Value::List(l) if !l.is_empty() => {
             let mut items = l.as_ref().clone();
-            if let Value::Map(m) = &items[0] {
-                let mut m2 = m.as_ref().clone();
+            if let Some(m) = fields(&items[0]) {
+                let mut m2 = m.clone();
                 m2.insert("path".to_string(), path.clone());
                 items[0] = Value::Map(Arc::new(m2));
             }
@@ -2295,10 +2293,7 @@ fn ly_same(a: &Value, b: &Value) -> bool {
 }
 
 fn field_or_unit<'a>(v: &'a Value, k: &str) -> &'a Value {
-    match v {
-        Value::Map(m) => m.get(k).unwrap_or(&UNIT.0),
-        _ => &UNIT.0,
-    }
+    fields(v).and_then(|m| m.get(k)).unwrap_or(&UNIT.0)
 }
 
 /// Loom's `ly_own_same`: the same role, key and props.
@@ -2510,9 +2505,9 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
     match (&args[3], &args[4]) {
         (Value::String(k), prev) if k.as_str() == "keyed" => {
             let pv = fields(prev);
-            let pout = match pv.and_then(|m| m.get("out")) {
-                Some(Value::Map(m)) => Some(PrevOut::of_ast(m)?),
-                _ => None,
+            let pout = match pv.and_then(|m| m.get("out")).and_then(fields) {
+                Some(m) => Some(PrevOut::of_ast(m)?),
+                None => None,
             };
             let pflat = pv.and_then(|m| m.get("flat")).and_then(PrevFlat::of_ast);
             let cand = match (&pout, &pflat) {
@@ -2531,7 +2526,7 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
                 v => Some(ints_of(v, "keep")?),
             };
             let prev = match (prev, &keep) {
-                (Value::Map(m), Some(_)) => Some(PrevOut::of_ast(m)?),
+                (v, Some(_)) if fields(v).is_some() => Some(PrevOut::of_ast(fields(v).expect("a map or a record"))?),
                 _ => None,
             };
             let reusable = prev.as_ref().is_some_and(|p| p.all_len(n));
@@ -2604,7 +2599,9 @@ fn vm_flat_emit(args: &[OvmValue]) -> Option<Res<OvmValue>> {
             _ => return None,
         };
         let prev = match (&args[4].data, &keep) {
-            (ValueData::Map(_) | ValueData::AstMap(_), Some(_)) => Some(PrevOut::of_vm(&args[4])?),
+            (ValueData::Map(_) | ValueData::AstMap(_) | ValueData::AstStruct(..) | ValueData::Struct(_), Some(_)) => {
+                Some(PrevOut::of_vm(&args[4])?)
+            }
             _ => None,
         };
         let reusable = prev.as_ref().is_some_and(|p| p.all_len(n));
@@ -3012,13 +3009,14 @@ impl Out for Value {
     }
     fn with_index(m: R, v: R) -> Self {
         let mv = m.ast();
-        match &mv {
-            Value::Map(mm) => {
-                let mut m2 = mm.as_ref().clone();
+        // an op given as a record gets its index as a map's does
+        match fields(&mv) {
+            Some(mm) => {
+                let mut m2 = mm.clone();
                 m2.insert("index".to_string(), v.ast());
                 Value::Map(Arc::new(m2))
             }
-            _ => mv,
+            None => mv,
         }
     }
     fn third(r: R) -> Self {
@@ -3058,7 +3056,8 @@ impl Out for OvmValue {
         let mv = m.vm();
         let mut mm = match &mv.data {
             ValueData::Map(x) => x.as_ref().clone(),
-            ValueData::AstMap(x) => OvmValue::force_ast_map(x),
+            ValueData::AstMap(x) | ValueData::AstStruct(x, _) => OvmValue::force_ast_map(x),
+            ValueData::Struct(st) => OvmValue::force_ast_map(st.ast_map()),
             _ => return mv,
         };
         mm.insert("index".to_string(), v.vm());

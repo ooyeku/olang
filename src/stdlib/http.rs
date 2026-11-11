@@ -164,7 +164,8 @@ pub(crate) fn parse_opts(
     v: &Value,
     fname: &str,
 ) -> Result<RequestOpts, Box<dyn std::error::Error>> {
-    let entries = match v {
+    let v = v.as_options();
+    let entries = match v.as_ref() {
         Value::Map(entries) => entries,
         other => {
             return Err(format!(
@@ -177,7 +178,7 @@ pub(crate) fn parse_opts(
     let mut opts = RequestOpts::default();
     for (key, value) in entries.iter() {
         match key.as_str() {
-            "headers" => match value {
+            "headers" => match value.as_options().as_ref() {
                 Value::Map(hs) => {
                     for (name, val) in hs.iter() {
                         match val {

@@ -143,7 +143,7 @@ pub fn seen() -> (u64, Option<Arc<WideMap>>) {
 /// (`"#rrggbb"`) to the colours they stand for on a wide screen (P3).
 pub fn parse_table(v: &Value, what: &str) -> Res<WideMap> {
     let mut out = WideMap::new();
-    let Value::Map(m) = v else {
+    let Some(m) = super::values::fields(v) else {
         return Err(format!(
             "{what}: \"wide\" is a map of sRGB colours to display-p3 ones"
         ));

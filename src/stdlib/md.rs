@@ -1627,7 +1627,8 @@ pub fn parse_tree(src: &str, gfm: bool, events: bool) -> Value {
 
 /// `md.parse`'s options: `gfm` (default true) and `events` (default false).
 fn parse_options(v: Option<&Value>) -> Result<(bool, bool), String> {
-    let m = match v {
+    let v = v.map(|x| x.as_options());
+    let m = match v.as_deref() {
         None | Some(Value::Unit) => return Ok((true, false)),
         Some(Value::Map(m)) => m,
         Some(other) => {

@@ -44,7 +44,8 @@ fn e(err: olang_ods::OdsError) -> String {
 }
 
 fn parse_options(value: &Value) -> Result<PlotOptions, String> {
-    let map = match value {
+    let value = value.as_options();
+    let map = match value.as_ref() {
         Value::Map(m) => m,
         other => {
             return Err(format!(

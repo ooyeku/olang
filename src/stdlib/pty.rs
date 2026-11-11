@@ -584,7 +584,8 @@ mod imp {
             Err(e) => return pty_fail(e),
         };
         let empty = crate::ast::ValueMap::default();
-        let o = match args.get(1) {
+        let opt = args.get(1).map(|v| v.as_options());
+        let o = match opt.as_deref() {
             Some(Value::Map(m)) => m.as_ref(),
             None => &empty,
             Some(other) => {
