@@ -606,7 +606,9 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
                     )
                     .into());
                 }
-                ("env", env @ (Value::Map(_) | Value::Struct { .. })) if env.record_fields().is_some() => {
+                ("env", env @ (Value::Map(_) | Value::Struct { .. }))
+                    if env.record_fields().is_some() =>
+                {
                     let m = env.record_fields().expect("a map or a record");
                     for (k, v) in m.iter() {
                         match v {

@@ -251,7 +251,8 @@ fn play_loop(
                 if !err.is_null() && s.error.is_none() {
                     let dsc: Option<Retained<objc2_foundation::NSString>> =
                         msg_send![err, localizedDescription];
-                    s.error = Some(dsc.map_or("the movie cannot be played".into(), |x| x.to_string()));
+                    s.error =
+                        Some(dsc.map_or("the movie cannot be played".into(), |x| x.to_string()));
                 }
             }
         });
@@ -259,7 +260,11 @@ fn play_loop(
         // (paused, nothing new for a while) only now and then
         idle = if drew { 0 } else { idle.saturating_add(1) };
         let playing = status.lock().unwrap_or_else(|e| e.into_inner()).playing;
-        std::thread::sleep(Duration::from_millis(if playing || idle < 200 { 4 } else { 30 }));
+        std::thread::sleep(Duration::from_millis(if playing || idle < 200 {
+            4
+        } else {
+            30
+        }));
     }
 }
 

@@ -1684,7 +1684,9 @@ fn gui_fonts(args: Vec<Value>) -> Res<Value> {
             matches!(m.get("background"), Some(Value::Boolean(true)))
         }
         Some(_) => {
-            return Err("gui.fonts: the options are a map or a record ({ background: true })".into());
+            return Err(
+                "gui.fonts: the options are a map or a record ({ background: true })".into(),
+            );
         }
     };
     if background {
@@ -1931,7 +1933,9 @@ fn gui_spell(args: Vec<Value>) -> Res<Value> {
             Value::Unit
         }
         ("stand_in", _) => {
-            return Err("gui.spell: \"stand_in\" takes a map or record of word to [guesses], or ()".into());
+            return Err(
+                "gui.spell: \"stand_in\" takes a map or record of word to [guesses], or ()".into(),
+            );
         }
         (_, Value::String(w)) => {
             let w = w.as_str();

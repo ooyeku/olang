@@ -2303,7 +2303,11 @@ impl Surface {
         let now = std::time::Instant::now();
         // (a little under the interval passes: frames come a refresh
         // apart, give or take, and a frame a hair early is the one due)
-        if !force && cap.last.is_some_and(|l| now.duration_since(l) < cap.every.mul_f32(0.8)) {
+        if !force
+            && cap
+                .last
+                .is_some_and(|l| now.duration_since(l) < cap.every.mul_f32(0.8))
+        {
             return;
         }
         // the writer behind: this frame is left out, and counted
@@ -2369,15 +2373,8 @@ impl Surface {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("gui capture"),
             });
-        self.gpu.blit_with(
-            &mut enc,
-            view,
-            cview,
-            cformat,
-            cw,
-            ch,
-            &self.gpu.linear,
-        );
+        self.gpu
+            .blit_with(&mut enc, view, cview, cformat, cw, ch, &self.gpu.linear);
         enc.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
                 texture: tex,
@@ -2403,21 +2400,25 @@ impl Surface {
         let ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let failed = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (r2, f2) = (ready.clone(), failed.clone());
-        buf.slice(..).map_async(wgpu::MapMode::Read, move |r| match r {
-            Ok(()) => r2.store(true, Ordering::Release),
-            Err(_) => f2.store(true, Ordering::Release),
-        });
+        buf.slice(..)
+            .map_async(wgpu::MapMode::Read, move |r| match r {
+                Ok(()) => r2.store(true, Ordering::Release),
+                Err(_) => f2.store(true, Ordering::Release),
+            });
         cap.writer.stats.in_flight.fetch_add(1, Ordering::Relaxed);
         let t_ms = now.duration_since(cap.writer.started).as_millis() as u64;
-        let _ = cap.writer.tx.send(super::capture::Msg::Frame(super::capture::Pending {
-            t_ms,
-            buf,
-            w: cw,
-            h: ch,
-            row,
-            ready,
-            failed,
-        }));
+        let _ = cap
+            .writer
+            .tx
+            .send(super::capture::Msg::Frame(super::capture::Pending {
+                t_ms,
+                buf,
+                w: cw,
+                h: ch,
+                row,
+                ready,
+                failed,
+            }));
         cap.last = Some(now);
     }
 

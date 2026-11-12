@@ -2177,7 +2177,7 @@ fn holds_vm_code(v: &OvmValue, depth: usize) -> bool {
                 return false;
             }
             let holds = st.values().any(|x| holds_vm_code(&x, depth + 1));
-            if !holds && depth + 1 <= 64 {
+            if !holds {
                 st.mark_without_vm_code();
             }
             holds
@@ -2204,7 +2204,8 @@ mod tests {
     /// the answer is kept in it, and its field count is unchanged.
     #[test]
     fn a_record_without_vm_code_is_walked_once() {
-        let inner = StructObject::from_pairs("Object", vec![("x".into(), OvmValue::new_integer(1))]);
+        let inner =
+            StructObject::from_pairs("Object", vec![("x".into(), OvmValue::new_integer(1))]);
         let outer = StructObject::from_pairs(
             "Object",
             vec![
@@ -2218,7 +2219,10 @@ mod tests {
         assert!(outer.known_without_vm_code());
         assert!(!holds_vm_code(&v, 0));
         assert_eq!(outer.len(), 2);
-        assert_eq!(outer.field("n").map(|f| f.to_ast().ok()), Some(Some(crate::ast::Value::Integer(2))));
+        assert_eq!(
+            outer.field("n").map(|f| f.to_ast().ok()),
+            Some(Some(crate::ast::Value::Integer(2)))
+        );
     }
 
     fn to_ast_cache_len() -> usize {
@@ -2234,16 +2238,28 @@ mod tests {
         // a VM record whose field is a list 200 deep, in an interpreter list
         let mut deep = OvmValue::new_integer(1);
         for _ in 0..200 {
-            deep = OvmValue { data: ValueData::List(Arc::new(vec![deep])) };
+            deep = OvmValue {
+                data: ValueData::List(Arc::new(vec![deep])),
+            };
         }
-        let s = super::super::struct_object::StructObject::from_pairs("Rec", vec![("rows".to_string(), deep)]);
-        let rec = crate::ast::Value::Struct { type_name: "Rec".into(), fields: crate::value_struct::StructFields::Vm(s) };
+        let s = super::super::struct_object::StructObject::from_pairs(
+            "Rec",
+            vec![("rows".to_string(), deep)],
+        );
+        let rec = crate::ast::Value::Struct {
+            type_name: "Rec".into(),
+            fields: crate::value_struct::StructFields::Vm(s),
+        };
         let v = crate::ast::Value::List(Arc::new(vec![rec]));
         assert_eq!(queued_len(), 0);
         // the interpreter's list is the outermost free; the VM list's levels
         // past the depth bound are queued as VM values
         drop(v);
-        assert_eq!(queued_len(), 0, "every queued VM value freed with the outermost free");
+        assert_eq!(
+            queued_len(),
+            0,
+            "every queued VM value freed with the outermost free"
+        );
     }
 
     /// The conversion cache frees dead entries a few at a time: converting

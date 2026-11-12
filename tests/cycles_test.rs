@@ -117,8 +117,7 @@ println(deep())\n\
 println(typeof(cell.get(back)))\n";
     for out in both_tiers("kept", src) {
         assert_eq!(
-            out,
-            "top\nFunction\nFunction\n5\nboxed\nshared\nFunction\ndeep\nFunction\n",
+            out, "top\nFunction\nFunction\n5\nboxed\nshared\nFunction\ndeep\nFunction\n",
             "{out}"
         );
     }

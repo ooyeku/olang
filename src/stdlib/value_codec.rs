@@ -108,7 +108,11 @@ pub fn call_value_function(name: &str, args: Vec<Value>) -> Result<Value, String
 fn canonical_opt(opts: &Value) -> Result<bool, String> {
     let fields = match opts {
         Value::Map(m) => m.clone(),
-        Value::Struct { type_name, fields } if type_name == "Object" || type_name == "JsonObject" => fields.to_arc(),
+        Value::Struct { type_name, fields }
+            if type_name == "Object" || type_name == "JsonObject" =>
+        {
+            fields.to_arc()
+        }
         other => {
             return Err(format!(
                 "value.encode: options must be a map, got {}",

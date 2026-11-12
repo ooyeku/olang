@@ -422,7 +422,10 @@ impl StructObject {
     /// shape: its value slots copied and those replaced, no field names
     /// copied and no shape looked up (OL-601). `None` when a key is not
     /// one of its fields, which needs another shape.
-    pub fn with_fields<'a>(&self, set: impl IntoIterator<Item = (&'a str, OvmValue)>) -> Option<Self> {
+    pub fn with_fields<'a>(
+        &self,
+        set: impl IntoIterator<Item = (&'a str, OvmValue)>,
+    ) -> Option<Self> {
         let shape = self.shape.clone();
         let mut slot: Vec<Option<OvmValue>> = (0..self.len()).map(|_| None).collect();
         for (k, v) in set {

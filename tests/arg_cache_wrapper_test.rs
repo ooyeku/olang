@@ -66,10 +66,16 @@ let _e = chan.send(work, ())
 fn a_parsed_object_passed_to_a_callback_is_freed() {
     let dir = workspace("cases");
     let out = run(&dir, CASES);
-    let held: Vec<i64> = out.lines().map(|l| l.trim().parse().expect("a number a line")).collect();
+    let held: Vec<i64> = out
+        .lines()
+        .map(|l| l.trim().parse().expect("a number a line"))
+        .collect();
     assert_eq!(held.len(), 3, "{out}");
     for (i, kb) in held.iter().enumerate() {
-        assert!(*kb < 100, "case {i} left {kb} KB a call behind (the object is about 1,700 KB)\n{out}");
+        assert!(
+            *kb < 100,
+            "case {i} left {kb} KB a call behind (the object is about 1,700 KB)\n{out}"
+        );
     }
     let _ = std::fs::remove_dir_all(&dir);
 }

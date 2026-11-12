@@ -45,10 +45,18 @@ fn ok(r) = match r { Ok(v) => v, Err(e) => raise(e) }
 #[test]
 fn a_kernel_that_answers_a_record_steps_as_the_function_does() {
     let rec = DRIFT
-        .replace(r#"#{ "pos": p.pos + vel * w.dt, "vel": vel, "dead": length(p.pos) > 450.0 }"#,
-                 "{ pos: p.pos + vel * w.dt, vel: vel, dead: length(p.pos) > 450.0 }")
-        .replace(r#"let FIELDS = #{ "pos": (0.0, 0.0), "vel": (0.0, 0.0) }"#, "let FIELDS = { pos: (0.0, 0.0), vel: (0.0, 0.0) }")
-        .replace(r#"let WORLD = #{ "home": (0.0, 0.0) }"#, "let WORLD = { home: (0.0, 0.0) }");
+        .replace(
+            r#"#{ "pos": p.pos + vel * w.dt, "vel": vel, "dead": length(p.pos) > 450.0 }"#,
+            "{ pos: p.pos + vel * w.dt, vel: vel, dead: length(p.pos) > 450.0 }",
+        )
+        .replace(
+            r#"let FIELDS = #{ "pos": (0.0, 0.0), "vel": (0.0, 0.0) }"#,
+            "let FIELDS = { pos: (0.0, 0.0), vel: (0.0, 0.0) }",
+        )
+        .replace(
+            r#"let WORLD = #{ "home": (0.0, 0.0) }"#,
+            "let WORLD = { home: (0.0, 0.0) }",
+        );
     assert!(!rec.contains("#{"), "{rec}");
     let src = format!(
         "{rec}

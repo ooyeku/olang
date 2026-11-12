@@ -254,14 +254,21 @@ fn write_loop(
                 Ok(data) => {
                     if movie.is_none() {
                         let path = opts.dir.join("movie.mov");
-                        match super::avf::MovieWriter::start(&path.to_string_lossy(), p.w, p.h, opts.fps) {
+                        match super::avf::MovieWriter::start(
+                            &path.to_string_lossy(),
+                            p.w,
+                            p.h,
+                            opts.fps,
+                        ) {
                             Ok(m) => movie = Some(m),
                             Err(e) => fail(&stats, e),
                         }
                     }
                     match movie.as_mut() {
                         // (a frame of another size, the window resized past what the capture held: left out)
-                        Some(m) if (m.width, m.height) == (p.w, p.h) => m.append(p.t_ms as i64, &data, p.row as usize),
+                        Some(m) if (m.width, m.height) == (p.w, p.h) => {
+                            m.append(p.t_ms as i64, &data, p.row as usize)
+                        }
                         Some(_) => Ok(false),
                         None => Err("the movie could not be begun".to_string()),
                     }
@@ -278,7 +285,7 @@ fn write_loop(
                     stats.width.store(p.w as u64, Ordering::Relaxed);
                     stats.height.store(p.h as u64, Ordering::Relaxed);
                     // how much is written so far, now and then (a limit watches it)
-                    if n % 30 == 0
+                    if n.is_multiple_of(30)
                         && let Ok(md) = std::fs::metadata(opts.dir.join("movie.mov"))
                     {
                         stats.bytes.store(md.len(), Ordering::Relaxed);

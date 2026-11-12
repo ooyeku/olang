@@ -551,8 +551,8 @@ pub fn call_toad_function(
             num(a(1)).unwrap_or(1.0),
         )?),
         #[cfg(not(feature = "audio"))]
-        "audio" | "sound" | "sound_info" | "play" | "stop" | "tune" | "volume" | "listen" | "tape"
-        | "mic" | "mics" => {
+        "audio" | "sound" | "sound_info" | "play" | "stop" | "tune" | "volume" | "listen"
+        | "tape" | "mic" | "mics" => {
             Err(format!("toad.{name}: sound needs the native build (feature `audio`)").into())
         }
         "drop" => {
@@ -607,7 +607,11 @@ pub fn call_toad_function(
                         Value::Unit
                     }
                     "walk" => {
-                        let dt = a(3).record_fields().and_then(|m| m.get("dt")).and_then(num).unwrap_or(1.0 / 120.0);
+                        let dt = a(3)
+                            .record_fields()
+                            .and_then(|m| m.get("dt"))
+                            .and_then(num)
+                            .unwrap_or(1.0 / 120.0);
                         w.walk(n(1, "body")?, pt(2, "the step")?, a(3), dt)?
                     }
                     _ => w.overlap(
@@ -970,9 +974,9 @@ fn shape_of(v: &Value, out: &mut Vec<f32>) -> Result<(), String> {
     let m = map_of(v, "a shape")?;
     let mat = match m.get("material") {
         Some(Value::Map(mm)) => Some(mm.clone()),
-        Some(r @ Value::Struct { .. }) if r.record_fields().is_some() => {
-            Some(std::sync::Arc::new(r.record_fields().expect("a record").clone()))
-        }
+        Some(r @ Value::Struct { .. }) if r.record_fields().is_some() => Some(std::sync::Arc::new(
+            r.record_fields().expect("a record").clone(),
+        )),
         Some(Value::Unit) | None => None,
         Some(_) => {
             return Err("toad.frame: a shape's `material` is a map (from `material`)".into());

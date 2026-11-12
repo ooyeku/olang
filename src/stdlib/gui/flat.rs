@@ -70,7 +70,9 @@ fn strs(v: Option<&Value>) -> HashSet<&str> {
 fn a_map<'a>(v: Option<&'a Value>, what: &str) -> Res<&'a crate::ast::ValueMap> {
     match v.and_then(fields) {
         Some(m) => Ok(m),
-        None => Err(format!("gui.flatten: the spec's \"{what}\" must be a map or a record")),
+        None => Err(format!(
+            "gui.flatten: the spec's \"{what}\" must be a map or a record"
+        )),
     }
 }
 
@@ -566,7 +568,10 @@ fn leaf_size(
     if let Value::String(field) = mget(r, "rows") {
         let count = match mget(p, field.as_str()) {
             Value::List(l) => l.len() as f64,
-            other => fields(other).and_then(|m| m.get("count")).map(fnum).unwrap_or(0.0),
+            other => fields(other)
+                .and_then(|m| m.get("count"))
+                .map(fnum)
+                .unwrap_or(0.0),
         };
         let rh = match mget(p, "row_height") {
             Value::Unit => num_or("row_h", 32.0),
@@ -1401,7 +1406,10 @@ fn own_eq(a: &Value, b: &Value) -> bool {
                 std::ptr::eq(x, y)
                     || (x.get("role") == y.get("role")
                         && x.get("key") == y.get("key")
-                        && match (x.get("props").and_then(fields), y.get("props").and_then(fields)) {
+                        && match (
+                            x.get("props").and_then(fields),
+                            y.get("props").and_then(fields),
+                        ) {
                             (Some(a), Some(b)) => std::ptr::eq(a, b) || a == b,
                             _ => x.get("props") == y.get("props"),
                         })
@@ -2526,7 +2534,9 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
                 v => Some(ints_of(v, "keep")?),
             };
             let prev = match (prev, &keep) {
-                (v, Some(_)) if fields(v).is_some() => Some(PrevOut::of_ast(fields(v).expect("a map or a record"))?),
+                (v, Some(_)) if fields(v).is_some() => {
+                    Some(PrevOut::of_ast(fields(v).expect("a map or a record"))?)
+                }
                 _ => None,
             };
             let reusable = prev.as_ref().is_some_and(|p| p.all_len(n));
@@ -2603,9 +2613,13 @@ fn vm_flat_emit(args: &[OvmValue]) -> Option<Res<OvmValue>> {
             _ => return None,
         };
         let prev = match (&args[4].data, &keep) {
-            (ValueData::Map(_) | ValueData::AstMap(_) | ValueData::AstStruct(..) | ValueData::Struct(_), Some(_)) => {
-                Some(PrevOut::of_vm(&args[4])?)
-            }
+            (
+                ValueData::Map(_)
+                | ValueData::AstMap(_)
+                | ValueData::AstStruct(..)
+                | ValueData::Struct(_),
+                Some(_),
+            ) => Some(PrevOut::of_vm(&args[4])?),
             _ => None,
         };
         let reusable = prev.as_ref().is_some_and(|p| p.all_len(n));

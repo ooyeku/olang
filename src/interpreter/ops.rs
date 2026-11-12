@@ -773,9 +773,16 @@ fn same_collection(a: &Value, b: &Value) -> bool {
             std::sync::Arc::ptr_eq(x, y)
         }
         (Value::Map(x), Value::Map(y)) => std::sync::Arc::ptr_eq(x, y),
-        (Value::Struct { type_name: tn, fields: fx }, Value::Struct { type_name: tm, fields: fy }) => {
-            tn == tm && crate::value_struct::StructFields::ptr_eq(fx, fy)
-        }
+        (
+            Value::Struct {
+                type_name: tn,
+                fields: fx,
+            },
+            Value::Struct {
+                type_name: tm,
+                fields: fy,
+            },
+        ) => tn == tm && crate::value_struct::StructFields::ptr_eq(fx, fy),
         _ => false,
     }
 }
@@ -802,9 +809,16 @@ pub fn loose_eq(a: &Value, b: &Value) -> bool {
         // a record (or struct) is equal to itself without a walk, as a map
         // is, so one holding a function shared by both sides compares
         // (OL-598)
-        (Value::Struct { type_name: tn, fields: fx }, Value::Struct { type_name: tm, fields: fy })
-            if tn == tm && crate::value_struct::StructFields::ptr_eq(fx, fy) =>
-        {
+        (
+            Value::Struct {
+                type_name: tn,
+                fields: fx,
+            },
+            Value::Struct {
+                type_name: tm,
+                fields: fy,
+            },
+        ) if tn == tm && crate::value_struct::StructFields::ptr_eq(fx, fy) => {
             return true;
         }
         _ => {}

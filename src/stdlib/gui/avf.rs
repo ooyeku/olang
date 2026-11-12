@@ -8,9 +8,9 @@
 //! capture's writer thread).
 
 use objc2::encode::{Encode, Encoding, RefEncode};
+use objc2::msg_send;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Bool};
-use objc2::msg_send;
 use std::ffi::{CStr, c_void};
 
 /// CoreMedia's time: `value / timescale` seconds.
@@ -189,9 +189,15 @@ impl MovieWriter {
         unsafe {
             let props = nsdict(&[
                 (AVVideoAverageBitRateKey, &*nsnumber(bitrate)?),
-                (AVVideoMaxKeyFrameIntervalKey, &*nsnumber((fps as i64 * 2).max(2))?),
+                (
+                    AVVideoMaxKeyFrameIntervalKey,
+                    &*nsnumber((fps as i64 * 2).max(2))?,
+                ),
                 (AVVideoExpectedSourceFrameRateKey, &*nsnumber(fps as i64)?),
-                (AVVideoProfileLevelKey, &*AVVideoProfileLevelH264HighAutoLevel),
+                (
+                    AVVideoProfileLevelKey,
+                    &*AVVideoProfileLevelH264HighAutoLevel,
+                ),
             ])?;
             let settings = nsdict(&[
                 (AVVideoCodecKey, &*AVVideoCodecTypeH264),
@@ -201,8 +207,7 @@ impl MovieWriter {
             ])?;
             let mut err: *mut AnyObject = std::ptr::null_mut();
             let wc = class(c"AVAssetWriter")?;
-            let writer: Option<Retained<AnyObject>> =
-                msg_send![wc, assetWriterWithURL: &*url, fileType: AVFileTypeQuickTimeMovie, error: &mut err];
+            let writer: Option<Retained<AnyObject>> = msg_send![wc, assetWriterWithURL: &*url, fileType: AVFileTypeQuickTimeMovie, error: &mut err];
             let writer = writer.ok_or_else(|| format!("the movie {path}: {}", describe(err)))?;
             let ic = class(c"AVAssetWriterInput")?;
             let input: Option<Retained<AnyObject>> = msg_send![ic, assetWriterInputWithMediaType: AVMediaTypeVideo, outputSettings: &*settings];
@@ -260,7 +265,9 @@ impl MovieWriter {
                 return Err("the movie has no room for frames (it stopped)".to_string());
             }
             let mut pb: *mut c_void = std::ptr::null_mut();
-            if CVPixelBufferPoolCreatePixelBuffer(std::ptr::null(), pool, &mut pb) != 0 || pb.is_null() {
+            if CVPixelBufferPoolCreatePixelBuffer(std::ptr::null(), pool, &mut pb) != 0
+                || pb.is_null()
+            {
                 return Ok(false);
             }
             CVPixelBufferLockBaseAddress(pb, 0);
@@ -273,7 +280,11 @@ impl MovieWriter {
                     if from + line > bgra.len() {
                         break;
                     }
-                    std::ptr::copy_nonoverlapping(bgra.as_ptr().add(from), base.add(y * stride), line);
+                    std::ptr::copy_nonoverlapping(
+                        bgra.as_ptr().add(from),
+                        base.add(y * stride),
+                        line,
+                    );
                 }
             }
             CVPixelBufferUnlockBaseAddress(pb, 0);

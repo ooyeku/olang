@@ -11,7 +11,11 @@ fn olang() -> &'static str {
 }
 
 fn run(flags: &[&str], name: &str, program: &str) -> String {
-    let dir = std::env::temp_dir().join(format!("records-{}-{name}-{}", std::process::id(), flags.join("")));
+    let dir = std::env::temp_dir().join(format!(
+        "records-{}-{name}-{}",
+        std::process::id(),
+        flags.join("")
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("p.ol");
     std::fs::write(&file, program).unwrap();
@@ -83,8 +87,14 @@ fn gui_flatten_reads_records_as_maps_on_both_tiers() {
     let vm = run(&["--ovm-tier=1"], "flat", FLAT);
     assert_eq!(tree, vm, "the tiers disagree");
     assert!(tree.contains("records lay out as maps true"), "{tree}");
-    assert!(tree.contains("a record frame keeps the last true"), "{tree}");
-    assert!(tree.contains("keyed keep reads a record prev true"), "{tree}");
+    assert!(
+        tree.contains("a record frame keeps the last true"),
+        "{tree}"
+    );
+    assert!(
+        tree.contains("keyed keep reads a record prev true"),
+        "{tree}"
+    );
 }
 
 /// Options given as records, and maps inside options given as records.
@@ -197,7 +207,11 @@ fn every_options_native_reads_a_record_as_its_map() {
     let vm = run(&["--ovm-tier=1"], "table", TABLE);
     for out in [&tree, &vm] {
         let differs: Vec<&str> = out.lines().filter(|l| !l.ends_with(" alike")).collect();
-        assert!(differs.is_empty(), "options read differently as a record:\n{}", differs.join("\n"));
+        assert!(
+            differs.is_empty(),
+            "options read differently as a record:\n{}",
+            differs.join("\n")
+        );
         assert!(out.lines().count() >= 20, "{out}");
     }
 }

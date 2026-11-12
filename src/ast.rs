@@ -745,7 +745,10 @@ pub(crate) fn free_bounded<T>(
 /// queues' room let go if large.
 fn drain_queued() {
     loop {
-        let a = QUEUED_VALUES.try_with(|q| q.borrow_mut().pop()).ok().flatten();
+        let a = QUEUED_VALUES
+            .try_with(|q| q.borrow_mut().pop())
+            .ok()
+            .flatten();
         let b = crate::ovm::value::pop_queued();
         if a.is_none() && b.is_none() {
             break;
@@ -877,7 +880,9 @@ impl Value {
     /// through this, as `map_get` does (OL-594).
     pub fn as_options(&self) -> std::borrow::Cow<'_, Value> {
         match self {
-            Value::Struct { type_name, fields } if type_name == "Object" || type_name == "JsonObject" => {
+            Value::Struct { type_name, fields }
+                if type_name == "Object" || type_name == "JsonObject" =>
+            {
                 std::borrow::Cow::Owned(Value::Map(Arc::new((**fields).clone())))
             }
             _ => std::borrow::Cow::Borrowed(self),

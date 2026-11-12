@@ -10417,10 +10417,13 @@ impl BytecodeVm {
         let fields_of = |p: &OvmValue| -> Option<Vec<(String, OvmValue)>> {
             Some(match &p.data {
                 ValueData::Map(m) => m.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
-                ValueData::AstMap(m) | ValueData::AstStruct(m, _) => {
-                    m.iter().map(|(k, v)| (k.clone(), OvmValue::from_ast(v.clone()))).collect()
+                ValueData::AstMap(m) | ValueData::AstStruct(m, _) => m
+                    .iter()
+                    .map(|(k, v)| (k.clone(), OvmValue::from_ast(v.clone())))
+                    .collect(),
+                ValueData::Struct(st) => {
+                    st.iter().map(|(k, v)| (k.clone(), (*v).clone())).collect()
                 }
-                ValueData::Struct(st) => st.iter().map(|(k, v)| (k.clone(), (*v).clone())).collect(),
                 _ => return None,
             })
         };
@@ -10431,7 +10434,8 @@ impl BytecodeVm {
             for p in &parts[1..] {
                 rest.extend(fields_of(p)?);
             }
-            if let Some(next) = first.with_fields(rest.iter().map(|(k, v)| (k.as_str(), v.clone()))) {
+            if let Some(next) = first.with_fields(rest.iter().map(|(k, v)| (k.as_str(), v.clone())))
+            {
                 return Some(Ok(OvmValue::new_struct(next)));
             }
         }
@@ -10441,7 +10445,10 @@ impl BytecodeVm {
                 out.insert(k, v);
             }
         }
-        Some(Ok(OvmValue::new_struct(StructObject::from_pairs("Object", out.into_iter().collect()))))
+        Some(Ok(OvmValue::new_struct(StructObject::from_pairs(
+            "Object",
+            out.into_iter().collect(),
+        ))))
     }
 
     /// Where `xs[i] = v` (subscript) or `col.set` writes in a list of

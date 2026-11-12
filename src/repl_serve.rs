@@ -3057,20 +3057,18 @@ impl Session {
                     Err(e) => json!({ "ok": false, "error": { "kind": "error", "message": e } }),
                 }
             }
-            _ if crate::ods::gg::is_spec(&v) => {
-                match crate::ods::gg::scene_of(&v, None) {
-                    Ok(scene) => {
-                        let text: String = scene
-                            .to_svg()
-                            .chars()
-                            .skip(start)
-                            .take(count.max(1) * 100)
-                            .collect();
-                        json!({ "ok": true, "s": text })
-                    }
-                    Err(e) => json!({ "ok": false, "error": { "kind": "error", "message": e } }),
+            _ if crate::ods::gg::is_spec(&v) => match crate::ods::gg::scene_of(&v, None) {
+                Ok(scene) => {
+                    let text: String = scene
+                        .to_svg()
+                        .chars()
+                        .skip(start)
+                        .take(count.max(1) * 100)
+                        .collect();
+                    json!({ "ok": true, "s": text })
                 }
-            }
+                Err(e) => json!({ "ok": false, "error": { "kind": "error", "message": e } }),
+            },
             Value::String(s) if msg.get("chart").is_some() => match chart_of(s) {
                 Some(mut c) => {
                     let bound = |k: &str| msg["chart"].get(k).and_then(|x| x.as_f64());

@@ -50,15 +50,15 @@
 //! when the heap has doubled since the last walk; and on
 //! `runtime.collect()`.
 
-use crate::ast::{EnumVariantData, EnumValue, Function, Value, ValueMap};
+use crate::ast::{EnumValue, EnumVariantData, Function, Value, ValueMap};
 use crate::native::{NativeHandle, NativeObject, Traced};
 use crate::ovm::struct_object::StructObject;
 use crate::ovm::value::{
     ClosureObject, EnumData, EnumObject, FunctionObject, OvmMap, OvmValue, ResultObject, ValueData,
 };
 use crate::value_struct::StructFields;
-use std::cell::RefCell;
 use rustc_hash::FxHashMap as HashMap;
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
@@ -77,10 +77,7 @@ static SINCE: AtomicUsize = AtomicUsize::new(0);
 static THRESHOLD: AtomicUsize = AtomicUsize::new(THRESHOLD_MIN);
 static HEAP_AFTER: AtomicU64 = AtomicU64::new(0);
 static COLLECTING: AtomicBool = AtomicBool::new(false);
-static TOTALS: Mutex<Totals> = Mutex::new(Totals {
-    walks: 0,
-    freed: 0,
-});
+static TOTALS: Mutex<Totals> = Mutex::new(Totals { walks: 0, freed: 0 });
 
 struct Totals {
     walks: u64,
@@ -114,7 +111,7 @@ pub fn track(handle: &NativeHandle) {
         .push(Arc::downgrade(&handle.0));
     let since = SINCE.fetch_add(1, Ordering::Relaxed) + 1;
     let due = since >= THRESHOLD.load(Ordering::Relaxed)
-        || (since % HEAP_CHECK_EVERY == 0 && heap_doubled());
+        || (since.is_multiple_of(HEAP_CHECK_EVERY) && heap_doubled());
     if due {
         collect();
     }

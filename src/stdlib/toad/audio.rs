@@ -775,7 +775,11 @@ fn taped(t: Taping) -> Value {
     m.insert("channels".into(), Value::Integer(channels as i64));
     m.insert(
         "ms".into(),
-        Value::Integer(if rate == 0 { 0 } else { (frames * 1000 / rate as u64) as i64 }),
+        Value::Integer(if rate == 0 {
+            0
+        } else {
+            (frames * 1000 / rate as u64) as i64
+        }),
     );
     Value::Map(Arc::new(m))
 }
@@ -904,26 +908,62 @@ fn transports() -> HashMap<String, &'static str> {
     // SAFETY: CoreAudio's documented property calls: the sizes asked for
     // first, the buffers as large as it says, the name a CFString we own.
     unsafe {
-        let devs = Addr { selector: cc(b"dev#"), scope: global, element: 0 };
+        let devs = Addr {
+            selector: cc(b"dev#"),
+            scope: global,
+            element: 0,
+        };
         let mut size: u32 = 0;
         if AudioObjectGetPropertyDataSize(1, &devs, 0, std::ptr::null(), &mut size) != 0 {
             return out;
         }
         let mut ids = vec![0u32; size as usize / 4];
-        if AudioObjectGetPropertyData(1, &devs, 0, std::ptr::null(), &mut size, ids.as_mut_ptr().cast()) != 0 {
+        if AudioObjectGetPropertyData(
+            1,
+            &devs,
+            0,
+            std::ptr::null(),
+            &mut size,
+            ids.as_mut_ptr().cast(),
+        ) != 0
+        {
             return out;
         }
         for id in ids.into_iter().take(size as usize / 4) {
             let mut tran: u32 = 0;
             let mut n = 4u32;
-            let a = Addr { selector: cc(b"tran"), scope: global, element: 0 };
-            if AudioObjectGetPropertyData(id, &a, 0, std::ptr::null(), &mut n, (&mut tran as *mut u32).cast()) != 0 {
+            let a = Addr {
+                selector: cc(b"tran"),
+                scope: global,
+                element: 0,
+            };
+            if AudioObjectGetPropertyData(
+                id,
+                &a,
+                0,
+                std::ptr::null(),
+                &mut n,
+                (&mut tran as *mut u32).cast(),
+            ) != 0
+            {
                 continue;
             }
             let mut name: *const objc2_core_foundation::CFString = std::ptr::null();
             let mut n = std::mem::size_of::<*const c_void>() as u32;
-            let a = Addr { selector: cc(b"lnam"), scope: global, element: 0 };
-            if AudioObjectGetPropertyData(id, &a, 0, std::ptr::null(), &mut n, (&mut name as *mut *const objc2_core_foundation::CFString).cast()) != 0 {
+            let a = Addr {
+                selector: cc(b"lnam"),
+                scope: global,
+                element: 0,
+            };
+            if AudioObjectGetPropertyData(
+                id,
+                &a,
+                0,
+                std::ptr::null(),
+                &mut n,
+                (&mut name as *mut *const objc2_core_foundation::CFString).cast(),
+            ) != 0
+            {
                 continue;
             }
             let Some(nn) = std::ptr::NonNull::new(name.cast_mut()) else {
@@ -993,7 +1033,9 @@ fn pick_input(named: Option<&str>) -> Result<(cpal::Device, &'static str, String
             .map(|(d, k, name, _)| (d, k, name))
             .ok_or_else(|| format!("no microphone named \"{n}\""));
     }
-    let sys_bluetooth = all.iter().any(|(_, k, _, is_sys)| *is_sys && *k == "bluetooth");
+    let sys_bluetooth = all
+        .iter()
+        .any(|(_, k, _, is_sys)| *is_sys && *k == "bluetooth");
     let at = if sys_bluetooth {
         all.iter().position(|(_, k, _, _)| *k == "built-in")
     } else {
@@ -1020,7 +1062,10 @@ pub fn mics() -> Value {
                 let mut m = ValueMap::default();
                 m.insert("kind".into(), Value::String(kind.to_string().into()));
                 m.insert("system".into(), Value::Boolean(is_sys));
-                m.insert("chosen".into(), Value::Boolean(chosen.as_deref() == Some(name.as_str())));
+                m.insert(
+                    "chosen".into(),
+                    Value::Boolean(chosen.as_deref() == Some(name.as_str())),
+                );
                 m.insert("name".into(), Value::String(name.into()));
                 Value::Map(Arc::new(m))
             })
@@ -1039,16 +1084,18 @@ pub fn mic(what: &Value) -> Result<Value, String> {
     let (path, named): (&str, Option<String>) = match what {
         Value::Unit => return Ok(with(|st| st.mic.take()).map_or(Value::Unit, taped)),
         Value::String(p) => (p.as_ref(), None),
-        rec @ (Value::Map(_) | Value::Struct { .. }) => match rec.record_fields().and_then(|m| m.get("path")) {
-            Some(Value::String(p)) => (
-                p.as_ref(),
-                match rec.record_fields().and_then(|m| m.get("device")) {
-                    Some(Value::String(d)) => Some(d.to_string()),
-                    _ => None,
-                },
-            ),
-            _ => return Err("toad.mic: `path` (where to write it) is needed".to_string()),
-        },
+        rec @ (Value::Map(_) | Value::Struct { .. }) => {
+            match rec.record_fields().and_then(|m| m.get("path")) {
+                Some(Value::String(p)) => (
+                    p.as_ref(),
+                    match rec.record_fields().and_then(|m| m.get("device")) {
+                        Some(Value::String(d)) => Some(d.to_string()),
+                        _ => None,
+                    },
+                ),
+                _ => return Err("toad.mic: `path` (where to write it) is needed".to_string()),
+            }
+        }
         _ => return Err("toad.mic: a path begins it, () ends it".to_string()),
     };
     {
@@ -1067,44 +1114,47 @@ pub fn mic(what: &Value) -> Result<Value, String> {
                 .spawn(move || {
                     use cpal::traits::{DeviceTrait, StreamTrait};
                     let (tx, rx) = std::sync::mpsc::channel::<Vec<f32>>();
-                    let made = (|| -> Result<(cpal::Stream, u32, u16, &'static str, String), String> {
-                        let (device, kind, dname) = pick_input(named.as_deref())?;
-                        let config = device
-                            .default_input_config()
-                            .map_err(|e| format!("the microphone: {e}"))?;
-                        let format = config.sample_format();
-                        let cfg: cpal::StreamConfig = config.into();
-                        let (rate, channels) = (cfg.sample_rate, cfg.channels);
-                        let err = |e: cpal::Error| eprintln!("toad mic: {e}");
-                        let stream = match format {
-                            cpal::SampleFormat::F32 => device.build_input_stream(
-                                cfg,
-                                move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                                    let _ = tx.send(data.to_vec());
-                                },
-                                err,
-                                None,
-                            ),
-                            cpal::SampleFormat::I16 => device.build_input_stream(
-                                cfg,
-                                move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                                    let _ = tx.send(
-                                        data.iter().map(|x| *x as f32 / i16::MAX as f32).collect(),
-                                    );
-                                },
-                                err,
-                                None,
-                            ),
-                            other => {
-                                return Err(format!(
-                                    "the microphone's samples are {other}, not f32 or i16"
-                                ));
+                    let made =
+                        (|| -> Result<(cpal::Stream, u32, u16, &'static str, String), String> {
+                            let (device, kind, dname) = pick_input(named.as_deref())?;
+                            let config = device
+                                .default_input_config()
+                                .map_err(|e| format!("the microphone: {e}"))?;
+                            let format = config.sample_format();
+                            let cfg: cpal::StreamConfig = config.into();
+                            let (rate, channels) = (cfg.sample_rate, cfg.channels);
+                            let err = |e: cpal::Error| eprintln!("toad mic: {e}");
+                            let stream = match format {
+                                cpal::SampleFormat::F32 => device.build_input_stream(
+                                    cfg,
+                                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                                        let _ = tx.send(data.to_vec());
+                                    },
+                                    err,
+                                    None,
+                                ),
+                                cpal::SampleFormat::I16 => device.build_input_stream(
+                                    cfg,
+                                    move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                                        let _ = tx.send(
+                                            data.iter()
+                                                .map(|x| *x as f32 / i16::MAX as f32)
+                                                .collect(),
+                                        );
+                                    },
+                                    err,
+                                    None,
+                                ),
+                                other => {
+                                    return Err(format!(
+                                        "the microphone's samples are {other}, not f32 or i16"
+                                    ));
+                                }
                             }
-                        }
-                        .map_err(|e| format!("the microphone: {e}"))?;
-                        stream.play().map_err(|e| format!("the microphone: {e}"))?;
-                        Ok((stream, rate, channels, kind, dname))
-                    })();
+                            .map_err(|e| format!("the microphone: {e}"))?;
+                            stream.play().map_err(|e| format!("the microphone: {e}"))?;
+                            Ok((stream, rate, channels, kind, dname))
+                        })();
                     match made {
                         Err(e) => {
                             let _ = up_tx.send(Err(e));

@@ -546,7 +546,9 @@ fn handle(st: &mut State, m: Msg) {
         }
         Msg::Capture(id, ask, reply) => {
             let r = match st.wins.get_mut(&id) {
-                None => Err("gui.capture: the window is not drawn on the render thread".to_string()),
+                None => {
+                    Err("gui.capture: the window is not drawn on the render thread".to_string())
+                }
                 Some(w) => match ask {
                     CaptureAsk::Start(opts) => w.surface.capture_start(*opts).map(|_| None),
                     CaptureAsk::Stats => Ok(w.surface.capture_stats()),
