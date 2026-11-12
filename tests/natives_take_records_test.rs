@@ -53,6 +53,27 @@ let c = gui.flatten(view_r(5), SPEC_M, ())
 println("records lay out as maps " + show(said(a) == said(b) && said(a) == said(c)))
 println("a record frame keeps the last " + show(gui.flatten(view_r(5), SPEC_R, b).n == 6))
 println(said(b))
+// a frame of another shape kept by key from last frame's, `prev` given
+// as a map and as a record (OL-596)
+fn boxes(f) = flatten(map(range(0, f.n), (i) => [0.0, to_float(i) * 20.0, 40.0, 16.0]))
+gui.flat_keep(b.id, boxes(b))
+let e1 = gui.flat_emit(b, (), SPEC_R, (), ())
+let next = gui.flatten(view_r(4), SPEC_R, b)
+gui.flat_keep(next.id, boxes(next))
+// last frame's placements marked, so what is kept is counted
+let e1m = #{ ...e1, "recs": map(e1.recs, (rs) => map(rs, (r) => map_set(r, "mark", true))) }
+fn kept(e) = fold(e.recs, 0, (a, rs) => a + len(filter(rs, (r) => r.mark == true)))
+// in a named function, called often enough that the bytecode tier runs it
+fn keyed(next, prev_flat, out, as_record) = if as_record => gui.flat_emit(next, (), SPEC_R, "keyed", { flat: prev_flat, out: out })
+    else => gui.flat_emit(next, (), SPEC_R, "keyed", #{ "flat": prev_flat, "out": out })
+let mut by_map = ()
+let mut by_rec = ()
+for _ in 0..200 {
+    by_map = keyed(next, b, e1m, false)
+    by_rec = keyed(next, b, e1m, true)
+}
+println("keyed keep reads a record prev " + show(kept(by_map) > 0 && kept(by_map) == kept(by_rec)))
+println("keyed keep keeps " + to_string(kept(by_map)) + " and " + to_string(kept(by_rec)))
 "##;
 
 #[cfg(feature = "gui")]
@@ -63,6 +84,7 @@ fn gui_flatten_reads_records_as_maps_on_both_tiers() {
     assert_eq!(tree, vm, "the tiers disagree");
     assert!(tree.contains("records lay out as maps true"), "{tree}");
     assert!(tree.contains("a record frame keeps the last true"), "{tree}");
+    assert!(tree.contains("keyed keep reads a record prev true"), "{tree}");
 }
 
 /// Options given as records, and maps inside options given as records.
