@@ -196,8 +196,9 @@ pub fn parse(history: &[Value]) -> Result<Vec<Op>, String> {
     let mut open: HashMap<String, usize> = HashMap::new();
     let mut failed: HashSet<usize> = HashSet::new();
     for (i, e) in history.iter().enumerate() {
-        let Value::Map(m) = e else {
-            return Err(format!("history entry {i} is not a map"));
+        // an entry is a map or a record (OL-600)
+        let Some(m) = e.record_fields() else {
+            return Err(format!("history entry {i} is not a map or a record"));
         };
         let kind = match field(m, "type") {
             Some(Value::String(t)) => t.to_string(),

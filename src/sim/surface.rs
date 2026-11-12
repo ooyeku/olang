@@ -650,8 +650,9 @@ fn run_opts(
 ) -> Result<(Option<u64>, Vec<super::props::Property>), InterpreterError> {
     let mut props = Vec::new();
     let run_for = match opts {
-        Some(o @ Value::Map(m)) if m.contains_key("props") => {
-            let mut rest = (**m).clone();
+        // the options as a map or a record (OL-600)
+        Some(o) if o.record_fields().is_some_and(|m| m.contains_key("props")) => {
+            let mut rest = o.record_fields().expect("a map or a record").clone();
             if let Some(p) = rest.shift_remove("props") {
                 props = props_of(&p, what)?;
             }

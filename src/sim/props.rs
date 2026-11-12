@@ -424,9 +424,10 @@ pub fn linearize(
     model: &Value,
     max_steps: u64,
 ) -> Result<Verdict, String> {
-    let Value::Map(m) = model else {
+    // a model of the program's own is a map or a record (OL-600)
+    let Some(m) = model.record_fields() else {
         return Err(format!(
-            "a model is sim.register(init), sim.kv(), or #{{ init, step }}, got {}",
+            "a model is sim.register(init), sim.kv(), or {{ init, step }}, got {}",
             model.type_name()
         ));
     };
