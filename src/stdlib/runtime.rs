@@ -95,6 +95,10 @@ fn runtime_on_crash(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
     let (dir, opts) = match args.as_slice() {
         [Value::String(d)] => (d.to_string(), None),
         [Value::String(d), Value::Map(o)] => (d.to_string(), Some(o.clone())),
+        // options given as a record (OL-600)
+        [Value::String(d), r] if r.record_fields().is_some() => {
+            (d.to_string(), Some(std::sync::Arc::new(r.record_fields().expect("a record").clone())))
+        }
         _ => return Err(usage.into()),
     };
     #[cfg(unix)]
@@ -255,6 +259,10 @@ fn runtime_profile_live_start(args: Vec<Value>) -> Result<Value, Box<dyn std::er
     let (dir, opts) = match args.as_slice() {
         [Value::String(d)] => (d.to_string(), None),
         [Value::String(d), Value::Map(o)] => (d.to_string(), Some(o.clone())),
+        // options given as a record (OL-600)
+        [Value::String(d), r] if r.record_fields().is_some() => {
+            (d.to_string(), Some(std::sync::Arc::new(r.record_fields().expect("a record").clone())))
+        }
         _ => return Err(usage.into()),
     };
     let int_opt = |k: &str, default: u64, least: u64| -> Result<u64, String> {
