@@ -1,429 +1,400 @@
-# Idiomatic olang (draft)
-
-> Draft, 2026-11-11. Not committed. Nothing in the code has been changed.
-> Each point is tagged:
-> **Today**: olang 1.0.0-rc.8 supports it, so you can write it now.
-> **Change**: it needs a language or tool change. That can't land in the
-> 1.0 freeze, so it is listed for 1.1.0 or 2.0.0, with the existing
-> OL issue where there is one.
-> The "before" examples are real code. The "after" examples ran on rc.8,
-> or are marked as sketches.
-
-Most of what makes today's code hard to read is habit, not the
-language. Studio's `core/` and `face/` hold about 81,000 lines, with
-11,300 `#{ }` literals, 5,950 `map_set` calls, no `struct`, no `enum`,
-no `error` declaration and no `type` alias. There are 3,500 lines over
-160 characters, and two update functions of more than 450 lines.
-olang already has bare-key records, record spread, record patterns with
-guards, structs, enums, named arguments and module namespaces. The
-first rule is to use them.
-
----
-
-## 1. Data: record, struct, enum or map
-
-- **A value with fixed, known fields is a record `{ k: v }`, not a map
-  `#{ "k": v }`.** Records read with `.k`, as maps do. They print, compare
-  and serialize the same way, and `#{ "a": 1 } == { a: 1 }` is true. So
-  they mix with existing map code without changes. `olang check` warns
-  on a misspelt field (`` `nn` is not a key any construction of `o` has
-  … did you mean `n`? ``). **Today.**
-
-  ```olang
-  // before: apps/studio/face/agentface.ol:837
-  return (ah_wait(m, id, #{ "kind": "wait", "wait": "lsp", "deadline": m.now + 20000 }), [])
-  // after
-  return (ah_wait(m, id, { kind: "wait", wait: "lsp", deadline: m.now + 20000 }), [])
-  ```
-
-- **Keep `#{ }` for real dictionaries.** Use it where the keys are data
-  (paths, ids, names typed by a person), or where a key is not an
-  identifier (`"content-type"`). `VC_SRC` in `tests/convkit.ol` (file path
-  → text) is a true map. A message, an effect, a model or an options
-  record is not. **Today.**
-
-- **Update with a spread, not nested `map_set`.** `{ ...r, k: v }` copies
-  `r` with `k` set, works on maps and records alike, and nests.
-  **Today.**
-
-  ```olang
-  // before: libraries/loom/lib/layout.ol:852
-  let gop = ly_pos(map_set(map_set(map_set(map_set(rec.gop, "role", "listitem"), "selected", sel), "focusable", false), "index", idx), i, count)
-  // after
-  let gop = ly_pos({ ...rec.gop, role: "listitem", selected: sel, focusable: false, index: idx }, i, count)
-  ```
-
-  ```olang
-  // a nested update, no map_set_in needed when the path is fixed
-  fn step(m) = { ...m, sel: m.sel + 1, view: { ...m.view, top: 0 } }
-  ```
-
-  Keep `map_set(m, k, v)` for a computed key, and the
-  `m = map_set(m, k, v)` rebind inside a hot loop. `performance.md` says
-  that form compiles to an in-place insert.
-
-  **Performance (measured on rc.8, 2026-11-11, 200,000 iterations):**
-  - Building a record `{ }` is 2–3× faster than building a `#{ }` map,
-    and reading fields from it is as fast or faster.
-  - Spread a value of the same kind: `#{ ...m, "k": v }` over a map
-    (152 ms), `{ ...r, k: v }` over a record. Spreading across kinds
-    converts the value and costs 2–3× more (425 ms).
-  - A same-kind spread beats a `map_set` chain (282 ms) for a one-off
-    update of a value something else holds.
-  - In a hot rebind loop, `m = map_set(m, "a", …)` on a map is in place
-    (10 ms). The same on a record (138 ms) or as a spread (131–357 ms)
-    copies every time. Keep hot loops on maps with `map_set` until
-    records get the in-place path.
-  - An arm that runs once per message pays a microsecond or two either
-    way.
-
-- **Give a shape you pass around a name with `type Name = { … }`.** A
-  shape alias costs nothing at runtime. It lets the checker check every
-  `.field` read against one declaration, and it documents the record
-  where a reader looks for it. Studio declares none today. The model
-  `m`, the message `x`, and each page record are the obvious first
-  ones. **Today.**
-
-  ```olang
-  type Msg = { tag: String, arg: Any, at: Int }
-  fn sa_update(m0: Model, x: Msg) = …
-  ```
-
-- **Use a `struct` when construction should be checked.** A struct
-  refuses a missing or surprise field, and its field types are checked
-  at runtime. It suits values made in many places that must all agree,
-  such as work-scheduler's `CtEnvelope` or a Track issue. A record shape
-  alias is lighter and enough for internal state. **Today.**
-
-- **Use an `enum` for a closed set of cases, not `"kind": "x"`
-  strings.** Studio has 306 `#{ "kind": … }` literals and many
-  `if p.kind == "diff" … else if p.kind == "history"` chains. An enum
-  gets exhaustiveness warnings from `olang check` and patterns that bind
-  the payload. Its limit is payloads: they are positional only
-  (`Diff(root, big_ok)`). That pushes people back to maps when a case
-  has more than two fields. **Today**, with that limit. Named-field
-  variants need a **change**: OL-313 (2.0.0).
-
-  ```olang
-  // before: apps/studio/face/gitpage.ol:427
-  if p.kind == "diff" => (m, [gd_read_fx(p, p.root, p.big_ok == true)])
-  else if p.kind == "history" => (m, [gd_hist_fx(p, 0)]) else => (m, [])
-  // after (today, with a record pattern; or an enum Page { Diff(..), History(..) })
-  match p {
-      { kind: "diff" } => (m, [gd_read_fx(p, p.root, big_ok: p.big_ok ?? false)]),
-      { kind: "history" } => (m, [gd_hist_fx(p, 0)]),
-      _ => (m, []),
-  }
-  ```
-
-- **Don't hand-roll records as positional lists.** `mailbox/mb_mailbox.ol`
-  keeps "one flat list of nine slots" for speed, and a header comment
-  explains what `b[3]` means. Where the speed is measured and needed,
-  name the slots (`let MB_DEADLINE = 3`) so the code reads `b[MB_DEADLINE]`.
-  Everywhere else, use a record. **Today.**
-
-- **Gaps.**
-  - Field punning in literals: `{ holes }` for `{ holes: holes }`. It
-    parses in patterns but not in literals. **Change**: 1.1.0 candidate
-    (additive). It fits OL-307.
-  - A single record syntax with `with` update (`m with { sel: 3 }`).
-    **Change**: OL-307 (2.0.0). Most of it is already possible with
-    `{ ...m, sel: 3 }`, so the remaining case for OL-307 is nested paths
-    (`m with { view.top: 0 }`) and fixed shapes on the native tier.
-  - `olang fix records`, which rewrites a `#{ }` whose keys are all literal
-    identifiers into `{ }`, and a chain of literal-key `map_set` into one
-    spread. This is a tool, not a language change, and today's
-    semantics already allow it. **Change**: 1.1.0 candidate. OL-307 has
-    it only as a 2.0 migration step. It is the highest-leverage single
-    change for readability.
-  - Function-typed struct fields with more than one parameter must be
-    `Any` (OL-515, 1.0-freeze bug). That is why work-scheduler's
-    contracts read `struct { new: Any, register: Any, … }`.
-
-## 2. Naming and prefixes
-
-- **Prefixes like `hl_`, `pz_`, `tz_` and `sr_` hurt.** They were added
-  to stop collisions between files imported flat with `use m { names }`.
-  The price is that every name starts with two meaningless letters.
-  Studio's `VC_PREFIXES` has more than 150 of them: `tz_`/`tv_` (tests),
-  `pz_`/`pw_` (profiler), `cf_` (settings). `sr_` is given to both
-  `core/search.ol` and `face/wsrun.ol`, so they don't even guarantee
-  uniqueness.
-
-- **olang already has qualified access.** `use core.search {}` binds the
-  module's namespace, and calls read `search.find(q)`. **Today.**
-
-  ```olang
-  // before: apps/studio/face/agentface.ol:36 (a 300+ character use line)
-  use core.agent { ag_lat_rows, ag_agents, ag_agent_key, ag_agent_name, ag_sweep, … }
-  ag_resolve(root, p)
-  // after
-  use core.agent {}
-  agent.resolve(root, p)
-  ```
-
-  Three things stop this from replacing prefixes yet, so it is only
-  partly ready:
-  - **There is no module alias.** `use core.search as s` fails with a
-    misleading runtime error, `Undefined variable: as`. That error
-    message is a 1.0 bug worth an OL issue. The alias itself is
-    **Change**: OL-312 / OL-279 (2.0.0).
-  - **Two modules with the same last segment collide silently.**
-    `use core.search {}` then `use face.search {}` makes `search` the
-    second one, and `olang check` reports the file clean.
-  - **A project module named like a stdlib module shadows it
-    silently.** `use core.task {}` replaces `task`.
-
-  Both silent collisions should be `olang check` warnings: a 1.1.0
-  candidate, or a 1.0 bug fix if the owner counts silent shadowing as
-  one.
-
-- **Until then, prefer whole words for short prefixes in new code.** A
-  file `core/trust.ol` exporting `trust_allows` reads better than
-  `tr_allows`, and the convention test can check a word prefix as
-  easily as two letters. **Today**, as a convention change (convkit's
-  `VC_PREFIXES` accepts any string).
-
-- **Name functions as verbs and values as nouns. Drop numbered
-  rebinds.** `m0`/`m1`/`m2`/`m3` and `f1`…`f4` in `sa_update` tell the
-  reader nothing; `let m = …` shadowing is allowed and usually clearer
-  (see §5). **Today.**
-
-- **Booleans read as questions, and absence defaults with `??`.**
-  `p.big_ok == true` is there because a missing field is `()`, and a
-  condition must be a Bool. `p.big_ok ?? false` says that directly.
-  **Today.**
-
-## 3. Long lines versus blocks
-
-- **One idea per line, and about 100 columns.** `olang fmt` does not
-  re-wrap, so the formatter will not do it for you. The 30 lines in
-  `face/` over 300 characters are each several statements in one
-  expression. **Today**, by hand.
-
-  ```olang
-  // before: apps/studio/face/agentface.ol:1548
-  let head = if len(rows) == 0 => "No bench ran: " + ag_cut(ag_plain(out), 4000) else => "olang bench " + ag_rel(base, path) + (if fs.exists(basef) => " against the baseline" else => " (no baseline yet: Studio's Profiler › Benches sets one)") + (if b.regressed => " · SLOWER" else => "")
-  // after
-  let head = if len(rows) == 0 => "No bench ran: " + ag_cut(ag_plain(out), 4000) else => {
-      let against = if fs.exists(basef) => " against the baseline"
-          else => " (no baseline yet: Studio's Profiler › Benches sets one)"
-      let slower = if b.regressed => " · SLOWER" else => ""
-      `olang bench ${ag_rel(base, path)}${against}${slower}`
-  }
-  ```
-
-- **Break a long record over lines, one field per line, with a trailing
-  comma.** Literals, `use` lists and argument lists all accept that.
-  **Today.**
-
-- **Use template strings for text made of parts.**
-  `` `${a} at ${b}` `` instead of `a + " at " + to_string(b)`. A template
-  formats a value itself, so the `to_string` calls go too. **Today.**
-  (Templates have no escapes and do not nest: OL-316, 2.0.0.)
-
-- **Gap.** A width-aware `olang fmt` that breaks long calls, literals
-  and `if` chains at a set width. **Change**: 1.1.0 candidate
-  (`stability.md` lets fmt output change in a minor release).
-  Meanwhile, a line-length rule in the conventions suite (convkit
-  already reads every line) would hold new code to it **today**.
-
-## 4. `if … =>` chains versus `match`
-
-- **Use `match` when every branch tests the same value.** A `match` with
-  record patterns and guards does what the long early-return chains do,
-  in one place. **Today.**
-
-  ```olang
-  // before: apps/studio/face/app.ol:2041 (13 such lines in a row)
-  if typeof(x.tag) == "String" && str.starts_with(x.tag, "term.") => return tf_update(m, x)
-  if typeof(x.tag) == "String" && str.starts_with(x.tag, "nb.d.") => return nd_update(m, x)
-  if typeof(x.tag) == "String" && str.starts_with(x.tag, "nb.w.") => return ny_update(m, x)
-  …
-  // after (today: guards)
-  let tag = if typeof(x.tag) == "String" => x.tag else => ""
-  match tag {
-      t if str.starts_with(t, "term.") => tf_update(m, x),
-      t if str.starts_with(t, "nb.d.") => nd_update(m, x),
-      t if str.starts_with(t, "nb.w.") => ny_update(m, x),
-      …
-  }
-  // or, better still, a table: [("term.", tf_update), ("nb.d.", nd_update), …]
-  // looked up once with first(filter(…))
-  ```
-
-- **Keep `if … =>` for one or two conditions on different things**, and
-  for early returns at the top of a function (`if !gd_shown(m) =>
-  return (m, [])`). Those read well. **Today.**
-
-- **End a `match` with `_` only when you mean "anything else".** Over an
-  enum, leave it off so `olang check` tells you about a missing case.
-  **Today.**
-
-- **Gap.** String-prefix patterns (`"term." ++ rest => …`) would remove
-  the guard noise above. **Change**: OL-292 (2.0.0).
-
-## 5. Pipes
-
-- **Pipe a value through steps when you would otherwise read inside out.**
-  **Today.**
-
-  ```olang
-  // before: apps/studio/tests/convkit.ol
-  fn vc_glob(pat) = filter(map(sort(unwrap_or(fs.glob(fs.join(VC_ROOT, pat)), [])), vc_rel), vc_keep)
-  // after
-  fn vc_glob(pat) = unwrap_or(fs.glob(fs.join(VC_ROOT, pat)), [])
-      |> sort
-      |> map(vc_rel)
-      |> filter(vc_keep)
-  ```
-
-- **Don't pipe one step, and don't pipe into a lambda that only
-  reorders arguments.** `x |> f` is no clearer than `f(x)`, and
-  `|> (m) => map_set(m, "a", 1)` should be a spread. **Today.**
-
-- **Thread `(model, effects)` with a helper, not numbered names.** The
-  mode switch in `sa_update` threads `m1/f1 … m3/f3`. A two-line helper
-  makes each step one line. **Today.**
-
-  ```olang
-  // sketch
-  fn then((m, fx), step) = { let (m2, more) = step(m); (m2, fx + more) }
-  (m, [])
-      |> then(sa_win_remember)
-      |> then((m) => if left_game => gp_leave(m) else => (m, []))
-  ```
-
-- **Gap.** A placeholder for the piped value inside a call
-  (`|> f(a, _)`, `map(_.name)`). **Change**: OL-310 (2.0.0).
-
-## 6. Errors: `Result`, `?`, `attempt`, `raise`
-
-- **Return `Result` for a failure the caller can handle, and propagate
-  it with `?`.** Studio's `core/` has 66 `?` and 243 arms like
-  `Err(e) => ""`, which swallow the error at the first step. Let it rise
-  to the arm that can tell the person something. **Today.**
-
-  ```olang
-  // before: apps/studio/core/project.ol:66
-  let parsed = match fs.read_file(toml_path) { Ok(t) => toml.parse(t), Err(e) => Err(e) }
-  // after
-  let parsed = toml.parse(fs.read_file(toml_path)?)   // inside a fn returning Result
-  ```
-
-- **When a default really is right, say so in one call.**
-  `match os.get_env("HOME") { Ok(h) => h, Err(e) => "" }`
-  (core/project.ol:24) is `unwrap_or(os.get_env("HOME"), "")`. And
-  `Err(_)` instead of `Err(e)` when the error is ignored on purpose.
-  **Today.**
-
-- **`attempt` is a boundary, not a `try`.** Use it once, around a
-  request handler, a plugin call or one record of a batch, where a bug
-  must not end the program. Not around ordinary calls. **Today.**
-
-- **`raise(text)` is for misuse by the caller** (a bug), never for a
-  condition a caller should handle. **Today.**
-
-- **Use `error` declarations for errors callers will match on.** Nothing
-  in Studio, Loom or work-scheduler declares one. Strings work for
-  messages shown to a person, but an `error StoreError { Locked,
-  Missing: { path: String } }` lets the caller tell cases apart without
-  parsing text. **Today.**
-
-- **Gaps.** `??` over `Err` and `let Ok(x) = e else { … }`: **Change**,
-  OL-308 (2.0.0). Error context chains: OL-294 (2.0.0).
-
-## 7. Function size
-
-- **An update function is a router, not the work.** `sa_update`
-  (face/app.ol, 543 lines) and `wt_update` (face/writeface.ol, 469 lines)
-  hold dozens of handlers inline. Route by tag to named functions, one
-  per message or per group, each short enough to read on one screen
-  (about 40 lines). The routing table is then the map of what the app
-  handles. **Today.**
-
-- **Use a block for a few local steps, and a function when the steps
-  have a name.** A block keeps its intermediates from leaking (see
-  "Blocks are expressions"). If you find yourself writing a comment to
-  say what the block does, make that comment the function's name.
-  **Today.**
-
-- **Use named arguments for flags and optional values.**
-  `gd_read_fx(p, p.root, big_ok: true)` says what `true` means. Named
-  arguments and defaults run on every tier. **Today.** (OL-314 in 2.0.0
-  is about compiling them faster and about option records.)
-
-## 8. Comments
-
-- **Use `///` doc comments on everything a file shares,** in whole
-  sentences: what it is, what it returns, and what `()` means. convkit.ol
-  does this well. **Today.**
-
-- **Comment why, not what.** Studio's inline comments are often a
-  fragment of what the next line does ("the book's example put at the
-  caret of the file in front"). Keep the ones that explain a reason or a
-  workaround (`// OL-516: …`), and turn the rest into names.
-
-- **Put a module header `//!` at the top of every file**, saying what
-  the file is for and what it must not depend on. mb_mailbox.ol's header
-  is a good model. **Today.**
-
-## 9. Module layout
-
-- **Order a file top to bottom.** First the `//!` header, then `use`
-  lines (one module per `use`, lists over lines), then shared types and
-  constants, then shared functions, then private helpers, then `test`
-  blocks. Functions are hoisted and values are not, so constants go
-  above their first use. **Today.**
-
-- **Make a file one idea, about 1,000 lines at most.** `face/agentface.ol`
-  is past 3,000 lines. Its message handlers, its tool performers and its
-  waits are three files. **Today.**
-
-- **Share less.** Every `share` is a name the convention test must
-  police and a reader must find. Keep helpers private, and re-export
-  with `share use` from one front file (`index.ol`, as work-scheduler
-  does) when a package has a public face. **Today.**
-
-- **Gap.** Private-by-default modules with qualified access only.
-  **Change**: OL-279 (2.0.0).
-
-## 10. Smaller things
-
-- `first(xs)` / `last(xs)` instead of `xs[0]` / `xs[len(xs) - 1]` with a
-  length guard; `x.f ?? d` instead of `if x == () => d else => x.f`. The
-  four `olang fix` passes (`guards`, `defaults`, `first-last`, `units`) and
-  `olang fix maps` (`map_get(x, "k")` → `x.k`) do these mechanically.
-  Run them. **Today.**
-- `for (k, v) in entries(m)` to walk a map. **Today.**
-- No `+=`: write `n = n + 1`. **Change**: OL-311 (2.0.0).
-- No slices: `take(skip(ls, a), n)` (convkit's `vc_def_text`) would be
-  `ls[a..a + n]`. **Change**: OL-309 (2.0.0).
-- No set type: `contains(VC_OPEN, t)` over a list. **Change**: OL-315
-  (2.0.0).
-- Use `typeof(x) == "String"` checks once, at the edge where untyped data
-  comes in (a message, parsed JSON), not on every line after it. Better
-  still, annotate the parameter. **Today.**
-
----
-
-## Language and tool candidates, summarized
-
-| Candidate | Kind | Release | Existing issue |
-|---|---|---|---|
-| `olang fix records`: literal-key `#{ }` → `{ }`, `map_set` chains → spread | tool | 1.1.0 | OL-588 (split from OL-307) |
-| Width-aware `olang fmt` | tool | 1.1.0 | OL-589 |
-| `olang check` warns on two namespace imports with the same last name, and on a module shadowing a stdlib module | checker | 1.1.0 (or a 1.0 fix) | OL-590 |
-| `use x as y` gives "Undefined variable: as" instead of a parse error | error message | 1.0 bug | OL-591 |
-| Field punning in literals `{ holes }` | syntax | 1.1.0 | OL-592 |
-| Module alias `use core.search as search` | syntax | 2.0.0 | OL-312, OL-279 |
-| Record `with` update, nested paths | syntax | 2.0.0 | OL-307 |
-| Enum variants with named fields | syntax | 2.0.0 | OL-313 |
-| String-prefix and richer patterns | syntax | 2.0.0 | OL-292 |
-| Pipe placeholder `_` | syntax | 2.0.0 | OL-310 |
-| `??` on `Err`, `let … else` | syntax | 2.0.0 | OL-308 |
-| `+=` | syntax | 2.0.0 | OL-311 |
-| Slices | syntax | 2.0.0 | OL-309 |
-| Function types with 0 or 2+ params | bug | 1.0 freeze | OL-515 |
-
-The candidates new in this draft were filed 2026-11-11 as OL-588 to OL-592.
+# Writing idiomatic olang
+
+Part of [the olang book](README.md) · [Language reference](language.md) · [Common pitfalls](pitfalls.md).
+
+Most olang that is hard to read is not hard because of the language.
+It is hard because it reaches for the general tool when a better one is
+there: a `#{ "k": v }` map where a record would do, `map_set` nested
+three deep where one spread says it, a long `if` chain where a `match`
+lines the cases up. This chapter is the habits that make olang read
+well. Each section says what to write, shows it next to what it
+replaces, and says why. [Writing fast olang](performance.md) covers the
+habits that make it fast, and the two agree almost everywhere; where
+they part, this chapter says so.
+
+## Table of contents
+
+1. [Records for fixed fields, maps for data](#records-for-fixed-fields-maps-for-data)
+2. [Name the shapes you pass around](#name-the-shapes-you-pass-around)
+3. [Enums for a closed set of cases](#enums-for-a-closed-set-of-cases)
+4. [Update with a spread](#update-with-a-spread)
+5. [`match` when every branch tests one value](#match-when-every-branch-tests-one-value)
+6. [Pipe what would read inside out](#pipe-what-would-read-inside-out)
+7. [One idea a line](#one-idea-a-line)
+8. [Errors: let them travel](#errors-let-them-travel)
+9. [Names, and modules instead of prefixes](#names-and-modules-instead-of-prefixes)
+10. [Functions, comments and files](#functions-comments-and-files)
+11. [Letting the tools hold you to it](#letting-the-tools-hold-you-to-it)
+12. [What 1.0 cannot say yet](#what-10-cannot-say-yet)
+
+## Records for fixed fields, maps for data
+
+A value whose fields you know when you write the code is a record,
+`{ name: v }`. A map, `#{ "k": v }`, is for keys that are data: file
+paths, user names, words counted, anything that arrives at run time.
+
+Records read with `.field` as maps do, print as `{ name: v }`, compare
+equal to a map with the same keys, and turn into the same JSON, so
+switching a value from one to the other changes nothing that reads it.
+What they add is that the keys are names: no quotes to type, and
+`olang check` warns when a read names a field that no construction of
+the value has.
+
+```olang
+// the general tool
+let wait_m = #{ "kind": "wait", "on": "server", "deadline": 20000 }
+// what it is
+let wait = { kind: "wait", on: "server", deadline: 20000 }
+println(wait.on)                              // server
+println(show(wait == wait_m))                 // true
+
+// a map, because its keys are data
+let mut seen = #{}
+for w in str.split("a b a c b a", " ") { seen = map_update(seen, w, (n) => (n ?? 0) + 1) }
+println(show(seen.a))                         // 3
+```
+
+A record's key may be any string; one that is not a name, or is one of
+olang's reserved words, is quoted: `{ "fn": f, "content-type": t, tag: "x" }`.
+
+Every native that takes a map takes a record too: the options of
+`os.exec`, `fs.scan` or `md.parse`, the maps inside them (an
+`os.exec`'s `env`), a `gui` view, its props and its theme.
+
+**When a map is still right:** a map that a loop grows with
+`m = map_set(m, k, v)` is updated in place (see [Writing fast
+olang](performance.md)); a record is copied each time instead. For
+values built once and read many times the two cost the same, and a
+record is faster to build.
+
+## Name the shapes you pass around
+
+When several functions take the same record, give its shape a name
+with `type`. The alias costs nothing at run time; it tells the reader
+what a value holds, and `olang check` checks each field read against
+it.
+
+```olang
+type Task = { title: String, done: Bool }
+
+fn finish(t: Task) -> Task = { ...t, done: true }
+fn open_titles(ts: [Task]) = ts |> filter((t) => !t.done) |> map((t) => t.title)
+
+let tasks = [{ title: "write", done: false }, { title: "ship", done: false }]
+println(show(open_titles([finish(tasks[0]), tasks[1]])))   // ["ship"]
+```
+
+Reach for a `struct` when construction itself should be checked: a
+struct literal must name every field, refuses one it does not declare,
+and checks each field's type as it is built. That suits a value made in
+many places that must all agree. A record shape is lighter and is
+enough for a program's own state.
+
+## Enums for a closed set of cases
+
+A string `kind` field and an `if` chain over it is an enum the
+language cannot see. Declared as one, each case carries its own data,
+a `match` binds it, and `olang check` warns about a case the `match`
+forgot.
+
+```olang
+type Page = enum { Diff(String, Bool), History(Int), Closed }
+
+fn reload(p) = match p {
+    Diff(root, big_ok) => "diff of " + root + (if big_ok => " (large files too)" else => ""),
+    History(from) => "history from " + to_string(from),
+    Closed => "nothing to reload",
+}
+println(reload(Diff("src", true)))
+println(reload(History(0)))
+```
+
+An enum's cases take positional fields only. When a case needs more
+than two or three, give it a record or a struct as its one field
+(`Diff(DiffPage)`), or match records by their `kind` as the next
+section but one shows.
+
+## Update with a spread
+
+A copy of a record or map with some fields changed is a spread:
+`{ ...r, k: v }` for a record, `#{ ...m, "k": v }` for a map. One
+spread says what a chain of `map_set` says, and it nests.
+
+```olang
+let rec = { role: "item", key: "a", selected: false, index: 0 }
+// before: every update its own call, read inside out
+let a = map_set(map_set(map_set(rec, "role", "listitem"), "selected", true), "index", 3)
+// after
+let b = { ...rec, role: "listitem", selected: true, index: 3 }
+println(show(a == b))                          // true
+
+// a nested update
+let model = { sel: 1, view: { top: 9, height: 30 } }
+let scrolled = { ...model, view: { ...model.view, top: 0 } }
+println(show(scrolled.view.top))               // 0
+```
+
+Spread a value into a literal of its own kind: a record into `{ }`, a
+map into `#{ }`. Spreading one into the other converts it, which costs
+more than either.
+
+Keep `map_set` for a key computed at run time, and for the
+`m = map_set(m, k, v)` rebind of a map inside a loop, which is updated
+in place.
+
+## `match` when every branch tests one value
+
+An `if … else if` chain that tests the same thing in every branch is a
+`match`. The cases line up, a record pattern names the fields it reads,
+and a guard says the rest.
+
+```olang
+fn describe(msg) = match msg {
+    { tag: "open", arg: path } => "open " + path,
+    { tag: "close" } => "close",
+    { tag: t } if str.starts_with(t, "term.") => "a terminal's " + str.substring(t, 5, str.length(t)),
+    _ => "ignored",
+}
+println(describe({ tag: "open", arg: "main.ol" }))
+println(describe({ tag: "term.o3", arg: () }))
+```
+
+Keep `if … =>` for one or two conditions on different things, and for
+an early return at the top of a function:
+
+```olang
+fn reload(page, shown) = {
+    if !shown => return "not shown"
+    if page == () => return "no page"
+    "reloading " + page
+}
+println(reload("diff", true))
+```
+
+Over an enum, leave out the final `_` so that `olang check` can tell you
+about a case you missed.
+
+## Pipe what would read inside out
+
+When a value goes through several steps, a pipeline reads in the order
+they happen.
+
+```olang
+let files = ["b.ol", "_scratch.ol", "a.ol"]
+// before
+let kept = filter(map(sort(files), (f) => "src/" + f), (p) => !str.contains(p, "/_"))
+// after
+let kept2 = files
+    |> sort
+    |> map((f) => "src/" + f)
+    |> filter((p) => !str.contains(p, "/_"))
+println(show(kept == kept2))                   // true
+```
+
+A pipe of one step (`x |> f`) is no clearer than `f(x)`, and a lambda
+stage that only reorders arguments, `|> (m) => map_set(m, "a", 1)`, is
+better said as a spread.
+
+When an update function returns `(model, effects)` and runs several
+steps, a two-line helper threads the pair so each step is one line:
+
+```olang
+fn then((m, fx), step) = {
+    let (m2, more) = step(m)
+    (m2, fx + more)
+}
+let (m, fx) = ({ count: 0 }, [])
+    |> then((m) => ({ ...m, count: m.count + 1 }, ["saved"]))
+    |> then((m) => (m, if m.count > 0 => ["notify"] else => []))
+println(show((m.count, fx)))                   // (1, ["saved", "notify"])
+```
+
+## One idea a line
+
+`olang fmt` lays code out but does not re-wrap a long line, so keeping
+lines short is yours to do. Around a hundred columns is a good limit.
+Past it, a line is almost always several ideas, and each can have a
+name.
+
+```olang
+let rows = []
+let regressed = true
+let has_baseline = false
+// before
+let head = if len(rows) == 0 => "No bench ran" else => "olang bench" + (if has_baseline => " against the baseline" else => " (no baseline yet)") + (if regressed => " · SLOWER" else => "")
+// after
+let against = if has_baseline => " against the baseline" else => " (no baseline yet)"
+let slower = if regressed => " · SLOWER" else => ""
+let head2 = if len(rows) == 0 => "No bench ran" else => `olang bench${against}${slower}`
+println(show(head == head2))                   // true
+```
+
+- A long record, list, argument list or `use` list goes one item a line,
+  with a trailing comma.
+- Text made of parts is a template string, `` `${a} at ${b}` ``. A
+  template formats each value itself, so the `to_string` calls go too.
+- An `if` arm's `=>` may start the next line, so a long condition wraps
+  cleanly.
+
+## Errors: let them travel
+
+A failure the caller can handle is a `Result`. Inside a function that
+returns one, `?` hands an `Err` straight back, so an error travels to
+the code that can say something about it instead of turning into an
+empty string at the first step.
+
+```olang
+fn port_of(text) = {
+    let n = str.parse_int(str.trim(text))?
+    if n < 1 || n > 65535 => return Err("a port is 1 to 65535, got " + to_string(n))
+    Ok(n)
+}
+println(show(port_of(" 8080 ")))               // Ok(8080)
+println(show(is_err(port_of("eighty"))))       // true
+```
+
+When a default really is the right answer, say so in one call:
+
+```olang
+// before
+let home_m = match os.get_env("OLANG_IDIOMS_HOME") { Ok(h) => h, Err(e) => "" }
+// after
+let home = unwrap_or(os.get_env("OLANG_IDIOMS_HOME"), "")
+println(show(home == home_m))                  // true
+```
+
+- `Err(_)`, not `Err(e)`, when the error is ignored on purpose.
+- `attempt(f)` is a boundary, not a `try`: put one around a request
+  handler, a plugin's call or one record of a batch, where a bug must
+  not end the program — not around ordinary calls.
+- `raise(text)` is for a caller who used your code wrongly (a bug), not
+  for a condition a caller should handle.
+- An `error` declaration gives callers errors they can match on,
+  instead of text they would have to parse:
+
+```olang
+error StoreError {
+    Locked,
+    Missing: { path: String }
+}
+fn open_store(path) = if fs.exists(path) => Ok(path) else => Err(Missing(path))
+println(match open_store("/no/such/store.db") {
+    Ok(p) => "opened " + p,
+    Err(Locked) => "locked",
+    Err(Missing(p)) => "no store at " + p,
+})
+```
+
+## Names, and modules instead of prefixes
+
+A function is named for what it does (a verb), a value for what it is
+(a noun). A flag reads as a question (`big_ok`, `is_open`), and a
+missing one defaults with `??`: `p.big_ok ?? false`, not
+`p.big_ok == true`.
+
+A run of numbered rebinds (`m0`, `m1`, `m2`) tells the reader nothing.
+A fresh `let m = …` is allowed and usually clearer, and so is naming
+what each step made.
+
+Short name prefixes (`pj_open`, `tz_run`) exist to keep the names that
+files share from colliding when they are imported flat. A module's
+namespace does that job and reads better:
+
+```olang no-run
+// before: every name carries two letters, and the use line lists them all
+use core.project { pj_open, pj_close, pj_files }
+pj_open(root)
+
+// after: the module's name says where a function comes from
+use core.project {}
+project.open(root)
+```
+
+`use m {}` binds the module's namespace and nothing else. To take a
+single function under another name, write `use m { f as g }`. 1.0 has
+no alias for a whole module (`use m as x`), and two modules whose paths
+end in the same name (`core.search` and `face.search`) bind the same
+namespace, the later one winning; give one of them its own file name.
+Where a project keeps prefixes, a whole word (`project_open`) reads
+better than two letters.
+
+Named arguments make a call say what a flag means:
+`read_diff(page, root, big_ok: true)`. On the compiled tiers a named
+call costs more than a positional one, so in a loop that runs per node
+or per element, pass by position.
+
+## Functions, comments and files
+
+**A function does one thing and fits on a screen.** An update function
+that handles every message is a router: it names the handler for each
+message, and each handler is a function of its own. The routing table
+is then the list of what the program handles.
+
+**A block for a few steps, a function when they have a name.** A
+block's bindings end with it, so intermediates do not leak. If you are
+about to write a comment that says what a block does, make that
+comment the name of a function instead.
+
+**Comments say why.** `///` doc comments on every shared name, in
+sentences: what it is, what it answers, and what `()` means there. A
+`//!` header at the top of every file says what the file is for and
+what it may depend on. Inside a function, a comment explains a reason
+or a workaround; one that restates the next line can go.
+
+**One file, one idea.** Order a file top to bottom: the `//!` header,
+the `use` lines, shared types and constants, shared functions, private
+helpers, then `test` blocks. Functions are hoisted and values are not,
+so constants go above their first use. Share as little as you can, and
+give a package one front file (`index.ol`) that re-exports its public
+names with `share use`.
+
+**Slots in a list are a last resort.** A record kept as a list of
+positions for speed (`b[3]` meaning "the deadline") reads as noise.
+Where the speed is measured and needed, name the slots
+(`let DEADLINE = 3`); everywhere else, use a record.
+
+## Letting the tools hold you to it
+
+Several of these habits are mechanical, and olang's tools rewrite them
+exactly:
+
+| Command | Rewrites |
+|---|---|
+| `olang fix maps` | `map_get(x, "k")` to `x.k`, and `map_get_or(x, "k", d)` to `x.k ?? d` |
+| `olang fix guards` | a guard that only kept a field read off `()` |
+| `olang fix defaults` | `if x == () => d else => x` to `x ?? d` |
+| `olang fix first-last` | a length-guarded `xs[0]` or `xs[len(xs) - 1]` to `first(xs)` or `last(xs)` |
+| `olang fix units` | `to_int(math.floor(e))` to `math.floor(e)` |
+
+Each takes `--check` (report, exit 1 when something would change) and
+`--dry-run`, so a project's test suite can hold its code to them.
+
+The rest can be held by a project's own rules: a `rule_` function in an
+olang file, listed under `[check] rules` in `olang.toml`, that reads
+each file's syntax tree and answers its findings ([Command-line
+tooling](tooling.md) has the details). This one finds nested
+`map_set` calls with fixed keys:
+
+```olang no-run
+// tools/rules.ol
+fn chained(n) = n.kind == "call" && n.target == "map_set" && len(n.args) == 3
+    && n.args[0].kind == "call" && n.args[0].target == "map_set"
+share fn rule_map_set_chain(nodes) = nodes
+    |> filter(chained)
+    |> map((n) => { message: "nested map_set: write one spread", line: n.line })
+```
+
+A deliberate exception says `// allow: rule_map_set_chain` on its line.
+olang's own source tree keeps rules for the habits in this chapter, and
+a rewrite for the record and `unwrap_or` forms, in `tools/idioms/`.
+
+## What 1.0 cannot say yet
+
+A few things this chapter would like to recommend need the language to
+change, so they wait for a release after 1.0. The
+[roadmap](roadmap.md) lists them: a record literal with field
+shorthand (`{ holes }` for `{ holes: holes }`), an update form for
+nested fields, enum cases with named fields, string-prefix patterns in
+`match`, a placeholder in pipes (`map(_.name)`), slices (`xs[a..b]`),
+compound assignment (`n += 1`), an alias for a whole module, and an
+`olang fmt` that re-wraps long lines.

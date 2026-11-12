@@ -170,6 +170,11 @@ fn pitfalls_chapter_examples_work() {
 }
 
 #[test]
+fn idioms_chapter_examples_work() {
+    run_doc_file("docs/idioms.md", include_str!("../docs/idioms.md"));
+}
+
+#[test]
 fn sim_chapter_examples_work() {
     run_doc_file("docs/sim.md", include_str!("../docs/sim.md"));
 }

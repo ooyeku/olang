@@ -219,4 +219,9 @@ more) under an exception the owner made to the freeze. From rc.8 to
 | `[stdlib]` `sim`: what S6 left | Loom apps in a world (`gui.platform()` answered there, so the headless driver can load); `w.client` reaching module cells; a stopped node refusing connections; tasks as coroutines rather than threads for speed (plans/SIM-S6-ENGINE.md) |
 | `[olang]` The bytecode tier recompiles a lambda whose captures change | `db.transaction`'s callback is compiled again at every call (`hof_function_id` in src/ovm/bytecode.rs) |
 | `[stdlib]` Toad's web export | skipped for 1.0 |
+| `[olang]` Field shorthand in record literals, `{ holes }` for `{ holes: holes }` | patterns and parameters take it already; a literal refuses it (OL-592). From [Writing idiomatic olang](idioms.md) |
+| `[olang]` An update form for nested record fields, and enum cases with named fields | `{ ...m, view: { ...m.view, top: 0 } }` is today's nested update; a case with more than a few fields falls back to a record (OL-307, OL-313) |
+| `[olang]` String-prefix patterns in `match`, a placeholder in pipes, slices, `+=` | dispatch on a tag's prefix is a guard on every arm today (OL-292, OL-310, OL-309, OL-311) |
+| `[olang]` Module aliases, and a warning when two `use m {}` namespaces collide | `use m as x` is refused; `core.search` and `face.search` bind one `search`, the later winning, with no warning (OL-312, OL-590) |
+| `[tooling]` `olang fix records`, and an `olang fmt` that re-wraps at a width | olang's `tools/idioms/fix.ol` does the records rewrite today; fmt does not re-wrap (OL-588, OL-589) |
 

@@ -23,6 +23,7 @@ examples do what the text says they do.
 | [Installation](installation.md) | Getting olang onto your machine, running your first program, and the interactive prompt. |
 | [A tour of olang](tour.md) | Learn the language by building one program, from a few lines of text to a small statistical report. |
 | [Common pitfalls](pitfalls.md) | The things that tend to catch people out, and what to write instead. |
+| [Writing idiomatic olang](idioms.md) | The habits that make olang read well: records, spreads, `match`, pipes, errors that travel, and modules instead of name prefixes. |
 | [olang for LLMs](llms.md) | The rules that differ from Rust, Go and Python, the usual mistakes, and a working program for each everyday task, for a model or a person writing olang from the docs alone. |
 | [Stability and compatibility](stability.md) | What 1.0 promises: which parts are stable, which are still experimental, which platforms are covered, and what a version number means. |
 
@@ -84,7 +85,9 @@ the tables in the [Standard library
 reference](stdlib.md#ods--series-and-frames) as you go.
 
 To build a project of your own, read [Packages and
-dependencies](packages.md) and [Command-line tooling](tooling.md). For
+dependencies](packages.md) and [Command-line tooling](tooling.md), and
+[Writing idiomatic olang](idioms.md) for how to write it so it reads
+well. For
 the web, start with [olang in the browser](wasm.md) and then [The web
 SDK](web-sdk.md).
 
