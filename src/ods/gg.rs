@@ -23,7 +23,8 @@ pub const MARK: &str = "$gg";
 
 /// Whether a value is a gg plot spec.
 pub fn is_spec(v: &Value) -> bool {
-    matches!(v, Value::Map(m) if m.contains_key(MARK))
+    // a map, or a record read as one (OL-602)
+    v.record_fields().is_some_and(|m| m.contains_key(MARK))
 }
 
 fn s(v: &str) -> Value {
@@ -301,6 +302,9 @@ fn columns_named(m: &[(Aes, Source)], into: &mut Vec<String>) {
 
 /// A spec map read into the renderer's spec.
 pub fn spec_of(v: &Value) -> Result<Spec, String> {
+    // a record read as the map of its fields (OL-602)
+    let v = v.as_options();
+    let v = v.as_ref();
     let Value::Map(m) = v else {
         return Err(format!(
             "gg: expects a plot (gg.plot(…)), got {}",

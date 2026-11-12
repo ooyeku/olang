@@ -2848,7 +2848,13 @@ impl Session {
                 .max(0);
                 json!({ "k": "range", "t": t, "n": n, "s": v.to_string() })
             }
-            Value::Map(_) if crate::ods::gg::is_spec(v) => self.encode_gg(v, None, held),
+            _ if crate::ods::gg::is_spec(v) => self.encode_gg(v, None, held),
+            // a Loom view written as a record is a view, as a map one is (OL-602)
+            Value::Struct { fields, .. } if loom_view_role(fields).is_some() => {
+                let role = loom_view_role(fields).expect("checked");
+                let h = self.hold(v, held);
+                json!({ "k": "view", "t": "View", "role": role, "h": h, "s": format!("a Loom {} view", role) })
+            }
             Value::Map(m) => {
                 if let Some(role) = loom_view_role(m) {
                     let h = self.hold(v, held);
@@ -3027,7 +3033,7 @@ impl Session {
             (msg.get("count").and_then(|s| s.as_u64()).unwrap_or(100) as usize).min(EXPAND_MAX);
         let mut held = Vec::new();
         let reply = match &v {
-            Value::Map(_) if crate::ods::gg::is_spec(&v) && msg.get("chart").is_some() => {
+            _ if crate::ods::gg::is_spec(&v) && msg.get("chart").is_some() => {
                 let bound = |k: &str| msg["chart"].get(k).and_then(|x| x.as_f64());
                 let zoom = match (bound("x0"), bound("x1")) {
                     (Some(a), Some(b)) => Some((
@@ -3051,7 +3057,7 @@ impl Session {
                     Err(e) => json!({ "ok": false, "error": { "kind": "error", "message": e } }),
                 }
             }
-            Value::Map(_) if crate::ods::gg::is_spec(&v) => {
+            _ if crate::ods::gg::is_spec(&v) => {
                 match crate::ods::gg::scene_of(&v, None) {
                     Ok(scene) => {
                         let text: String = scene
@@ -3763,7 +3769,7 @@ fn table_columns(items: &[Value]) -> Option<Vec<String>> {
     for it in items.iter().take(TABLE_SAMPLE) {
         let fields = match it {
             Value::Map(m) if loom_view_role(m).is_none() => m.as_ref(),
-            Value::Struct { fields, .. } => fields.as_ref(),
+            Value::Struct { fields, .. } if loom_view_role(fields).is_none() => fields.as_ref(),
             _ => return None,
         };
         let keys: Vec<&String> = fields.keys().collect();
@@ -3891,7 +3897,7 @@ fn value_fields(v: &Value) -> (&'static str, Vec<(String, String)>) {
                 .map(|(k, x)| (k.clone(), x.type_name().to_string()))
                 .collect(),
         ),
-        Value::Struct { fields, .. } => (
+        Value::Struct { fields, .. } if loom_view_role(fields).is_none() => (
             "record",
             fields
                 .iter()

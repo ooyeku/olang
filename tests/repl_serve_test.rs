@@ -499,6 +499,26 @@ fn a_loom_view_renders_headless_to_a_picture() {
 }
 
 #[test]
+fn a_loom_view_written_as_a_record_is_a_view_and_renders() {
+    // OL-602: Loom's views are records now; the panel draws them as it drew maps
+    let loom = Path::new(env!("CARGO_MANIFEST_DIR")).join("../libraries/loom");
+    if !loom.join("lib/test.ol").exists() {
+        eprintln!("no ../libraries/loom: skipped");
+        return;
+    }
+    let dir = project();
+    let (mut r, _) = Repl::start(dir.path());
+    let v = r.eval("{ role: \"text\", key: \"t\", props: { text: \"Hello\" }, children: [] }");
+    assert_eq!(v["value"]["k"], json!("view"), "{v}");
+    let h = v["value"]["h"].as_u64().unwrap();
+    let pic = r.ask(json!({ "op": "render", "h": h, "dark": false, "scale": 1.0, "loom": std::fs::canonicalize(&loom).unwrap() }));
+    assert_eq!(pic["ok"], json!(true), "{pic}");
+    // an ordinary record is still a record
+    let rec = r.eval("{ a: 1, b: 2 }");
+    assert_eq!(rec["value"]["k"], json!("record"), "{rec}");
+}
+
+#[test]
 fn shutdown_ends_the_child() {
     let dir = project();
     let (mut r, _) = Repl::start(dir.path());
