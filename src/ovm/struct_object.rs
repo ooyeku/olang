@@ -397,6 +397,26 @@ impl StructObject {
         (0..self.len()).any(|i| !kind::is_scalar(unsafe { *self.kinds().add(i) }))
     }
 
+    /// This record with some of its own fields set again, under the same
+    /// shape: its value slots copied and those replaced, no field names
+    /// copied and no shape looked up (OL-601). `None` when a key is not
+    /// one of its fields, which needs another shape.
+    pub fn with_fields<'a>(&self, set: impl IntoIterator<Item = (&'a str, OvmValue)>) -> Option<Self> {
+        let shape = self.shape.clone();
+        let mut slot: Vec<Option<OvmValue>> = (0..self.len()).map(|_| None).collect();
+        for (k, v) in set {
+            let i = shape.field_index(k)? as usize;
+            slot[i] = Some(v);
+        }
+        let mut slot = slot.into_iter();
+        Some(Self::build(shape, self.len(), |j| {
+            match slot.next().flatten() {
+                Some(v) => encode(v),
+                None => encode(self.get(j)),
+            }
+        }))
+    }
+
     /// The fields with `key` set to `value`: in its place when the record
     /// has it (as a map keeps a key set again where it was), else last.
     pub fn set_pairs(&self, key: String, value: OvmValue) -> Vec<(String, OvmValue)> {

@@ -9650,6 +9650,10 @@ impl BytecodeVm {
                         }
                     },
                     ValueData::Struct(st) => {
+                        // a field it has: the same shape, its slots copied (OL-601)
+                        if let Some(next) = st.with_fields([(key.as_str(), args[2].clone())]) {
+                            return Ok(OvmValue::new_struct(next));
+                        }
                         let pairs = st.set_pairs(key, args[2].clone());
                         Ok(OvmValue::new_struct(
                             crate::ovm::value::StructObject::from_pairs(st.type_name(), pairs),
@@ -10319,6 +10323,13 @@ impl BytecodeVm {
         match &args[0].data {
             ValueData::Map(_) => {}
             ValueData::AstMap(_) if entries.iter().all(|(_, v)| v.to_ast().is_ok()) => {}
+            // a record merged with fields it has: the same shape, its
+            // slots copied (OL-601)
+            ValueData::Struct(st) => {
+                return st
+                    .with_fields(entries.iter().map(|(k, v)| (k.as_str(), v.clone())))
+                    .map(|next| Ok(OvmValue::new_struct(next)));
+            }
             _ => return None,
         }
         let target = std::mem::replace(&mut args[0], OvmValue::new_unit());
@@ -10355,6 +10366,9 @@ impl BytecodeVm {
         use crate::ovm::value::ValueData;
         match args.first().map(|a| &a.data) {
             Some(ValueData::Map(m)) if m.is_empty() => {}
+            Some(ValueData::Struct(base)) if base.is_empty() && base.type_name() == "Object" => {
+                return Self::spread_record(&args[1..]);
+            }
             _ => return None,
         }
         if !args[1..].iter().all(|a| {
@@ -10390,6 +10404,44 @@ impl BytecodeVm {
             }
         }
         Some(Ok(OvmValue::new_map(Arc::new(out))))
+    }
+
+    /// A record literal with spreads (`{ ...r, k: v }`) built natively
+    /// (OL-601). When the first part is a record and every later part
+    /// sets only fields it has, the answer keeps its shape and copies its
+    /// slots; otherwise the fields are laid down in order (a later key
+    /// winning, in the place it was first set) under the shape they make.
+    /// A part that is not a record goes to the bridge, which says so.
+    fn spread_record(parts: &[OvmValue]) -> Option<Result<OvmValue, BytecodeError>> {
+        use crate::ovm::value::{StructObject, ValueData};
+        let fields_of = |p: &OvmValue| -> Option<Vec<(String, OvmValue)>> {
+            Some(match &p.data {
+                ValueData::Map(m) => m.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                ValueData::AstMap(m) | ValueData::AstStruct(m, _) => {
+                    m.iter().map(|(k, v)| (k.clone(), OvmValue::from_ast(v.clone()))).collect()
+                }
+                ValueData::Struct(st) => st.iter().map(|(k, v)| (k.clone(), (*v).clone())).collect(),
+                _ => return None,
+            })
+        };
+        if let Some(ValueData::Struct(first)) = parts.first().map(|p| &p.data)
+            && first.type_name() == "Object"
+        {
+            let mut rest: Vec<(String, OvmValue)> = Vec::new();
+            for p in &parts[1..] {
+                rest.extend(fields_of(p)?);
+            }
+            if let Some(next) = first.with_fields(rest.iter().map(|(k, v)| (k.as_str(), v.clone()))) {
+                return Some(Ok(OvmValue::new_struct(next)));
+            }
+        }
+        let mut out: indexmap::IndexMap<String, OvmValue> = indexmap::IndexMap::new();
+        for p in parts {
+            for (k, v) in fields_of(p)? {
+                out.insert(k, v);
+            }
+        }
+        Some(Ok(OvmValue::new_struct(StructObject::from_pairs("Object", out.into_iter().collect()))))
     }
 
     /// Where `xs[i] = v` (subscript) or `col.set` writes in a list of
