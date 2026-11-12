@@ -394,7 +394,7 @@ it is what makes those comparable:
 ```olang
 let nothing = ()
 println(to_string(nothing == ()))                  // true
-println(to_string(#{ "a": 1 }.zz == ()))   // true
+println(to_string({ a: 1 }.zz == ()))   // true
 ```
 
 ### Destructuring
@@ -935,7 +935,7 @@ is the lookup-with-default — `opts.pad ?? 0` is
 `false`, `0` and `""` are values.
 
 ```olang
-let opts = #{ "pad": 2, "label": "" }
+let opts = { pad: 2, label: "" }
 println(to_string(opts.pad ?? 0))          // 2
 println(to_string(opts.width ?? 80))       // 80: absent
 println("[" + (opts.label ?? "none") + "]") // []: "" is a value
@@ -1108,7 +1108,7 @@ element `i` of the list at `m.k` and rebinds `m`. Deeper paths
 `map_set_in(m, path, v)` for those.
 
 ```olang
-let mut board = #{ "cells": ["", "", ""] }
+let mut board = { cells: ["", "", ""] }
 board.cells[1] = "x"
 println(board.cells)   // ["", "x", ""]
 ```
@@ -1323,7 +1323,7 @@ as well. A field of anything else that is not a record raises (`5.k`),
 as does a declared struct's missing field.
 
 ```olang
-let s = #{ "name": "ada" }
+let s = { name: "ada" }
 println(to_string(s.pp.cur))          // (): s.pp is absent
 println(to_string(s.pp.cur ?? 0))     // 0
 ```
@@ -1955,7 +1955,7 @@ type Task = { title: String, done: Bool }
 type Tasks = [Task]
 fn title_of(t: Task) -> String = t.title
 fn first_title(ts: Tasks) = title_of(head(ts))
-let t: Task = #{ "title": "ship", "done": false }
+let t: Task = { title: "ship", done: false }
 println(first_title([t]))
 ```
 
@@ -2169,8 +2169,8 @@ answers it as `Err(message)`, and uncaught it is reported as any
 runtime error is (`Runtime error: message`).
 
 ```olang
-fn widget(kind) = if kind == "button" || kind == "label" => #{ "kind": kind } else => raise("widget: no kind " + show(kind))
-println(show(widget("label")))                     // #{"kind": "label"}
+fn widget(kind) = if kind == "button" || kind == "label" => { kind: kind } else => raise("widget: no kind " + show(kind))
+println(show(widget("label")))                     // { kind: "label" }
 println(show(attempt(() => widget("dial"))))       // Err("widget: no kind dial")
 ```
 
@@ -2353,7 +2353,7 @@ handle:
 fn slow(n) = { time.sleep(80); n }
 let t = spawn slow(7)
 println(show(task.join_timeout(t, 5)))                      // Err("timed out")
-println(show(task.join_timeout(t, #{ "timeout_ms": 5000 })))   // Ok(Ok(7)) — it kept running
+println(show(task.join_timeout(t, { timeout_ms: 5000 })))   // Ok(Ok(7)) — it kept running
 ```
 
 ### Stopping a task
@@ -2477,13 +2477,13 @@ owner performs it.
 // One owner. Requests arrive on `asks`; each carries its own reply channel.
 let asks = chan.new()
 spawn {
-    let state = cell(#{ "built_at": 0, "value": () })
+    let state = cell({ built_at: 0, value: () })
     loop {
         let ask = unwrap(chan.recv(asks))
         match ask.kind {
             "get" => chan.send(ask.reply, cell.get(state).value),
             "rebuild" => {
-                cell.set(state, #{ "built_at": time.monotonic_ms(), "value": expensive() })
+                cell.set(state, { built_at: time.monotonic_ms(), value: expensive() })
                 chan.send(ask.reply, true)
             }
         }
@@ -2493,7 +2493,7 @@ spawn {
 // Workers never touch the cell; they ask.
 fn cached_value() = {
     let reply = chan.new()
-    chan.send(asks, #{ "kind": "get", "reply": reply })
+    chan.send(asks, { kind: "get", reply: reply })
     unwrap(chan.recv(reply))
 }
 
@@ -2514,13 +2514,13 @@ a new one. Values never change in place, so a reader keeps the version
 it read for as long as it needs.
 
 ```olang
-let config = shared.new(#{ "rev": 1, "greeting": "hello" })
+let config = shared.new({ rev: 1, greeting: "hello" })
 fn handle(name) = {
     let c = shared.get(config)
     `${c.greeting}, ${name} (rev ${c.rev})`
 }
 println(handle("ada"))                                      // hello, ada (rev 1)
-let reloader = spawn { shared.set(config, #{ "rev": 2, "greeting": "hi" }) }
+let reloader = spawn { shared.set(config, { rev: 2, greeting: "hi" }) }
 unwrap(task.join(reloader))
 println(handle("ada"))                                      // hi, ada (rev 2)
 ```

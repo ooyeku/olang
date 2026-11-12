@@ -76,12 +76,12 @@ let routes = [
     rpc("todos.list", (req, p) => rows(conn, "SELECT * FROM todos ORDER BY id", [])),
     rpc("todos.create", (req, p) => {
         let payload = unwrap(json.parse(req.body))
-        let id = insert_row(conn, "todos", #{ "title": payload.title, "done": 0 })
+        let id = insert_row(conn, "todos", { title: payload.title, done: 0 })
         row(conn, "SELECT * FROM todos WHERE id = ?", [id])
     })
 ]
 
-serve(#{ "title": "todos", "routes": routes, "client": "client.ol", "port": 7500 })
+serve({ title: "todos", routes: routes, client: "client.ol", port: 7500 })
 ```
 
 The client — served bundled, so `use web` works in the browser:
@@ -92,8 +92,8 @@ use web { mount, action, apply, call, input_value,
 
 fn view(s) = stack([
     h1(#{}, ["todos"]),
-    card([div(#{ "class": "row" }, [
-        input(#{ "id": "title", "class": "field-input" }),
+    card([div({ class: "row" }, [
+        input({ id: "title", class: "field-input" }),
         btn_primary("Add", "add")
     ])]),
     stack(map(s.todos, (t) => card([t.title])))
@@ -103,9 +103,9 @@ fn refresh() = call("todos.list", #{}, (r) =>
     match r { Ok(ts) => { apply((s) => map_set(s, "todos", ts)) }, Err(m) => () })
 
 action("add", (ev) =>
-    call("todos.create", #{ "title": input_value("title") }, (r) => refresh()))
+    call("todos.create", { title: input_value("title") }, (r) => refresh()))
 
-mount("#app", view, #{ "todos": [] })
+mount("#app", view, { todos: [] })
 refresh()
 ```
 
@@ -131,7 +131,7 @@ exists to skip, which a function `when` would.
 
 ```olang no-run
 use web { div, span, render, escape }
-let node = div(#{ "class": "card" }, ["hello ", span(#{}, ["world"])])
+let node = div({ class: "card" }, ["hello ", span(#{}, ["world"])])
 testing.assert_eq(render(node), "<div class=\"card\">hello <span>world</span></div>") |> unwrap
 testing.assert_eq(escape("<b>"), "&lt;b&gt;") |> unwrap
 ```
@@ -185,17 +185,17 @@ nothing.
 
 ```olang no-run
 use web { document, html, head_, body, title, meta_, link, script, main, article, h1, time_, render }
-let d = document(html(#{ "lang": "en" }, [
+let d = document(html({ lang: "en" }, [
     head_(#{}, [
-        meta_(#{ "charset": "utf-8" }),
+        meta_({ charset: "utf-8" }),
         title(#{}, ["Notes"]),
-        meta_(#{ "name": "description", "content": "What changed" }),
-        link(#{ "rel": "canonical", "href": "https://example.org/notes" }),
-        script(#{ "type": "module" }, ["if (1 < 2) start()"])
+        meta_({ name: "description", content: "What changed" }),
+        link({ rel: "canonical", href: "https://example.org/notes" }),
+        script({ type: "module" }, ["if (1 < 2) start()"])
     ]),
-    body(#{ "class": "notes" }, [main(#{}, [article(#{}, [
+    body({ class: "notes" }, [main(#{}, [article(#{}, [
         h1(#{}, ["Notes"]),
-        time_(#{ "datetime": "2026-10-24" }, ["24 October"])
+        time_({ datetime: "2026-10-24" }, ["24 October"])
     ])])])
 ]))
 let out = render(d)
@@ -405,7 +405,7 @@ write.
 Fields are declared once and used three ways:
 
 ```olang no-run
-let fields = [field("title", "Title", "text", #{ "min": 1, "max": 80 })]
+let fields = [field("title", "Title", "text", { min: 1, max: 80 })]
 form_fields(fields, values, errors)   // the markup, errors shown in place
 check(payload, rules(fields))         // validate (the shelf's validate library)
 read(payload, fields)                 // narrowed + number-parsed input
@@ -488,12 +488,12 @@ preference the user chose.
 use web { serve, rows }
 use lib.pages { home }        // the view, imported by both halves
 
-serve(#{
-    "routes": routes,
-    "client": ["lib/pages.ol", "client.ol"],
-    "view": home,
-    "initial": () => #{ "notes": rows(conn, "SELECT * FROM notes ORDER BY id DESC", []),
-                        "errors": [] }
+serve({
+    routes: routes,
+    client: ["lib/pages.ol", "client.ol"],
+    view: home,
+    initial: () => { notes: rows(conn, "SELECT * FROM notes ORDER BY id DESC", []),
+                        errors: [] }
 })
 ```
 

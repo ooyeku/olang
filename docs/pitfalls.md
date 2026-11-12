@@ -187,7 +187,7 @@ structurally (`Ok(1) == Ok(1)` is `true`).
 ```olang
 let r = str.parse_int("5")
 println(r == Ok(5))                                   // true
-let handlers = [#{ "name": "a", "run": () => 1 }]
+let handlers = [{ name: "a", run: () => 1 }]
 println(map(handlers, (h) => h.name) == ["a"])        // compare the data
 ```
 

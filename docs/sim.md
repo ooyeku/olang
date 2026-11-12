@@ -68,9 +68,9 @@ fn account(inbox) = {
 // Withdraw by asking for the balance, then setting the new one.
 fn withdraw(inbox, amount) = {
     time.sleep(random.randint(0, 10))
-    let balance = unwrap(chan.ask(inbox, #{ "op": "balance" }))
+    let balance = unwrap(chan.ask(inbox, { op: "balance" }))
     if balance >= amount => {
-        unwrap(chan.ask(inbox, #{ "op": "set", "to": balance - amount }))
+        unwrap(chan.ask(inbox, { op: "set", to: balance - amount }))
         true
     } else => false
 }
@@ -81,7 +81,7 @@ let a = spawn withdraw(inbox, 30)
 let b = spawn withdraw(inbox, 50)
 unwrap(task.join(a))
 unwrap(task.join(b))
-let left = unwrap(chan.ask(inbox, #{ "op": "balance" }))
+let left = unwrap(chan.ask(inbox, { op: "balance" }))
 println("left: " + to_string(left))
 assert_eq(left, 20, "two withdrawals of 30 and 50 from 100")
 ```
@@ -182,7 +182,7 @@ fn account(inbox) = {
 
 fn withdraw(inbox, amount) = {
     time.sleep(random.randint(0, 10))
-    unwrap(chan.ask(inbox, #{ "op": "withdraw", "amount": amount }))
+    unwrap(chan.ask(inbox, { op: "withdraw", amount: amount }))
 }
 ```
 
@@ -234,11 +234,11 @@ spawn counts(inbox)
 fn handle(req) = {
     if req.method == "POST" && req.path == "/add" => {
         let body = unwrap(json.parse(req.body))
-        let total = unwrap(chan.ask(inbox, #{ "op": "add", "key": body.key }))
+        let total = unwrap(chan.ask(inbox, { op: "add", key: body.key }))
         http.response(200, to_string(total))
     }
     else if req.path == "/get" => {
-        let total = unwrap(chan.ask(inbox, #{ "op": "get", "key": req.query.key }))
+        let total = unwrap(chan.ask(inbox, { op: "get", key: req.query.key }))
         http.response(200, to_string(total))
     }
     else => http.response(404, "no such route")
@@ -253,7 +253,7 @@ counter.ol`. The world around it is a second file, `counter_world.ol`:
 ```olang no-run
 // One counter server and three clients on a slow network. Each client
 // adds to its own key for half an hour, then checks the server's total.
-let w = sim.world(#{ "net": #{ "latency": (10, 200) } })
+let w = sim.world({ net: { latency: (10, 200) } })
 w.node("counter", ["olang", "counter.ol"])
 
 // Keep asking until the server answers. A request that times out is
@@ -261,8 +261,8 @@ w.node("counter", ["olang", "counter.ol"])
 fn add(key) = {
     let mut answered = false
     while !answered {
-        let body = unwrap(json.stringify(#{ "key": key }))
-        match http.post("http://counter:7500/add", body, #{ "timeout_ms": 1000 }) {
+        let body = unwrap(json.stringify({ key: key }))
+        match http.post("http://counter:7500/add", body, { timeout_ms: 1000 }) {
             Ok(resp) => { answered = resp.status == 200 }
             Err(_) => time.sleep(500)
         }
@@ -375,10 +375,10 @@ retry:
 
 ```olang no-run
 fn add(key, id) = {
-    let body = unwrap(json.stringify(#{ "key": key, "id": id }))
+    let body = unwrap(json.stringify({ key: key, id: id }))
     let mut answered = false
     while !answered {
-        match http.post("http://counter:7500/add", body, #{ "timeout_ms": 1000 }) {
+        match http.post("http://counter:7500/add", body, { timeout_ms: 1000 }) {
             Ok(resp) => { answered = resp.status == 200 }
             Err(_) => time.sleep(500)
         }
@@ -458,7 +458,7 @@ store acknowledged, and then check that the store still has every one
 of them. Every 20 seconds a coin decides whether the power goes:
 
 ```olang no-run
-let w = sim.world(#{ "net": #{ "latency": (1, 20) } })
+let w = sim.world({ net: { latency: (1, 20) } })
 w.node("store", ["olang", "fast_store.ol"])
 
 fn writer(key) = {
@@ -468,7 +468,7 @@ fn writer(key) = {
         time.sleep(random.randint(50, 400))
         n = n + 1
         let body = key + " " + to_string(n)
-        match http.post("http://store:7600/put", body, #{ "timeout_ms": 1000 }) {
+        match http.post("http://store:7600/put", body, { timeout_ms: 1000 }) {
             Ok(resp) => if resp.status == 200 => { acked = acked + [to_string(n)] } else => (),
             Err(_) => ()
         }
@@ -476,7 +476,7 @@ fn writer(key) = {
     // Read back what the store kept, waiting for it if it is down.
     let mut kept = ()
     while kept == () {
-        match http.get("http://store:7600/get?key=" + key, #{ "timeout_ms": 1000 }) {
+        match http.get("http://store:7600/get?key=" + key, { timeout_ms: 1000 }) {
             Ok(resp) => { kept = str.split(resp.body, "\n") }
             Err(_) => time.sleep(500)
         }
@@ -494,7 +494,7 @@ for key in ["x", "y", "z"] {
 w.every(sim.seconds(20), () => {
     if random.random() < 0.5 => {
         time.sleep(random.randint(0, 19000))
-        w.crash("store", #{ "restart_after": sim.seconds(1) })
+        w.crash("store", { restart_after: sim.seconds(1) })
     } else => ()
 })
 
@@ -572,9 +572,9 @@ A disk can be made to misbehave in more ways with `sim.disk`, passed
 as a node's `disk` option:
 
 ```olang no-run
-w.node("store", ["olang", "store.ol"], #{
-    "disk": sim.disk(#{ "fsync_lies": 0.01, "torn_writes": true, "full_at": 64 * 1048576, "slow": 2 }),
-    "crash": #{ "p": 0.001, "restart_after": sim.seconds(1) }
+w.node("store", ["olang", "store.ol"], {
+    disk: sim.disk({ fsync_lies: 0.01, torn_writes: true, full_at: 64 * 1048576, slow: 2 }),
+    crash: { p: 0.001, restart_after: sim.seconds(1) }
 })
 ```
 
@@ -602,7 +602,7 @@ each keeps:
 | `w.stop(n)`, like SIGTERM | gone once its program returns | every write | run |
 | its program returns, or calls `os.exit` | gone | every write | not run |
 
-The first three take `#{ "restart_after": ms }` to bring the node
+The first three take `{ restart_after: ms }` to bring the node
 back. A node also has its own environment (`env`), working directory
 (`cwd`), files on its disk from the start (`files`) and standard input
 (`stdin`, and `w.write_stdin` later). SQLite works in a world too:
@@ -623,7 +623,7 @@ They record each put in a history with `sim.record` instead: an
 when they never heard back. Two properties watch the run:
 
 ```olang no-run
-let w = sim.world(#{ "net": #{ "latency": (1, 20) } })
+let w = sim.world({ net: { latency: (1, 20) } })
 w.node("store", ["olang", "fast_store.ol"])
 
 fn writer(key) = {
@@ -631,10 +631,10 @@ fn writer(key) = {
     while time.monotonic_ms() < sim.minutes(5) {
         time.sleep(random.randint(50, 400))
         n = n + 1
-        sim.record("puts", #{ "type": "invoke", "f": "put", "value": [key, n] })
-        match http.post("http://store:7600/put", key + " " + to_string(n), #{ "timeout_ms": 1000 }) {
-            Ok(_) => sim.record("puts", #{ "type": "ok", "value": [key, n] }),
-            Err(_) => sim.record("puts", #{ "type": "info" })
+        sim.record("puts", { type: "invoke", f: "put", value: [key, n] })
+        match http.post("http://store:7600/put", key + " " + to_string(n), { timeout_ms: 1000 }) {
+            Ok(_) => sim.record("puts", { type: "ok", value: [key, n] }),
+            Err(_) => sim.record("puts", { type: "info" })
         }
     }
 }
@@ -663,7 +663,7 @@ let durable = sim.always("an acknowledged put is on the disk", (s) => match last
 })
 let back = sim.eventually("the store comes back", sim.seconds(5), (s) => s.up("store"))
 
-let run = w.run(#{ "for": sim.minutes(10), "props": [durable, back] })
+let run = w.run({ "for": sim.minutes(10), props: [durable, back] })
 println(run.outcome)
 ```
 
@@ -730,7 +730,7 @@ to check it against. Here is `counter_check.ol`, which runs the first
 `counter.ol` (the one that ignores ids):
 
 ```olang no-run
-let w = sim.world(#{ "net": #{ "latency": (10, 200) } })
+let w = sim.world({ net: { latency: (10, 200) } })
 w.node("counter", ["olang", "counter.ol"])
 
 // Ask until answered (a retry carries the same body, id and all), and
@@ -738,8 +738,8 @@ w.node("counter", ["olang", "counter.ol"])
 fn ask(url, body) = {
     let mut total = ()
     while total == () {
-        let reply = if body == () => http.get(url, #{ "timeout_ms": 1000 })
-            else => http.post(url, body, #{ "timeout_ms": 1000 })
+        let reply = if body == () => http.get(url, { timeout_ms: 1000 })
+            else => http.post(url, body, { timeout_ms: 1000 })
         match reply {
             Ok(resp) => { total = to_int(resp.body) }
             Err(_) => time.sleep(500)
@@ -753,12 +753,12 @@ fn client(key) = {
     while time.monotonic_ms() < sim.minutes(30) {
         time.sleep(random.randint(1000, 3000))
         n = n + 1
-        let body = unwrap(json.stringify(#{ "key": key, "id": key + "-" + to_string(n) }))
-        sim.record("counts", #{ "type": "invoke", "f": "add", "value": [key, 1] })
-        sim.record("counts", #{ "type": "ok", "value": ask("http://counter:7500/add", body) })
+        let body = unwrap(json.stringify({ key: key, id: key + "-" + to_string(n) }))
+        sim.record("counts", { type: "invoke", f: "add", value: [key, 1] })
+        sim.record("counts", { type: "ok", value: ask("http://counter:7500/add", body) })
     }
-    sim.record("counts", #{ "type": "invoke", "f": "get", "value": [key] })
-    sim.record("counts", #{ "type": "ok", "value": ask("http://counter:7500/get?key=" + key, ()) })
+    sim.record("counts", { type: "invoke", f: "get", value: [key] })
+    sim.record("counts", { type: "ok", value: ask("http://counter:7500/get?key=" + key, ()) })
 }
 
 for name in ["a", "b", "c"] {
@@ -767,7 +767,7 @@ for name in ["a", "b", "c"] {
 
 // (the same partitions as in counter_world.ol)
 
-let run = w.run(#{ "for": sim.hours(1), "props": [
+let run = w.run({ "for": sim.hours(1), props: [
     sim.linearizable("every add counts once", "counts", sim.kv())
 ] })
 println(run.outcome)
@@ -799,12 +799,12 @@ history, inside a world or not:
 ```olang
 // p1 writes 1 while p2 reads twice: first 1, then 0.
 let history = [
-    #{ "process": "p1", "type": "invoke", "f": "write", "value": 1 },
-    #{ "process": "p2", "type": "invoke", "f": "read" },
-    #{ "process": "p2", "type": "ok", "value": 1 },
-    #{ "process": "p2", "type": "invoke", "f": "read" },
-    #{ "process": "p2", "type": "ok", "value": 0 },
-    #{ "process": "p1", "type": "ok" }
+    { process: "p1", type: "invoke", f: "write", value: 1 },
+    { process: "p2", type: "invoke", f: "read" },
+    { process: "p2", type: "ok", value: 1 },
+    { process: "p2", type: "invoke", f: "read" },
+    { process: "p2", type: "ok", value: 0 },
+    { process: "p1", type: "ok" }
 ]
 println(sim.linearize(history, sim.register(0)).ok)                       // false
 println(sim.linearize(take(history, 3) + [history[5]], sim.register(0)).ok)  // true
@@ -851,7 +851,7 @@ fn scribble() = {
         time.sleep(random.randint(100, 400))
     }
 }
-w.client("spare", scribble, #{ "crash": #{ "p": 0.01, "restart_after": 300 }, "optional": true })
+w.client("spare", scribble, { crash: { p: 0.01, restart_after: 300 }, optional: true })
 w.every(sim.seconds(7), () => {
     w.partition(["spare"], ["x", "y", "z"])
     time.sleep(1000)
@@ -934,7 +934,7 @@ Add these lines to the end of `counter_world.ol`:
 
 ```olang no-run
 let f = run.events()
-println(f.group_by("kind").agg(#{ "n": ods.count() }))   // what happened, and how often
+println(f.group_by("kind").agg({ n: ods.count() }))   // what happened, and how often
 println(ods.filter(f, f["fault"]))                       // every fault the world caused
 let arrivals = ods.filter(f, f["kind"] == "deliver")
 println(ods.filter(arrivals, arrivals["t"] - arrivals["sent"] > 190))   // the slow messages
@@ -1003,7 +1003,7 @@ Here is the first counter with one line added to its `/add` handler,
 before it answers:
 
 ```olang no-run
-let total = unwrap(chan.ask(inbox, #{ "op": "add", "key": body.key }))
+let total = unwrap(chan.ask(inbox, { op: "add", key: body.key }))
 if sim.maybe("slow_answer") => time.sleep(1500) else => ()
 http.response(200, to_string(total))
 ```
@@ -1092,7 +1092,7 @@ any machine. A database opened inside a world, for instance, lives on
 the world's disk and nowhere else:
 
 ```olang
-let run = sim.world(#{ "seed": 1 }).run_fn(() => {
+let run = sim.world({ seed: 1 }).run_fn(() => {
     let conn = unwrap(db.open("notes.db"))
     unwrap(db.execute(conn, "create table notes (body text)", []))
     unwrap(db.execute(conn, "insert into notes values (?)", ["hello"]))

@@ -228,7 +228,7 @@ and `OLANG_UPDATE_SNAPSHOTS=1` (or the generic `UPDATE_SNAPSHOTS=1`)
 accepts the new form. In CI set `OLANG_SNAPSHOTS=ci`: a snapshot not
 recorded fails instead of being written, so one deleted or never
 committed turns the run red. A library with an update variable of its own
-passes it: `testing.snapshot(name, value, #{ "update": true })`. It is
+passes it: `testing.snapshot(name, value, { update: true })`. It is
 for the long HTML and SVG strings a test would otherwise inline; commit
 the directory.
 
@@ -1723,7 +1723,7 @@ frames also carry `line`. `native` is the crashing thread's backtrace
 as raw addresses. Read them back with the dSYM whose UUID the report
 names: `atos -o olang.dSYM -l <load_address> <address>...`. A report
 never holds a value, the environment or the program's arguments, so it
-can be sent home as is. `runtime.on_crash(dir, #{ "max_bytes": n })`
+can be sent home as is. `runtime.on_crash(dir, { max_bytes: n })`
 caps the file (256 KiB by default, 16 KiB to 1 MiB). A report cut to
 fit stays valid JSON, with `"truncated": true`. Only the program
 itself may arm it; a module loaded with `runtime.load_module` may not.
@@ -1800,7 +1800,7 @@ let sig = unwrap(crypto.ed25519_sign(program, release_private_key))
 unwrap(fs.create_dir_all("layers/1.4.0"))
 unwrap(fs.write_bytes("layers/1.4.0/app.olb", program))
 unwrap(fs.write_file("layers/1.4.0/app.olb.sig", sig))
-let state = #{ "active": "1.4.0", "tries": 0, "max_tries": 3 }
+let state = { active: "1.4.0", tries: 0, max_tries: 3 }
 unwrap(fs.write_file("layers/state.json", unwrap(json.stringify(state))))
 
 // In the program, once the new layer has shown it works.

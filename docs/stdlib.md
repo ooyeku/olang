@@ -551,7 +551,7 @@ slicing at one is O(1). `str.byte_len`, `str.slice_bytes`,
 those units. A byte offset that falls inside a character raises,
 because a slice there would not be text. `str.chunks(s, n)` cuts a
 text into pieces of at most `n` bytes in a single pass (100 MB in
-about the time it takes to copy it). Pass `#{"prefer": "\n"}` to end
+about the time it takes to copy it). Pass `{ prefer: "\n" }` to end
 each piece at a line break where the window has one.
 
 ```olang
@@ -559,7 +559,7 @@ let s = "naïve café"
 println(str.byte_len(s))                  // 12
 println(str.char_to_byte(s, 3))           // 4
 println(str.slice_bytes(s, 0, 4))         // naï
-println(str.chunks("ab\ncd\nefgh", 5, #{"prefer": "\n"}))  // ["ab\n", "cd\n", "efgh"]
+println(str.chunks("ab\ncd\nefgh", 5, {prefer: "\n"}))  // ["ab\n", "cd\n", "efgh"]
 ```
 
 **Comparing text as a reader does.** `==` compares code points, so
@@ -575,7 +575,7 @@ word diffs step over `str.word_bounds`, and wrapping cuts only at
 println(str.normalize("e\u{301}", "nfc") == "é")              // true
 println(str.fold("Straße") == str.fold("STRASSE"))            // true
 println(str.word_bounds("can't stop"))                        // [0, 5, 6, 10]
-println(str.lines("a\r\nb\n", #{"keep_ends": true}) == ["a\r\n", "b\n"])   // true
+println(str.lines("a\r\nb\n", {keep_ends: true}) == ["a\r\n", "b\n"])   // true
 println(str.line_starts("ab\ncd\n"))                         // [0, 3, 6]
 println(str.stats("héllo\nwörld").graphemes)                  // 11
 ```
@@ -912,11 +912,11 @@ can still read what this one wrote, and a file that is not an encoding
 is refused.
 
 ```olang
-let v = #{ "id": (7, "seven"), "raw": bytes.from_list([1, 2]), "r": Ok([1.5]) }
+let v = { id: (7, "seven"), raw: bytes.from_list([1, 2]), r: Ok([1.5]) }
 let b = value.encode(v)
 println(unwrap(value.decode(b)) == v)                   // true
-let x = value.encode(#{ "a": 1, "b": 2 }, #{ "canonical": true })
-let y = value.encode(#{ "b": 2, "a": 1 }, #{ "canonical": true })
+let x = value.encode({ a: 1, b: 2 }, { canonical: true })
+let y = value.encode({ b: 2, a: 1 }, { canonical: true })
 println(x == y)                                          // true
 ```
 
@@ -965,7 +965,7 @@ let text = "name = \"cfg\"\n[server]\nport = 7317"
 let doc = unwrap(toml.parse(text))
 println(show(doc.name) + " on " + show(doc.server.port))
 
-let out = unwrap(toml.stringify(#{ "retries": 3 }))
+let out = unwrap(toml.stringify({ retries: 3 }))
 println(str.trim(out))
 println(to_string(toml.is_valid("not [ valid")))
 ```
@@ -1013,7 +1013,7 @@ and every build includes it, the browser's too.
 | <a id="md-slug"></a>`md.slug(text)` | the anchor GitHub gives a heading whose text is `text`: lower-cased; letters, digits, `-` and `_` kept; a space a `-`; the rest dropped |
 | <a id="md-front"></a>`md.front(src)` | `Ok(#{ "data", "body", "format" })`: the front matter as a Map, the text after it, and `"yaml"` (a `---` block), `"toml"` (`+++`) or `""` when there is none (`data` is then `#{}`). `Err(message)` naming the line of a block that does not parse |
 | <a id="md-text"></a>`md.text(src)` | the document's plain text, a block a line: what a search index or a page description reads |
-| <a id="md-parse"></a>`md.parse(src, opts?)` | the document as a tree of nodes, each `#{ "kind", "start", "end", "char_start", "char_end", ... }` with its source range in bytes and in characters. The root is `document`. A container (`paragraph`, `heading` with `level`, `blockquote`, `code_block` with `lang` and `info`, `list` with `ordered` and `first`, `item`, `table` with `align`, `table_head`, `table_row`, `table_cell`, `emphasis`, `strong`, `strikethrough`, `link` and `image` with `url` and `title`, `footnote_def`, `html_block`, `front_matter`) has `children`. A leaf (`text`, `code`, `html`, `inline_html`, `math`, `footnote_ref`, `soft_break`, `hard_break`, `rule`, `task` with `checked`) has its `text`. `#{ "gfm": false }` reads CommonMark alone, with no tables, strikethrough, task lists or footnotes. `#{ "events": true }` answers the stream instead: a flat list in document order, each container a `start` and an `end` event (`event` says which) and each leaf a `leaf` event |
+| <a id="md-parse"></a>`md.parse(src, opts?)` | the document as a tree of nodes, each `#{ "kind", "start", "end", "char_start", "char_end", ... }` with its source range in bytes and in characters. The root is `document`. A container (`paragraph`, `heading` with `level`, `blockquote`, `code_block` with `lang` and `info`, `list` with `ordered` and `first`, `item`, `table` with `align`, `table_head`, `table_row`, `table_cell`, `emphasis`, `strong`, `strikethrough`, `link` and `image` with `url` and `title`, `footnote_def`, `html_block`, `front_matter`) has `children`. A leaf (`text`, `code`, `html`, `inline_html`, `math`, `footnote_ref`, `soft_break`, `hard_break`, `rule`, `task` with `checked`) has its `text`. `{ gfm: false }` reads CommonMark alone, with no tables, strikethrough, task lists or footnotes. `{ events: true }` answers the stream instead: a flat list in document order, each container a `start` and an `end` event (`event` says which) and each leaf a `leaf` event |
 
 `render`'s options, every one optional:
 
@@ -1042,9 +1042,9 @@ let page = "---\ntitle: Getting started\ntags: [intro, setup]\n---\n# Start\n\nS
 let f = unwrap(md.front(page))
 println(f.data.title)                     // Getting started
 println(f.data.tags)                      // ["intro", "setup"]
-let doc = md.render(f.body, #{
-    "link": (u) => if str.ends_with(u, ".md") => "/book/" + str.replace(u, ".md", "/") else => u,
-    "code": (lang, info, text) => if lang == "olang" => "<pre class=\"ol\">" + meta.highlight(text) + "</pre>" else => ()
+let doc = md.render(f.body, {
+    link: (u) => if str.ends_with(u, ".md") => "/book/" + str.replace(u, ".md", "/") else => u,
+    code: (lang, info, text) => if lang == "olang" => "<pre class=\"ol\">" + meta.highlight(text) + "</pre>" else => ()
 })
 println(doc.title)                        // Start
 println(map(doc.headings, (h) => h.slug)) // ["start"]
@@ -1067,7 +1067,7 @@ let em = doc.children[1].children[1]
 println(em.kind)                                       // emphasis
 println(str.slice_bytes(src, em.start, em.end))        // *café*
 println(`${em.end - em.start} ${em.char_end - em.char_start}`)   // 7 6
-let events = md.parse("a *b*", #{ "events": true })
+let events = md.parse("a *b*", { events: true })
 println(map(events, (e) => e.event + " " + e.kind))
 // ["start paragraph", "leaf text", "start emphasis", "leaf text", "end emphasis", "end paragraph"]
 ```
@@ -1263,7 +1263,7 @@ let g = unwrap(peg.grammar(`
   Name = [a-z]+
   Num "a number" = [0-9]+
   skip = [ \\n]+
-`, #{}, #{ "recover": [";"] }))
+`, #{}, { recover: [";"] }))
 match g.parse("a = 1; b = ; c = 3;") {
     Ok(_) => println("parsed"),
     Err(e) => {
@@ -1319,7 +1319,7 @@ query, a sixth of what its hand-written parser takes.
 
 The engine peg had before — the grammar written out as olang functions
 and compiled with `meta.eval` — is still there for testing peg itself
-(`peg.grammar(text, actions, #{ "engine": "olang" })`): it gives the
+(`peg.grammar(text, actions, { engine: "olang" })`): it gives the
 same trees and errors, 9 to 25 times slower.
 
 A grammar is an immutable value, so tasks can share one (through a
@@ -1348,17 +1348,17 @@ let Json = unwrap(peg.grammar(`
   False   = "false"
   Null    = "null"
   skip    = [ \\t\\n\\r]+
-`, #{
-    "json": (m) => m.children[0],
-    "value": (m) => m.children[0],
-    "object": (m) => fold(m.children, #{}, (acc, kv) => map_set(acc, kv[0], kv[1])),
-    "member": (m) => (m.key, m.val),
-    "array": (m) => m.children,
-    "String": (m) => unwrap(json.parse(m.text)),
-    "Number": (m) => unwrap(str.parse_float(m.text)),
-    "True": (m) => true,
-    "False": (m) => false,
-    "Null": (m) => ()
+`, {
+    json: (m) => m.children[0],
+    value: (m) => m.children[0],
+    object: (m) => fold(m.children, #{}, (acc, kv) => map_set(acc, kv[0], kv[1])),
+    member: (m) => (m.key, m.val),
+    array: (m) => m.children,
+    String: (m) => unwrap(json.parse(m.text)),
+    Number: (m) => unwrap(str.parse_float(m.text)),
+    True: (m) => true,
+    False: (m) => false,
+    Null: (m) => ()
 }))
 let v = unwrap(Json.parse(`{"tags": ["a", "b"], "size": 2.5, "ok": true}`))
 println(v.tags)                            // ["a", "b"]
@@ -1386,15 +1386,16 @@ let Calc = unwrap(peg.grammar(`
   atom = Num / "(" expr ")"
   Num  = [0-9]+
   skip = [ ]+
-`, #{
-    "expr": (m) => if m.fixity == "prefix" => 0 - m.operand
-        else if m.op == "+" => m.left + m.right
-        else if m.op == "-" => m.left - m.right
-        else if m.op == "*" => m.left * m.right
-        else if m.op == "/" => m.left / m.right
-        else => power(m.left, m.right),
-    "atom": (m) => m.children[0],
-    "Num": (m) => unwrap(str.parse_int(m.text))
+`, {
+    expr: (m) => if m.fixity == "prefix" => 0 - m.operand else => match m.op {
+        "+" => m.left + m.right,
+        "-" => m.left - m.right,
+        "*" => m.left * m.right,
+        "/" => m.left / m.right,
+        _ => power(m.left, m.right),
+    },
+    atom: (m) => m.children[0],
+    Num: (m) => unwrap(str.parse_int(m.text))
 }))
 println(unwrap(Calc.parse("1 + 2 * 3")))     // 7
 println(unwrap(Calc.parse("10 - 4 - 3")))    // 3
@@ -1690,7 +1691,7 @@ made, as `chan.send` would refuse it.
 
 ```olang
 let gone = chan.new()
-fn open_view(id) = #{ "id": id, "guard": chan.on_drop(gone, #{ "closed": id }) }
+fn open_view(id) = { id: id, guard: chan.on_drop(gone, { closed: id }) }
 fn show_once() = {
     let view = open_view(7)
     view.id
@@ -2106,8 +2107,8 @@ println(show(bytes.from_string("hi!") == b))           // true
 **Text that isn't UTF-8.** `fs.read_file` and `bytes.to_string` are
 strict: one bad byte makes the whole read an `Err`. That is the right
 default for data, but an editor or a diff has to open whatever file a
-person has. `fs.read_file(path, #{"lossy": true})` reads it anyway and
-puts U+FFFD where a sequence was not UTF-8. `#{"encoding": "latin1"}`
+person has. `fs.read_file(path, { lossy: true })` reads it anyway and
+puts U+FFFD where a sequence was not UTF-8. `{ encoding: "latin1" }`
 (or `"utf-16le"`, `"utf-16be"`) reads a file written in another
 encoding, and `str.encode(s, encoding)` writes one (a `Result`, since
 Latin-1 has no byte for most characters).
@@ -2221,8 +2222,8 @@ a `Bool`, and the path functions `join`, `dirname`, `basename`, and
 | Watching | `watch` `watch_next` `watch_close`: a folder's whole tree followed as it changes |
 | <a id="fs-abs_path"></a><a id="fs-real_path"></a>Paths | `join(parts)` `dirname` `basename` `ext`: pure string surgery, answering the string itself. `abs_path` answers a **`Result`** (`Ok(path)`): it resolves against the current directory, which can fail, and normalizes `.`/`..` without requiring the file to exist. `real_path` (a `Result` too) also resolves symbolic links (`/tmp/x` is `/private/tmp/x` on macOS); for a path that does not exist yet it makes the nearest existing folder real and keeps the rest |
 
-`fs.read_file(path, #{"lossy": true})` reads a file that is not all
-valid UTF-8, and `#{"encoding": "latin1"}` one in another encoding
+`fs.read_file(path, { lossy: true })` reads a file that is not all
+valid UTF-8, and `{ encoding: "latin1" }` one in another encoding
 (see [text that isn't UTF-8](#bytes--binary-data)).
 
 A file too large to hold is read a piece at a time:
@@ -2334,8 +2335,8 @@ chosen paths under an ignored folder through (a repository's
 | `max` | at most this many paths a batch; past it, `rescan` the root (5,000) |
 
 ```olang no-run
-let w = unwrap(fs.watch("project", #{ "ignore": [".git", "target"], "keep": [".git/HEAD"] }))
-match fs.watch_next(w, #{ "timeout_ms": 2000 }) {
+let w = unwrap(fs.watch("project", { ignore: [".git", "target"], keep: [".git/HEAD"] }))
+match fs.watch_next(w, { timeout_ms: 2000 }) {
     Ok(b) => if b != () => { for e in b.events { println(e.kind + " " + e.path) } },
     Err(e) => println("closed")
 }
@@ -2365,17 +2366,17 @@ over these nodes, beside the type checker
 
 | Function | Result |
 |---|---|
-| <a id="meta-parse"></a>`meta.parse(source, options?)` | `Ok(list of node maps)` \| `Err(message)` — a syntax error is a normal `Err`, never a crash. `#{ "recover": true }` answers `#{ "items", "errors" }` instead: when the file does not parse whole, each top-level item is parsed on its own, so a file mid-edit keeps every item but the broken one, and each error is `#{ "kind": "error", "message", "line", "column", "at", "start", "end" }` (`line` and `column` the file's, while the message's own position counts from the broken item; `at` the byte the parser stopped at, `start` and `end` the broken item's range). `#{ "byte_offset", "line_offset" }` gives an item parsed on its own (its text sliced out of a file) the spans and lines it has in the file |
+| <a id="meta-parse"></a>`meta.parse(source, options?)` | `Ok(list of node maps)` \| `Err(message)` — a syntax error is a normal `Err`, never a crash. `{ recover: true }` answers `#{ "items", "errors" }` instead: when the file does not parse whole, each top-level item is parsed on its own, so a file mid-edit keeps every item but the broken one, and each error is `#{ "kind": "error", "message", "line", "column", "at", "start", "end" }` (`line` and `column` the file's, while the message's own position counts from the broken item; `at` the byte the parser stopped at, `start` and `end` the broken item's range). `#{ "byte_offset", "line_offset" }` gives an item parsed on its own (its text sliced out of a file) the spans and lines it has in the file |
 | <a id="meta-parse_items"></a>`meta.parse_items(source)` | `[#{ "kind", "name", "start", "end", "line" }]`, one per top-level item, found by a scan rather than a parse. The byte ranges tile the file (a doc comment goes with the item under it), so an index reparses only the item an edit is in. The scan restarts at a line that opens with a declaration keyword, so a file with an unclosed bracket still shows the items after it |
 | <a id="meta-rename"></a>`meta.rename(source, names)` | `Ok(text)`: `source` with each name that is a key of the map `names` renamed to its value wherever it binds or refers to a value — declarations, parameters, pattern binders, uses, template interpolations — and kept where it names something else: a field after `.`, an object's, struct literal's or named argument's key, a struct pattern's field, a type, a variant, a trait's or impl's method, an import. Comments and strings are untouched; `Err` when the source does not parse |
-| <a id="meta-eval"></a>`meta.eval(source, options?)` | evaluate source; `options` bounds untrusted code — `#{ "max_steps": n }` (loop iterations and calls, deterministic) and `#{ "timeout_ms": ms }` (wall clock) — returning `Err("budget exceeded …")` instead of a hung thread. Bounded code runs on the same tiers as any other code, and each tier counts its steps |
+| <a id="meta-eval"></a>`meta.eval(source, options?)` | evaluate source; `options` bounds untrusted code — `{ max_steps: n }` (loop iterations and calls, deterministic) and `{ timeout_ms: ms }` (wall clock) — returning `Err("budget exceeded …")` instead of a hung thread. Bounded code runs on the same tiers as any other code, and each tier counts its steps |
 | <a id="meta-expand"></a>`meta.expand(source)` | `Ok(text)` \| `Err(message)` — the program after macro expansion, as source: every `meta fn` removed and every `@` site replaced by what it generated (what `olang expand FILE` prints) |
-| <a id="meta-encode"></a>`meta.encode(source, options?)` | `Ok(bytes)` \| `Err(message)` — the parsed program (macros expanded) as a program image: bytes the runtime loads without parsing, behind a header naming the olang version that wrote it, which is the only version that loads it. `#{ "hot": [names] }` names the functions the loading runtime compiles at declaration rather than at their first call. What the web SDK's `serve` hands the browser in place of the source bundle |
+| <a id="meta-encode"></a>`meta.encode(source, options?)` | `Ok(bytes)` \| `Err(message)` — the parsed program (macros expanded) as a program image: bytes the runtime loads without parsing, behind a header naming the olang version that wrote it, which is the only version that loads it. `{ hot: [names] }` names the functions the loading runtime compiles at declaration rather than at their first call. What the web SDK's `serve` hands the browser in place of the source bundle |
 | <a id="meta-unresolved"></a>`meta.unresolved(source)` | `Ok(list)` of every name the program uses that nothing in it defines or imports and the language does not provide, in order of first use; `Err` when the source does not parse. How the web SDK's bundler warns of a module that uses a name it does not import, undefined in the browser as natively |
 | <a id="meta-resolve"></a>`meta.resolve(source)` | `Ok([#{ "name", "start", "end", ... }])`, every name in the program in the order the scope walk meets them (a `let`'s value before its name), with what it reads: `def` (`#{ "start", "end" }` of the binding's definition; `is_def` marks the definition itself), or `builtin`, `module` or `unresolved` set to `true`; a top-level binding and its uses carry `top_level: true`. The language server's references and rename walk the same scopes, so the two agree. `Err` when it does not parse. Native only |
 | <a id="meta-types"></a>`meta.types(source)` | `Ok([#{ "name", "signature", "doc", "name_start", "line", "column" }])`, each top-level declaration with the signature a hover shows for it (`fn double(x: Int) -> Int`, `let n: Int`) and its `///` doc. The language server's own code. Native only |
 | <a id="meta-fingerprint"></a>`meta.fingerprint(item)` | `Ok(#{ "sig", "body" })` for one item, given as its source or its node from `meta.parse`: two 16-digit hex hashes of the node with every position left out, so moving an item, or adding lines above it, changes neither. `sig` covers the declaration without its body (a `fn`'s name, parameters, types and `share`), `body` the body (a `let`'s value); an edit inside a body leaves `sig` as it was |
-| <a id="meta-tokens"></a>`meta.tokens(source, lang?)` | the source as tokens that cover it exactly — their `text`s joined are `source` — `[#{ "kind", "text", "start", "end", "line" }]`, `start` and `end` in characters, `line` from 1. `kind` is one of `keyword` `constant` (`true`, `Ok`, an ALL-CAPS name) `ident` `function` (a call's or a definition's name) `type` `module` `property` `string` (a template's text pieces; a string a line) `interpolation` (`${` and its `}`) `number` `comment` `operator` `punct` `macro` (`@name`) `space`. Any text lexes, finished or not: the language server's lexer. `lang` names another language, with the same kinds and the same guarantee: `"python"` (`py`), `"rust"` (`rs`), `"js"` (`javascript`, `ts`), `"shell"` (`sh`, `bash`, `console`), `"toml"`, `"json"` or `"markdown"` (`md`); a name it does not know raises. `meta.tokens(source, #{ "packed": true })` answers `#{ "kind", "start", "end", "kinds", "state" }` instead: three Int lists, offsets in bytes and each kind its index in `kinds`, and the lexer's `state` at the end (`"code"`, or `"string"`, `"raw"` or `"template"` when the text ends inside one). `"from"` (a byte offset) and `"state"` (the state there, as an earlier call answered it) lex from a line rather than from the start, which is what an editor relexing after an edit needs. The options map may also name `lang`; `from`, `state` and `packed` are for olang source only. Without `packed`, a lex `from` an offset answers the usual maps, offsets still counted in characters from the start of `source`. An option it does not know raises |
+| <a id="meta-tokens"></a>`meta.tokens(source, lang?)` | the source as tokens that cover it exactly — their `text`s joined are `source` — `[#{ "kind", "text", "start", "end", "line" }]`, `start` and `end` in characters, `line` from 1. `kind` is one of `keyword` `constant` (`true`, `Ok`, an ALL-CAPS name) `ident` `function` (a call's or a definition's name) `type` `module` `property` `string` (a template's text pieces; a string a line) `interpolation` (`${` and its `}`) `number` `comment` `operator` `punct` `macro` (`@name`) `space`. Any text lexes, finished or not: the language server's lexer. `lang` names another language, with the same kinds and the same guarantee: `"python"` (`py`), `"rust"` (`rs`), `"js"` (`javascript`, `ts`), `"shell"` (`sh`, `bash`, `console`), `"toml"`, `"json"` or `"markdown"` (`md`); a name it does not know raises. `meta.tokens(source, { packed: true })` answers `#{ "kind", "start", "end", "kinds", "state" }` instead: three Int lists, offsets in bytes and each kind its index in `kinds`, and the lexer's `state` at the end (`"code"`, or `"string"`, `"raw"` or `"template"` when the text ends inside one). `"from"` (a byte offset) and `"state"` (the state there, as an earlier call answered it) lex from a line rather than from the start, which is what an editor relexing after an edit needs. The options map may also name `lang`; `from`, `state` and `packed` are for olang source only. Without `packed`, a lex `from` an offset answers the usual maps, offsets still counted in characters from the start of `source`. An option it does not know raises |
 | <a id="meta-highlight"></a>`meta.highlight(source, lang?)` | the source as HTML for inside a `<code>`: each token but a space a `<span class="ol-KIND">`, its text escaped; `lang` as `meta.tokens` takes it. The same in the browser runtime, so a page's build and its playground colour alike |
 | <a id="meta-exports"></a>`meta.exports(path)` | at expansion time, `Ok(map)` of the literal values the module the expanding file imports as `path` binds at its top level (`let`/`share let` of a number, string, list, map, or tuple literal), by name; `Err` for a path the file does not import, and at runtime |
 
@@ -2561,7 +2562,7 @@ println(meta.highlight("version = \"1.0\"  # pinned", "toml"))
 
 An editor or an indexer works on a file that is being changed, often
 mid-edit. `meta.parse_items` finds the items without parsing, so an
-edit reparses only its item. `#{ "recover": true }` keeps every item
+edit reparses only its item. `{ recover: true }` keeps every item
 that parses, with the broken one reported in place. `meta.types` gives
 what a hover shows, and `meta.fingerprint` tells a moved item from a
 changed one.
@@ -2570,7 +2571,7 @@ changed one.
 let src = "/// Twice x.\nfn double(x: Int) -> Int = x * 2\nfn bad( = \nlet n = double(4)\n"
 let items = meta.parse_items(src)
 println(map(items, (i) => i.name))                         // ["double", "bad", "n"]
-let r = meta.parse(src, #{ "recover": true })
+let r = meta.parse(src, { recover: true })
 println(map(r.items, (n) => n.name))                       // ["double", "n"]
 println(`${r.errors[0].line}:${r.errors[0].column}`)       // 3:9
 let types = unwrap(meta.types("/// Twice x.\nfn double(x: Int) -> Int = x * 2"))
@@ -2587,10 +2588,10 @@ top. It keeps the `state` each line ended in and passes it back with
 
 ```olang
 let line1 = "let b = `one\n"
-let head = meta.tokens(line1, #{ "packed": true })
+let head = meta.tokens(line1, { packed: true })
 println(head.state)                                         // template
 let src = line1 + "two`\nlet c = 3\n"
-let rest = meta.tokens(src, #{ "packed": true, "from": str.byte_len(line1), "state": head.state })
+let rest = meta.tokens(src, { packed: true, from: str.byte_len(line1), state: head.state })
 println(rest.kinds[rest.kind[0]])                           // string
 println(rest.start[0])                                      // 13
 println(rest.state)                                         // code
@@ -2768,7 +2769,7 @@ genuinely fail:
 let args = os.args()
 let target = if len(args) > 1 => args[1] else => "."
 
-let r = unwrap(os.exec(["git", "status", "--short"], #{ "cwd": target }))
+let r = unwrap(os.exec(["git", "status", "--short"], { cwd: target }))
 if r.code == 0 => print(r.stdout)
 else => println("git failed: " + r.stderr)
 ```
@@ -2840,19 +2841,19 @@ println(show(unwrap(proc.wait(p)).code))
 
 A child that speaks the language server protocol frames its messages by
 `Content-Length` headers, not lines (a message's body ends with no line
-break). Spawn it with `#{ "framing": "content-length" }` and each
+break). Spawn it with `{ framing: "content-length" }` and each
 `read_line` is one whole message body; `write_frame` sends one framed.
 
 ```olang no-run
-let p = unwrap(proc.spawn(["olang", "lsp"], #{ "framing": "content-length" }))
-unwrap(proc.write_frame(p, unwrap(json.stringify(#{ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": #{} }))))
+let p = unwrap(proc.spawn(["olang", "lsp"], { framing: "content-length" }))
+unwrap(proc.write_frame(p, unwrap(json.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: #{} }))))
 println(unwrap(proc.read_line(p)))     // the initialize result, whole
 ```
 
 <a id="proc-kill"></a>`proc.kill(p)` ends the child alone (SIGKILL); a shell's children
 outlive it. To end everything a child started, spawn it with
-`#{ "group": true }` — it leads a process group of its own — and kill
-it with `proc.kill(p, #{ "tree": true })`, which kills the whole group
+`{ group: true }` — it leads a process group of its own — and kill
+it with `proc.kill(p, { tree: true })`, which kills the whole group
 (`taskkill /T` on Windows). A tree kill of a child spawned without
 `group` is an `Err`. A grouped child does not receive the terminal's
 Ctrl-C. A program that traps Ctrl-C (`os.on_interrupt`,
@@ -2861,9 +2862,9 @@ a Ctrl-C, SIGTERM or SIGHUP that ends olang kills the group too, so it
 never runs on with nobody waiting for it.
 
 ```olang no-run
-let p = unwrap(proc.spawn(["sh", "-c", "make test"], #{ "group": true }))
+let p = unwrap(proc.spawn(["sh", "-c", "make test"], { group: true }))
 // … the deadline passes …
-unwrap(proc.kill(p, #{ "tree": true }))   // make, and everything it ran
+unwrap(proc.kill(p, { tree: true }))   // make, and everything it ran
 ```
 
 <a id="proc-pipeline"></a>`proc.pipeline` chains commands the way the shell's `a | b | c` does —
@@ -2912,9 +2913,9 @@ A terminal that closes waits for what it wrote to be read (macOS): keep
 reading until `eof`, then `wait`.
 
 ```olang no-run
-let p = unwrap(pty.spawn([pty.shell(), "-l"], #{ "cwd": "/tmp", "rows": 30, "cols": 100, "env": #{ "TERM": "xterm-256color" } }))
+let p = unwrap(pty.spawn([pty.shell(), "-l"], { cwd: "/tmp", rows: 30, cols: 100, env: #{ "TERM": "xterm-256color" } }))
 unwrap(pty.write(p, "ls\r"))
-match pty.read(p, #{ "timeout_ms": 500 }) { Ok(b) => println(b), Err(e) => println(e) }
+match pty.read(p, { timeout_ms: 500 }) { Ok(b) => println(b), Err(e) => println(e) }
 pty.close(p)
 ```
 
@@ -2984,14 +2985,14 @@ short-circuits with `help` set true.
 
 ```olang no-run
 use cli
-let spec = #{
-    "name": "greet", "about": "Greet someone",
-    "flags": [
-        #{ "name": "loud", "short": "l", "type": "bool", "help": "SHOUT it" },
-        #{ "name": "count", "short": "n", "type": "int", "default": 1,
-           "help": "repeat N times" }
+let spec = {
+    name: "greet", about: "Greet someone",
+    flags: [
+        { name: "loud", short: "l", type: "bool", help: "SHOUT it" },
+        { name: "count", short: "n", type: "int", default: 1,
+           help: "repeat N times" }
     ],
-    "args": [ #{ "name": "who", "required": true, "help": "who to greet" } ]
+    args: [ { name: "who", required: true, help: "who to greet" } ]
 }
 match cli.parse(spec, cli.args()) {
     Err(e) => { println("greet: " + e); os.exit(2) },
@@ -3025,7 +3026,7 @@ with no extra logic.
 |---|---|
 | <a id="term-black"></a><a id="term-green"></a><a id="term-yellow"></a><a id="term-blue"></a><a id="term-magenta"></a><a id="term-cyan"></a><a id="term-white"></a><a id="term-gray"></a>Color | `red` `green` `yellow` `blue` `magenta` `cyan` `white` `black` `gray` — each wraps a string |
 | <a id="term-bold"></a><a id="term-dim"></a><a id="term-italic"></a><a id="term-underline"></a>Attributes | `bold` `dim` `italic` `underline` |
-| <a id="term-color"></a><a id="term-style"></a>General | `style(s, opts)` — `opts` is `#{ "fg": ..., "bg": ..., "bold": ..., "dim": ..., "italic": ..., "underline": ... }`; `color()` — is styling active (a TTY without `NO_COLOR`, or `CLICOLOR_FORCE`; decided once, re-decided after the program's own `os.set_env`/`os.remove_env`) |
+| <a id="term-color"></a><a id="term-style"></a>General | `style(s, opts)` — `opts` is `{ fg: ..., bg: ..., bold: ..., dim: ..., italic: ..., underline: ... }`; `color()` — is styling active (a TTY without `NO_COLOR`, or `CLICOLOR_FORCE`; decided once, re-decided after the program's own `os.set_env`/`os.remove_env`) |
 | <a id="term-rule"></a>Structure | `rule(width)` — a horizontal line; `table(headers, rows)` — columns aligned to their widest plain cell, header bold |
 | <a id="term-red"></a><a id="term-visible_len"></a>Measure | `visible_len(s)` — the width of `s` on screen, its styling escapes not counted (`visible_len(term.red("hi"))` is 2) |
 | <a id="term-bar"></a>Progress | `bar(fraction, width)` — a `[████░░░░]  50%` bar string; print it with a leading `\r` and `os.flush()` to redraw in place |
@@ -3096,7 +3097,7 @@ capability: a control cell is pure.
 ```olang
 use ui
 use dash
-println(ui.html(ui.h("p", #{ "class": "note" }, ["a < b"])))
+println(ui.html(ui.h("p", { class: "note" }, ["a < b"])))
 println(str.contains(dash.kpi("open", "12", ""), "open"))
 ```
 
@@ -3171,7 +3172,7 @@ followed by DA1 (`"\u{1b}[?u\u{1b}[c"`), which every terminal answers.
 
 ```olang no-run
 if !tty.is_tty() => { println("needs a terminal"); os.exit(0) }
-let h = unwrap(tty.enter(#{ "alt_screen": true, "hide_cursor": true, "mouse": true, "paste": true }))
+let h = unwrap(tty.enter({ alt_screen: true, hide_cursor: true, mouse: true, paste: true }))
 let events = tty.events(h)
 let (cols, rows) = unwrap(tty.size())
 tty.write(h, "\u{1b}[2J\u{1b}[H" + show(cols) + "x" + show(rows) + " — q quits\r\n")
@@ -3260,7 +3261,7 @@ Native-only; on in the released binaries (the `gui` cargo feature).
 | <a id="gui-hold_quit"></a>`gui.hold_quit(on)` | `true`: a quit from outside the program — the Dock's Quit, AppleScript's `quit app`, a logout, a restart or a shutdown (AppKit's `applicationShouldTerminate:`) — is the program's `quit` event, and the application waits for the program to end, then exits with its status; `false` (the default): such a quit ends the process at once. The wait lasts until the program ends; meanwhile the platform runs no window handler, so `gui.open` and `gui.dialog` answer an error and what is sent to the windows waits. Loom's run loop holds quits and sends the message ⌘Q sends. macOS; `gui.platform()` says `quit_hold`. → `()` |
 | <a id="gui-turn"></a>`gui.turn(on)` | a program says a turn begins (`true`) and ends (`false`) — Loom's loop does, around each turn. One that runs past 2 s (`GUI_NOT_RESPONDING_MS`) makes every window show it is waiting (the busy cursor, a veil and a spinner over the frame) until it ends; the engine draws on meanwhile, so scrolls, looks and fields keep the refresh. → `()`. `gui.platform()` says `turn_watch` |
 | <a id="gui-set"></a>`gui.set(w, props)` | `title`, `size`, `min`, `at` (where on the screen the window is), `visible`, `cursor`, `focus`, `background`, `zoom` (the text size, 0.5 to 3: the window keeps its pixels and its boxes, reads, and events are in units of `zoom` logical pixels, so a program lays out in less room at a larger size; a `resize` event says the new size), `appearance` (`"light"`, `"dark"`, or `"system"`: the title bar and the platform's own controls in the appearance the program draws in), `scripted` (`true`: a script drives the window through `gui.input`, and a person's keys, pointer, wheel and drops on it are not taken — a test's window is not moved by the mouse passing over it), `tab` (macOS window tabs: `"next"`, `"previous"` tab chosen, `"merge"` every window into this one's tab bar, `"detach"` this tab into a window of its own, `"bar"` the bar shown or hidden; a `tabs` event follows), `corner` (`"continuous"` or `"round"`: the corners of every rounded box whose style says none), `wide` (a map of sRGB colours, `"#rrggbb"`, to the Display P3 ones the GPU draws for them, `"color(display-p3 r g b)"`; `()` none — see Colours), `flash` (`true`: the repaint rainbow — every region a frame draws tinted with that frame's colour, unseen by damage, so a region keeps the tint of the frame that last drew it; `false` draws the window whole again; `gui.platform()` says `flash`), `fullscreen` (`"toggle"`: enters or leaves full screen in its own space, as the green button does; macOS) |
-| <a id="gui-fonts"></a>`gui.fonts(sources, opts?)` | register fonts: paths or Bytes, TTF/OTF/TTC, optionally brotli-compressed → the number of faces added. Registered fonts come before the system's. `#{ "background": true }`: the sources are read now, then decompressed and registered on a thread of their own while the program goes on — whatever shapes or measures text meanwhile waits until they are in — and it answers the number of sources (Loom's `run` registers its bundled fonts so: they were tens of milliseconds of a window's first frame) |
+| <a id="gui-fonts"></a>`gui.fonts(sources, opts?)` | register fonts: paths or Bytes, TTF/OTF/TTC, optionally brotli-compressed → the number of faces added. Registered fonts come before the system's. `{ background: true }`: the sources are read now, then decompressed and registered on a thread of their own while the program goes on — whatever shapes or measures text meanwhile waits until they are in — and it answers the number of sources (Loom's `run` registers its bundled fonts so: they were tens of milliseconds of a window's first frame) |
 | <a id="gui-clipboard_read"></a><a id="gui-clipboard_write"></a>`gui.clipboard_read()` / `gui.clipboard_write(text)` | the platform clipboard (headless windows' editing uses a private one) |
 | <a id="gui-clipboard_image"></a>`gui.clipboard_image()` | the clipboard's image (a screenshot copied, an image copied in another program) → `Ok(#{ png, width, height })`, `png` its PNG Bytes (a TIFF is turned into one), or `Err` when it holds none. macOS only: elsewhere an `Err` that says so (`gui.platform().clipboard_image`) |
 | <a id="gui-image_info"></a>`gui.image_info(source)` | a picture's size and format from its header, a path or Bytes → `Ok(#{ width, height, format })` (`"png"`, `"jpeg"`, `"webp"`, `"gif"`, `"svg"`; a JPEG's turned as its EXIF orientation says, an SVG's in its own units), or `Err`. It reads the file: call it from a task |
@@ -3572,21 +3573,21 @@ handed back is known as the field's own earlier one by its identity.
 | `"context"` | a context menu closed (`gui.context_menu`): `id` (the item chosen, or `()`), `items` (the titles as the native menu held them, `"-"` a separator), `picked` (a script's `context_pick` chose it) |
 | `"files"` | `action` (`"hover"`: files from another program are over the window; `"drop"`: they were dropped; `"cancel"`: the hover went away), `paths`, `x`, `y` (where: on macOS the pointer's place as the files arrive; elsewhere the pointer's last place in the window — `gui.platform().drop_position`). Not sent on Linux: winit has no Wayland drag and drop (`gui.platform().file_drop`), `target` (the node there). The platform sends a file at a time; the engine sends the files of one gesture as one event |
 | `"status"` | `item` (the item's id), `button` (`"left"`, or `"right"` for a right or ⌃-click), `was_open` (a panel of this item was shown as the click came, or was dismissed by it: the program closes rather than opens), `frame` `(x, y, w, h)` (the item on the screen, from its top left, in points) — no `window`: a status item clicked (`gui.status_item`) |
-| `"dismiss"` | `window`, `item`, `why` (`"outside"`: a click outside it, the key window moving elsewhere; `"escape"`) — a status item's panel put away (hidden: `gui.set(w, #{ "visible": true })` shows it under its item again, or `gui.close` it so it costs nothing while it is away) |
+| `"dismiss"` | `window`, `item`, `why` (`"outside"`: a click outside it, the key window moving elsewhere; `"escape"`) — a status item's panel put away (hidden: `gui.set(w, { visible: true })` shows it under its item again, or `gui.close` it so it costs nothing while it is away) |
 | `"notification"` | `id`, `action` — no `window`: a notification (`gui.notify`) clicked |
 
 ```olang no-run
-let w = unwrap(gui.open(#{ "title": "Hello", "size": (360, 160) }))
+let w = unwrap(gui.open({ title: "Hello", size: (360, 160) }))
 let events = gui.events()
 fn view(name) = [
-    #{ "key": "root", "box": (0, 0, 360, 160), "style": #{ "bg": "#ffffff" } },
-    #{ "key": "name", "parent": "root", "role": "input", "name": "Name", "box": (24, 24, 312, 36),
-       "edit": #{ "value": name, "placeholder": "Your name" },
-       "style": #{ "border": "#d4d4d8", "border_width": 1, "radius": 6, "pad": (0, 10, 0, 10) } },
-    #{ "key": "hi", "parent": "root", "role": "status", "box": (24, 80, 312, 20),
-       "text": if name == "" => "" else => "Hello, " + name }]
+    { key: "root", box: (0, 0, 360, 160), style: { bg: "#ffffff" } },
+    { key: "name", parent: "root", role: "input", name: "Name", box: (24, 24, 312, 36),
+       edit: { value: name, placeholder: "Your name" },
+       style: { border: "#d4d4d8", border_width: 1, radius: 6, pad: (0, 10, 0, 10) } },
+    { key: "hi", parent: "root", role: "status", box: (24, 80, 312, 20),
+       text: if name == "" => "" else => "Hello, " + name }]
 gui.apply(w, view(""))
-gui.apply(w, [#{ "op": "focus", "key": "name" }])
+gui.apply(w, [{ op: "focus", key: "name" }])
 let mut going = true
 while going {
     let e = unwrap(chan.recv(events))
@@ -3651,12 +3652,12 @@ fireflies) live in a **swarm**: columns of numbers the engine owns, moved
 by a **kernel**, a plain olang function compiled for the CPU and the GPU.
 
 ```olang no-run
-fn spark(p, w) = #{ "pos": p.pos + p.vel * w.dt, "life": p.life - w.dt, "dead": p.life <= 0.0 }
-let k = toad.kernel(spark, #{ "pos": (0.0, 0.0), "vel": (0.0, 0.0), "life": 1.0 }, #{})?
+fn spark(p, w) = { pos: p.pos + p.vel * w.dt, life: p.life - w.dt, dead: p.life <= 0.0 }
+let k = toad.kernel(spark, { pos: (0.0, 0.0), vel: (0.0, 0.0), life: 1.0 }, #{})?
 let s = toad.swarm(k, 100000, "show")?
-toad.spawn(s, 24, #{ "vel": ("cone", (0.0, 300.0), 0.4), "life": ("between", 0.3, 0.8) })
-toad.step(s, #{ "dt": 1.0 / 120.0 })
-toad.frame([#{ "swarm": s, "color": "#ff9a3c", "radius": 6.0 }], #{ "size": (1280, 720), "live": "game" })
+toad.spawn(s, 24, { vel: ("cone", (0.0, 300.0), 0.4), life: ("between", 0.3, 0.8) })
+toad.step(s, { dt: 1.0 / 120.0 })
+toad.frame([{ swarm: s, color: "#ff9a3c", radius: 6.0 }], { size: (1280, 720), live: "game" })
 ```
 
 | Function | |
@@ -3804,10 +3805,10 @@ An unknown option key raises rather than being ignored — a typo'd option
 must not become a request that quietly lacked its auth header.
 
 ```olang no-run
-let resp = unwrap(http.get("https://api.example.com/me", #{
-    "bearer": os.get_env("API_TOKEN") |> unwrap,
-    "timeout_ms": 5000,
-    "headers": #{ "accept": "application/json" },
+let resp = unwrap(http.get("https://api.example.com/me", {
+    bearer: os.get_env("API_TOKEN") |> unwrap,
+    timeout_ms: 5000,
+    headers: { accept: "application/json" },
 }))
 println(to_string(resp.status))
 println(show(resp.headers["content-type"]))
@@ -3885,7 +3886,7 @@ fn handle(req) = {
         http.response_with_headers(201, req.body, #{ "Content-Type": "application/json" })
     else => http.response(404, "no route for " + req.path)
 }
-http.serve(8080, handle, #{ "workers": 8, "queue_capacity": 512 })
+http.serve(8080, handle, { workers: 8, queue_capacity: 512 })
 // blocks the calling program; Ctrl-C to stop
 ```
 
@@ -3958,7 +3959,7 @@ println(back["revenue"].sum())                              // 2610.75
 unwrap(db.close(c))
 ```
 
-**Opening.** `db.open(path, #{ "readonly": true, "create": false })` —
+**Opening.** `db.open(path, { readonly: true, create: false })` —
 both optional, and the defaults are read-write and create:
 
 - `readonly: true` opens with `SQLITE_OPEN_READ_ONLY`: SQLite refuses
@@ -4054,7 +4055,7 @@ stopped from outside it:
   ms")` when the statement runs longer. It is taken by `db.execute`,
   `db.query`, `db.query_one`, `db.query_rows`, and `db.cursor` (where
   it bounds each `db.next`). The options map may stand where the params
-  would: `db.query(conn, sql, #{ "timeout_ms": 500 })`.
+  would: `db.query(conn, sql, { timeout_ms: 500 })`.
 
 Both work through a progress handler SQLite calls every thousand
 virtual-machine instructions, not `sqlite3_interrupt` (whose flag stays
@@ -4069,7 +4070,7 @@ let endless = "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) S
 let t = spawn { time.sleep(50); db.interrupt(c) }
 assert_eq(db.query(c, endless), Err("db.query: interrupted"))
 task.join(t)
-assert_eq(db.query(c, endless, #{ "timeout_ms": 50 }), Err("db.query: timed out after 50 ms"))
+assert_eq(db.query(c, endless, { timeout_ms: 50 }), Err("db.query: timed out after 50 ms"))
 assert_eq(len(unwrap(db.query(c, "SELECT 1"))), 1)
 unwrap(db.close(c))
 ```
@@ -4195,8 +4196,8 @@ dom.on(dom.query("#new-title"), "enter", (e) => add_item(e.value))
 dom.fetch("GET", "/api/items", "", (resp) => render(unwrap(json.parse(resp))))
 dom.on_frame((f) => {
     dom.draw(canvas, [
-        #{ "op": "clear", "color": "rgba(11,14,20,0.35)" },
-        #{ "op": "circle", "x": 360.0, "y": 240.0, "r": 16.0, "fill": "#f5c542" }
+        { op: "clear", color: "rgba(11,14,20,0.35)" },
+        { op: "circle", x: 360.0, y: 240.0, r: 16.0, fill: "#f5c542" }
     ])
 })
 ```
@@ -4260,7 +4261,7 @@ a seed always gives the same run, but the options, a run's fields and
 what a world simulates may still change in a minor release.
 
 ```olang
-let w = sim.world(#{ "seed": 7 })
+let w = sim.world({ seed: 7 })
 let run = w.run_fn(() => {
     let start = time.now_ms()
     time.sleep(sim.hours(2))
@@ -4355,10 +4356,10 @@ call.
 
 ```olang
 let history = [
-    #{ "process": "p1", "type": "invoke", "f": "write", "value": 1 },
-    #{ "process": "p1", "type": "ok" },
-    #{ "process": "p2", "type": "invoke", "f": "read" },
-    #{ "process": "p2", "type": "ok", "value": 0 }
+    { process: "p1", type: "invoke", f: "write", value: 1 },
+    { process: "p1", type: "ok" },
+    { process: "p2", type: "invoke", f: "read" },
+    { process: "p2", type: "ok", value: 0 }
 ]
 println(sim.linearize(history, sim.register(0)).verdict)   // violation
 ```
@@ -4647,7 +4648,7 @@ Bayes, k-means, Gaussian mixtures and PCA, and the metrics to judge
 them. Every kernel is Rust (`olang-ods`), parallel past measured sizes,
 and pinned against scikit-learn in the test suite. `learn` functions
 take their options by name (`learn.forest(f, y: "churn", n_trees: 300,
-seed: 1)`) or in one trailing map or object (`#{ "n_trees": 300 }` and
+seed: 1)`) or in one trailing map or object (`{ n_trees: 300 }` and
 `{ n_trees: 300 }` are the same options), and an unknown option is an
 error naming the options there are. **`use ml`** adds short names for a few
 options and the forms that call an olang function (below).

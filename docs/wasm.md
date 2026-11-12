@@ -440,10 +440,10 @@ shapes it holds:
 dom.on_frame((f) => {
     let t = f.delta / 1000.0
     dom.draw(sky, [
-        #{ "op": "clear", "color": "rgba(11,14,20,0.35)" },
-        #{ "op": "circle", "x": 360.0, "y": 240.0, "r": 16.0, "fill": "#f5c542" },
-        #{ "op": "line", "x1": 0.0, "y1": 0.0, "x2": 60.0, "y2": 80.0,
-           "stroke": "#fff", "line_width": 2 }
+        { op: "clear", color: "rgba(11,14,20,0.35)" },
+        { op: "circle", x: 360.0, y: 240.0, r: 16.0, fill: "#f5c542" },
+        { op: "line", x1: 0.0, y1: 0.0, x2: 60.0, y2: 80.0,
+           stroke: "#fff", line_width: 2 }
     ])
 })
 ```
@@ -527,9 +527,9 @@ as a *value*, and let reconciliation decide what actually changes.
 ```olang no-run
 use ui { h, hk, render }
 
-fn note_row(n) = hk(n.id, "div", #{ "class": "note" }, [
+fn note_row(n) = hk(n.id, "div", { class: "note" }, [
     h("span", #{}, [n.text]),
-    h("button", #{ "id": "del-" + n.id }, ["x"])
+    h("button", { id: "del-" + n.id }, ["x"])
 ])
 
 fn draw() = render(dom.query("#list"), map(load_notes(), note_row))
@@ -577,7 +577,7 @@ the browser provides threads, and `dom.worker` puts olang on them:
 ```olang no-run
 let w = dom.worker("/primes-worker.ol")
 dom.worker_on(w, (m) => show_progress(m))
-dom.worker_send(w, #{ "upto": 200000 })
+dom.worker_send(w, { upto: 200000 })
 ```
 
 `dom.worker(path)` fetches an olang source file and boots it inside a

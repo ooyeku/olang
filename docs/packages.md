@@ -384,13 +384,13 @@ JSON object.
 use validate { check, ok }
 
 let rules = [
-    ["date",   "str", #{ "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" }],
-    ["amount", "int", #{ "min": 1 }],
-    ["kind",   "str", #{ "one_of": ["expense", "income"] }],
-    ["note",   "str", #{ "required": false, "max": 200 }],
+    ["date",   "str", { pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" }],
+    ["amount", "int", { min: 1 }],
+    ["kind",   "str", { one_of: ["expense", "income"] }],
+    ["note",   "str", { required: false, max: 200 }],
 ]
 
-match check(#{ "date": "2026-8-25", "amount": 0, "kind": "loan" }, rules) {
+match check({ date: "2026-8-25", amount: 0, kind: "loan" }, rules) {
     Ok(row) => println("valid"),
     Err(problems) => for p in problems { println(p) }
 }
@@ -398,8 +398,8 @@ match check(#{ "date": "2026-8-25", "amount": 0, "kind": "loan" }, rules) {
 // amount: below minimum 1
 // kind: must be one of ["expense", "income"]
 
-let even = [["n", "int", #{ "where": (v) => if v % 2 == 0 => Ok(v) else => Err("must be even") }]]
-println(show(check(#{ "n": 3 }, even)))   // Err(["n: must be even"])
+let even = [["n", "int", { where: (v) => if v % 2 == 0 => Ok(v) else => Err("must be even") }]]
+println(show(check({ n: 3 }, even)))   // Err(["n: must be even"])
 ```
 
 #### markdown — a Markdown renderer
@@ -995,7 +995,7 @@ A host can load code it did not write into its own running program — a
 plugin — and hold that code to a grant of its own:
 
 ```olang no-run
-let grant = #{ "name": "tier-map", "fs": "read", "fs_roots": ["/work/project"], "proc": ["olang"] }
+let grant = { name: "tier-map", fs: "read", fs_roots: ["/work/project"], proc: ["olang"] }
 match runtime.load_module("/work/plugins/tier-map/plugin.ol", grant) {
     Ok(m) => {
         let r = runtime.call_budget(m.on, [state, event], 250)
