@@ -101,7 +101,8 @@ pub fn call_meta_function(
             // `#{from, state, packed, lang}`: packed Int lists in bytes,
             // from an offset with the lexer's state there (OL-454)
             if name == "tokens"
-                && let Some(Value::Map(opts)) = args.get(1)
+                && let Some(opt) = args.get(1).map(|v| v.as_options())
+                && let Value::Map(opts) = opt.as_ref()
             {
                 return tokens_with_options(&src, opts);
             }

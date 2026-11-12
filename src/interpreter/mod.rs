@@ -7145,8 +7145,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         let mut needed = crate::caps::implied_fs(full_name, path.as_deref())?;
         if full_name == "db.open" {
             let readonly_option = matches!(
-                args.get(1),
-                Some(Value::Map(m)) if m.get("readonly") == Some(&Value::Boolean(true))
+                args.get(1).and_then(|v| v.record_fields()),
+                Some(m) if m.get("readonly") == Some(&Value::Boolean(true))
             );
             if crate::caps::db_open_is_readonly(path.as_deref().unwrap_or(""), readonly_option) {
                 needed = crate::caps::FsCap::Read;

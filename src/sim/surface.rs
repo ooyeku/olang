@@ -1754,7 +1754,8 @@ fn check(args: Vec<Value>, interpreter: &mut Interpreter) -> Result<Value, Inter
 /// (nothing outside a world).
 fn record(args: &[Value]) -> Result<Value, InterpreterError> {
     let name = text_arg(args.first(), "sim.record(name, op): the history's name")?;
-    let op = match args.get(1) {
+    let rec = args.get(1).map(|x| x.as_options());
+    let op = match rec.as_deref() {
         Some(Value::Map(m)) => m,
         _ => {
             return Err(misuse(

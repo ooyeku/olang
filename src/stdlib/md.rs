@@ -1215,7 +1215,8 @@ fn text_arg<'a>(name: &str, args: &'a [Value], arity: &str) -> Result<&'a str, S
 pub fn read_options(v: Option<&Value>) -> Result<(Options, crate::ast::ValueMap), String> {
     let mut opts = Options::default();
     let mut hooks = crate::ast::ValueMap::default();
-    let fields = match v {
+    let rec = v.map(|x| x.as_options());
+    let fields = match rec.as_deref() {
         None | Some(Value::Unit) => return Ok((opts, hooks)),
         Some(Value::Map(m)) => m.as_ref().clone(),
         Some(Value::Struct { fields, .. }) => fields.as_ref().clone(),

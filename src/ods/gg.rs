@@ -195,7 +195,8 @@ fn param_of(v: &Value) -> Option<Param> {
 
 fn params_of(v: Option<&Value>) -> Result<Params, String> {
     let mut p = Params::new();
-    match v {
+    let rec = v.map(|x| x.as_options());
+    match rec.as_deref() {
         None => {}
         Some(Value::Map(m)) => {
             for (k, v) in m.iter() {

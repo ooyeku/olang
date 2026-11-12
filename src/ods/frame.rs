@@ -2209,7 +2209,8 @@ impl CsvOpts {
             dtypes: Vec::new(),
             nulls: None,
         };
-        let map = match v {
+        let rec = v.map(|x| x.as_options());
+        let map = match rec.as_deref() {
             None | Some(Value::Unit) => return Ok(o),
             Some(Value::Map(m)) => m,
             Some(other) => {
