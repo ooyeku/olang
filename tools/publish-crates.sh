@@ -1,6 +1,7 @@
 #!/bin/sh
 # Publish olang to crates.io as `olangc` (the `olang` name there belongs
-# to someone else) with its numerical engine as `olangc-ods`. The
+# to someone else) with its numerical engine as `olangc-ods` and its
+# patched copy of im as `olangc-im` (a [patch] does not reach crates.io). The
 # committed tree is copied and renamed by tools/crates-package.py; the
 # repository's own manifests stay `olang` and `olang-ods`. The command
 # it installs is still `olang`. Pass --dry-run to check without uploading.
@@ -9,4 +10,4 @@ cd "$(dirname "$0")/.."
 out="${TMPDIR:-/tmp}/olangc-publish"
 python3 tools/crates-package.py "$PWD" "$out"
 cd "$out"
-cargo publish -j 4 -p olangc-ods -p olangc --allow-dirty "$@"
+cargo publish -j 4 -p olangc-im -p olangc-ods -p olangc --allow-dirty "$@"
