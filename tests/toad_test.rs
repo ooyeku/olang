@@ -40,6 +40,30 @@ let WORLD = #{ "home": (0.0, 0.0) }
 fn ok(r) = match r { Ok(v) => v, Err(e) => raise(e) }
 "#;
 
+/// OL-603: a kernel that answers a record, with its fields, world, entity
+/// and step all records, compiles and steps as the map one does.
+#[test]
+fn a_kernel_that_answers_a_record_steps_as_the_function_does() {
+    let rec = DRIFT
+        .replace(r#"#{ "pos": p.pos + vel * w.dt, "vel": vel, "dead": length(p.pos) > 450.0 }"#,
+                 "{ pos: p.pos + vel * w.dt, vel: vel, dead: length(p.pos) > 450.0 }")
+        .replace(r#"let FIELDS = #{ "pos": (0.0, 0.0), "vel": (0.0, 0.0) }"#, "let FIELDS = { pos: (0.0, 0.0), vel: (0.0, 0.0) }")
+        .replace(r#"let WORLD = #{ "home": (0.0, 0.0) }"#, "let WORLD = { home: (0.0, 0.0) }");
+    assert!(!rec.contains("#{"), "{rec}");
+    let src = format!(
+        "{rec}
+let p = {{ pos: (120.0, -40.0), vel: (3.0, 1.0) }}
+let w = {{ home: (10.0, 20.0), dt: 0.01 }}
+let want = drift(p, w)
+let s = ok(toad.swarm(ok(toad.kernel(drift, FIELDS, WORLD)), 4, \"play\"))
+toad.spawn(s, 1, p)
+toad.step(s, w)
+let got = toad.read(s, \"pos\")[0]
+show(abs(got[0] - want.pos[0]) < 0.0005 && abs(got[1] - want.pos[1]) < 0.0005)"
+    );
+    assert_eq!(run(&src).as_deref(), Ok("true"));
+}
+
 #[test]
 fn a_kernel_steps_as_the_function_does() {
     let src = format!(

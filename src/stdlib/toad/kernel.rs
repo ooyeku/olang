@@ -540,7 +540,9 @@ impl<'a> Lower<'a> {
                 },
                 _ => self.err("a call of something that is not a name"),
             },
-            Expr::MapLiteral { .. } => self.err("a map that is not the kernel's result"),
+            Expr::MapLiteral { .. } | Expr::AnonymousObject { .. } => {
+                self.err("a record or map that is not the kernel's result")
+            }
             Expr::String(_) | Expr::TemplateString { .. } | Expr::RawString(_) => {
                 self.err("a string (a GPU has none)")
             }
@@ -602,7 +604,7 @@ pub fn compile(
             last = stmt;
         }
         let Statement::Expression(e) = last else {
-            return l.err("its body does not end in the map of new fields");
+            return l.err("its body does not end in the record of new fields");
         };
         body = e;
         lets = init;
@@ -615,7 +617,7 @@ pub fn compile(
                 s = stmt;
             }
             let Statement::LetDecl(d) = s else {
-                return l.err("its body holds something other than `let`s before the map");
+                return l.err("its body holds something other than `let`s before the record");
             };
             let Pattern::Identifier(n) = &d.pattern else {
                 return l.err("a `let` that is not a plain name");
@@ -627,17 +629,29 @@ pub fn compile(
             l.scopes[0].insert(n.clone(), v);
         }
     }
-    let Expr::MapLiteral { entries } = body else {
-        return l.err("it does not answer a map of the fields' new values (#{ \"pos\": … })");
-    };
+    // the fields' new values, as a record `{ pos: … }` or a map
+    // `#{ "pos": … }` (OL-603)
+    let mut answer: Vec<(String, &Expr)> = Vec::new();
+    match body {
+        Expr::AnonymousObject { fields } => {
+            for f in fields {
+                answer.push((f.name.clone(), &f.value));
+            }
+        }
+        Expr::MapLiteral { entries } => {
+            for e in entries {
+                match &e.key {
+                    Expr::String(s) => answer.push((s.to_string(), &e.value)),
+                    _ => return l.err("a field name that is not a literal string"),
+                }
+            }
+        }
+        _ => return l.err("it does not answer the fields' new values ({ pos: … })"),
+    }
     let mut writes = Vec::new();
     let mut dead = None;
-    for e in entries {
-        let k = match &e.key {
-            Expr::String(s) => s.to_string(),
-            _ => return l.err("a field name that is not a literal string"),
-        };
-        let v = l.expr(&e.value)?;
+    for (k, value) in answer {
+        let v = l.expr(value)?;
         if k == "dead" {
             match v {
                 V::Bool(i) => dead = Some(i),
