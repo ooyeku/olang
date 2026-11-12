@@ -607,10 +607,7 @@ pub fn call_toad_function(
                         Value::Unit
                     }
                     "walk" => {
-                        let dt = match a(3) {
-                            Value::Map(m) => m.get("dt").and_then(num).unwrap_or(1.0 / 120.0),
-                            _ => 1.0 / 120.0,
-                        };
+                        let dt = a(3).record_fields().and_then(|m| m.get("dt")).and_then(num).unwrap_or(1.0 / 120.0);
                         w.walk(n(1, "body")?, pt(2, "the step")?, a(3), dt)?
                     }
                     _ => w.overlap(

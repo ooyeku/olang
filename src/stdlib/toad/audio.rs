@@ -1039,10 +1039,10 @@ pub fn mic(what: &Value) -> Result<Value, String> {
     let (path, named): (&str, Option<String>) = match what {
         Value::Unit => return Ok(with(|st| st.mic.take()).map_or(Value::Unit, taped)),
         Value::String(p) => (p.as_ref(), None),
-        Value::Map(m) => match m.get("path") {
+        rec @ (Value::Map(_) | Value::Struct { .. }) => match rec.record_fields().and_then(|m| m.get("path")) {
             Some(Value::String(p)) => (
                 p.as_ref(),
-                match m.get("device") {
+                match rec.record_fields().and_then(|m| m.get("device")) {
                     Some(Value::String(d)) => Some(d.to_string()),
                     _ => None,
                 },

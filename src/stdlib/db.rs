@@ -490,7 +490,7 @@ fn call_tail(func: &str, args: &[Value], from: usize) -> Result<Tail, Value> {
     match rest.next() {
         None | Some(Value::Unit) => {}
         Some(Value::List(items)) => params = items.iter().cloned().collect(),
-        Some(m @ Value::Map(_)) => opts = Some(m),
+        Some(m @ (Value::Map(_) | Value::Struct { .. })) => opts = Some(m),
         Some(other) => {
             return Err(err(format!(
                 "db.{}: params must be a list, got {}",
@@ -502,7 +502,7 @@ fn call_tail(func: &str, args: &[Value], from: usize) -> Result<Tail, Value> {
     if opts.is_none() {
         match rest.next() {
             None | Some(Value::Unit) => {}
-            Some(m @ Value::Map(_)) => opts = Some(m),
+            Some(m @ (Value::Map(_) | Value::Struct { .. })) => opts = Some(m),
             Some(other) => {
                 return Err(err(format!(
                     "db.{}: options must be a map (#{{ \"timeout_ms\": … }}), got {}",
@@ -1780,10 +1780,7 @@ fn db_query_frame(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
         let mut accs: Vec<ColumnAcc> = cols
             .iter()
             .map(|c| {
-                let field = |k: &str| match c {
-                    Value::Map(m) => m.get(k).cloned(),
-                    _ => None,
-                };
+                let field = |k: &str| c.record_fields().and_then(|m| m.get(k).cloned());
                 ColumnAcc {
                     name: match &field("name") {
                         Some(Value::String(s)) => s.to_string(),

@@ -380,7 +380,7 @@ mod imp {
         let clear = matches!(o.get("clear_env"), Some(Value::Boolean(true)));
         let mut set: Vec<(String, String)> = Vec::new();
         let mut removed: Vec<String> = Vec::new();
-        if let Some(Value::Map(env)) = o.get("env") {
+        if let Some(env) = o.get("env").and_then(|e| e.record_fields()) {
             for (k, v) in env.iter() {
                 match v {
                     Value::Unit => removed.push(k.to_string()),
