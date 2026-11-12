@@ -152,11 +152,11 @@ and a guard says the rest.
 fn describe(msg) = match msg {
     { tag: "open", arg: path } => "open " + path,
     { tag: "close" } => "close",
-    { tag: t } if str.starts_with(t, "term.") => "a terminal's " + str.substring(t, 5, str.length(t)),
+    { tag: t } if str.starts_with(t, "pane.") => "a pane's " + str.substring(t, 5, str.length(t)),
     _ => "ignored",
 }
 println(describe({ tag: "open", arg: "main.ol" }))
-println(describe({ tag: "term.o3", arg: () }))
+println(describe({ tag: "pane.o3", arg: () }))
 ```
 
 Keep `if … =>` for one or two conditions on different things, and for

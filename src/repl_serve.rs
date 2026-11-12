@@ -3385,7 +3385,9 @@ impl Session {
         let _ = crate::output::take_collected();
         let ms = round3(t0.elapsed().as_secs_f64() * 1000.0);
         match outcome {
-            Ok(Value::Map(ref m)) => {
+            // Loom answers a map or a record (OL-594)
+            Ok(ref v) if v.record_fields().is_some() => {
+                let m = v.record_fields().expect("a map or a record");
                 let png = m
                     .get("png")
                     .and_then(|p| crate::stdlib::bytes::bytes_of(p).ok().map(|b| b.to_vec()));
