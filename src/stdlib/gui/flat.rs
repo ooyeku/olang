@@ -2573,13 +2573,17 @@ fn vm_flat_emit(args: &[OvmValue]) -> Option<Res<OvmValue>> {
     let n = inp.n;
     let keyed = matches!(&args[3].data, ValueData::String(k) if k.as_str() == "keyed");
     if keyed {
+        // `prev` as a record (`{ flat, out }`): its fields are the
+        // interpreter's values, read as the tree-walker reads them (OL-596)
         let pout = match vm_field(&args[4], "out") {
             Some(Fld::Vm(m)) => PrevOut::of_vm(m),
-            _ => None,
+            Some(Fld::Ast(v)) => fields(v).and_then(|m| PrevOut::of_ast(m).ok()),
+            None => None,
         };
         let pflat = match vm_field(&args[4], "flat") {
             Some(Fld::Vm(f)) => PrevFlat::of_vm(f),
-            _ => None,
+            Some(Fld::Ast(v)) => PrevFlat::of_ast(v),
+            None => None,
         };
         let cand = match (&pout, &pflat) {
             (Some(po), Some(pf)) => match geo_of(&pf.st) {
