@@ -101,6 +101,16 @@ println("meta.eval " + show(meta.eval("1 + 1", { max_steps: 1000 }) == meta.eval
 let s = ods.series([1.0, 2.0])
 println("plot " + show(plot.line(s, s, { title: "t" }) == plot.line(s, s, #{ "title": "t" })))
 println("db.open " + show(is_ok(db.open(":memory:", { readonly: false }))))
+println("meta.tokens " + show(meta.tokens("let a = 1", { packed: true }) == meta.tokens("let a = 1", #{ "packed": true })))
+// a record holding a function, shared by both sides, equals itself as a
+// map does (OL-598)
+let f = (x) => x
+let am = #{ "k": 1, "sub": #{ "g": f } }
+let ar = { k: 1, sub: { g: f } }
+println("eq shared " + show([attempt(() => am == map_set(am, "k", 1)), attempt(() => am == #{ ...am, "k": 1 }),
+    attempt(() => ar == map_set(ar, "k", 1)), attempt(() => ar == { ...ar, k: 1 }), attempt(() => ar.sub == ({ ...ar, k: 1 }).sub)]))
+fn eq_in_fn(a, b) = a == b
+println("eq shared compiled " + show(attempt(() => fold(range(0, 300), true, (acc, i) => acc && eq_in_fn(ar, { ...ar, k: 1 })))))
 println("bytes " + show(bytes.decode(bytes.from_list([104, 105]), "utf-8", { lossy: true }) == bytes.decode(bytes.from_list([104, 105]), "utf-8", #{ "lossy": true })))
 "##;
 
@@ -119,6 +129,9 @@ fn options_and_maps_inside_them_read_records_on_both_tiers() {
         "plot true",
         "db.open true",
         "bytes true",
+        "meta.tokens true",
+        "eq shared [Ok(true), Ok(true), Ok(true), Ok(true), Ok(true)]",
+        "eq shared compiled Ok(true)",
     ] {
         assert!(tree.contains(want), "no `{want}` in:\n{tree}");
     }

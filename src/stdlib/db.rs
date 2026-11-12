@@ -519,7 +519,8 @@ fn call_tail(func: &str, args: &[Value], from: usize) -> Result<Tail, Value> {
         )));
     }
     let mut timeout_ms = None;
-    if let Some(Value::Map(m)) = opts {
+    let rec = opts.map(|x| x.as_options());
+    if let Some(Value::Map(m)) = rec.as_deref() {
         for (key, value) in m.iter() {
             match key.as_str() {
                 "timeout_ms" => timeout_ms = timeout_of(func, value)?,

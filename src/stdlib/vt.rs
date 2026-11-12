@@ -1886,6 +1886,8 @@ fn num(v: Option<&Value>) -> Option<f64> {
 fn fields(v: Option<&Value>) -> Option<&crate::ast::ValueMap> {
     match v {
         Some(Value::Map(m)) => Some(m),
+        // a record's fields, as a map's (OL-599)
+        Some(r @ Value::Struct { .. }) => r.record_fields(),
         Some(Value::Struct { fields, .. }) => Some(fields),
         _ => None,
     }

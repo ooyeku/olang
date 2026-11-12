@@ -135,7 +135,8 @@ const OPTION_NAMES: &[&str] = &[
 impl Options {
     fn parse(v: Option<&Value>) -> Result<Options, Box<dyn std::error::Error>> {
         let mut o = Options::default();
-        let map = match v {
+        let rec = v.map(|x| x.as_options());
+        let map = match rec.as_deref() {
             None | Some(Value::Unit) => return Ok(o),
             Some(Value::Map(m)) => &**m,
             Some(Value::Struct { type_name, fields }) if type_name == "Object" => &**fields,

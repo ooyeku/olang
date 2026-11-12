@@ -476,7 +476,8 @@ fn draw_seed() -> u64 {
 /// The options map with its seed made explicit, so a spec refits the
 /// same way.
 fn with_seed(opts: Option<&Value>, seed: u64) -> Value {
-    let mut m: ValueMap = match opts {
+    let rec = opts.map(|x| x.as_options());
+    let mut m: ValueMap = match rec.as_deref() {
         Some(Value::Map(m)) => m.as_ref().clone(),
         _ => ValueMap::default(),
     };

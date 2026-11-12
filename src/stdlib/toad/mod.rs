@@ -973,6 +973,9 @@ fn shape_of(v: &Value, out: &mut Vec<f32>) -> Result<(), String> {
     let m = map_of(v, "a shape")?;
     let mat = match m.get("material") {
         Some(Value::Map(mm)) => Some(mm.clone()),
+        Some(r @ Value::Struct { .. }) if r.record_fields().is_some() => {
+            Some(std::sync::Arc::new(r.record_fields().expect("a record").clone()))
+        }
         Some(Value::Unit) | None => None,
         Some(_) => {
             return Err("toad.frame: a shape's `material` is a map (from `material`)".into());

@@ -281,7 +281,8 @@ fn read_file_options(
     opts: Option<&Value>,
 ) -> Result<(&'static str, bool), Box<dyn std::error::Error>> {
     let lossy = crate::stdlib::bytes::lossy_option(opts, "fs.read_file", &["lossy", "encoding"])?;
-    let encoding = match opts {
+    let rec = opts.map(|x| x.as_options());
+    let encoding = match rec.as_deref() {
         Some(Value::Map(m)) => match m.get("encoding") {
             None | Some(Value::Unit) => "utf-8",
             Some(Value::String(e)) => crate::stdlib::bytes::encoding_of(e, "fs.read_file")?,

@@ -787,6 +787,9 @@ pub fn grant_from_value(
     v: &crate::ast::Value,
 ) -> Result<ModuleGrant, String> {
     use crate::ast::Value;
+    // a grant given as a record reads as the map of its fields (OL-599)
+    let opts = v.as_options();
+    let v = opts.as_ref();
     let get = |k: &str| -> Option<Value> {
         match v {
             Value::Map(m) => m.get(k).cloned(),
@@ -796,7 +799,7 @@ pub fn grant_from_value(
     };
     if !matches!(v, Value::Map(_) | Value::Unit) {
         return Err(format!(
-            "runtime.load_module: the grant must be a Map, got {}",
+            "runtime.load_module: the grant must be a map or a record, got {}",
             v.type_name()
         ));
     }
