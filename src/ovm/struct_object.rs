@@ -68,7 +68,9 @@ pub mod kind {
 #[repr(C)]
 pub struct StructHeader {
     rc: AtomicU32,
-    len: u32,
+    /// The field count, and in its top bit whether the struct is known to
+    /// hold no compiled function at any depth (`NO_VM_CODE`, OL-604).
+    len: AtomicU32,
     pub shape: Arc<StructShape>,
     /// The interpreter's map of the fields (`Arc::into_raw`), or null
     /// until something needs it.
@@ -76,6 +78,13 @@ pub struct StructHeader {
 }
 
 const HEADER: usize = std::mem::size_of::<StructHeader>();
+
+/// The field count's bits of `StructHeader::len`.
+const LEN_MASK: u32 = 0x7FFF_FFFF;
+/// Set in `StructHeader::len` once the struct is known to hold no
+/// compiled function: its fields never gain one (they are written in
+/// place only to `()`, by `clear_fields`), so the answer holds for good.
+const NO_VM_CODE: u32 = 0x8000_0000;
 
 /// A VM struct: a counted pointer to one allocation (see the module).
 pub struct StructObject {
@@ -228,7 +237,7 @@ impl StructObject {
         len: usize,
         mut fill: impl FnMut(usize) -> (u8, u64),
     ) -> Self {
-        assert!(len <= u32::MAX as usize, "a struct of {len} fields");
+        assert!(len <= LEN_MASK as usize, "a struct of {len} fields");
         let layout = layout(len);
         let raw = unsafe { alloc(layout) };
         let Some(ptr) = NonNull::new(raw as *mut StructHeader) else {
@@ -237,7 +246,7 @@ impl StructObject {
         unsafe {
             ptr.as_ptr().write(StructHeader {
                 rc: AtomicU32::new(1),
-                len: len as u32,
+                len: AtomicU32::new(len as u32),
                 shape,
                 ast: AtomicPtr::new(std::ptr::null_mut()),
             });
@@ -325,10 +334,22 @@ impl StructObject {
         Self::build(shape, self.len(), |i| encode(self.get(i)))
     }
 
+    /// Whether this struct is known to hold no compiled function.
+    #[inline]
+    pub fn known_without_vm_code(&self) -> bool {
+        self.header().len.load(Ordering::Relaxed) & NO_VM_CODE != 0
+    }
+
+    /// Remember that this struct holds no compiled function (OL-604).
+    #[inline]
+    pub fn mark_without_vm_code(&self) {
+        self.header().len.fetch_or(NO_VM_CODE, Ordering::Relaxed);
+    }
+
     /// How many fields.
     #[inline]
     pub fn len(&self) -> usize {
-        self.header().len as usize
+        (self.header().len.load(Ordering::Relaxed) & LEN_MASK) as usize
     }
 
     #[inline]
@@ -497,7 +518,7 @@ impl StructObject {
     #[inline]
     pub unsafe fn raw_at(p: *const StructHeader, idx: usize) -> Option<(u8, u64)> {
         unsafe {
-            let len = (*p).len as usize;
+            let len = ((*p).len.load(Ordering::Relaxed) & LEN_MASK) as usize;
             if idx >= len {
                 return None;
             }

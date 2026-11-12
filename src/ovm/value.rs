@@ -2169,8 +2169,18 @@ fn holds_vm_code(v: &OvmValue, depth: usize) -> bool {
             items.iter().any(|x| holds_vm_code(x, depth + 1))
         }
         ValueData::Map(m) => m.values().any(|x| holds_vm_code(x, depth + 1)),
+        // asked once per struct: the answer is kept in it (OL-604), so a
+        // model holding many records does not walk them all again each
+        // time it crosses to the interpreter
         ValueData::Struct(st) => {
-            st.has_nested() && st.values().any(|x| holds_vm_code(&x, depth + 1))
+            if !st.has_nested() || st.known_without_vm_code() {
+                return false;
+            }
+            let holds = st.values().any(|x| holds_vm_code(&x, depth + 1));
+            if !holds && depth + 1 <= 64 {
+                st.mark_without_vm_code();
+            }
+            holds
         }
         ValueData::Enum(e) => match &e.data {
             EnumData::Unit => false,
@@ -2189,6 +2199,27 @@ fn holds_vm_code(v: &OvmValue, depth: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A record that holds no compiled function is walked once (OL-604):
+    /// the answer is kept in it, and its field count is unchanged.
+    #[test]
+    fn a_record_without_vm_code_is_walked_once() {
+        let inner = StructObject::from_pairs("Object", vec![("x".into(), OvmValue::new_integer(1))]);
+        let outer = StructObject::from_pairs(
+            "Object",
+            vec![
+                ("inner".into(), OvmValue::new_struct(inner)),
+                ("n".into(), OvmValue::new_integer(2)),
+            ],
+        );
+        let v = OvmValue::new_struct(outer.clone());
+        assert!(!outer.known_without_vm_code());
+        assert!(!holds_vm_code(&v, 0));
+        assert!(outer.known_without_vm_code());
+        assert!(!holds_vm_code(&v, 0));
+        assert_eq!(outer.len(), 2);
+        assert_eq!(outer.field("n").map(|f| f.to_ast().ok()), Some(Some(crate::ast::Value::Integer(2))));
+    }
 
     fn to_ast_cache_len() -> usize {
         TO_AST_CACHE.with(|c| c.borrow().len())
