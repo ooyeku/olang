@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0-rc.9] - 2026-11-11
+
 ### Added
 
 - **`gui.capture(window, what)`: a window captured as it draws**
@@ -41,8 +43,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   OlangStudio's first recordings a voice that was not there), or the one
   named (`#{ path, device }`). Ending it answers `peak`, the loudest
   sample, so a caller can say a voice was not heard.
+- **A menu bar item, an accessory application, and notifications**
+  (OL-568, for OlangStudio's menu bar helper). `gui.status_item` puts an
+  item in the Mac menu bar (`status_set`, `status_remove`), and a window
+  opened with `panel: item` is the panel under it. `gui.accessory(true)`
+  runs with no Dock icon or menu bar of its own. `gui.notify` posts a
+  notification, clickable from an application bundle.
+  `examples/gui/menubar.ol` shows all three.
+- **A chapter on writing idiomatic olang** (docs/idioms.md): records for
+  fixed fields and maps for data, updates as spreads, `match` where every
+  branch tests one value, pipes, errors that travel with `?`, modules in
+  place of name prefixes, and the `olang fix` passes and check rules that
+  hold a project to them. Every example in the book now follows it.
+  olang's source tree keeps the rules, a ratchet and a rewriter for them
+  in `tools/idioms/`.
 
 ### Fixed
+
+- **A record goes wherever a map went** (OL-594, OL-596, OL-599, OL-600,
+  OL-602, OL-603). A record `{ k: v }`, or a parsed JSON object, was
+  refused or misread by natives that matched only a map. Now every native
+  that takes a map, or a map inside its options, reads a record as it
+  reads one: `gui.flatten`'s view, spec and theme and its keyed keep on
+  the bytecode tier, `gui.fonts`, `gui.spell`, `os.exec`'s and `proc`'s
+  `env`, http options and headers, `md.parse`, `md.render`, `meta.*`,
+  `plot`, `db`, `str`'s option maps, `runtime.on_crash` and
+  `profile_live_start`, `sim.linearize` and a world's run options, a
+  toad swarm kernel's answer, and `repl --serve`'s Loom views and gg
+  specs. A table-driven test calls each with a map and with the same
+  record, on both tiers.
+- **A record equals itself** (OL-598). `==` on two values sharing an
+  inner record that holds a function answers true, as it does for maps,
+  instead of raising.
+- **Updating a record is cheap** (OL-601). A `map_set` of a field the
+  record has, a `map_merge` and a record spread `{ ...r, k: v }` keep its
+  shape and copy its slots, and now cost less than the same update on a
+  map; they cost twice as much before.
+- **A record crossing to the interpreter is not walked again** (OL-604).
+  Whether a VM record holds a compiled function is asked once and kept
+  in the record, so a model full of records no longer walks them all on
+  every message. OlangStudio's profiler frame went from 8.7 to 5.4 ms
+  and a crosshair move from 5.1 to 2.95, faster than with maps.
 
 - **A parsed JSON object passed to a callback is freed** (OL-575). A
   compiled function called back from a builtin (`col.sort_by`'s key,
