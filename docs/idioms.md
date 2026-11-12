@@ -61,11 +61,12 @@ Every native that takes a map takes a record too: the options of
 `os.exec`, `fs.scan` or `md.parse`, the maps inside them (an
 `os.exec`'s `env`), a `gui` view, its props and its theme.
 
-**When a map is still right:** a map that a loop grows with
-`m = map_set(m, k, v)` is updated in place (see [Writing fast
-olang](performance.md)); a record is copied each time instead. For
-values built once and read many times the two cost the same, and a
-record is faster to build.
+**What each costs:** a record is cheaper than a map to build, to read
+and to update: a spread, a `map_set` of a field it has and a
+`map_merge` copy its slots without looking its shape up again. The one
+place a map wins is a loop that rebinds it, `m = map_set(m, k, v)`: a
+map that nothing else holds is updated in place (see [Writing fast
+olang](performance.md)), and a record is copied each time.
 
 ## Name the shapes you pass around
 
