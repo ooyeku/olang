@@ -2241,6 +2241,15 @@ impl RichEditor {
             .fold(0.0f32, f32::max)
     }
 
+    /// The program's own selection, set with a line it asked for still
+    /// waiting on the first frame: the line is what shows (only a
+    /// person's move of the caret since takes the view from it).
+    pub fn keep_pending_line(&mut self) {
+        if let Some(line) = self.pending_line {
+            self.follow = self.locate(self.focus).0 == line;
+        }
+    }
+
     /// Keep the caret in a view `h` high: adjust `scroll_y`.
     pub fn follow_caret(&mut self, h: f32, ts: &mut TextSystem) {
         // the view made shorter (a panel docked under it) keeps a caret
@@ -2259,11 +2268,13 @@ impl RichEditor {
             && h > 0.0
             && let Some(line) = self.pending_line.take()
         {
-            // the caret moved off that line since it was asked for (a key
-            // before the first frame): the caret is what is shown
-            let moved_on = self.follow && self.locate(self.focus).0 != line;
-            if !moved_on {
-                self.scroll_to_line(line, ts);
+            // the line asked for is shown; a caret a person moved since
+            // (a key before the first frame) is then brought into view
+            // from there, if that left it outside
+            let moved = self.follow;
+            self.scroll_to_line(line, ts);
+            if moved {
+                self.follow = true;
             }
         }
         if self.follow && self.placed {

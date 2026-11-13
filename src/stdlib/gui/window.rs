@@ -612,6 +612,7 @@ impl WinState {
                         {
                             r.select_seq = seq;
                             r.select_chars(a.max(0) as usize, f.max(0) as usize);
+                            r.keep_pending_line();
                             reselected = true;
                         }
                         if adopted {
