@@ -1995,9 +1995,17 @@ impl RichEditor {
 
     /// Lines wrapped at the width (the default) or not (`nowrap`: the
     /// text scrolls sideways).
-    pub fn set_nowrap(&mut self, nowrap: bool) {
+    /// Lines wrapped at the width, or not: a caret in view before its
+    /// lines break again stays in view (as `set_geometry_keeping`'s).
+    pub fn set_nowrap(&mut self, nowrap: bool, ts: &mut TextSystem) {
         if self.nowrap == nowrap {
             return;
+        }
+        if self.placed && self.view_h > 0.0 {
+            let c = self.caret_box(1.0, ts);
+            if (c.y1 as f32) > self.scroll_y && (c.y0 as f32) < self.scroll_y + self.view_h {
+                self.follow = true;
+            }
         }
         self.nowrap = nowrap;
         self.scroll_x = 0.0;
@@ -2251,7 +2259,12 @@ impl RichEditor {
             && h > 0.0
             && let Some(line) = self.pending_line.take()
         {
-            self.scroll_to_line(line, ts);
+            // the caret moved off that line since it was asked for (a key
+            // before the first frame): the caret is what is shown
+            let moved_on = self.follow && self.locate(self.focus).0 != line;
+            if !moved_on {
+                self.scroll_to_line(line, ts);
+            }
         }
         if self.follow && self.placed {
             // the paragraphs between the old view and the caret are
@@ -2709,6 +2722,68 @@ mod rebase_tests {
         ed.select_all(&mut ts);
         ed.insert("x", &mut ts);
         assert!(ed.sticky_rows(&mut ts).is_empty());
+    }
+
+    /// A line asked for before the first frame, then the caret taken to
+    /// the text's end before that frame: the caret is shown, not the line
+    /// asked for (Studio's fuzz seed 41181: a file opened, then ⌘↓).
+    #[test]
+    fn a_caret_moved_before_the_first_frame_is_followed() {
+        let mut ts = system().lock().unwrap_or_else(|e| e.into_inner());
+        let text = (0..200)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut ed = RichEditor::new(&text, &Font::default(), Default::default());
+        ed.scroll_to_line(0, &mut ts);
+        let n = text.chars().count();
+        ed.select_chars(n, n);
+        ed.set_geometry_keeping(400.0, 1.0, &mut ts);
+        ed.follow_caret(300.0, &mut ts);
+        let c = ed.caret_box(1.0, &mut ts);
+        assert!(
+            (c.y0 as f32) >= ed.scroll_y && (c.y1 as f32) <= ed.scroll_y + 300.5,
+            "caret {}..{} with the view at {}",
+            c.y0,
+            c.y1,
+            ed.scroll_y
+        );
+        // a line asked for with the caret left where it was is still reached
+        let mut ed = RichEditor::new(&text, &Font::default(), Default::default());
+        ed.scroll_to_line(120, &mut ts);
+        ed.set_geometry_keeping(400.0, 1.0, &mut ts);
+        ed.follow_caret(300.0, &mut ts);
+        assert!(ed.scroll_y > 0.0);
+    }
+
+    /// Wrapping turned on with the caret in view: the long lines above it
+    /// break into rows, and the caret is still in view after (Studio's
+    /// fuzz seed 40643).
+    #[test]
+    fn wrapping_toggled_keeps_a_caret_that_was_in_view() {
+        let mut ts = system().lock().unwrap_or_else(|e| e.into_inner());
+        let long = "word ".repeat(120);
+        let text = (0..40).map(|_| long.clone()).collect::<Vec<_>>().join("\n");
+        let mut ed = RichEditor::new(&text, &Font::default(), Default::default());
+        ed.set_nowrap(true, &mut ts);
+        ed.set_geometry_keeping(400.0, 1.0, &mut ts);
+        ed.follow_caret(300.0, &mut ts);
+        // the caret on the tenth line, in view
+        let at = (long.chars().count() + 1) * 10;
+        ed.select_chars(at, at);
+        ed.follow_caret(300.0, &mut ts);
+        ed.set_nowrap(false, &mut ts);
+        ed.set_geometry_keeping(400.0, 1.0, &mut ts);
+        ed.follow_caret(300.0, &mut ts);
+        let c = ed.caret_box(1.0, &mut ts);
+        assert!(
+            (c.y0 as f32) >= ed.scroll_y - 0.5 && (c.y1 as f32) <= ed.scroll_y + 300.5,
+            "caret {}..{} with the view at {}",
+            c.y0,
+            c.y1,
+            ed.scroll_y
+        );
+        assert!(ed.scroll_y > 0.0);
     }
 
     /// Enter continuing a list, and a key typed before the program's

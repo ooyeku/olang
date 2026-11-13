@@ -594,7 +594,7 @@ impl WinState {
                         let (cols, rc) = super::rich::parse_rulers(props.rulers.as_ref());
                         r.rulers = cols;
                         r.ruler_color = rc;
-                        r.set_nowrap(!props.wrap);
+                        r.set_nowrap(!props.wrap, &mut ts);
                         r.readonly = props.readonly;
                         r.band = props.band.unwrap_or(16).max(1);
                         r.track = super::rich::parse_track(props.track.as_ref());
@@ -670,7 +670,7 @@ impl WinState {
                         let (cols, rc) = super::rich::parse_rulers(props.rulers.as_ref());
                         r.rulers = cols;
                         r.ruler_color = rc;
-                        r.set_nowrap(!props.wrap);
+                        r.set_nowrap(!props.wrap, &mut ts);
                         r.readonly = props.readonly;
                         r.band = props.band.unwrap_or(16).max(1);
                         r.track = super::rich::parse_track(props.track.as_ref());
@@ -3736,6 +3736,15 @@ impl WinState {
             .expect("present");
         r.set_font(&st.font, st.color);
         r.set_geometry_keeping(content[2] / s, s, ts);
+        // the pinned rows' height before the caret is followed: a field's
+        // first frame keeps its caret from under them too
+        r.sticky_lh = st.font.size
+            * s
+            * if st.font.line_height > 0.0 {
+                st.font.line_height
+            } else {
+                1.2
+            };
         r.follow_caret(content[3], ts);
         let ox = content[0] - r.scroll_x;
         let oy = content[1] - r.scroll_y;
