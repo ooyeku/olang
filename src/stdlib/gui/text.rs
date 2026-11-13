@@ -593,6 +593,17 @@ pub fn system() -> &'static Mutex<TextSystem> {
     system_now()
 }
 
+/// The text systems' locks made usable again after a panic that held one
+/// (`platform::contained_problem`): the state is as the panic left it.
+pub fn clear_poison() {
+    if let Some(m) = PAINT.get() {
+        m.clear_poison();
+    }
+    if let Some(m) = WORK.get() {
+        m.clear_poison();
+    }
+}
+
 /// The text system without waiting: the background registration's own.
 /// The main thread's own on the thread that paints, else everyone else's.
 pub fn system_now() -> &'static Mutex<TextSystem> {

@@ -1023,6 +1023,12 @@ fn cache() -> &'static Mutex<Cache> {
     C.get_or_init(|| Mutex::new(Cache::default()))
 }
 
+/// The cache's lock made usable again after a panic that held it
+/// (`platform::contained_problem`).
+pub fn clear_poison() {
+    cache().clear_poison();
+}
+
 /// The size and format of a source, read from its header (and kept).
 pub fn info(src: &Value) -> Res<Info> {
     let (id, sr) = identify(src)?;

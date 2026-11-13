@@ -2203,6 +2203,11 @@ impl RichEditor {
             if h > top + stk.max || e < top {
                 continue;
             }
+            // a scope of the text as it was (the program computes them
+            // apart): past the last line now, it is no row (OL-611)
+            if h >= self.paras.len() || e >= self.paras.len() {
+                continue;
+            }
             let slot = rows.len() as f32 * lh;
             let (hy, _) = self.line_box(h, ts);
             if hy >= self.scroll_y + slot {
@@ -2681,6 +2686,30 @@ mod rebase_tests {
     use super::RichEditor;
     use crate::stdlib::gui::text::{Font, system};
     use std::sync::Arc;
+
+    /// Sticky scopes are the program's, computed for the text as it was:
+    /// one whose lines are past a shorter text's end is no row, and no
+    /// panic (OL-611: `line_box` indexed past the paragraphs, and the
+    /// contained panic left the text system's lock poisoned).
+    #[test]
+    fn a_sticky_scope_past_the_texts_end_is_no_row() {
+        let mut ts = system().lock().unwrap_or_else(|e| e.into_inner());
+        let mut ed = RichEditor::new("fn a() = {\n    1\n}", &Font::default(), Default::default());
+        ed.sticky_lh = 18.0;
+        ed.sticky = Some(super::Sticky {
+            scopes: vec![(0, 2), (3, 9), (40, 41)],
+            max: 3,
+            bg: None,
+            line: None,
+        });
+        ed.scroll_y = 20.0;
+        let rows = ed.sticky_rows(&mut ts);
+        assert!(rows.iter().all(|(line, _)| *line < 3), "rows: {rows:?}");
+        // a text made shorter under the same scopes
+        ed.select_all(&mut ts);
+        ed.insert("x", &mut ts);
+        assert!(ed.sticky_rows(&mut ts).is_empty());
+    }
 
     /// Enter continuing a list, and a key typed before the program's
     /// answer: the program's `- ` is made over the typed key, not in place

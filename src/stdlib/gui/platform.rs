@@ -2175,6 +2175,11 @@ pub fn contained_problem(site: &str, message: &str) {
     CONTAINED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     eprintln!("gui: a problem was contained in the engine ({message}); the program goes on");
     windows().clear_poison();
+    // the text systems and the picture cache too: a panic that held one
+    // left every later lock of it refused, so no text was laid out, typed
+    // or measured until the process ended (OL-611)
+    super::text::clear_poison();
+    super::picture::clear_poison();
     let ws: Vec<Shared> = windows()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
