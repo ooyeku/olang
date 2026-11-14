@@ -100,3 +100,49 @@ main()
     );
     assert_eq!(out, "300000\n300000\n300000\n");
 }
+
+/// OL-358: a lambda called with too few arguments said "Missing required
+/// argument: x" on the interpreter and "Arity mismatch: expected 1, got 0"
+/// on the bytecode tier; a surplus argument's call stack ended in the
+/// callee on the interpreter only.
+#[test]
+fn a_calls_arity_error_reads_the_same_on_both_tiers() {
+    let out = both_tiers(
+        r#"
+fn g(a, b) = a + b
+fn run() = {
+  let f = (x) => x
+  println(attempt(() => f()))
+  println(attempt(() => f(1, 2)))
+  println(attempt(() => 5(1)))
+  println(attempt(() => g(1)))
+  println(attempt(() => g(1, 2, 3)))
+  println(attempt(() => g(1, 2)))
+}
+run()
+"#,
+    );
+    assert_eq!(
+        out,
+        "Err(\"Missing required argument: x\")\nErr(\"Arity mismatch: expected 1, got 2\")\n\
+         Err(\"cannot call an Int: it is a value, not a function\")\n\
+         Err(\"Missing required argument: b\")\nErr(\"Arity mismatch: expected 2, got 3\")\nOk(3)\n"
+    );
+    for src in [
+        "fn g(a, b) = a + b\nfn run() = g(1, 2, 3)\nrun()\n",
+        "fn g(a, b) = a + b\nfn run() = g(1)\nrun()\n",
+    ] {
+        let (ok, _, vm) = run(src, &[]);
+        assert!(!ok);
+        let (ok, _, interp) = run(src, &["--no-ovm"]);
+        assert!(!ok);
+        let stack = |e: &str| {
+            e.lines()
+                .filter(|l| l.trim_start().starts_with('→'))
+                .map(|l| l.trim().to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(stack(&vm), vec!["→ run"], "{vm}");
+        assert_eq!(stack(&interp), vec!["→ run"], "{interp}");
+    }
+}

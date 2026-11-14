@@ -3570,15 +3570,30 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         func: &Arc<Function>,
         arguments: &[Value],
     ) -> Result<(), InterpreterError> {
+        Self::check_call_arity(func, arguments)?;
+        self.check_call_types(func, arguments)
+    }
+
+    /// A call's argument count against its function's parameters, in the
+    /// bytecode VM's words: a missing argument names the first absent
+    /// parameter, a surplus reports arity (OL-358: a lambda called short
+    /// said "Arity mismatch" here and "Missing required argument" there).
+    fn check_call_arity(func: &Function, arguments: &[Value]) -> Result<(), InterpreterError> {
         let required_params = func
             .parameters
             .iter()
             .filter(|p| p.default_value.is_none())
             .count();
         if arguments.len() < required_params {
-            return Err(InterpreterError::ArityMismatch {
-                expected: required_params,
-                got: arguments.len(),
+            return Err(InterpreterError::RuntimeError {
+                message: format!(
+                    "Missing required argument: {}",
+                    func.parameters[arguments.len()..]
+                        .iter()
+                        .find(|p| p.default_value.is_none())
+                        .map(|p| p.name.as_str())
+                        .unwrap_or("?")
+                ),
             });
         }
         if arguments.len() > func.parameters.len() {
@@ -3587,6 +3602,15 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 got: arguments.len(),
             });
         }
+        Ok(())
+    }
+
+    /// The rest of a call's boundary: trait bounds and declared types.
+    fn check_call_types(
+        &mut self,
+        func: &Arc<Function>,
+        arguments: &[Value],
+    ) -> Result<(), InterpreterError> {
         // Trait bounds fail at the boundary with a clear message, not
         // deep inside the body; declared parameter types run before the
         // tier so every execution path sees the same boundary.
@@ -3732,6 +3756,10 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         mut arguments: Vec<Value>,
     ) -> Result<Value, InterpreterError> {
         {
+            // A call with the wrong number of arguments never enters its
+            // function: the error is the caller's, and its frame list ends
+            // at the caller on every tier (OL-358).
+            Self::check_call_arity(func, &arguments)?;
             self.spend_step()?;
             if crate::interrupt::pending() {
                 return Err(crate::interrupt::interpreter_error());
@@ -3757,7 +3785,17 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             };
             self.call_stack_names.push(frame);
 
-            self.check_call_boundary(func, &arguments)?;
+            // A declared type or a trait bound refused at the boundary is
+            // placed in the callee, as before; the frame and the depth are
+            // given back, so a caught error leaves the stacks as they were.
+            if let Err(e) = self.check_call_types(func, &arguments) {
+                if self.pending_error_location.is_none() && self.pending_error_frames.is_none() {
+                    self.pending_error_frames = Some(self.call_stack_names.clone());
+                }
+                self.call_depth -= 1;
+                self.call_stack_names.pop();
+                return Err(e);
+            }
             self.frame_funcs.push(func.clone());
 
             // Hot-function promotion: run on the bytecode tier when the

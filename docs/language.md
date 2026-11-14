@@ -2254,7 +2254,10 @@ deoptimization ([the execution tiers](ovm.md#correctness-policy)). One
 shape note:
 statements inside block bodies pinpoint the failing statement, while a
 single-expression function body (`fn f(x) = ...`) attributes the error
-to the nearest enclosing located statement — its call site.
+to the nearest enclosing located statement — its call site. A call with
+the wrong number of arguments never enters its function, so its frames end
+at the caller: too few says `Missing required argument: b` (the first
+parameter left without one), too many `Arity mismatch: expected 2, got 3`.
 
 ## Concurrency
 
