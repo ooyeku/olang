@@ -2733,7 +2733,8 @@ println(to_string(apply((n) => n + count, 39)))
 ```
 
 Annotation forms: `Int`, `Float`, `String`, `Bool`, `Map`, custom type
-names, `[T]` lists, `(A, B)` tuples, `Map<K, V>`, `(A, B) -> R` functions,
+names, `[T]` lists, `(A, B)` tuples, `Map<K, V>`, `(A, B) -> R` functions
+(one type per parameter: `() -> R` takes none, `(A) -> R` one),
 `Result<T, E>`, `A | B` unions, scalar literals
 (`"open" | "done"` is a lightweight enum), record shapes
 `{ name: Type, ... }`, generic applications `Name<T>`, and `()` unit.

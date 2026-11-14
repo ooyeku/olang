@@ -2928,36 +2928,21 @@ impl Parser {
                 Ok(TypeAnnotation::Tuple(types))
             }
             Rule::function_type => {
-                let mut inner_pairs = pair.into_inner();
-                let mut params = Vec::new();
-
-                // The first part is either a single type annotation or a list of them in parens
-                let first = inner_pairs
-                    .next()
-                    .ok_or_else(|| ParseError::InvalidSyntax {
-                        message: "Missing parameter types in function type".to_string(),
-                    })?;
-                if first.as_rule() == Rule::type_annotation {
-                    // Single parameter without parens (or the return type)
-                    params.push(self.build_type_annotation(first.into_inner())?);
-                } else {
-                    // Parens with multiple parameters
-                    for param_pair in first.into_inner() {
-                        if param_pair.as_rule() == Rule::type_annotation {
-                            params.push(self.build_type_annotation(param_pair.into_inner())?);
-                        }
-                    }
-                }
-
-                let return_type = inner_pairs
-                    .next()
-                    .ok_or_else(|| ParseError::InvalidSyntax {
-                        message: "Missing return type in function type".to_string(),
-                    })?;
-                let return_annotation = self.build_type_annotation(return_type.into_inner())?;
+                // `(A, B) -> R`: the grammar gives every parameter's type and
+                // then the return type, all at one level. `() -> R` has no
+                // parameter types (OL-515: the first two were read as one
+                // parameter and the return type, and `()` as no return type).
+                let mut types = pair
+                    .into_inner()
+                    .filter(|p| p.as_rule() == Rule::type_annotation)
+                    .map(|p| self.build_type_annotation(p.into_inner()))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let return_annotation = types.pop().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing return type in function type".to_string(),
+                })?;
 
                 Ok(TypeAnnotation::Function {
-                    params,
+                    params: types,
                     return_type: Box::new(return_annotation),
                 })
             }
