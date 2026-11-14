@@ -278,8 +278,7 @@ fn point(s: &mut State, started: crate::clock::Instant) {
         .map(|i| tiers[i].saturating_sub(s.prev_tiers[i]))
         .collect();
     s.prev_tiers = tiers;
-    let heap = crate::memory::heap_bytes();
-    let program = crate::memory::program_bytes().min(heap);
+    let (heap, program, code, values) = crate::memory::breakdown();
     let (rss_kb, threads) = vitals();
     let mut p = json!({
         "t_ms": round1(started.elapsed().as_secs_f64() * 1000.0),
@@ -290,7 +289,8 @@ fn point(s: &mut State, started: crate::clock::Instant) {
         "cpu_ms": cpu_ms(),
         "heap": heap,
         "program": program,
-        "values": heap - program,
+        "code": code,
+        "values": values,
         "tasks": crate::memory::tasks().len(),
         "olang_threads": crate::profile::thread_counts().0,
         "parked": crate::profile::thread_counts().1,

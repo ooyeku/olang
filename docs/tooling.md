@@ -1618,7 +1618,7 @@ program's own output), the counts behind the report:
 | `functions` | per frame: `self` and `total` samples and ms, `tiers` (self samples by tier), `tier` (the one that ran it most) |
 | `folded` | the stacks as folded lines (`a;b;c 12`), for any flame-graph tool |
 | `tiers`, `samples`, `ticks`, `idle`, `blocked`, `worker_samples`, `interval_us`, `elapsed_ms`, `ms_per_sample` | the totals |
-| `series` | the process over time, a point a snapshot: `t_ms`, `samples` by tier since the last point, `rss_kb`, `threads`, `cpu_ms` (the kernel's), `heap`, `program`, `values` (the counting allocator's, as `runtime.memory()`), `tasks` (counted apart), `olang_threads`, `parked`; with `--ovm-stats` also `calls` and `deopts` since the last point |
+| `series` | the process over time, a point a snapshot: `t_ms`, `samples` by tier since the last point, `rss_kb`, `threads`, `cpu_ms` (the kernel's), `heap`, `program`, `code`, `values` (the counting allocator's, as `runtime.memory()`), `tasks` (counted apart), `olang_threads`, `parked`; with `--ovm-stats` also `calls` and `deopts` since the last point |
 | `live`, `done`, `attached`, `attaches`, `pid`, `file`, `wall_ms`, `exit` | the run |
 
 `--live DIR` writes the document so far (without `folded`) to

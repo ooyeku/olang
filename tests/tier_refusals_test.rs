@@ -308,7 +308,12 @@ fn a_declared_function_costs_kilobytes_not_tens_of_them() {
             "{flags:?}: {per_function} bytes a function ({program} for 2,000)"
         );
         let heap = field(memory, "heap");
-        assert_eq!(heap, program + field(memory, "values"), "{memory}");
+        // the runtime's own code is counted apart from values (OL-418)
+        assert_eq!(
+            heap,
+            program + field(memory, "code") + field(memory, "values"),
+            "{memory}"
+        );
     }
 }
 

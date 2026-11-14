@@ -2614,7 +2614,7 @@ that serves its own routes reads the same bytes.
 | `runtime.wasm("full")` | the same for the full profile, the whole standard library (`re` and RSA too), for a playground that runs any program: its gzip and brotli forms are slices of the binary; its `bytes` are the brotli form decoded, once per process, on first ask |
 | <a id="runtime-features"></a>`runtime.features()` / `runtime.features(profile)` | what a runtime has: `#{ "profile", "modules", "threads", "fs", "net", "processes", "db", "gui", "dom", "jit", "needs" }` — its name, the modules a program can call there (sorted), and whether it can start threads (`spawn`, `task`, `par_map` workers), reach files, the network, processes, SQLite, windows, a page's DOM, and native code. `needs` maps each function of those modules that reaches a power the profile lacks to that power — `#{ "ods.open_csv": "fs", "gg.save": "fs", "spawn": "threads", … }` (`spawn` is the form) — and is empty natively. With no argument, this runtime; any runtime, the browser's included, also answers for `"native"`, `"browser"` and `"full"` |
 | <a id="runtime-version"></a>`runtime.version()` | the olang version string |
-| <a id="runtime-memory"></a>`runtime.memory()` | `#{ "heap", "program", "values", "embedded", "tasks" }`, in bytes — where the process's memory is (below) |
+| <a id="runtime-memory"></a>`runtime.memory()` | `#{ "heap", "program", "code", "values", "embedded", "tasks" }`, in bytes — where the process's memory is (below) |
 | <a id="runtime-collect"></a>`runtime.collect()` | `#{ "freed", "scanned", "roots", "ms" }` — frees, now, the loops through cells and shared references that nothing else holds (they are also found on their own as cells are made); `()` when another thread is collecting |
 | <a id="runtime-profile_start"></a>`runtime.profile_start()` / `runtime.profile_start(interval_us)` | begin sampling this process with the profiler behind `olang profile` (every 1,000 µs by default): `Ok(())`, or `Err` when a profile is already running |
 | <a id="runtime-profile_stop"></a>`runtime.profile_stop()` | end it: `Ok(#{ "interval_us", "ticks", "idle", "blocked", "samples", "rows" })`, where `rows` is `[#{ "function", "tier", "samples", "share" }]`, most first — the functions that were running when the sampler looked, the tier each ran on (`interp`, `vm`, `native`, `builtin`), and its share of the samples that landed in code. `blocked` counts thread-ticks spent parked — a receive, a sleep, a server waiting for a connection, an idle http worker — which are charged to no function. `Err` when no profile is running |
@@ -2668,7 +2668,8 @@ allocator, so the figures are exact and the call is cheap enough for a
 |---|---|
 | `heap` | bytes allocated and not yet freed, across every thread |
 | `program` | the share the loaded program holds: the heap's growth measured across parsing the entry file and across each outermost `use` with everything it loads |
-| `values` | `heap - program`: the running program's values, tables, and buffers |
+| `code` | the share the runtime's own code holds once the program runs, measured the same way across that work: functions compiled to bytecode and to machine code, function bodies built the first time they are called, and the interpreters the compiled tiers keep to run builtins. Code the tier lets go of again (a dead closure's) comes back off |
+| `values` | `heap - program - code`: what the running program holds — its values, tables and buffers, and the engines it drives (a window's surfaces and text, a database connection) — plus the runtime's fixed tables made at start, a few MB |
 | `embedded` | the browser runtime and its compressed forms in the binary's image — file-backed pages, not heap |
 | `tasks` | `[#{ "name", "bytes" }]`, largest first: each live spawned task (`olang-spawn-N`) and http worker (`olang-http-N`) with the bytes that thread allocated and has not itself freed |
 
@@ -2682,7 +2683,7 @@ freed but not yet returned.
 ```olang no-run
 let m = runtime.memory()
 let mb = (key) => to_string(m[key] / 1048576) + " MB"
-println("program " + mb("program") + ", values " + mb("values"))
+println("program " + mb("program") + ", code " + mb("code") + ", values " + mb("values"))
 ```
 
 A binary built without the artifact (a fresh checkout's `cargo build`

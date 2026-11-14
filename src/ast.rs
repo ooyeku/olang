@@ -1096,6 +1096,8 @@ impl Body {
     /// The tree, built now if it has not been.
     pub fn tree(&self) -> &Arc<Expr> {
         self.0.tree.get_or_init(|| {
+            // the runtime's own memory, not the program's values (OL-418)
+            let _code = crate::memory::code_scope();
             let pending = self
                 .0
                 .pending

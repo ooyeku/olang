@@ -1169,6 +1169,7 @@ impl BytecodeTier {
     /// *before* compilation, which is what lets mutually recursive functions
     /// resolve each other.
     fn compile(&mut self, name: &str, func: &Function) -> Option<FunctionId> {
+        let _code = crate::memory::code_scope();
         // Each iteration resolves one distinct callee — compiles it, or
         // routes calls to it through the bridge — so the loop ends when the
         // function has no unresolved callee left. The bound is a backstop
