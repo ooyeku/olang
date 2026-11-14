@@ -267,6 +267,30 @@ fn date_string_parsing_is_uniformly_flexible() {
 }
 
 #[test]
+fn format_datetime_gives_a_moments_offset() {
+    // OL-337: a moment was formatted as a naive datetime, so its offset
+    // fields were "invalid format string".
+    let f = |fmt: &str| run(&format!("unwrap(dates.format_datetime(\"2026-01-02T03:04:05+05:00\", \"{fmt}\"))"));
+    assert_eq!(f("%H:%M %z").unwrap(), "03:04 +0500");
+    assert_eq!(f("%:z").unwrap(), "+05:00");
+    assert_eq!(f("%Z").unwrap(), "+05:00");
+    assert_eq!(f("%+").unwrap(), "2026-01-02T03:04:05+05:00");
+    assert_eq!(
+        run("show(is_ok(dates.format_datetime(dates.now(), \"%z\")))").unwrap(),
+        "true"
+    );
+    // A stamp without an offset has none to give.
+    assert_eq!(
+        run("show(is_err(dates.format_datetime(\"2026-01-02T03:04:05\", \"%z\")))").unwrap(),
+        "true"
+    );
+    assert_eq!(
+        run("unwrap(dates.format_datetime(\"2026-01-02T03:04:05\", \"%H:%M\"))").unwrap(),
+        "03:04"
+    );
+}
+
+#[test]
 fn dates_misuse_raises_instead_of_returning_err() {
     // The module violated stdlib rule 3 wholesale before 0.68: a typo'd
     // call came back as Err and `unwrap_or` swallowed it.

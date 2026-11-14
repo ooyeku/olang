@@ -800,6 +800,13 @@ fn dates_format_datetime(args: Vec<Value>) -> Result<Value, Box<dyn std::error::
         _ => return Err(misuse("format_datetime: second argument must be a string")),
     };
 
+    // A moment with an offset keeps it, so `%z`, `%:z`, `%Z` and `%+`
+    // format; a stamp without one has no offset to give (OL-337).
+    if let Ok(moment) = DateTime::parse_from_rfc3339(datetime_str)
+        .or_else(|_| DateTime::parse_from_str(datetime_str, "%Y-%m-%d %H:%M:%S%.f%:z"))
+    {
+        return format_checked(moment.format(format_str), format_str, "format_datetime");
+    }
     let datetime = parse_datetime_flexible(datetime_str)?;
 
     format_checked(datetime.format(format_str), format_str, "format_datetime")

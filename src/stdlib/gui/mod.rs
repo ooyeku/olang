@@ -1529,8 +1529,9 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
             if !w.lock().map_err(|_| "gui: window poisoned")?.headless {
                 return Err("gui.input: \"clipboard\" sets a headless window's clipboard; a real window's is the platform's".into());
             }
-            let t = get_str(&args[1], "text", what)?.unwrap_or("").to_string();
-            w.lock().map_err(|_| "gui: window poisoned")?.clip = Some(t);
+            // no `text`: a clipboard that holds none (a picture copied)
+            let t = get_str(&args[1], "text", what)?.map(str::to_string);
+            w.lock().map_err(|_| "gui: window poisoned")?.clip = t;
             return Ok(Value::Unit);
         }
         _ => {}

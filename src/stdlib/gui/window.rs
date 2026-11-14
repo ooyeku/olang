@@ -1496,9 +1496,12 @@ impl WinState {
                     }
                     None => Outcome::Moved,
                 },
+                // a clipboard with no text (a picture) is the program's
+                // to paste: ⌘V, or the Edit menu's Paste, goes on to it as
+                // the key, as undo the field leaves to it does (OL-188)
                 ("v", false) => match clip.get() {
                     Some(t) => ed.insert(&t, &mut ts),
-                    None => Outcome::Moved,
+                    None => Outcome::Pass,
                 },
                 ("z" | "y", _) if !ed.own_undo() => Outcome::Pass,
                 ("z", false) => ed.undo(&mut ts),

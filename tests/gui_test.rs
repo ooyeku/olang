@@ -12,8 +12,10 @@ use olang::stdlib::gui::{gpu, soft};
 use olang::{Interpreter, Parser, Value};
 use std::sync::Arc;
 
-/// The engine has one event channel for the process; tests that read it
-/// take turns, or one would take another's events.
+/// The engine has one event channel for the process; every test that
+/// drives a window takes turns, the ones that only send events too, or
+/// one would read another's (a pointer move from a test running beside
+/// it, OL-544).
 static EVENTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn events_turn() -> std::sync::MutexGuard<'static, ()> {
@@ -764,6 +766,40 @@ fn a_test_can_close_command_paste_and_see_the_caret() {
         [caret != () && caret[0] >= 10.0 && caret[3] > 10.0, gui.read(w, "value", "f"), contains(kinds, "menu:save"), contains(kinds, "close_requested"), gui.read(w, "caret")]
     "##);
     assert_eq!(text(&v), r#"[true, "pasted", true, true, ()]"#);
+}
+
+#[test]
+fn a_paste_the_field_cannot_take_goes_on_to_the_program() {
+    // OL-188: with no text on the clipboard (a picture copied), ⌘V in a
+    // field — what the Edit menu's Paste sends — was swallowed; it goes
+    // on to the program as the key, aimed at the field, which reads the
+    // clipboard itself. Text is still the field's.
+    let _turn = events_turn();
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (300, 100) })
+        let ev = gui.events()
+        gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 300, 100) },
+          #{ "key": "f", "parent": "root", "role": "input", "box": (10, 10, 200, 30), "edit": #{ "value": "" } },
+          #{ "op": "focus", "key": "f" }
+        ])
+        fn keys() = {
+            let mut got = []
+            let mut more = true
+            while more { match chan.try_recv(ev) { Ok(()) => { more = false }, Ok(e) => { if map_get(e, "kind") == "key" => { got = got + [map_get(e, "mod_chord") + "@" + map_get(e, "target")] } }, _ => { more = false } } }
+            got
+        }
+        gui.input(w, #{ "kind": "clipboard" })
+        gui.input(w, #{ "kind": "key", "key": "v", "mod": true })
+        let picture = keys()
+        gui.input(w, #{ "kind": "clipboard", "text": "words" })
+        gui.input(w, #{ "kind": "key", "key": "v", "mod": true })
+        let words = keys()
+        let value = gui.read(w, "value", "f")
+        gui.close(w)
+        [picture, words, value]
+    "##);
+    assert_eq!(text(&v), r#"[["mod+v@f"], [], "words"]"#);
 }
 
 #[test]
@@ -2151,6 +2187,7 @@ fn the_platform_says_what_its_windows_can_do() {
 /// a real window shows a native one.
 #[test]
 fn a_context_menu_is_checked_and_headless_windows_leave_it_to_the_program() {
+    let _turn = events_turn();
     let v = run(r#"
         let w = gui.headless(#{ "size": (200, 100) })
         let ok = gui.context_menu(w, [#{ "id": "a", "label": "Cut", "keys": "mod+x" }, "separator",
@@ -2252,6 +2289,7 @@ fn a_problem_after_a_line_gives_way_at_the_edge() {
 /// those in its range.
 #[test]
 fn a_colour_only_decoration_recolours_its_glyphs() {
+    let _turn = events_turn();
     let v = run(r##"
         let w = gui.headless(#{ "size": (300, 60) })
         gui.apply(w, [#{ "key": "root", "box": (0, 0, 300, 60), "style": #{ "bg": "#ffffff" } },
@@ -2302,6 +2340,7 @@ fn a_colour_only_decoration_recolours_its_glyphs() {
 /// line number at the top).
 #[test]
 fn a_wrapped_code_field_hides_a_half_row_at_its_top_and_keeps_the_lines_number() {
+    let _turn = events_turn();
     let v = run(r##"
         let long = join(map(range(0, 30), (i) => "word"), " ")
         let text = join(["short", long] + map(range(0, 40), (i) => "x" + to_string(i)), "\n")
@@ -2591,6 +2630,7 @@ fn a_picture_and_a_canvas_under_an_opacity_are_faded() {
 fn an_alert_is_a_role_said_at_once() {
     // something that wants the person now (a file changed on disk under
     // edits): its own role, live and assertive on the platform's tree
+    let _turn = events_turn();
     let v = run(r##"
         let w = gui.headless(#{ "size": (200, 100) })
         let r = gui.apply(w, [
