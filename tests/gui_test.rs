@@ -767,6 +767,40 @@ fn a_test_can_close_command_paste_and_see_the_caret() {
 }
 
 #[test]
+fn a_paste_the_field_cannot_take_goes_on_to_the_program() {
+    // OL-188: with no text on the clipboard (a picture copied), ⌘V in a
+    // field — what the Edit menu's Paste sends — was swallowed; it goes
+    // on to the program as the key, aimed at the field, which reads the
+    // clipboard itself. Text is still the field's.
+    let _turn = events_turn();
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (300, 100) })
+        let ev = gui.events()
+        gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 300, 100) },
+          #{ "key": "f", "parent": "root", "role": "input", "box": (10, 10, 200, 30), "edit": #{ "value": "" } },
+          #{ "op": "focus", "key": "f" }
+        ])
+        fn keys() = {
+            let mut got = []
+            let mut more = true
+            while more { match chan.try_recv(ev) { Ok(()) => { more = false }, Ok(e) => { if map_get(e, "kind") == "key" => { got = got + [map_get(e, "mod_chord") + "@" + map_get(e, "target")] } }, _ => { more = false } } }
+            got
+        }
+        gui.input(w, #{ "kind": "clipboard" })
+        gui.input(w, #{ "kind": "key", "key": "v", "mod": true })
+        let picture = keys()
+        gui.input(w, #{ "kind": "clipboard", "text": "words" })
+        gui.input(w, #{ "kind": "key", "key": "v", "mod": true })
+        let words = keys()
+        let value = gui.read(w, "value", "f")
+        gui.close(w)
+        [picture, words, value]
+    "##);
+    assert_eq!(text(&v), r#"[["mod+v@f"], [], "words"]"#);
+}
+
+#[test]
 fn the_application_hears_what_it_is_asked_to_open_and_the_tab_bar() {
     // what the Finder asks (Open With, a drop on the Dock icon) and the
     // tab bar's + button, as a test sends them; a window may join a tab
