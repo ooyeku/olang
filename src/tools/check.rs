@@ -335,7 +335,7 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
                             ),
                         ),
                     )
-                    .with_source_code(miette::NamedSource::new(
+                    .with_source_code(crate::diag_source::CharSource::new(
                         file.display().to_string(),
                         text.clone(),
                     ));
@@ -424,11 +424,12 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
             }
             // a notebook's own text around it: the program's lines are
             // the file's, its prose made empty
-            let report =
-                miette::Report::new(diagnostic).with_source_code(miette::NamedSource::new(
+            let report = miette::Report::new(diagnostic).with_source_code(
+                crate::diag_source::CharSource::new(
                     file.display().to_string(),
                     shown.clone().unwrap_or_else(|| source.clone()),
-                ));
+                ),
+            );
             eprintln!("{:?}", report);
         }
     }

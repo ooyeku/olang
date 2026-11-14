@@ -2474,10 +2474,9 @@ fn show_classic_interpreter_error(
         if let Some(hint) = &loc.hint {
             diagnostic = diagnostic.with_help(hint.clone());
         }
-        let report = miette::Report::new(diagnostic).with_source_code(miette::NamedSource::new(
-            display_name,
-            display_source.to_string(),
-        ));
+        let report = miette::Report::new(diagnostic).with_source_code(
+            olang::diag_source::CharSource::new(display_name, display_source.to_string()),
+        );
         eprintln!("{:?}", report);
         if !loc.call_stack.is_empty() {
             eprintln!("  {}", "Call stack (outermost first):".bright_blue().bold());
