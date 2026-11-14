@@ -366,6 +366,9 @@ spacing —
 - `:` glues left and breathes right (`x: Int`, `#{ "a": 1 }`)
 - braces breathe (`{ ok: true }`, `#{ "a": 1 }`); empty pairs glue
   (`{}`, `#{}`)
+- a type's angle brackets glue (`List<Int>`, `Map<String, List<Int>>`,
+  `fn first<T>(xs: List<T>)`); `<` and `>` as comparisons breathe
+  (`a < b`)
 
 What it does **not** do: re-indent, re-wrap, or reflow
 lines — leading whitespace and line structure are the author's, so a

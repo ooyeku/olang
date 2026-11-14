@@ -30,6 +30,7 @@ pub mod controls; // Controls a host binds: `runtime.bind`, `ui.slider` and its 
 #[cfg(unix)]
 pub mod crash; // Crash reports: a panic or a fatal signal leaves a JSON file (`runtime.on_crash`)
 pub mod cycles; // Frees the loops reference counting cannot (OL-570)
+pub mod diag_source; // A printed diagnostic's source: columns in characters (OL-371)
 pub mod effects;
 pub mod errtrace; // Where a caught error went: its frames, file and line each
 pub mod expand;

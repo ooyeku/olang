@@ -630,7 +630,31 @@ fn humanize_pest_error(e: pest::error::Error<Rule>, input: &str) -> ParseError {
         .skip(column.saturating_sub(1))
         .take_while(|c| c.is_alphanumeric() || *c == '_')
         .collect();
-    let message = if RESERVED_WORDS.contains(&word_at.as_str()) {
+    // A name with a letter outside ASCII (`ñ`, `café`): names are ASCII
+    // (OL-389); say so rather than what the parser wanted next.
+    let non_ascii_name = raw_line
+        .chars()
+        .nth(column.saturating_sub(1))
+        .is_some_and(|c| !c.is_ascii() && c.is_alphanumeric());
+    let message = if non_ascii_name {
+        let before: String = {
+            let mut b: Vec<char> = raw_line
+                .chars()
+                .take(column.saturating_sub(1))
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            b.reverse();
+            b.into_iter().collect()
+        };
+        format!(
+            "`{}{}` is not a name: a name is ASCII letters, digits and `_` (a string \
+             can hold any text, and a map key is a string: `#{{ \"{}{}\": 1 }}`)",
+            before, word_at, before, word_at
+        )
+    } else if RESERVED_WORDS.contains(&word_at.as_str()) {
         format!(
             "`{}` is a reserved word (kept for a future form of the language) and cannot \
              be a name; choose another",
@@ -2904,36 +2928,21 @@ impl Parser {
                 Ok(TypeAnnotation::Tuple(types))
             }
             Rule::function_type => {
-                let mut inner_pairs = pair.into_inner();
-                let mut params = Vec::new();
-
-                // The first part is either a single type annotation or a list of them in parens
-                let first = inner_pairs
-                    .next()
-                    .ok_or_else(|| ParseError::InvalidSyntax {
-                        message: "Missing parameter types in function type".to_string(),
-                    })?;
-                if first.as_rule() == Rule::type_annotation {
-                    // Single parameter without parens (or the return type)
-                    params.push(self.build_type_annotation(first.into_inner())?);
-                } else {
-                    // Parens with multiple parameters
-                    for param_pair in first.into_inner() {
-                        if param_pair.as_rule() == Rule::type_annotation {
-                            params.push(self.build_type_annotation(param_pair.into_inner())?);
-                        }
-                    }
-                }
-
-                let return_type = inner_pairs
-                    .next()
-                    .ok_or_else(|| ParseError::InvalidSyntax {
-                        message: "Missing return type in function type".to_string(),
-                    })?;
-                let return_annotation = self.build_type_annotation(return_type.into_inner())?;
+                // `(A, B) -> R`: the grammar gives every parameter's type and
+                // then the return type, all at one level. `() -> R` has no
+                // parameter types (OL-515: the first two were read as one
+                // parameter and the return type, and `()` as no return type).
+                let mut types = pair
+                    .into_inner()
+                    .filter(|p| p.as_rule() == Rule::type_annotation)
+                    .map(|p| self.build_type_annotation(p.into_inner()))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let return_annotation = types.pop().ok_or_else(|| ParseError::InvalidSyntax {
+                    message: "Missing return type in function type".to_string(),
+                })?;
 
                 Ok(TypeAnnotation::Function {
-                    params,
+                    params: types,
                     return_type: Box::new(return_annotation),
                 })
             }

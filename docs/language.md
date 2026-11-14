@@ -95,9 +95,10 @@ later input redefine a name).
 Expressions evaluated at the top level are allowed and their value is
 discarded (the last one is the program's result in the REPL).
 
-Identifiers start with a letter or an underscore and continue with
-letters, digits, and underscores: `total`, `user_name`, `isValid2`,
-`_unused`. A bare `_` is not a name but the discard pattern (`let _ =
+Identifiers start with an ASCII letter or an underscore and continue
+with ASCII letters, digits, and underscores: `total`, `user_name`,
+`isValid2`, `_unused`. A letter outside ASCII (`ñ`, `café`) is not part of
+a name, and is refused as one; strings and map keys hold any text. A bare `_` is not a name but the discard pattern (`let _ =
 ...`, `for _ in ...`, a `match` arm). Identifiers cannot be
 [keywords](#appendix-keywords-and-grammar).
 
@@ -2253,7 +2254,10 @@ deoptimization ([the execution tiers](ovm.md#correctness-policy)). One
 shape note:
 statements inside block bodies pinpoint the failing statement, while a
 single-expression function body (`fn f(x) = ...`) attributes the error
-to the nearest enclosing located statement — its call site.
+to the nearest enclosing located statement — its call site. A call with
+the wrong number of arguments never enters its function, so its frames end
+at the caller: too few says `Missing required argument: b` (the first
+parameter left without one), too many `Arity mismatch: expected 2, got 3`.
 
 ## Concurrency
 
@@ -2732,7 +2736,8 @@ println(to_string(apply((n) => n + count, 39)))
 ```
 
 Annotation forms: `Int`, `Float`, `String`, `Bool`, `Map`, custom type
-names, `[T]` lists, `(A, B)` tuples, `Map<K, V>`, `(A, B) -> R` functions,
+names, `[T]` lists, `(A, B)` tuples, `Map<K, V>`, `(A, B) -> R` functions
+(one type per parameter: `() -> R` takes none, `(A) -> R` one),
 `Result<T, E>`, `A | B` unions, scalar literals
 (`"open" | "done"` is a lightweight enum), record shapes
 `{ name: Type, ... }`, generic applications `Name<T>`, and `()` unit.

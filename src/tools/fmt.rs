@@ -383,10 +383,15 @@ fn respace(indent: &str, toks: &[Tok], tail: Option<&str>) -> String {
             };
         }
     }
+    let angle = type_angles(toks);
     let mut out = String::from(indent);
     for (idx, t) in toks.iter().enumerate() {
         let space = if idx == 0 || glue_right[idx - 1] {
             0
+        } else if angle[idx] || (angle[idx - 1] && toks[idx - 1].text == "<") {
+            0 // a type's brackets glue: `List<Int>`, `fn first<T>`
+        } else if angle[idx - 1] && t.text == "(" {
+            0 // `fn first<T>(xs)`
         } else if (t.text == "=>" || t.kind == TokKind::Comment) && t.gap >= 2 {
             t.gap // preserved alignment
         } else {
@@ -417,6 +422,78 @@ fn respace(indent: &str, toks: &[Tok], tail: Option<&str>) -> String {
         out.push_str(tail);
     }
     out
+}
+
+/// Which `<`/`>` tokens are a type's brackets rather than comparisons:
+/// `List<Int>`, `Map<String, List<Int>>`, `fn first<T>` (OL-364). A `<`
+/// opens one after a capitalized name (`List<`) or a name that follows
+/// `fn`/`type` (type parameters), and only when the brackets close on the
+/// line around nothing but type syntax: capitalized names, string literal
+/// types, `,`, `|`, `->`, `?`, `()`, `[]`, and a struct type's `name:`.
+/// Anything else between them (an operator, a lowercase value) and they are
+/// left as comparisons.
+fn type_angles(toks: &[Tok]) -> Vec<bool> {
+    let mut angle = vec![false; toks.len()];
+    let opens = |i: usize| {
+        let Some(p) = i.checked_sub(1).map(|j| &toks[j]) else {
+            return false;
+        };
+        toks[i].kind == TokKind::Op
+            && toks[i].text == "<"
+            && p.kind == TokKind::Word
+            && !is_keyword(&p.text)
+            && (p.text.starts_with(|c: char| c.is_uppercase())
+                || (i >= 2 && matches!(toks[i - 2].text.as_str(), "fn" | "type")))
+    };
+    let mut i = 0;
+    while i < toks.len() {
+        if angle[i] || !opens(i) {
+            i += 1;
+            continue;
+        }
+        let mut depth = 0usize;
+        let mut marks = Vec::new();
+        let mut closed = false;
+        for (j, t) in toks.iter().enumerate().skip(i) {
+            let ok = match (t.kind, t.text.as_str()) {
+                (TokKind::Op, "<") if j == i || opens(j) => {
+                    depth += 1;
+                    marks.push(j);
+                    true
+                }
+                (TokKind::Op, ">") => {
+                    depth -= 1;
+                    marks.push(j);
+                    true
+                }
+                (TokKind::Op, "," | "|" | "->" | "?" | "(" | ")" | "[" | "]" | "{" | "}" | ":") => {
+                    true
+                }
+                (TokKind::Word, w) => {
+                    w.starts_with(|c: char| c.is_uppercase())
+                        || toks.get(j + 1).is_some_and(|n| n.text == ":")
+                }
+                (TokKind::Str, _) => true,
+                _ => false,
+            };
+            if !ok {
+                break;
+            }
+            if depth == 0 {
+                closed = true;
+                break;
+            }
+        }
+        if closed {
+            for j in &marks {
+                angle[*j] = true;
+            }
+            i = marks.last().copied().unwrap_or(i) + 1;
+        } else {
+            i += 1;
+        }
+    }
+    angle
 }
 
 /// Is this token something a following `-`/`+` would be *binary* after
@@ -856,6 +933,34 @@ mod tests {
             format_source("match proc.spawn(a, b) {\n"),
             "match proc.spawn(a, b) {\n"
         );
+    }
+
+    #[test]
+    fn a_types_angle_brackets_glue() {
+        // OL-364: these were spaced as comparisons, `List < Int >`.
+        for line in [
+            "fn f(xs: List<Int>) -> Int = len(xs)\n",
+            "let ys: List<Int> = [1]\n",
+            "fn g(m: Map<String, List<Int>>) = m\n",
+            "fn first<T>(xs: List<T>) -> T = xs[0]\n",
+            "let r: Result<List<Int>, String> = Ok([1])\n",
+            "type Pair<A, B> = struct { a: A, b: B }\n",
+            "fn ap(f: (Int) -> List<Int>) = f(1)\n",
+        ] {
+            assert_eq!(format_source(line), line);
+            let spaced = line
+                .replace('<', " < ")
+                .replace('>', " > ")
+                .replace("- >", "->");
+            assert_eq!(format_source(&spaced), line, "from {spaced:?}");
+        }
+        // comparisons still breathe
+        assert_eq!(format_source("let b = a<b\n"), "let b = a < b\n");
+        assert_eq!(
+            format_source("if N<M && M>K => 1\n"),
+            "if N < M && M > K => 1\n"
+        );
+        assert_eq!(format_source("let c = x<Y\n"), "let c = x < Y\n");
     }
 
     #[test]

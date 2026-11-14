@@ -762,6 +762,58 @@ fn the_reserved_words_are_refused_as_names_and_allowed_as_members() {
     );
 }
 
+// ── Names are ASCII (OL-389) ────────────────────────────────────────
+#[test]
+fn a_name_outside_ascii_is_refused_with_a_reason() {
+    for (src, name) in [
+        ("let ñ = 3\n", "ñ"),
+        ("let café = 3\n", "café"),
+        ("fn größe(x) = x\n", "größe"),
+    ] {
+        let err = parse_err(src);
+        assert!(
+            err.contains(&format!("`{name}` is not a name: a name is ASCII letters")),
+            "{src}: {err}"
+        );
+    }
+    // any text in a string or a map key
+    assert_eq!(
+        agree_tiered("let m = #{ \"ñ\": 3 }\n[m[\"ñ\"], \"café\"]\n"),
+        Ok(l(vec![Value::Integer(3), s("café")]))
+    );
+}
+
+// ── Function types with 0 or several parameters (OL-515) ────────────
+#[test]
+fn a_function_type_checks_every_parameter_count() {
+    assert_eq!(
+        agree_tiered(
+            "fn ap(f: (Int, Int) -> Int) = f(1, 2)\n\
+             fn ap0(f: () -> Int) = f()\n\
+             fn ap3(f: (Int, Int, Int) -> Int) = f(1, 2, 3)\n\
+             type Box = struct { push: (Any, Any) -> Any }\n\
+             let b = Box { push: (q, v) => q + [v] }\n\
+             [ap((a, b) => a + b), ap0(() => 7), ap3((a, b, c) => a + b + c), b.push([1], 2)]\n"
+        ),
+        Ok(l(vec![
+            Value::Integer(3),
+            Value::Integer(7),
+            Value::Integer(6),
+            l(vec![Value::Integer(1), Value::Integer(2)]),
+        ]))
+    );
+    let err = agree_tiered("fn ap(f: (Int, Int) -> Int) = f(1, 2)\nap((a) => a)\n").unwrap_err();
+    assert!(
+        err.contains("expects (Int, Int) -> Int, got a function taking 1 parameter"),
+        "{err}"
+    );
+    let err = agree_tiered("fn ap0(f: () -> Int) = f()\nap0((a) => a)\n").unwrap_err();
+    assert!(
+        err.contains("expects () -> Int, got a function taking 1 parameter"),
+        "{err}"
+    );
+}
+
 // ── task.join answers a Result ──────────────────────────────────────
 #[test]
 fn task_join_tells_a_raise_from_a_returned_err() {

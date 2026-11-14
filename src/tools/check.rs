@@ -335,7 +335,7 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
                             ),
                         ),
                     )
-                    .with_source_code(miette::NamedSource::new(
+                    .with_source_code(crate::diag_source::CharSource::new(
                         file.display().to_string(),
                         text.clone(),
                     ));
@@ -424,11 +424,12 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
             }
             // a notebook's own text around it: the program's lines are
             // the file's, its prose made empty
-            let report =
-                miette::Report::new(diagnostic).with_source_code(miette::NamedSource::new(
+            let report = miette::Report::new(diagnostic).with_source_code(
+                crate::diag_source::CharSource::new(
                     file.display().to_string(),
                     shown.clone().unwrap_or_else(|| source.clone()),
-                ));
+                ),
+            );
             eprintln!("{:?}", report);
         }
     }
@@ -6737,6 +6738,26 @@ mod tests {
             "parameter 'f' of apply expects (Int) -> Int, got a function taking 2 parameters"
         );
         assert!(d[0].runtime, "arity is value-exposed; the runtime rejects");
+    }
+
+    #[test]
+    fn function_annotations_with_zero_or_several_parameters_check_their_arity() {
+        // OL-515: `(Int, Int) -> Int` was read as one parameter, and
+        // `() -> Int` did not parse.
+        let src = "fn ap(f: (Int, Int) -> Int) = f(1, 2)\nfn ap0(f: () -> Int) = f()\n";
+        assert!(check(&format!("{}ap((a, b) => a + b)\nap0(() => 1)\n", src)).is_empty());
+        let d = check(&format!("{}ap((a) => a)\n", src));
+        assert_eq!(d.len(), 1);
+        assert_eq!(
+            d[0].message,
+            "parameter 'f' of ap expects (Int, Int) -> Int, got a function taking 1 parameter"
+        );
+        let d = check(&format!("{}ap0((a) => a)\n", src));
+        assert_eq!(d.len(), 1);
+        assert_eq!(
+            d[0].message,
+            "parameter 'f' of ap0 expects () -> Int, got a function taking 1 parameter"
+        );
     }
 
     #[test]

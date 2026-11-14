@@ -470,7 +470,8 @@ pub fn run(paths: &[PathBuf], output: Option<&Path>, markdown: bool) -> i32 {
         };
         if let Err(e) = std::fs::write(output, html) {
             eprintln!("olang doc: cannot write {}: {}", output.display(), e);
-            return 1;
+            // an output that cannot be written is a misuse (OL-346)
+            return 2;
         }
         println!(
             "wrote {} — {} item(s) across {} module(s)",
