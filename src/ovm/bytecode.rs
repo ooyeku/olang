@@ -159,6 +159,12 @@ pub struct BytecodeVm {
     /// then consumes the leaked slot, so the surviving extra frame
     /// shifts outward until a span captures). Mirror that observable.
     error_trace_leak: Option<String>,
+    /// The call depth whose frame keeps its parameters when it fails
+    /// (`keep_params_on_error`), and what it kept: a promoted loop's
+    /// remainder hands its live variables back through its parameters
+    /// on an interrupt or an error too (OL-179).
+    keep_params_at: Option<u32>,
+    kept_params: Option<Vec<OvmValue>>,
     /// Spare execution frames, pooled so register/local vectors keep their
     /// allocated capacity across calls
     /// Pooled argument buffers for Call* instructions, so marshaling a call's
@@ -895,6 +901,12 @@ pub enum Instruction {
         dst: Register,
         callee: Register,
         args: Vec<Register>,
+        /// The arguments dead after the call, by position (bit i): taken
+        /// from their registers rather than cloned, as `CallFn`'s are, so
+        /// a value replaced by what the call answers (`l = f(l)`) is not
+        /// kept alive in the caller's frame (OL-549).
+        #[serde(default)]
+        arg_moves: u64,
     },
     /// A binary operation whose right operand is a compile-time numeric
     /// literal, carried in the instruction — no LoadConst dispatch, no
@@ -1859,6 +1871,8 @@ impl BytecodeVm {
             dependency_map: HashMap::new(),
             error_trace_frames: Vec::new(),
             error_trace_leak: None,
+            keep_params_at: None,
+            kept_params: None,
             cell_owner: crate::stdlib::cell::next_vm_owner(),
         }
     }
@@ -2174,6 +2188,48 @@ impl BytecodeVm {
         }
     }
 
+    /// A declared struct a map builtin answered, held to its declaration
+    /// as a literal is (OL-356): no field the declaration does not name,
+    /// each value of its field's annotated type. The interpreter's
+    /// `check_struct_write`, with the same messages.
+    fn check_struct_write(&self, builtin: &str, value: &OvmValue) -> Result<(), BytecodeError> {
+        use crate::ovm::value::ValueData;
+        let ValueData::Struct(st) = &value.data else {
+            return Ok(());
+        };
+        let type_name = st.shape.type_name.as_str();
+        let Some(declared) = self.struct_defs.get(type_name) else {
+            return Ok(());
+        };
+        let checks = self.struct_field_checks.get(type_name);
+        for (name, field) in st.iter() {
+            if !declared.iter().any(|d| d == name) {
+                return Err(BytecodeError::TypeError(format!(
+                    "{builtin}: struct '{}' has no field '{}' (declared fields: {})",
+                    type_name,
+                    name,
+                    declared.join(", ")
+                )));
+            }
+            if let Some(check) = checks.and_then(|c| c.get(name.as_str())) {
+                let (actual, payload, fn_arity, scalar) = ovm_value_view(&field);
+                if let Some((expected, got)) = check.check_value(actual, payload, fn_arity, scalar)
+                {
+                    return Err(BytecodeError::TypeError(format!(
+                        "{builtin}: {}",
+                        self.annotation_error(
+                            &format!("field '{}' of {}", name, type_name),
+                            check,
+                            &expected,
+                            &got,
+                        )
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn register_function(&mut self, name: String, func_id: FunctionId) {
         #[cfg(feature = "native")]
         self.jit.note_shadow(&name);
@@ -2409,6 +2465,11 @@ impl BytecodeVm {
                     self.record_start();
                 }
                 let def_file_kept = def_file.clone();
+                // A compile that baked a handle (a drop guard, a channel …)
+                // is not kept for a later run: the record kept it alive,
+                // and its guard with it, for the rest of this one (OL-545),
+                // and no later run has that handle.
+                let holds_handle = key.is_some() && closure_holds_handle(&closure);
                 let r = self.compile_function_with_closure_lent(
                     func_id,
                     func,
@@ -2418,9 +2479,21 @@ impl BytecodeVm {
                     def_file,
                     run,
                 );
+                // The closure compiled against goes with the compile: kept
+                // here until the next one, it held what that closure
+                // captured, a drop guard among them (OL-545).
+                self.compiler.enclosing_closure = std::sync::Arc::default();
                 if let Some(key) = key {
                     let rec = self.record_stop();
+                    let holds_handle = holds_handle
+                        || self.bytecode_cache.read().is_ok_and(|cache| {
+                            let mut budget = 512usize;
+                            cache.get(&func_id).is_some_and(|b| {
+                                b.constants.iter().any(|c| ovm_holds_handle(c, &mut budget))
+                            })
+                        });
                     if r.is_ok()
+                        && !holds_handle
                         && let Some(rec) = rec
                     {
                         crate::compile_cache::store(def_file_kept.as_deref(), key, move || {
@@ -3248,10 +3321,40 @@ impl BytecodeVm {
         if profiled {
             crate::profile::pop();
         }
+        if result.is_err() && self.keep_params_at == Some(self.call_depth) {
+            self.kept_params = Some(
+                (0..bytecode.param_count)
+                    .map(|r| {
+                        self.execution_state
+                            .get_register(Register(r as u32))
+                            .unwrap_or_else(|_| OvmValue::new_unit())
+                    })
+                    .collect(),
+            );
+        }
         self.pop_caps_frame(caps_pushed);
         self.execution_state.pop_frame(saved);
         self.call_depth -= 1;
         result
+    }
+
+    /// Run `func_id` as `execute_taking` does; when it fails on the VM,
+    /// its parameters' values at the failure come back with the error
+    /// (`None` when it failed before its frame ran, or ran natively
+    /// whole). A promoted loop's remainder takes its live variables as
+    /// parameters, so these are the values the loop had (OL-179).
+    pub fn execute_keeping_params(
+        &mut self,
+        func_id: FunctionId,
+        args: &mut [OvmValue],
+    ) -> (Result<OvmValue, BytecodeError>, Option<Vec<OvmValue>>) {
+        let outer = self.keep_params_at.replace(self.call_depth + 1);
+        self.kept_params = None;
+        let result = self.execute_taking(func_id, args);
+        self.keep_params_at = outer;
+        let kept = self.kept_params.take();
+        let kept = if result.is_err() { kept } else { None };
+        (result, kept)
     }
 
     /// The shared front half of `execute`/`execute_taking`: bytecode
@@ -5282,13 +5385,11 @@ impl BytecodeVm {
                                 .map(|(name, val)| (name.clone(), val.clone()))
                                 .collect();
                             pairs.push((key_str.to_string(), v));
-                            self.execution_state.set_register(
-                                *target,
-                                OvmValue::new_struct(crate::ovm::value::StructObject::from_pairs(
-                                    st.type_name(),
-                                    pairs,
-                                )),
-                            )?;
+                            let next = OvmValue::new_struct(
+                                crate::ovm::value::StructObject::from_pairs(st.type_name(), pairs),
+                            );
+                            self.check_struct_write("map_set", &next)?;
+                            self.execution_state.set_register(*target, next)?;
                         }
                         _ => {
                             return Err(BytecodeError::TypeError(
@@ -6049,11 +6150,20 @@ impl BytecodeVm {
                     self.execution_state.set_register(*dst, result)?;
                 }
 
-                Instruction::CallValue { dst, callee, args } => {
+                Instruction::CallValue {
+                    dst,
+                    callee,
+                    args,
+                    arg_moves,
+                } => {
                     let mut arg_values = self.arg_pool.pop().unwrap_or_default();
                     arg_values.reserve(args.len());
-                    for arg_reg in args {
-                        arg_values.push(self.execution_state.get_register(*arg_reg)?);
+                    for (i, arg_reg) in args.iter().enumerate() {
+                        arg_values.push(if i < 64 && arg_moves & (1 << i) != 0 {
+                            self.execution_state.take_register(*arg_reg)?
+                        } else {
+                            self.execution_state.get_register(*arg_reg)?
+                        });
                     }
                     let callee_value = self.execution_state.get_register(*callee)?;
                     let result = match self.call_function_value(&callee_value, &arg_values) {
@@ -6332,7 +6442,16 @@ impl BytecodeVm {
                     if self.arg_pool.len() < 64 {
                         self.arg_pool.push(arg_values);
                     }
-                    self.execution_state.set_register(*dst, outcome?)?;
+                    let outcome = outcome?;
+                    if user.is_none()
+                        && matches!(
+                            function_name.as_str(),
+                            "map_set" | "map_merge" | "map_set_in" | "map_update"
+                        )
+                    {
+                        self.check_struct_write(function_name, &outcome)?;
+                    }
+                    self.execution_state.set_register(*dst, outcome)?;
                 }
 
                 // Collection operations
@@ -7649,6 +7768,65 @@ impl BytecodeVm {
     /// to the interpreter) for arity mismatch, default parameters, trait
     /// bounds, or an uncompilable body; failures are cached per body so
     /// they are not retried.
+    /// Let go at once of what was compiled for `func` alone, when its
+    /// captures hold a handle (a drop guard, a channel, a cell …): the
+    /// compiled code holds the captured values, and a dead closure's code
+    /// went only when a later compile swept the cache, so a guard it
+    /// captured fired at program exit, not when the closure died
+    /// (OL-545). Called after such a closure ran through the bridge; a
+    /// closure called again compiles again.
+    pub(crate) fn release_closure_compile(&mut self, func: &crate::ast::Function) {
+        let key = (
+            Arc::as_ptr(&func.body) as usize,
+            Arc::as_ptr(&func.closure) as usize,
+        );
+        let Some((_, _, Some(root))) = self.hof_cache.get(&key) else {
+            return;
+        };
+        let root = *root;
+        let ids = self
+            .hof_owned
+            .get(&root)
+            .cloned()
+            .unwrap_or_else(|| vec![root]);
+        // what the compile baked in: its constants, and the closure it
+        // was compiled against
+        let baked_handle = closure_holds_handle(&func.closure)
+            || self.bytecode_cache.read().is_ok_and(|cache| {
+                let mut budget = 512usize;
+                ids.iter().any(|id| {
+                    cache.get(id).is_some_and(|b| {
+                        b.constants.iter().any(|c| ovm_holds_handle(c, &mut budget))
+                    })
+                })
+            });
+        if env_on!("OLANG_DEBUG_HOF") {
+            eprintln!(
+                "[hof] release {:?}: closure keys {:?}, baked handle {}",
+                func.name,
+                func.closure.keys().collect::<Vec<_>>(),
+                baked_handle
+            );
+        }
+        if !baked_handle {
+            return;
+        }
+        self.hof_cache.remove(&key);
+        self.hof_owned.remove(&root);
+        self.evict_compiled(&ids);
+    }
+
+    /// `release_closure_compile` for each function among `args`, once a
+    /// higher-order builtin is done calling them.
+    pub(crate) fn release_function_args(&mut self, args: &[OvmValue]) {
+        for arg in args {
+            if let crate::ovm::value::ValueData::AstFunction(f) = &arg.data {
+                let f = f.clone();
+                self.release_closure_compile(&f);
+            }
+        }
+    }
+
     pub(crate) fn hof_function_id(
         &mut self,
         func: &crate::ast::Function,
@@ -10531,6 +10709,7 @@ impl BytecodeVm {
         // Higher-order builtins loop natively when the function argument
         // compiles — otherwise everything below bridges to the interpreter.
         if let Some(result) = self.try_native_higher_order(name, args) {
+            self.release_function_args(args);
             return result;
         }
         let _counted = bridge_stats_on().then(|| BridgeCount {
@@ -12316,6 +12495,7 @@ impl BytecodeCompiler {
                         dst: dst_reg,
                         callee: callee_reg,
                         args: arg_regs,
+                        arg_moves: 0,
                     });
                     return Ok(dst_reg);
                 }
@@ -12452,6 +12632,7 @@ impl BytecodeCompiler {
                                     dst: dst_reg,
                                     callee: callee_reg,
                                     args: arg_regs,
+                                    arg_moves: 0,
                                 });
                                 return Ok(dst_reg);
                             }
@@ -12561,6 +12742,7 @@ impl BytecodeCompiler {
                             dst: dst_reg,
                             callee: baked,
                             args: arg_regs,
+                            arg_moves: 0,
                         });
                         Ok(dst_reg)
                     }
@@ -12577,6 +12759,7 @@ impl BytecodeCompiler {
                             dst: dst_reg,
                             callee: baked,
                             args: arg_regs,
+                            arg_moves: 0,
                         });
                         Ok(dst_reg)
                     }
@@ -12588,6 +12771,7 @@ impl BytecodeCompiler {
                             dst: dst_reg,
                             callee: baked,
                             args: arg_regs,
+                            arg_moves: 0,
                         });
                         Ok(dst_reg)
                     }
@@ -15819,6 +16003,25 @@ impl BytecodeOptimizer {
                 let dead = !(pc + 1 < n && live_in[pc + 1][value.0 as usize]);
                 *value_dead = dead && value != target && value != key;
             }
+            if let I::CallValue {
+                callee,
+                args,
+                arg_moves,
+                ..
+            } = &mut instructions[pc]
+            {
+                // the callee's own register is read after the arguments
+                // are taken: never one of them
+                let mut mask = 0u64;
+                for (i, r) in args.iter().enumerate().take(64) {
+                    let unique = args.iter().filter(|a| a.0 == r.0).count() == 1;
+                    let dead = !(pc + 1 < n && live_in[pc + 1][r.0 as usize]);
+                    if unique && dead && r != callee {
+                        mask |= 1 << i;
+                    }
+                }
+                *arg_moves = mask;
+            }
             if let I::CallFn {
                 args, arg_moves, ..
             } = &mut instructions[pc]
@@ -16052,7 +16255,9 @@ impl BytecodeOptimizer {
                 }
                 defs.push(dst.0);
             }
-            I::CallValue { dst, callee, args } => {
+            I::CallValue {
+                dst, callee, args, ..
+            } => {
                 uses.push(callee.0);
                 for a in args {
                     uses.push(a.0);
@@ -16214,6 +16419,65 @@ impl Default for BytecodeVm {
 /// and CompiledFunction don't record defaults, so their arity stays
 /// unchecked rather than wrongly strict.
 #[allow(clippy::type_complexity)]
+/// Whether a closure's captured values hold a native handle (a drop
+/// guard, a channel, a cell, a shared reference …), looked for in the
+/// values themselves and the lists, maps, records, tuples and results
+/// they hold, up to a budget: a value past it is taken as holding none.
+/// `closure_holds_handle` for a value in the VM's form.
+fn ovm_holds_handle(v: &OvmValue, budget: &mut usize) -> bool {
+    use crate::ovm::value::ValueData as D;
+    if *budget == 0 {
+        return false;
+    }
+    *budget -= 1;
+    match &v.data {
+        D::Native(_) => true,
+        D::List(items) => items.iter().any(|x| ovm_holds_handle(x, budget)),
+        D::Tuple(items) => items.iter().any(|x| ovm_holds_handle(x, budget)),
+        D::Map(m) => m.iter().any(|(_, x)| ovm_holds_handle(x, budget)),
+        D::Struct(st) => st.values().any(|x| ovm_holds_handle(&x, budget)),
+        D::AstList(items) => items.iter().any(|x| ast_holds_handle(x, budget)),
+        D::AstMap(m) | D::AstStruct(m, _) => m.values().any(|x| ast_holds_handle(x, budget)),
+        D::Closure(c) => {
+            c.captured.iter().any(|x| ovm_holds_handle(x, budget))
+                || c.template
+                    .closure
+                    .values()
+                    .any(|x| ast_holds_handle(x, budget))
+        }
+        D::AstFunction(f) => f.closure.values().any(|x| ast_holds_handle(x, budget)),
+        D::Result(r) => {
+            r.ok.as_ref().is_some_and(|x| ovm_holds_handle(x, budget))
+                || r.err.as_ref().is_some_and(|x| ovm_holds_handle(x, budget))
+        }
+        _ => false,
+    }
+}
+
+fn ast_holds_handle(v: &crate::ast::Value, budget: &mut usize) -> bool {
+    use crate::ast::Value as V;
+    if *budget == 0 {
+        return false;
+    }
+    *budget -= 1;
+    match v {
+        V::Native(_) => true,
+        V::List(items) | V::Tuple(items) => items.iter().any(|x| ast_holds_handle(x, budget)),
+        V::Map(m) => m.values().any(|x| ast_holds_handle(x, budget)),
+        V::Struct { type_name, fields } => {
+            type_name != "Module" && fields.values().any(|x| ast_holds_handle(x, budget))
+        }
+        V::Ok(x) | V::Err(x) => ast_holds_handle(x, budget),
+        V::Function(f) => f.closure.values().any(|x| ast_holds_handle(x, budget)),
+        _ => false,
+    }
+}
+
+fn closure_holds_handle(closure: &im::HashMap<String, crate::ast::Value>) -> bool {
+    let mut budget = 256usize;
+    closure.values().any(|v| ast_holds_handle(v, &mut budget))
+}
+
 fn ovm_value_view(
     v: &OvmValue,
 ) -> (

@@ -140,6 +140,10 @@ pub struct BytecodeTier {
     /// and a parameter-check frame that survived without a span. The
     /// interpreter fetches it right after mapping the error message.
     last_error_trace: (Option<(u32, u32)>, Vec<String>, Option<String>),
+    /// `try_call_function_value_keeping` in progress, and the failed
+    /// call's parameters it kept (OL-179).
+    keep_params: bool,
+    kept_params: Option<Vec<Value>>,
     call_counts: HashMap<String, u32>,
     /// Name -> (compiled id, the exact body it was compiled from). The body is
     /// part of the key on purpose: trait dispatch resolves a bare method name
@@ -198,6 +202,8 @@ impl BytecodeTier {
     pub fn new(threshold: u32) -> Self {
         Self {
             last_error_trace: (None, Vec::new(), None),
+            keep_params: false,
+            kept_params: None,
             vm: BytecodeVm::new(),
             threshold,
             warm_hints: HashMap::new(),
@@ -401,9 +407,29 @@ impl BytecodeTier {
     ) -> TierOutcome {
         let arity = func.parameters.len();
         match self.vm.hof_function_id(func, arity) {
-            Some(func_id) => self.run_on_vm(func_id, args, None),
+            Some(func_id) => {
+                let outcome = self.run_on_vm(func_id, args, None);
+                self.vm.release_closure_compile(func);
+                outcome
+            }
             None => TierOutcome::Fallback,
         }
+    }
+
+    /// `try_call_function_value`, and when the call fails on the VM, its
+    /// parameters' values at the failure: a promoted loop's remainder
+    /// takes its live variables as parameters, and they are written back
+    /// on an interrupt or an error as on its end (OL-179).
+    pub fn try_call_function_value_keeping(
+        &mut self,
+        func: &crate::ast::Function,
+        args: &mut [Value],
+    ) -> (TierOutcome, Option<Vec<Value>>) {
+        self.keep_params = true;
+        self.kept_params = None;
+        let outcome = self.try_call_function_value(func, args);
+        self.keep_params = false;
+        (outcome, self.kept_params.take())
     }
 
     pub fn stats(&self) -> TierStats {
@@ -785,7 +811,11 @@ impl BytecodeTier {
             None => {
                 let arity = func.parameters.len();
                 return match self.vm.hof_function_id(func, arity) {
-                    Some(func_id) => self.run_on_vm(func_id, args, None),
+                    Some(func_id) => {
+                        let outcome = self.run_on_vm(func_id, args, None);
+                        self.vm.release_closure_compile(func);
+                        outcome
+                    }
                     None => TierOutcome::Fallback,
                 };
             }
@@ -893,6 +923,7 @@ impl BytecodeTier {
         )));
         self.vm.clear_error_trace();
         let out = self.vm.native_hof(name, &args);
+        self.vm.release_closure_compile(kernel);
         if self.vm.has_lazy_events() {
             self.sync_lazy();
         }
@@ -951,6 +982,7 @@ impl BytecodeTier {
         )));
         self.vm.clear_error_trace();
         let out = self.vm.native_hof(name, &args);
+        self.vm.release_closure_compile(kernel);
         if self.vm.has_lazy_events() {
             self.sync_lazy();
         }
@@ -1032,7 +1064,19 @@ impl BytecodeTier {
 
         self.stats.bytecode_calls += 1;
         self.vm.clear_error_trace();
-        let executed = self.vm.execute_taking(func_id, &mut ovm_args);
+        let executed = if self.keep_params {
+            let (executed, kept) = self.vm.execute_keeping_params(func_id, &mut ovm_args);
+            // all of them or none: a value with no interpreter form
+            // cannot be written back
+            self.kept_params = kept.and_then(|vs| {
+                vs.into_iter()
+                    .map(|v| v.into_ast().ok())
+                    .collect::<Option<Vec<Value>>>()
+            });
+            executed
+        } else {
+            self.vm.execute_taking(func_id, &mut ovm_args)
+        };
         if self.vm.has_lazy_events() {
             self.sync_lazy();
         }

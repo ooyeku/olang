@@ -2628,14 +2628,15 @@ fn native_collection_builtins_agree_across_maps_and_structs() {
 type P = struct { a: Int, b: Int }
 fn go(n) = {
     let m = map_set(#{"x": n, 7: n * 2}, true, n + 1)
-    let p = map_set(P { a: n, b: 2 }, "c", n * 3)
+    // a declared struct's own field: an undeclared one is an error (OL-356)
+    let p = map_set(P { a: n, b: 2 }, "b", n * 3)
     let e = entries(m)
     let l = concat([n], skip([1, 2, 3, 4], 2))
     map_get(m, "x") + map_get(m, 7) + map_get(m, true) +
-        map_get(p, "a") + map_get(p, "c") +
+        map_get(p, "a") + map_get(p, "b") +
         len(e) + len(l) + head(l) + len(tail(l)) + head(cons(n, l)) +
         (if map_has_key(m, "x") => 1 else => 0) +
-        (if map_has_key(p, "c") => 10 else => 0) +
+        (if map_has_key(p, "b") => 10 else => 0) +
         (if map_has_key(m, "zz") => 100 else => 0)
 }
 let mut t = 0

@@ -3103,6 +3103,54 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         self.struct_defs.contains_key(name) || self.enum_type_names.contains(name)
     }
 
+    /// A declared struct that `builtin` (map_set, map_merge, …) answered,
+    /// checked as its literal would be (OL-356): a field the declaration
+    /// does not name, or a value its field's annotation refuses, is a type
+    /// error. A record of no declared type (an anonymous object) passes.
+    pub fn check_struct_write(&self, builtin: &str, value: &Value) -> Result<(), InterpreterError> {
+        let Value::Struct { type_name, fields } = value else {
+            return Ok(());
+        };
+        let Some(declared) = self.struct_defs.get(type_name.as_str()) else {
+            return Ok(());
+        };
+        let checks = self.struct_field_checks.get(type_name.as_str());
+        for (name, field) in fields.iter() {
+            if !declared.iter().any(|d| d == name) {
+                return Err(InterpreterError::TypeError {
+                    message: format!(
+                        "{builtin}: struct '{}' has no field '{}' (declared fields: {})",
+                        type_name.as_str(),
+                        name,
+                        declared.join(", ")
+                    ),
+                });
+            }
+            if let Some(check) = checks.and_then(|c| c.get(name.as_str())) {
+                let (actual, payload, fn_arity) = Self::value_view(field);
+                if let Some((expected, got)) = check.check_value(
+                    &actual,
+                    payload.as_ref().map(|(o, p)| (*o, p.as_str())),
+                    fn_arity,
+                    Self::scalar_view(field),
+                ) {
+                    return Err(InterpreterError::TypeError {
+                        message: format!(
+                            "{builtin}: {}",
+                            self.annotation_error(
+                                &format!("field '{}' of {}", name, type_name.as_str()),
+                                check,
+                                &expected,
+                                &got,
+                            )
+                        ),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// The error text for a failed annotation check at `site`. When the
     /// declared type is a named type that was never declared, the value is
     /// not the problem — the annotation is — so it says "unknown type"
@@ -5756,10 +5804,11 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             .map(|t| {
                 t.set_host_globals(globals, root_file.as_deref());
                 t.set_caps_base(caps_base);
-                t.try_call_function_value(&func, &mut args)
+                t.try_call_function_value_keeping(&func, &mut args)
             })
-            .unwrap_or(crate::ovm::tier::TierOutcome::Fallback);
+            .unwrap_or((crate::ovm::tier::TierOutcome::Fallback, None));
         self.bytecode_tier = tier;
+        let (outcome, kept) = outcome;
 
         match outcome {
             crate::ovm::tier::TierOutcome::Ran(Ok(result)) => {
@@ -5785,6 +5834,20 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             }
             crate::ovm::tier::TierOutcome::Ran(Err(message)) => {
                 let err = Self::map_tier_error_message(message);
+                // The loop's variables as they were when it stopped — an
+                // interrupt, an error — written back as its end writes
+                // them: its remainder takes them as parameters, after the
+                // range's bounds (OL-179).
+                if let Some(kept) = kept {
+                    let skip = if range.is_some() { 2 } else { 0 };
+                    for name in &facts.writes {
+                        if let Some(i) = live_names.iter().position(|n| n == name)
+                            && let Some(value) = kept.get(skip + i)
+                        {
+                            self.environment.set(name, value.clone())?;
+                        }
+                    }
+                }
                 // Splice the VM's error location onto the interpreter's
                 // stack exactly as the ordinary tiered-call path does —
                 // minus the synthetic "<hot loop>" frame, which no

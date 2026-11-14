@@ -1441,7 +1441,7 @@ backward jump, self tail call and call, native code at its back edges
 and self tail calls. A wait the evaluation is in (`chan.recv`,
 `time.sleep`, …) ends at once. The evaluation fails with
 "interrupted" and the session stays as it was; a loop the interpreter had
-promoted to the VM keeps the values it had when it was promoted.
+promoted to the VM leaves its variables as they were when it stopped.
 
 **Reload.** `reload` re-reads a saved file. If it does not parse, nothing
 changes (`kept`). Otherwise the file's scope gets its declarations again,

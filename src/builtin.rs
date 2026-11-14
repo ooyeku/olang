@@ -694,7 +694,16 @@ impl BuiltinFunctions {
         arguments: Vec<Value>,
         interpreter: &mut crate::interpreter::Interpreter,
     ) -> Result<Value, InterpreterError> {
-        Self::call_internal(builtins, name, arguments, interpreter)
+        let result = Self::call_internal(builtins, name, arguments, interpreter)?;
+        // A declared struct written through a map builtin is held to its
+        // declaration as a literal is (OL-356): no field it does not
+        // declare, each value of its field's type.
+        if matches!(name, "map_set" | "map_merge" | "map_set_in" | "map_update")
+            && let Value::Struct { .. } = &result
+        {
+            interpreter.check_struct_write(name, &result)?;
+        }
+        Ok(result)
     }
 
     fn call_internal(

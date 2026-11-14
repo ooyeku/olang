@@ -177,3 +177,25 @@ fn a_value_too_deep_for_toml_is_an_error_not_a_stack_overflow() {
     let r = run("toml.stringify(#{ \"a\": #{ \"b\": [1, 2] } })").expect("runs");
     assert!(matches!(r, Value::Ok(_)), "{}", r);
 }
+
+#[test]
+fn a_long_flat_operator_chain_is_a_parse_error_not_a_stack_overflow() {
+    // OL-357: a generated sum or concatenation, or a run of prefix
+    // operators, builds a tree as deep as the chain is long, and every
+    // later pass recursed down it until the process aborted
+    for src in [
+        format!("println({}1)\n", "1+".repeat(40_000)),
+        format!("let s = {}\"b\"\nlen(s)\n", "\"a\" + ".repeat(40_000)),
+        format!("let x = 1\n{}\n", "  + 1\n".repeat(40_000)),
+        format!("println({}1)\n", "-".repeat(50_000)),
+        format!("println({}true)\n", "!".repeat(50_000)),
+    ] {
+        let err = parse_err(src).expect("too long a chain");
+        assert!(err.contains("nested more than"), "{}", err);
+    }
+    // a long chain within the limit parses and runs
+    let src = format!("{}1\n", "1 + ".repeat(3000));
+    assert_eq!(run(&src).expect("runs"), Value::Integer(3001));
+    let src = format!("{}1\n", "- ".repeat(3000));
+    assert_eq!(run(&src).expect("runs"), Value::Integer(1));
+}

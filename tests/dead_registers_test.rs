@@ -111,3 +111,79 @@ fn a_for_variable_does_not_outlive_its_loop() {
     );
     assert_eq!(out, "5\n7\ntrue\n");
 }
+
+/// A value passed to a call through a function value and dead after it is
+/// let go by the caller, as a direct call's is (OL-549): `l = f(l)` with
+/// `f` a parameter kept the old `l` in the caller's registers until the
+/// caller returned, and a drop guard inside it did not fire.
+#[test]
+fn an_argument_dead_after_a_call_through_a_function_value_is_let_go() {
+    let src = r#"fn add(l, c) = map_set(l, "handles", #{ "1": chan.on_drop(c, "gone") })
+fn drop_it(l) = map_set(l, "handles", #{})
+fn direct() = {
+    let c = chan.new()
+    let mut l = { handles: #{}, x: 1 }
+    l = add(l, c)
+    l = drop_it(l)
+    show(chan.try_recv(c))
+}
+fn via_value(f) = {
+    let c = chan.new()
+    let mut l = { handles: #{}, x: 1 }
+    l = add(l, c)
+    l = f(l)
+    show(chan.try_recv(c))
+}
+fn via_lambda() = {
+    let c = chan.new()
+    let f = (l) => map_set(l, "handles", #{})
+    let mut l = { handles: #{}, x: 1 }
+    l = add(l, c)
+    l = f(l)
+    show(chan.try_recv(c))
+}
+for i in 0..3 {
+    println(direct())
+    println(via_value(drop_it))
+    println(via_lambda())
+}
+"#;
+    let ws = workspace("callvalue");
+    let out = run(&ws, src);
+    assert_eq!(out, "Ok(\"gone\")\n".repeat(9), "{out}");
+}
+
+/// A lambda a bridged builtin calls (`shared.swap`, `cell.update`,
+/// `group_by`, `find` …) is compiled for its own captures, and the
+/// compiled code held them: a drop guard it captured stayed alive until a
+/// later compile swept the cache, often at exit (OL-545). It goes with
+/// the function that made it, as on the interpreter.
+#[test]
+fn a_guard_captured_by_a_lambda_a_builtin_calls_goes_with_its_function() {
+    let src = r#"fn mk(ch, tag) = chan.on_drop(ch, tag)
+fn report(ch) = println(show(chan.try_recv(ch)))
+fn lam(ch) = { let g = mk(ch, "lambda"); let f = (x) => { let h = g; x + 1 }; let r = f(1); 1 }
+fn sw(ch) = { let g = mk(ch, "swap"); let s = shared.new(1); let r = shared.swap(s, (x) => { let h = g; x + 1 }); 1 }
+fn upd(ch) = { let g = mk(ch, "update"); let c = cell(1); let r = cell.update(c, (x) => { let h = g; x + 1 }); 1 }
+fn grp(ch) = { let g = mk(ch, "group_by"); let r = group_by([1, 2], (x) => { let h = g; to_string(x) }); 1 }
+fn named(ch) = { let g = mk(ch, "named"); let s = shared.new(1); let f = (x) => { let h = { guard: g }; x + 1 }; let r = shared.swap(s, f); 1 }
+fn main() = {
+  let ch = chan.new()
+  for i in 0..2 {
+    lam(ch); report(ch)
+    sw(ch); report(ch)
+    upd(ch); report(ch)
+    grp(ch); report(ch)
+    named(ch); report(ch)
+  }
+}
+main()
+"#;
+    let ws = workspace("guard_lambda");
+    let out = run(&ws, src);
+    assert_eq!(
+        out,
+        "Ok(\"lambda\")\nOk(\"swap\")\nOk(\"update\")\nOk(\"group_by\")\nOk(\"named\")\n".repeat(2),
+        "{out}"
+    );
+}
