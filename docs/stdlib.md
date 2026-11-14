@@ -928,16 +928,20 @@ println(x == y)                                          // true
 
 | Function | Description |
 |---|---|
-| <a id="json-parse"></a>`json.parse(s)` | `Result` of the parsed value |
+| <a id="json-parse"></a>`json.parse(s)` | `Result` of the parsed value, nested as deep as the text is: whatever `stringify` writes reads back (the playground, whose stack cannot grow, stops at 128 levels) |
 | <a id="json-stringify"></a>`json.stringify(v)` | `Result` of compact JSON text; an object's keys in its order (a map's as they were first set) |
 | <a id="json-stringify_pairs"></a>`json.stringify_pairs(pairs)` | `Result` of one JSON object whose keys are in the order of `pairs`, a list of `(key, value)`, a key repeated written twice (each value as `stringify` writes it) |
 | <a id="json-prettify"></a><a id="json-minify"></a>`json.prettify(s)` / `json.minify(s)` | reformat JSON text |
-| <a id="json-is_valid"></a>`json.is_valid(s)` | is the text valid JSON? |
+| <a id="json-is_valid"></a>`json.is_valid(s)` | is the text valid JSON? (at any depth `parse` reads; a number olang cannot hold, `1E400`, is still valid JSON) |
 | <a id="json-get"></a><a id="json-set"></a>`json.get(s, key)` / `json.set(s, key, v)` | read or replace one top-level key of JSON text: `Result` of the value / of the new text |
 | <a id="json-has_key"></a><a id="json-remove"></a>`json.has_key(s, k)` / `json.remove(s, k)` | text-level operations |
 | <a id="json-get_type"></a><a id="json-get_keys"></a><a id="json-get_values"></a>`json.get_keys` `json.get_values` `json.get_type` | text-level inspection |
 | <a id="json-array_get"></a><a id="json-array_length"></a><a id="json-array_push"></a>`json.array_get` `json.array_length` `json.array_push` | text-level arrays |
 | <a id="json-merge"></a><a id="json-deep_clone"></a>`json.merge(a, b)` / `json.deep_clone(s)` | combine / copy |
+
+The text-level functions (`prettify` through `deep_clone`) read text
+nested at most 128 levels deep and answer `Err` past that; `parse` the
+text for a deeper document.
 
 ```olang
 let doc = unwrap(json.parse("{\"name\": \"ada\", \"tags\": [\"x\", \"y\"], \"age\": 36}"))

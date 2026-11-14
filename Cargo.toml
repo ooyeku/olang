@@ -115,7 +115,7 @@ olang-ods = { path = "olang-ods", default-features = false, features = ["stats"]
 pest = "2.8"
 pest_derive = "2.8"
 serde = { version = "1.0", features = ["derive", "rc"] }
-serde_json = { version = "1.0", features = ["arbitrary_precision", "preserve_order"] }
+serde_json = { version = "1.0", features = ["arbitrary_precision", "preserve_order", "unbounded_depth"] }
 # The compact binary form of a parsed program (src/olb.rs): what `serve`
 # hands the browser instead of source, so the wasm runtime skips parsing.
 postcard = { version = "1.1", features = ["use-std"] }

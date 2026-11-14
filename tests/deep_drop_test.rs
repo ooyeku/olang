@@ -227,6 +227,49 @@ fn a_deep_value_prints_and_serializes() {
 }
 
 #[test]
+fn what_stringify_writes_parse_reads_back_at_any_depth() {
+    // OL-342: the reader stopped at serde_json's 128 levels, so a value
+    // stringify wrote at 130 did not read back. It reads a million deep
+    // now, on a small stack, and is_valid agrees with it.
+    on_small_stack(|| {
+        let list = chain(|next| Value::List(Arc::new(vec![Value::Integer(1), next])));
+        let (ok, text) = stringify(list);
+        assert!(ok, "{text}");
+        let call = |name: &str, text: &str| {
+            olang::stdlib::json::call_json_function(
+                name,
+                vec![Value::String(text.to_string().into())],
+            )
+            .expect(name)
+        };
+        let parsed = call("parse", &text);
+        assert!(matches!(parsed, Value::Ok(_)), "parse refused it");
+        let (ok, again) = stringify(parsed.into_payload().expect("payload"));
+        assert!(ok && again == text, "the round trip changed the text");
+        assert_eq!(call("is_valid", &text), Value::Boolean(true));
+
+        // A deep document that is not JSON is still an Err with its place.
+        let broken = format!("{}1,{}", "[".repeat(200), "]".repeat(199));
+        match call("parse", &broken) {
+            Value::Err(ref e) => assert!(e.to_string().contains("line 1 column"), "{e}"),
+            other => panic!("not an Err: {other:?}"),
+        }
+        assert_eq!(call("is_valid", &broken), Value::Boolean(false));
+        // A number olang cannot hold is valid JSON, but parse refuses it
+        // with the number's own message, as it did.
+        assert_eq!(call("is_valid", "[1E400]"), Value::Boolean(true));
+        match call("parse", "[[1E400]]") {
+            Value::Err(ref e) => assert!(
+                e.to_string()
+                    .contains("JSON number 1e+400 does not fit Float"),
+                "{e}"
+            ),
+            other => panic!("not an Err: {other:?}"),
+        }
+    });
+}
+
+#[test]
 fn stringify_refuses_a_float_json_cannot_hold() {
     for f in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
         let (ok, message) = stringify(Value::List(Arc::new(vec![Value::Float(f)])));

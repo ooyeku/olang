@@ -146,15 +146,131 @@ fn json_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         }
     };
 
-    match serde_json::from_str::<serde_json::Value>(json_str) {
-        Ok(json_value) => match json_to_olang_value(json_value) {
-            Ok(olang_value) => Ok(Value::Ok(Box::new(olang_value))),
-            Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(e))))),
-        },
-        Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "JSON parse error: {}",
-            e
-        )))))),
+    match read_json_text(json_str, false) {
+        Ok(olang_value) => Ok(Value::Ok(Box::new(olang_value))),
+        Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(e))))),
+    }
+}
+
+/// JSON text straight into an olang value, as deep as it nests (OL-342).
+///
+/// Through a `serde_json::Value` the reader stopped at 128 levels (its
+/// recursion limit), so text `json.stringify` wrote — it writes a value
+/// any depth — did not read back. Here each level grows the stack as it
+/// needs (`with_stack_headroom`, as the interpreter's calls do) and builds
+/// the olang value directly: no serde_json tree, whose build, conversion
+/// and drop would each recurse a frame per level. The playground has no
+/// stack to grow, so there the limit stays.
+///
+/// Numbers are read as `json_to_olang_value` reads them, and its error
+/// (an integer past Int, a float that overflows) is the answer as it
+/// was. `check_only` (`is_valid`) asks only whether the text is JSON:
+/// a number olang cannot hold is still valid JSON.
+pub(crate) fn read_json_text(text: &str, check_only: bool) -> Result<Value, String> {
+    use serde::de::DeserializeSeed;
+    let number_error = std::cell::RefCell::new(None);
+    #[cfg_attr(not(feature = "native"), allow(unused_mut))]
+    let mut de = serde_json::Deserializer::from_str(text);
+    #[cfg(feature = "native")]
+    de.disable_recursion_limit();
+    let seed = JsonSeed {
+        number_error: &number_error,
+        check_only,
+    };
+    let read = seed.deserialize(&mut de).and_then(|v| de.end().map(|()| v));
+    read.map_err(|e| {
+        number_error
+            .take()
+            .unwrap_or_else(|| format!("JSON parse error: {}", e))
+    })
+}
+
+/// serde_json's name for the one-key map it hands a visitor in place of
+/// a number when `arbitrary_precision` is on (its `Value` reads it so).
+const NUMBER_TOKEN: &str = "$serde_json::private::Number";
+
+#[derive(Clone, Copy)]
+struct JsonSeed<'a> {
+    number_error: &'a std::cell::RefCell<Option<String>>,
+    check_only: bool,
+}
+
+impl JsonSeed<'_> {
+    fn number<E: serde::de::Error>(self, n: serde_json::Number) -> Result<Value, E> {
+        match json_to_olang_value(serde_json::Value::Number(n)) {
+            Ok(v) => Ok(v),
+            Err(_) if self.check_only => Ok(Value::Unit),
+            Err(message) => {
+                *self.number_error.borrow_mut() = Some(message.clone());
+                Err(E::custom(message))
+            }
+        }
+    }
+}
+
+impl<'de> serde::de::DeserializeSeed<'de> for JsonSeed<'_> {
+    type Value = Value;
+    fn deserialize<D: serde::Deserializer<'de>>(self, d: D) -> Result<Value, D::Error> {
+        crate::interpreter::with_stack_headroom(|| d.deserialize_any(self))
+    }
+}
+
+impl<'de> serde::de::Visitor<'de> for JsonSeed<'_> {
+    type Value = Value;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("a JSON value")
+    }
+    fn visit_unit<E>(self) -> Result<Value, E> {
+        Ok(Value::Unit)
+    }
+    fn visit_bool<E>(self, b: bool) -> Result<Value, E> {
+        Ok(Value::Boolean(b))
+    }
+    fn visit_i64<E: serde::de::Error>(self, n: i64) -> Result<Value, E> {
+        self.number(n.into())
+    }
+    fn visit_u64<E: serde::de::Error>(self, n: u64) -> Result<Value, E> {
+        self.number(n.into())
+    }
+    fn visit_f64<E: serde::de::Error>(self, f: f64) -> Result<Value, E> {
+        match serde_json::Number::from_f64(f) {
+            Some(n) => self.number(n),
+            None => Err(E::custom("a JSON number is finite")),
+        }
+    }
+    fn visit_str<E>(self, s: &str) -> Result<Value, E> {
+        Ok(Value::String(Arc::new(s.to_string())))
+    }
+    fn visit_string<E>(self, s: String) -> Result<Value, E> {
+        Ok(Value::String(Arc::new(s)))
+    }
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
+        let mut items = Vec::with_capacity(seq.size_hint().unwrap_or(0));
+        while let Some(v) = seq.next_element_seed(self)? {
+            items.push(v);
+        }
+        Ok(Value::List(items.into()))
+    }
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Value, A::Error> {
+        let mut fields = crate::ast::ValueMap::default();
+        let mut first = true;
+        while let Some(key) = map.next_key::<String>()? {
+            if first && key == NUMBER_TOKEN {
+                let text: String = map.next_value()?;
+                let n = text
+                    .parse::<serde_json::Number>()
+                    .map_err(serde::de::Error::custom)?;
+                return self.number(n);
+            }
+            first = false;
+            let value = map.next_value_seed(self)?;
+            fields.insert(key, value);
+        }
+        Ok(Value::Struct {
+            type_name: "JsonObject".into(),
+            fields: std::sync::Arc::new(fields).into(),
+        })
     }
 }
 
@@ -400,8 +516,8 @@ fn json_is_valid(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         _ => return Err("json.is_valid: argument must be a string".into()),
     };
 
-    let is_valid = serde_json::from_str::<serde_json::Value>(json_str).is_ok();
-    Ok(Value::Boolean(is_valid))
+    // The reader `parse` uses, so the two agree at any depth.
+    Ok(Value::Boolean(read_json_text(json_str, true).is_ok()))
 }
 
 /// Get the type of a JSON value
@@ -996,8 +1112,7 @@ pub(crate) fn json_to_olang_value(json_value: serde_json::Value) -> Result<Value
 /// How deep `olang_value_to_json` follows a value. The tree it builds
 /// is walked by recursion everywhere after (serde_json's printer and its
 /// drop, the TOML writer), a frame per level: a value a million deep
-/// overflowed the stack and aborted the process. JSON's own reader stops
-/// at 128.
+/// overflowed the stack and aborted the process.
 pub(crate) const MAX_VALUE_DEPTH: usize = 512;
 
 /// Convert olang Value to serde_json::Value
