@@ -6,7 +6,9 @@
 //! switching versions is one atomic relink and the running binaries are
 //! never overwritten in place. Downloads come from the project's GitHub
 //! releases and are verified against the release's `SHA256SUMS` before
-//! anything is installed. Nothing checks the network unless explicitly
+//! anything is installed, and `SHA256SUMS` against its signature
+//! (`SHA256SUMS.sig`) by olang's release key, pinned here as
+//! [`RELEASE_SIGNING_KEY`] (OL-491). Nothing checks the network unless explicitly
 //! asked: `otc update` and `otc update --check` are the only calls that
 //! reach out, consistent with the language's capability posture.
 //!
@@ -19,6 +21,110 @@ use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
 const REPO: &str = "ooyeku/olang";
+
+/// The public half of olang's release signing key, an ECDSA P-256 key
+/// as PEM: the key `install.sh` pins as `SIGNING_KEY` and `install.ps1`
+/// as `$SigningKey` (tests/install_script_test.rs checks the copies
+/// agree). The release workflow signs each release's `SHA256SUMS` with
+/// the private half (dist/signing/README.md).
+///
+/// PLACEHOLDER: empty until the owner sets up release signing and pastes
+/// the real public key here, as into the installers. While it is empty
+/// `otc update` checks the checksum only and says the release is
+/// unverified.
+pub const RELEASE_SIGNING_KEY: &str = "";
+
+/// The first signed release (`v1.0.0`), as `install.sh`'s `SIGNED_FROM`:
+/// an older release carries no signature and installs on its checksum.
+pub const SIGNED_FROM: &str = "";
+
+/// What the check of a release's `SHA256SUMS` signature found.
+#[derive(Debug, PartialEq)]
+enum Signature {
+    /// It verifies with the pinned key.
+    Verified,
+    /// No key is pinned yet: signing is not set up.
+    NotSetUp,
+    /// The release is older than the first signed one and has none.
+    OlderThanSigning,
+    /// It has none, and `OLANG_ALLOW_UNSIGNED=1` lets it through.
+    AllowedUnsigned,
+}
+
+/// Whether `sums` (a release's `SHA256SUMS`) may be trusted: its
+/// signature `sig` (`None` when the release has no `SHA256SUMS.sig`)
+/// must verify with `key`, the pinned public key. A release older than
+/// `signed_from` may lack one; a bad signature is refused always.
+fn check_signature(
+    key: &str,
+    signed_from: &str,
+    version: &str,
+    sums: &[u8],
+    sig: Option<&[u8]>,
+    allow_unsigned: bool,
+) -> Result<Signature> {
+    if key.trim().is_empty() {
+        return Ok(Signature::NotSetUp);
+    }
+    let Some(sig) = sig else {
+        let older = match (
+            semver::Version::parse(normalize(version).as_str()),
+            semver::Version::parse(normalize(signed_from).as_str()),
+        ) {
+            (Ok(v), Ok(from)) => v < from,
+            _ => false,
+        };
+        if older {
+            return Ok(Signature::OlderThanSigning);
+        }
+        if allow_unsigned {
+            return Ok(Signature::AllowedUnsigned);
+        }
+        bail!(
+            "release {version} has no SHA256SUMS.sig, so otc cannot tell that it came from olang; \
+             nothing was installed. Every release from {signed_from} on is signed: please report \
+             this at https://github.com/{REPO}/issues"
+        );
+    };
+    verify_p256(key, sums, sig).map_err(|e| {
+        anyhow::anyhow!(
+            "the signature of release {version}'s SHA256SUMS does not verify with olang's release \
+             key ({e}), so nothing was installed. The files on the download server may have been \
+             changed by someone other than olang: please report this at https://github.com/{REPO}/issues"
+        )
+    })?;
+    Ok(Signature::Verified)
+}
+
+/// The DER prefix of an ECDSA P-256 SubjectPublicKeyInfo: the algorithm
+/// (id-ecPublicKey, prime256v1) and the bit string's header. The 65-byte
+/// uncompressed point follows it.
+const P256_SPKI_PREFIX: [u8; 26] = [
+    0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a,
+    0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00,
+];
+
+/// Verify `sig`, a DER ECDSA signature over SHA-256 (what `openssl dgst
+/// -sha256 -sign` writes), of `msg` with `pem`, a P-256 public key.
+fn verify_p256(pem: &str, msg: &[u8], sig: &[u8]) -> Result<()> {
+    use aws_lc_rs::signature::{ECDSA_P256_SHA256_ASN1, UnparsedPublicKey};
+    use base64::Engine;
+    let body: String = pem
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with("-----"))
+        .collect();
+    let der = base64::engine::general_purpose::STANDARD
+        .decode(body)
+        .context("the pinned key is not base64 PEM")?;
+    let point = der
+        .strip_prefix(&P256_SPKI_PREFIX[..])
+        .filter(|p| p.len() == 65)
+        .context("the pinned key is not an ECDSA P-256 public key")?;
+    UnparsedPublicKey::new(&ECDSA_P256_SHA256_ASN1, point)
+        .verify(msg, sig)
+        .map_err(|_| anyhow::anyhow!("bad signature"))
+}
 
 #[derive(Subcommand)]
 pub enum ToolchainCommand {
@@ -341,6 +447,43 @@ fn install_version(version: &str) -> Result<()> {
         .send()?
         .error_for_status()?
         .text()?;
+    let sig = if RELEASE_SIGNING_KEY.trim().is_empty() {
+        None
+    } else {
+        let resp = client
+            .get(format!("{}/SHA256SUMS.sig", base))
+            .send()
+            .context("download of SHA256SUMS.sig failed")?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            None
+        } else {
+            Some(resp.error_for_status()?.bytes()?.to_vec())
+        }
+    };
+    match check_signature(
+        RELEASE_SIGNING_KEY,
+        SIGNED_FROM,
+        version,
+        sums.as_bytes(),
+        sig.as_deref(),
+        std::env::var("OLANG_ALLOW_UNSIGNED").as_deref() == Ok("1"),
+    )? {
+        Signature::Verified => println!("signature verified: signed by olang's release key."),
+        Signature::NotSetUp => println!(
+            "signature NOT verified: this otc has no release key pinned yet, so only the \
+             checksum below is checked, which proves the download is intact but not who \
+             published it (dist/signing/README.md)."
+        ),
+        Signature::OlderThanSigning => println!(
+            "release {} is older than olang's release signatures (they start at {}), \
+             so only its checksum is checked.",
+            version, SIGNED_FROM
+        ),
+        Signature::AllowedUnsigned => println!(
+            "release {} has no signature; going on because OLANG_ALLOW_UNSIGNED=1.",
+            version
+        ),
+    }
 
     let expected = sums
         .lines()
@@ -406,4 +549,84 @@ fn install_version(version: &str) -> Result<()> {
 
 fn hex(digest: &[u8]) -> String {
     digest.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    //! The signature check, over a test-only key pair (tests/fixtures/
+    //! release-signing: its private half was never kept). No network.
+    use super::*;
+
+    fn fixture(name: &str) -> Vec<u8> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/release-signing")
+            .join(name);
+        std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    }
+
+    fn key() -> String {
+        String::from_utf8(fixture("test-release.pub")).unwrap()
+    }
+
+    #[test]
+    fn a_good_signature_verifies() {
+        let sums = fixture("SHA256SUMS");
+        let sig = fixture("SHA256SUMS.sig");
+        assert_eq!(
+            check_signature(&key(), "v1.0.0", "1.2.0", &sums, Some(&sig), false).unwrap(),
+            Signature::Verified
+        );
+    }
+
+    #[test]
+    fn changed_sums_or_another_keys_signature_is_refused() {
+        let sums = fixture("SHA256SUMS");
+        let sig = fixture("SHA256SUMS.sig");
+        let mut changed = sums.clone();
+        changed[0] = if changed[0] == b'0' { b'1' } else { b'0' };
+        let err = check_signature(&key(), "v1.0.0", "1.2.0", &changed, Some(&sig), false)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("does not verify"), "{err}");
+        assert!(err.contains("nothing was installed"), "{err}");
+
+        let other = fixture("SHA256SUMS.other-key.sig");
+        assert!(check_signature(&key(), "v1.0.0", "1.2.0", &sums, Some(&other), true).is_err());
+        // garbage is refused, never a panic
+        assert!(check_signature(&key(), "v1.0.0", "1.2.0", &sums, Some(b"nope"), false).is_err());
+    }
+
+    #[test]
+    fn a_missing_signature_is_refused_from_the_first_signed_release_on() {
+        let sums = fixture("SHA256SUMS");
+        let err = check_signature(&key(), "v1.0.0", "1.0.0", &sums, None, false)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("has no SHA256SUMS.sig"), "{err}");
+        assert_eq!(
+            check_signature(&key(), "v1.0.0", "0.99.0", &sums, None, false).unwrap(),
+            Signature::OlderThanSigning
+        );
+        assert_eq!(
+            check_signature(&key(), "v1.0.0", "1.1.0", &sums, None, true).unwrap(),
+            Signature::AllowedUnsigned
+        );
+    }
+
+    #[test]
+    fn with_no_pinned_key_only_the_checksum_is_checked() {
+        let sums = fixture("SHA256SUMS");
+        assert_eq!(
+            check_signature("", "", "1.0.0", &sums, Some(b"anything"), false).unwrap(),
+            Signature::NotSetUp
+        );
+    }
+
+    #[test]
+    fn a_key_that_is_not_p256_is_refused() {
+        let sums = fixture("SHA256SUMS");
+        let sig = fixture("SHA256SUMS.sig");
+        let not_p256 = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAGb9ECWmEzf6FQbrBZ9w7lshQhqowtrbLDFw4rXAxZuE=\n-----END PUBLIC KEY-----";
+        assert!(verify_p256(not_p256, &sums, &sig).is_err());
+    }
 }

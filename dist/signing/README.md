@@ -6,7 +6,8 @@ intact; it cannot prove who made it, because `SHA256SUMS` sits on the
 same server as the files it describes. So the release workflow also
 signs `SHA256SUMS` with a private key that lives only in a GitHub
 secret, and the installers check that signature against the public key
-written into `install.sh` and `install.ps1`. Someone who could swap the
+written into `install.sh` and `install.ps1`, and `otc update` checks it
+against the same key built into `otc`. Someone who could swap the
 files on the release page still could not produce a signature that
 matches.
 
@@ -36,13 +37,16 @@ Then, in one commit, before the first signed release is tagged:
 1. Copy `olang-release.pub` to `dist/signing/olang-release.pub`.
 2. Paste its contents into `install.sh` as `SIGNING_KEY` (the whole PEM,
    `-----BEGIN PUBLIC KEY-----` through `-----END PUBLIC KEY-----`,
-   inside the double quotes) and into `install.ps1` as `$SigningKey`.
-3. Set `SIGNED_FROM` in `install.sh` and `$SignedFrom` in `install.ps1`
-   to the tag of that first signed release, for example `v1.0.0`.
+   inside the double quotes), into `install.ps1` as `$SigningKey`, and
+   into `otc/src/commands/update.rs` as `RELEASE_SIGNING_KEY`, so `otc
+   update` checks the same signature.
+3. Set `SIGNED_FROM` in `install.sh`, `$SignedFrom` in `install.ps1` and
+   `SIGNED_FROM` in `otc/src/commands/update.rs` to the tag of that
+   first signed release, for example `v1.0.0`.
    Releases older than it install with a note that only their checksum
    was checked; releases from it on must carry a good signature.
 
-`tests/install_script_test.rs` checks that the three copies of the key
+`tests/install_script_test.rs` checks that the four copies of the key
 agree. The release workflow refuses to publish when `install.sh` carries
 a key but the secret is missing, or when the signature it made does not
 verify against `install.sh`'s key.
@@ -64,8 +68,8 @@ gh attestation verify olang-1.0.0-macos-arm64.tar.gz --repo ooyeku/olang
 
 ## Rotating the key
 
-Make a new pair as above, replace the secret, the public key file and
-both installers' copies in one commit, and set `SIGNED_FROM` to the next
+Make a new pair as above, replace the secret, the public key file,
+both installers' copies and otc's in one commit, and set `SIGNED_FROM` to the next
 release. Older releases signed with the old key then fail the check,
 so also re-run the release workflow for any release people still
 install by version, which re-signs it with the new key.

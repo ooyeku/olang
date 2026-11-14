@@ -142,6 +142,29 @@ fn installers_agree_on_the_signing_key() {
         from,
         "install.ps1 $SignedFrom vs install.sh"
     );
+    // otc update checks the same signature with the same key (OL-491)
+    let otc = read("otc/src/commands/update.rs");
+    assert_eq!(
+        rust_const(&otc, "RELEASE_SIGNING_KEY"),
+        key,
+        "otc's RELEASE_SIGNING_KEY vs install.sh SIGNING_KEY"
+    );
+    assert_eq!(
+        rust_const(&otc, "SIGNED_FROM"),
+        from,
+        "otc's SIGNED_FROM vs install.sh"
+    );
+}
+
+/// `pub const NAME: &str = "value";` in Rust, possibly spanning lines.
+fn rust_const(source: &str, name: &str) -> String {
+    let head = format!("pub const {name}: &str = \"");
+    let start = source
+        .find(&head)
+        .unwrap_or_else(|| panic!("otc sets no {name}"))
+        + head.len();
+    let end = source[start..].find('"').expect("closing quote") + start;
+    source[start..end].replace("\r\n", "\n")
 }
 
 /// NAME="value" in sh, possibly spanning lines.

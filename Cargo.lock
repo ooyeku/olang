@@ -4269,6 +4269,8 @@ name = "otc"
 version = "0.77.0"
 dependencies = [
  "anyhow",
+ "aws-lc-rs",
+ "base64 0.23.1",
  "clap",
  "clap_complete",
  "libc",
