@@ -656,6 +656,13 @@ fn replay_lock(
             }
         }
         let dir = locked_dir(root, name, locked, options)?;
+        // An edited path or shelf library is development, not tampering —
+        // but an install the user asked for re-pins it (and `--frozen`
+        // fails on it), rather than keep a checksum that is no longer
+        // true (OL-367). A run replays it as it stands.
+        if options.explicit && library_edited(locked, &dir) {
+            return Ok(None);
+        }
         // Fetched sources must still match the checksum the lock recorded —
         // this is where the trust model's tamper detection actually bites.
         // Path and shelf deps are exempt: editing one is normal development.
@@ -670,6 +677,34 @@ fn replay_lock(
         map.insert(name.clone(), dir);
     }
     Ok(Some(map))
+}
+
+/// Whether a path or unpinned shelf library at `dir` is no longer the
+/// tree its lock entry's checksum recorded: it was edited since.
+fn library_edited(locked: &LockedPackage, dir: &Path) -> bool {
+    matches!(
+        locked.source,
+        LockedSource::Path { .. } | LockedSource::Shelf { rev: None, .. }
+    ) && locked.checksum.as_deref().is_some_and(|recorded| {
+        cache::checksum_dir(dir).is_ok_and(|actual| actual != recorded)
+    })
+}
+
+/// The path and unpinned shelf libraries whose contents changed since
+/// the lock recorded them, by name: `otc install` says these before it
+/// re-pins them.
+pub fn edited_libraries(root: &Path) -> Vec<String> {
+    let Ok(lock) = Lockfile::load(root) else {
+        return Vec::new();
+    };
+    lock.package
+        .iter()
+        .filter(|(name, locked)| {
+            locked_dir(root, name, locked, &InstallOptions::default())
+                .is_ok_and(|dir| dir.exists() && library_edited(locked, &dir))
+        })
+        .map(|(name, _)| name.clone())
+        .collect()
 }
 
 /// Whether this machine's shelf now holds `name` at a different revision
