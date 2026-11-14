@@ -111,3 +111,44 @@ fn a_for_variable_does_not_outlive_its_loop() {
     );
     assert_eq!(out, "5\n7\ntrue\n");
 }
+
+/// A value passed to a call through a function value and dead after it is
+/// let go by the caller, as a direct call's is (OL-549): `l = f(l)` with
+/// `f` a parameter kept the old `l` in the caller's registers until the
+/// caller returned, and a drop guard inside it did not fire.
+#[test]
+fn an_argument_dead_after_a_call_through_a_function_value_is_let_go() {
+    let src = r#"fn add(l, c) = map_set(l, "handles", #{ "1": chan.on_drop(c, "gone") })
+fn drop_it(l) = map_set(l, "handles", #{})
+fn direct() = {
+    let c = chan.new()
+    let mut l = { handles: #{}, x: 1 }
+    l = add(l, c)
+    l = drop_it(l)
+    show(chan.try_recv(c))
+}
+fn via_value(f) = {
+    let c = chan.new()
+    let mut l = { handles: #{}, x: 1 }
+    l = add(l, c)
+    l = f(l)
+    show(chan.try_recv(c))
+}
+fn via_lambda() = {
+    let c = chan.new()
+    let f = (l) => map_set(l, "handles", #{})
+    let mut l = { handles: #{}, x: 1 }
+    l = add(l, c)
+    l = f(l)
+    show(chan.try_recv(c))
+}
+for i in 0..3 {
+    println(direct())
+    println(via_value(drop_it))
+    println(via_lambda())
+}
+"#;
+    let ws = workspace("callvalue");
+    let out = run(&ws, src);
+    assert_eq!(out, "Ok(\"gone\")\n".repeat(9), "{out}");
+}

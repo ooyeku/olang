@@ -895,6 +895,12 @@ pub enum Instruction {
         dst: Register,
         callee: Register,
         args: Vec<Register>,
+        /// The arguments dead after the call, by position (bit i): taken
+        /// from their registers rather than cloned, as `CallFn`'s are, so
+        /// a value replaced by what the call answers (`l = f(l)`) is not
+        /// kept alive in the caller's frame (OL-549).
+        #[serde(default)]
+        arg_moves: u64,
     },
     /// A binary operation whose right operand is a compile-time numeric
     /// literal, carried in the instruction — no LoadConst dispatch, no
@@ -6089,11 +6095,20 @@ impl BytecodeVm {
                     self.execution_state.set_register(*dst, result)?;
                 }
 
-                Instruction::CallValue { dst, callee, args } => {
+                Instruction::CallValue {
+                    dst,
+                    callee,
+                    args,
+                    arg_moves,
+                } => {
                     let mut arg_values = self.arg_pool.pop().unwrap_or_default();
                     arg_values.reserve(args.len());
-                    for arg_reg in args {
-                        arg_values.push(self.execution_state.get_register(*arg_reg)?);
+                    for (i, arg_reg) in args.iter().enumerate() {
+                        arg_values.push(if i < 64 && arg_moves & (1 << i) != 0 {
+                            self.execution_state.take_register(*arg_reg)?
+                        } else {
+                            self.execution_state.get_register(*arg_reg)?
+                        });
                     }
                     let callee_value = self.execution_state.get_register(*callee)?;
                     let result = match self.call_function_value(&callee_value, &arg_values) {
@@ -12365,6 +12380,7 @@ impl BytecodeCompiler {
                         dst: dst_reg,
                         callee: callee_reg,
                         args: arg_regs,
+                        arg_moves: 0,
                     });
                     return Ok(dst_reg);
                 }
@@ -12501,6 +12517,7 @@ impl BytecodeCompiler {
                                     dst: dst_reg,
                                     callee: callee_reg,
                                     args: arg_regs,
+                                    arg_moves: 0,
                                 });
                                 return Ok(dst_reg);
                             }
@@ -12610,6 +12627,7 @@ impl BytecodeCompiler {
                             dst: dst_reg,
                             callee: baked,
                             args: arg_regs,
+                            arg_moves: 0,
                         });
                         Ok(dst_reg)
                     }
@@ -12626,6 +12644,7 @@ impl BytecodeCompiler {
                             dst: dst_reg,
                             callee: baked,
                             args: arg_regs,
+                            arg_moves: 0,
                         });
                         Ok(dst_reg)
                     }
@@ -12637,6 +12656,7 @@ impl BytecodeCompiler {
                             dst: dst_reg,
                             callee: baked,
                             args: arg_regs,
+                            arg_moves: 0,
                         });
                         Ok(dst_reg)
                     }
@@ -15868,6 +15888,25 @@ impl BytecodeOptimizer {
                 let dead = !(pc + 1 < n && live_in[pc + 1][value.0 as usize]);
                 *value_dead = dead && value != target && value != key;
             }
+            if let I::CallValue {
+                callee,
+                args,
+                arg_moves,
+                ..
+            } = &mut instructions[pc]
+            {
+                // the callee's own register is read after the arguments
+                // are taken: never one of them
+                let mut mask = 0u64;
+                for (i, r) in args.iter().enumerate().take(64) {
+                    let unique = args.iter().filter(|a| a.0 == r.0).count() == 1;
+                    let dead = !(pc + 1 < n && live_in[pc + 1][r.0 as usize]);
+                    if unique && dead && r != callee {
+                        mask |= 1 << i;
+                    }
+                }
+                *arg_moves = mask;
+            }
             if let I::CallFn {
                 args, arg_moves, ..
             } = &mut instructions[pc]
@@ -16101,7 +16140,9 @@ impl BytecodeOptimizer {
                 }
                 defs.push(dst.0);
             }
-            I::CallValue { dst, callee, args } => {
+            I::CallValue {
+                dst, callee, args, ..
+            } => {
                 uses.push(callee.0);
                 for a in args {
                     uses.push(a.0);
