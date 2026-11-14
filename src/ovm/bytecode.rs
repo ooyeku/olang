@@ -159,6 +159,12 @@ pub struct BytecodeVm {
     /// then consumes the leaked slot, so the surviving extra frame
     /// shifts outward until a span captures). Mirror that observable.
     error_trace_leak: Option<String>,
+    /// The call depth whose frame keeps its parameters when it fails
+    /// (`keep_params_on_error`), and what it kept: a promoted loop's
+    /// remainder hands its live variables back through its parameters
+    /// on an interrupt or an error too (OL-179).
+    keep_params_at: Option<u32>,
+    kept_params: Option<Vec<OvmValue>>,
     /// Spare execution frames, pooled so register/local vectors keep their
     /// allocated capacity across calls
     /// Pooled argument buffers for Call* instructions, so marshaling a call's
@@ -1865,6 +1871,8 @@ impl BytecodeVm {
             dependency_map: HashMap::new(),
             error_trace_frames: Vec::new(),
             error_trace_leak: None,
+            keep_params_at: None,
+            kept_params: None,
             cell_owner: crate::stdlib::cell::next_vm_owner(),
         }
     }
@@ -3296,10 +3304,40 @@ impl BytecodeVm {
         if profiled {
             crate::profile::pop();
         }
+        if result.is_err() && self.keep_params_at == Some(self.call_depth) {
+            self.kept_params = Some(
+                (0..bytecode.param_count)
+                    .map(|r| {
+                        self.execution_state
+                            .get_register(Register(r as u32))
+                            .unwrap_or_else(|_| OvmValue::new_unit())
+                    })
+                    .collect(),
+            );
+        }
         self.pop_caps_frame(caps_pushed);
         self.execution_state.pop_frame(saved);
         self.call_depth -= 1;
         result
+    }
+
+    /// Run `func_id` as `execute_taking` does; when it fails on the VM,
+    /// its parameters' values at the failure come back with the error
+    /// (`None` when it failed before its frame ran, or ran natively
+    /// whole). A promoted loop's remainder takes its live variables as
+    /// parameters, so these are the values the loop had (OL-179).
+    pub fn execute_keeping_params(
+        &mut self,
+        func_id: FunctionId,
+        args: &mut [OvmValue],
+    ) -> (Result<OvmValue, BytecodeError>, Option<Vec<OvmValue>>) {
+        let outer = self.keep_params_at.replace(self.call_depth + 1);
+        self.kept_params = None;
+        let result = self.execute_taking(func_id, args);
+        self.keep_params_at = outer;
+        let kept = self.kept_params.take();
+        let kept = if result.is_err() { kept } else { None };
+        (result, kept)
     }
 
     /// The shared front half of `execute`/`execute_taking`: bytecode

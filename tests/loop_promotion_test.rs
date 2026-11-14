@@ -173,3 +173,45 @@ fn promotion_actually_happens() {
         "expected one promoted crossing (plus the peeled prefix), got {calls} boundary calls: {stats}"
     );
 }
+
+/// A promoted loop that stops on an error (or an interrupt) writes its
+/// variables back as one that ends does (OL-179): in a session (a REPL,
+/// Studio's panel) the next evaluation reads the values the loop had
+/// when it stopped, not those it had when it was promoted.
+#[test]
+fn a_promoted_loop_that_fails_writes_its_variables_back() {
+    use olang::{Interpreter, Parser};
+    for (tier, loop_src) in [
+        (
+            true,
+            "while true { k = k + 1; t = t + 2; if k == 50000 => xs[5] }",
+        ),
+        (
+            true,
+            "for i in 0..1000000 { k = k + 1; t = t + 2; if k == 50000 => xs[5] }",
+        ),
+        (
+            false,
+            "while true { k = k + 1; t = t + 2; if k == 50000 => xs[5] }",
+        ),
+    ] {
+        let mut interp = Interpreter::new();
+        if tier {
+            interp.enable_bytecode_tier(1, false);
+        }
+        let setup = Parser::new()
+            .parse("let xs = [1]\nlet mut k = 0\nlet mut t = 0\n")
+            .unwrap();
+        interp.eval_program(setup).unwrap();
+        let failed = interp.eval_program(Parser::new().parse(loop_src).unwrap());
+        assert!(failed.is_err(), "{loop_src}");
+        let read = interp
+            .eval_program(Parser::new().parse("[k, t]").unwrap())
+            .unwrap();
+        assert_eq!(
+            read.to_string(),
+            "[50000, 100000]",
+            "tier {tier}: {loop_src}"
+        );
+    }
+}

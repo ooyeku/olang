@@ -5780,10 +5780,11 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             .map(|t| {
                 t.set_host_globals(globals, root_file.as_deref());
                 t.set_caps_base(caps_base);
-                t.try_call_function_value(&func, &mut args)
+                t.try_call_function_value_keeping(&func, &mut args)
             })
-            .unwrap_or(crate::ovm::tier::TierOutcome::Fallback);
+            .unwrap_or((crate::ovm::tier::TierOutcome::Fallback, None));
         self.bytecode_tier = tier;
+        let (outcome, kept) = outcome;
 
         match outcome {
             crate::ovm::tier::TierOutcome::Ran(Ok(result)) => {
@@ -5809,6 +5810,20 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             }
             crate::ovm::tier::TierOutcome::Ran(Err(message)) => {
                 let err = Self::map_tier_error_message(message);
+                // The loop's variables as they were when it stopped — an
+                // interrupt, an error — written back as its end writes
+                // them: its remainder takes them as parameters, after the
+                // range's bounds (OL-179).
+                if let Some(kept) = kept {
+                    let skip = if range.is_some() { 2 } else { 0 };
+                    for name in &facts.writes {
+                        if let Some(i) = live_names.iter().position(|n| n == name)
+                            && let Some(value) = kept.get(skip + i)
+                        {
+                            self.environment.set(name, value.clone())?;
+                        }
+                    }
+                }
                 // Splice the VM's error location onto the interpreter's
                 // stack exactly as the ordinary tiered-call path does —
                 // minus the synthetic "<hot loop>" frame, which no
