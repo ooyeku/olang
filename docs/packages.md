@@ -138,6 +138,13 @@ Then `use geometry.shapes.circle` resolves from anywhere. Everything not
 listed stays internal, so a library can rearrange its `lib/` without
 breaking anyone.
 
+`olang doc` given the package's root documents exactly this surface,
+and a `/// @stable` or `/// @experimental` line in an item's doc says
+what it promises; `olang check --against <version>` reports each
+`@stable` item a later version removed or changed ([`olang
+doc`](tooling.md#olang-doc), [Stable items across
+versions](tooling.md#stable-items-across-versions)).
+
 ## The manifest
 
 ```toml

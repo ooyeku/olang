@@ -252,6 +252,11 @@ enum Commands {
         /// front matter's default (repeatable)
         #[arg(long = "param", value_name = "NAME=VALUE")]
         params: Vec<String>,
+        /// Also compare the package's public surface with an earlier
+        /// version's (a git tag or revision, `v` prefix tried, or a folder
+        /// holding it) and report each `@stable` item removed or changed
+        #[arg(long, value_name = "VERSION")]
+        against: Option<String>,
     },
 
     /// Evaluate a line of source and print its value
@@ -1126,12 +1131,17 @@ fn run() -> i32 {
             tier,
             format,
             params,
+            against,
         }) => {
             if let Err(code) = notebook_params(&params) {
                 return code;
             }
             if paths.is_empty() {
                 paths.push(PathBuf::from("."));
+            }
+            if against.is_some() && (tier || format == "json") {
+                eprintln!("olang check: --against does not take --tier or --format json");
+                return 2;
             }
             if format != "text" && format != "json" {
                 eprintln!(
@@ -1161,7 +1171,11 @@ fn run() -> i32 {
                     );
                 }
             }
-            olang::tools::check::run(&paths, rules.as_deref())
+            let code = olang::tools::check::run(&paths, rules.as_deref());
+            match against {
+                Some(version) => code.max(olang::tools::doc::run_against(&paths[0], &version)),
+                None => code,
+            }
         }
 
         Some(Commands::Eval { source }) => run_eval(&cli, &source),

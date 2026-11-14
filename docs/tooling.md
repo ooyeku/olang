@@ -52,7 +52,7 @@ talk to ([Editor support](editors.md)).
 |---|---|
 | `olang <file> [args]` | Run a program (`olang run <file>` is the explicit form) |
 | `olang` | Start the REPL (`olang repl`) |
-| `olang check [path]` | Type-check without running; `--rules FILE` adds project lints (or `[check] rules` in olang.toml); `--tier` lists the functions the bytecode tier refuses, with the reason |
+| `olang check [path]` | Type-check without running; `--rules FILE` adds project lints (or `[check] rules` in olang.toml); `--tier` lists the functions the bytecode tier refuses, with the reason; `--against VERSION` reports each `@stable` item a package removed or changed since that version |
 | `olang doctor [path]` | Audit a project: the manifest, its dependencies, the lock, the browser runtime the binary carries, stale runtime copies |
 | `olang eval SOURCE` | Evaluate one expression and print its value, with the working directory's project libraries in scope |
 | `olang fmt [path]` | Format sources in place; `--check` reports instead of writing |
@@ -532,6 +532,7 @@ olang check               # every .ol file under the current directory
 olang check src/ app/     # specific paths or a single file
 olang check --fix         # apply the unambiguous rewrites first (template escapes)
 olang check --format json # every problem as data, as the language server publishes it
+olang check --against 1.2.0  # also: each @stable item removed or changed since 1.2.0
 ```
 
 **As data.** `--format json` prints one document: `#{ format: 1, kind:
@@ -993,6 +994,30 @@ comment](#allowing-one-line), which wins over `promote`. A name
 olang.toml that olang does not read (a near miss such as
 `[dependancies]` or `autors`; other tools' sections, Loom's `[bundle]`
 and Studio's `[plugin]`, pass).
+
+### Stable items across versions
+
+A package marks what it promises to keep with a doc comment line,
+`/// @stable`, and what may still change with `/// @experimental` (see
+[`olang doc`](#olang-doc)). `--against` holds the package to its
+`@stable` items:
+
+```bash
+olang check --against 1.2.0          # the git tag 1.2.0, or v1.2.0
+olang check --against ../geometry-1.2.0   # a folder holding that version
+```
+
+It reads the package's public surface at that version and now, as
+`olang doc` documents it (the root module, the modules `[package]
+public` lists, what they re-export with `share use`), and reports an
+error for each item that was `@stable` there and here is removed, has
+another signature, or is no longer marked `@stable`. An
+`@experimental` or unmarked item may change freely. The version is a
+folder when one by that name exists; otherwise a revision of the git
+repository the package is in, tried as given and with a `v` in front.
+The rest of `olang check` runs as usual, and the exit code is 1 when
+either part finds an error, 2 when the earlier version cannot be read.
+`--against` is text only (not with `--tier` or `--format json`).
 
 ## `olang eval`
 
@@ -1836,6 +1861,30 @@ written down and nothing else.
 /// Greet someone by name, returning the greeting.
 share fn greet(name) = "Hello, " + name
 ```
+
+**Stability.** A doc line that is `@stable` or `@experimental` marks
+the item, and doc shows it as a badge beside `shared`. `@stable` is a
+promise: the item keeps its name and signature in every later version
+of the package, which [`olang check --against`](#stable-items-across-versions)
+holds it to. `@experimental` says it may still change. Text after the
+marker stays as doc (`/// @experimental: the options may change`).
+
+```olang
+/// Area of a w by h rectangle.
+/// @stable
+share fn area(w, h) = w * h
+```
+
+**A package's public surface.** Given a package's root (the folder
+with its `olang.toml`; with no path, the current folder when it is
+one), doc documents what other packages can use and nothing else: the
+root module (`index.ol`), the modules `[package] public` lists, the
+`share`d items of each, and what each re-exports with `share use lib.x
+{ name }` or `{ name as alias }`, under the name it is exported as,
+with the doc and stability written where it is declared. A module
+below the root that is not listed, and every item not `share`d, stays
+out, as it does for `use` ([Packages](packages.md#starting-a-package)).
+Any other path documents every documented declaration of its files.
 
 The embedded packages carry these comments, so `olang doc
 src/stdlib/embedded/cli.ol src/stdlib/embedded/term.ol` regenerates
