@@ -59,7 +59,34 @@ impl NativeObject for SharedObject {
         "Shared"
     }
     fn display(&self) -> String {
-        format!("<shared: {}>", self.load())
+        // A reference that holds itself (`shared.set(s, [s])`) is met
+        // again while it is being shown: shown there as `<shared: …>`,
+        // the cycle cut as a cell's is. Showing it whole recursed without
+        // end (OL-554).
+        thread_local! {
+            static SHOWING: std::cell::RefCell<Vec<usize>> =
+                const { std::cell::RefCell::new(Vec::new()) };
+        }
+        let me = self as *const SharedObject as usize;
+        let entered = SHOWING
+            .try_with(|s| {
+                let mut s = s.borrow_mut();
+                if s.contains(&me) {
+                    false
+                } else {
+                    s.push(me);
+                    true
+                }
+            })
+            .unwrap_or(false);
+        if !entered {
+            return "<shared: …>".to_string();
+        }
+        let shown = format!("<shared: {}>", self.load());
+        let _ = SHOWING.try_with(|s| {
+            s.borrow_mut().retain(|&p| p != me);
+        });
+        shown
     }
     fn native_eq(&self, other: &dyn NativeObject) -> bool {
         // Identity: two references are two places to point.

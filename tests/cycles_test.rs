@@ -142,3 +142,26 @@ println(cell.get(c)[1] + unwrap(task.join(t)))\n";
         assert_eq!(out, "42\n", "{out}");
     }
 }
+
+#[test]
+fn a_shared_reference_that_holds_itself_is_shown_with_the_cycle_cut() {
+    // OL-554: `show` followed the reference into itself without end; it
+    // is cut where it meets itself, as a cell's is
+    let src = "\
+let s = shared.new(0)
+shared.set(s, [s, 1])
+println(show(s))
+println(s)
+fn shown() = { let t = shared.new(1); shared.set(t, #{ \"me\": t }); show(t) }
+println(shown())
+let a = shared.new(1)
+println(show(shared.new([a, a])))
+";
+    for out in both_tiers("shared_shows_itself", src) {
+        assert_eq!(
+            out,
+            "<shared: [<shared: …>, 1]>\n<shared: [<shared: …>, 1]>\n\
+             <shared: #{\"me\": <shared: …>}>\n<shared: [<shared: 1>, <shared: 1>]>\n",
+        );
+    }
+}
