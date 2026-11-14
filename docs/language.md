@@ -95,9 +95,10 @@ later input redefine a name).
 Expressions evaluated at the top level are allowed and their value is
 discarded (the last one is the program's result in the REPL).
 
-Identifiers start with a letter or an underscore and continue with
-letters, digits, and underscores: `total`, `user_name`, `isValid2`,
-`_unused`. A bare `_` is not a name but the discard pattern (`let _ =
+Identifiers start with an ASCII letter or an underscore and continue
+with ASCII letters, digits, and underscores: `total`, `user_name`,
+`isValid2`, `_unused`. A letter outside ASCII (`ñ`, `café`) is not part of
+a name, and is refused as one; strings and map keys hold any text. A bare `_` is not a name but the discard pattern (`let _ =
 ...`, `for _ in ...`, a `match` arm). Identifiers cannot be
 [keywords](#appendix-keywords-and-grammar).
 

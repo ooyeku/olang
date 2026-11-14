@@ -762,6 +762,27 @@ fn the_reserved_words_are_refused_as_names_and_allowed_as_members() {
     );
 }
 
+// ── Names are ASCII (OL-389) ────────────────────────────────────────
+#[test]
+fn a_name_outside_ascii_is_refused_with_a_reason() {
+    for (src, name) in [
+        ("let ñ = 3\n", "ñ"),
+        ("let café = 3\n", "café"),
+        ("fn größe(x) = x\n", "größe"),
+    ] {
+        let err = parse_err(src);
+        assert!(
+            err.contains(&format!("`{name}` is not a name: a name is ASCII letters")),
+            "{src}: {err}"
+        );
+    }
+    // any text in a string or a map key
+    assert_eq!(
+        agree_tiered("let m = #{ \"ñ\": 3 }\n[m[\"ñ\"], \"café\"]\n"),
+        Ok(l(vec![Value::Integer(3), s("café")]))
+    );
+}
+
 // ── task.join answers a Result ──────────────────────────────────────
 #[test]
 fn task_join_tells_a_raise_from_a_returned_err() {

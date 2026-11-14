@@ -630,7 +630,31 @@ fn humanize_pest_error(e: pest::error::Error<Rule>, input: &str) -> ParseError {
         .skip(column.saturating_sub(1))
         .take_while(|c| c.is_alphanumeric() || *c == '_')
         .collect();
-    let message = if RESERVED_WORDS.contains(&word_at.as_str()) {
+    // A name with a letter outside ASCII (`ñ`, `café`): names are ASCII
+    // (OL-389); say so rather than what the parser wanted next.
+    let non_ascii_name = raw_line
+        .chars()
+        .nth(column.saturating_sub(1))
+        .is_some_and(|c| !c.is_ascii() && c.is_alphanumeric());
+    let message = if non_ascii_name {
+        let before: String = {
+            let mut b: Vec<char> = raw_line
+                .chars()
+                .take(column.saturating_sub(1))
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            b.reverse();
+            b.into_iter().collect()
+        };
+        format!(
+            "`{}{}` is not a name: a name is ASCII letters, digits and `_` (a string \
+             can hold any text, and a map key is a string: `#{{ \"{}{}\": 1 }}`)",
+            before, word_at, before, word_at
+        )
+    } else if RESERVED_WORDS.contains(&word_at.as_str()) {
         format!(
             "`{}` is a reserved word (kept for a future form of the language) and cannot \
              be a name; choose another",
