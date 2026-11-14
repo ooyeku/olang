@@ -1540,6 +1540,23 @@ fn parse_i64_fast(s: &str) -> Option<i64> {
     Some(if neg { -v } else { v })
 }
 
+/// A cell read as a Float. An integer written past the Int range (a
+/// 20-digit id) is not one: its Float reading would lose digits with no
+/// sign of it, as `json.parse` refuses to, so the column it is in stays
+/// text and keeps it exactly (OL-386). An integer in range reads as
+/// Float in a column that has decimals.
+#[inline]
+fn parse_f64_cell(cell: &str) -> Option<f64> {
+    let digits = cell.strip_prefix(['-', '+']).unwrap_or(cell);
+    if digits.len() > 18
+        && digits.bytes().all(|d| d.is_ascii_digit())
+        && cell.parse::<i64>().is_err()
+    {
+        return None;
+    }
+    cell.parse::<f64>().ok()
+}
+
 /// The per-column speculative builder the fused scan drives.
 enum Builder {
     /// No non-empty cell yet; `nulls` counts the empties.
@@ -1614,7 +1631,7 @@ fn seed_builder(cell: &str, nulls: usize, span: (u32, u32), est_rows: usize) -> 
         values.extend(std::iter::repeat_n(0i64, nulls));
         values.push(v);
         Builder::I64 { values, valid }
-    } else if let Ok(f) = cell.parse::<f64>() {
+    } else if let Some(f) = parse_f64_cell(cell) {
         let mut values = Vec::with_capacity(cap);
         values.extend(std::iter::repeat_n(0.0f64, nulls));
         values.push(f);
@@ -1653,7 +1670,7 @@ fn emit_cell(b: &mut Builder, cell: &str, span: (u32, u32), est_rows: usize) -> 
             if let Some(v) = parse_i64_fast(cell) {
                 Builder::push_valid(valid);
                 values.push(v);
-            } else if let Ok(f) = cell.parse::<f64>() {
+            } else if let Some(f) = parse_f64_cell(cell) {
                 // Upgrade in place: an i64 converts to exactly the
                 // double its decimal text would parse to, so the
                 // accumulated values re-read losslessly.
@@ -1677,7 +1694,7 @@ fn emit_cell(b: &mut Builder, cell: &str, span: (u32, u32), est_rows: usize) -> 
             }
         }
         Builder::F64 { values, valid } => {
-            if let Ok(f) = cell.parse::<f64>() {
+            if let Some(f) = parse_f64_cell(cell) {
                 Builder::push_valid(valid);
                 values.push(f);
             } else {
@@ -2735,12 +2752,12 @@ fn infer_column_chunks<S: AsRef<str> + Into<String>>(chunks: Vec<Vec<S>>) -> Ser
             floats.push(None);
             return true;
         }
-        match s.parse::<f64>() {
-            Ok(v) => {
+        match parse_f64_cell(s) {
+            Some(v) => {
                 floats.push(Some(v));
                 true
             }
-            Err(_) => false,
+            None => false,
         }
     }) {
         return Series::from_f64_options(floats);

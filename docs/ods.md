@@ -796,8 +796,11 @@ println(to_string(ods.columns(f)))    // ["region", "amount"]
 
 `ods.read_csv` parses CSV *text*, inferring each column's type:
 all-integer columns become Int, numeric become Float, `true`/`false`
-become Bool, anything else String. Empty cells become nulls, not empty
-strings:
+become Bool, anything else String. An integer past the Int range (a
+20-digit id) is not read as a Float that would lose its digits: its
+column stays String, the text exactly as written. Empty cells become
+nulls, not empty strings. A blank line is no row, as in `csv.parse`, so
+in a one-column file a null is written `""` (which `ods.to_csv` does):
 
 ```olang
 let sales = ods.read_csv("region,amount,qty\neast,25.5,10\nwest,320.0,3\neast,,4\n")

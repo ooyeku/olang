@@ -2653,3 +2653,48 @@ fn head_and_tail_take_a_series() {
     .expect("head");
     assert_eq!(shown(&v), "[[5, 6], [6, 7, 8], [5, 6, 7, 8], 4]");
 }
+
+#[test]
+fn read_csv_keeps_an_integer_past_int_as_text() {
+    // OL-386: a 20-digit id read as a Float lost its digits (1e20). Its
+    // column stays text, on the fast path (no quotes), the general path
+    // (a quote), the options path and alongside decimals; an integer that
+    // fits stays an Int.
+    let result = eval(
+        r#"
+        let big = "99999999999999999999"
+        [
+            ods.to_list(ods.read_csv("id\n99999999999999999999\n1\n")["id"]),
+            ods.to_list(ods.read_csv("id,s\n99999999999999999999,\"q\"\n1,r\n")["id"]),
+            ods.to_list(ods.read_csv("id;s\n-99999999999999999999;q\n", sep: ";")["id"]),
+            ods.to_list(ods.read_csv("x\n1.5\n99999999999999999999\n")["x"]),
+            ods.to_list(ods.read_csv("n\n9223372036854775807\n1\n")["n"]),
+            ods.to_list(ods.read_csv("f\n1.5\n2\n")["f"]),
+        ]
+        "#,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        result.to_string(),
+        r#"[["99999999999999999999", "1"], ["99999999999999999999", "1"], ["-99999999999999999999"], ["1.5", "99999999999999999999"], [9223372036854775807, 1], [1.5, 2.0]]"#
+    );
+}
+
+#[test]
+fn read_csv_skips_blank_lines_and_reads_a_quoted_empty_as_null() {
+    // OL-386, kept and documented: a blank line is no row (as in
+    // csv.parse); a one-column null is written `""`, which ods.to_csv
+    // writes and read_csv reads back.
+    let result = eval(
+        r#"
+        let f = ods.read_csv("a\nx\n\ny\n")
+        let g = ods.read_csv("a\nx\n\"\"\ny\n")
+        let h = ods.read_csv(ods.to_csv(g))
+        [ods.n_rows(f), ods.n_rows(g), ods.null_count(g["a"]), ods.n_rows(h), ods.null_count(h["a"])]
+        "#,
+        None,
+    )
+    .unwrap();
+    assert_eq!(result.to_string(), "[2, 3, 1, 3, 1]");
+}
