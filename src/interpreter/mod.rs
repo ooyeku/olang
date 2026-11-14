@@ -3079,6 +3079,54 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         self.struct_defs.contains_key(name) || self.enum_type_names.contains(name)
     }
 
+    /// A declared struct that `builtin` (map_set, map_merge, …) answered,
+    /// checked as its literal would be (OL-356): a field the declaration
+    /// does not name, or a value its field's annotation refuses, is a type
+    /// error. A record of no declared type (an anonymous object) passes.
+    pub fn check_struct_write(&self, builtin: &str, value: &Value) -> Result<(), InterpreterError> {
+        let Value::Struct { type_name, fields } = value else {
+            return Ok(());
+        };
+        let Some(declared) = self.struct_defs.get(type_name.as_str()) else {
+            return Ok(());
+        };
+        let checks = self.struct_field_checks.get(type_name.as_str());
+        for (name, field) in fields.iter() {
+            if !declared.iter().any(|d| d == name) {
+                return Err(InterpreterError::TypeError {
+                    message: format!(
+                        "{builtin}: struct '{}' has no field '{}' (declared fields: {})",
+                        type_name.as_str(),
+                        name,
+                        declared.join(", ")
+                    ),
+                });
+            }
+            if let Some(check) = checks.and_then(|c| c.get(name.as_str())) {
+                let (actual, payload, fn_arity) = Self::value_view(field);
+                if let Some((expected, got)) = check.check_value(
+                    &actual,
+                    payload.as_ref().map(|(o, p)| (*o, p.as_str())),
+                    fn_arity,
+                    Self::scalar_view(field),
+                ) {
+                    return Err(InterpreterError::TypeError {
+                        message: format!(
+                            "{builtin}: {}",
+                            self.annotation_error(
+                                &format!("field '{}' of {}", name, type_name.as_str()),
+                                check,
+                                &expected,
+                                &got,
+                            )
+                        ),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// The error text for a failed annotation check at `site`. When the
     /// declared type is a named type that was never declared, the value is
     /// not the problem — the annotation is — so it says "unknown type"

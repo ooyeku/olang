@@ -2174,6 +2174,48 @@ impl BytecodeVm {
         }
     }
 
+    /// A declared struct a map builtin answered, held to its declaration
+    /// as a literal is (OL-356): no field the declaration does not name,
+    /// each value of its field's annotated type. The interpreter's
+    /// `check_struct_write`, with the same messages.
+    fn check_struct_write(&self, builtin: &str, value: &OvmValue) -> Result<(), BytecodeError> {
+        use crate::ovm::value::ValueData;
+        let ValueData::Struct(st) = &value.data else {
+            return Ok(());
+        };
+        let type_name = st.shape.type_name.as_str();
+        let Some(declared) = self.struct_defs.get(type_name) else {
+            return Ok(());
+        };
+        let checks = self.struct_field_checks.get(type_name);
+        for (name, field) in st.iter() {
+            if !declared.iter().any(|d| d == name) {
+                return Err(BytecodeError::TypeError(format!(
+                    "{builtin}: struct '{}' has no field '{}' (declared fields: {})",
+                    type_name,
+                    name,
+                    declared.join(", ")
+                )));
+            }
+            if let Some(check) = checks.and_then(|c| c.get(name.as_str())) {
+                let (actual, payload, fn_arity, scalar) = ovm_value_view(&field);
+                if let Some((expected, got)) = check.check_value(actual, payload, fn_arity, scalar)
+                {
+                    return Err(BytecodeError::TypeError(format!(
+                        "{builtin}: {}",
+                        self.annotation_error(
+                            &format!("field '{}' of {}", name, type_name),
+                            check,
+                            &expected,
+                            &got,
+                        )
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn register_function(&mut self, name: String, func_id: FunctionId) {
         #[cfg(feature = "native")]
         self.jit.note_shadow(&name);
@@ -5282,13 +5324,11 @@ impl BytecodeVm {
                                 .map(|(name, val)| (name.clone(), val.clone()))
                                 .collect();
                             pairs.push((key_str.to_string(), v));
-                            self.execution_state.set_register(
-                                *target,
-                                OvmValue::new_struct(crate::ovm::value::StructObject::from_pairs(
-                                    st.type_name(),
-                                    pairs,
-                                )),
-                            )?;
+                            let next = OvmValue::new_struct(
+                                crate::ovm::value::StructObject::from_pairs(st.type_name(), pairs),
+                            );
+                            self.check_struct_write("map_set", &next)?;
+                            self.execution_state.set_register(*target, next)?;
                         }
                         _ => {
                             return Err(BytecodeError::TypeError(
@@ -6332,7 +6372,16 @@ impl BytecodeVm {
                     if self.arg_pool.len() < 64 {
                         self.arg_pool.push(arg_values);
                     }
-                    self.execution_state.set_register(*dst, outcome?)?;
+                    let outcome = outcome?;
+                    if user.is_none()
+                        && matches!(
+                            function_name.as_str(),
+                            "map_set" | "map_merge" | "map_set_in" | "map_update"
+                        )
+                    {
+                        self.check_struct_write(function_name, &outcome)?;
+                    }
+                    self.execution_state.set_register(*dst, outcome)?;
                 }
 
                 // Collection operations

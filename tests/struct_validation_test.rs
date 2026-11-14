@@ -328,3 +328,76 @@ fn indexing_a_map_reads_and_writing_one_points_at_map_set() {
         "{err}"
     );
 }
+
+/// `map_set` and `map_merge` answer a value of the struct's own type, so
+/// they are held to its declaration as a literal is (OL-356): a field it
+/// does not declare, or a value of the wrong type, is an error on every
+/// tier, where it used to land inside a value whose typeof is the struct.
+#[test]
+fn map_set_and_map_merge_on_a_declared_struct_validate_its_fields() {
+    let src = r#"type V = struct { x: Float, y: Float }
+fn show_err(r) = match r { Ok(v) => "ok " + to_string(v), Err(e) => "err " + e }
+fn set_x(v, x) = map_set(v, "x", x)
+fn merge(v, m) = map_merge(v, m)
+let v = V { x: 1.0, y: 2.0 }
+println(show_err(attempt(() => map_merge(v, #{ "y": "oops", "z": 5 }))))
+println(show_err(attempt(() => merge(v, #{ "z": 5 }))))
+println(show_err(attempt(() => map_set(v, "x", [1]))))
+println(show_err(attempt(() => set_x(v, 1))))
+println(show_err(attempt(() => set_x(v, 3.0))))
+println(show_err(attempt(() => merge(v, #{ "y": 9.0 }))))
+println(show_err(attempt(() => map_set({ a: 1 }, "b", 2))))
+"#;
+    let dir = std::env::temp_dir().join(format!("olang_ol356_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("main.ol");
+    std::fs::write(&file, src).unwrap();
+    for flags in [&["--no-ovm"][..], &[][..], &["--ovm-tier=1"][..]] {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_olang"))
+            .args(flags)
+            .arg(&file)
+            .env("OLANG_COMPILE_CACHE", "0")
+            .output()
+            .expect("run olang");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let lines: Vec<&str> = stdout.lines().collect();
+        assert_eq!(
+            lines.len(),
+            7,
+            "{:?}: {}{}",
+            flags,
+            stdout,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            lines[0].starts_with("err")
+                && lines[0].contains("field 'y' of V expects Float, got String"),
+            "{:?}: {}",
+            flags,
+            lines[0]
+        );
+        assert!(
+            lines[1].starts_with("err") && lines[1].contains("no field 'z'"),
+            "{:?}: {}",
+            flags,
+            lines[1]
+        );
+        assert!(
+            lines[2].starts_with("err")
+                && lines[2].contains("field 'x' of V expects Float, got List"),
+            "{:?}: {}",
+            flags,
+            lines[2]
+        );
+        assert!(
+            lines[3].starts_with("err")
+                && lines[3].contains("field 'x' of V expects Float, got Int"),
+            "{:?}: {}",
+            flags,
+            lines[3]
+        );
+        assert_eq!(lines[4], "ok V { x: 3.0, y: 2.0 }", "{:?}", flags);
+        assert_eq!(lines[5], "ok V { x: 1.0, y: 9.0 }", "{:?}", flags);
+        assert!(lines[6].starts_with("ok"), "{:?}: {}", flags, lines[6]);
+    }
+}

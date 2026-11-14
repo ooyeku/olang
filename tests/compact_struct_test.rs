@@ -130,11 +130,11 @@ fn map_get_keys_and_updates_agree() {
         "{PRELUDE}let p = ps[6]\n\
          let q = map_set(p, \"a\", 100)\n\
          [map_get(p, \"d\"), map_has_key(p, \"c\"), map_keys(p), q.a, p.a, \
-          q == mk(6), map_get(map_set(boxed(1), \"m\", 0), \"m\")]"
+          q == mk(6), map_len(map_get(map_set(boxed(1), \"m\", #{{ \"z\": 0 }}), \"m\"))]"
     ));
     assert_eq!(
         v.to_string(),
-        "[\"n6\", true, [\"a\", \"b\", \"c\", \"d\", \"e\"], 100, 6, false, 0]"
+        "[\"n6\", true, [\"a\", \"b\", \"c\", \"d\", \"e\"], 100, 6, false, 1]"
     );
 }
 
