@@ -2325,7 +2325,22 @@ impl RichEditor {
             }
             self.follow = false;
         }
-        let max = self.max_scroll(h, ts);
+        // the view past the text's reach as estimated (a paragraph styled
+        // again is a guess from its length until it is laid out, and one
+        // line wrapped over many rows, guessed short, pulled the view
+        // back from its caret): the paragraphs from the view's first are
+        // laid out until the reach is real or holds the view
+        let mut max = self.max_scroll(h, ts);
+        if self.placed && h > 0.0 && self.scroll_y > max {
+            let from = self.top_line(ts);
+            for i in from..self.paras.len().min(from + 256) {
+                self.ensure(i, ts);
+                max = self.max_scroll(h, ts);
+                if self.scroll_y <= max {
+                    break;
+                }
+            }
+        }
         self.scroll_y = snap_scroll(self.scroll_y.clamp(0.0, max), max);
     }
 
@@ -2795,6 +2810,32 @@ mod rebase_tests {
             ed.scroll_y
         );
         assert!(ed.scroll_y > 0.0);
+    }
+
+    /// One line wrapped over far more rows than the view has, the view
+    /// at its caret, and its layout let go (styled again): the view stays
+    /// (its reach was read from the line's estimated height, shorter, and
+    /// the view pulled back from the caret; Studio's fuzz seed 60445).
+    #[test]
+    fn a_view_at_a_long_lines_end_stays_when_its_layout_is_made_again() {
+        let mut ts = system().lock().unwrap_or_else(|e| e.into_inner());
+        let mut ed = RichEditor::new("", &Font::default(), Default::default());
+        ed.set_geometry_keeping(1000.0, 1.0, &mut ts);
+        ed.follow_caret(18.0, &mut ts);
+        ed.insert(&"long paste 中文 ".repeat(700), &mut ts);
+        ed.follow_caret(18.0, &mut ts);
+        let at = ed.scroll_y;
+        assert!(at > 500.0, "scrolled to the caret: {at}");
+        // styled again (`set_spans` with new spans): its layout let go,
+        // its height an estimate from its length until it is shown
+        ed.paras[0].layout = None;
+        ed.paras[0].measured = false;
+        ed.built = 0;
+        ed.ys_ok = false;
+        // (the average character seen so far narrower than this line's)
+        ed.char_w = (4.0, 1.0);
+        ed.follow_caret(18.0, &mut ts);
+        assert_eq!(ed.scroll_y, at);
     }
 
     /// Enter continuing a list, and a key typed before the program's
