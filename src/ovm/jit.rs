@@ -1829,6 +1829,7 @@ impl JitCache {
     }
 
     pub fn try_compile(&mut self, func_id: FunctionId, bytecode: &CompiledBytecode) {
+        let _code = crate::memory::code_scope();
         let idx = func_id.index();
         if self.table.get(idx).is_some_and(|slot| slot.is_some()) {
             return;

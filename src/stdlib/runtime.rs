@@ -386,10 +386,12 @@ fn runtime_build(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     Ok(Value::Map(Arc::new(out)))
 }
 
-/// `runtime.memory()` — `#{ "heap", "program", "values", "embedded",
-/// "tasks": [#{ "name", "bytes" }] }`, in bytes: what is allocated and not
-/// freed; the share the loaded program holds (the heap's growth across
-/// parsing the entry file and each `use`); the rest; the browser runtime
+/// `runtime.memory()` — `#{ "heap", "program", "code", "values",
+/// "embedded", "tasks": [#{ "name", "bytes" }] }`, in bytes: what is
+/// allocated and not freed; the share the loaded program holds (the heap's
+/// growth across parsing the entry file and each `use`); the share the
+/// runtime's own code holds (compiles, machine code, bodies built on first
+/// read, bridge interpreters, OL-418); the rest; the browser runtime
 /// the binary's image carries (file-backed, not heap); and each spawned
 /// task and http worker with what it allocated and has not itself freed,
 /// largest first. See `src/memory.rs` for how attribution works.
@@ -416,8 +418,7 @@ fn runtime_memory(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
     if !args.is_empty() {
         return Err(format!("runtime.memory expects 0 arguments, got {}", args.len()).into());
     }
-    let heap = crate::memory::heap_bytes();
-    let program = crate::memory::program_bytes().min(heap);
+    let (heap, program, code, values) = crate::memory::breakdown();
     let embedded = if crate::runtime_wasm::embedded().is_some() {
         crate::runtime_wasm::embedded_bytes()
     } else {
@@ -435,10 +436,8 @@ fn runtime_memory(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
     let mut out = crate::ast::ValueMap::default();
     out.insert("heap".to_string(), Value::Integer(heap as i64));
     out.insert("program".to_string(), Value::Integer(program as i64));
-    out.insert(
-        "values".to_string(),
-        Value::Integer((heap - program) as i64),
-    );
+    out.insert("code".to_string(), Value::Integer(code as i64));
+    out.insert("values".to_string(), Value::Integer(values as i64));
     out.insert("embedded".to_string(), Value::Integer(embedded as i64));
     out.insert("tasks".to_string(), Value::List(Arc::new(tasks)));
     Ok(Value::Map(Arc::new(out)))

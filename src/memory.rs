@@ -20,7 +20,11 @@
 //!
 //! `program` is measured, not estimated: the heap's growth across each
 //! outermost load (parsing the entry file, a `use` and everything it
-//! pulls in). `values` is the rest of the heap.
+//! pulls in). `code` is measured the same way, across the runtime's own
+//! work after load: a function compiled to bytecode, its machine code, a
+//! body built on first read, a bridge interpreter built (OL-418). Code
+//! the tier lets go of again (an evicted closure's) is taken back off.
+//! `values` is the rest of the heap: what the running program holds.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -47,6 +51,7 @@ static LIVE: [Slot; SLOTS] = [EMPTY; SLOTS];
 static NAMES: Mutex<Vec<Option<String>>> = Mutex::new(Vec::new());
 static NEXT_ANONYMOUS: AtomicU64 = AtomicU64::new(0);
 static PROGRAM: AtomicI64 = AtomicI64::new(0);
+static CODE: AtomicI64 = AtomicI64::new(0);
 static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
 static REQUESTED: AtomicU64 = AtomicU64::new(0);
 
@@ -55,6 +60,7 @@ thread_local! {
     // read it at any point in a thread's life, teardown included.
     static SLOT: Cell<usize> = const { Cell::new(UNSET) };
     static LOAD_DEPTH: Cell<u32> = const { Cell::new(0) };
+    static CODE_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
 
 pub struct Counting;
@@ -196,6 +202,52 @@ impl Drop for LoadScope {
             if grown > 0 {
                 PROGRAM.fetch_add(grown, Ordering::Relaxed);
             }
+        }
+    }
+}
+
+/// Bytes the runtime's own code holds (see the module header).
+pub fn code_bytes() -> u64 {
+    CODE.load(Ordering::Relaxed).max(0) as u64
+}
+
+/// The heap split as `runtime.memory()` reports it: `(heap, program,
+/// code, values)`, the last three adding up to the first.
+pub fn breakdown() -> (u64, u64, u64, u64) {
+    let heap = heap_bytes();
+    let program = program_bytes().min(heap);
+    let code = code_bytes().min(heap - program);
+    (heap, program, code, heap - program - code)
+}
+
+/// Counts this thread's heap growth across the runtime's own work toward
+/// `code` (a compile, machine code, a body built on first read; an
+/// eviction, negative). Measured on the thread's own counter, so other
+/// threads' allocations meanwhile are not in it. Inside a load, or inside
+/// another such scope, it counts nothing: the outer measure has it.
+pub struct CodeScope {
+    before: Option<i64>,
+}
+
+pub fn code_scope() -> CodeScope {
+    let loading = LOAD_DEPTH.try_with(|d| d.get() > 0).unwrap_or(true);
+    let depth = CODE_DEPTH
+        .try_with(|d| {
+            d.set(d.get() + 1);
+            d.get()
+        })
+        .unwrap_or(2);
+    CodeScope {
+        before: (depth == 1 && !loading).then(|| LIVE[my_slot()].live.load(Ordering::Relaxed)),
+    }
+}
+
+impl Drop for CodeScope {
+    fn drop(&mut self) {
+        let _ = CODE_DEPTH.try_with(|d| d.set(d.get().saturating_sub(1)));
+        if let Some(before) = self.before {
+            let grown = LIVE[my_slot()].live.load(Ordering::Relaxed) - before;
+            CODE.fetch_add(grown, Ordering::Relaxed);
         }
     }
 }

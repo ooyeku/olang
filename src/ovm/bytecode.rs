@@ -2400,6 +2400,8 @@ impl BytecodeVm {
         def_file: Option<Arc<str>>,
         run: crate::ast::RunRef,
     ) -> Result<(), BytecodeError> {
+        // the runtime's own memory, not the program's values (OL-418)
+        let _code = crate::memory::code_scope();
         let start_time = crate::clock::Instant::now();
         // The registries the compiler validates callees against are lent
         // to it for this compile — moved in and moved back, never copied.
@@ -3719,6 +3721,7 @@ impl BytecodeVm {
             return None;
         }
         if !self.osr_regions.contains_key(&(fid, head)) {
+            let _code = crate::memory::code_scope();
             let region = crate::ovm::osr::synthesize(bytecode, head).map(std::sync::Arc::new);
             match &region {
                 // The widest region anchors at an enclosing loop's head:
@@ -7586,6 +7589,7 @@ impl BytecodeVm {
     /// bytecode), and the OSR tables. Only for ids nothing can call any
     /// more — a dead closure's.
     fn evict_compiled(&mut self, ids: &[FunctionId]) {
+        let _code = crate::memory::code_scope();
         if ids.is_empty() {
             return;
         }
@@ -7621,6 +7625,7 @@ impl BytecodeVm {
     /// the bound is retired rather than forgotten — the index entry goes,
     /// the artifacts wait for the closure to die.
     fn sweep_hof_cache(&mut self) {
+        let _code = crate::memory::code_scope();
         let mut dead: Vec<FunctionId> = Vec::new();
         self.hof_cache.retain(|_, (body, env, id)| {
             let alive = body.strong_count() > 0 && env.strong_count() > 0;
@@ -7832,6 +7837,7 @@ impl BytecodeVm {
         func: &crate::ast::Function,
         arity: usize,
     ) -> Option<FunctionId> {
+        let _code = crate::memory::code_scope();
         // Full application only — the arity check guarantees no default
         // would fire, so defaulted functions are admissible here.
         if func.parameters.len() != arity || !func.param_bounds.is_empty() {
@@ -8191,6 +8197,7 @@ impl BytecodeVm {
     }
 
     fn ensure_bridge_interpreter(&mut self) {
+        let _code = crate::memory::code_scope();
         // A bridge seeded before later declarations answers for a stale
         // world: rebuild it whenever the landscape has moved. Changes
         // stop once a program's declarations settle, so steady-state
