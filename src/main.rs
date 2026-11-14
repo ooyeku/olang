@@ -2787,8 +2787,21 @@ fn collect_app(
     let loaded = interp
         .preload_uses(program)
         .map_err(|e| anyhow::anyhow!("loading the program's modules: {}", e))?;
-    let mut paths: BTreeSet<PathBuf> = loaded.into_iter().filter(|p| p.is_file()).collect();
-    paths.insert(source_abs.to_path_buf());
+    // Every path by its real place: a dependency named through a symbolic
+    // link (`../../libraries/loom`, the link in a worktree) had some of
+    // its files loaded by the link's path and some by the real one, so
+    // the latter were carried outside the package and its own `use
+    // lib.x` found nothing in the application (OL-537).
+    let real = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let deps: HashMap<String, PathBuf> = deps.iter().map(|(n, p)| (n.clone(), real(p))).collect();
+    let root = root.map(|r| real(&r));
+    let mut paths: BTreeSet<PathBuf> = loaded
+        .into_iter()
+        .filter(|p| p.is_file())
+        .map(|p| real(&p))
+        .collect();
+    paths.insert(real(source_abs));
+    let source_abs = &real(source_abs);
     let mut roots: BTreeSet<PathBuf> = deps.values().cloned().collect();
     if let Some(r) = &root {
         roots.insert(r.clone());

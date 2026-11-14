@@ -93,3 +93,69 @@ fn an_application_runs_after_its_sources_are_gone() {
     assert!(!run2.status.success(), "{out2}");
     let _ = fs::remove_dir_all(&ws);
 }
+
+/// OL-537: path dependencies named through a symbolic link (a worktree's
+/// `../../libraries/dep`, the link beside it) lost their own `lib.*`
+/// modules. Some of a dependency's files were loaded by the link's path
+/// and some by the real one, and the latter were carried outside the
+/// package: the application failed "Cannot find module 'lib.debug'"
+/// anywhere but its source folder.
+#[cfg(unix)]
+#[test]
+fn a_dependency_reached_through_a_symbolic_link_keeps_its_modules() {
+    let ws = std::env::temp_dir().join(format!("olang_build_app_link_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&ws);
+    let libs = ws.join("libraries");
+    let write = |path: std::path::PathBuf, text: &str| {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    };
+    write(
+        libs.join("dep/olang.toml"),
+        "[package]\nname = \"dep\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep2 = { path = \"../dep2\" }\n",
+    );
+    write(libs.join("dep/index.ol"), "share use lib.engine { run }\n");
+    write(
+        libs.join("dep/lib/engine.ol"),
+        "use lib.debug { d }\nuse dep2 { two }\nshare fn run() = d() + two()\n",
+    );
+    write(libs.join("dep/lib/debug.ol"), "share fn d() = \"debug \"\n");
+    write(
+        libs.join("dep2/olang.toml"),
+        "[package]\nname = \"dep2\"\nversion = \"0.1.0\"\n",
+    );
+    write(libs.join("dep2/index.ol"), "share use lib.engine { two }\n");
+    write(libs.join("dep2/lib/engine.ol"), "share fn two() = \"two\"\n");
+    // apps/studio/.claude/libraries -> ../../../libraries, and the app in
+    // a worktree two folders below it
+    let claude = ws.join("apps/studio/.claude");
+    fs::create_dir_all(claude.join("worktrees/w")).unwrap();
+    std::os::unix::fs::symlink("../../../libraries", claude.join("libraries")).unwrap();
+    let app = claude.join("worktrees/w");
+    write(
+        app.join("olang.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = { path = \"../../libraries/dep\" }\ndep2 = { path = \"../../libraries/dep2\" }\n",
+    );
+    write(app.join("main.ol"), "use dep { run }\nprintln(run())\n");
+    let exe = ws.join("built-app");
+    let out = Command::new(env!("CARGO_BIN_EXE_olang"))
+        .args(["build", "--app", "main.ol", "-o"])
+        .arg(&exe)
+        .current_dir(&app)
+        .output()
+        .expect("olang build");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    // run where none of the sources are
+    fs::remove_dir_all(&libs).unwrap();
+    let run = Command::new(&exe)
+        .current_dir(&ws)
+        .output()
+        .expect("run the application");
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout).trim(),
+        "debug two",
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let _ = fs::remove_dir_all(&ws);
+}
