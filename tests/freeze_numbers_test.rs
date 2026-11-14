@@ -103,6 +103,48 @@ fn ints(ns: &[i64]) -> Value {
     list(ns.iter().map(|n| Value::Integer(*n)).collect())
 }
 
+// ── OL-338, OL-391: min and max ─────────────────────────────────────
+#[test]
+fn min_and_max_raise_on_values_they_cannot_order() {
+    for call in [
+        "min([3, \"a\"])",
+        "max([3, \"a\"])",
+        "min([\"a\", 3])",
+        "max([\"a\", 3])",
+        "min([[1], 2])",
+        "min(3, \"a\")",
+        "min(\"a\", 1)",
+        "max(\"a\", 1)",
+        "col.min([1, \"a\"])",
+    ] {
+        let src = format!("fn main() = {call}\nmain()");
+        let err = agree(&src).expect_err(call);
+        assert!(err.contains("cannot order"), "{call}: {err}");
+        assert!(
+            err.contains("min:") || err.contains("max:"),
+            "{call}: {err}"
+        );
+    }
+}
+
+#[test]
+fn min_and_max_still_order_what_they_can() {
+    let src = r#"
+fn main() = [
+    min([3, 1.5, 2]) == 1.5,
+    max([3, 1.5, 2]) == 3,
+    min("b", "a") == "a",
+    max(["a", "c", "b"]) == "c",
+    min([(2, "a"), (1, "z")]) == (1, "z"),
+    max([[1, 2], [1, 3], [0, 9]]) == [1, 3],
+    min([true, false]) == false,
+    min([1, 1.0]) == 1,
+]
+main()
+"#;
+    assert_eq!(agree(src), Ok(bools(&[true; 8])));
+}
+
 // ── OL-359: Int and Float order exactly ─────────────────────────────
 #[test]
 fn int_float_ordering_agrees_with_equality_past_2_53() {

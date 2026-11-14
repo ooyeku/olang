@@ -3303,16 +3303,7 @@ impl BuiltinFunctions {
                 message: "min: cannot take min of an empty list".to_string(),
             });
         }
-        use std::cmp::Ordering;
-        let mut min = list_rc[0].clone();
-        for item in list_rc.iter().skip(1) {
-            if let Some(ord) = item.compare_for_sort(&min)
-                && ord == Ordering::Less
-            {
-                min = item.clone();
-            }
-        }
-        Ok(min)
+        extreme("min", list_rc, std::cmp::Ordering::Less)
     }
 
     fn max_value(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
@@ -3349,16 +3340,7 @@ impl BuiltinFunctions {
                 message: "max: cannot take max of an empty list".to_string(),
             });
         }
-        use std::cmp::Ordering;
-        let mut max = list_rc[0].clone();
-        for item in list_rc.iter().skip(1) {
-            if let Some(ord) = item.compare_for_sort(&max)
-                && ord == Ordering::Greater
-            {
-                max = item.clone();
-            }
-        }
-        Ok(max)
+        extreme("max", list_rc, std::cmp::Ordering::Greater)
     }
 
     fn clamp(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
@@ -5036,4 +5018,33 @@ pub fn index_key(key: &Value) -> Option<std::borrow::Cow<'_, str>> {
         Value::Boolean(b) => Some(Cow::Owned(b.to_string())),
         _ => None,
     }
+}
+
+/// The least (`keep` Less) or greatest (Greater) of `items`, the first of
+/// equal ones winning, by `<`'s order (`ops::value_ordering`: numbers, an
+/// Int and a Float exactly; strings; tuples and lists element by element),
+/// Bools among Bools too. Two values `<` cannot order raise, as `sort`
+/// does (OL-338, OL-391): `min([3, "a"])` has no answer, whatever the
+/// order of the list.
+fn extreme(
+    name: &str,
+    items: &[Value],
+    keep: std::cmp::Ordering,
+) -> Result<Value, InterpreterError> {
+    let mut best = &items[0];
+    for item in &items[1..] {
+        let ord = match (item, best) {
+            (Value::Boolean(a), Value::Boolean(b)) => a.cmp(b),
+            _ => crate::interpreter::ops::value_ordering(item, best).map_err(|e| match e {
+                InterpreterError::TypeError { message } => InterpreterError::TypeError {
+                    message: format!("{name}: {message}"),
+                },
+                other => other,
+            })?,
+        };
+        if ord == keep {
+            best = item;
+        }
+    }
+    Ok(best.clone())
 }
