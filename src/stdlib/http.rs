@@ -516,6 +516,21 @@ fn read_request(
         (std::time::Instant::now() >= deadline && !buf.is_empty())
             .then(|| (408, "request took too long to arrive".to_string()))
     };
+    // Each read waits at most until the deadline once a request has
+    // begun: a read waiting out the whole idle timeout (5 s) before the
+    // deadline was looked at let a few half-sent requests hold every
+    // worker for many times `request_timeout_ms` (OL-400). Before the
+    // first byte the idle timeout alone bounds the wait.
+    let idle = std::time::Duration::from_millis(limits.idle_timeout_ms);
+    let arm = |stream: &std::net::TcpStream, begun: bool| {
+        let wait = if begun {
+            idle.min(deadline.saturating_duration_since(std::time::Instant::now()))
+                .max(std::time::Duration::from_millis(1))
+        } else {
+            idle
+        };
+        let _ = stream.set_read_timeout(Some(wait));
+    };
 
     // Read until the blank line that ends the header block.
     let mut buf: Vec<u8> = std::mem::take(carry);
@@ -531,6 +546,7 @@ fn read_request(
         if let Some(e) = overdue(&buf) {
             return Err(e);
         }
+        arm(stream, !buf.is_empty());
         match stream.read(&mut chunk) {
             // A close (or idle timeout) before any bytes is the clean end of
             // a kept-alive connection, not an error.
@@ -625,6 +641,7 @@ fn read_request(
                 if let Some(e) = overdue(&buf) {
                     return Err(e);
                 }
+                arm(stream, true);
                 match stream.read(&mut chunk) {
                     Ok(0) => return Err((400, "connection closed mid-body".to_string())),
                     Ok(n) => {
@@ -727,6 +744,7 @@ fn read_request(
         if let Some(e) = overdue(&buf) {
             return Err(e);
         }
+        arm(stream, true);
         let n = match stream.read(&mut chunk) {
             Ok(n) => n,
             Err(e)
@@ -1675,6 +1693,19 @@ pub fn serve_blocking(
             ));
         }
     };
+    // A burst of connections past the kernel's accept queue is reset by
+    // the kernel before this server sees it (OL-401). The standard
+    // library listens with a backlog of 128; ask for more (the kernel
+    // caps it at its own limit, `somaxconn`).
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        // SAFETY: a listening socket this function owns; listen() again
+        // only changes its backlog.
+        unsafe {
+            libc::listen(listener.as_raw_fd(), 4096);
+        }
+    }
     // The OS assigns the port when 0 was requested; report the real one.
     let local = listener.local_addr().map(|a| a.port()).unwrap_or(port);
     // These lines are informational; the socket is the server's real
@@ -1744,6 +1775,7 @@ pub fn serve_blocking(
     // the queue drains, workers finish the request in hand and exit, and
     // `serve` returns Ok — the graceful stop a `kill` never allowed.
     SHUTDOWN.store(false, std::sync::atomic::Ordering::SeqCst);
+    let turn_away = spawn_turn_away(config.write_timeout_ms);
     if let Err(e) = listener.set_nonblocking(true) {
         return err_val(format!("serve: could not configure the listener: {}", e));
     }
@@ -1770,13 +1802,10 @@ pub fn serve_blocking(
         let _ = stream.set_nonblocking(false);
         match sender.try_send(stream) {
             Ok(()) => {}
-            Err(std::sync::mpsc::TrySendError::Full(mut stream)) => {
-                let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(
-                    config.write_timeout_ms,
-                )));
-                let bytes = response_bytes(503, "server overloaded", &[], false);
-                let _ = stream.write_all(&bytes);
-                let _ = stream.flush();
+            Err(std::sync::mpsc::TrySendError::Full(stream)) => {
+                // Answered by the turner-away, which reads the request
+                // before it closes (a full one past it is closed as is).
+                let _ = turn_away.try_send(stream);
             }
             Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
                 return Err(crate::interpreter::InterpreterError::RuntimeError {
@@ -1816,6 +1845,70 @@ pub fn serve_blocking(
     // "Pattern match failed" at the very moment the server stopped as
     // asked.
     Ok(Value::Ok(Box::new(Value::Unit)))
+}
+
+/// The connections a full queue turns away, answered `503` off the
+/// accept loop. The request is read to the client's close before the
+/// socket is: closed with the request unread, the kernel sent a reset
+/// that threw the 503 away, and every client past the queue saw
+/// "connection reset" instead of the documented 503 (OL-401). Each is
+/// given two seconds; past 1024 waiting, a connection is closed as is.
+fn spawn_turn_away(write_timeout_ms: u64) -> std::sync::mpsc::SyncSender<std::net::TcpStream> {
+    use std::io::{Read, Write};
+    let (sender, receiver) = std::sync::mpsc::sync_channel::<std::net::TcpStream>(1024);
+    let answer = response_bytes(503, "server overloaded", &[], false);
+    let _ = std::thread::Builder::new()
+        .name("olang-http-503".to_string())
+        .spawn(move || {
+            let mut waiting: Vec<(std::net::TcpStream, std::time::Instant)> = Vec::new();
+            let mut sink = [0u8; 4096];
+            loop {
+                let next = if waiting.is_empty() {
+                    receiver
+                        .recv()
+                        .map_err(|_| std::sync::mpsc::RecvTimeoutError::Disconnected)
+                } else {
+                    receiver.recv_timeout(std::time::Duration::from_millis(10))
+                };
+                match next {
+                    Ok(mut stream) => {
+                        let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(
+                            write_timeout_ms.min(1000),
+                        )));
+                        if stream.write_all(&answer).is_ok() {
+                            let _ = stream.flush();
+                            let _ = stream.shutdown(std::net::Shutdown::Write);
+                            if stream.set_nonblocking(true).is_ok() && waiting.len() < 1024 {
+                                waiting.push((stream, std::time::Instant::now()));
+                            }
+                        }
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                        if waiting.is_empty() {
+                            return;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                }
+                // read what each has sent; a close (or two seconds) ends it
+                waiting.retain_mut(|(stream, since)| {
+                    if since.elapsed() > std::time::Duration::from_secs(2) {
+                        return false;
+                    }
+                    loop {
+                        match stream.read(&mut sink) {
+                            Ok(0) => return false,
+                            Ok(_) => {}
+                            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return true,
+                            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                            Err(_) => return false,
+                        }
+                    }
+                });
+            }
+        });
+    sender
 }
 
 /// Set by `http.shutdown()`; every running accept loop stops on it.

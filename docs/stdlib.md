@@ -3832,7 +3832,11 @@ HTTP/1.1 keep-alive is honored, pipelining included: requests a client
 sends back to back on one connection are each answered, in order. Idle
 connections time out, each connection
 has a request cap, and a full bounded queue receives `503` rather than growing
-threads or memory without limit. The handler receives a request struct:
+threads or memory without limit. A burst of connections faster than the
+server accepts them is held by the kernel's accept queue, which the
+server asks to be 4096 long; the kernel caps it (`somaxconn`: 4096 on
+Linux, 128 on macOS unless raised), and connections past it are reset
+by the kernel, before any `503` can be sent. The handler receives a request struct:
 
 | Field | Contents |
 |---|---|
@@ -3866,18 +3870,23 @@ map literal so keys like `Content-Type` can contain `-`. A handler error
 becomes a `500`; the server keeps running through both.
 
 Abuse is answered precisely, with the connection closed: a malformed
-request line or unparseable `Content-Length` is a `400`, a header block
+request line, an unparseable `Content-Length`, or two `Content-Length`
+values that differ is a `400`, a header block
 past `max_header_bytes` a `431`, a declared body past `max_body_bytes` a
 `413`, and a request that has not arrived in full within
 `request_timeout_ms` a `408` — the whole-request deadline is what stops
 a client dribbling one byte at a time from holding a worker forever,
-which per-read timeouts alone cannot. A body sent with
+which per-read timeouts alone cannot. Each connection holds a worker
+while its request arrives, so as many half-sent requests as there are
+workers delay the rest by up to `request_timeout_ms`; lower it for a
+server open to clients you do not trust. A body sent with
 `Transfer-Encoding: chunked` (a streaming upload) is read whole, and
 counts against `max_body_bytes` as it arrives. Chunked together with a
 `Content-Length` is a `400`, and any other transfer-coding a `501`. Header values a handler returns
 are flattened to one line (CR and LF become spaces), so interpolating
 untrusted text into a header cannot split the response or inject
-headers.
+headers. A handler's own `Content-Length`, `Transfer-Encoding`
+and `Connection` headers are left out: the server frames the response.
 
 ```olang no-run
 fn handle(req) = {

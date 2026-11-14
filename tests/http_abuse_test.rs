@@ -43,10 +43,14 @@ http.serve(0, handler, #{
 "#;
 
 fn spawn_server() -> (KillOnDrop, u16) {
+    spawn_server_with("server", SERVER)
+}
+
+fn spawn_server_with(name: &str, source: &str) -> (KillOnDrop, u16) {
     let dir = std::env::temp_dir().join("olang_http_abuse_tests");
     std::fs::create_dir_all(&dir).expect("mkdir");
-    let path = dir.join("server.ol");
-    std::fs::write(&path, SERVER).expect("write");
+    let path = dir.join(format!("{name}.ol"));
+    std::fs::write(&path, source).expect("write");
     let mut child = Command::new(env!("CARGO_BIN_EXE_olang"))
         .arg("run")
         .arg(&path)
@@ -207,4 +211,66 @@ fn a_dripping_client_is_cut_off_at_the_request_deadline() {
         "worker held too long: {:?}",
         started.elapsed()
     );
+}
+
+/// Half-sent requests hold a worker only until the request deadline,
+/// not a whole idle timeout per read: four of them against two workers
+/// delayed a request behind them by many deadlines (OL-400).
+#[test]
+fn half_sent_requests_hold_workers_only_to_the_deadline() {
+    let (_guard, port) = spawn_server_with(
+        "slowloris",
+        r#"http.serve(0, (req) => "ok", #{ "workers": 2, "request_timeout_ms": 600, "idle_timeout_ms": 5000 })"#,
+    );
+    let mut half = Vec::new();
+    for _ in 0..4 {
+        let mut s = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        s.write_all(b"GET / HTTP/1.1\r\nHost: x\r\n").expect("write");
+        half.push(s);
+    }
+    std::thread::sleep(Duration::from_millis(50));
+    let started = std::time::Instant::now();
+    let r = raw(port, b"GET / HTTP/1.1\r\nConnection: close\r\n\r\n");
+    assert!(status_line(&r).contains("200"), "behind the slow ones:\n{r}");
+    // two rounds of the 600 ms deadline; a 5 s idle wait per read was 10 s
+    assert!(
+        started.elapsed() < Duration::from_millis(3000),
+        "a request waited {:?} behind half-sent ones",
+        started.elapsed()
+    );
+}
+
+/// Clients past a full queue are answered 503, not reset: the request
+/// is read before the socket closes (OL-401).
+#[test]
+fn clients_past_a_full_queue_get_503_not_a_reset() {
+    let (_guard, port) = spawn_server_with(
+        "overload",
+        r#"http.serve(0, (req) => { time.sleep(300)
+ "ok" }, #{ "workers": 2, "queue_capacity": 4 })"#,
+    );
+    let clients: Vec<_> = (0..40)
+        .map(|_| {
+            std::thread::spawn(move || {
+                let mut s = match TcpStream::connect(("127.0.0.1", port)) {
+                    Ok(s) => s,
+                    Err(e) => return format!("connect: {e}"),
+                };
+                s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+                if let Err(e) = s.write_all(b"GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n") {
+                    return format!("write: {e}");
+                }
+                let mut out = Vec::new();
+                match s.read_to_end(&mut out) {
+                    Ok(_) => status_line(&String::from_utf8_lossy(&out)).to_string(),
+                    Err(e) => format!("read: {e}"),
+                }
+            })
+        })
+        .collect();
+    let got: Vec<String> = clients.into_iter().map(|c| c.join().unwrap()).collect();
+    let ok = got.iter().filter(|l| l.contains(" 200 ")).count();
+    let busy = got.iter().filter(|l| l.contains(" 503 ")).count();
+    assert_eq!(ok + busy, got.len(), "every client answered 200 or 503: {got:?}");
+    assert!(busy > 0 && ok >= 6, "{ok} answered, {busy} turned away: {got:?}");
 }
