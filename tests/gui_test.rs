@@ -12,8 +12,10 @@ use olang::stdlib::gui::{gpu, soft};
 use olang::{Interpreter, Parser, Value};
 use std::sync::Arc;
 
-/// The engine has one event channel for the process; tests that read it
-/// take turns, or one would take another's events.
+/// The engine has one event channel for the process; every test that
+/// drives a window takes turns, the ones that only send events too, or
+/// one would read another's (a pointer move from a test running beside
+/// it, OL-544).
 static EVENTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn events_turn() -> std::sync::MutexGuard<'static, ()> {
@@ -2185,6 +2187,7 @@ fn the_platform_says_what_its_windows_can_do() {
 /// a real window shows a native one.
 #[test]
 fn a_context_menu_is_checked_and_headless_windows_leave_it_to_the_program() {
+    let _turn = events_turn();
     let v = run(r#"
         let w = gui.headless(#{ "size": (200, 100) })
         let ok = gui.context_menu(w, [#{ "id": "a", "label": "Cut", "keys": "mod+x" }, "separator",
@@ -2286,6 +2289,7 @@ fn a_problem_after_a_line_gives_way_at_the_edge() {
 /// those in its range.
 #[test]
 fn a_colour_only_decoration_recolours_its_glyphs() {
+    let _turn = events_turn();
     let v = run(r##"
         let w = gui.headless(#{ "size": (300, 60) })
         gui.apply(w, [#{ "key": "root", "box": (0, 0, 300, 60), "style": #{ "bg": "#ffffff" } },
@@ -2336,6 +2340,7 @@ fn a_colour_only_decoration_recolours_its_glyphs() {
 /// line number at the top).
 #[test]
 fn a_wrapped_code_field_hides_a_half_row_at_its_top_and_keeps_the_lines_number() {
+    let _turn = events_turn();
     let v = run(r##"
         let long = join(map(range(0, 30), (i) => "word"), " ")
         let text = join(["short", long] + map(range(0, 40), (i) => "x" + to_string(i)), "\n")
@@ -2625,6 +2630,7 @@ fn a_picture_and_a_canvas_under_an_opacity_are_faded() {
 fn an_alert_is_a_role_said_at_once() {
     // something that wants the person now (a file changed on disk under
     // edits): its own role, live and assertive on the platform's tree
+    let _turn = events_turn();
     let v = run(r##"
         let w = gui.headless(#{ "size": (200, 100) })
         let r = gui.apply(w, [

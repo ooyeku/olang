@@ -214,7 +214,7 @@ fn a_deferred_handler_parks_the_connection_and_respond_answers_it_from_a_task() 
              let r = http.serve({port}, (req) => {{\n\
                  if req.path == \"/wait\" => {{\n\
                      let ticket = http.defer()\n\
-                     spawn {{ time.sleep(400); http.respond(ticket, http.response(200, \"late\")) }}\n\
+                     spawn {{ time.sleep(1500); http.respond(ticket, http.response(200, \"late\")) }}\n\
                      ticket\n\
                  }} else if req.path == \"/stop\" => {{ http.shutdown(); \"bye\" }}\n\
                  else => \"quick\"\n\
@@ -222,13 +222,26 @@ fn a_deferred_handler_parks_the_connection_and_respond_answers_it_from_a_task() 
              println(\"served: \" + show(r))\n"
         ),
     );
-    let child = Command::new(env!("CARGO_BIN_EXE_olang"))
-        .args(["run", "d.ol"])
-        .current_dir(&ws)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
+    // The server is killed if an assertion fails before `/stop`: a
+    // failed run left it serving for hours (OL-544).
+    struct Server(Option<std::process::Child>);
+    impl Drop for Server {
+        fn drop(&mut self) {
+            if let Some(c) = self.0.as_mut() {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+        }
+    }
+    let mut server = Server(Some(
+        Command::new(env!("CARGO_BIN_EXE_olang"))
+            .args(["run", "d.ol"])
+            .current_dir(&ws)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap(),
+    ));
     // Wait for the listener rather than a fixed pause: the test binary
     // runs its cases in parallel, and a debug-profile boot under that
     // load can take longer than a sleep guesses.
@@ -260,22 +273,22 @@ fn a_deferred_handler_parks_the_connection_and_respond_answers_it_from_a_task() 
     let waiter = std::thread::spawn(move || get("/wait"));
     std::thread::sleep(std::time::Duration::from_millis(100));
     // ...and the same worker answers another request meanwhile: the
-    // parked connection cost a socket, not the worker.
+    // parked connection cost a socket, not the worker. A worker held by
+    // the deferred request could answer only after it, 1.4 s on; the
+    // order is the check, since a loaded machine slowed the quick answer
+    // past a fixed bound (646 ms, OL-544).
     let (quick, quick_took) = get("/quick");
     assert!(quick.contains("quick"), "{quick}");
-    assert!(
-        quick_took < std::time::Duration::from_millis(250),
-        "{quick_took:?}"
-    );
+    assert!(!waiter.is_finished(), "answered after the deferred one: {quick_took:?}");
     let (late, late_took) = waiter.join().unwrap();
     assert!(late.contains("HTTP/1.1 200"), "{late}");
     assert!(late.ends_with("late"), "{late}");
     assert!(
-        late_took >= std::time::Duration::from_millis(350),
+        late_took >= std::time::Duration::from_millis(1400),
         "{late_took:?}"
     );
     let _ = get("/stop");
-    let out = child.wait_with_output().unwrap();
+    let out = server.0.take().unwrap().wait_with_output().unwrap();
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("served: Ok(())"), "{text}");
 }

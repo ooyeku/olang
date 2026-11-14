@@ -74,9 +74,17 @@ gui.close(w)
         .status()
         .expect("osascript");
     assert!(st.success(), "osascript: {st:?}");
+    // when the program finished its quit (its mark says done), as this
+    // side sees it
+    let mut done: Option<Instant> = None;
     let status = loop {
         if let Some(st) = child.try_wait().unwrap() {
             break st;
+        }
+        if done.is_none()
+            && std::fs::read_to_string(&mark).is_ok_and(|m| m.ends_with(" done"))
+        {
+            done = Some(Instant::now());
         }
         if asked.elapsed() > Duration::from_secs(15) {
             let _ = child.kill();
@@ -84,17 +92,19 @@ gui.close(w)
         }
         std::thread::sleep(Duration::from_millis(20));
     };
-    let took = asked.elapsed();
+    let took = done.map_or(Duration::ZERO, |d| d.elapsed());
     let said = std::fs::read_to_string(&mark).unwrap_or_default();
     assert_eq!(
         said, "quit:quit done",
         "the program's quit did not finish before the exit"
     );
     assert_eq!(status.code(), Some(0), "{status:?}");
-    // the reply ended it, not the fallback (3 s after the program)
+    // the reply ended it, not the fallback (3 s after the program):
+    // timed from the program's finish, since osascript and the quit's
+    // way to the program took 10 s on a loaded machine (OL-544)
     assert!(
-        took < Duration::from_millis(3000),
-        "ended {took:?} after the quit"
+        took < Duration::from_millis(2500),
+        "ended {took:?} after the program finished its quit"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

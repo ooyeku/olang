@@ -7,7 +7,7 @@ use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 static NEXT_SERVER: AtomicU64 = AtomicU64::new(1);
 
@@ -219,8 +219,9 @@ fn keep_alive_serves_multiple_requests_on_one_connection() {
 fn worker_pool_serves_independent_connections_concurrently() {
     let source = r#"
 fn handle(req) = {
+    let t0 = time.monotonic()
     time.sleep(500)
-    req.remote_addr + " done"
+    req.remote_addr + " " + show(t0) + " " + show(time.monotonic()) + " done"
 }
 http.serve(0, handle, #{ "workers": 2, "queue_capacity": 8 })
 "#;
@@ -238,17 +239,28 @@ http.serve(0, handle, #{ "workers": 2, "queue_capacity": 8 })
         }));
     }
 
-    let started = Instant::now();
     barrier.wait();
+    let mut spans = Vec::new();
     for client in clients {
         let response = client.join().expect("client thread");
         assert!(response.ends_with("done"), "got: {response}");
         assert!(response.contains("127.0.0.1"), "remote address: {response}");
+        let body = response.rsplit("\r\n\r\n").next().unwrap_or("");
+        let t: Vec<f64> = body
+            .split(' ')
+            .skip(1)
+            .take(2)
+            .map(|x| x.parse().expect("a handler's time"))
+            .collect();
+        spans.push((t[0], t[1]));
     }
-    let elapsed = started.elapsed();
+    // The handlers' own clocks say whether they overlapped: a wall-clock
+    // bound on both answers failed on a loaded machine (2.09 s, OL-544),
+    // while one worker after the other never overlaps however fast.
+    let (a, b) = (spans[0], spans[1]);
     assert!(
-        elapsed < Duration::from_millis(850),
-        "two 500ms handlers took {elapsed:?}; connections ran sequentially"
+        a.0 < b.1 && b.0 < a.1,
+        "the two handlers ran one after the other: {spans:?}"
     );
 }
 
