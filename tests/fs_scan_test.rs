@@ -430,3 +430,25 @@ let took = time.monotonic() - t0
     )));
     assert!(got.starts_with("true true"), "cancelled, took: {got}");
 }
+
+/// `fs.walk` and `fs.scan` treat a link alike (OL-403): a link to a file
+/// is listed, a link to a folder is not followed, a dangling link is not
+/// listed. `fs.walk` listed the dangling one; `fs.scan` left out every
+/// link.
+#[test]
+#[cfg(unix)]
+fn walk_and_scan_agree_on_links() {
+    let d = tempfile::tempdir().unwrap();
+    fs::create_dir_all(d.path().join("sub")).unwrap();
+    fs::write(d.path().join("sub/a.txt"), "hi").unwrap();
+    std::os::unix::fs::symlink("sub/a.txt", d.path().join("tofile.txt")).unwrap();
+    std::os::unix::fs::symlink("nowhere.txt", d.path().join("dangling.txt")).unwrap();
+    std::os::unix::fs::symlink("sub", d.path().join("todir")).unwrap();
+    let r = root_of(&d);
+    let scanned = s(eval(&format!(r#"show(unwrap(fs.scan("{r}")))"#)));
+    assert_eq!(scanned, r#"["sub/a.txt", "tofile.txt"]"#);
+    let walked = s(eval(&format!(
+        r#"show(map(unwrap(fs.walk("{r}")), (p) => str.replace(p, "{r}/", "")))"#
+    )));
+    assert_eq!(walked, scanned);
+}

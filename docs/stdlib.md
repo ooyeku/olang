@@ -2278,6 +2278,9 @@ With `replace` (a template) each match also
 says `with`, what it becomes — a regular expression's groups expanded
 (`$1`, `${name}`, `$$` a dollar) — for a replace across files to
 preview and apply. An option either function does not know raises.
+`fs.walk` and `fs.scan` treat a symbolic link alike: a link to a file is
+listed as a file, a link to a folder is not followed, and a link that
+names nothing is not listed.
 
 | <a id="fs-scan"></a>`fs.scan` option | Meaning (default) |
 |---|---|

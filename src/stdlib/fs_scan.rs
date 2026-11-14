@@ -315,7 +315,15 @@ fn walk(root: &Path, w: &Walk) -> (Vec<String>, Vec<String>) {
             if empty_dirs == 1 {
                 return ignore::WalkState::Continue;
             }
-            if !e.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            // a file, or a link to one (listed as `fs.walk` lists it); a
+            // link to a folder is not followed, and a dangling one names
+            // no file (OL-403: every link was left out here)
+            let is_file = match e.file_type() {
+                Some(t) if t.is_file() => true,
+                Some(t) if t.is_symlink() => e.path().is_file(),
+                _ => false,
+            };
+            if !is_file {
                 return ignore::WalkState::Continue;
             }
             let path = e.path();
