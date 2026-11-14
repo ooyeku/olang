@@ -27,6 +27,12 @@ fn handler(req) = {
         // header, whatever this contains.
         let evil = if map_has_key(req.query, "v") => map_get(req.query, "v") else => "x"
         { status: 200, headers: #{ "x-echo": evil }, body: "ok" }
+    } else if req.path == "/repeated" => {
+        // a header sent twice reaches the handler as both values (OL-378)
+        show(map_get(req.headers, "x-a"))
+    } else if req.path == "/framing" => {
+        // A handler forwarding an upstream's framing headers (OL-373).
+        http.response_with_headers(200, "h", #{ "Content-Length": "999", "Connection": "upgrade" })
     } else => {
         { status: 200, body: `echo ${req.method} ${req.path} ${len(req.body)}` }
     }
@@ -40,10 +46,14 @@ http.serve(0, handler, #{
 "#;
 
 fn spawn_server() -> (KillOnDrop, u16) {
+    spawn_server_with("server", SERVER)
+}
+
+fn spawn_server_with(name: &str, source: &str) -> (KillOnDrop, u16) {
     let dir = std::env::temp_dir().join("olang_http_abuse_tests");
     std::fs::create_dir_all(&dir).expect("mkdir");
-    let path = dir.join("server.ol");
-    std::fs::write(&path, SERVER).expect("write");
+    let path = dir.join(format!("{name}.ol"));
+    std::fs::write(&path, source).expect("write");
     let mut child = Command::new(env!("CARGO_BIN_EXE_olang"))
         .arg("run")
         .arg(&path)
@@ -126,6 +136,31 @@ fn the_gauntlet() {
     let r = raw(port, b"POST / HTTP/1.1\r\nContent-Length: abc\r\n\r\nxxx");
     assert!(status_line(&r).contains("400"), "bad content-length:\n{r}");
 
+    // Two Content-Lengths that differ: 400, never one of them picked
+    // (a proxy in front picking the other smuggles a request) (OL-373).
+    let r = raw(
+        port,
+        b"POST / HTTP/1.1\r\nContent-Length: 3\r\nContent-Length: 10\r\n\r\nabc",
+    );
+    assert!(status_line(&r).contains("400"), "two content-lengths:\n{r}");
+
+    // A handler's own Content-Length and Connection give way to the
+    // server's: one of each in the response (OL-373).
+    let r = raw(port, b"GET /framing HTTP/1.1\r\nConnection: close\r\n\r\n");
+    let lower = r.to_ascii_lowercase();
+    assert_eq!(lower.matches("content-length:").count(), 1, "framing:\n{r}");
+    assert!(lower.contains("content-length: 1\r\n"), "framing:\n{r}");
+    assert_eq!(lower.matches("connection:").count(), 1, "framing:\n{r}");
+    assert!(r.ends_with("\r\n\r\nh"), "framing body:\n{r}");
+
+    // A header sent twice keeps both values, in order, as the client's
+    // headers and req.query do (OL-378).
+    let r = raw(
+        port,
+        b"GET /repeated HTTP/1.1\r\nX-A: 1\r\nx-a: 2\r\nConnection: close\r\n\r\n",
+    );
+    assert!(r.ends_with("[\"1\", \"2\"]"), "repeated header:\n{r}");
+
     // Header injection through the handler: the evil value must stay on
     // one line — no injected header, no response splitting.
     let r = raw(
@@ -187,4 +222,94 @@ fn a_dripping_client_is_cut_off_at_the_request_deadline() {
         "worker held too long: {:?}",
         started.elapsed()
     );
+}
+
+/// Half-sent requests hold a worker only until the request deadline,
+/// not a whole idle timeout per read: four of them against two workers
+/// delayed a request behind them by many deadlines (OL-400).
+#[test]
+fn half_sent_requests_hold_workers_only_to_the_deadline() {
+    let (_guard, port) = spawn_server_with(
+        "slowloris",
+        r#"http.serve(0, (req) => "ok", #{ "workers": 2, "request_timeout_ms": 600, "idle_timeout_ms": 5000 })"#,
+    );
+    let mut half = Vec::new();
+    for _ in 0..4 {
+        let mut s = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        s.write_all(b"GET / HTTP/1.1\r\nHost: x\r\n").expect("write");
+        half.push(s);
+    }
+    std::thread::sleep(Duration::from_millis(50));
+    let started = std::time::Instant::now();
+    let r = raw(port, b"GET / HTTP/1.1\r\nConnection: close\r\n\r\n");
+    assert!(status_line(&r).contains("200"), "behind the slow ones:\n{r}");
+    // two rounds of the 600 ms deadline; a 5 s idle wait per read was 10 s
+    assert!(
+        started.elapsed() < Duration::from_millis(3000),
+        "a request waited {:?} behind half-sent ones",
+        started.elapsed()
+    );
+}
+
+/// Clients past a full queue are answered 503, not reset: the request
+/// is read before the socket closes (OL-401).
+#[test]
+fn clients_past_a_full_queue_get_503_not_a_reset() {
+    let (_guard, port) = spawn_server_with(
+        "overload",
+        r#"http.serve(0, (req) => { time.sleep(300)
+ "ok" }, #{ "workers": 2, "queue_capacity": 4 })"#,
+    );
+    let clients: Vec<_> = (0..40)
+        .map(|_| {
+            std::thread::spawn(move || {
+                let mut s = match TcpStream::connect(("127.0.0.1", port)) {
+                    Ok(s) => s,
+                    Err(e) => return format!("connect: {e}"),
+                };
+                s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+                if let Err(e) = s.write_all(b"GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n") {
+                    return format!("write: {e}");
+                }
+                let mut out = Vec::new();
+                match s.read_to_end(&mut out) {
+                    Ok(_) => status_line(&String::from_utf8_lossy(&out)).to_string(),
+                    Err(e) => format!("read: {e}"),
+                }
+            })
+        })
+        .collect();
+    let got: Vec<String> = clients.into_iter().map(|c| c.join().unwrap()).collect();
+    let ok = got.iter().filter(|l| l.contains(" 200 ")).count();
+    let busy = got.iter().filter(|l| l.contains(" 503 ")).count();
+    assert_eq!(ok + busy, got.len(), "every client answered 200 or 503: {got:?}");
+    assert!(busy > 0 && ok >= 6, "{ok} answered, {busy} turned away: {got:?}");
+}
+
+/// `http.respond` to a client that hung up while it waited answers Err,
+/// not Ok(()) as if delivered; one that waited gets its answer and Ok
+/// (OL-402).
+#[test]
+fn a_deferred_answer_to_a_client_that_left_is_an_err() {
+    let (_guard, port) = spawn_server_with(
+        "deferred",
+        r#"let results = chan.new()
+fn handle(req) = if req.path == "/wait" => {
+    let ticket = http.defer()
+    spawn { time.sleep(300)
+ chan.send(results, show(http.respond(ticket, "late"))) }
+    ticket
+} else if req.path == "/result" => show(chan.recv_timeout(results, 3000)) else => "quick"
+http.serve(0, handle)"#,
+    );
+    let mut left = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+    left.write_all(b"GET /wait HTTP/1.1\r\nHost: x\r\n\r\n").expect("write");
+    std::thread::sleep(Duration::from_millis(50));
+    drop(left);
+    let r = raw(port, b"GET /result HTTP/1.1\r\nConnection: close\r\n\r\n");
+    assert!(r.contains("Err(") && r.contains("left"), "a client that left:\n{r}");
+    let waited = raw(port, b"GET /wait HTTP/1.1\r\nHost: x\r\n\r\n");
+    assert!(waited.ends_with("late"), "a client that waited:\n{waited}");
+    let r = raw(port, b"GET /result HTTP/1.1\r\nConnection: close\r\n\r\n");
+    assert!(r.contains("Ok(())") && !r.contains("Err"), "its respond:\n{r}");
 }

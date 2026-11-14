@@ -163,7 +163,7 @@ where a wait or a stream ends instead, and stay as they are:
 | Sentinel | Meaning | From |
 |---|---|---|
 | `Err("eof")` | the stream ended | `os.read_line`, `proc.read_line`, `pty.read` |
-| `Err("timed out")` | the wait's time ran out | `task.join_timeout`, `chan.recv_timeout` |
+| `Err("timed out")` | the wait's time ran out | `task.join_timeout`, `chan.recv_timeout`, the http client past its `timeout_ms` |
 | `Err("channel is closed")` | the channel is closed and drained | `chan.recv`, `chan.try_recv`, `chan.recv_timeout`, `chan.send` |
 
 A program may match these strings; any other error's text is for
@@ -1784,7 +1784,8 @@ choosing. `runtime.call_cancellable` stops code that does not check: the
 interpreter at its next statement, compiled code at its next loop
 iteration or call, and the long builtins between their steps (the file
 walks `fs.walk`, `fs.scan` and `fs.search`, `os.exec`, which kills the
-child, and http reads). It is the same stop `runtime.call_budget` makes
+child, and an http request while it connects, waits for its answer
+or reads the body). It is the same stop `runtime.call_budget` makes
 when time runs out, and it stops only the threads running a cancellable
 call on that token.
 
@@ -2277,6 +2278,9 @@ With `replace` (a template) each match also
 says `with`, what it becomes — a regular expression's groups expanded
 (`$1`, `${name}`, `$$` a dollar) — for a replace across files to
 preview and apply. An option either function does not know raises.
+`fs.walk` and `fs.scan` treat a symbolic link alike: a link to a file is
+listed as a file, a link to a folder is not followed, and a link that
+names nothing is not listed.
 
 | <a id="fs-scan"></a>`fs.scan` option | Meaning (default) |
 |---|---|
@@ -2789,8 +2793,8 @@ moves to the next connection, and the parked connection costs a socket.
 `http.respond(ticket, response)` completes it from wherever the answer
 turns up — a spawned task, a channel service, a later request on
 another worker — with any value a handler could have returned; it is
-`Ok(())`, or `Err` when nothing holds the ticket (answered already, or
-the client left). The connection closes after the deferred answer.
+`Ok(())`, or `Err` when nothing holds the ticket (answered already) or
+the client hung up while it waited. The connection closes after the deferred answer.
 
 ```olang no-run
 fn handle(req) = if req.path == "/wait" => {
@@ -3796,11 +3800,13 @@ how a request carries headers, a timeout, and authentication:
 | Option | Meaning |
 |---|---|
 | `"headers"` | map of header name → string value |
-| `"timeout_ms"` | whole-request timeout in milliseconds |
+| `"timeout_ms"` | whole-request timeout in milliseconds (30 s unless given); past it the request answers `Err("timed out")` |
 | `"bearer"` | sets `Authorization: Bearer <token>` |
 | `"basic"` | `(user, password)` tuple: HTTP basic auth |
 | `"bytes"` | `true`: the response `body` is `Bytes`, not text (an image, an archive) |
 
+A request that fails otherwise answers an `Err` that says its cause (a
+refused connection, a body cut short, a URL that does not parse).
 An unknown option key raises rather than being ignored — a typo'd option
 must not become a request that quietly lacked its auth header.
 
@@ -3832,14 +3838,18 @@ HTTP/1.1 keep-alive is honored, pipelining included: requests a client
 sends back to back on one connection are each answered, in order. Idle
 connections time out, each connection
 has a request cap, and a full bounded queue receives `503` rather than growing
-threads or memory without limit. The handler receives a request struct:
+threads or memory without limit. A burst of connections faster than the
+server accepts them is held by the kernel's accept queue, which the
+server asks to be 4096 long; the kernel caps it (`somaxconn`: 4096 on
+Linux, 128 on macOS unless raised), and connections past it are reset
+by the kernel, before any `503` can be sent. The handler receives a request struct:
 
 | Field | Contents |
 |---|---|
 | `req.method` | `"GET"`, `"POST"`, ... (uppercased) |
 | `req.path` | the path, without the query string |
 | `req.query` | map of decoded query parameters (a name given more than once: a list of its values) |
-| `req.headers` | map of headers, keys lowercased |
+| `req.headers` | map of headers, keys lowercased (a header sent more than once: a list of its values, in order) |
 | `req.body` | the request body as text (bytes that are not UTF-8 read as U+FFFD) |
 | `req.body_bytes` | the request body as `Bytes`, exactly as sent (an upload, an image) |
 | `req.remote_addr` | client socket address (`ip:port`) |
@@ -3866,18 +3876,23 @@ map literal so keys like `Content-Type` can contain `-`. A handler error
 becomes a `500`; the server keeps running through both.
 
 Abuse is answered precisely, with the connection closed: a malformed
-request line or unparseable `Content-Length` is a `400`, a header block
+request line, an unparseable `Content-Length`, or two `Content-Length`
+values that differ is a `400`, a header block
 past `max_header_bytes` a `431`, a declared body past `max_body_bytes` a
 `413`, and a request that has not arrived in full within
 `request_timeout_ms` a `408` — the whole-request deadline is what stops
 a client dribbling one byte at a time from holding a worker forever,
-which per-read timeouts alone cannot. A body sent with
+which per-read timeouts alone cannot. Each connection holds a worker
+while its request arrives, so as many half-sent requests as there are
+workers delay the rest by up to `request_timeout_ms`; lower it for a
+server open to clients you do not trust. A body sent with
 `Transfer-Encoding: chunked` (a streaming upload) is read whole, and
 counts against `max_body_bytes` as it arrives. Chunked together with a
 `Content-Length` is a `400`, and any other transfer-coding a `501`. Header values a handler returns
 are flattened to one line (CR and LF become spaces), so interpolating
 untrusted text into a header cannot split the response or inject
-headers.
+headers. A handler's own `Content-Length`, `Transfer-Encoding`
+and `Connection` headers are left out: the server frames the response.
 
 ```olang no-run
 fn handle(req) = {

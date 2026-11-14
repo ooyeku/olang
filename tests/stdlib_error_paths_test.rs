@@ -44,21 +44,32 @@ fn test_http_error_paths() {
     // Should handle invalid URL error
     assert!(result.is_ok() || result.is_err());
 
-    // Test connection to non-existent host
-    let source = r#"http.get("https://non-existent-host-12345.com")"#;
-    let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program);
+    // Every request below stays on this machine (OL-616: these asked a
+    // made-up host's DNS and httpbin.org).
+    // A connection nothing answers: a port just freed.
+    let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let closed = free.local_addr().unwrap().port();
+    drop(free);
+    let source = format!(r#"is_err(http.get("http://127.0.0.1:{closed}/", #{{ "timeout_ms": 2000 }}))"#);
+    let program = parser.parse(&source).expect("Failed to parse");
+    let result = interpreter.eval_program(program).expect("a refused request is a value");
+    assert_eq!(result.to_string(), "true");
 
-    // Should handle connection error
-    assert!(result.is_ok() || result.is_err());
-
-    // Test POST with invalid data
-    let source = r#"http.post("https://httpbin.org/post", "invalid json {{{{")"#;
-    let program = parser.parse(source).expect("Failed to parse");
-    let result = interpreter.eval_program(program);
-
-    // Should handle invalid request data
-    assert!(result.is_ok() || result.is_err());
+    // A POST of a body that is not JSON: the server takes it as it is.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        use std::io::{Read, Write};
+        for mut c in listener.incoming().flatten() {
+            let mut buf = [0u8; 4096];
+            let _ = c.read(&mut buf);
+            let _ = c.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+        }
+    });
+    let source = format!(r#"unwrap(http.post("http://127.0.0.1:{port}/post", "invalid json {{{{{{{{")).status"#);
+    let program = parser.parse(&source).expect("Failed to parse");
+    let result = interpreter.eval_program(program).expect("the POST is answered");
+    assert_eq!(result.to_string(), "200");
 }
 
 #[test]

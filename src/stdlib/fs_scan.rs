@@ -315,7 +315,15 @@ fn walk(root: &Path, w: &Walk) -> (Vec<String>, Vec<String>) {
             if empty_dirs == 1 {
                 return ignore::WalkState::Continue;
             }
-            if !e.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            // a file, or a link to one (listed as `fs.walk` lists it); a
+            // link to a folder is not followed, and a dangling one names
+            // no file (OL-403: every link was left out here)
+            let is_file = match e.file_type() {
+                Some(t) if t.is_file() => true,
+                Some(t) if t.is_symlink() => e.path().is_file(),
+                _ => false,
+            };
+            if !is_file {
                 return ignore::WalkState::Continue;
             }
             let path = e.path();
@@ -824,11 +832,18 @@ pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     };
     stopped()?;
     use rayon::prelude::*;
+    // A stop asked of the calling thread (a cancelled token, a budget)
+    // is seen by the workers before each file: the files not yet read
+    // are skipped and the caller raises (`stopped`) (OL-533).
+    let probe = crate::interrupt::StopProbe::here();
     let per: Vec<(usize, Vec<Found>)> = crate::parallel::install(|| {
         files
             .par_iter()
             .enumerate()
             .map(|(i, rel)| {
+                if probe.should_stop() {
+                    return (i, Vec::new());
+                }
                 (
                     i,
                     search_file(
@@ -844,6 +859,7 @@ pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             .filter(|(_, ms)| !ms.is_empty())
             .collect()
     });
+    stopped()?;
     let mut out: Vec<Value> = Vec::new();
     'files: for (i, ms) in per {
         let rel = Arc::new(files[i].clone());

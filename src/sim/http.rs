@@ -230,9 +230,9 @@ fn client(
                 None,
                 format!("after {timeout} ms"),
             );
-            failed(format!(
-                "timed out after {timeout} ms (no answer from {host}:{port})"
-            ))
+            // the sentinel the real client answers (OL-376); the world's
+            // log says after how long
+            Ok(err("timed out".to_string()))
         }
         Some(Body::Refused { why, .. }) => {
             w.settle_request(ctx.task, id, "refused", None, None, why.clone());

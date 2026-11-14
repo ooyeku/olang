@@ -345,6 +345,74 @@ fn http_network_failure_is_still_a_value() {
     );
 }
 
+/// A local listener that answers each connection with `reply` (or
+/// nothing, when it is empty) and then holds it open.
+fn listener(reply: &'static [u8]) -> u16 {
+    use std::io::Write;
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        let mut held = Vec::new();
+        for mut c in l.incoming().flatten() {
+            if !reply.is_empty() {
+                let _ = c.write_all(reply);
+                let _ = c.flush();
+            }
+            held.push(c);
+        }
+    });
+    port
+}
+
+/// A client failure says what happened (OL-376): a `timeout_ms` that ran
+/// out is the `"timed out"` sentinel, waiting for the headers or reading
+/// the body; a refused connection, a body cut short and a URL that does
+/// not parse each say their cause.
+#[test]
+fn http_client_failures_say_their_cause() {
+    let silent = listener(b"");
+    let dribbles = listener(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nabc");
+    for port in [silent, dribbles] {
+        assert_eq!(
+            run(&format!(
+                "show(http.get(\"http://127.0.0.1:{port}/\", #{{ \"timeout_ms\": 300 }}))"
+            ))
+            .unwrap(),
+            "Err(\"timed out\")",
+            "port {port}"
+        );
+    }
+    // a refused connection: a port nothing listens on
+    let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let closed = free.local_addr().unwrap().port();
+    drop(free);
+    let refused = run(&format!(
+        "show(http.get(\"http://127.0.0.1:{closed}/\", #{{ \"timeout_ms\": 2000 }}))"
+    ))
+    .unwrap()
+    .to_lowercase();
+    assert!(refused.contains("refused"), "{refused}");
+    // a body cut short: 9 of 100 bytes, then the server closes
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let short = l.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        use std::io::{Read, Write};
+        for mut c in l.incoming().flatten() {
+            let mut buf = [0u8; 1024];
+            let _ = c.read(&mut buf);
+            let _ = c.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\nshort bod");
+        }
+    });
+    let cut = run(&format!(
+        "show(http.get(\"http://127.0.0.1:{short}/\", #{{ \"timeout_ms\": 2000 }}))"
+    ))
+    .unwrap();
+    assert!(cut.starts_with("Err(\"Failed to read response body"), "{cut}");
+    assert!(cut.len() > "Err(\"Failed to read response body: error decoding response body\")".len(), "{cut}");
+    let bad = run("show(http.get(\"not a url\"))").unwrap();
+    assert!(bad.contains("builder error: "), "{bad}");
+}
+
 #[test]
 fn bytes_to_and_from_hex() {
     assert_eq!(

@@ -834,7 +834,9 @@ fn walk(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
 // A link is not followed into a folder (one pointing at its own parent
 // walked ~40 levels until the system said ELOOP and the walk failed); a
-// link to a file is listed as the file it names.
+// link to a file is listed as the file it names, and a link that names
+// nothing (dangling) is no file and is left out, as `fs.scan` does
+// (OL-403).
 fn walk_into(dir: &std::path::Path, out: &mut Vec<String>) -> std::io::Result<()> {
     // A stop asked of this thread (a cancelled token, a budget) ends the
     // walk at the next folder, and the call raises.
@@ -850,7 +852,7 @@ fn walk_into(dir: &std::path::Path, out: &mut Vec<String>) -> std::io::Result<()
         let ft = entry.file_type()?;
         if ft.is_dir() {
             walk_into(&path, out)?;
-        } else if ft.is_symlink() && path.is_dir() {
+        } else if ft.is_symlink() && !path.is_file() {
             continue;
         } else if let Some(s) = path.to_str() {
             out.push(s.to_string());

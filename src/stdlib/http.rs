@@ -264,19 +264,50 @@ pub(crate) fn parse_opts(
     Ok(opts)
 }
 
+/// A wait inside a request that a stop can cut short: `fut` polled on
+/// this thread, and the thread's stop question asked every 10 ms while
+/// it waits. `None` when a stop landed first; the future is dropped
+/// then, which closes its connection.
+async fn unless_stopped<F: std::future::Future>(fut: F) -> Option<F::Output> {
+    let mut fut = std::pin::pin!(fut);
+    if !crate::interrupt::armed() {
+        return Some(fut.await);
+    }
+    let mut tick = tokio::time::interval(std::time::Duration::from_millis(10));
+    std::future::poll_fn(|cx| {
+        if let std::task::Poll::Ready(v) = fut.as_mut().poll(cx) {
+            return std::task::Poll::Ready(Some(v));
+        }
+        while tick.poll_tick(cx).is_ready() {
+            if crate::interrupt::should_stop() {
+                return std::task::Poll::Ready(None);
+            }
+        }
+        std::task::Poll::Pending
+    })
+    .await
+}
+
 /// One request core for every client verb. Network failure is a value
 /// (`Err(message)`); a misused call raises through the dispatcher.
+///
+/// The request is driven on the calling thread, and every wait in it —
+/// connecting, the headers, each piece of the body — gives way to a stop
+/// (a cancellable call's token, a budget, the REPL's interrupt): a slow
+/// server held a cancelled call until its timeout, or forever without
+/// one (OL-534).
 fn perform(
     method: &str,
     url: &str,
     body: Option<&str>,
     opts: RequestOpts,
 ) -> Result<Value, Box<dyn std::error::Error>> {
-    let mut client = reqwest::blocking::Client::builder();
-    if let Some(ms) = opts.timeout_ms {
-        client = client.timeout(std::time::Duration::from_millis(ms));
-    }
-    let client = client
+    // 30 s unless told: the blocking client's default, which the async
+    // one does not have (a request with no `timeout_ms` would wait forever).
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(
+            opts.timeout_ms.unwrap_or(30_000),
+        ))
         .build()
         .map_err(|e| format!("{method}: could not build HTTP client: {e}"))?;
 
@@ -313,80 +344,109 @@ fn perform(
     if crate::interrupt::should_stop() {
         return Err(crate::interrupt::stop_message().into());
     }
-    match builder.send() {
-        Ok(response) => {
-            let status = response.status().as_u16() as i64;
-            // Response headers, lowercased for predictable lookup; a
-            // repeated header (`set-cookie`) keeps every value, as a list.
-            let headers = multi_map(response.headers().iter().filter_map(|(name, value)| {
-                value
-                    .to_str()
-                    .ok()
-                    .map(|v| (name.as_str().to_lowercase(), v.to_string()))
-            }));
-            // Where a call can be stopped (a cancellable call, a budget,
-            // the REPL's interrupt), the body is read a chunk at a time,
-            // and a stop between chunks raises as the evaluators do.
-            let body: Result<Value, String> = if crate::interrupt::armed() {
-                use std::io::Read;
-                let mut response = response;
-                let mut all = Vec::new();
-                let mut chunk = vec![0u8; 64 * 1024];
-                loop {
-                    if crate::interrupt::should_stop() {
-                        return Err(crate::interrupt::stop_message().into());
-                    }
-                    match response.read(&mut chunk) {
-                        Ok(0) => break Ok(()),
-                        Ok(n) => all.extend_from_slice(&chunk[..n]),
-                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                        Err(e) => break Err(e.to_string()),
-                    }
-                }
-                .map(|()| {
-                    if opts.bytes {
-                        crate::stdlib::bytes::to_value(all)
-                    } else {
-                        Value::String(Arc::new(String::from_utf8_lossy(&all).into_owned()))
-                    }
-                })
-            } else if opts.bytes {
-                response
-                    .bytes()
-                    .map(|b| crate::stdlib::bytes::to_value(b.to_vec()))
-                    .map_err(|e| e.to_string())
-            } else {
-                response
-                    .text()
-                    .map(|t| Value::String(Arc::new(t)))
-                    .map_err(|e| e.to_string())
-            };
-            match body {
-                Ok(response_body) => {
-                    let mut response_map = crate::ast::ValueMap::default();
-                    response_map.insert("status".to_string(), Value::Integer(status));
-                    response_map.insert("body".to_string(), response_body);
-                    response_map.insert("headers".to_string(), Value::Map(Arc::new(headers)));
-                    response_map.insert(
-                        "success".to_string(),
-                        Value::Boolean((200..300).contains(&status)),
-                    );
-                    Ok(Value::Ok(Box::new(Value::Struct {
-                        type_name: "HttpResponse".into(),
-                        fields: std::sync::Arc::new(response_map).into(),
-                    })))
-                }
-                Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-                    "Failed to read response body: {}",
-                    e
-                )))))),
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("{method}: could not start the HTTP client: {e}"))?;
+    let stopped = || -> Result<Value, Box<dyn std::error::Error>> {
+        Err(crate::interrupt::stop_message().into())
+    };
+    runtime.block_on(async move {
+        let response = match unless_stopped(builder.send()).await {
+            None => return stopped(),
+            Some(Ok(response)) => response,
+            Some(Err(e)) => {
+                return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                    client_error(&format!("{upper} request failed"), &e),
+                )))));
             }
+        };
+        let status = response.status().as_u16() as i64;
+        // Response headers, lowercased for predictable lookup; a
+        // repeated header (`set-cookie`) keeps every value, as a list.
+        let headers = multi_map(response.headers().iter().filter_map(|(name, value)| {
+            value
+                .to_str()
+                .ok()
+                .map(|v| (name.as_str().to_lowercase(), v.to_string()))
+        }));
+        // Where a call can be stopped (a cancellable call, a budget, the
+        // REPL's interrupt), the body is read a piece at a time, a stop
+        // looked at while each waits.
+        let body: Result<Value, reqwest::Error> = if crate::interrupt::armed() {
+            let mut response = response;
+            let mut all = Vec::new();
+            let read: Result<(), reqwest::Error> = loop {
+                match unless_stopped(response.chunk()).await {
+                    None => return stopped(),
+                    Some(Ok(Some(piece))) => all.extend_from_slice(&piece),
+                    Some(Ok(None)) => break Ok(()),
+                    Some(Err(e)) => break Err(e),
+                }
+            };
+            read.map(|()| {
+                if opts.bytes {
+                    crate::stdlib::bytes::to_value(all)
+                } else {
+                    Value::String(Arc::new(String::from_utf8_lossy(&all).into_owned()))
+                }
+            })
+        } else if opts.bytes {
+            response
+                .bytes()
+                .await
+                .map(|b| crate::stdlib::bytes::to_value(b.to_vec()))
+        } else {
+            response
+                .text()
+                .await
+                .map(|t| Value::String(Arc::new(t)))
+        };
+        match body {
+            Ok(response_body) => {
+                let mut response_map = crate::ast::ValueMap::default();
+                response_map.insert("status".to_string(), Value::Integer(status));
+                response_map.insert("body".to_string(), response_body);
+                response_map.insert("headers".to_string(), Value::Map(Arc::new(headers)));
+                response_map.insert(
+                    "success".to_string(),
+                    Value::Boolean((200..300).contains(&status)),
+                );
+                Ok(Value::Ok(Box::new(Value::Struct {
+                    type_name: "HttpResponse".into(),
+                    fields: std::sync::Arc::new(response_map).into(),
+                })))
+            }
+            Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(client_error(
+                "Failed to read response body",
+                &e,
+            )))))),
         }
-        Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "{} request failed: {}",
-            upper, e
-        )))))),
+    })
+}
+
+/// A client failure as a program sees it (OL-376). A `timeout_ms` that
+/// ran out, waiting for the answer or reading its body, is the
+/// `"timed out"` sentinel, so a retry can tell a slow server from one
+/// that is down. Any other failure says its cause, not only reqwest's
+/// outer words ("error sending request for url"): each error it wraps is
+/// added once ("connection refused", "unexpected end of file", "relative
+/// URL without a base").
+fn client_error(what: &str, e: &reqwest::Error) -> String {
+    if e.is_timeout() {
+        return "timed out".to_string();
     }
+    let mut text = format!("{what}: {e}");
+    let mut source = std::error::Error::source(e);
+    while let Some(cause) = source {
+        let said = cause.to_string();
+        if !said.is_empty() && !text.contains(&said) {
+            text.push_str(": ");
+            text.push_str(&said);
+        }
+        source = cause.source();
+    }
+    text
 }
 
 fn str_arg<'a>(v: &'a Value, what: &str) -> Result<&'a str, Box<dyn std::error::Error>> {
@@ -516,6 +576,21 @@ fn read_request(
         (std::time::Instant::now() >= deadline && !buf.is_empty())
             .then(|| (408, "request took too long to arrive".to_string()))
     };
+    // Each read waits at most until the deadline once a request has
+    // begun: a read waiting out the whole idle timeout (5 s) before the
+    // deadline was looked at let a few half-sent requests hold every
+    // worker for many times `request_timeout_ms` (OL-400). Before the
+    // first byte the idle timeout alone bounds the wait.
+    let idle = std::time::Duration::from_millis(limits.idle_timeout_ms);
+    let arm = |stream: &std::net::TcpStream, begun: bool| {
+        let wait = if begun {
+            idle.min(deadline.saturating_duration_since(std::time::Instant::now()))
+                .max(std::time::Duration::from_millis(1))
+        } else {
+            idle
+        };
+        let _ = stream.set_read_timeout(Some(wait));
+    };
 
     // Read until the blank line that ends the header block.
     let mut buf: Vec<u8> = std::mem::take(carry);
@@ -531,6 +606,7 @@ fn read_request(
         if let Some(e) = overdue(&buf) {
             return Err(e);
         }
+        arm(stream, !buf.is_empty());
         match stream.read(&mut chunk) {
             // A close (or idle timeout) before any bytes is the clean end of
             // a kept-alive connection, not an error.
@@ -625,6 +701,7 @@ fn read_request(
                 if let Some(e) = overdue(&buf) {
                     return Err(e);
                 }
+                arm(stream, true);
                 match stream.read(&mut chunk) {
                     Ok(0) => return Err((400, "connection closed mid-body".to_string())),
                     Ok(n) => {
@@ -701,12 +778,24 @@ fn read_request(
     // more). A Content-Length that does not parse is a malformed
     // request, not an empty body — treating it as 0 would desynchronize
     // the kept-alive stream into the next request.
-    let content_length = match headers.iter().find(|(k, _)| k == "content-length") {
-        None => 0,
-        Some((_, v)) => v
-            .parse::<usize>()
-            .map_err(|_| (400, format!("invalid Content-Length: {:?}", v)))?,
-    };
+    // Every Content-Length said (twice, or as a list `5, 5`) must agree:
+    // differing values are refused (RFC 9112 §6.3), never one picked — a
+    // proxy in front picking the other is how a request is smuggled
+    // (OL-373).
+    let mut content_length: Option<usize> = None;
+    for (_, v) in headers.iter().filter(|(k, _)| k == "content-length") {
+        for one in v.split(',') {
+            let n = one
+                .trim()
+                .parse::<usize>()
+                .map_err(|_| (400, format!("invalid Content-Length: {:?}", v)))?;
+            if content_length.is_some_and(|was| was != n) {
+                return Err((400, "conflicting Content-Length values".to_string()));
+            }
+            content_length = Some(n);
+        }
+    }
+    let content_length = content_length.unwrap_or(0);
     if content_length > max_body {
         return Err((413, "request body too large".to_string()));
     }
@@ -715,6 +804,7 @@ fn read_request(
         if let Some(e) = overdue(&buf) {
             return Err(e);
         }
+        arm(stream, true);
         let n = match stream.read(&mut chunk) {
             Ok(n) => n,
             Err(e)
@@ -790,11 +880,10 @@ pub(crate) fn request_value(
 /// with `query` and `headers` as maps so `map_get` reads them.
 fn request_to_value(req: &ParsedRequest, remote_addr: &str) -> Value {
     let query_map = multi_map(req.query.iter().cloned());
-    let header_map: crate::ast::ValueMap = req
-        .headers
-        .iter()
-        .map(|(k, v)| (k.clone(), Value::String(Arc::new(v.clone()))))
-        .collect();
+    // a header sent more than once keeps every value, in order, as a
+    // list: the client's headers and `req.query` say a repeated name so
+    // (OL-378); the last value alone was kept
+    let header_map = multi_map(req.headers.iter().cloned());
 
     let mut fields = crate::ast::ValueMap::default();
     fields.insert(
@@ -911,13 +1000,7 @@ fn response_raw_bytes(
     if !has_content_type {
         out.push_str("Content-Type: application/octet-stream\r\n");
     }
-    for (k, v) in extra_headers {
-        out.push_str(&format!(
-            "{}: {}\r\n",
-            header_line_safe(k),
-            header_line_safe(v)
-        ));
-    }
+    push_handler_headers(&mut out, extra_headers);
     out.push_str(&format!("Content-Length: {}\r\n", body.len()));
     out.push_str(if keep_alive {
         "Connection: keep-alive\r\n\r\n"
@@ -927,6 +1010,27 @@ fn response_raw_bytes(
     let mut bytes = out.into_bytes();
     bytes.extend_from_slice(body);
     bytes
+}
+
+/// A handler's headers into a response head, leaving out the framing
+/// the server writes itself: a handler's `Content-Length` (one forwarded
+/// from an upstream response) was sent beside the server's, two different
+/// lengths in one response, and its `Transfer-Encoding` or `Connection`
+/// would contradict the body and the connection the server sends (OL-373).
+fn push_handler_headers(out: &mut String, headers: &[(String, String)]) {
+    for (k, v) in headers {
+        if ["content-length", "transfer-encoding", "connection"]
+            .iter()
+            .any(|f| k.trim().eq_ignore_ascii_case(f))
+        {
+            continue;
+        }
+        out.push_str(&format!(
+            "{}: {}\r\n",
+            header_line_safe(k),
+            header_line_safe(v)
+        ));
+    }
 }
 
 /// A header key or value is one line: strip CR and LF so a handler
@@ -953,13 +1057,7 @@ fn response_bytes(
     if !has_content_type {
         out.push_str("Content-Type: text/plain; charset=utf-8\r\n");
     }
-    for (k, v) in extra_headers {
-        out.push_str(&format!(
-            "{}: {}\r\n",
-            header_line_safe(k),
-            header_line_safe(v)
-        ));
-    }
+    push_handler_headers(&mut out, extra_headers);
     out.push_str(&format!("Content-Length: {}\r\n", body.len()));
     if keep_alive {
         out.push_str("Connection: keep-alive\r\n\r\n");
@@ -1010,13 +1108,7 @@ fn raw_head(
     if !has_content_type {
         out.push_str("Content-Type: application/octet-stream\r\n");
     }
-    for (k, v) in extra_headers {
-        out.push_str(&format!(
-            "{}: {}\r\n",
-            header_line_safe(k),
-            header_line_safe(v)
-        ));
-    }
+    push_handler_headers(&mut out, extra_headers);
     out.push_str(&format!("Content-Length: {}\r\n", len));
     out.push_str(if keep_alive {
         "Connection: keep-alive\r\n\r\n"
@@ -1473,6 +1565,15 @@ fn http_respond(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
                 .to_string(),
         )))));
     };
+    // A client that hung up while its answer was awaited: the write
+    // below would land in the kernel's buffer and answer Ok(()), as if
+    // delivered (OL-402). A look at the socket first tells: a close it
+    // sent reads as 0 bytes, a reset as an error.
+    if let Some(why) = peer_gone(&stream) {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "http.respond: the client left ({why})"
+        ))))));
+    }
     // The deferred connection is done after this answer.
     let rendered = render_handler_response(response, false, fs);
     match rendered.write_to(&mut stream) {
@@ -1482,6 +1583,24 @@ fn http_respond(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             e
         )))))),
     }
+}
+
+/// Whether the client on a parked connection has gone: its close (or a
+/// reset) is waiting to be read. Bytes it sent since (a pipelined
+/// request) or nothing at all mean it is still there.
+fn peer_gone(stream: &std::net::TcpStream) -> Option<String> {
+    if stream.set_nonblocking(true).is_err() {
+        return None;
+    }
+    let mut one = [0u8; 1];
+    let gone = match stream.peek(&mut one) {
+        Ok(0) => Some("it closed the connection".to_string()),
+        Ok(_) => None,
+        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => None,
+        Err(e) => Some(e.to_string()),
+    };
+    let _ = stream.set_nonblocking(false);
+    gone
 }
 
 fn serve_connection(
@@ -1660,6 +1779,19 @@ pub fn serve_blocking(
             ));
         }
     };
+    // A burst of connections past the kernel's accept queue is reset by
+    // the kernel before this server sees it (OL-401). The standard
+    // library listens with a backlog of 128; ask for more (the kernel
+    // caps it at its own limit, `somaxconn`).
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        // SAFETY: a listening socket this function owns; listen() again
+        // only changes its backlog.
+        unsafe {
+            libc::listen(listener.as_raw_fd(), 4096);
+        }
+    }
     // The OS assigns the port when 0 was requested; report the real one.
     let local = listener.local_addr().map(|a| a.port()).unwrap_or(port);
     // These lines are informational; the socket is the server's real
@@ -1729,6 +1861,7 @@ pub fn serve_blocking(
     // the queue drains, workers finish the request in hand and exit, and
     // `serve` returns Ok — the graceful stop a `kill` never allowed.
     SHUTDOWN.store(false, std::sync::atomic::Ordering::SeqCst);
+    let turn_away = spawn_turn_away(config.write_timeout_ms);
     if let Err(e) = listener.set_nonblocking(true) {
         return err_val(format!("serve: could not configure the listener: {}", e));
     }
@@ -1755,13 +1888,10 @@ pub fn serve_blocking(
         let _ = stream.set_nonblocking(false);
         match sender.try_send(stream) {
             Ok(()) => {}
-            Err(std::sync::mpsc::TrySendError::Full(mut stream)) => {
-                let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(
-                    config.write_timeout_ms,
-                )));
-                let bytes = response_bytes(503, "server overloaded", &[], false);
-                let _ = stream.write_all(&bytes);
-                let _ = stream.flush();
+            Err(std::sync::mpsc::TrySendError::Full(stream)) => {
+                // Answered by the turner-away, which reads the request
+                // before it closes (a full one past it is closed as is).
+                let _ = turn_away.try_send(stream);
             }
             Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
                 return Err(crate::interpreter::InterpreterError::RuntimeError {
@@ -1801,6 +1931,70 @@ pub fn serve_blocking(
     // "Pattern match failed" at the very moment the server stopped as
     // asked.
     Ok(Value::Ok(Box::new(Value::Unit)))
+}
+
+/// The connections a full queue turns away, answered `503` off the
+/// accept loop. The request is read to the client's close before the
+/// socket is: closed with the request unread, the kernel sent a reset
+/// that threw the 503 away, and every client past the queue saw
+/// "connection reset" instead of the documented 503 (OL-401). Each is
+/// given two seconds; past 1024 waiting, a connection is closed as is.
+fn spawn_turn_away(write_timeout_ms: u64) -> std::sync::mpsc::SyncSender<std::net::TcpStream> {
+    use std::io::{Read, Write};
+    let (sender, receiver) = std::sync::mpsc::sync_channel::<std::net::TcpStream>(1024);
+    let answer = response_bytes(503, "server overloaded", &[], false);
+    let _ = std::thread::Builder::new()
+        .name("olang-http-503".to_string())
+        .spawn(move || {
+            let mut waiting: Vec<(std::net::TcpStream, std::time::Instant)> = Vec::new();
+            let mut sink = [0u8; 4096];
+            loop {
+                let next = if waiting.is_empty() {
+                    receiver
+                        .recv()
+                        .map_err(|_| std::sync::mpsc::RecvTimeoutError::Disconnected)
+                } else {
+                    receiver.recv_timeout(std::time::Duration::from_millis(10))
+                };
+                match next {
+                    Ok(mut stream) => {
+                        let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(
+                            write_timeout_ms.min(1000),
+                        )));
+                        if stream.write_all(&answer).is_ok() {
+                            let _ = stream.flush();
+                            let _ = stream.shutdown(std::net::Shutdown::Write);
+                            if stream.set_nonblocking(true).is_ok() && waiting.len() < 1024 {
+                                waiting.push((stream, std::time::Instant::now()));
+                            }
+                        }
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                        if waiting.is_empty() {
+                            return;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                }
+                // read what each has sent; a close (or two seconds) ends it
+                waiting.retain_mut(|(stream, since)| {
+                    if since.elapsed() > std::time::Duration::from_secs(2) {
+                        return false;
+                    }
+                    loop {
+                        match stream.read(&mut sink) {
+                            Ok(0) => return false,
+                            Ok(_) => {}
+                            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return true,
+                            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                            Err(_) => return false,
+                        }
+                    }
+                });
+            }
+        });
+    sender
 }
 
 /// Set by `http.shutdown()`; every running accept loop stops on it.
@@ -2572,22 +2766,33 @@ mod tests {
 
     #[test]
     fn test_http_request_method_handling() {
-        let supported_methods = vec!["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"];
-
-        for method in supported_methods {
-            let result = http_request(vec![
-                string_val(method),
-                string_val("http://httpbin.org/anything"), // This would fail in actual request
-                string_val(""),
-            ])
-            .unwrap();
-
-            // We expect this to be an error due to network, but not due to unsupported method
-            if let Value::Err(error) = &result
-                && let Value::String(error_msg) = error.as_ref()
-            {
-                // Should not contain "Unsupported HTTP method"
-                assert!(!error_msg.contains("Unsupported HTTP method"));
+        // A local server answering 200 to whatever it is sent: each
+        // supported method is a request that succeeds, never "Unsupported
+        // HTTP method", and nothing leaves the machine (OL-616: this asked
+        // httpbin.org).
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/anything", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for mut c in listener.incoming().flatten() {
+                let mut buf = [0u8; 4096];
+                let _ = c.read(&mut buf);
+                let _ = c.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+                );
+            }
+        });
+        for method in ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"] {
+            let result = http_request(vec![string_val(method), string_val(&url), string_val("")])
+                .unwrap();
+            match &result {
+                Value::Ok(resp) => match resp.as_ref() {
+                    Value::Struct { fields, .. } => {
+                        assert_eq!(fields.get("status"), Some(&Value::Integer(200)), "{method}")
+                    }
+                    other => panic!("{method}: {other}"),
+                },
+                other => panic!("{method}: {other}"),
             }
         }
     }
@@ -2794,5 +2999,50 @@ mod chunked_tests {
             err(b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nhello\r\n0\r\n\r\n"),
             Some(400)
         );
+    }
+
+    /// Two Content-Lengths that differ are refused, never one picked
+    /// (the shape a smuggled request takes); the same length said twice
+    /// is one length (OL-373).
+    #[test]
+    fn conflicting_content_lengths_are_refused() {
+        let err = |raw| parse(raw).err().map(|e| e.0);
+        assert_eq!(
+            err(b"POST / HTTP/1.1\r\nContent-Length: 3\r\nContent-Length: 10\r\n\r\nabc"),
+            Some(400)
+        );
+        assert_eq!(
+            err(b"POST / HTTP/1.1\r\nContent-Length: 3, 10\r\n\r\nabc"),
+            Some(400)
+        );
+        let same = parse(b"POST / HTTP/1.1\r\nContent-Length: 3\r\nContent-Length: 3\r\n\r\nabc")
+            .unwrap()
+            .unwrap();
+        assert_eq!(same.body, b"abc");
+    }
+
+    /// A handler's own Content-Length, Transfer-Encoding and Connection
+    /// are left out: the server's framing is the one sent (OL-373).
+    #[test]
+    fn a_handlers_framing_headers_give_way_to_the_servers() {
+        let headers = [
+            ("Content-Length".to_string(), "999".to_string()),
+            ("transfer-encoding".to_string(), "chunked".to_string()),
+            ("Connection".to_string(), "upgrade".to_string()),
+            ("X-Kept".to_string(), "1".to_string()),
+        ];
+        for head in [
+            super::response_bytes(200, "h", &headers, true),
+            super::response_raw_bytes(200, b"h", &headers, true),
+            super::raw_head(200, 1, &headers, true),
+        ] {
+            let text = String::from_utf8(head).unwrap().to_ascii_lowercase();
+            assert_eq!(text.matches("content-length:").count(), 1, "{text}");
+            assert!(text.contains("content-length: 1\r\n"), "{text}");
+            assert!(!text.contains("transfer-encoding"), "{text}");
+            assert_eq!(text.matches("connection:").count(), 1, "{text}");
+            assert!(text.contains("connection: keep-alive"), "{text}");
+            assert!(text.contains("x-kept: 1"), "{text}");
+        }
     }
 }
