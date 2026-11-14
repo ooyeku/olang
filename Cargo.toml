@@ -88,6 +88,7 @@ native = [
     "dep:rusqlite",
     "dep:rustyline",
     "dep:reqwest",
+    "dep:tokio",
     "dep:hostname",
     "dep:whoami",
     "dep:dirs",
@@ -195,10 +196,13 @@ thiserror = "2.0"
 miette = { version = "7.6", features = ["fancy"] }
 
 # HTTP libraries for stdlib. reqwest (hyper 1 under the hood) is the whole
-# client stack — it brings its own async runtime for the blocking API, so
-# no direct tokio/hyper dependency is needed. `http.serve` is hand-rolled
+# client stack, with the async runtime it brings. `http.serve` is hand-rolled
 # TCP in src/stdlib/http.rs and uses none of this.
 reqwest = { version = "0.13", features = ["blocking", "json"], optional = true }  # HTTP client
+# The runtime reqwest already brings, named so a request can be driven on
+# the calling thread and dropped when a cancel lands (OL-534): no crate
+# beyond reqwest's own.
+tokio = { version = "1", default-features = false, features = ["rt", "time", "net"], optional = true }
 url = "2.5"  # URL parsing
 urlencoding = "2.1"  # URL encoding/decoding
 

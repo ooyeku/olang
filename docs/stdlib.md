@@ -1784,7 +1784,8 @@ choosing. `runtime.call_cancellable` stops code that does not check: the
 interpreter at its next statement, compiled code at its next loop
 iteration or call, and the long builtins between their steps (the file
 walks `fs.walk`, `fs.scan` and `fs.search`, `os.exec`, which kills the
-child, and http reads). It is the same stop `runtime.call_budget` makes
+child, and an http request while it connects, waits for its answer
+or reads the body). It is the same stop `runtime.call_budget` makes
 when time runs out, and it stops only the threads running a cancellable
 call on that token.
 

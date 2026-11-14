@@ -311,3 +311,44 @@ fn a_shared_reference_refuses_a_cell() {
         assert!(e.contains("cannot be shared between threads"), "{src}: {e}");
     }
 }
+
+/// A cancel lands while `http.get` waits (OL-534): on a server that
+/// takes the connection and never answers, and on one that sends its
+/// headers and a few bytes of the body, then stalls. Both are local
+/// listeners; each call was held until its own timeout.
+#[test]
+fn a_cancel_stops_an_http_request_that_waits() {
+    use std::io::Write;
+    let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let stalls = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let silent_port = silent.local_addr().unwrap().port();
+    let stalls_port = stalls.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        let mut held = Vec::new();
+        for c in silent.incoming().flatten() {
+            held.push(c);
+        }
+    });
+    std::thread::spawn(move || {
+        let mut held = Vec::new();
+        for mut c in stalls.incoming().flatten() {
+            let _ = c.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\nabc");
+            let _ = c.flush();
+            held.push(c);
+        }
+    });
+    for port in [silent_port, stalls_port] {
+        let got = shows(&format!(
+            "let t = cancel.token()\n\
+             let out = chan.new()\n\
+             let _h = spawn (() => {{ let c = runtime.call_cancellable((u) => http.get(u, #{{ \"timeout_ms\": 20000 }}), [\"http://127.0.0.1:{port}/\"], t)\n chan.send(out, c) }})()\n\
+             time.sleep(300)\n\
+             let t0 = time.monotonic()\n\
+             cancel.set(t)\n\
+             let c = unwrap(chan.recv(out))\n\
+             let took = time.monotonic() - t0\n\
+             [c.cancelled, took < 1000]"
+        ));
+        assert_eq!(got, "[true, true]", "port {port}");
+    }
+}

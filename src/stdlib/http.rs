@@ -264,19 +264,50 @@ pub(crate) fn parse_opts(
     Ok(opts)
 }
 
+/// A wait inside a request that a stop can cut short: `fut` polled on
+/// this thread, and the thread's stop question asked every 10 ms while
+/// it waits. `None` when a stop landed first; the future is dropped
+/// then, which closes its connection.
+async fn unless_stopped<F: std::future::Future>(fut: F) -> Option<F::Output> {
+    let mut fut = std::pin::pin!(fut);
+    if !crate::interrupt::armed() {
+        return Some(fut.await);
+    }
+    let mut tick = tokio::time::interval(std::time::Duration::from_millis(10));
+    std::future::poll_fn(|cx| {
+        if let std::task::Poll::Ready(v) = fut.as_mut().poll(cx) {
+            return std::task::Poll::Ready(Some(v));
+        }
+        while tick.poll_tick(cx).is_ready() {
+            if crate::interrupt::should_stop() {
+                return std::task::Poll::Ready(None);
+            }
+        }
+        std::task::Poll::Pending
+    })
+    .await
+}
+
 /// One request core for every client verb. Network failure is a value
 /// (`Err(message)`); a misused call raises through the dispatcher.
+///
+/// The request is driven on the calling thread, and every wait in it —
+/// connecting, the headers, each piece of the body — gives way to a stop
+/// (a cancellable call's token, a budget, the REPL's interrupt): a slow
+/// server held a cancelled call until its timeout, or forever without
+/// one (OL-534).
 fn perform(
     method: &str,
     url: &str,
     body: Option<&str>,
     opts: RequestOpts,
 ) -> Result<Value, Box<dyn std::error::Error>> {
-    let mut client = reqwest::blocking::Client::builder();
-    if let Some(ms) = opts.timeout_ms {
-        client = client.timeout(std::time::Duration::from_millis(ms));
-    }
-    let client = client
+    // 30 s unless told: the blocking client's default, which the async
+    // one does not have (a request with no `timeout_ms` would wait forever).
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(
+            opts.timeout_ms.unwrap_or(30_000),
+        ))
         .build()
         .map_err(|e| format!("{method}: could not build HTTP client: {e}"))?;
 
@@ -313,80 +344,88 @@ fn perform(
     if crate::interrupt::should_stop() {
         return Err(crate::interrupt::stop_message().into());
     }
-    match builder.send() {
-        Ok(response) => {
-            let status = response.status().as_u16() as i64;
-            // Response headers, lowercased for predictable lookup; a
-            // repeated header (`set-cookie`) keeps every value, as a list.
-            let headers = multi_map(response.headers().iter().filter_map(|(name, value)| {
-                value
-                    .to_str()
-                    .ok()
-                    .map(|v| (name.as_str().to_lowercase(), v.to_string()))
-            }));
-            // Where a call can be stopped (a cancellable call, a budget,
-            // the REPL's interrupt), the body is read a chunk at a time,
-            // and a stop between chunks raises as the evaluators do.
-            let body: Result<Value, String> = if crate::interrupt::armed() {
-                use std::io::Read;
-                let mut response = response;
-                let mut all = Vec::new();
-                let mut chunk = vec![0u8; 64 * 1024];
-                loop {
-                    if crate::interrupt::should_stop() {
-                        return Err(crate::interrupt::stop_message().into());
-                    }
-                    match response.read(&mut chunk) {
-                        Ok(0) => break Ok(()),
-                        Ok(n) => all.extend_from_slice(&chunk[..n]),
-                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                        Err(e) => break Err(e.to_string()),
-                    }
-                }
-                .map(|()| {
-                    if opts.bytes {
-                        crate::stdlib::bytes::to_value(all)
-                    } else {
-                        Value::String(Arc::new(String::from_utf8_lossy(&all).into_owned()))
-                    }
-                })
-            } else if opts.bytes {
-                response
-                    .bytes()
-                    .map(|b| crate::stdlib::bytes::to_value(b.to_vec()))
-                    .map_err(|e| e.to_string())
-            } else {
-                response
-                    .text()
-                    .map(|t| Value::String(Arc::new(t)))
-                    .map_err(|e| e.to_string())
-            };
-            match body {
-                Ok(response_body) => {
-                    let mut response_map = crate::ast::ValueMap::default();
-                    response_map.insert("status".to_string(), Value::Integer(status));
-                    response_map.insert("body".to_string(), response_body);
-                    response_map.insert("headers".to_string(), Value::Map(Arc::new(headers)));
-                    response_map.insert(
-                        "success".to_string(),
-                        Value::Boolean((200..300).contains(&status)),
-                    );
-                    Ok(Value::Ok(Box::new(Value::Struct {
-                        type_name: "HttpResponse".into(),
-                        fields: std::sync::Arc::new(response_map).into(),
-                    })))
-                }
-                Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-                    "Failed to read response body: {}",
-                    e
-                )))))),
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("{method}: could not start the HTTP client: {e}"))?;
+    let stopped = || -> Result<Value, Box<dyn std::error::Error>> {
+        Err(crate::interrupt::stop_message().into())
+    };
+    runtime.block_on(async move {
+        let response = match unless_stopped(builder.send()).await {
+            None => return stopped(),
+            Some(Ok(response)) => response,
+            Some(Err(e)) => {
+                return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                    "{} request failed: {}",
+                    upper, e
+                ))))));
             }
+        };
+        let status = response.status().as_u16() as i64;
+        // Response headers, lowercased for predictable lookup; a
+        // repeated header (`set-cookie`) keeps every value, as a list.
+        let headers = multi_map(response.headers().iter().filter_map(|(name, value)| {
+            value
+                .to_str()
+                .ok()
+                .map(|v| (name.as_str().to_lowercase(), v.to_string()))
+        }));
+        // Where a call can be stopped (a cancellable call, a budget, the
+        // REPL's interrupt), the body is read a piece at a time, a stop
+        // looked at while each waits.
+        let body: Result<Value, String> = if crate::interrupt::armed() {
+            let mut response = response;
+            let mut all = Vec::new();
+            let read: Result<(), String> = loop {
+                match unless_stopped(response.chunk()).await {
+                    None => return stopped(),
+                    Some(Ok(Some(piece))) => all.extend_from_slice(&piece),
+                    Some(Ok(None)) => break Ok(()),
+                    Some(Err(e)) => break Err(e.to_string()),
+                }
+            };
+            read.map(|()| {
+                if opts.bytes {
+                    crate::stdlib::bytes::to_value(all)
+                } else {
+                    Value::String(Arc::new(String::from_utf8_lossy(&all).into_owned()))
+                }
+            })
+        } else if opts.bytes {
+            response
+                .bytes()
+                .await
+                .map(|b| crate::stdlib::bytes::to_value(b.to_vec()))
+                .map_err(|e| e.to_string())
+        } else {
+            response
+                .text()
+                .await
+                .map(|t| Value::String(Arc::new(t)))
+                .map_err(|e| e.to_string())
+        };
+        match body {
+            Ok(response_body) => {
+                let mut response_map = crate::ast::ValueMap::default();
+                response_map.insert("status".to_string(), Value::Integer(status));
+                response_map.insert("body".to_string(), response_body);
+                response_map.insert("headers".to_string(), Value::Map(Arc::new(headers)));
+                response_map.insert(
+                    "success".to_string(),
+                    Value::Boolean((200..300).contains(&status)),
+                );
+                Ok(Value::Ok(Box::new(Value::Struct {
+                    type_name: "HttpResponse".into(),
+                    fields: std::sync::Arc::new(response_map).into(),
+                })))
+            }
+            Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                "Failed to read response body: {}",
+                e
+            )))))),
         }
-        Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "{} request failed: {}",
-            upper, e
-        )))))),
-    }
+    })
 }
 
 fn str_arg<'a>(v: &'a Value, what: &str) -> Result<&'a str, Box<dyn std::error::Error>> {
