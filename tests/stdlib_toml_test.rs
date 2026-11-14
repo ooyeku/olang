@@ -68,3 +68,28 @@ fn parses_a_real_package_manifest() {
     );
     assert_eq!(v, Value::String("demo".to_string().into()));
 }
+
+#[test]
+fn inf_and_nan_are_an_err_naming_the_key() {
+    // OL-340: an olang Float is always finite, so TOML's inf/nan used to
+    // come back as `()`, and `cfg.timeout ?? 30` quietly read it as absent.
+    for (text, key) in [
+        ("f = inf", "`f`"),
+        ("f = -inf", "`f`"),
+        ("f = nan", "`f`"),
+        ("[server]\\ntimeout = +inf", "`server.timeout`"),
+        ("xs = [1.0, nan]", "`xs[1]`"),
+    ] {
+        let v = eval(&format!(
+            "match toml.parse(\"{text}\") {{ Ok(d) => \"ok: \" + show(d), Err(e) => e }}"
+        ));
+        let Value::String(ref message) = v else {
+            panic!("{v:?}")
+        };
+        assert!(
+            message.contains("does not fit Float") && message.contains(key),
+            "{text}: {message}"
+        );
+    }
+    assert_eq!(eval("toml.is_valid(\"f = inf\")"), Value::Boolean(true));
+}

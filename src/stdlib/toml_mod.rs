@@ -73,7 +73,7 @@ fn one_string_arg<'a>(
 fn toml_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let text = one_string_arg("parse", &args)?;
     match text.parse::<toml::Value>() {
-        Ok(tv) => match super::json::json_to_olang_value(toml_to_json(tv)) {
+        Ok(tv) => match toml_to_json(tv).and_then(super::json::json_to_olang_value) {
             Ok(v) => Ok(Value::Ok(Box::new(v))),
             Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(e))))),
         },
@@ -89,25 +89,59 @@ fn toml_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// private Number wrapper as a visible one-key object; the explicit walk
 /// keeps every number a plain Number and renders datetimes as their
 /// string form (the documented shape) without the wrapper dance.
-pub(crate) fn toml_to_json(v: toml::Value) -> serde_json::Value {
-    match v {
+///
+/// TOML's `inf` and `nan` are floats olang has no value for (a Float is
+/// always finite): they are an error naming the key, never a silent `()`
+/// that `cfg.timeout ?? 30` would read as absent.
+pub(crate) fn toml_to_json(v: toml::Value) -> Result<serde_json::Value, String> {
+    to_json_at(v, &mut String::new())
+}
+
+fn to_json_at(v: toml::Value, path: &mut String) -> Result<serde_json::Value, String> {
+    Ok(match v {
         toml::Value::String(s) => serde_json::Value::String(s),
         toml::Value::Integer(i) => serde_json::Value::Number(serde_json::Number::from(i)),
-        toml::Value::Float(f) => serde_json::Number::from_f64(f)
-            .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
+        toml::Value::Float(f) => match serde_json::Number::from_f64(f) {
+            Some(n) => serde_json::Value::Number(n),
+            None => {
+                return Err(format!(
+                    "TOML float {} at `{}` does not fit Float: olang Floats are finite",
+                    f,
+                    if path.is_empty() {
+                        "(top)"
+                    } else {
+                        path.as_str()
+                    }
+                ));
+            }
+        },
         toml::Value::Boolean(b) => serde_json::Value::Bool(b),
         toml::Value::Datetime(dt) => serde_json::Value::String(dt.to_string()),
         toml::Value::Array(items) => {
-            serde_json::Value::Array(items.into_iter().map(toml_to_json).collect())
+            let mut out = Vec::with_capacity(items.len());
+            for (i, item) in items.into_iter().enumerate() {
+                let len = path.len();
+                path.push_str(&format!("[{}]", i));
+                out.push(to_json_at(item, path)?);
+                path.truncate(len);
+            }
+            serde_json::Value::Array(out)
         }
-        toml::Value::Table(table) => serde_json::Value::Object(
-            table
-                .into_iter()
-                .map(|(k, v)| (k, toml_to_json(v)))
-                .collect(),
-        ),
-    }
+        toml::Value::Table(table) => {
+            let mut out = serde_json::Map::new();
+            for (k, v) in table {
+                let len = path.len();
+                if !path.is_empty() {
+                    path.push('.');
+                }
+                path.push_str(&k);
+                let jv = to_json_at(v, path)?;
+                path.truncate(len);
+                out.insert(k, jv);
+            }
+            serde_json::Value::Object(out)
+        }
+    })
 }
 
 /// serde_json::Value → toml::Value, the stringify direction of the
@@ -142,7 +176,9 @@ fn json_to_toml(v: serde_json::Value) -> Result<toml::Value, String> {
 }
 
 /// `toml.stringify(value)` — a Map (or struct-like) as pretty TOML.
-/// TOML documents are tables at the top level; anything else is an Err.
+/// TOML documents are tables at the top level: anything else is misuse
+/// and raises. A table with a value TOML cannot hold (a `()` field) is an
+/// Err.
 fn toml_stringify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
         return Err(format!("stringify expects 1 argument, got {}", args.len()).into());

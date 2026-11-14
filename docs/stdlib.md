@@ -956,9 +956,12 @@ TOML is the config format olang's own `olang.toml` files use. The
 <a id="toml-parse"></a><a id="toml-stringify"></a><a id="toml-is_valid"></a>module has the same core functions as `json`: `parse`, `stringify`, `is_valid`. Both modules bridge
 values through the same conversions, so a table parses to the same Map
 shapes JSON objects do — tables become Maps, arrays become Lists,
-datetimes become their string rendering. A TOML document is a table at
-the top level, so `stringify` accepts a Map (or struct-like value) and
-returns `Err` for anything else.
+datetimes become their string rendering. TOML's `inf` and `nan` have no
+olang value (a Float is always finite), so `parse` answers `Err` naming
+the key rather than reading them as `()`. A TOML document is a table at
+the top level, so `stringify` takes a Map (or struct-like value) and
+raises for anything else, as misuse; a table holding a value TOML has
+no form for (a `()` field) is an `Err`.
 
 ```olang
 let text = "name = \"cfg\"\n[server]\nport = 7317"
