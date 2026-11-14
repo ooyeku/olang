@@ -1754,10 +1754,45 @@ impl Parser {
     /// rule per level built, at a fraction of the parser's queue (see
     /// the ladder's note in grammar.pest).
     fn build_binary_expr(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        let children: Vec<Pair<Rule>> = pairs.collect();
+        let links = children
+            .iter()
+            .filter(|p| !matches!(p.as_rule(), Rule::unary_expr | Rule::cmp_rhs))
+            .count();
         let mut operands: Vec<Expr> = Vec::new();
         let mut operators: Vec<(Rule, String)> = Vec::new();
-        self.collect_binary(pairs.collect(), &mut operands, &mut operators)?;
+        let outer = self.chain_deeper(links, children.first())?;
+        let collected = self.collect_binary(children, &mut operands, &mut operators);
+        self.expr_depth.set(outer);
+        collected?;
         Self::finish_binary(operands, operators)
+    }
+
+    /// Room for a flat chain of `links` operators (`1 + 1 + …`, or
+    /// `- - … 1`) below the expression being built: its tree is as deep
+    /// as the chain is long, and every later pass (the checker, the
+    /// compiler, evaluation, even dropping the tree) recurses down it. A
+    /// generated 40,000-term sum overflowed the stack and aborted the
+    /// process (OL-357). Counts the chain into the expression depth
+    /// [`MAX_EXPR_DEPTH`] bounds and answers the depth to restore after.
+    fn chain_deeper(&self, links: usize, at: Option<&Pair<Rule>>) -> Result<usize, ParseError> {
+        let outer = self.expr_depth.get();
+        if links == 0 {
+            return Ok(outer);
+        }
+        if outer + links > MAX_EXPR_DEPTH {
+            let message = format!(
+                "an expression nested more than {} deep (a chain of {} operators): \
+                 bind parts of it to names",
+                MAX_EXPR_DEPTH, links
+            );
+            return Err(match at {
+                Some(pair) => ParseError::invalid_syntax_at(message, PositionInfo::from_pair(pair)),
+                None => ParseError::InvalidSyntax { message },
+            });
+        }
+        self.expr_depth.set(outer + links);
+        Ok(outer)
     }
 
     fn finish_binary(
@@ -2496,6 +2531,17 @@ impl Parser {
             }
         }
 
+        let outer = self.chain_deeper(operators.len(), call_expr_pair.as_ref())?;
+        let built = self.finish_unary(operators, call_expr_pair);
+        self.expr_depth.set(outer);
+        built
+    }
+
+    fn finish_unary(
+        &self,
+        operators: Vec<UnaryOp>,
+        call_expr_pair: Option<Pair<Rule>>,
+    ) -> Result<Expr, ParseError> {
         // `-9223372036854775808`: the smallest Int is written as the
         // negation of a literal one past the largest, which alone does
         // not fit; the pair is read as the one literal it spells.
