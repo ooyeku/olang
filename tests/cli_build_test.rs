@@ -149,6 +149,48 @@ fn build_rejects_a_program_that_does_not_parse() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// OL-369: a plain build carries one file. A program that `use`s its own
+/// modules ran only from the folder it was built in ("Cannot find module"
+/// anywhere else), so the build refuses it and names `--app`; `--app`
+/// builds the same program, and it runs from anywhere.
+#[test]
+fn a_plain_build_of_a_program_with_local_modules_is_refused() {
+    let dir = tmp("local_use");
+    let project = dir.join("p1");
+    std::fs::create_dir_all(project.join("lib")).unwrap();
+    std::fs::write(
+        project.join("lib/calc.ol"),
+        "share fn add(a, b) = a + b\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project.join("app.ol"),
+        "use lib.calc { add }\nprintln(to_string(add(2, 3)))\n",
+    )
+    .unwrap();
+    let out = dir.join("app.bin");
+    let plain = Command::new(olang_bin())
+        .current_dir(&project)
+        .args(["build", "app.ol", "-o", out.to_str().unwrap()])
+        .output()
+        .expect("run olang build");
+    let stderr = String::from_utf8_lossy(&plain.stderr);
+    assert!(!plain.status.success(), "a plain build must refuse: {stderr}");
+    assert!(stderr.contains("`lib.calc`") && stderr.contains("--app"), "stderr: {stderr}");
+    assert!(!out.exists(), "nothing is written");
+
+    let app = Command::new(olang_bin())
+        .current_dir(&project)
+        .args(["build", "--app", "app.ol", "-o", out.to_str().unwrap()])
+        .output()
+        .expect("run olang build --app");
+    assert!(app.status.success(), "{}", String::from_utf8_lossy(&app.stderr));
+    let ran = Command::new(&out).current_dir(&dir).output().expect("run app");
+    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "5");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// C2: a transparency record must be validated before anything trusts a
 /// field of it. `format` selects which bytes the digest covers, and the
 /// check was `>= 3` — so a bundle claiming format 99 took the format-3

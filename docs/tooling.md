@@ -1666,7 +1666,8 @@ embedded packages (`cli`, `term`, `ui`, `viz`, `dash`, `colx`,
 `mathx`, and `collections` with `heap`, `deque`, `table`, `dsu`,
 `bitset`, `alg`) travel with the executable. A plain `build` bundles a single
 source file; a program that `use`s local `.ol` files or depends on
-packages is built as an application:
+packages is built as an application (a plain `build` of one refuses and
+names the modules, since the binary would run only beside its sources):
 
 ```bash
 olang build --app main.ol -o myapp   # its modules, its dependencies', and their assets

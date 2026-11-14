@@ -3146,6 +3146,20 @@ pub fn check_program_with_context(context: &[&Program], program: &Program) -> Ve
                 }
             }
         }
+        // A name a context module re-exports under an alias (`share use
+        // api { ws_send as send }`) is that function under a new name, and
+        // its signature is not collected under it: a like-named function
+        // of another context module (a package root imported for something
+        // else) is not what the file means by it (OL-550).
+        for stmt in &p.statements {
+            if let Statement::ShareDecl(crate::ast::ShareDecl::Use(u)) = stmt.unwrapped() {
+                for item in &u.items {
+                    if let crate::ast::UseItem::Aliased { alias, .. } = item {
+                        ambiguous.insert(alias.clone());
+                    }
+                }
+            }
+        }
         checker.collect(p);
     }
     checker.sigs.retain(|name, _| !ambiguous.contains(name));
@@ -3285,6 +3299,10 @@ struct Checker {
     /// Every trait method name the file declares or implements: a read of
     /// one off a struct may be the method, not a field.
     methods: std::collections::HashSet<String>,
+    /// How many `attempt(...)` calls the walk is inside. A raise there is
+    /// the program's own, caught on purpose (`attempt(() => map_get(5,
+    /// "k"))` is an `Err`), so a "would fail at runtime" report is false.
+    caught: usize,
     out: Vec<CheckDiagnostic>,
 }
 
@@ -4117,6 +4135,9 @@ impl Checker {
     }
 
     fn diag(&mut self, span: (u32, u32), runtime: bool, message: String) {
+        if runtime && self.caught > 0 {
+            return;
+        }
         self.out.push(CheckDiagnostic {
             line: span.0,
             column: span.1,
@@ -5084,6 +5105,22 @@ impl Checker {
     }
 
     fn check_expr(&mut self, expr: &Expr, span: (u32, u32)) {
+        // `attempt(f)` catches whatever `f` raises: its argument is
+        // walked as usual, with the runtime reports inside it held back.
+        if let Expr::Call { callee, .. } = expr
+            && matches!(callee.as_ref(), Expr::Identifier(name) if name == "attempt")
+            && !self.user_bound.contains("attempt")
+            && !self.scopes.iter().any(|scope| scope.contains_key("attempt"))
+        {
+            self.caught += 1;
+            self.check_expr_node(expr, span);
+            self.caught -= 1;
+        } else {
+            self.check_expr_node(expr, span);
+        }
+    }
+
+    fn check_expr_node(&mut self, expr: &Expr, span: (u32, u32)) {
         if let Expr::Call { callee, arguments } = expr
             && let Expr::Identifier(name) = callee.as_ref()
         {
@@ -5836,6 +5873,22 @@ mod tests {
     }
 
     #[test]
+    fn a_raise_caught_by_attempt_is_not_a_runtime_failure() {
+        // OL-365: the docs' own `attempt` sample; the raise is the point.
+        let d = check(
+            "println(show(attempt(() => map_get(5, \"k\"))))\nprintln(show(attempt(() => 41 + 1)))\n",
+        );
+        assert!(d.is_empty(), "{d:?}");
+        // Outside `attempt`, the same call is still reported.
+        let d = check("println(show(map_get(5, \"k\")))\n");
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert!(d[0].runtime && d[0].message.contains("needs a map or a record"));
+        // A local named `attempt` catches nothing.
+        let d = check("fn g(attempt) = attempt(() => map_get(5, \"k\"))\n");
+        assert_eq!(d.len(), 1, "{d:?}");
+    }
+
+    #[test]
     fn a_field_a_declared_struct_never_has_is_reported() {
         let d = check(
             "type Point = struct { x: Int, y: Int }\ntype Task = { title: String }\nfn a(p: Point) = p.z\nfn b(p: Point) = p.x + p.y\nfn c() = Point { x: 1, y: 2 }.k\nfn e(t: Task) = t.titel\nfn f(q) = q.anything\n",
@@ -6386,6 +6439,28 @@ mod tests {
             d[0].message
                 .contains("parameter 'w' of area expects Int, got String")
         );
+    }
+
+    #[test]
+    fn a_name_re_exported_under_an_alias_is_not_another_module_s() {
+        // OL-550: `use index { send }`, where index re-exports `ws_send as
+        // send`, beside `use loom { run }`, whose root has a `send(msg)`
+        // of its own. The file's `send` is index's; Loom's signature was
+        // checked against it ("Arity mismatch: expected 1, got 3").
+        let loom = Parser::new()
+            .parse("share fn send(msg) = msg\nshare fn run(p) = p\n")
+            .expect("parses");
+        let index = Parser::new()
+            .parse("share use api.core { ws_send as send }\n")
+            .expect("parses");
+        let main = Parser::new()
+            .parse("use index { send }\nuse loom { run }\nfn f(s) = send(s, \"a\", { tag: \"x\" })\n")
+            .expect("parses");
+        let d = check_program_with_context(&[&index, &loom], &main);
+        assert!(d.is_empty(), "{d:?}");
+        // Without the alias, the one `send` is still checked.
+        let d = check_program_with_context(&[&loom], &main);
+        assert!(d.iter().any(|x| x.message.contains("Arity mismatch")), "{d:?}");
     }
 
     #[test]

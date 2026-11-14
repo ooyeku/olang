@@ -363,6 +363,10 @@ pub fn do_install(frozen: bool, update: bool, verbose: bool) -> anyhow::Result<(
             Some(r) => format!("at {}", &r[..r.len().min(12)]),
             None => "following its directory".to_string(),
         };
+        // An edited path or shelf library: its new contents are pinned.
+        for name in olang::pkg::edited_libraries(&root) {
+            println!("library '{}' changed since the lock was written — re-pinning", name);
+        }
         for (name, was, now) in olang::pkg::moved_shelf_pins(&root) {
             println!(
                 "shelf library '{}' moved: the lock had it {}, the shelf has it {} — re-pinning",
