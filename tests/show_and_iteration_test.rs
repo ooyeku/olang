@@ -59,12 +59,22 @@ typeof(d2) + ":" + show(map_get(d2, "b")) + ":" + show(map_has_key(d, "b"))
 
 #[test]
 fn map_set_updates_structs_preserving_type_name() {
+    // a declared field keeps the struct's type; an undeclared one is an
+    // error, as in a literal (OL-356)
     let src = r#"
-type P = struct { x: Int }
-let p2 = map_set(P { x: 1 }, "y", 2)
+type P = struct { x: Int, y: Int }
+let p2 = map_set(P { x: 1, y: 0 }, "y", 2)
 typeof(p2) + ":" + show(map_get(p2, "y"))
 "#;
     assert_eq!(s(eval(src)), "P:2");
+    let src = r#"
+type P = struct { x: Int }
+match attempt(() => map_set(P { x: 1 }, "y", 2)) { Ok(_) => "ok", Err(e) => e }
+"#;
+    assert_eq!(
+        s(eval(src)),
+        "map_set: struct 'P' has no field 'y' (declared fields: x)"
+    );
 }
 
 #[test]

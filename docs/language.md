@@ -1912,6 +1912,18 @@ Box { value: "anything" }         // fine: a generic field stays dynamic
 { x: "anything", y: 2 }           // fine: anonymous objects are free-form
 ```
 
+A struct written through `map_set`, `map_merge`, `map_set_in` or
+`map_update` is checked the same way: setting a declared field keeps the
+struct's type, and an undeclared field or a value of the wrong type is an
+error, as in a literal.
+
+```olang no-run
+let p = Point { x: 1, y: 2 }
+map_set(p, "y", 5)                // Point { x: 1, y: 5 }
+map_merge(p, #{ "z": 3 })         // error: map_merge: struct 'Point' has no field 'z'
+map_set(p, "x", 1.5)              // error: map_set: field 'x' of Point expects Int, got Float
+```
+
 ### Enums (algebraic data types)
 
 Variants may be bare (unit), carry positional payloads, or both. Declaring
