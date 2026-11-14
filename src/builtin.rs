@@ -2881,6 +2881,7 @@ impl BuiltinFunctions {
             Numeric,
             Str,
             Tuple,
+            List,
             Other,
         }
         fn class_of(v: &Value) -> SortClass {
@@ -2888,6 +2889,7 @@ impl BuiltinFunctions {
                 Value::Integer(_) | Value::Float(_) => SortClass::Numeric,
                 Value::String(_) => SortClass::Str,
                 Value::Tuple(_) => SortClass::Tuple,
+                Value::List(_) => SortClass::List,
                 _ => SortClass::Other,
             }
         }
@@ -2901,7 +2903,7 @@ impl BuiltinFunctions {
             for item in list.iter() {
                 if class_of(item) != cls {
                     return Err(InterpreterError::TypeError {
-                        message: "sort: cannot compare values of different types (a list of numbers, of strings, or of tuples)".to_string(),
+                        message: "sort: cannot compare values of different types (a list of numbers, of strings, of tuples or of lists)".to_string(),
                     });
                 }
             }
@@ -2909,21 +2911,19 @@ impl BuiltinFunctions {
 
         let mut result: Vec<Value> = list.to_vec();
 
-        // Tuples order lexicographically, as `<` orders them; a pair `<`
-        // cannot order is its error.
-        if list.first().is_some_and(|v| matches!(v, Value::Tuple(_))) {
+        // Tuples and lists order lexicographically, as `<` orders them
+        // (OL-487); a pair `<` cannot order is its error.
+        if list
+            .first()
+            .is_some_and(|v| matches!(v, Value::Tuple(_) | Value::List(_)))
+        {
             let mut failure = None;
-            result.sort_by(|a, b| match (a, b) {
-                (Value::Tuple(x), Value::Tuple(y)) => {
-                    match crate::interpreter::ops::tuple_ordering(x, y) {
-                        Ok(o) => o,
-                        Err(e) => {
-                            failure.get_or_insert(e);
-                            std::cmp::Ordering::Equal
-                        }
-                    }
+            result.sort_by(|a, b| match crate::interpreter::ops::value_ordering(a, b) {
+                Ok(o) => o,
+                Err(e) => {
+                    failure.get_or_insert(e);
+                    std::cmp::Ordering::Equal
                 }
-                _ => std::cmp::Ordering::Equal,
             });
             if let Some(InterpreterError::TypeError { message }) = failure {
                 return Err(InterpreterError::TypeError {
@@ -2944,8 +2944,16 @@ impl BuiltinFunctions {
                 (Value::Integer(x), Value::Integer(y)) => x.cmp(y),
                 (Value::Float(x), Value::Float(y)) => x.total_cmp(y),
                 (Value::String(x), Value::String(y)) => x.cmp(y),
-                (Value::Integer(x), Value::Float(y)) => (*x as f64).total_cmp(y),
-                (Value::Float(x), Value::Integer(y)) => x.total_cmp(&(*y as f64)),
+                // exactly, as `<` orders them (OL-359)
+                (Value::Integer(x), Value::Float(y)) => {
+                    crate::interpreter::ops::int_float_cmp(*x, *y)
+                        .unwrap_or_else(|| (*x as f64).total_cmp(y))
+                }
+                (Value::Float(x), Value::Integer(y)) => {
+                    crate::interpreter::ops::int_float_cmp(*y, *x)
+                        .map(std::cmp::Ordering::reverse)
+                        .unwrap_or_else(|| x.total_cmp(&(*y as f64)))
+                }
                 _ => std::cmp::Ordering::Equal,
             }
         }
@@ -3188,7 +3196,7 @@ impl BuiltinFunctions {
                 })?;
 
                 if result.2 {
-                    Ok(Value::Float(result.1))
+                    sum_float(result.1)
                 } else {
                     Ok(Value::Integer(result.0))
                 }
@@ -3226,7 +3234,7 @@ impl BuiltinFunctions {
                 }
             }
             if is_float {
-                Ok(Value::Float(float_acc))
+                sum_float(float_acc)
             } else {
                 Ok(Value::Integer(int_acc))
             }
@@ -3253,7 +3261,35 @@ impl BuiltinFunctions {
                 message: "average: cannot take average of an empty list".to_string(),
             });
         }
-        let sum_val = self.sum(vec![Value::List(list_rc.clone())])?;
+        // The sum's errors are the average's; a sum of Ints past i64 still
+        // has a mean (it is taken in i128 then).
+        let sum_val = match self.sum(vec![Value::List(list_rc.clone())]) {
+            Ok(v) => v,
+            Err(InterpreterError::RuntimeError { message })
+                if message == "sum: integer overflow"
+                    && list_rc.iter().all(|v| matches!(v, Value::Integer(_))) =>
+            {
+                let total: i128 = list_rc
+                    .iter()
+                    .map(|v| match v {
+                        Value::Integer(n) => *n as i128,
+                        _ => 0,
+                    })
+                    .sum();
+                return Ok(Value::Float(total as f64 / list_rc.len() as f64));
+            }
+            Err(InterpreterError::RuntimeError { message }) => {
+                return Err(InterpreterError::RuntimeError {
+                    message: message.replacen("sum:", "average:", 1),
+                });
+            }
+            Err(InterpreterError::TypeError { message }) => {
+                return Err(InterpreterError::TypeError {
+                    message: message.replacen("sum:", "average:", 1),
+                });
+            }
+            Err(e) => return Err(e),
+        };
         match sum_val {
             Value::Integer(s) => Ok(Value::Float(s as f64 / list_rc.len() as f64)),
             Value::Float(f) => Ok(Value::Float(f / list_rc.len() as f64)),
@@ -3295,16 +3331,7 @@ impl BuiltinFunctions {
                 message: "min: cannot take min of an empty list".to_string(),
             });
         }
-        use std::cmp::Ordering;
-        let mut min = list_rc[0].clone();
-        for item in list_rc.iter().skip(1) {
-            if let Some(ord) = item.compare_for_sort(&min)
-                && ord == Ordering::Less
-            {
-                min = item.clone();
-            }
-        }
-        Ok(min)
+        extreme("min", list_rc, std::cmp::Ordering::Less)
     }
 
     fn max_value(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
@@ -3341,16 +3368,7 @@ impl BuiltinFunctions {
                 message: "max: cannot take max of an empty list".to_string(),
             });
         }
-        use std::cmp::Ordering;
-        let mut max = list_rc[0].clone();
-        for item in list_rc.iter().skip(1) {
-            if let Some(ord) = item.compare_for_sort(&max)
-                && ord == Ordering::Greater
-            {
-                max = item.clone();
-            }
-        }
-        Ok(max)
+        extreme("max", list_rc, std::cmp::Ordering::Greater)
     }
 
     fn clamp(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
@@ -5027,5 +5045,46 @@ pub fn index_key(key: &Value) -> Option<std::borrow::Cow<'_, str>> {
         Value::Float(f) => Some(Cow::Owned(crate::ast::float_key_text(*f))),
         Value::Boolean(b) => Some(Cow::Owned(b.to_string())),
         _ => None,
+    }
+}
+
+/// The least (`keep` Less) or greatest (Greater) of `items`, the first of
+/// equal ones winning, by `<`'s order (`ops::value_ordering`: numbers, an
+/// Int and a Float exactly; strings; tuples and lists element by element),
+/// Bools among Bools too. Two values `<` cannot order raise, as `sort`
+/// does (OL-338, OL-391): `min([3, "a"])` has no answer, whatever the
+/// order of the list.
+fn extreme(
+    name: &str,
+    items: &[Value],
+    keep: std::cmp::Ordering,
+) -> Result<Value, InterpreterError> {
+    let mut best = &items[0];
+    for item in &items[1..] {
+        let ord = match (item, best) {
+            (Value::Boolean(a), Value::Boolean(b)) => a.cmp(b),
+            _ => crate::interpreter::ops::value_ordering(item, best).map_err(|e| match e {
+                InterpreterError::TypeError { message } => InterpreterError::TypeError {
+                    message: format!("{name}: {message}"),
+                },
+                other => other,
+            })?,
+        };
+        if ord == keep {
+            best = item;
+        }
+    }
+    Ok(best.clone())
+}
+
+/// A Float sum as `sum` answers it: finite, or the overflow `+` raises
+/// (OL-355). Once past f64 a sum never comes back, so the total tells.
+fn sum_float(total: f64) -> Result<Value, InterpreterError> {
+    if total.is_finite() {
+        Ok(Value::Float(total))
+    } else {
+        Err(InterpreterError::RuntimeError {
+            message: format!("sum: {}", crate::ast::float_overflow_message("addition")),
+        })
     }
 }

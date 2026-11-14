@@ -391,28 +391,26 @@ fn key_string(value: &Value) -> String {
 /// natural order. Mixed/other types fall back to string comparison so a key
 /// function never crashes the operation.
 fn compare_keys(a: &Value, b: &Value) -> std::cmp::Ordering {
+    use crate::interpreter::ops::int_float_cmp;
     use std::cmp::Ordering;
-    let num = |v: &Value| -> Option<f64> {
-        match v {
-            Value::Integer(n) => Some(*n as f64),
-            Value::Float(f) => Some(*f),
-            _ => None,
-        }
-    };
-    match (num(a), num(b)) {
-        (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(Ordering::Equal),
-        _ => match (a, b) {
-            (Value::String(x), Value::String(y)) => x.cmp(y),
-            (Value::Boolean(x), Value::Boolean(y)) => x.cmp(y),
-            // Several keys at once: in order, as `<` orders tuples.
-            (Value::Tuple(x), Value::Tuple(y)) => x
-                .iter()
-                .zip(y.iter())
-                .map(|(p, q)| compare_keys(p, q))
-                .find(|o| o.is_ne())
-                .unwrap_or_else(|| x.len().cmp(&y.len())),
-            _ => a.to_string().cmp(&b.to_string()),
-        },
+    match (a, b) {
+        (Value::Integer(x), Value::Integer(y)) => x.cmp(y),
+        (Value::Float(x), Value::Float(y)) => x.partial_cmp(y).unwrap_or(Ordering::Equal),
+        // exactly, as `<` orders them (OL-359)
+        (Value::Integer(x), Value::Float(y)) => int_float_cmp(*x, *y).unwrap_or(Ordering::Equal),
+        (Value::Float(x), Value::Integer(y)) => int_float_cmp(*y, *x)
+            .map(Ordering::reverse)
+            .unwrap_or(Ordering::Equal),
+        (Value::String(x), Value::String(y)) => x.cmp(y),
+        (Value::Boolean(x), Value::Boolean(y)) => x.cmp(y),
+        // Several keys at once: in order, as `<` orders tuples and lists.
+        (Value::Tuple(x), Value::Tuple(y)) | (Value::List(x), Value::List(y)) => x
+            .iter()
+            .zip(y.iter())
+            .map(|(p, q)| compare_keys(p, q))
+            .find(|o| o.is_ne())
+            .unwrap_or_else(|| x.len().cmp(&y.len())),
+        _ => a.to_string().cmp(&b.to_string()),
     }
 }
 
@@ -642,23 +640,63 @@ fn sum_by(args: Vec<Value>, interpreter: &mut Interpreter) -> Result<Value, Inte
         }
     }
     if any_float {
-        Ok(Value::Float(float_sum + int_sum as f64))
+        // finite, or the overflow `+` raises (OL-355)
+        let total = float_sum + int_sum as f64;
+        if !total.is_finite() {
+            return Err(InterpreterError::RuntimeError {
+                message: format!(
+                    "col.sum_by: {}",
+                    crate::ast::float_overflow_message("addition")
+                ),
+            });
+        }
+        Ok(Value::Float(total))
     } else {
         Ok(Value::Integer(int_sum))
     }
 }
 
-/// Deduplicate while preserving first-seen order.
+/// Deduplicate while preserving first-seen order, by `==` (OL-339): `1`
+/// and `1.0` are one value, `1` and `"1"` two (and `[1]` and `[1.0]` two,
+/// as `==` keeps kinds apart inside a collection). Values are bucketed by
+/// `hash` (which agrees with `==`) and told apart within a bucket by `==`
+/// itself; a value with no hash (a function) is kept by its text, as
+/// before.
 fn unique(args: Vec<Value>) -> Result<Value, InterpreterError> {
     let list = list_arg(&args, 0, "unique")?;
-    let mut seen = std::collections::HashSet::new();
-    let mut out = Vec::new();
+    let mut buckets: std::collections::HashMap<i64, Vec<usize>> = std::collections::HashMap::new();
+    let mut unhashed = std::collections::HashSet::new();
+    let mut out: Vec<Value> = Vec::new();
     for item in list.iter() {
-        if seen.insert(item.to_string()) {
-            out.push(item.clone());
+        match crate::value_hash::hash_value(item) {
+            Ok(h) => {
+                let bucket = buckets.entry(h).or_default();
+                if bucket.iter().any(|&i| same_by_eq(&out[i], item)) {
+                    continue;
+                }
+                bucket.push(out.len());
+            }
+            Err(_) => {
+                if !unhashed.insert(item.to_string()) {
+                    continue;
+                }
+            }
         }
+        out.push(item.clone());
     }
     Ok(Value::List(out.into()))
+}
+
+/// `a == b` as the operator answers it: an Int and a Float by number at
+/// the top, everything else structurally.
+fn same_by_eq(a: &Value, b: &Value) -> bool {
+    use crate::interpreter::ops::{int_float_eq, loose_eq};
+    match (a, b) {
+        (Value::Integer(i), Value::Float(f)) | (Value::Float(f), Value::Integer(i)) => {
+            int_float_eq(*i, *f)
+        }
+        _ => loose_eq(a, b),
+    }
 }
 
 /// Sliding windows of a fixed size: window([1,2,3,4], 2) -> [[1,2],[2,3],[3,4]].

@@ -278,7 +278,7 @@ println(`${same(xs, ys)} ${same(xs, [1, 2] + [3])} ${xs == [1, 2] + [3]}`)  // t
 | <a id="head"></a><a id="tail"></a>`head(xs)` / `tail(xs)` | first element / all but the first |
 | <a id="first"></a><a id="last"></a>`first(xs)` / `last(xs)` | the first / last element, or `()` when the list is empty (also of a tuple, and the first / last character of a string) |
 | <a id="take"></a><a id="skip"></a><a id="drop"></a>`take(xs, n)` / `skip(xs, n)` | first `n` / all but the first `n` (`drop` is `skip` under the name most languages pair with `take`) |
-| <a id="reverse"></a><a id="sort"></a>`reverse(xs)` / `sort(xs)` | reversed / ascending copy (numbers, strings, or tuples, which order lexicographically); the sort is stable: elements that compare equal keep their order |
+| <a id="reverse"></a><a id="sort"></a>`reverse(xs)` / `sort(xs)` | reversed / ascending copy (numbers, strings, tuples or lists, which order lexicographically, as `<` orders them); the sort is stable: elements that compare equal keep their order |
 | <a id="contains"></a>`contains(xs, v)` | membership test |
 | <a id="concat"></a>`concat(a, b)` | join two lists (or use `a + b`) |
 | <a id="cons"></a>`cons(v, xs)` | prepend an element |
@@ -314,8 +314,8 @@ println(`${col.index_of(xs, 30)} ${col.slice(xs, 1, 3)} ${drop(xs, 3)}`)
 
 | Function | Description |
 |---|---|
-| <a id="sum"></a><a id="min"></a><a id="max"></a>`sum(xs)` / `min(xs)` / `max(xs)` | numeric aggregates over a list — `min` and `max` also take two or more scalars (`max(0, n - 1)`, the clamp idiom) |
-| <a id="average"></a>`average(xs)` | mean of a numeric list |
+| <a id="sum"></a><a id="min"></a><a id="max"></a>`sum(xs)` / `min(xs)` / `max(xs)` | aggregates over a list — `min` and `max` also take two or more scalars (`max(0, n - 1)`, the clamp idiom). `sum` takes numbers and raises on overflow, an Int's or a Float's, as `+` does; `min` and `max` order as `<` does (numbers, strings, tuples, lists; Bools among Bools) and raise on two values it cannot order (`min([3, "a"])`), as `sort` does |
+| <a id="average"></a>`average(xs)` | mean of a numeric list (a Float); raises on a Float overflow, as `sum` does |
 | <a id="clamp"></a>`clamp(v, lo, hi)` | bound a number to a range |
 | <a id="abs"></a>`abs(x)` | absolute value, an Int for an Int (`math.abs`) |
 
@@ -629,7 +629,7 @@ variants. `colx` (`use colx`) implements the higher-order core of `col`
 | <a id="col-take"></a><a id="col-skip"></a><a id="col-drop"></a><a id="col-contains"></a><a id="col-filter"></a><a id="col-map"></a><a id="col-fold"></a><a id="col-reverse"></a><a id="col-sort"></a><a id="col-sum"></a><a id="col-min"></a><a id="col-max"></a><a id="col-head"></a><a id="col-tail"></a><a id="col-zip"></a><a id="col-flatten"></a>`col.map` `col.filter` `col.fold` `col.sort` `col.contains` `col.reverse` `col.flatten` `col.zip` `col.take` `col.drop` `col.skip` `col.head` `col.tail` `col.sum` `col.min` `col.max` | the global list helpers of the same names, mirrored here: each behaves exactly as its global ([Lists](#lists), [Aggregates](#aggregates), [Higher-order functions](#higher-order-functions)) |
 | <a id="col-set"></a><a id="col-swap"></a>`col.set(xs, i, v)` / `col.swap(xs, i, j)` | the list with element `i` replaced / elements `i` and `j` exchanged; `xs = col.set(xs, i, v)` on a list nothing else holds writes in place; an index outside the list, a negative one included, raises |
 | <a id="col-filled"></a>`col.filled(n, v)` | a list of `n` copies of `v`, the preallocation primitive |
-| <a id="col-unique"></a>`col.unique(xs)` | dedupe, first-seen order |
+| <a id="col-unique"></a>`col.unique(xs)` | dedupe by `==`, first-seen order (`1` and `1.0` are one value, `1` and `"1"` two) |
 | <a id="col-partition"></a>`col.partition(xs, p)` | `([matching], [rest])` |
 | <a id="col-sum_by"></a>`col.sum_by(xs, f)` | total of a projection |
 | <a id="col-count_by"></a><a id="col-frequencies"></a>`col.count_by(xs, f)` / `col.frequencies(xs)` | maps of counts |

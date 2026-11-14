@@ -2528,9 +2528,11 @@ impl Value {
             (Value::Float(a), Value::Float(b)) => a.partial_cmp(b),
             (Value::String(a), Value::String(b)) => Some(a.cmp(b)),
             (Value::Boolean(a), Value::Boolean(b)) => Some(a.cmp(b)),
-            // For mixed numeric types, convert to float
-            (Value::Integer(a), Value::Float(b)) => (*a as f64).partial_cmp(b),
-            (Value::Float(a), Value::Integer(b)) => a.partial_cmp(&(*b as f64)),
+            // An Int and a Float exactly, as `<` orders them (OL-359)
+            (Value::Integer(a), Value::Float(b)) => crate::interpreter::ops::int_float_cmp(*a, *b),
+            (Value::Float(a), Value::Integer(b)) => {
+                crate::interpreter::ops::int_float_cmp(*b, *a).map(std::cmp::Ordering::reverse)
+            }
             // Result values are not comparable
             (Value::Ok(_), _) | (Value::Err(_), _) | (_, Value::Ok(_)) | (_, Value::Err(_)) => None,
             _ => None, // Other types are not comparable for sorting

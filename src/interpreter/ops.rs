@@ -255,17 +255,18 @@ impl Interpreter {
             (Value::String(ref a), BinaryOp::NotEqual, Value::String(ref b)) => {
                 Ok(Value::Boolean(*a != *b))
             }
-            // Tuples order lexicographically (`tuple_ordering`), as a sort
-            // by several keys needs: `(a.year, a.name) < (b.year, b.name)`.
+            // Tuples and lists order lexicographically (`tuple_ordering`,
+            // `list_ordering`), as a sort by several keys needs:
+            // `(a.year, a.name) < (b.year, b.name)`, `[1, 2] < [1, 3]`.
             (
-                Value::Tuple(ref a),
+                ref left @ (Value::Tuple(_) | Value::List(_)),
                 op @ (BinaryOp::LessThan
                 | BinaryOp::LessThanEqual
                 | BinaryOp::GreaterThan
                 | BinaryOp::GreaterThanEqual),
-                Value::Tuple(ref b),
-            ) => {
-                let ord = tuple_ordering(a, b)?;
+                ref right @ (Value::Tuple(_) | Value::List(_)),
+            ) if std::mem::discriminant(left) == std::mem::discriminant(right) => {
+                let ord = value_ordering(left, right)?;
                 Ok(Value::Boolean(match op {
                     BinaryOp::LessThan => ord.is_lt(),
                     BinaryOp::LessThanEqual => ord.is_le(),
@@ -305,46 +306,46 @@ impl Interpreter {
             }
             (Value::Integer(a), BinaryOp::LessThan, Value::Integer(b)) => Ok(Value::Boolean(a < b)),
             (Value::Float(a), BinaryOp::LessThan, Value::Float(b)) => Ok(Value::Boolean(a < b)),
-            (Value::Integer(a), BinaryOp::LessThan, Value::Float(b)) => {
-                Ok(Value::Boolean((a as f64) < b))
-            }
-            (Value::Float(a), BinaryOp::LessThan, Value::Integer(b)) => {
-                Ok(Value::Boolean(a < b as f64))
-            }
+            (Value::Integer(a), BinaryOp::LessThan, Value::Float(b)) => Ok(Value::Boolean(
+                int_float_cmp(a, b).is_some_and(|o| o.is_lt()),
+            )),
+            (Value::Float(a), BinaryOp::LessThan, Value::Integer(b)) => Ok(Value::Boolean(
+                int_float_cmp(b, a).is_some_and(|o| o.reverse().is_lt()),
+            )),
             (Value::Integer(a), BinaryOp::LessThanEqual, Value::Integer(b)) => {
                 Ok(Value::Boolean(a <= b))
             }
             (Value::Float(a), BinaryOp::LessThanEqual, Value::Float(b)) => {
                 Ok(Value::Boolean(a <= b))
             }
-            (Value::Integer(a), BinaryOp::LessThanEqual, Value::Float(b)) => {
-                Ok(Value::Boolean((a as f64) <= b))
-            }
-            (Value::Float(a), BinaryOp::LessThanEqual, Value::Integer(b)) => {
-                Ok(Value::Boolean(a <= b as f64))
-            }
+            (Value::Integer(a), BinaryOp::LessThanEqual, Value::Float(b)) => Ok(Value::Boolean(
+                int_float_cmp(a, b).is_some_and(|o| o.is_le()),
+            )),
+            (Value::Float(a), BinaryOp::LessThanEqual, Value::Integer(b)) => Ok(Value::Boolean(
+                int_float_cmp(b, a).is_some_and(|o| o.reverse().is_le()),
+            )),
             (Value::Integer(a), BinaryOp::GreaterThan, Value::Integer(b)) => {
                 Ok(Value::Boolean(a > b))
             }
             (Value::Float(a), BinaryOp::GreaterThan, Value::Float(b)) => Ok(Value::Boolean(a > b)),
-            (Value::Integer(a), BinaryOp::GreaterThan, Value::Float(b)) => {
-                Ok(Value::Boolean((a as f64) > b))
-            }
-            (Value::Float(a), BinaryOp::GreaterThan, Value::Integer(b)) => {
-                Ok(Value::Boolean(a > b as f64))
-            }
+            (Value::Integer(a), BinaryOp::GreaterThan, Value::Float(b)) => Ok(Value::Boolean(
+                int_float_cmp(a, b).is_some_and(|o| o.is_gt()),
+            )),
+            (Value::Float(a), BinaryOp::GreaterThan, Value::Integer(b)) => Ok(Value::Boolean(
+                int_float_cmp(b, a).is_some_and(|o| o.reverse().is_gt()),
+            )),
             (Value::Integer(a), BinaryOp::GreaterThanEqual, Value::Integer(b)) => {
                 Ok(Value::Boolean(a >= b))
             }
             (Value::Float(a), BinaryOp::GreaterThanEqual, Value::Float(b)) => {
                 Ok(Value::Boolean(a >= b))
             }
-            (Value::Integer(a), BinaryOp::GreaterThanEqual, Value::Float(b)) => {
-                Ok(Value::Boolean((a as f64) >= b))
-            }
-            (Value::Float(a), BinaryOp::GreaterThanEqual, Value::Integer(b)) => {
-                Ok(Value::Boolean(a >= b as f64))
-            }
+            (Value::Integer(a), BinaryOp::GreaterThanEqual, Value::Float(b)) => Ok(Value::Boolean(
+                int_float_cmp(a, b).is_some_and(|o| o.is_ge()),
+            )),
+            (Value::Float(a), BinaryOp::GreaterThanEqual, Value::Integer(b)) => Ok(Value::Boolean(
+                int_float_cmp(b, a).is_some_and(|o| o.reverse().is_ge()),
+            )),
             (Value::Boolean(a), BinaryOp::And, Value::Boolean(b)) => Ok(Value::Boolean(a && b)),
             (Value::Boolean(a), BinaryOp::Or, Value::Boolean(b)) => Ok(Value::Boolean(a || b)),
             (Value::String(ref a), BinaryOp::Add, Value::String(ref b)) => {
@@ -629,43 +630,81 @@ fn deep_eq(a: &Value, b: &Value) -> bool {
 /// lists, tuples, and records on both tiers.
 /// The order `<` and `sort` give two tuples: element by element, the
 /// first unequal pair deciding by `<`'s own rule for it (numbers with
-/// numbers, strings with strings, tuples again), a tuple that runs out
-/// first being the smaller. Equal elements need no order of their own, so
-/// `(true, 1) < (true, 2)`; an unequal pair `<` cannot order is the error
-/// `<` raises for it.
+/// numbers, strings with strings, tuples and lists again), a tuple that
+/// runs out first being the smaller. Equal elements need no order of
+/// their own, so `(true, 1) < (true, 2)`; an unequal pair `<` cannot
+/// order is the error `<` raises for it.
 pub fn tuple_ordering(a: &[Value], b: &[Value]) -> Result<std::cmp::Ordering, InterpreterError> {
+    seq_ordering(a, b, "tuple")
+}
+
+/// Two lists' order, by the tuples' rule (OL-487): `[1, 2] < [1, 3]`,
+/// `[1] < [1, 0]`.
+pub fn list_ordering(a: &[Value], b: &[Value]) -> Result<std::cmp::Ordering, InterpreterError> {
+    seq_ordering(a, b, "list")
+}
+
+fn seq_ordering(
+    a: &[Value],
+    b: &[Value],
+    kind: &str,
+) -> Result<std::cmp::Ordering, InterpreterError> {
     for (x, y) in a.iter().zip(b.iter()) {
         if loose_eq(x, y) {
             continue;
         }
-        return value_ordering(x, y);
+        let ord = value_ordering(x, y).map_err(|e| match e {
+            InterpreterError::TypeError { message } if message.starts_with("cannot order ") => {
+                InterpreterError::TypeError {
+                    message: inside(&message, kind),
+                }
+            }
+            other => other,
+        })?;
+        // `2` and `2.0` are not `==` inside a collection, yet neither is
+        // before the other: the next pair decides
+        if ord.is_ne() {
+            return Ok(ord);
+        }
     }
     Ok(a.len().cmp(&b.len()))
 }
 
-/// `<`'s order of two values it can order, for a tuple's elements.
-fn value_ordering(x: &Value, y: &Value) -> Result<std::cmp::Ordering, InterpreterError> {
+/// "cannot order Int and String: ..." said of a pair inside a tuple or
+/// list, once: the innermost container names it.
+fn inside(message: &str, kind: &str) -> String {
+    if message.contains(" inside a ") {
+        return message.to_string();
+    }
+    match message.split_once(':') {
+        Some((head, rest)) => format!("{head} inside a {kind}:{rest}"),
+        None => format!("{message} inside a {kind}"),
+    }
+}
+
+/// `<`'s order of two values it can order: numbers (an Int and a Float
+/// exactly, `int_float_cmp`), strings, and tuples and lists element by
+/// element. Anything else is the error `<` raises for the pair. `sort`,
+/// `min` and `max` order by it too.
+pub fn value_ordering(x: &Value, y: &Value) -> Result<std::cmp::Ordering, InterpreterError> {
     use std::cmp::Ordering;
-    let num = |v: &Value| match v {
-        Value::Integer(n) => Some(*n as f64),
-        Value::Float(f) => Some(*f),
+    let ord = match (x, y) {
+        (Value::Integer(a), Value::Integer(b)) => Some(a.cmp(b)),
+        (Value::Float(a), Value::Float(b)) => Some(a.partial_cmp(b).unwrap_or(Ordering::Equal)),
+        (Value::Integer(a), Value::Float(b)) => int_float_cmp(*a, *b),
+        (Value::Float(a), Value::Integer(b)) => int_float_cmp(*b, *a).map(Ordering::reverse),
+        (Value::String(a), Value::String(b)) => Some(a.cmp(b)),
+        (Value::Tuple(a), Value::Tuple(b)) => return tuple_ordering(a, b),
+        (Value::List(a), Value::List(b)) => return list_ordering(a, b),
         _ => None,
     };
-    match (x, y) {
-        (Value::Integer(a), Value::Integer(b)) => Ok(a.cmp(b)),
-        (Value::String(a), Value::String(b)) => Ok(a.cmp(b)),
-        (Value::Tuple(a), Value::Tuple(b)) => tuple_ordering(a, b),
-        _ => match (num(x), num(y)) {
-            (Some(a), Some(b)) => Ok(a.partial_cmp(&b).unwrap_or(Ordering::Equal)),
-            _ => Err(InterpreterError::TypeError {
-                message: format!(
-                    "cannot order {} and {} inside a tuple: `<` orders numbers, strings and tuples",
-                    x.type_name(),
-                    y.type_name()
-                ),
-            }),
-        },
-    }
+    ord.ok_or_else(|| InterpreterError::TypeError {
+        message: format!(
+            "cannot order {} and {}: `<` orders numbers, strings, tuples and lists",
+            x.type_name(),
+            y.type_name()
+        ),
+    })
 }
 
 /// What a condition that is not a Bool raises, on every tier.
@@ -755,6 +794,24 @@ pub fn search_eq(a: &Value, b: &Value) -> Result<bool, String> {
         (true, Some(kind)) => Err(uncomparable_message(kind)),
         (eq, _) => Ok(eq),
     }
+}
+
+/// `i` against `f` exactly, as `==` compares them (OL-359): the order of
+/// the two numbers themselves, not of `i` rounded to f64. Rounding is
+/// monotone, so the rounded Int orders the pair unless it lands on the
+/// Float; then the Float is an integer and decides against the Int as an
+/// i64 (2^63, past every Int, is above all of them). `None` only for NaN,
+/// which no olang Float is.
+pub fn int_float_cmp(i: i64, f: f64) -> Option<std::cmp::Ordering> {
+    use std::cmp::Ordering;
+    let rounded = (i as f64).partial_cmp(&f)?;
+    if rounded != Ordering::Equal {
+        return Some(rounded);
+    }
+    if f >= 9_223_372_036_854_775_808.0 {
+        return Some(Ordering::Less);
+    }
+    Some(i.cmp(&(f as i64)))
 }
 
 /// `i == f` exactly: the Float is that integer, not merely the f64

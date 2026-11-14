@@ -53,7 +53,7 @@ use crate::ovm::value::{OvmValue, ValueData};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
+use cranelift_codegen::ir::condcodes::{CondCode, FloatCC, IntCC};
 use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlagsData, Type, Value as ClifValue, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_jit::{JITBuilder, JITModule};
@@ -6784,7 +6784,11 @@ fn translate_body(
                 {
                     return None;
                 }
-                let flag = if lk == Kind::Float || rk == Kind::Float {
+                let flag = if (lk, rk) == (Kind::Int, Kind::Float) {
+                    exact_mixed_cmp(builder, compare_cc(inst), a, b)
+                } else if (lk, rk) == (Kind::Float, Kind::Int) {
+                    exact_mixed_cmp(builder, compare_cc(inst).swap_args(), b, a)
+                } else if lk == Kind::Float || rk == Kind::Float {
                     let fa = r#gen.to_float(builder, a, lk);
                     let fb = r#gen.to_float(builder, b, rk);
                     builder.ins().fcmp(float_cc(inst), fa, fb)
@@ -6829,7 +6833,9 @@ fn translate_body(
                 let a = builder.use_var(Variable::from_u32(lhs.0));
                 let (b, bk) = match imm.data {
                     ValueData::Integer(x) => {
-                        if lk == Kind::Float {
+                        // An Int past 2^53 orders a Float exactly only as
+                        // an Int (OL-359); below it the f64 is exact.
+                        if lk == Kind::Float && x.unsigned_abs() <= 1 << 53 {
                             // The VM promotes the int immediate to float.
                             (builder.ins().f64const(x as f64), Kind::Float)
                         } else {
@@ -6861,7 +6867,12 @@ fn translate_body(
                     | BinaryOp::LessThanEqual
                     | BinaryOp::GreaterThan
                     | BinaryOp::GreaterThanEqual => {
-                        let flag = if lk == Kind::Float || bk == Kind::Float {
+                        let ordering = !matches!(op, BinaryOp::Equal | BinaryOp::NotEqual);
+                        let flag = if ordering && (lk, bk) == (Kind::Int, Kind::Float) {
+                            exact_mixed_cmp(builder, imm_compare(op)?, a, b)
+                        } else if ordering && (lk, bk) == (Kind::Float, Kind::Int) {
+                            exact_mixed_cmp(builder, imm_compare(op)?.swap_args(), b, a)
+                        } else if lk == Kind::Float || bk == Kind::Float {
                             let fa = r#gen.to_float(builder, a, lk);
                             let fb = r#gen.to_float(builder, b, bk);
                             builder.ins().fcmp(imm_float_cc(op)?, fa, fb)
@@ -8183,6 +8194,40 @@ fn compare_cc(inst: &Instruction) -> IntCC {
         Instruction::Ge { .. } => IntCC::SignedGreaterThanOrEqual,
         _ => unreachable!("compare_cc on non-compare instruction"),
     }
+}
+
+/// `i cc f` for an Int `i` and a Float `f`, exact as the VM's
+/// `ops::int_float_cmp` (OL-359): the Int rounded to f64 orders the pair
+/// unless it lands on the Float, which is then an integer and decides
+/// against the Int itself; 2^63, past every Int, is above all of them.
+fn exact_mixed_cmp(
+    builder: &mut FunctionBuilder,
+    cc: IntCC,
+    i: ClifValue,
+    f: ClifValue,
+) -> ClifValue {
+    let fcc = match cc {
+        IntCC::Equal => FloatCC::Equal,
+        IntCC::NotEqual => FloatCC::NotEqual,
+        IntCC::SignedLessThan => FloatCC::LessThan,
+        IntCC::SignedLessThanOrEqual => FloatCC::LessThanOrEqual,
+        IntCC::SignedGreaterThan => FloatCC::GreaterThan,
+        _ => FloatCC::GreaterThanOrEqual,
+    };
+    let fi = builder.ins().fcvt_from_sint(types::F64, i);
+    let rounded = builder.ins().fcmp(fcc, fi, f);
+    let tie = builder.ins().fcmp(FloatCC::Equal, fi, f);
+    let fi64 = builder.ins().fcvt_to_sint_sat(types::I64, f);
+    let exact = builder.ins().icmp(cc, i, fi64);
+    let two63 = builder.ins().f64const(9_223_372_036_854_775_808.0);
+    let past = builder.ins().fcmp(FloatCC::Equal, f, two63);
+    let below = matches!(
+        cc,
+        IntCC::SignedLessThan | IntCC::SignedLessThanOrEqual | IntCC::NotEqual
+    );
+    let below = builder.ins().iconst(types::I8, below as i64);
+    let on_tie = builder.ins().select(past, below, exact);
+    builder.ins().select(tie, on_tie, rounded)
 }
 
 fn float_cc(inst: &Instruction) -> FloatCC {

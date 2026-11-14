@@ -825,7 +825,7 @@ println(to_string(2 + 0.5))
 
 All comparison operators work on numbers (mixing Int/Float), **on
 strings**, which order lexicographically by Unicode scalar value, and
-**on tuples**, which order lexicographically by element:
+**on tuples and lists**, which order lexicographically by element:
 
 ```olang
 println(to_string("apple" < "banana"))
@@ -833,12 +833,19 @@ let c = "7"
 println(to_string((c >= "0") && (c <= "9")))   // character-range check
 println((2026, "mar") < (2026, "may"))         // true: the first unequal elements decide
 println(sort([(2, "b"), (1, "z"), (2, "a")]))  // [(1, "z"), (2, "a"), (2, "b")]
+println([1, 2] < [1, 3])                       // true: lists order the same way
 ```
 
-Two tuples compare element by element: the first pair that is not equal
-decides, by `<`'s rule for that pair (numbers with numbers, strings with
-strings, tuples again), and a tuple that is a prefix of the other is
-the smaller. Equal elements need no order of their own, so `(true, 1) <
+An Int and a Float order **exactly**, as `==` compares them: the two
+numbers themselves, not the Int rounded to a Float, so
+`9007199254740993 > 9007199254740992.0` is `true` (the two are not
+equal), and every Int is below `9223372036854775807.0` (2⁶³).
+
+Two tuples (or two lists) compare element by element: the first pair
+that is not equal decides, by `<`'s rule for that pair (numbers with
+numbers, strings with strings, tuples and lists again), and a tuple
+that is a prefix of the other is the smaller. A tuple and a list do not
+order against each other. Equal elements need no order of their own, so `(true, 1) <
 (true, 2)` holds; an unequal pair `<` cannot order (`(1, "a") < ("b",
 2)`) raises. `sort` orders a list of tuples the same way, which is the
 way to sort by several keys: `sort(map(rows, (r) => (r.year, r.name)))`,

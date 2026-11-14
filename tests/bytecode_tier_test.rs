@@ -246,10 +246,10 @@ f([1, 2], 3, "S")
 fn unsupported_binary_op_error_text_matches_interpreter() {
     // Same failure, same words: a promoted function raising a binary-op type
     // error must produce the interpreter's message ("Invalid binary
-    // operation: cannot apply '<' to List and List"), not the VM-internal
+    // operation: cannot apply '<' to Map and Map"), not the VM-internal
     // "Unsupported operation: LessThan".
     for src in [
-        "fn f(a, b) = a < b\nf([1, 2], [1, 3])",
+        "fn f(a, b) = a < b\nf(#{ \"a\": 1 }, #{ \"a\": 2 })",
         "fn f(a, b) = a - b\nf(\"a\", \"b\")",
         "fn f(a, b) = a && b\nf(1, 2)",
         "fn f(a, b) = a || b\nf(1.0, 2)",
