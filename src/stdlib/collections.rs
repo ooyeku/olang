@@ -646,17 +646,47 @@ fn sum_by(args: Vec<Value>, interpreter: &mut Interpreter) -> Result<Value, Inte
     }
 }
 
-/// Deduplicate while preserving first-seen order.
+/// Deduplicate while preserving first-seen order, by `==` (OL-339): `1`
+/// and `1.0` are one value, `1` and `"1"` two (and `[1]` and `[1.0]` two,
+/// as `==` keeps kinds apart inside a collection). Values are bucketed by
+/// `hash` (which agrees with `==`) and told apart within a bucket by `==`
+/// itself; a value with no hash (a function) is kept by its text, as
+/// before.
 fn unique(args: Vec<Value>) -> Result<Value, InterpreterError> {
     let list = list_arg(&args, 0, "unique")?;
-    let mut seen = std::collections::HashSet::new();
-    let mut out = Vec::new();
+    let mut buckets: std::collections::HashMap<i64, Vec<usize>> = std::collections::HashMap::new();
+    let mut unhashed = std::collections::HashSet::new();
+    let mut out: Vec<Value> = Vec::new();
     for item in list.iter() {
-        if seen.insert(item.to_string()) {
-            out.push(item.clone());
+        match crate::value_hash::hash_value(item) {
+            Ok(h) => {
+                let bucket = buckets.entry(h).or_default();
+                if bucket.iter().any(|&i| same_by_eq(&out[i], item)) {
+                    continue;
+                }
+                bucket.push(out.len());
+            }
+            Err(_) => {
+                if !unhashed.insert(item.to_string()) {
+                    continue;
+                }
+            }
         }
+        out.push(item.clone());
     }
     Ok(Value::List(out.into()))
+}
+
+/// `a == b` as the operator answers it: an Int and a Float by number at
+/// the top, everything else structurally.
+fn same_by_eq(a: &Value, b: &Value) -> bool {
+    use crate::interpreter::ops::{int_float_eq, loose_eq};
+    match (a, b) {
+        (Value::Integer(i), Value::Float(f)) | (Value::Float(f), Value::Integer(i)) => {
+            int_float_eq(*i, *f)
+        }
+        _ => loose_eq(a, b),
+    }
 }
 
 /// Sliding windows of a fixed size: window([1,2,3,4], 2) -> [[1,2],[2,3],[3,4]].

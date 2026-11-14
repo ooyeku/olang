@@ -629,7 +629,7 @@ variants. `colx` (`use colx`) implements the higher-order core of `col`
 | <a id="col-take"></a><a id="col-skip"></a><a id="col-drop"></a><a id="col-contains"></a><a id="col-filter"></a><a id="col-map"></a><a id="col-fold"></a><a id="col-reverse"></a><a id="col-sort"></a><a id="col-sum"></a><a id="col-min"></a><a id="col-max"></a><a id="col-head"></a><a id="col-tail"></a><a id="col-zip"></a><a id="col-flatten"></a>`col.map` `col.filter` `col.fold` `col.sort` `col.contains` `col.reverse` `col.flatten` `col.zip` `col.take` `col.drop` `col.skip` `col.head` `col.tail` `col.sum` `col.min` `col.max` | the global list helpers of the same names, mirrored here: each behaves exactly as its global ([Lists](#lists), [Aggregates](#aggregates), [Higher-order functions](#higher-order-functions)) |
 | <a id="col-set"></a><a id="col-swap"></a>`col.set(xs, i, v)` / `col.swap(xs, i, j)` | the list with element `i` replaced / elements `i` and `j` exchanged; `xs = col.set(xs, i, v)` on a list nothing else holds writes in place; an index outside the list, a negative one included, raises |
 | <a id="col-filled"></a>`col.filled(n, v)` | a list of `n` copies of `v`, the preallocation primitive |
-| <a id="col-unique"></a>`col.unique(xs)` | dedupe, first-seen order |
+| <a id="col-unique"></a>`col.unique(xs)` | dedupe by `==`, first-seen order (`1` and `1.0` are one value, `1` and `"1"` two) |
 | <a id="col-partition"></a>`col.partition(xs, p)` | `([matching], [rest])` |
 | <a id="col-sum_by"></a>`col.sum_by(xs, f)` | total of a projection |
 | <a id="col-count_by"></a><a id="col-frequencies"></a>`col.count_by(xs, f)` / `col.frequencies(xs)` | maps of counts |

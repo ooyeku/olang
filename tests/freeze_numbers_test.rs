@@ -145,6 +145,22 @@ main()
     assert_eq!(agree(src), Ok(bools(&[true; 8])));
 }
 
+// ── OL-339: col.unique by `==` ──────────────────────────────────────
+#[test]
+fn col_unique_dedupes_by_equality() {
+    let src = r#"
+fn main() = [
+    col.unique([1, 1.0, 2]) == [1, 2],
+    len(col.unique([1, "1"])) == 2,
+    len(col.unique([[1], [1.0], [1], [2]])) == 3,
+    len(col.unique([#{ "a": 1 }, #{ "a": 1 }, #{ "a": "1" }])) == 2,
+    col.unique([1.5, 1.5, 2]) == [1.5, 2],
+]
+main()
+"#;
+    assert_eq!(agree(src), Ok(bools(&[true; 5])));
+}
+
 // ── OL-359: Int and Float order exactly ─────────────────────────────
 #[test]
 fn int_float_ordering_agrees_with_equality_past_2_53() {
