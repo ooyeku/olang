@@ -1,6 +1,7 @@
 //! The command line's traps (the freeze audit): a mistyped command is
 //! suggested, not read as a file; run options are taken after `run`; what
-//! follows the program file is the program's; a missing path exits 2; and
+//! follows the program file is the program's; a missing path exits 2; an
+//! output file that cannot be written exits 2 and is named; and
 //! `olang test --fail-if-none` fails a run that ran nothing.
 
 use std::path::{Path, PathBuf};
@@ -69,6 +70,35 @@ fn a_missing_path_exits_2_for_every_command() {
             "{args:?}: {out}"
         );
     }
+}
+
+// OL-346: `record` used to run, warn and exit 0 with no trace written;
+// `build` and `doc` exited 1, and `build` did not name the path.
+#[test]
+fn an_output_that_cannot_be_written_exits_2_and_names_it() {
+    let ws = workspace("unwritable");
+    std::fs::write(ws.join("d.ol"), "/// one\nfn f() = 1\n").unwrap();
+    let bad = ws.join("nosuchdir").join("x");
+    let bad = bad.to_str().unwrap();
+    for args in [
+        &["record", "a.ol", "-o", bad][..],
+        &["--record", bad, "a.ol"],
+        &["build", "a.ol", "-o", bad],
+        &["doc", "d.ol", "-o", bad],
+    ] {
+        let (out, code) = olang(&ws, args);
+        assert_eq!(code, 2, "{args:?}: {out}");
+        assert!(
+            out.contains(&format!("cannot write {bad}")),
+            "{args:?}: {out}"
+        );
+    }
+    // the program did not run: the trace is checked before it starts
+    let (out, _) = olang(&ws, &["record", "a.ol", "-o", bad]);
+    assert!(!out.contains("[]"), "{out}");
+    // an output path that is a folder is the same misuse
+    let (out, code) = olang(&ws, &["build", "a.ol", "-o", ws.to_str().unwrap()]);
+    assert_eq!(code, 2, "{out}");
 }
 
 #[test]

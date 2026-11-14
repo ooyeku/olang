@@ -1233,7 +1233,11 @@ fn run() -> i32 {
                 }
                 Err(e) => {
                     eprintln!("olang build: {}", e);
-                    1
+                    if e.downcast_ref::<OutputError>().is_some() {
+                        2
+                    } else {
+                        1
+                    }
                 }
             }
         }
@@ -1799,6 +1803,12 @@ fn run_program(
     // or the `olang record` command).
     let timeline = match &record {
         Some(out) => {
+            // A trace that could not be written is a misuse (exit 2), found
+            // before the program runs rather than after it (OL-346).
+            if let Err(e) = check_output_path(std::path::Path::new(out)) {
+                eprintln!("olang record: cannot write {}: {}", out, e);
+                return 2;
+            }
             match olang::notebook::read(&file_path, olang::notebook::Mode::Run).map(|p| p.source) {
                 Ok(src) => Some(olang::timeline::Timeline::record(
                     PathBuf::from(out),
@@ -1834,7 +1844,35 @@ fn run_program(
         logger.error("main", &format!("Error executing file: {}", e));
         return 1;
     }
+    if TRACE_WRITE_FAILED.load(std::sync::atomic::Ordering::SeqCst) {
+        return 2;
+    }
     0
+}
+
+/// Set when a recorded trace could not be written at the end of a run, so
+/// the run exits 2 instead of reporting success without its trace.
+static TRACE_WRITE_FAILED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Whether an output file can be created at `path`: its folder exists and is
+/// a folder, and the path itself is not a folder. Checked before a command
+/// does its work, so a bad `-o` is reported (exit 2) up front.
+fn check_output_path(path: &std::path::Path) -> Result<(), String> {
+    if path.is_dir() {
+        return Err("it is a directory".to_string());
+    }
+    let parent = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => std::path::Path::new("."),
+    };
+    if !parent.exists() {
+        return Err(format!("no such directory {}", parent.display()));
+    }
+    if !parent.is_dir() {
+        return Err(format!("{} is not a directory", parent.display()));
+    }
+    Ok(())
 }
 
 /// `olang --watch script.ol` -- the edit-run loop. Each run is a child
@@ -3635,9 +3673,13 @@ fn inspect_binary(args: &InspectArgs) -> i32 {
             })
             .unwrap_or_else(|| "program.ol".to_string());
         let mut wrote = vec![source_name.clone()];
-        if std::fs::write(dir.join(&source_name), &source).is_err() {
-            eprintln!("olang inspect: cannot write {}", source_name);
-            return 1;
+        if let Err(e) = std::fs::write(dir.join(&source_name), &source) {
+            eprintln!(
+                "olang inspect: cannot write {}: {}",
+                dir.join(&source_name).display(),
+                e
+            );
+            return 2;
         }
         if let Some(m) = &meta {
             if let Some(text) = &m.manifest {
@@ -4033,6 +4075,10 @@ fn build_executable(
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "program".to_string()),
     };
+    // An output that cannot be written is a misuse (exit 2), reported
+    // before the work is done (OL-346).
+    check_output_path(std::path::Path::new(&output))
+        .map_err(|e| OutputError(format!("cannot write {}: {}", output, e)))?;
 
     // The transparency record: checksum, provenance, and — when the
     // source lives in a package — its manifest and lockfile, verbatim.
@@ -4132,15 +4178,20 @@ fn build_executable(
     let meta_json =
         serde_json::to_vec(&meta).map_err(|e| anyhow::anyhow!("serialize meta: {}", e))?;
 
-    if payload_only {
-        // the program alone: the runtime is shipped beside it
-        std::fs::write(&output, b"")?;
+    let exe = if payload_only {
+        None
     } else {
-        let exe = std::env::current_exe()?;
-        std::fs::copy(&exe, &output)?;
-    }
-    {
+        Some(std::env::current_exe()?)
+    };
+    let write_out = || -> std::io::Result<()> {
         use std::io::Write;
+        match &exe {
+            // the program alone: the runtime is shipped beside it
+            None => std::fs::write(&output, b"")?,
+            Some(exe) => {
+                std::fs::copy(exe, &output)?;
+            }
+        }
         // Transparent-binary footer:
         // [source][ast][meta][src_len][ast_len][meta_len][META_MAGIC].
         // The source travels as a feature, not a debugging convenience:
@@ -4157,16 +4208,31 @@ fn build_executable(
         f.write_all(&(meta_json.len() as u64).to_le_bytes())?;
         f.write_all(OLANG_META_MAGIC)?;
         f.flush()?;
-    }
-    #[cfg(unix)]
-    if !payload_only {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&output)?.permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&output, perms)?;
-    }
+        #[cfg(unix)]
+        if !payload_only {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&output)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&output, perms)?;
+        }
+        Ok(())
+    };
+    write_out().map_err(|e| OutputError(format!("cannot write {}: {}", output, e)))?;
     Ok(output)
 }
+
+/// An output file a command could not write: exit 2 (misuse), as
+/// docs/tooling.md "Exit codes" says, rather than 1 (OL-346).
+#[derive(Debug)]
+struct OutputError(String);
+
+impl std::fmt::Display for OutputError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for OutputError {}
 
 /// `olang caps [path]` — show the capability grant a program is *declared*
 /// to have, read from its `olang.toml` (base grant plus each dependency's
@@ -4682,7 +4748,7 @@ fn execute_program(
 
     // Whatever happens, a recorded trace is written — a crashed run is
     // exactly the run you want to replay.
-    let write_trace = |interp: &mut olang::interpreter::Interpreter, logger: &Logger| {
+    let write_trace = |interp: &mut olang::interpreter::Interpreter, _logger: &Logger| {
         if let Some(t) = interp.take_timeline() {
             match t.finish() {
                 Ok(Some(path)) => eprintln!(
@@ -4691,7 +4757,14 @@ fn execute_program(
                     path.display()
                 ),
                 Ok(None) => {}
-                Err(e) => logger.warn("main", &format!("could not write trace: {}", e)),
+                Err(e) => {
+                    let shown = t
+                        .out_path()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_default();
+                    eprintln!("olang record: cannot write {}: {}", shown, e);
+                    TRACE_WRITE_FAILED.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
             }
         }
     };

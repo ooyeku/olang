@@ -368,6 +368,11 @@ impl Timeline {
         }
     }
 
+    /// Where a recording is written (`None` in replay mode).
+    pub fn out_path(&self) -> Option<&std::path::Path> {
+        self.out_path.as_deref()
+    }
+
     /// Write the recorded trace to its output path. A no-op in replay mode.
     pub fn finish(&self) -> std::io::Result<Option<std::path::PathBuf>> {
         let Some(path) = &self.out_path else {
