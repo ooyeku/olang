@@ -986,8 +986,8 @@ are strings — convert explicitly).
 
 | Function | Description |
 |---|---|
-| <a id="csv-parse"></a>`csv.parse(s)` | rows as lists of strings |
-| <a id="csv-parse_with_headers"></a>`csv.parse_with_headers(s)` | rows as maps keyed by the header |
+| <a id="csv-parse"></a>`csv.parse(s)` | `Ok` of the rows as lists of strings; `Err` for a quoted field that is never closed (naming the line it opens on) or a row whose length differs from the first |
+| <a id="csv-parse_with_headers"></a>`csv.parse_with_headers(s)` | `Ok` of the rows as maps keyed by the header; `Err` as `parse`'s, and for a header that names two columns (a map would keep one of them) |
 | <a id="csv-stringify"></a><a id="csv-stringify_with_headers"></a>`csv.stringify(rows)` / `csv.stringify_with_headers` | write CSV text: `Ok(text)`, or `Err` for a ragged row or a field that is not text, a number or a bool |
 | <a id="csv-get_headers"></a><a id="csv-set_headers"></a>`csv.get_headers(s)` / `csv.set_headers` | header row |
 | <a id="csv-row_count"></a><a id="csv-column_count"></a>`csv.row_count(rows)` / `csv.column_count(rows)` | dimensions |
