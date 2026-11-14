@@ -152,3 +152,38 @@ for i in 0..3 {
     let out = run(&ws, src);
     assert_eq!(out, "Ok(\"gone\")\n".repeat(9), "{out}");
 }
+
+/// A lambda a bridged builtin calls (`shared.swap`, `cell.update`,
+/// `group_by`, `find` …) is compiled for its own captures, and the
+/// compiled code held them: a drop guard it captured stayed alive until a
+/// later compile swept the cache, often at exit (OL-545). It goes with
+/// the function that made it, as on the interpreter.
+#[test]
+fn a_guard_captured_by_a_lambda_a_builtin_calls_goes_with_its_function() {
+    let src = r#"fn mk(ch, tag) = chan.on_drop(ch, tag)
+fn report(ch) = println(show(chan.try_recv(ch)))
+fn lam(ch) = { let g = mk(ch, "lambda"); let f = (x) => { let h = g; x + 1 }; let r = f(1); 1 }
+fn sw(ch) = { let g = mk(ch, "swap"); let s = shared.new(1); let r = shared.swap(s, (x) => { let h = g; x + 1 }); 1 }
+fn upd(ch) = { let g = mk(ch, "update"); let c = cell(1); let r = cell.update(c, (x) => { let h = g; x + 1 }); 1 }
+fn grp(ch) = { let g = mk(ch, "group_by"); let r = group_by([1, 2], (x) => { let h = g; to_string(x) }); 1 }
+fn named(ch) = { let g = mk(ch, "named"); let s = shared.new(1); let f = (x) => { let h = { guard: g }; x + 1 }; let r = shared.swap(s, f); 1 }
+fn main() = {
+  let ch = chan.new()
+  for i in 0..2 {
+    lam(ch); report(ch)
+    sw(ch); report(ch)
+    upd(ch); report(ch)
+    grp(ch); report(ch)
+    named(ch); report(ch)
+  }
+}
+main()
+"#;
+    let ws = workspace("guard_lambda");
+    let out = run(&ws, src);
+    assert_eq!(
+        out,
+        "Ok(\"lambda\")\nOk(\"swap\")\nOk(\"update\")\nOk(\"group_by\")\nOk(\"named\")\n".repeat(2),
+        "{out}"
+    );
+}

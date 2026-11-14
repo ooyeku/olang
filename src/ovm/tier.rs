@@ -407,7 +407,11 @@ impl BytecodeTier {
     ) -> TierOutcome {
         let arity = func.parameters.len();
         match self.vm.hof_function_id(func, arity) {
-            Some(func_id) => self.run_on_vm(func_id, args, None),
+            Some(func_id) => {
+                let outcome = self.run_on_vm(func_id, args, None);
+                self.vm.release_closure_compile(func);
+                outcome
+            }
             None => TierOutcome::Fallback,
         }
     }
@@ -807,7 +811,11 @@ impl BytecodeTier {
             None => {
                 let arity = func.parameters.len();
                 return match self.vm.hof_function_id(func, arity) {
-                    Some(func_id) => self.run_on_vm(func_id, args, None),
+                    Some(func_id) => {
+                        let outcome = self.run_on_vm(func_id, args, None);
+                        self.vm.release_closure_compile(func);
+                        outcome
+                    }
                     None => TierOutcome::Fallback,
                 };
             }
@@ -915,6 +923,7 @@ impl BytecodeTier {
         )));
         self.vm.clear_error_trace();
         let out = self.vm.native_hof(name, &args);
+        self.vm.release_closure_compile(kernel);
         if self.vm.has_lazy_events() {
             self.sync_lazy();
         }
@@ -973,6 +982,7 @@ impl BytecodeTier {
         )));
         self.vm.clear_error_trace();
         let out = self.vm.native_hof(name, &args);
+        self.vm.release_closure_compile(kernel);
         if self.vm.has_lazy_events() {
             self.sync_lazy();
         }

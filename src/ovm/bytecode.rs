@@ -2465,6 +2465,11 @@ impl BytecodeVm {
                     self.record_start();
                 }
                 let def_file_kept = def_file.clone();
+                // A compile that baked a handle (a drop guard, a channel …)
+                // is not kept for a later run: the record kept it alive,
+                // and its guard with it, for the rest of this one (OL-545),
+                // and no later run has that handle.
+                let holds_handle = key.is_some() && closure_holds_handle(&closure);
                 let r = self.compile_function_with_closure_lent(
                     func_id,
                     func,
@@ -2474,9 +2479,21 @@ impl BytecodeVm {
                     def_file,
                     run,
                 );
+                // The closure compiled against goes with the compile: kept
+                // here until the next one, it held what that closure
+                // captured, a drop guard among them (OL-545).
+                self.compiler.enclosing_closure = std::sync::Arc::default();
                 if let Some(key) = key {
                     let rec = self.record_stop();
+                    let holds_handle = holds_handle
+                        || self.bytecode_cache.read().is_ok_and(|cache| {
+                            let mut budget = 512usize;
+                            cache.get(&func_id).is_some_and(|b| {
+                                b.constants.iter().any(|c| ovm_holds_handle(c, &mut budget))
+                            })
+                        });
                     if r.is_ok()
+                        && !holds_handle
                         && let Some(rec) = rec
                     {
                         crate::compile_cache::store(def_file_kept.as_deref(), key, move || {
@@ -7751,6 +7768,65 @@ impl BytecodeVm {
     /// to the interpreter) for arity mismatch, default parameters, trait
     /// bounds, or an uncompilable body; failures are cached per body so
     /// they are not retried.
+    /// Let go at once of what was compiled for `func` alone, when its
+    /// captures hold a handle (a drop guard, a channel, a cell …): the
+    /// compiled code holds the captured values, and a dead closure's code
+    /// went only when a later compile swept the cache, so a guard it
+    /// captured fired at program exit, not when the closure died
+    /// (OL-545). Called after such a closure ran through the bridge; a
+    /// closure called again compiles again.
+    pub(crate) fn release_closure_compile(&mut self, func: &crate::ast::Function) {
+        let key = (
+            Arc::as_ptr(&func.body) as usize,
+            Arc::as_ptr(&func.closure) as usize,
+        );
+        let Some((_, _, Some(root))) = self.hof_cache.get(&key) else {
+            return;
+        };
+        let root = *root;
+        let ids = self
+            .hof_owned
+            .get(&root)
+            .cloned()
+            .unwrap_or_else(|| vec![root]);
+        // what the compile baked in: its constants, and the closure it
+        // was compiled against
+        let baked_handle = closure_holds_handle(&func.closure)
+            || self.bytecode_cache.read().is_ok_and(|cache| {
+                let mut budget = 512usize;
+                ids.iter().any(|id| {
+                    cache.get(id).is_some_and(|b| {
+                        b.constants.iter().any(|c| ovm_holds_handle(c, &mut budget))
+                    })
+                })
+            });
+        if env_on!("OLANG_DEBUG_HOF") {
+            eprintln!(
+                "[hof] release {:?}: closure keys {:?}, baked handle {}",
+                func.name,
+                func.closure.keys().collect::<Vec<_>>(),
+                baked_handle
+            );
+        }
+        if !baked_handle {
+            return;
+        }
+        self.hof_cache.remove(&key);
+        self.hof_owned.remove(&root);
+        self.evict_compiled(&ids);
+    }
+
+    /// `release_closure_compile` for each function among `args`, once a
+    /// higher-order builtin is done calling them.
+    pub(crate) fn release_function_args(&mut self, args: &[OvmValue]) {
+        for arg in args {
+            if let crate::ovm::value::ValueData::AstFunction(f) = &arg.data {
+                let f = f.clone();
+                self.release_closure_compile(&f);
+            }
+        }
+    }
+
     pub(crate) fn hof_function_id(
         &mut self,
         func: &crate::ast::Function,
@@ -10633,6 +10709,7 @@ impl BytecodeVm {
         // Higher-order builtins loop natively when the function argument
         // compiles — otherwise everything below bridges to the interpreter.
         if let Some(result) = self.try_native_higher_order(name, args) {
+            self.release_function_args(args);
             return result;
         }
         let _counted = bridge_stats_on().then(|| BridgeCount {
@@ -16342,6 +16419,65 @@ impl Default for BytecodeVm {
 /// and CompiledFunction don't record defaults, so their arity stays
 /// unchecked rather than wrongly strict.
 #[allow(clippy::type_complexity)]
+/// Whether a closure's captured values hold a native handle (a drop
+/// guard, a channel, a cell, a shared reference …), looked for in the
+/// values themselves and the lists, maps, records, tuples and results
+/// they hold, up to a budget: a value past it is taken as holding none.
+/// `closure_holds_handle` for a value in the VM's form.
+fn ovm_holds_handle(v: &OvmValue, budget: &mut usize) -> bool {
+    use crate::ovm::value::ValueData as D;
+    if *budget == 0 {
+        return false;
+    }
+    *budget -= 1;
+    match &v.data {
+        D::Native(_) => true,
+        D::List(items) => items.iter().any(|x| ovm_holds_handle(x, budget)),
+        D::Tuple(items) => items.iter().any(|x| ovm_holds_handle(x, budget)),
+        D::Map(m) => m.iter().any(|(_, x)| ovm_holds_handle(x, budget)),
+        D::Struct(st) => st.values().any(|x| ovm_holds_handle(&x, budget)),
+        D::AstList(items) => items.iter().any(|x| ast_holds_handle(x, budget)),
+        D::AstMap(m) | D::AstStruct(m, _) => m.values().any(|x| ast_holds_handle(x, budget)),
+        D::Closure(c) => {
+            c.captured.iter().any(|x| ovm_holds_handle(x, budget))
+                || c.template
+                    .closure
+                    .values()
+                    .any(|x| ast_holds_handle(x, budget))
+        }
+        D::AstFunction(f) => f.closure.values().any(|x| ast_holds_handle(x, budget)),
+        D::Result(r) => {
+            r.ok.as_ref().is_some_and(|x| ovm_holds_handle(x, budget))
+                || r.err.as_ref().is_some_and(|x| ovm_holds_handle(x, budget))
+        }
+        _ => false,
+    }
+}
+
+fn ast_holds_handle(v: &crate::ast::Value, budget: &mut usize) -> bool {
+    use crate::ast::Value as V;
+    if *budget == 0 {
+        return false;
+    }
+    *budget -= 1;
+    match v {
+        V::Native(_) => true,
+        V::List(items) | V::Tuple(items) => items.iter().any(|x| ast_holds_handle(x, budget)),
+        V::Map(m) => m.values().any(|x| ast_holds_handle(x, budget)),
+        V::Struct { type_name, fields } => {
+            type_name != "Module" && fields.values().any(|x| ast_holds_handle(x, budget))
+        }
+        V::Ok(x) | V::Err(x) => ast_holds_handle(x, budget),
+        V::Function(f) => f.closure.values().any(|x| ast_holds_handle(x, budget)),
+        _ => false,
+    }
+}
+
+fn closure_holds_handle(closure: &im::HashMap<String, crate::ast::Value>) -> bool {
+    let mut budget = 256usize;
+    closure.values().any(|v| ast_holds_handle(v, &mut budget))
+}
+
 fn ovm_value_view(
     v: &OvmValue,
 ) -> (
