@@ -138,6 +138,13 @@ Then `use geometry.shapes.circle` resolves from anywhere. Everything not
 listed stays internal, so a library can rearrange its `lib/` without
 breaking anyone.
 
+`olang doc` given the package's root documents exactly this surface,
+and a `/// @stable` or `/// @experimental` line in an item's doc says
+what it promises; `olang check --against <version>` reports each
+`@stable` item a later version removed or changed ([`olang
+doc`](tooling.md#olang-doc), [Stable items across
+versions](tooling.md#stable-items-across-versions)).
+
 ## The manifest
 
 ```toml
@@ -537,13 +544,25 @@ manage it:
 ## Updating and toolchains
 
 `otc update` downloads the latest release for the platform, verifies it
-against the release's `SHA256SUMS`, installs it under
-`~/.olang/toolchains/<version>/`, and atomically repoints the shims in
+against the release's `SHA256SUMS` and `SHA256SUMS` against its
+signature (`SHA256SUMS.sig`) by olang's release key, which `otc` carries
+pinned, installs it under `~/.olang/toolchains/<version>/`, and atomically repoints the shims in
 `~/.olang/bin` — the running binaries are never overwritten in place.
 `otc update --check` reports the current and latest versions without
 installing anything. Nothing contacts the network except these two
-invocations, explicitly. olang 1.0 is built, tested and supported on
-macOS; the installer also runs on Linux and Windows, where olang is an
+invocations, explicitly.
+
+A release whose signature does not verify is refused and nothing is
+installed, as is a release without one from the first signed release
+on (`OLANG_ALLOW_UNSIGNED=1` lets an unsigned one through; a bad
+signature never). An older release, from before signing began,
+installs on its checksum with a note. `otc toolchain install` checks
+the same way. Until olang's release key is pinned (see
+[`dist/signing/README.md`](../dist/signing/README.md)), only the
+checksum is checked, and `otc update` says plainly that the release's
+signature was not verified.
+
+olang 1.0 is built, tested and supported on macOS; the installer also runs on Linux and Windows, where olang is an
 unsupported preview ([Stability](stability.md#platforms)).
 
 Multiple releases install side by side:
