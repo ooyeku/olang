@@ -151,6 +151,52 @@ pub fn call_csv_function(
     }
 }
 
+/// Where a quoted field that is never closed opens, as a 1-based line.
+/// The csv reader takes the rest of the text into that field without a
+/// word, so `a,"bc` read as `[["a", "bc"]]`: `parse` and
+/// `parse_with_headers` refuse it (OL-384). Quotes follow the reader's
+/// rules: a quote opens a field only at its start, `""` inside one is a
+/// quote, and a quote in the middle of an unquoted field is a character.
+fn unclosed_quote_line(text: &str) -> Option<usize> {
+    #[derive(PartialEq)]
+    enum At {
+        FieldStart,
+        Unquoted,
+        Quoted,
+        QuoteInQuoted,
+    }
+    let mut at = At::FieldStart;
+    let mut line = 1;
+    let mut opened_on = 1;
+    for b in text.bytes() {
+        let ends_field = b == b',' || b == b'\n' || b == b'\r';
+        at = match at {
+            At::FieldStart | At::Unquoted if ends_field => At::FieldStart,
+            At::FieldStart if b == b'"' => {
+                opened_on = line;
+                At::Quoted
+            }
+            At::FieldStart | At::Unquoted => At::Unquoted,
+            At::Quoted if b == b'"' => At::QuoteInQuoted,
+            At::Quoted => At::Quoted,
+            At::QuoteInQuoted if b == b'"' => At::Quoted,
+            At::QuoteInQuoted if ends_field => At::FieldStart,
+            At::QuoteInQuoted => At::Unquoted,
+        };
+        if b == b'\n' {
+            line += 1;
+        }
+    }
+    (at == At::Quoted).then_some(opened_on)
+}
+
+fn unclosed_quote_err(line: usize) -> Value {
+    Value::Err(Box::new(Value::String(Arc::new(format!(
+        "CSV parse error: the quoted field opened on line {} is never closed",
+        line
+    )))))
+}
+
 /// Parse a CSV string into a 2D array (list of lists)
 /// Usage: csv.parse("name,age\nAlice,30\nBob,25") -> Result<[[String]], Error>
 fn csv_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
@@ -164,6 +210,10 @@ fn csv_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             return Err("parse: argument must be a string".to_string().into());
         }
     };
+
+    if let Some(line) = unclosed_quote_line(csv_str) {
+        return Ok(unclosed_quote_err(line));
+    }
 
     let mut reader = ReaderBuilder::new()
         .has_headers(false)
@@ -207,6 +257,10 @@ fn csv_parse_with_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::error:
         }
     };
 
+    if let Some(line) = unclosed_quote_line(csv_str) {
+        return Ok(unclosed_quote_err(line));
+    }
+
     let mut reader = ReaderBuilder::new()
         .has_headers(true)
         .from_reader(csv_str.as_bytes());
@@ -220,6 +274,19 @@ fn csv_parse_with_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::error:
             ))))));
         }
     };
+    // A row is a map keyed by the header, so a name the header repeats
+    // would keep one column's values and silently lose the other's.
+    for (i, name) in headers.iter().enumerate() {
+        if let Some(first) = headers[..i].iter().position(|h| h == name) {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                "CSV header error: the header {:?} names columns {} and {}; \
+                 rename one, or read the rows with csv.parse",
+                name,
+                first + 1,
+                i + 1
+            ))))));
+        }
+    }
 
     let mut objects = Vec::new();
     for result in reader.records() {
@@ -1394,6 +1461,60 @@ mod tests {
 
         // Test error conditions
         assert_fails(csv_parse_with_headers(vec![int_val(42)]));
+    }
+
+    /// The Err's message, for a result that must be an Err.
+    fn err_message(result: &Value) -> &str {
+        match result {
+            Value::Err(e) => extract_string(e),
+            other => panic!("expected an Err, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_unclosed_quote_is_an_err() {
+        // OL-384: the reader took the rest of the text into the field.
+        for (text, line) in [("a,\"bc", 1), ("a,b\nc,\"d\ne,f", 2), ("\"x\"\"", 1)] {
+            for result in [
+                csv_parse(vec![string_val(text)]).unwrap(),
+                csv_parse_with_headers(vec![string_val(&format!("h,i\n{text}"))]).unwrap(),
+            ] {
+                let message = err_message(&result);
+                assert!(message.contains("never closed"), "{text}: {message}");
+            }
+            let result = csv_parse(vec![string_val(text)]).unwrap();
+            let message = err_message(&result);
+            assert!(
+                message.contains(&format!("line {line}")),
+                "{text}: {message}"
+            );
+        }
+        // Closed quotes, an escaped quote, a newline inside one, and a
+        // quote in the middle of an unquoted field all still read.
+        for (text, cell) in [
+            ("a,\"b,c\"", "b,c"),
+            ("a,\"say \"\"hi\"\"\"", "say \"hi\""),
+            ("a,\"two\nlines\"", "two\nlines"),
+            ("a,5\"", "5\""),
+        ] {
+            let result = csv_parse(vec![string_val(text)]).unwrap();
+            let rows = extract_list(assert_ok(&result));
+            assert_eq!(extract_string(&extract_list(&rows[0])[1]), cell, "{text}");
+        }
+    }
+
+    #[test]
+    fn a_repeated_header_is_an_err() {
+        // OL-384: a row is a map, so the second `x` column's values were lost.
+        let result = csv_parse_with_headers(vec![string_val("x,x,y\n1,2,3")]).unwrap();
+        let message = err_message(&result);
+        assert!(
+            message.contains("\"x\"") && message.contains("columns 1 and 2"),
+            "{message}"
+        );
+        // csv.parse keeps every column, header row included.
+        let result = csv_parse(vec![string_val("x,x,y\n1,2,3")]).unwrap();
+        assert_eq!(extract_list(assert_ok(&result)).len(), 2);
     }
 
     #[test]

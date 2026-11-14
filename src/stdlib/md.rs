@@ -718,7 +718,10 @@ pub fn front(src: &str) -> Result<(Value, String, &'static str), String> {
             let tv = block
                 .parse::<toml::Value>()
                 .map_err(|e| format!("front matter (TOML): {e}"))?;
-            crate::stdlib::json::json_to_olang_value(crate::stdlib::toml_mod::toml_to_json(tv))?
+            crate::stdlib::json::json_to_olang_value(
+                crate::stdlib::toml_mod::toml_to_json(tv)
+                    .map_err(|e| format!("front matter (TOML): {e}"))?,
+            )?
         };
         return Ok((data, after[rest..].to_string(), format));
     }

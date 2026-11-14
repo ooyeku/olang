@@ -300,3 +300,40 @@ fn re_patterns_kept_compiled_answer_as_before() {
     );
     assert_eq!(format!("{v}"), "[2000, 600, [true, true, false, true]]");
 }
+
+/// `to_int`/`to_float` and their Result forms read the same text
+/// (OL-382): whitespace around the number is trimmed by both, and what
+/// one refuses the other refuses.
+#[test]
+fn to_int_and_parse_int_read_the_same_text() {
+    fn raising(src: &str) -> Option<Value> {
+        let program = Parser::new().parse(src).expect("parse");
+        Interpreter::new().eval_program(program).ok()
+    }
+    for text in [
+        " 42 ",
+        "42",
+        "\t-7\n",
+        "4 2",
+        "",
+        " ",
+        "x",
+        "1.5",
+        " 3.25\r\n",
+        "1e999",
+    ] {
+        let lit = format!("{text:?}");
+        for (to, parse) in [("to_int", "str.parse_int"), ("to_float", "str.parse_float")] {
+            let direct = raising(&format!("show({to}({lit}))"));
+            let result = eval(&format!(
+                "match {parse}({lit}) {{ Ok(n) => show(n), Err(_) => \"err\" }}"
+            ));
+            match direct {
+                Some(v) => assert_eq!(v, result, "{to}({lit})"),
+                None => assert_eq!(s(result), "err", "{to}({lit}) raised"),
+            }
+        }
+    }
+    assert_eq!(eval(r#"to_int(" 42 ")"#), Value::Integer(42));
+    assert_eq!(eval("to_float(\"\\t2.5\\n\")"), Value::Float(2.5));
+}

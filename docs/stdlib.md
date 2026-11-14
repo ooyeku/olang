@@ -223,8 +223,8 @@ helpers are aliases of the same function, never a second definition.
 | <a id="typeof"></a>`typeof(v)` | runtime type name as a string |
 | <a id="show"></a>`show(v)` | the value as olang source writes it ([How values print](language.md#how-values-print)); a String is its text |
 | <a id="to_string"></a>`to_string(v)` | the same text as `show` (a String is its text) |
-| <a id="to_int"></a>`to_int(v)` | string/float → Int (floats truncate toward zero); a string that is not a number raises (`str.parse_int` is the `Result` form), and so does a Float outside the Int range (`to_int(1e30)`) or not finite |
-| <a id="to_float"></a>`to_float(v)` | string/int → Float; a string that is not a number raises (`str.parse_float` is the `Result` form) |
+| <a id="to_int"></a>`to_int(v)` | string/float → Int (floats truncate toward zero); a string that is not a number raises (`str.parse_int` is the `Result` form, and both read the same text: whitespace around the number is trimmed, so `to_int(" 42\n")` is 42), and so does a Float outside the Int range (`to_int(1e30)`) or not finite |
+| <a id="to_float"></a>`to_float(v)` | string/int → Float; a string that is not a number raises (`str.parse_float` is the `Result` form, which reads the same text, whitespace around the number trimmed) |
 | <a id="len"></a>`len(v)` | length of a list, a string (in characters), a tuple, or `Bytes`; a map raises, and its entry count is `map_len` |
 | <a id="implements"></a>`implements(v, "Trait")` | does the value's type implement the trait? |
 | <a id="hash"></a>`hash(v)` | a 64-bit Int hash of the value, the same for values that are `==`, and the same in every run |
@@ -522,7 +522,7 @@ every function returns a new string.
 | <a id="str-is_empty"></a>`str.is_empty(s)` | `""` test |
 | <a id="str-is_ascii"></a>`str.is_ascii(s)` | every character ASCII? (true for `""`) — one pass over the bytes |
 | <a id="str-hash"></a>`str.hash(s)` | the XXH3 hash of the string's UTF-8 as an Int, the same in every run (`crypto.xxh3(s)`) |
-| <a id="str-parse_int"></a><a id="str-parse_float"></a>`str.parse_int(s)` / `str.parse_float(s)` | `Result` parses |
+| <a id="str-parse_int"></a><a id="str-parse_float"></a>`str.parse_int(s)` / `str.parse_float(s)` | `Result` parses, whitespace around the number trimmed; the text `to_int` / `to_float` read, as an `Err` where they raise |
 | <a id="str-fmt"></a>`str.fmt(template, ...)` | fill `{}` placeholders, display form; `{{`/`}}` escape |
 | <a id="str-fixed"></a>`str.fixed(x, digits)` | exactly `digits` decimals, never exponent form, never `-0.00` — the column form `to_string` is not |
 | <a id="str-thousands"></a>`str.thousands(x, digits)` | `str.fixed` with thousands separators: `1,234,567.89` |
@@ -928,16 +928,20 @@ println(x == y)                                          // true
 
 | Function | Description |
 |---|---|
-| <a id="json-parse"></a>`json.parse(s)` | `Result` of the parsed value |
+| <a id="json-parse"></a>`json.parse(s)` | `Result` of the parsed value, nested as deep as the text is: whatever `stringify` writes reads back (the playground, whose stack cannot grow, stops at 128 levels) |
 | <a id="json-stringify"></a>`json.stringify(v)` | `Result` of compact JSON text; an object's keys in its order (a map's as they were first set) |
 | <a id="json-stringify_pairs"></a>`json.stringify_pairs(pairs)` | `Result` of one JSON object whose keys are in the order of `pairs`, a list of `(key, value)`, a key repeated written twice (each value as `stringify` writes it) |
 | <a id="json-prettify"></a><a id="json-minify"></a>`json.prettify(s)` / `json.minify(s)` | reformat JSON text |
-| <a id="json-is_valid"></a>`json.is_valid(s)` | is the text valid JSON? |
+| <a id="json-is_valid"></a>`json.is_valid(s)` | is the text valid JSON? (at any depth `parse` reads; a number olang cannot hold, `1E400`, is still valid JSON) |
 | <a id="json-get"></a><a id="json-set"></a>`json.get(s, key)` / `json.set(s, key, v)` | read or replace one top-level key of JSON text: `Result` of the value / of the new text |
 | <a id="json-has_key"></a><a id="json-remove"></a>`json.has_key(s, k)` / `json.remove(s, k)` | text-level operations |
 | <a id="json-get_type"></a><a id="json-get_keys"></a><a id="json-get_values"></a>`json.get_keys` `json.get_values` `json.get_type` | text-level inspection |
 | <a id="json-array_get"></a><a id="json-array_length"></a><a id="json-array_push"></a>`json.array_get` `json.array_length` `json.array_push` | text-level arrays |
 | <a id="json-merge"></a><a id="json-deep_clone"></a>`json.merge(a, b)` / `json.deep_clone(s)` | combine / copy |
+
+The text-level functions (`prettify` through `deep_clone`) read text
+nested at most 128 levels deep and answer `Err` past that; `parse` the
+text for a deeper document.
 
 ```olang
 let doc = unwrap(json.parse("{\"name\": \"ada\", \"tags\": [\"x\", \"y\"], \"age\": 36}"))
@@ -956,9 +960,12 @@ TOML is the config format olang's own `olang.toml` files use. The
 <a id="toml-parse"></a><a id="toml-stringify"></a><a id="toml-is_valid"></a>module has the same core functions as `json`: `parse`, `stringify`, `is_valid`. Both modules bridge
 values through the same conversions, so a table parses to the same Map
 shapes JSON objects do — tables become Maps, arrays become Lists,
-datetimes become their string rendering. A TOML document is a table at
-the top level, so `stringify` accepts a Map (or struct-like value) and
-returns `Err` for anything else.
+datetimes become their string rendering. TOML's `inf` and `nan` have no
+olang value (a Float is always finite), so `parse` answers `Err` naming
+the key rather than reading them as `()`. A TOML document is a table at
+the top level, so `stringify` takes a Map (or struct-like value) and
+raises for anything else, as misuse; a table holding a value TOML has
+no form for (a `()` field) is an `Err`.
 
 ```olang
 let text = "name = \"cfg\"\n[server]\nport = 7317"
@@ -979,8 +986,8 @@ are strings — convert explicitly).
 
 | Function | Description |
 |---|---|
-| <a id="csv-parse"></a>`csv.parse(s)` | rows as lists of strings |
-| <a id="csv-parse_with_headers"></a>`csv.parse_with_headers(s)` | rows as maps keyed by the header |
+| <a id="csv-parse"></a>`csv.parse(s)` | `Ok` of the rows as lists of strings; `Err` for a quoted field that is never closed (naming the line it opens on) or a row whose length differs from the first |
+| <a id="csv-parse_with_headers"></a>`csv.parse_with_headers(s)` | `Ok` of the rows as maps keyed by the header; `Err` as `parse`'s, and for a header that names two columns (a map would keep one of them) |
 | <a id="csv-stringify"></a><a id="csv-stringify_with_headers"></a>`csv.stringify(rows)` / `csv.stringify_with_headers` | write CSV text: `Ok(text)`, or `Err` for a ragged row or a field that is not text, a number or a bool |
 | <a id="csv-get_headers"></a><a id="csv-set_headers"></a>`csv.get_headers(s)` / `csv.set_headers` | header row |
 | <a id="csv-row_count"></a><a id="csv-column_count"></a>`csv.row_count(rows)` / `csv.column_count(rows)` | dimensions |
