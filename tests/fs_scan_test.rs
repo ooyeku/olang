@@ -402,3 +402,31 @@ fn a_case_blind_search_finds_every_file_a_lower_cased_copy_would() {
         assert_eq!(got, want, "{needle}");
     }
 }
+
+/// A cancel lands between files once the search is reading them, not
+/// after the last one (OL-533): 400,000 reads take seconds, the stop a
+/// few milliseconds.
+#[test]
+fn a_cancelled_search_stops_between_files() {
+    let d = tempfile::tempdir().unwrap();
+    let line = "the quick brown fox jumps over the lazy dog\n".repeat(40);
+    for i in 0..2000 {
+        fs::write(d.path().join(format!("f{i}.txt")), &line).unwrap();
+    }
+    let got = s(eval(&format!(
+        r#"let rels = map(range(0, 2000), (i) => "f" + to_string(i) + ".txt")
+let files = flatten(map(range(0, 200), (k) => rels))
+let t = cancel.token()
+let out = chan.new()
+let _h = spawn (() => {{ let c = runtime.call_cancellable((x) => fs.search("{root}", "zebra", #{{ "files": x }}), [files], t)
+ chan.send(out, c) }})()
+time.sleep(100)
+let t0 = time.monotonic()
+cancel.set(t)
+let c = unwrap(chan.recv(out))
+let took = time.monotonic() - t0
+`${{c.cancelled}} ${{took < 500}} ${{took}}`"#,
+        root = root_of(&d)
+    )));
+    assert!(got.starts_with("true true"), "cancelled, took: {got}");
+}

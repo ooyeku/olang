@@ -824,11 +824,18 @@ pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     };
     stopped()?;
     use rayon::prelude::*;
+    // A stop asked of the calling thread (a cancelled token, a budget)
+    // is seen by the workers before each file: the files not yet read
+    // are skipped and the caller raises (`stopped`) (OL-533).
+    let probe = crate::interrupt::StopProbe::here();
     let per: Vec<(usize, Vec<Found>)> = crate::parallel::install(|| {
         files
             .par_iter()
             .enumerate()
             .map(|(i, rel)| {
+                if probe.should_stop() {
+                    return (i, Vec::new());
+                }
                 (
                     i,
                     search_file(
@@ -844,6 +851,7 @@ pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             .filter(|(_, ms)| !ms.is_empty())
             .collect()
     });
+    stopped()?;
     let mut out: Vec<Value> = Vec::new();
     'files: for (i, ms) in per {
         let rel = Arc::new(files[i].clone());
