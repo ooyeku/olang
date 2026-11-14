@@ -356,10 +356,9 @@ fn perform(
             None => return stopped(),
             Some(Ok(response)) => response,
             Some(Err(e)) => {
-                return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-                    "{} request failed: {}",
-                    upper, e
-                ))))));
+                return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                    client_error(&format!("{upper} request failed"), &e),
+                )))));
             }
         };
         let status = response.status().as_u16() as i64;
@@ -374,15 +373,15 @@ fn perform(
         // Where a call can be stopped (a cancellable call, a budget, the
         // REPL's interrupt), the body is read a piece at a time, a stop
         // looked at while each waits.
-        let body: Result<Value, String> = if crate::interrupt::armed() {
+        let body: Result<Value, reqwest::Error> = if crate::interrupt::armed() {
             let mut response = response;
             let mut all = Vec::new();
-            let read: Result<(), String> = loop {
+            let read: Result<(), reqwest::Error> = loop {
                 match unless_stopped(response.chunk()).await {
                     None => return stopped(),
                     Some(Ok(Some(piece))) => all.extend_from_slice(&piece),
                     Some(Ok(None)) => break Ok(()),
-                    Some(Err(e)) => break Err(e.to_string()),
+                    Some(Err(e)) => break Err(e),
                 }
             };
             read.map(|()| {
@@ -397,13 +396,11 @@ fn perform(
                 .bytes()
                 .await
                 .map(|b| crate::stdlib::bytes::to_value(b.to_vec()))
-                .map_err(|e| e.to_string())
         } else {
             response
                 .text()
                 .await
                 .map(|t| Value::String(Arc::new(t)))
-                .map_err(|e| e.to_string())
         };
         match body {
             Ok(response_body) => {
@@ -420,12 +417,36 @@ fn perform(
                     fields: std::sync::Arc::new(response_map).into(),
                 })))
             }
-            Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-                "Failed to read response body: {}",
-                e
+            Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(client_error(
+                "Failed to read response body",
+                &e,
             )))))),
         }
     })
+}
+
+/// A client failure as a program sees it (OL-376). A `timeout_ms` that
+/// ran out, waiting for the answer or reading its body, is the
+/// `"timed out"` sentinel, so a retry can tell a slow server from one
+/// that is down. Any other failure says its cause, not only reqwest's
+/// outer words ("error sending request for url"): each error it wraps is
+/// added once ("connection refused", "unexpected end of file", "relative
+/// URL without a base").
+fn client_error(what: &str, e: &reqwest::Error) -> String {
+    if e.is_timeout() {
+        return "timed out".to_string();
+    }
+    let mut text = format!("{what}: {e}");
+    let mut source = std::error::Error::source(e);
+    while let Some(cause) = source {
+        let said = cause.to_string();
+        if !said.is_empty() && !text.contains(&said) {
+            text.push_str(": ");
+            text.push_str(&said);
+        }
+        source = cause.source();
+    }
+    text
 }
 
 fn str_arg<'a>(v: &'a Value, what: &str) -> Result<&'a str, Box<dyn std::error::Error>> {

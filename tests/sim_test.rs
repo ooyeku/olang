@@ -587,11 +587,8 @@ w.run(sim.minutes(1))
     );
     assert_eq!(s(&field(&run, "outcome")), "done", "{run}");
     let parts = list(&field(&field(&run, "value"), "c1"));
-    assert!(
-        parts[0].to_string().contains("timed out after 5000 ms"),
-        "{}",
-        parts[0]
-    );
+    // the sentinel, as the real client answers (OL-376)
+    assert_eq!(parts[0].to_string(), "Err(\"timed out\")", "{}", parts[0]);
     assert_eq!(int(&parts[1]), 5000);
     // the partition holds for the whole run: the refusal never comes back
     assert!(parts[2].to_string().contains("timed out"), "{}", parts[2]);

@@ -163,7 +163,7 @@ where a wait or a stream ends instead, and stay as they are:
 | Sentinel | Meaning | From |
 |---|---|---|
 | `Err("eof")` | the stream ended | `os.read_line`, `proc.read_line`, `pty.read` |
-| `Err("timed out")` | the wait's time ran out | `task.join_timeout`, `chan.recv_timeout` |
+| `Err("timed out")` | the wait's time ran out | `task.join_timeout`, `chan.recv_timeout`, the http client past its `timeout_ms` |
 | `Err("channel is closed")` | the channel is closed and drained | `chan.recv`, `chan.try_recv`, `chan.recv_timeout`, `chan.send` |
 
 A program may match these strings; any other error's text is for
@@ -3797,11 +3797,13 @@ how a request carries headers, a timeout, and authentication:
 | Option | Meaning |
 |---|---|
 | `"headers"` | map of header name → string value |
-| `"timeout_ms"` | whole-request timeout in milliseconds |
+| `"timeout_ms"` | whole-request timeout in milliseconds (30 s unless given); past it the request answers `Err("timed out")` |
 | `"bearer"` | sets `Authorization: Bearer <token>` |
 | `"basic"` | `(user, password)` tuple: HTTP basic auth |
 | `"bytes"` | `true`: the response `body` is `Bytes`, not text (an image, an archive) |
 
+A request that fails otherwise answers an `Err` that says its cause (a
+refused connection, a body cut short, a URL that does not parse).
 An unknown option key raises rather than being ignored — a typo'd option
 must not become a request that quietly lacked its auth header.
 
