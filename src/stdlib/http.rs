@@ -2766,22 +2766,33 @@ mod tests {
 
     #[test]
     fn test_http_request_method_handling() {
-        let supported_methods = vec!["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"];
-
-        for method in supported_methods {
-            let result = http_request(vec![
-                string_val(method),
-                string_val("http://httpbin.org/anything"), // This would fail in actual request
-                string_val(""),
-            ])
-            .unwrap();
-
-            // We expect this to be an error due to network, but not due to unsupported method
-            if let Value::Err(error) = &result
-                && let Value::String(error_msg) = error.as_ref()
-            {
-                // Should not contain "Unsupported HTTP method"
-                assert!(!error_msg.contains("Unsupported HTTP method"));
+        // A local server answering 200 to whatever it is sent: each
+        // supported method is a request that succeeds, never "Unsupported
+        // HTTP method", and nothing leaves the machine (OL-616: this asked
+        // httpbin.org).
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/anything", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for mut c in listener.incoming().flatten() {
+                let mut buf = [0u8; 4096];
+                let _ = c.read(&mut buf);
+                let _ = c.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+                );
+            }
+        });
+        for method in ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"] {
+            let result = http_request(vec![string_val(method), string_val(&url), string_val("")])
+                .unwrap();
+            match &result {
+                Value::Ok(resp) => match resp.as_ref() {
+                    Value::Struct { fields, .. } => {
+                        assert_eq!(fields.get("status"), Some(&Value::Integer(200)), "{method}")
+                    }
+                    other => panic!("{method}: {other}"),
+                },
+                other => panic!("{method}: {other}"),
             }
         }
     }
