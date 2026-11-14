@@ -9951,6 +9951,13 @@ impl BytecodeVm {
                         }
                     }
                 }
+                // finite, or the interpreter's overflow error (OL-355)
+                if is_float && !float_acc.is_finite() {
+                    return Some(Err(BytecodeError::RuntimeError(format!(
+                        "sum: {}",
+                        crate::ast::float_overflow_message("addition")
+                    ))));
+                }
                 Some(Ok(if is_float {
                     OvmValue::new_float(float_acc)
                 } else {

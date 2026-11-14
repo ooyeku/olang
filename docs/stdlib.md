@@ -314,8 +314,8 @@ println(`${col.index_of(xs, 30)} ${col.slice(xs, 1, 3)} ${drop(xs, 3)}`)
 
 | Function | Description |
 |---|---|
-| <a id="sum"></a><a id="min"></a><a id="max"></a>`sum(xs)` / `min(xs)` / `max(xs)` | aggregates over a list — `min` and `max` also take two or more scalars (`max(0, n - 1)`, the clamp idiom). `min` and `max` order as `<` does (numbers, strings, tuples, lists; Bools among Bools) and raise on two values it cannot order (`min([3, "a"])`), as `sort` does |
-| <a id="average"></a>`average(xs)` | mean of a numeric list |
+| <a id="sum"></a><a id="min"></a><a id="max"></a>`sum(xs)` / `min(xs)` / `max(xs)` | aggregates over a list — `min` and `max` also take two or more scalars (`max(0, n - 1)`, the clamp idiom). `sum` takes numbers and raises on overflow, an Int's or a Float's, as `+` does; `min` and `max` order as `<` does (numbers, strings, tuples, lists; Bools among Bools) and raise on two values it cannot order (`min([3, "a"])`), as `sort` does |
+| <a id="average"></a>`average(xs)` | mean of a numeric list (a Float); raises on a Float overflow, as `sum` does |
 | <a id="clamp"></a>`clamp(v, lo, hi)` | bound a number to a range |
 | <a id="abs"></a>`abs(x)` | absolute value, an Int for an Int (`math.abs`) |
 

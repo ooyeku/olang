@@ -640,7 +640,17 @@ fn sum_by(args: Vec<Value>, interpreter: &mut Interpreter) -> Result<Value, Inte
         }
     }
     if any_float {
-        Ok(Value::Float(float_sum + int_sum as f64))
+        // finite, or the overflow `+` raises (OL-355)
+        let total = float_sum + int_sum as f64;
+        if !total.is_finite() {
+            return Err(InterpreterError::RuntimeError {
+                message: format!(
+                    "col.sum_by: {}",
+                    crate::ast::float_overflow_message("addition")
+                ),
+            });
+        }
+        Ok(Value::Float(total))
     } else {
         Ok(Value::Integer(int_sum))
     }

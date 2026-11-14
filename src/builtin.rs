@@ -3196,7 +3196,7 @@ impl BuiltinFunctions {
                 })?;
 
                 if result.2 {
-                    Ok(Value::Float(result.1))
+                    sum_float(result.1)
                 } else {
                     Ok(Value::Integer(result.0))
                 }
@@ -3234,7 +3234,7 @@ impl BuiltinFunctions {
                 }
             }
             if is_float {
-                Ok(Value::Float(float_acc))
+                sum_float(float_acc)
             } else {
                 Ok(Value::Integer(int_acc))
             }
@@ -3261,7 +3261,35 @@ impl BuiltinFunctions {
                 message: "average: cannot take average of an empty list".to_string(),
             });
         }
-        let sum_val = self.sum(vec![Value::List(list_rc.clone())])?;
+        // The sum's errors are the average's; a sum of Ints past i64 still
+        // has a mean (it is taken in i128 then).
+        let sum_val = match self.sum(vec![Value::List(list_rc.clone())]) {
+            Ok(v) => v,
+            Err(InterpreterError::RuntimeError { message })
+                if message == "sum: integer overflow"
+                    && list_rc.iter().all(|v| matches!(v, Value::Integer(_))) =>
+            {
+                let total: i128 = list_rc
+                    .iter()
+                    .map(|v| match v {
+                        Value::Integer(n) => *n as i128,
+                        _ => 0,
+                    })
+                    .sum();
+                return Ok(Value::Float(total as f64 / list_rc.len() as f64));
+            }
+            Err(InterpreterError::RuntimeError { message }) => {
+                return Err(InterpreterError::RuntimeError {
+                    message: message.replacen("sum:", "average:", 1),
+                });
+            }
+            Err(InterpreterError::TypeError { message }) => {
+                return Err(InterpreterError::TypeError {
+                    message: message.replacen("sum:", "average:", 1),
+                });
+            }
+            Err(e) => return Err(e),
+        };
         match sum_val {
             Value::Integer(s) => Ok(Value::Float(s as f64 / list_rc.len() as f64)),
             Value::Float(f) => Ok(Value::Float(f / list_rc.len() as f64)),
@@ -5047,4 +5075,16 @@ fn extreme(
         }
     }
     Ok(best.clone())
+}
+
+/// A Float sum as `sum` answers it: finite, or the overflow `+` raises
+/// (OL-355). Once past f64 a sum never comes back, so the total tells.
+fn sum_float(total: f64) -> Result<Value, InterpreterError> {
+    if total.is_finite() {
+        Ok(Value::Float(total))
+    } else {
+        Err(InterpreterError::RuntimeError {
+            message: format!("sum: {}", crate::ast::float_overflow_message("addition")),
+        })
+    }
 }

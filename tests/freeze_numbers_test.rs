@@ -161,6 +161,34 @@ main()
     assert_eq!(agree(src), Ok(bools(&[true; 5])));
 }
 
+// ── OL-355: aggregates overflow as `+` does ─────────────────────────
+#[test]
+fn float_aggregates_raise_on_overflow() {
+    for (call, name) in [
+        ("sum([1e308, 1e308])", "sum:"),
+        ("average([1e308, 1e308])", "average:"),
+        ("col.sum_by([1e308, 1e308], (x) => x)", "col.sum_by:"),
+        ("sum([1, 1e308, 1e308])", "sum:"),
+    ] {
+        let src = format!("fn main() = {call}\nmain()");
+        let err = agree(&src).expect_err(call);
+        assert!(
+            err.contains(name) && err.contains("Float overflow in addition"),
+            "{call}: {err}"
+        );
+        assert!(!err.contains("inf"), "{call} leaked inf: {err}");
+    }
+}
+
+#[test]
+fn average_of_large_ints_is_their_mean() {
+    let src = "fn main() = average([9223372036854775807, 9223372036854775807])\nmain()";
+    assert_eq!(agree(src), Ok(Value::Float(9223372036854775807.0)));
+    let src = "fn main() = average([1, \"a\"])\nmain()";
+    let err = agree(src).expect_err("not numbers");
+    assert!(err.contains("average:"), "{err}");
+}
+
 // ── OL-359: Int and Float order exactly ─────────────────────────────
 #[test]
 fn int_float_ordering_agrees_with_equality_past_2_53() {
