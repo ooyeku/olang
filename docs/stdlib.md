@@ -3846,7 +3846,7 @@ by the kernel, before any `503` can be sent. The handler receives a request stru
 | `req.method` | `"GET"`, `"POST"`, ... (uppercased) |
 | `req.path` | the path, without the query string |
 | `req.query` | map of decoded query parameters (a name given more than once: a list of its values) |
-| `req.headers` | map of headers, keys lowercased |
+| `req.headers` | map of headers, keys lowercased (a header sent more than once: a list of its values, in order) |
 | `req.body` | the request body as text (bytes that are not UTF-8 read as U+FFFD) |
 | `req.body_bytes` | the request body as `Bytes`, exactly as sent (an upload, an image) |
 | `req.remote_addr` | client socket address (`ip:port`) |

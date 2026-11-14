@@ -27,6 +27,9 @@ fn handler(req) = {
         // header, whatever this contains.
         let evil = if map_has_key(req.query, "v") => map_get(req.query, "v") else => "x"
         { status: 200, headers: #{ "x-echo": evil }, body: "ok" }
+    } else if req.path == "/repeated" => {
+        // a header sent twice reaches the handler as both values (OL-378)
+        show(map_get(req.headers, "x-a"))
     } else if req.path == "/framing" => {
         // A handler forwarding an upstream's framing headers (OL-373).
         http.response_with_headers(200, "h", #{ "Content-Length": "999", "Connection": "upgrade" })
@@ -149,6 +152,14 @@ fn the_gauntlet() {
     assert!(lower.contains("content-length: 1\r\n"), "framing:\n{r}");
     assert_eq!(lower.matches("connection:").count(), 1, "framing:\n{r}");
     assert!(r.ends_with("\r\n\r\nh"), "framing body:\n{r}");
+
+    // A header sent twice keeps both values, in order, as the client's
+    // headers and req.query do (OL-378).
+    let r = raw(
+        port,
+        b"GET /repeated HTTP/1.1\r\nX-A: 1\r\nx-a: 2\r\nConnection: close\r\n\r\n",
+    );
+    assert!(r.ends_with("[\"1\", \"2\"]"), "repeated header:\n{r}");
 
     // Header injection through the handler: the evil value must stay on
     // one line — no injected header, no response splitting.

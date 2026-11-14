@@ -880,11 +880,10 @@ pub(crate) fn request_value(
 /// with `query` and `headers` as maps so `map_get` reads them.
 fn request_to_value(req: &ParsedRequest, remote_addr: &str) -> Value {
     let query_map = multi_map(req.query.iter().cloned());
-    let header_map: crate::ast::ValueMap = req
-        .headers
-        .iter()
-        .map(|(k, v)| (k.clone(), Value::String(Arc::new(v.clone()))))
-        .collect();
+    // a header sent more than once keeps every value, in order, as a
+    // list: the client's headers and `req.query` say a repeated name so
+    // (OL-378); the last value alone was kept
+    let header_map = multi_map(req.headers.iter().cloned());
 
     let mut fields = crate::ast::ValueMap::default();
     fields.insert(
