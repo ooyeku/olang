@@ -391,28 +391,26 @@ fn key_string(value: &Value) -> String {
 /// natural order. Mixed/other types fall back to string comparison so a key
 /// function never crashes the operation.
 fn compare_keys(a: &Value, b: &Value) -> std::cmp::Ordering {
+    use crate::interpreter::ops::int_float_cmp;
     use std::cmp::Ordering;
-    let num = |v: &Value| -> Option<f64> {
-        match v {
-            Value::Integer(n) => Some(*n as f64),
-            Value::Float(f) => Some(*f),
-            _ => None,
-        }
-    };
-    match (num(a), num(b)) {
-        (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(Ordering::Equal),
-        _ => match (a, b) {
-            (Value::String(x), Value::String(y)) => x.cmp(y),
-            (Value::Boolean(x), Value::Boolean(y)) => x.cmp(y),
-            // Several keys at once: in order, as `<` orders tuples.
-            (Value::Tuple(x), Value::Tuple(y)) => x
-                .iter()
-                .zip(y.iter())
-                .map(|(p, q)| compare_keys(p, q))
-                .find(|o| o.is_ne())
-                .unwrap_or_else(|| x.len().cmp(&y.len())),
-            _ => a.to_string().cmp(&b.to_string()),
-        },
+    match (a, b) {
+        (Value::Integer(x), Value::Integer(y)) => x.cmp(y),
+        (Value::Float(x), Value::Float(y)) => x.partial_cmp(y).unwrap_or(Ordering::Equal),
+        // exactly, as `<` orders them (OL-359)
+        (Value::Integer(x), Value::Float(y)) => int_float_cmp(*x, *y).unwrap_or(Ordering::Equal),
+        (Value::Float(x), Value::Integer(y)) => int_float_cmp(*y, *x)
+            .map(Ordering::reverse)
+            .unwrap_or(Ordering::Equal),
+        (Value::String(x), Value::String(y)) => x.cmp(y),
+        (Value::Boolean(x), Value::Boolean(y)) => x.cmp(y),
+        // Several keys at once: in order, as `<` orders tuples and lists.
+        (Value::Tuple(x), Value::Tuple(y)) | (Value::List(x), Value::List(y)) => x
+            .iter()
+            .zip(y.iter())
+            .map(|(p, q)| compare_keys(p, q))
+            .find(|o| o.is_ne())
+            .unwrap_or_else(|| x.len().cmp(&y.len())),
+        _ => a.to_string().cmp(&b.to_string()),
     }
 }
 

@@ -6862,6 +6862,26 @@ impl BytecodeVm {
         })
     }
 
+    fn is_ordering(op: &BinaryOp) -> bool {
+        matches!(
+            op,
+            BinaryOp::LessThan
+                | BinaryOp::LessThanEqual
+                | BinaryOp::GreaterThan
+                | BinaryOp::GreaterThanEqual
+        )
+    }
+
+    /// Whether `op` holds of two values in the order `ord`.
+    fn ordering_holds(op: &BinaryOp, ord: std::cmp::Ordering) -> bool {
+        match op {
+            BinaryOp::LessThan => ord.is_lt(),
+            BinaryOp::LessThanEqual => ord.is_le(),
+            BinaryOp::GreaterThan => ord.is_gt(),
+            _ => ord.is_ge(),
+        }
+    }
+
     fn finite(x: f64) -> Option<f64> {
         x.is_finite().then_some(x)
     }
@@ -7034,24 +7054,33 @@ impl BytecodeVm {
             }
         }
 
-        // Tuples order lexicographically, by the interpreter's one rule.
+        // Tuples and lists order lexicographically, by the interpreter's
+        // one rule (`ops::value_ordering`, OL-487).
+        let is_list = |d: &ValueData| {
+            matches!(
+                d,
+                ValueData::List(_)
+                    | ValueData::FloatList(_)
+                    | ValueData::IntList(_)
+                    | ValueData::AstList(_)
+            )
+        };
         if matches!(
             op,
             BinaryOp::LessThan
                 | BinaryOp::LessThanEqual
                 | BinaryOp::GreaterThan
                 | BinaryOp::GreaterThanEqual
-        ) && matches!(left.data, ValueData::Tuple(_))
-            && matches!(right.data, ValueData::Tuple(_))
+        ) && ((matches!(left.data, ValueData::Tuple(_))
+            && matches!(right.data, ValueData::Tuple(_)))
+            || (is_list(&left.data) && is_list(&right.data)))
         {
-            let (Ok(Value::Tuple(ref a)), Ok(Value::Tuple(ref b))) =
-                (left.to_ast(), right.to_ast())
-            else {
+            let (Ok(a), Ok(b)) = (left.to_ast(), right.to_ast()) else {
                 return Err(BytecodeError::TypeError(
-                    "cannot order these tuples".to_string(),
+                    "cannot order these values".to_string(),
                 ));
             };
-            let ord = crate::interpreter::ops::tuple_ordering(a, b).map_err(|e| match e {
+            let ord = crate::interpreter::ops::value_ordering(&a, &b).map_err(|e| match e {
                 crate::interpreter::InterpreterError::TypeError { message } => {
                     BytecodeError::TypeError(message)
                 }
@@ -7148,6 +7177,16 @@ impl BytecodeVm {
             (ValueData::Float(a), ValueData::Float(b)) => self
                 .execute_float_binary_op(*a, *b, op.clone())
                 .map_err(|e| Self::name_operand_types(e, op, left, right))?,
+            // An Int and a Float order exactly, as `==` compares them
+            // (OL-359): not the Int rounded to f64.
+            (ValueData::Integer(a), ValueData::Float(b)) if Self::is_ordering(&op) => {
+                let ord = crate::interpreter::ops::int_float_cmp(*a, *b);
+                OvmValue::new_boolean(ord.is_some_and(|o| Self::ordering_holds(&op, o)))
+            }
+            (ValueData::Float(a), ValueData::Integer(b)) if Self::is_ordering(&op) => {
+                let ord = crate::interpreter::ops::int_float_cmp(*b, *a).map(|o| o.reverse());
+                OvmValue::new_boolean(ord.is_some_and(|o| Self::ordering_holds(&op, o)))
+            }
             (ValueData::Integer(a), ValueData::Float(b)) => self
                 .execute_float_binary_op(*a as f64, *b, op.clone())
                 .map_err(|e| Self::name_operand_types(e, op, left, right))?,

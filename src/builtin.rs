@@ -2881,6 +2881,7 @@ impl BuiltinFunctions {
             Numeric,
             Str,
             Tuple,
+            List,
             Other,
         }
         fn class_of(v: &Value) -> SortClass {
@@ -2888,6 +2889,7 @@ impl BuiltinFunctions {
                 Value::Integer(_) | Value::Float(_) => SortClass::Numeric,
                 Value::String(_) => SortClass::Str,
                 Value::Tuple(_) => SortClass::Tuple,
+                Value::List(_) => SortClass::List,
                 _ => SortClass::Other,
             }
         }
@@ -2901,7 +2903,7 @@ impl BuiltinFunctions {
             for item in list.iter() {
                 if class_of(item) != cls {
                     return Err(InterpreterError::TypeError {
-                        message: "sort: cannot compare values of different types (a list of numbers, of strings, or of tuples)".to_string(),
+                        message: "sort: cannot compare values of different types (a list of numbers, of strings, of tuples or of lists)".to_string(),
                     });
                 }
             }
@@ -2909,21 +2911,19 @@ impl BuiltinFunctions {
 
         let mut result: Vec<Value> = list.to_vec();
 
-        // Tuples order lexicographically, as `<` orders them; a pair `<`
-        // cannot order is its error.
-        if list.first().is_some_and(|v| matches!(v, Value::Tuple(_))) {
+        // Tuples and lists order lexicographically, as `<` orders them
+        // (OL-487); a pair `<` cannot order is its error.
+        if list
+            .first()
+            .is_some_and(|v| matches!(v, Value::Tuple(_) | Value::List(_)))
+        {
             let mut failure = None;
-            result.sort_by(|a, b| match (a, b) {
-                (Value::Tuple(x), Value::Tuple(y)) => {
-                    match crate::interpreter::ops::tuple_ordering(x, y) {
-                        Ok(o) => o,
-                        Err(e) => {
-                            failure.get_or_insert(e);
-                            std::cmp::Ordering::Equal
-                        }
-                    }
+            result.sort_by(|a, b| match crate::interpreter::ops::value_ordering(a, b) {
+                Ok(o) => o,
+                Err(e) => {
+                    failure.get_or_insert(e);
+                    std::cmp::Ordering::Equal
                 }
-                _ => std::cmp::Ordering::Equal,
             });
             if let Some(InterpreterError::TypeError { message }) = failure {
                 return Err(InterpreterError::TypeError {
@@ -2944,8 +2944,16 @@ impl BuiltinFunctions {
                 (Value::Integer(x), Value::Integer(y)) => x.cmp(y),
                 (Value::Float(x), Value::Float(y)) => x.total_cmp(y),
                 (Value::String(x), Value::String(y)) => x.cmp(y),
-                (Value::Integer(x), Value::Float(y)) => (*x as f64).total_cmp(y),
-                (Value::Float(x), Value::Integer(y)) => x.total_cmp(&(*y as f64)),
+                // exactly, as `<` orders them (OL-359)
+                (Value::Integer(x), Value::Float(y)) => {
+                    crate::interpreter::ops::int_float_cmp(*x, *y)
+                        .unwrap_or_else(|| (*x as f64).total_cmp(y))
+                }
+                (Value::Float(x), Value::Integer(y)) => {
+                    crate::interpreter::ops::int_float_cmp(*y, *x)
+                        .map(std::cmp::Ordering::reverse)
+                        .unwrap_or_else(|| x.total_cmp(&(*y as f64)))
+                }
                 _ => std::cmp::Ordering::Equal,
             }
         }
