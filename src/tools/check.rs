@@ -3146,6 +3146,20 @@ pub fn check_program_with_context(context: &[&Program], program: &Program) -> Ve
                 }
             }
         }
+        // A name a context module re-exports under an alias (`share use
+        // api { ws_send as send }`) is that function under a new name, and
+        // its signature is not collected under it: a like-named function
+        // of another context module (a package root imported for something
+        // else) is not what the file means by it (OL-550).
+        for stmt in &p.statements {
+            if let Statement::ShareDecl(crate::ast::ShareDecl::Use(u)) = stmt.unwrapped() {
+                for item in &u.items {
+                    if let crate::ast::UseItem::Aliased { alias, .. } = item {
+                        ambiguous.insert(alias.clone());
+                    }
+                }
+            }
+        }
         checker.collect(p);
     }
     checker.sigs.retain(|name, _| !ambiguous.contains(name));
@@ -6425,6 +6439,28 @@ mod tests {
             d[0].message
                 .contains("parameter 'w' of area expects Int, got String")
         );
+    }
+
+    #[test]
+    fn a_name_re_exported_under_an_alias_is_not_another_module_s() {
+        // OL-550: `use index { send }`, where index re-exports `ws_send as
+        // send`, beside `use loom { run }`, whose root has a `send(msg)`
+        // of its own. The file's `send` is index's; Loom's signature was
+        // checked against it ("Arity mismatch: expected 1, got 3").
+        let loom = Parser::new()
+            .parse("share fn send(msg) = msg\nshare fn run(p) = p\n")
+            .expect("parses");
+        let index = Parser::new()
+            .parse("share use api.core { ws_send as send }\n")
+            .expect("parses");
+        let main = Parser::new()
+            .parse("use index { send }\nuse loom { run }\nfn f(s) = send(s, \"a\", { tag: \"x\" })\n")
+            .expect("parses");
+        let d = check_program_with_context(&[&index, &loom], &main);
+        assert!(d.is_empty(), "{d:?}");
+        // Without the alias, the one `send` is still checked.
+        let d = check_program_with_context(&[&loom], &main);
+        assert!(d.iter().any(|x| x.message.contains("Arity mismatch")), "{d:?}");
     }
 
     #[test]
