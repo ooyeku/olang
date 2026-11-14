@@ -285,3 +285,31 @@ fn clients_past_a_full_queue_get_503_not_a_reset() {
     assert_eq!(ok + busy, got.len(), "every client answered 200 or 503: {got:?}");
     assert!(busy > 0 && ok >= 6, "{ok} answered, {busy} turned away: {got:?}");
 }
+
+/// `http.respond` to a client that hung up while it waited answers Err,
+/// not Ok(()) as if delivered; one that waited gets its answer and Ok
+/// (OL-402).
+#[test]
+fn a_deferred_answer_to_a_client_that_left_is_an_err() {
+    let (_guard, port) = spawn_server_with(
+        "deferred",
+        r#"let results = chan.new()
+fn handle(req) = if req.path == "/wait" => {
+    let ticket = http.defer()
+    spawn { time.sleep(300)
+ chan.send(results, show(http.respond(ticket, "late"))) }
+    ticket
+} else if req.path == "/result" => show(chan.recv_timeout(results, 3000)) else => "quick"
+http.serve(0, handle)"#,
+    );
+    let mut left = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+    left.write_all(b"GET /wait HTTP/1.1\r\nHost: x\r\n\r\n").expect("write");
+    std::thread::sleep(Duration::from_millis(50));
+    drop(left);
+    let r = raw(port, b"GET /result HTTP/1.1\r\nConnection: close\r\n\r\n");
+    assert!(r.contains("Err(") && r.contains("left"), "a client that left:\n{r}");
+    let waited = raw(port, b"GET /wait HTTP/1.1\r\nHost: x\r\n\r\n");
+    assert!(waited.ends_with("late"), "a client that waited:\n{waited}");
+    let r = raw(port, b"GET /result HTTP/1.1\r\nConnection: close\r\n\r\n");
+    assert!(r.contains("Ok(())") && !r.contains("Err"), "its respond:\n{r}");
+}

@@ -1565,6 +1565,15 @@ fn http_respond(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
                 .to_string(),
         )))));
     };
+    // A client that hung up while its answer was awaited: the write
+    // below would land in the kernel's buffer and answer Ok(()), as if
+    // delivered (OL-402). A look at the socket first tells: a close it
+    // sent reads as 0 bytes, a reset as an error.
+    if let Some(why) = peer_gone(&stream) {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "http.respond: the client left ({why})"
+        ))))));
+    }
     // The deferred connection is done after this answer.
     let rendered = render_handler_response(response, false, fs);
     match rendered.write_to(&mut stream) {
@@ -1574,6 +1583,24 @@ fn http_respond(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             e
         )))))),
     }
+}
+
+/// Whether the client on a parked connection has gone: its close (or a
+/// reset) is waiting to be read. Bytes it sent since (a pipelined
+/// request) or nothing at all mean it is still there.
+fn peer_gone(stream: &std::net::TcpStream) -> Option<String> {
+    if stream.set_nonblocking(true).is_err() {
+        return None;
+    }
+    let mut one = [0u8; 1];
+    let gone = match stream.peek(&mut one) {
+        Ok(0) => Some("it closed the connection".to_string()),
+        Ok(_) => None,
+        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => None,
+        Err(e) => Some(e.to_string()),
+    };
+    let _ = stream.set_nonblocking(false);
+    gone
 }
 
 fn serve_connection(

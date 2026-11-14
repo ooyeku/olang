@@ -2790,8 +2790,8 @@ moves to the next connection, and the parked connection costs a socket.
 `http.respond(ticket, response)` completes it from wherever the answer
 turns up — a spawned task, a channel service, a later request on
 another worker — with any value a handler could have returned; it is
-`Ok(())`, or `Err` when nothing holds the ticket (answered already, or
-the client left). The connection closes after the deferred answer.
+`Ok(())`, or `Err` when nothing holds the ticket (answered already) or
+the client hung up while it waited. The connection closes after the deferred answer.
 
 ```olang no-run
 fn handle(req) = if req.path == "/wait" => {
