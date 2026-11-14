@@ -223,8 +223,8 @@ helpers are aliases of the same function, never a second definition.
 | <a id="typeof"></a>`typeof(v)` | runtime type name as a string |
 | <a id="show"></a>`show(v)` | the value as olang source writes it ([How values print](language.md#how-values-print)); a String is its text |
 | <a id="to_string"></a>`to_string(v)` | the same text as `show` (a String is its text) |
-| <a id="to_int"></a>`to_int(v)` | string/float → Int (floats truncate toward zero); a string that is not a number raises (`str.parse_int` is the `Result` form), and so does a Float outside the Int range (`to_int(1e30)`) or not finite |
-| <a id="to_float"></a>`to_float(v)` | string/int → Float; a string that is not a number raises (`str.parse_float` is the `Result` form) |
+| <a id="to_int"></a>`to_int(v)` | string/float → Int (floats truncate toward zero); a string that is not a number raises (`str.parse_int` is the `Result` form, and both read the same text: whitespace around the number is trimmed, so `to_int(" 42\n")` is 42), and so does a Float outside the Int range (`to_int(1e30)`) or not finite |
+| <a id="to_float"></a>`to_float(v)` | string/int → Float; a string that is not a number raises (`str.parse_float` is the `Result` form, which reads the same text, whitespace around the number trimmed) |
 | <a id="len"></a>`len(v)` | length of a list, a string (in characters), a tuple, or `Bytes`; a map raises, and its entry count is `map_len` |
 | <a id="implements"></a>`implements(v, "Trait")` | does the value's type implement the trait? |
 | <a id="hash"></a>`hash(v)` | a 64-bit Int hash of the value, the same for values that are `==`, and the same in every run |
@@ -522,7 +522,7 @@ every function returns a new string.
 | <a id="str-is_empty"></a>`str.is_empty(s)` | `""` test |
 | <a id="str-is_ascii"></a>`str.is_ascii(s)` | every character ASCII? (true for `""`) — one pass over the bytes |
 | <a id="str-hash"></a>`str.hash(s)` | the XXH3 hash of the string's UTF-8 as an Int, the same in every run (`crypto.xxh3(s)`) |
-| <a id="str-parse_int"></a><a id="str-parse_float"></a>`str.parse_int(s)` / `str.parse_float(s)` | `Result` parses |
+| <a id="str-parse_int"></a><a id="str-parse_float"></a>`str.parse_int(s)` / `str.parse_float(s)` | `Result` parses, whitespace around the number trimmed; the text `to_int` / `to_float` read, as an `Err` where they raise |
 | <a id="str-fmt"></a>`str.fmt(template, ...)` | fill `{}` placeholders, display form; `{{`/`}}` escape |
 | <a id="str-fixed"></a>`str.fixed(x, digits)` | exactly `digits` decimals, never exponent form, never `-0.00` — the column form `to_string` is not |
 | <a id="str-thousands"></a>`str.thousands(x, digits)` | `str.fixed` with thousands separators: `1,234,567.89` |

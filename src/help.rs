@@ -1242,6 +1242,7 @@ impl HelpSystem {
             examples: vec![
                 "to_int(3.14)  // 3".to_string(),
                 "to_int(\"42\")  // 42".to_string(),
+                "to_int(\" 42 \")  // 42 (whitespace around it trimmed)".to_string(),
             ],
             category: "Conversion".to_string(),
             see_also: vec!["to_float".to_string(), "to_string".to_string()],

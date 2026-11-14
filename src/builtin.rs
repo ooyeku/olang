@@ -2620,13 +2620,13 @@ impl BuiltinFunctions {
                     })
                 }
             }
-            Value::String(s) => {
-                s.parse::<i64>()
-                    .map(Value::Integer)
-                    .map_err(|_| InterpreterError::TypeError {
-                        message: format!("Cannot convert string '{}' to integer", s),
-                    })
-            }
+            // Surrounding whitespace is no part of the number, as for
+            // `str.parse_int`, the Result form of this (OL-382).
+            Value::String(s) => s.trim().parse::<i64>().map(Value::Integer).map_err(|_| {
+                InterpreterError::TypeError {
+                    message: format!("Cannot convert string '{}' to integer", s),
+                }
+            }),
             _ => Err(InterpreterError::TypeError {
                 message: "to_int: cannot convert value to integer".to_string(),
             }),
@@ -2644,7 +2644,8 @@ impl BuiltinFunctions {
         match &args[0] {
             Value::Integer(n) => Ok(Value::Float(*n as f64)),
             Value::Float(x) => Ok(Value::Float(*x)),
-            Value::String(s) => match s.parse::<f64>() {
+            // Surrounding whitespace trimmed, as `str.parse_float` does.
+            Value::String(s) => match s.trim().parse::<f64>() {
                 // A Float is never inf or NaN: "1e999" is out of range.
                 Ok(x) if x.is_nan() => Err(InterpreterError::TypeError {
                     message: format!("to_float: '{}' is not a number: a Float is never NaN", s),
