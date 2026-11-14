@@ -377,8 +377,10 @@ fn csv_stringify_with_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::er
 
     // Write data rows
     for obj in objects.iter() {
-        match obj {
-            Value::Struct { fields, .. } => {
+        // A row is a map (what `parse_with_headers` gives), an object or
+        // a JSON object: all read alike (OL-336).
+        match obj.record_fields() {
+            Some(fields) => {
                 let row_data: Vec<String> = header_strings
                     .iter()
                     .map(|header| {
@@ -402,8 +404,8 @@ fn csv_stringify_with_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::er
                     ))))));
                 }
             }
-            _ => {
-                return Err("Each object must be a struct".to_string().into());
+            None => {
+                return Err("Each row must be a map or an object".to_string().into());
             }
         }
     }
@@ -1474,6 +1476,29 @@ mod tests {
         assert_fails(csv_stringify_with_headers(vec![
             list_val(vec![]),
             int_val(42),
+        ]));
+    }
+
+    #[test]
+    fn stringify_with_headers_takes_the_maps_parse_with_headers_gives() {
+        // OL-336: the module round-trips its own rows, and a `#{}` row
+        // is written as an object's is.
+        let rows = csv_parse_with_headers(vec![string_val("a,b\n1,2")]).unwrap();
+        let rows = assert_ok(&rows).clone();
+        let headers = list_val(vec![string_val("a"), string_val("b")]);
+        let out = csv_stringify_with_headers(vec![rows, headers.clone()]).unwrap();
+        assert_eq!(extract_string(assert_ok(&out)), "a,b\n1,2\n");
+
+        let mut m = crate::ast::ValueMap::default();
+        m.insert("a".to_string(), int_val(1));
+        let map_row = Value::Map(std::sync::Arc::new(m));
+        let out = csv_stringify_with_headers(vec![list_val(vec![map_row]), headers.clone()])
+            .unwrap();
+        assert_eq!(extract_string(assert_ok(&out)), "a,b\n1,\n");
+
+        assert_fails(csv_stringify_with_headers(vec![
+            list_val(vec![int_val(1)]),
+            headers,
         ]));
     }
 
