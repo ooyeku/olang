@@ -701,12 +701,24 @@ fn read_request(
     // more). A Content-Length that does not parse is a malformed
     // request, not an empty body — treating it as 0 would desynchronize
     // the kept-alive stream into the next request.
-    let content_length = match headers.iter().find(|(k, _)| k == "content-length") {
-        None => 0,
-        Some((_, v)) => v
-            .parse::<usize>()
-            .map_err(|_| (400, format!("invalid Content-Length: {:?}", v)))?,
-    };
+    // Every Content-Length said (twice, or as a list `5, 5`) must agree:
+    // differing values are refused (RFC 9112 §6.3), never one picked — a
+    // proxy in front picking the other is how a request is smuggled
+    // (OL-373).
+    let mut content_length: Option<usize> = None;
+    for (_, v) in headers.iter().filter(|(k, _)| k == "content-length") {
+        for one in v.split(',') {
+            let n = one
+                .trim()
+                .parse::<usize>()
+                .map_err(|_| (400, format!("invalid Content-Length: {:?}", v)))?;
+            if content_length.is_some_and(|was| was != n) {
+                return Err((400, "conflicting Content-Length values".to_string()));
+            }
+            content_length = Some(n);
+        }
+    }
+    let content_length = content_length.unwrap_or(0);
     if content_length > max_body {
         return Err((413, "request body too large".to_string()));
     }
@@ -911,13 +923,7 @@ fn response_raw_bytes(
     if !has_content_type {
         out.push_str("Content-Type: application/octet-stream\r\n");
     }
-    for (k, v) in extra_headers {
-        out.push_str(&format!(
-            "{}: {}\r\n",
-            header_line_safe(k),
-            header_line_safe(v)
-        ));
-    }
+    push_handler_headers(&mut out, extra_headers);
     out.push_str(&format!("Content-Length: {}\r\n", body.len()));
     out.push_str(if keep_alive {
         "Connection: keep-alive\r\n\r\n"
@@ -927,6 +933,27 @@ fn response_raw_bytes(
     let mut bytes = out.into_bytes();
     bytes.extend_from_slice(body);
     bytes
+}
+
+/// A handler's headers into a response head, leaving out the framing
+/// the server writes itself: a handler's `Content-Length` (one forwarded
+/// from an upstream response) was sent beside the server's, two different
+/// lengths in one response, and its `Transfer-Encoding` or `Connection`
+/// would contradict the body and the connection the server sends (OL-373).
+fn push_handler_headers(out: &mut String, headers: &[(String, String)]) {
+    for (k, v) in headers {
+        if ["content-length", "transfer-encoding", "connection"]
+            .iter()
+            .any(|f| k.trim().eq_ignore_ascii_case(f))
+        {
+            continue;
+        }
+        out.push_str(&format!(
+            "{}: {}\r\n",
+            header_line_safe(k),
+            header_line_safe(v)
+        ));
+    }
 }
 
 /// A header key or value is one line: strip CR and LF so a handler
@@ -953,13 +980,7 @@ fn response_bytes(
     if !has_content_type {
         out.push_str("Content-Type: text/plain; charset=utf-8\r\n");
     }
-    for (k, v) in extra_headers {
-        out.push_str(&format!(
-            "{}: {}\r\n",
-            header_line_safe(k),
-            header_line_safe(v)
-        ));
-    }
+    push_handler_headers(&mut out, extra_headers);
     out.push_str(&format!("Content-Length: {}\r\n", body.len()));
     if keep_alive {
         out.push_str("Connection: keep-alive\r\n\r\n");
@@ -1010,13 +1031,7 @@ fn raw_head(
     if !has_content_type {
         out.push_str("Content-Type: application/octet-stream\r\n");
     }
-    for (k, v) in extra_headers {
-        out.push_str(&format!(
-            "{}: {}\r\n",
-            header_line_safe(k),
-            header_line_safe(v)
-        ));
-    }
+    push_handler_headers(&mut out, extra_headers);
     out.push_str(&format!("Content-Length: {}\r\n", len));
     out.push_str(if keep_alive {
         "Connection: keep-alive\r\n\r\n"
@@ -2794,5 +2809,50 @@ mod chunked_tests {
             err(b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nhello\r\n0\r\n\r\n"),
             Some(400)
         );
+    }
+
+    /// Two Content-Lengths that differ are refused, never one picked
+    /// (the shape a smuggled request takes); the same length said twice
+    /// is one length (OL-373).
+    #[test]
+    fn conflicting_content_lengths_are_refused() {
+        let err = |raw| parse(raw).err().map(|e| e.0);
+        assert_eq!(
+            err(b"POST / HTTP/1.1\r\nContent-Length: 3\r\nContent-Length: 10\r\n\r\nabc"),
+            Some(400)
+        );
+        assert_eq!(
+            err(b"POST / HTTP/1.1\r\nContent-Length: 3, 10\r\n\r\nabc"),
+            Some(400)
+        );
+        let same = parse(b"POST / HTTP/1.1\r\nContent-Length: 3\r\nContent-Length: 3\r\n\r\nabc")
+            .unwrap()
+            .unwrap();
+        assert_eq!(same.body, b"abc");
+    }
+
+    /// A handler's own Content-Length, Transfer-Encoding and Connection
+    /// are left out: the server's framing is the one sent (OL-373).
+    #[test]
+    fn a_handlers_framing_headers_give_way_to_the_servers() {
+        let headers = [
+            ("Content-Length".to_string(), "999".to_string()),
+            ("transfer-encoding".to_string(), "chunked".to_string()),
+            ("Connection".to_string(), "upgrade".to_string()),
+            ("X-Kept".to_string(), "1".to_string()),
+        ];
+        for head in [
+            super::response_bytes(200, "h", &headers, true),
+            super::response_raw_bytes(200, b"h", &headers, true),
+            super::raw_head(200, 1, &headers, true),
+        ] {
+            let text = String::from_utf8(head).unwrap().to_ascii_lowercase();
+            assert_eq!(text.matches("content-length:").count(), 1, "{text}");
+            assert!(text.contains("content-length: 1\r\n"), "{text}");
+            assert!(!text.contains("transfer-encoding"), "{text}");
+            assert_eq!(text.matches("connection:").count(), 1, "{text}");
+            assert!(text.contains("connection: keep-alive"), "{text}");
+            assert!(text.contains("x-kept: 1"), "{text}");
+        }
     }
 }

@@ -27,6 +27,9 @@ fn handler(req) = {
         // header, whatever this contains.
         let evil = if map_has_key(req.query, "v") => map_get(req.query, "v") else => "x"
         { status: 200, headers: #{ "x-echo": evil }, body: "ok" }
+    } else if req.path == "/framing" => {
+        // A handler forwarding an upstream's framing headers (OL-373).
+        http.response_with_headers(200, "h", #{ "Content-Length": "999", "Connection": "upgrade" })
     } else => {
         { status: 200, body: `echo ${req.method} ${req.path} ${len(req.body)}` }
     }
@@ -125,6 +128,23 @@ fn the_gauntlet() {
     // that would desynchronize the kept-alive stream.
     let r = raw(port, b"POST / HTTP/1.1\r\nContent-Length: abc\r\n\r\nxxx");
     assert!(status_line(&r).contains("400"), "bad content-length:\n{r}");
+
+    // Two Content-Lengths that differ: 400, never one of them picked
+    // (a proxy in front picking the other smuggles a request) (OL-373).
+    let r = raw(
+        port,
+        b"POST / HTTP/1.1\r\nContent-Length: 3\r\nContent-Length: 10\r\n\r\nabc",
+    );
+    assert!(status_line(&r).contains("400"), "two content-lengths:\n{r}");
+
+    // A handler's own Content-Length and Connection give way to the
+    // server's: one of each in the response (OL-373).
+    let r = raw(port, b"GET /framing HTTP/1.1\r\nConnection: close\r\n\r\n");
+    let lower = r.to_ascii_lowercase();
+    assert_eq!(lower.matches("content-length:").count(), 1, "framing:\n{r}");
+    assert!(lower.contains("content-length: 1\r\n"), "framing:\n{r}");
+    assert_eq!(lower.matches("connection:").count(), 1, "framing:\n{r}");
+    assert!(r.ends_with("\r\n\r\nh"), "framing body:\n{r}");
 
     // Header injection through the handler: the evil value must stay on
     // one line — no injected header, no response splitting.
