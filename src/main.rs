@@ -4036,6 +4036,25 @@ fn build_executable(
     }
     // An application carries its modules and assets (a section before
     // the source); a plain build, one file.
+    // A plain build carries the one file: a program that `use`s its own
+    // modules or a dependency would run only beside those sources (from
+    // the folder it was built in), so it is refused, not shipped (OL-369).
+    if !app {
+        let mut interp = olang::Interpreter::new();
+        interp.set_current_file(&source_abs);
+        let beyond = interp.uses_beyond_runtime(&program);
+        if !beyond.is_empty() {
+            anyhow::bail!(
+                "{} uses {}, which a plain build does not carry: the binary would run only beside these sources. Build it as an application with `olang build --app`",
+                source_path.display(),
+                beyond
+                    .iter()
+                    .map(|n| format!("`{n}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+    }
     let app_section = if app {
         let (files, deps, entry) = collect_app(&source_abs, &program)?;
         let count = files.len();

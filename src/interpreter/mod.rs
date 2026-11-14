@@ -2935,6 +2935,30 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         Ok(self.loaded_module_files())
     }
 
+    /// The modules a `use` of `program` names, at any depth, that the
+    /// runtime alone does not hold: one read from a file on disk, or one
+    /// that does not resolve here (a dependency). A plain `olang build`
+    /// carries a single file, so a program naming any of these would run
+    /// only beside its sources (OL-369).
+    pub fn uses_beyond_runtime(&mut self, program: &Program) -> Vec<String> {
+        let on_disk = |me: &Self| {
+            me.loaded_module_files()
+                .into_iter()
+                .filter(|f| f.is_file())
+                .count()
+        };
+        let mut out: Vec<String> = Vec::new();
+        for u in crate::scoping::all_uses(program) {
+            let name = u.path.join(".");
+            let before = on_disk(self);
+            let resolved = self.eval_use_decl(u).is_ok();
+            if (!resolved || on_disk(self) > before) && !out.contains(&name) {
+                out.push(name);
+            }
+        }
+        out
+    }
+
     /// Load every `use` of `program` at any depth as if from `file`.
     fn preload_nested_uses(&mut self, program: &Program, file: Option<String>) {
         let saved = std::mem::replace(&mut self.current_module_path, file);
