@@ -32,11 +32,14 @@ const REPO: &str = "ooyeku/olang";
 /// the real public key here, as into the installers. While it is empty
 /// `otc update` checks the checksum only and says the release is
 /// unverified.
-pub const RELEASE_SIGNING_KEY: &str = "";
+pub const RELEASE_SIGNING_KEY: &str = "-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE36cXQoV1JHERlNekWav8gfY3uw6J
+LvVlnGRVnXmoiR0E/OuqLIfeejOe9XvwIJjf+PwFwPWl6p0ghxHXjUBWIg==
+-----END PUBLIC KEY-----";
 
 /// The first signed release (`v1.0.0`), as `install.sh`'s `SIGNED_FROM`:
 /// an older release carries no signature and installs on its checksum.
-pub const SIGNED_FROM: &str = "";
+pub const SIGNED_FROM: &str = "v1.0.0";
 
 /// What the check of a release's `SHA256SUMS` signature found.
 #[derive(Debug, PartialEq)]
