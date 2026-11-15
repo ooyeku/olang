@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-15
+
 olang 1.0. What it commits to is docs/stability.md, and every 1.x
 release proves it keeps those commitments before it is tagged
 (tests/compat/). 1.0.0 is 1.0.0-rc.10 with the fix below; the
@@ -11404,7 +11406,8 @@ opt-in bytecode tier (`--ovm-tier`) is now honest, tested, and fast.
 - `crypto.decrypt_aes` accepts the output of `crypto.encrypt_aes` directly
   (the embedded nonce is parsed rather than requiring manual hex slicing).
 
-[Unreleased]: https://github.com/ooyeku/olang/compare/v1.0.0-rc.10...HEAD
+[Unreleased]: https://github.com/ooyeku/olang/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/ooyeku/olang/compare/v1.0.0-rc.10...v1.0.0
 [1.0.0-rc.10]: https://github.com/ooyeku/olang/compare/v1.0.0-rc.9...v1.0.0-rc.10
 [0.77.0]: https://github.com/ooyeku/olang/compare/v0.76.0...v0.77.0
 [0.76.0]: https://github.com/ooyeku/olang/compare/v0.75.0...v0.76.0
