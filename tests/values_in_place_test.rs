@@ -63,3 +63,31 @@ println(shared())
         );
     }
 }
+
+#[test]
+fn typeof_names_every_value_alike_on_every_tier() {
+    // OL-521: on the bytecode tier a record or struct crossed to the
+    // interpreter to be named; now it is named by its tag. The names
+    // must stay the interpreter's.
+    let src = r#"
+type P = struct { a: Int, b: Int }
+type E = enum { One(Int), Two }
+fn names(xs) = map(xs, (x) => typeof(x))
+fn main() = {
+    let f = (x) => x + 1
+    let xs = [{ a: 1 }, P { a: 1, b: 2 }, One(1), Two, Ok(1), Err("e"), range(0, 2), f, names, json.parse("{\"a\": 1}"), (1, 2), #{ "k": 1 }, [1], 1.5, "s", true, ()]
+    let mut out = []
+    for x in xs { out = out + [typeof(x)] }
+    (out, names(xs) == out)
+}
+println(main())
+"#;
+    let outs: Vec<String> = TIERS.iter().map(|flags| run(flags, src)).collect();
+    assert!(
+        outs[0].starts_with("([\"Object\", \"P\", \"E\", \"E\", \"Result\", \"Result\", \"List\", \"Function\", \"Function\""),
+        "{}",
+        outs[0]
+    );
+    assert!(outs[0].ends_with("true)"), "{}", outs[0]);
+    assert!(outs.iter().all(|o| o == &outs[0]), "{outs:?}");
+}

@@ -9498,6 +9498,19 @@ impl BytecodeVm {
                     ValueData::Boolean(_) => "Bool",
                     ValueData::String(_) => "String",
                     ValueData::Unit => "Unit",
+                    // A record, a struct, an enum and the rest by their
+                    // tag, the names `Value::type_name` gives their
+                    // interpreter forms: bridged, the value crossed to be
+                    // named (OL-521). A VM-only function, a builtin's
+                    // stand-in and an error keep the bridge's answer.
+                    ValueData::Struct(_)
+                    | ValueData::AstStruct(..)
+                    | ValueData::Enum(_)
+                    | ValueData::Range(_)
+                    | ValueData::Result(_)
+                    | ValueData::Native(_)
+                    | ValueData::AstFunction(_)
+                    | ValueData::Closure(_) => args[0].type_name(),
                     _ => return None,
                 };
                 Some(Ok(OvmValue::new_string(t.to_string())))
