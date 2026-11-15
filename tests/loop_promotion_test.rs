@@ -176,7 +176,7 @@ fn promotion_actually_happens() {
 
 /// A promoted loop that stops on an error (or an interrupt) writes its
 /// variables back as one that ends does (OL-179): in a session (a REPL,
-/// Studio's panel) the next evaluation reads the values the loop had
+/// an editor's panel) the next evaluation reads the values the loop had
 /// when it stopped, not those it had when it was promoted.
 #[test]
 fn a_promoted_loop_that_fails_writes_its_variables_back() {

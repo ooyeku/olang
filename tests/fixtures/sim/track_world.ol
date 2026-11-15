@@ -1,8 +1,8 @@
-// olang-track's headless server (api.ol, lib/server.ol's run_server) as
+// An issue tracker's headless server (api.ol, lib/server.ol's run_server) as
 // a node, unchanged, with agents that file issues over its rpc and read
 // each acknowledged one back after the server crashed.
 //
-//   OLANG_TRACK_DIR=<olang-track checkout> olang sim track_world.ol --seeds N
+//   OLANG_TRACK_DIR=<tracker checkout> olang sim track_world.ol --seeds N
 //
 // The server runs on its own disk: the sources it reads at boot (lib/,
 // static/, packages/, the entries) are copied onto it here, outside the
@@ -19,7 +19,7 @@ let CRASH = match os.get_env("CRASH") { Ok(c) => c, Err(e) => "kill" }
 let MINUTES = match os.get_env("MINUTES") { Ok(m) => unwrap(str.parse_int(m)), Err(e) => 5 }
 
 /// The shelf libraries the server reads as files at boot (the web SDK's
-/// stylesheet and browser modules, Shuttle's runtime for the build
+/// stylesheet and browser modules, the web framework's runtime for the build
 /// stamp), from this machine's shelf, to /shelf/<name> on the node's
 /// disk, and a shelf.toml there naming them.
 fn shelf_files() = {

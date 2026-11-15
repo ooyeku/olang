@@ -289,8 +289,8 @@ fn bench_fails_cleanly_on_broken_programs_and_bad_paths() {
 }
 
 /// `olang test` answers for the project's own files: its `lib/` modules'
-/// blocks run (imported or walked), a dependency's do not — Foundry's 13
-/// tests were reported as 133, the rest Shuttle's. `--deps` runs them.
+/// blocks run (imported or walked), a dependency's do not — a CI runner's 13
+/// tests were reported as 133, the rest a web framework's. `--deps` runs them.
 #[test]
 fn test_runner_runs_the_projects_own_blocks_and_dependencies_only_with_deps() {
     let ws = fixture_dir("own_deps");

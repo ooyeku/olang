@@ -1,4 +1,4 @@
-//! A chart of 10,000 points panned (loom/ROADMAP.md item 11's measure):
+//! A chart of 10,000 points panned:
 //! each step a frame's display list made and drawn on the GPU over the
 //! kept frame, the GPU waited for. Ignored by the suite; run by hand:
 //!

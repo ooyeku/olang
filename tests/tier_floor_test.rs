@@ -321,7 +321,7 @@ fn a_function_value_compiles_around_what_it_cannot() {
     // callees and on any callee that could not compile (a `cell` call),
     // and a short call to a defaulted helper sent it to the bridge — the
     // whole body then tree-walked, its arguments converted each call,
-    // every static check green (Loom's `rt_frame`, the app's `view`).
+    // every static check green (a UI framework's `rt_frame`, the app's `view`).
     // Now it resolves every callee, calls the one that cannot compile
     // through the bridge, and fills literal defaults (`()`, `#{}`, `-1`).
     // Calibrated: promoted=12, instructions=13,800 (cold: 1 and 1,200).
@@ -357,8 +357,8 @@ fn a_function_value_compiles_around_what_it_cannot() {
 #[test]
 fn a_callee_compiles_at_its_first_call_not_with_its_caller() {
     // `never` is reachable from `pick` and never called. Compiling a
-    // caller once compiled everything it could reach first (olang
-    // Studio's first frame compiled ~1,800 functions to run a few
+    // caller once compiled everything it could reach first (an
+    // editor's first frame compiled ~1,800 functions to run a few
     // hundred); now a callee compiles when it is first called. `pick`
     // prints, so it is no native candidate (whose group would compile
     // its callees ahead, for the JIT's planner).

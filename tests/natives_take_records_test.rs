@@ -1,7 +1,7 @@
 //! OL-594: a native that takes a map takes a record too. A record
 //! (`{ k: v }`, an anonymous object, or a parsed JSON object) is what
 //! `map_get` reads as a map, so a native's map argument, and a map inside
-//! its options, read it the same: Loom's views, themes and effects may be
+//! its options, read it the same: a UI framework's views, themes and effects may be
 //! written as records, and `os.exec` takes `{ env: { NAME: "v" } }`.
 
 use std::process::Command;

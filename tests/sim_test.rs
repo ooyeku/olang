@@ -1152,9 +1152,9 @@ let inside = sim.world(#{ "seed": 1 }).run_fn(() => db.query(conn, "SELECT 1 AS 
     assert_eq!(parts[1].to_string(), "1");
 }
 
-// ─── S3, the stretch: olang-track as a node ──────────────────────────
+// ─── S3, the stretch: an issue tracker as a node ──────────────────────
 
-/// The olang-track checkout beside this one, when this machine has it
+/// The issue tracker's checkout beside this one, when this machine has it
 /// and the shelf its server reads (its packages are files on the node's
 /// disk, copied from there by the fixture).
 fn olang_track() -> Option<PathBuf> {
@@ -1184,9 +1184,9 @@ fn track_sim(dir: &std::path::Path, crash: &str, args: &[&str]) -> (i32, String)
 }
 
 #[test]
-fn olang_track_keeps_every_acknowledged_issue_through_kills_and_stops() {
+fn the_tracker_keeps_every_acknowledged_issue_through_kills_and_stops() {
     let Some(dir) = olang_track() else {
-        eprintln!("skipped: no olang-track checkout (and shelf) beside this one");
+        eprintln!("skipped: no issue tracker checkout (and shelf) beside this one");
         return;
     };
     let (code, err) = track_sim(&dir, "kill", &["--seeds", "3"]);
@@ -1195,12 +1195,12 @@ fn olang_track_keeps_every_acknowledged_issue_through_kills_and_stops() {
 }
 
 #[test]
-fn olang_track_runs_the_same_on_one_job_and_three() {
+fn the_tracker_runs_the_same_on_one_job_and_three() {
     // A real application in one process, seed after seed, gives what a
     // fresh worker gives: no process-wide counter (a connection's id, a
     // channel's) reaches a run.
     let Some(dir) = olang_track() else {
-        eprintln!("skipped: no olang-track checkout (and shelf) beside this one");
+        eprintln!("skipped: no issue tracker checkout (and shelf) beside this one");
         return;
     };
     let (c1, e1) = track_sim(&dir, "power", &["--seeds", "3", "--jobs", "1"]);
@@ -1210,13 +1210,13 @@ fn olang_track_runs_the_same_on_one_job_and_three() {
 }
 
 #[test]
-fn olang_track_keeps_acknowledged_issues_through_power_cuts() {
+fn the_tracker_keeps_acknowledged_issues_through_power_cuts() {
     // S3 found WAL at synchronous=NORMAL losing the issues acknowledged
-    // since the last checkpoint to a power cut; olang-track now syncs
+    // since the last checkpoint to a power cut; the tracker now syncs
     // every commit (synchronous=FULL, its commit cc4fd13), and power cuts
     // lose nothing acknowledged. Run across two worker processes.
     let Some(dir) = olang_track() else {
-        eprintln!("skipped: no olang-track checkout (and shelf) beside this one");
+        eprintln!("skipped: no issue tracker checkout (and shelf) beside this one");
         return;
     };
     let (code, err) = track_sim(&dir, "power", &["--seeds", "2", "--jobs", "2"]);

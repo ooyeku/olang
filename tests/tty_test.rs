@@ -1,4 +1,4 @@
-//! The `tty` module (milestone H0 of Heddle): the input decoder on byte
+//! The `tty` module (the first milestone of a TUI framework): the input decoder on byte
 //! sequences, `str.width`, and the restore guarantee end to end — a real
 //! olang program in a pseudo-terminal enters raw mode and the alternate
 //! screen, then raises, exits, is sent SIGTERM, or panics, and the

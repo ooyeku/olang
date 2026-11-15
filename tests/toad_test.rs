@@ -727,7 +727,7 @@ show((same, attempt(() => toad.count(a)) |> show |> str.contains("no such swarm"
 
 #[test]
 fn a_kernel_from_a_loaded_module_finds_that_modules_constants() {
-    // a private kernel of a module loaded at run time (Studio's canvas
+    // a private kernel of a module loaded at run time (an editor's canvas
     // loads a game so): REACH lives in the module's scope, not here
     let dir = tempfile::tempdir().expect("dir");
     let lib = dir.path().join("game.ol");

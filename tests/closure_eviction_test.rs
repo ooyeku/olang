@@ -1,5 +1,5 @@
 //! A lambda the tier compiles per closure is evicted when its closure
-//! dies (open-track OL-146).
+//! dies (OL-146).
 //!
 //! A closure compiles with its captures baked in as constants, so its
 //! compiled artifact holds whatever it captured. The index of those
@@ -7,7 +7,7 @@
 //! themselves — in the bytecode cache, the hot mirror, the JIT's table —
 //! were never dropped: every closure a program ever handed to a builtin
 //! from interpreted code stayed resident with its captures. On a server
-//! that is every request's data, on every worker: open-track went from
+//! that is every request's data, on every worker: an issue tracker went from
 //! 450 MB to 1.4 GB in a thousand reads and gave nothing back, while the
 //! same load under `--no-ovm` stayed flat.
 

@@ -1,6 +1,6 @@
 //! A count far past memory is an error, never an allocation that aborts
 //! the process (release builds abort on a failed allocation: a plugin's
-//! `str.repeat("x", 1 << 40)` took olang Studio down with it), and a long
+//! `str.repeat("x", 1 << 40)` took an editor down with it), and a long
 //! native build hears a budget's stop.
 
 use olang::{Interpreter, Parser, Value};

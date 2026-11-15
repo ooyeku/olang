@@ -70,7 +70,7 @@ mod mac {
                 if moved => { done = true } else => ()
                 if map_get(e, "label") == "Move to Done" => {
                   moved = true
-                  // what Loom's announce(text) places: a polite live region
+                  // what a UI framework's announce(text) places: a polite live region
                   gui.apply(w, [#{ "key": "say1", "parent": "root", "role": "status", "name": "Row one moved to Done",
                                    "live": "polite", "inert": true, "box": (0, 0, 1, 1) }])
                 } else => ()

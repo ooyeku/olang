@@ -341,7 +341,7 @@ fn a_closure_sees_a_top_level_binding_declared_after_it_on_every_tier() {
     // chain, so a `let` declared after the closure is visible when it
     // runs. With the tier on, a function value the compiler declined ran
     // on the bridge interpreter, which knew the program's functions but
-    // not its top-level `let`s — the open-track click that reported
+    // not its top-level `let`s — an app's click that reported
     // "Undefined variable" only in the browser. The bridge now sees the
     // host's globals.
     let (out, rc) = agree(

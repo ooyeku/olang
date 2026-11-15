@@ -1,4 +1,4 @@
-//! Motion (loom/ROADMAP.md item 17, SPEC §7): a style's `transition`
+//! Motion: a style's `transition`
 //! animates a node's opacity, box and colours between frames, brings a
 //! node in from its `enter` pose and draws one leaving to its `exit` — on
 //! the window's clock, with no program turn; instant under reduced motion

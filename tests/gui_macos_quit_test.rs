@@ -2,7 +2,7 @@
 //! AppleScript's `quit app`, a logout or a shutdown is AppKit's
 //! `applicationShouldTerminate:`, which winit answered by ending the
 //! process with nothing of the program's quit run. A program that holds
-//! quits (`gui.hold_quit(true)`, Loom's run loop) hears `quit` and the
+//! quits (`gui.hold_quit(true)`, a UI framework's run loop) hears `quit` and the
 //! application waits for it: the program's quit finishes (here: a write
 //! half a second later) before the process ends, with its status.
 //!

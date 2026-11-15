@@ -194,7 +194,7 @@ share type Shade = enum { Red, Blue }
 
 #[test]
 fn an_imported_name_the_language_also_provides_is_not_a_duplicate() {
-    // `use loom { task, find, split }`: Studio, Loom and open-track each
+    // `use ui { task, find, split }`: an editor, a UI framework and an app each
     // showed "Duplicate variable" over an import line.
     let dir = project(
         "builtin_import",
@@ -215,7 +215,7 @@ fn an_imported_name_the_language_also_provides_is_not_a_duplicate() {
 
 #[test]
 fn a_constant_below_the_function_that_reads_it_is_defined_and_used() {
-    // Studio's `PK_BUILTIN` (core/plugins.ol), Loom's `TEXT_STEPS`: a
+    // An editor's `PK_BUILTIN`, a UI framework's `TEXT_STEPS`: a
     // top-level `let` written after the function body naming it.
     let dir = project(
         "forward_const",
@@ -502,7 +502,7 @@ fn check_as_json_is_what_the_server_publishes() {
 fn a_unit_binding_is_not_a_tuple() {
     // `let mut fg = ()` set to a String later is a placeholder, and any
     // value compared with `()` is the presence test: no always-true or
-    // always-false advisory (Studio's tui/view.ol)
+    // always-false advisory (an editor's terminal view)
     let dir = project(
         "unit",
         &[(

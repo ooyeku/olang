@@ -126,7 +126,7 @@ fn a_dependency_reached_through_a_symbolic_link_keeps_its_modules() {
     );
     write(libs.join("dep2/index.ol"), "share use lib.engine { two }\n");
     write(libs.join("dep2/lib/engine.ol"), "share fn two() = \"two\"\n");
-    // apps/studio/.claude/libraries -> ../../../libraries, and the app in
+    // apps/<app>/.claude/libraries -> ../../../libraries, and the app in
     // a worktree two folders below it
     let claude = ws.join("apps/studio/.claude");
     fs::create_dir_all(claude.join("worktrees/w")).unwrap();

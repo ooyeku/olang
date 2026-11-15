@@ -1,4 +1,4 @@
-//! Modules loaded at run time, as a host (olang Studio) loads its
+//! Modules loaded at run time, as a host (an editor) loads its
 //! plugins: `runtime.load_module(path, grant)` reads a file into the
 //! running program as a module held to its own grant — attributed, as a
 //! dependency's is, by the folder its code lives in — finer than a
@@ -471,7 +471,7 @@ println(said(runtime.call_budget(m.pty_path, [bin], 5000)))
 /// included, on both tiers: its functions' frames read their module's
 /// scope by its file, and the failed reload had forgotten that scope
 /// (`Undefined variable` for every name the module imported — olang
-/// Studio's tier plugin lost `tier_check_argv` so).
+/// An editor's tier plugin lost `tier_check_argv` so).
 #[test]
 fn a_failed_reload_keeps_the_module_s_imports() {
     let ws = workspace("reload_imports");

@@ -2,7 +2,7 @@
 //! in its entry and in its modules, and runs them from anywhere. Before,
 //! `olang build --app` followed only top-level `use`s; once its files
 //! were keyed by virtual paths (OL-444) a nested `use` found nothing and
-//! OlangStudio stopped at launch.
+//! An editor stopped at launch.
 
 use std::fs;
 use std::path::Path;

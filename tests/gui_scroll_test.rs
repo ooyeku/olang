@@ -1,4 +1,4 @@
-//! Scroll physics (loom/ROADMAP.md item 18): a trackpad's gesture pulls a
+//! Scroll physics: a trackpad's gesture pulls a
 //! region past its ends against a rubber band and springs back as the
 //! fingers lift; its momentum bounces at an end and is spent there; a
 //! mouse wheel's notch glides; a scroll with no phase moves at once, as

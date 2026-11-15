@@ -328,7 +328,7 @@ println("join_timeout quick " + show(time.monotonic() - t2 < 200))
 fn a_rust_panic_is_its_task_s_or_boundary_s_err() {
     // The panic hook aborted the process unless the panic happened inside
     // contain::catch, which only lsp and gui used: one builtin bug took
-    // the whole program (and OlangStudio) down. The sites below panic
+    // the whole program (and an editor) down. The sites below panic
     // once each on purpose (OLANG_TEST_PANIC).
     let out = run_both_env(
         "panics",

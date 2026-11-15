@@ -5,7 +5,7 @@
 //!
 //! `values` was the heap minus the program alone (OL-418), so everything
 //! the tiers compiled after load counted as the program's values: about
-//! 130 MB of Studio's "values" was compiled code, which sent two
+//! 130 MB of an editor's "values" was compiled code, which sent two
 //! investigations looking in the wrong place.
 
 use std::process::Command;

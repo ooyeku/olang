@@ -140,7 +140,7 @@ println([which(), helper()])
 #[test]
 fn a_client_bundle_keeps_each_modules_names_its_own_in_the_browser() {
     // The web SDK shares a `code` element and the app a `code` field
-    // (Shuttle's); each module has a private `helper`. One namespace made
+    // (a web framework's); each module has a private `helper`. One namespace made
     // them one function each, and the duplicate-fn rule refused the
     // bundle; each module's scope is its own again.
     let Some(wasm) = wasm() else { return };

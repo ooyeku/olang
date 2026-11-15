@@ -1,5 +1,5 @@
 //! The `db` module's interrupts, time limits, cursors, row-keeping
-//! reads, and open options (heddle-sql's findings): `db.interrupt` from
+//! reads, and open options (a TUI SQL client's findings): `db.interrupt` from
 //! another task, `timeout_ms`, `db.cursor`/`db.next`/`db.columns`/
 //! `db.close_cursor`, `db.query_rows`, and `db.open(path, #{ readonly,
 //! create })`. Each program asserts in olang and answers "ok".

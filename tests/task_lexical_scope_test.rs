@@ -51,7 +51,7 @@ fn in_every_mode(dir: &Path, file: &str, expect: &str) {
 
 #[test]
 fn a_name_a_task_cannot_resolve_never_lands_on_the_callers_like_named_function() {
-    // The open-track shape: the app's `head_for` is declared after the
+    // An app's shape: the app's `head_for` is declared after the
     // function that names it; the SDK's `serve` has its own local
     // `head_for` that calls the app's head function on a worker task.
     // The app's name must reach the app's global, on every tier.

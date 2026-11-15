@@ -1,4 +1,4 @@
-//! `gui`'s text engine (Loom phase 3): variable fonts' optical size,
+//! `gui`'s text engine: variable fonts' optical size,
 //! fallback per cluster, the shaping cache's generations, darkening that
 //! matches macOS, hairlines and scrolls on whole pixels, and the text
 //! system's gestures (a double click's drag by words, a drag-select past

@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 /// A throwaway workspace under the temp dir, unique per test.
 fn workspace(tag: &str) -> PathBuf {
-    // A caller's OLANG_LOCK_READONLY=1 (Studio's Checks set it) would keep
+    // A caller's OLANG_LOCK_READONLY=1 (an editor's checks set it) would keep
     // the locks these tests expect unwritten.
     unsafe { std::env::remove_var("OLANG_LOCK_READONLY") };
     let dir = std::env::temp_dir().join(format!("olang_pkg_it_{}_{}", std::process::id(), tag));

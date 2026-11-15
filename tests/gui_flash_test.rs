@@ -1,4 +1,4 @@
-//! The repaint rainbow (`gui.set(w, #{ "flash": true })`, Loom's
+//! The repaint rainbow (`gui.set(w, #{ "flash": true })`, a UI framework's
 //! inspector): every region a frame draws is tinted with that frame's
 //! colour, over its pixels, and damage never sees the tint — a region
 //! keeps the colour of the frame that last drew it, an unchanged frame

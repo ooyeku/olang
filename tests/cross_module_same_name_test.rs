@@ -154,8 +154,8 @@ fn a_dependency_reached_two_ways_is_loaded_once() {
 /// A bridge interpreter is handed the program's module scopes; its own
 /// tier must know them too, or the bridge that tier builds starts with
 /// none, and a module function run there cannot find a helper declared
-/// below it ("Undefined variable" three layers down, in Loom's terminal
-/// face under Heddle's fuzzer).
+/// below it ("Undefined variable" three layers down, in a UI framework's terminal
+/// face under a TUI framework's fuzzer).
 #[test]
 fn module_scopes_handed_to_an_interpreter_reach_its_tier() {
     let program = Parser::new()
