@@ -158,11 +158,7 @@ fn a_plain_build_of_a_program_with_local_modules_is_refused() {
     let dir = tmp("local_use");
     let project = dir.join("p1");
     std::fs::create_dir_all(project.join("lib")).unwrap();
-    std::fs::write(
-        project.join("lib/calc.ol"),
-        "share fn add(a, b) = a + b\n",
-    )
-    .unwrap();
+    std::fs::write(project.join("lib/calc.ol"), "share fn add(a, b) = a + b\n").unwrap();
     std::fs::write(
         project.join("app.ol"),
         "use lib.calc { add }\nprintln(to_string(add(2, 3)))\n",
@@ -175,8 +171,14 @@ fn a_plain_build_of_a_program_with_local_modules_is_refused() {
         .output()
         .expect("run olang build");
     let stderr = String::from_utf8_lossy(&plain.stderr);
-    assert!(!plain.status.success(), "a plain build must refuse: {stderr}");
-    assert!(stderr.contains("`lib.calc`") && stderr.contains("--app"), "stderr: {stderr}");
+    assert!(
+        !plain.status.success(),
+        "a plain build must refuse: {stderr}"
+    );
+    assert!(
+        stderr.contains("`lib.calc`") && stderr.contains("--app"),
+        "stderr: {stderr}"
+    );
     assert!(!out.exists(), "nothing is written");
 
     let app = Command::new(olang_bin())
@@ -184,8 +186,15 @@ fn a_plain_build_of_a_program_with_local_modules_is_refused() {
         .args(["build", "--app", "app.ol", "-o", out.to_str().unwrap()])
         .output()
         .expect("run olang build --app");
-    assert!(app.status.success(), "{}", String::from_utf8_lossy(&app.stderr));
-    let ran = Command::new(&out).current_dir(&dir).output().expect("run app");
+    assert!(
+        app.status.success(),
+        "{}",
+        String::from_utf8_lossy(&app.stderr)
+    );
+    let ran = Command::new(&out)
+        .current_dir(&dir)
+        .output()
+        .expect("run app");
     assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "5");
 
     let _ = std::fs::remove_dir_all(&dir);

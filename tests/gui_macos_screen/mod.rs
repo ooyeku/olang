@@ -91,7 +91,9 @@ fn why_screen_unseen() -> Option<&'static str> {
 }
 
 fn say_skipped(test: &str, why: &str) {
-    println!("{test}: skipped ({why}, so its window presents no frames; it needs an unlocked, awake display)");
+    println!(
+        "{test}: skipped ({why}, so its window presents no frames; it needs an unlocked, awake display)"
+    );
 }
 
 /// Said and `true` when a window can't be seen now: the test returns

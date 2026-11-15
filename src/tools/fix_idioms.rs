@@ -2646,7 +2646,11 @@ pub fn run(target: Target, paths: &[PathBuf], check: bool, dry_run: bool, skip: 
         target.name(),
         total,
         // --check and --dry-run write nothing, and say so (OL-421)
-        if write { "rewritten" } else { "would be rewritten" },
+        if write {
+            "rewritten"
+        } else {
+            "would be rewritten"
+        },
         files_changed,
         if files_changed == 1 { "" } else { "s" },
         if kinds.is_empty() {

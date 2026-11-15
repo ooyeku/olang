@@ -470,7 +470,10 @@ fn search_reads_nothing_outside_its_root() {
     let secret = fs::canonicalize(top.path().join("outside/secret.txt")).unwrap();
     std::os::unix::fs::symlink(&secret, root.join("out.txt")).unwrap();
     std::os::unix::fs::symlink("sub/in.txt", root.join("inlink.txt")).unwrap();
-    let r = fs::canonicalize(&root).unwrap().to_string_lossy().to_string();
+    let r = fs::canonicalize(&root)
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
     let found = s(eval(&format!(
         r#"show(map(unwrap(fs.search("{r}", "KEY")), (m) => m.path))"#
     )));

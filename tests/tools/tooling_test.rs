@@ -83,8 +83,16 @@ fn test_only_leaves_out_files_without_a_match_and_heads_a_file_error() {
     )
     .unwrap();
     let run = |args: &[&str]| {
-        let out = olang().arg("test").args(args).current_dir(&dir).output().unwrap();
-        (out.status.code(), String::from_utf8_lossy(&out.stdout).into_owned())
+        let out = olang()
+            .arg("test")
+            .args(args)
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+        )
     };
     let (code, stdout) = run(&["--only", "after"]);
     assert_eq!(code, Some(0), "{stdout}");
@@ -109,7 +117,10 @@ fn test_only_leaves_out_files_without_a_match_and_heads_a_file_error() {
         .unwrap();
     let text = String::from_utf8_lossy(&out.stdout);
     assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(text.contains(r#""event":"skipped""#) && text.contains("never"), "{text}");
+    assert!(
+        text.contains(r#""event":"skipped""#) && text.contains("never"),
+        "{text}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -342,20 +353,42 @@ fn bench_reports_a_failing_file_and_times_the_others() {
     std::fs::write(dir.join("bad.ol"), "println(1 / 0)\n").unwrap();
     std::fs::write(dir.join("good.ol"), "println(1 + 1)\n").unwrap();
     let out = olang()
-        .args(["bench", "bad.ol", "good.ol", "--runs", "1", "--save", "base.json"])
+        .args([
+            "bench",
+            "bad.ol",
+            "good.ol",
+            "--runs",
+            "1",
+            "--save",
+            "base.json",
+        ])
         .current_dir(&dir)
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(1), "{stdout}{stderr}");
-    assert!(stderr.contains("Division by zero"), "the child's reason is lost: {stderr}");
-    assert!(stdout.contains("good"), "the file after the failure was never timed: {stdout}");
-    assert!(stderr.contains("1 of 2 file(s) failed; no baseline saved"), "{stderr}");
-    assert!(!dir.join("base.json").exists(), "a partial baseline was saved");
+    assert!(
+        stderr.contains("Division by zero"),
+        "the child's reason is lost: {stderr}"
+    );
+    assert!(
+        stdout.contains("good"),
+        "the file after the failure was never timed: {stdout}"
+    );
+    assert!(
+        stderr.contains("1 of 2 file(s) failed; no baseline saved"),
+        "{stderr}"
+    );
+    assert!(
+        !dir.join("base.json").exists(),
+        "a partial baseline was saved"
+    );
 
     let out = olang()
-        .args(["bench", "bad.ol", "good.ol", "--runs", "1", "--format", "json"])
+        .args([
+            "bench", "bad.ol", "good.ol", "--runs", "1", "--format", "json",
+        ])
         .current_dir(&dir)
         .output()
         .unwrap();
@@ -364,9 +397,22 @@ fn bench_reports_a_failing_file_and_times_the_others() {
         .lines()
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
-    let kinds: Vec<&str> = events.iter().map(|e| e["event"].as_str().unwrap()).collect();
-    assert_eq!(kinds, ["start", "error", "result", "finished"], "{events:?}");
-    assert!(events[1]["message"].as_str().unwrap().contains("Division by zero"), "{events:?}");
+    let kinds: Vec<&str> = events
+        .iter()
+        .map(|e| e["event"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        kinds,
+        ["start", "error", "result", "finished"],
+        "{events:?}"
+    );
+    assert!(
+        events[1]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Division by zero"),
+        "{events:?}"
+    );
     assert_eq!(events[3]["failed"], 1);
     assert_eq!(events[3]["files"], 1);
 }

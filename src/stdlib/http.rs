@@ -356,9 +356,10 @@ fn perform(
             None => return stopped(),
             Some(Ok(response)) => response,
             Some(Err(e)) => {
-                return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                    client_error(&format!("{upper} request failed"), &e),
-                )))));
+                return Ok(Value::Err(Box::new(Value::String(Arc::new(client_error(
+                    &format!("{upper} request failed"),
+                    &e,
+                ))))));
             }
         };
         let status = response.status().as_u16() as i64;
@@ -397,10 +398,7 @@ fn perform(
                 .await
                 .map(|b| crate::stdlib::bytes::to_value(b.to_vec()))
         } else {
-            response
-                .text()
-                .await
-                .map(|t| Value::String(Arc::new(t)))
+            response.text().await.map(|t| Value::String(Arc::new(t)))
         };
         match body {
             Ok(response_body) => {
@@ -797,11 +795,16 @@ fn read_request(
             let line = String::from_utf8_lossy(&pending[..line_end]).to_string();
             // Hex digits only: `from_str_radix` also takes a sign (`+5`),
             // and a size a proxy reads differently is a smuggled body.
-            let hex = line.split(';').next().unwrap_or("").trim_end_matches([' ', '\t']);
-            let size = (!hex.is_empty() && hex.len() <= 16 && hex.bytes().all(|b| b.is_ascii_hexdigit()))
-                .then(|| usize::from_str_radix(hex, 16).ok())
-                .flatten()
-                .ok_or_else(|| (400, format!("invalid chunk size: {:?}", hex)))?;
+            let hex = line
+                .split(';')
+                .next()
+                .unwrap_or("")
+                .trim_end_matches([' ', '\t']);
+            let size =
+                (!hex.is_empty() && hex.len() <= 16 && hex.bytes().all(|b| b.is_ascii_hexdigit()))
+                    .then(|| usize::from_str_radix(hex, 16).ok())
+                    .flatten()
+                    .ok_or_else(|| (400, format!("invalid chunk size: {:?}", hex)))?;
             pending.drain(..line_end + 2);
             if size == 0 {
                 // the trailer section, to its blank line
@@ -1195,7 +1198,10 @@ impl Rendered {
             self.head.truncate(end + 4);
         }
         if no_length
-            && let Some(at) = self.head.windows(18).position(|w| w == b"\r\nContent-Length: ")
+            && let Some(at) = self
+                .head
+                .windows(18)
+                .position(|w| w == b"\r\nContent-Length: ")
             && let Some(len) = self.head[at + 2..].windows(2).position(|w| w == b"\r\n")
         {
             self.head.drain(at + 2..at + 2 + len + 2);
@@ -1547,8 +1553,7 @@ static CONN_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::ne
 #[allow(clippy::type_complexity)]
 static DEFERRED: std::sync::Mutex<
     Option<HashMap<u64, (std::net::TcpStream, crate::caps::FsCap, String)>>,
-> =
-    std::sync::Mutex::new(None);
+> = std::sync::Mutex::new(None);
 
 fn http_defer(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
@@ -2898,8 +2903,8 @@ mod tests {
             }
         });
         for method in ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"] {
-            let result = http_request(vec![string_val(method), string_val(&url), string_val("")])
-                .unwrap();
+            let result =
+                http_request(vec![string_val(method), string_val(&url), string_val("")]).unwrap();
             match &result {
                 Value::Ok(resp) => match resp.as_ref() {
                     Value::Struct { fields, .. } => {
@@ -3147,7 +3152,9 @@ mod chunked_tests {
             Some(413)
         );
         assert_eq!(
-            err(b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n10000000000000000\r\nxx\r\n"),
+            err(
+                b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n10000000000000000\r\nxx\r\n"
+            ),
             Some(400)
         );
     }
@@ -3225,8 +3232,15 @@ mod chunked_tests {
             };
             let head = text(r.for_request("GET"));
             assert!(head.ends_with("\r\n\r\n"), "{status}: {head:?}");
-            assert_eq!(head.contains("Content-Length"), length, "{status}: {head:?}");
-            assert!(head.contains("Connection: keep-alive"), "{status}: {head:?}");
+            assert_eq!(
+                head.contains("Content-Length"),
+                length,
+                "{status}: {head:?}"
+            );
+            assert!(
+                head.contains("Connection: keep-alive"),
+                "{status}: {head:?}"
+            );
         }
         let shared = super::Rendered {
             head: super::raw_head(200, 3, &[], true),

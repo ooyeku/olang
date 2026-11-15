@@ -86,7 +86,10 @@ fn add_refuses_a_folder_with_no_package_and_a_failed_add_writes_nothing() {
     let (ok, out) = otc(&app, &home, &["add", "../emptylib"]);
     assert!(!ok, "{out}");
     assert!(out.contains("has no olang.toml or root module"), "{out}");
-    assert!(!app.join("olang.toml").exists(), "a failed add made a manifest: {out}");
+    assert!(
+        !app.join("olang.toml").exists(),
+        "a failed add made a manifest: {out}"
+    );
 
     let (ok, out) = otc(&app, &home, &["add", "../nope"]);
     assert!(!ok, "{out}");

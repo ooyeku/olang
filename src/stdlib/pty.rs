@@ -116,7 +116,6 @@ pub fn call_pty_function(name: &str, args: Vec<Value>) -> Res {
     }
 }
 
-
 fn handle(id: i64) -> Value {
     let mut fields = crate::ast::ValueMap::default();
     fields.insert("id".to_string(), Value::Integer(id));

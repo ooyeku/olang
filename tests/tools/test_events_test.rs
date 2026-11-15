@@ -523,7 +523,11 @@ test "records" {
 "#,
         )],
     );
-    let (code, out, err) = olang(&dir, &["test", "--format", "json", "tests/snap_test.ol"], &[]);
+    let (code, out, err) = olang(
+        &dir,
+        &["test", "--format", "json", "tests/snap_test.ol"],
+        &[],
+    );
     assert_eq!(code, 1, "{err}");
     let (evs, _) = events(&out);
     let pixels = of(&evs, "failed", "pixels");

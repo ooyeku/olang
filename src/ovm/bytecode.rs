@@ -233,10 +233,8 @@ pub struct BytecodeVm {
     /// entry stands; an entry is good for the epoch it was made in, and
     /// the whole map goes when any compiled code is evicted.
     #[allow(clippy::type_complexity)]
-    fn_value_ids: rustc_hash::FxHashMap<
-        usize,
-        (std::sync::Weak<crate::ast::Function>, u64, FunctionId),
-    >,
+    fn_value_ids:
+        rustc_hash::FxHashMap<usize, (std::sync::Weak<crate::ast::Function>, u64, FunctionId)>,
     /// Closures compiled one by one (not shared), per body: past
     /// `HOF_JIT_CLOSURES` the body is churning and its compiles stay on
     /// the bytecode VM, whose artifacts are freed with the closure.
@@ -6280,7 +6278,9 @@ impl BytecodeVm {
                     // a direct call's do: a value rebound to what the call
                     // answers (`b = f(b, x)`) is held only there, so the
                     // callee updates it in place (OL-523).
-                    let result = match self.call_function_value_taking(&callee_value, &mut arg_values) {
+                    let result = match self
+                        .call_function_value_taking(&callee_value, &mut arg_values)
+                    {
                         // A value called as a function: the bridge's error
                         // does not know the identifier; this site does.
                         Err(BytecodeError::RuntimeError(msg)) if msg.contains("cannot call a") => {
@@ -8001,11 +8001,7 @@ impl BytecodeVm {
 
     /// `hof_function_id` for a function value, remembered by the value's
     /// allocation (`fn_value_ids`): the call-through-a-value path.
-    fn fn_value_id(
-        &mut self,
-        f: &Arc<crate::ast::Function>,
-        arity: usize,
-    ) -> Option<FunctionId> {
+    fn fn_value_id(&mut self, f: &Arc<crate::ast::Function>, arity: usize) -> Option<FunctionId> {
         let key = Arc::as_ptr(f) as usize;
         if let Some((weak, epoch, id)) = self.fn_value_ids.get(&key)
             && *epoch == self.hof_epoch
@@ -16443,7 +16439,10 @@ impl BytecodeOptimizer {
     /// a jump's target, a branch's target and the next instruction, a
     /// self tail call's entry, nothing after a return or a match or try
     /// failure, and otherwise the next instruction.
-    fn block_liveness(instructions: &[Instruction], nregs: usize) -> (Vec<(usize, usize)>, Vec<Vec<u64>>) {
+    fn block_liveness(
+        instructions: &[Instruction],
+        nregs: usize,
+    ) -> (Vec<(usize, usize)>, Vec<Vec<u64>>) {
         use Instruction as I;
         let n = instructions.len();
         let words = nregs.div_ceil(64).max(1);
@@ -16566,173 +16565,174 @@ impl BytecodeOptimizer {
         let mut defs = Vec::new();
         let mut running = vec![0u64; words];
         for (b, &(first, past)) in blocks.iter().enumerate() {
-        running.copy_from_slice(&block_out[b]);
-        for pc in (first..past).rev() {
-            // what this instruction reads and writes, before any rewrite
-            uses.clear();
-            defs.clear();
-            Self::uses_defs_into(&instructions[pc], &mut uses, &mut defs);
-            let live = |r: u32| (r as usize) < nregs && running[r as usize / 64] >> (r % 64) & 1 == 1;
-            // Calls consume dead-after argument registers by move: filling
-            // the mask here (rather than cloning at frame push) is what
-            // keeps a handle passed into a callee from staying pinned in
-            // the caller's frame for the callee's whole run. Only
-            // registers appearing once in the argument list qualify — a
-            // duplicated register must still be cloned for its second use.
-            // The same for a builtin's arguments, and for the left side
-            // of a sum: dead after it, it may be taken and extended.
-            if let I::CallNamed {
-                args, arg_moves, ..
-            } = &mut instructions[pc]
-            {
-                let mut mask = 0u64;
-                for (i, r) in args.iter().enumerate().take(64) {
-                    let unique = args.iter().filter(|a| a.0 == r.0).count() == 1;
-                    let dead = !live(r.0);
-                    if unique && dead {
-                        mask |= 1 << i;
-                    }
-                }
-                *arg_moves = mask;
-            }
-            if let I::Add {
-                dst,
-                lhs,
-                rhs,
-                lhs_dead,
-            } = &mut instructions[pc]
-            {
-                let dead = !live(lhs.0);
-                *lhs_dead = dead && lhs != rhs && dst != rhs;
-            }
-            if let I::GetField {
-                dst,
-                object,
-                object_dead,
-                ..
-            } = &mut instructions[pc]
-            {
-                let dead = !live(object.0);
-                *object_dead = dead && dst != object;
-            }
-            if let I::MapSetAssign {
-                target,
-                key,
-                value,
-                value_dead,
-            } = &mut instructions[pc]
-            {
-                let dead = !live(value.0);
-                *value_dead = dead && value != target && value != key;
-            }
-            if let I::CallValue {
-                callee,
-                args,
-                arg_moves,
-                ..
-            } = &mut instructions[pc]
-            {
-                // the callee's own register is read after the arguments
-                // are taken: never one of them
-                let mut mask = 0u64;
-                for (i, r) in args.iter().enumerate().take(64) {
-                    let unique = args.iter().filter(|a| a.0 == r.0).count() == 1;
-                    let dead = !live(r.0);
-                    if unique && dead && r != callee {
-                        mask |= 1 << i;
-                    }
-                }
-                *arg_moves = mask;
-            }
-            if let I::CallMethod {
-                object,
-                args,
-                arg_moves,
-                ..
-            } = &mut instructions[pc]
-            {
-                // the receiver is read before the arguments: never one
-                let mut mask = 0u64;
-                for (i, r) in args.iter().enumerate().take(64) {
-                    let unique = args.iter().filter(|a| a.0 == r.0).count() == 1;
-                    if unique && !live(r.0) && r != object {
-                        mask |= 1 << i;
-                    }
-                }
-                *arg_moves = mask;
-            }
-            if let I::CallFn {
-                args, arg_moves, ..
-            } = &mut instructions[pc]
-            {
-                let mut mask = 0u64;
-                for (i, r) in args.iter().enumerate().take(64) {
-                    let unique = args.iter().filter(|a| a.0 == r.0).count() == 1;
-                    let dead = !live(r.0);
-                    if unique && dead {
-                        mask |= 1 << i;
-                    }
-                }
-                *arg_moves = mask;
-            }
-            if debug_flag(&DEBUG_LIVENESS, "OLANG_DEBUG_LIVENESS")
-                && let I::Move { dst, src } = &instructions[pc]
-            {
-                let la = live;
-                eprintln!(
-                    "[live] pc={} Move dst=r{}(live_after={}) src=r{}(live_after={})",
-                    pc,
-                    dst.0,
-                    la(dst.0),
-                    src.0,
-                    la(src.0)
-                );
-            }
-            let rewrite = match &instructions[pc] {
-                I::Move { dst, src } if dst != src => {
-                    let live_after = live;
-                    if !live_after(dst.0) {
-                        // Nobody reads the destination: the Move (and the
-                        // reference it would plant) can go. Its old value
-                        // goes too, and the source's when it is dead: a
-                        // Nop left both alive until something overwrote
-                        // them, so `x = ()` freed nothing (OL-411).
-                        let mut regs = vec![*dst];
-                        if !live_after(src.0) {
-                            regs.push(*src);
+            running.copy_from_slice(&block_out[b]);
+            for pc in (first..past).rev() {
+                // what this instruction reads and writes, before any rewrite
+                uses.clear();
+                defs.clear();
+                Self::uses_defs_into(&instructions[pc], &mut uses, &mut defs);
+                let live =
+                    |r: u32| (r as usize) < nregs && running[r as usize / 64] >> (r % 64) & 1 == 1;
+                // Calls consume dead-after argument registers by move: filling
+                // the mask here (rather than cloning at frame push) is what
+                // keeps a handle passed into a callee from staying pinned in
+                // the caller's frame for the callee's whole run. Only
+                // registers appearing once in the argument list qualify — a
+                // duplicated register must still be cloned for its second use.
+                // The same for a builtin's arguments, and for the left side
+                // of a sum: dead after it, it may be taken and extended.
+                if let I::CallNamed {
+                    args, arg_moves, ..
+                } = &mut instructions[pc]
+                {
+                    let mut mask = 0u64;
+                    for (i, r) in args.iter().enumerate().take(64) {
+                        let unique = args.iter().filter(|a| a.0 == r.0).count() == 1;
+                        let dead = !live(r.0);
+                        if unique && dead {
+                            mask |= 1 << i;
                         }
-                        Some(I::Release { regs })
-                    } else if !live_after(src.0) {
-                        // The destination lives but the source is dead —
-                        // the call-result pattern (`CallFn dst; Move x ←
-                        // dst`): move the value instead of cloning it, so
-                        // the dead register does not pin an Arc until
-                        // something happens to overwrite it.
-                        Some(I::TakeMove {
-                            dst: *dst,
-                            src: *src,
-                        })
-                    } else {
-                        None
+                    }
+                    *arg_moves = mask;
+                }
+                if let I::Add {
+                    dst,
+                    lhs,
+                    rhs,
+                    lhs_dead,
+                } = &mut instructions[pc]
+                {
+                    let dead = !live(lhs.0);
+                    *lhs_dead = dead && lhs != rhs && dst != rhs;
+                }
+                if let I::GetField {
+                    dst,
+                    object,
+                    object_dead,
+                    ..
+                } = &mut instructions[pc]
+                {
+                    let dead = !live(object.0);
+                    *object_dead = dead && dst != object;
+                }
+                if let I::MapSetAssign {
+                    target,
+                    key,
+                    value,
+                    value_dead,
+                } = &mut instructions[pc]
+                {
+                    let dead = !live(value.0);
+                    *value_dead = dead && value != target && value != key;
+                }
+                if let I::CallValue {
+                    callee,
+                    args,
+                    arg_moves,
+                    ..
+                } = &mut instructions[pc]
+                {
+                    // the callee's own register is read after the arguments
+                    // are taken: never one of them
+                    let mut mask = 0u64;
+                    for (i, r) in args.iter().enumerate().take(64) {
+                        let unique = args.iter().filter(|a| a.0 == r.0).count() == 1;
+                        let dead = !live(r.0);
+                        if unique && dead && r != callee {
+                            mask |= 1 << i;
+                        }
+                    }
+                    *arg_moves = mask;
+                }
+                if let I::CallMethod {
+                    object,
+                    args,
+                    arg_moves,
+                    ..
+                } = &mut instructions[pc]
+                {
+                    // the receiver is read before the arguments: never one
+                    let mut mask = 0u64;
+                    for (i, r) in args.iter().enumerate().take(64) {
+                        let unique = args.iter().filter(|a| a.0 == r.0).count() == 1;
+                        if unique && !live(r.0) && r != object {
+                            mask |= 1 << i;
+                        }
+                    }
+                    *arg_moves = mask;
+                }
+                if let I::CallFn {
+                    args, arg_moves, ..
+                } = &mut instructions[pc]
+                {
+                    let mut mask = 0u64;
+                    for (i, r) in args.iter().enumerate().take(64) {
+                        let unique = args.iter().filter(|a| a.0 == r.0).count() == 1;
+                        let dead = !live(r.0);
+                        if unique && dead {
+                            mask |= 1 << i;
+                        }
+                    }
+                    *arg_moves = mask;
+                }
+                if debug_flag(&DEBUG_LIVENESS, "OLANG_DEBUG_LIVENESS")
+                    && let I::Move { dst, src } = &instructions[pc]
+                {
+                    let la = live;
+                    eprintln!(
+                        "[live] pc={} Move dst=r{}(live_after={}) src=r{}(live_after={})",
+                        pc,
+                        dst.0,
+                        la(dst.0),
+                        src.0,
+                        la(src.0)
+                    );
+                }
+                let rewrite = match &instructions[pc] {
+                    I::Move { dst, src } if dst != src => {
+                        let live_after = live;
+                        if !live_after(dst.0) {
+                            // Nobody reads the destination: the Move (and the
+                            // reference it would plant) can go. Its old value
+                            // goes too, and the source's when it is dead: a
+                            // Nop left both alive until something overwrote
+                            // them, so `x = ()` freed nothing (OL-411).
+                            let mut regs = vec![*dst];
+                            if !live_after(src.0) {
+                                regs.push(*src);
+                            }
+                            Some(I::Release { regs })
+                        } else if !live_after(src.0) {
+                            // The destination lives but the source is dead —
+                            // the call-result pattern (`CallFn dst; Move x ←
+                            // dst`): move the value instead of cloning it, so
+                            // the dead register does not pin an Arc until
+                            // something happens to overwrite it.
+                            Some(I::TakeMove {
+                                dst: *dst,
+                                src: *src,
+                            })
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some(inst) = rewrite {
+                    instructions[pc] = inst;
+                    any_rewrite = true;
+                }
+                for &d in &defs {
+                    if (d as usize) < nregs {
+                        running[d as usize / 64] &= !(1u64 << (d % 64));
                     }
                 }
-                _ => None,
-            };
-            if let Some(inst) = rewrite {
-                instructions[pc] = inst;
-                any_rewrite = true;
-            }
-            for &d in &defs {
-                if (d as usize) < nregs {
-                    running[d as usize / 64] &= !(1u64 << (d % 64));
+                for &u in &uses {
+                    if (u as usize) < nregs {
+                        running[u as usize / 64] |= 1u64 << (u % 64);
+                    }
                 }
             }
-            for &u in &uses {
-                if (u as usize) < nregs {
-                    running[u as usize / 64] |= 1u64 << (u % 64);
-                }
-            }
-        }
         }
         (instructions, any_rewrite)
     }

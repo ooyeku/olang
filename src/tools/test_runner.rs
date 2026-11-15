@@ -252,9 +252,10 @@ pub fn run_paths(
         // error can neither fail the filtered run nor print under another
         // file's heading (OL-349). JSON still says what it left out.
         if let Some(only) = options.only.as_deref()
-            && !program.statements.iter().any(
-                |s| matches!(s.unwrapped(), Statement::TestDecl(t) if t.name.contains(only)),
-            )
+            && !program
+                .statements
+                .iter()
+                .any(|s| matches!(s.unwrapped(), Statement::TestDecl(t) if t.name.contains(only)))
         {
             if json {
                 let name = abs_name(file);

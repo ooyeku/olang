@@ -5147,7 +5147,10 @@ module's functions (`{name}.…`)"
         if let Expr::Call { callee, .. } = expr
             && matches!(callee.as_ref(), Expr::Identifier(name) if name == "attempt")
             && !self.user_bound.contains("attempt")
-            && !self.scopes.iter().any(|scope| scope.contains_key("attempt"))
+            && !self
+                .scopes
+                .iter()
+                .any(|scope| scope.contains_key("attempt"))
         {
             self.caught += 1;
             self.check_expr_node(expr, span);
@@ -6518,13 +6521,18 @@ mod tests {
             .parse("share use api.core { ws_send as send }\n")
             .expect("parses");
         let main = Parser::new()
-            .parse("use index { send }\nuse loom { run }\nfn f(s) = send(s, \"a\", { tag: \"x\" })\n")
+            .parse(
+                "use index { send }\nuse loom { run }\nfn f(s) = send(s, \"a\", { tag: \"x\" })\n",
+            )
             .expect("parses");
         let d = check_program_with_context(&[&index, &loom], &main);
         assert!(d.is_empty(), "{d:?}");
         // Without the alias, the one `send` is still checked.
         let d = check_program_with_context(&[&loom], &main);
-        assert!(d.iter().any(|x| x.message.contains("Arity mismatch")), "{d:?}");
+        assert!(
+            d.iter().any(|x| x.message.contains("Arity mismatch")),
+            "{d:?}"
+        );
     }
 
     #[test]

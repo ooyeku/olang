@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **A check that 1.x keeps 1.0's promises.** `tests/compat/` holds a
+  program for each Stable area with its exact output on both tiers, the
+  1.0 stdlib surface, and a package of `@stable` items.
+  `tools/compat-check.sh` runs them against any olang binary and refuses
+  a changed expectation unless `tests/compat/allow.toml` records the
+  break, its issue and its reason. docs/stability.md describes it.
+- **`/// @stable` and `/// @experimental` on an item, and `olang check
+  --against <version>`** (OL-469). A package marks its items' tier;
+  `olang check --against 1.0.0` reports each `@stable` item removed or
+  changed since that version. `olang doc` of a package's root now
+  documents its public surface only: the root, `[package] public`, and
+  what `share use` re-exports.
+- **`otc toolchain list` shows every olang on the machine** (OL-577):
+  each binary's own version, the active one and the shims' default,
+  which one shadows which and how to fix it, and the project's pin.
+- **`runtime.memory()` counts the runtime's own code** (OL-418). A new
+  `code` figure holds compiled bytecode, machine code, bodies built on
+  first read and bridge interpreters. Before, all of it counted as the
+  program's `values`.
+- **A `visible` style in a variant** (OL-269). `visible: false` keeps a
+  `gui` node in its place but neither drawn nor under the pointer, and a
+  variant can set it, so `hover: #{ visible: true }` shows a row's
+  controls on hover with no program turn.
+- **`dates.format_datetime` gives a moment's offset** (OL-337). A stamp
+  with an offset was read as a naive datetime, so `%z`, `%:z`, `%Z` and
+  `%+` were an "invalid format string". They now format the offset; a
+  stamp with none still answers `Err` for them.
+
 ### Changed
 
 - **Four names from rc.8 and rc.9, settled before 1.0** (the name
@@ -22,6 +52,181 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Every module has a tier.** `toad` is Experimental, as `gui` is. The
   modules written in olang mark each shared item `/// @stable`, and
   `peg`'s `/// @experimental`, as docs/stability.md tiers them.
+- **A task's failure is printed only when nobody can collect it**
+  (OL-387). A failure that `task.join` (or a `task.join_timeout` that
+  sees the end) collects is the program's to handle and prints nothing.
+  One no join can collect goes to stderr once, when its last handle is
+  dropped, at a deadlock, or when the program ends.
+- **`olang build` without `--app` refuses a program with modules**
+  (OL-369). A plain build of a program that uses its own modules or a
+  dependency built something that could not find them; it is now
+  refused, naming `--app`.
+
+### Fixed
+
+- **`task.join` hands back `raise`'s message as given** (OL-627).
+  `task.join` of a task that raised `"boom"` answered
+  `Err("Runtime error: boom")`; it now answers `Err("boom")`, as
+  `attempt` does and docs/stability.md promises.
+- **Numbers order exactly, and lists order** (OL-359, OL-487, OL-338,
+  OL-391). `<` between an Int and a Float rounded the Int, so past 2^53
+  it disagreed with `==`; the two numbers are now compared exactly, in
+  the interpreter, the VM, the JIT and every sort. Lists order element
+  by element, as tuples do. `min`, `max` and `col.min` kept the first
+  of two values they could not order, so the answer hung on the order;
+  they now raise as `sort` does.
+- **Aggregates and dedupe agree with arithmetic** (OL-355, OL-339).
+  `sum`, `average` and `col.sum_by` answered `inf` past the Float range;
+  they raise a Float overflow, as `+` does, and the mean of Ints whose
+  sum is past the Int range is still taken. `col.unique` keyed on text,
+  so `1` and `1.0` stayed apart and `1` and `"1"` merged; it now dedupes
+  by `==`.
+- **Text to numbers reads one way** (OL-382). `to_int` and `to_float`
+  trim whitespace around the number, as `str.parse_int` and
+  `parse_float` do, and refuse what they refuse.
+- **Writes to a declared struct are checked** (OL-356). `map_set`,
+  `map_merge`, `map_set_in` and `map_update` on a struct accepted an
+  undeclared field or a wrong-typed value; the answer is now checked as
+  a literal is, on both tiers.
+- **Data formats keep what they read** (OL-342, OL-340, OL-384, OL-386,
+  OL-336). `json.parse` reads JSON as deep as `json.stringify` writes
+  it, past the old 128-level limit. `toml.parse` answers `Err` for `inf`
+  and `nan`, naming the key, where they came back as `()`. `csv.parse`
+  refuses an unclosed quote, and `parse_with_headers` a repeated header,
+  naming the line or the columns. `ods.read_csv` keeps an integer past
+  the Int range as its text instead of a Float that lost its digits.
+  `csv.stringify_with_headers` takes the rows `parse_with_headers`
+  gives.
+- **http fixes** (OL-376, OL-378, OL-402, OL-534, OL-400, OL-401). A
+  client `timeout_ms` that runs out answers `Err("timed out")`, and
+  other failures say their cause. A cancel lands while a request
+  connects, waits for headers or reads a stalled body. `http.serve`
+  keeps every value of a repeated request header as a list, and
+  `http.respond` to a client that hung up is an `Err`. Half-sent
+  requests hold a worker only until the request deadline, and clients
+  past a full queue get their 503 instead of a reset.
+- **fs fixes** (OL-403, OL-533). `fs.walk` and `fs.scan` agree on links:
+  a link to a file is listed, a dangling one is not. A cancel of
+  `fs.search` lands between files, not after the last one.
+- **Parser and type errors say what is wrong** (OL-591, OL-389, OL-357,
+  OL-515, OL-358). `use a.b as x` is a parse error at the alias, naming
+  the forms that work; it failed at run time with "Undefined variable:
+  as". A non-ASCII letter in a name says names are ASCII. A very long
+  flat operator chain is a parse error, not a stack overflow. A
+  function type `(A, B) -> R` takes one type per parameter, and
+  `() -> R` none. A call's arity error reads the same on both tiers.
+- **Runtime fixes** (OL-392, OL-554, OL-179, OL-545, OL-549). A
+  one-expression lambda in an error trace is placed at its own line,
+  not line 0. `show` of a shared reference that holds itself prints
+  `<shared: …>` instead of recursing forever. A promoted top-level loop
+  that is interrupted or fails writes its variables back. Values a
+  lambda captured, and arguments dead after a call through a function
+  value, are let go when they should be, so drop guards fire.
+- **Faster on the bytecode tier** (OL-268, OL-361, OL-416, OL-520,
+  OL-521, OL-522, OL-523, OL-524, OL-525, OL-527, OL-529, OL-574,
+  OL-615). Compile time is linear in a function's lambdas and pipe
+  steps. A call through a function value costs about a direct call.
+  `col.filled`, `enumerate`, `col.set`, `take`, `drop`, `col.slice`,
+  `col.splice`, `typeof`, and `str.index_of`, `substring`,
+  `starts_with`, `ends_with` and `contains` are answered natively,
+  sharing items rather than converting them. `m = map_remove(m, k)` and
+  `xs = xs + f(x)` update in place, and reading `b[i][j]` or a call's
+  `.field` no longer keeps a copy alive that forces the next update to
+  copy.
+- **olang check, fmt, the language server and meta** (OL-539, OL-550,
+  OL-365, OL-364, OL-528, OL-371, OL-398, OL-535, OL-536). `check`
+  reports a call of a module that has no `new`, no longer confuses an
+  aliased re-export with another module's function, and does not flag a
+  raise inside `attempt(...)`. `fmt` glues `List<Int>` and formats a
+  file with `<<` or `>>` instead of skipping it. A diagnostic's column
+  counts characters, not bytes. The language server reads an open
+  module's unsaved buffer for its importers. `meta.parse` errors name
+  the file's line, and `meta.tokens` marks an ALL-CAPS name a constant
+  where it is bound.
+- **The test, fix, bench and output commands** (OL-349, OL-421,
+  OL-366, OL-346, OL-605). `olang test --only` skips a file with no
+  matching block and prints a file error under its own heading.
+  `olang fix --check` and `--dry-run` say what would be rewritten.
+  `olang bench` reports a failing file and goes on to the rest. An
+  output file that cannot be written exits 2 and is named.
+  `testing.snapshot_failed` reads a record as a map, so every fact
+  reaches `--format json`.
+- **otc and builds** (OL-367, OL-368, OL-537). `otc install` reports and
+  re-pins an edited path or shelf library, and `--frozen` fails on it.
+  `otc add` refuses a path with no `olang.toml` or root module and
+  leaves the project as it was. `olang build --app` resolves dependency
+  roots by their real paths, so one reached through a symlink keeps its
+  lib modules.
+- **gui text fields** (OL-183, OL-188, OL-322, OL-611, OL-613,
+  OL-614). A field padded more than its box is tall still shows a line
+  and its caret. A paste the focused field cannot take (a picture on
+  the clipboard) goes on to the program. A styled field scrolled far
+  with `scroll_to` draws its new top. The caret stays in view after a
+  key before the first frame, under pinned rows, when wrapping is
+  toggled and when a long wrapped line is restyled. A sticky scope past
+  the text's end is no row, and a contained panic gives the text locks
+  back.
+
+### Security
+
+- **Releases are signed, and the signature is required from v1.0.0**
+  (OL-622, OL-491). install.sh, install.ps1 and `otc update` pin
+  olang's release key (ECDSA P-256) and check `SHA256SUMS` against its
+  `SHA256SUMS.sig`. From v1.0.0 on, a bad or missing signature stops the
+  install. Before, a download was checked only against a checksum file
+  from the same server.
+- **One chunked request no longer ends an `http.serve` process**
+  (OL-631). A chunk size near the top of the range wrapped the body-size
+  sum and panicked, which aborted the server before any handler ran. It
+  is now a 413, and a chunk size is at most 16 hex digits.
+- **`http.serve` reads request heads strictly** (OL-632, OL-373).
+  Wherever a proxy could read a head another way, the request is now a
+  400: a bare CR or LF or a NUL, space before a header's colon, a folded
+  line or one with no colon, a signed or conflicting Content-Length, a
+  signed chunk size, a malformed request line (another HTTP version is a
+  505). Every Transfer-Encoding line counts, and a body cut short is a
+  400. An answer to HEAD, or a 1xx, 204 or 304, ends at its headers, and
+  a handler's own framing headers give way to the server's.
+- **A module held to a program allow-list stays inside it** (OL-633). A
+  relative program path with a slash was judged from the host's folder
+  but run from the `cwd` the module chose, so a plugin could run a file
+  it shipped; only a bare name or an absolute path is allowed now.
+  Process and pty handles had counted ids any code could forge to drive
+  the host's own processes; their ids are random.
+- **File roots hold for every reader and writer** (OL-634). A module
+  held to `fs_roots` could write anywhere with `ods.write_*` (whose path
+  is the second argument) and open any database with `db.open`; both are
+  held to the roots, and a SQLite `file:` URI is refused. `fs.search`
+  read linked files leading out of its root and `files` entries with
+  `..`; `asset.read` followed a link a package shipped. Both now refuse
+  a file whose real location is outside.
+- **`otc` never goes down, and a toolchain name is one folder**
+  (OL-635). `otc update` installed whatever the server called latest,
+  even an older release; it now refuses to downgrade
+  (`otc toolchain install <v>` still installs one on purpose). The
+  checksum is the exact file's line in `SHA256SUMS`, not the first that
+  ends with its name. `otc toolchain remove ..` removed `~/.olang`; a
+  name with a slash or a leading dot is refused.
+- **A dependency's `use` stays inside its own package** (OL-618). It
+  resolves only inside the package and its declared dependencies, never
+  the app's project root.
+- **`asset.read` reads only a package's declared `assets`** (OL-619).
+  `asset.read`, `asset.exists` and `asset.path` refuse any other path,
+  when run from source as in a built app, so a dependency held to
+  `fs = false` can no longer read the app's `olang.toml` or `.env`.
+- **Decompression is capped** (OL-620). `compress.gunzip`, `inflate`
+  and `unbrotli` take `max_bytes`, and by default cap their output at
+  the smaller of 1 GiB and 1000 times the input.
+- **A code layer cannot be rolled back** (OL-621). A layer's signature
+  covers its version, and a layer older than the app is refused. The
+  signing recipe in the tooling chapter changed with it: a layer signed
+  the old way no longer runs.
+- **A denied `env` reaches child processes too** (OL-623). When `env`
+  is denied, a child process starts with a cleared environment (PATH,
+  HOME, LANG and TMPDIR only). `DYLD_*` and `LD_*` are refused in a
+  module's `env`, an olang child is held to its starter's grant
+  (`OLANG_DENY`), and the docs say a `proc` grant amounts to every
+  capability.
 
 ## [1.0.0-rc.9] - 2026-11-11
 

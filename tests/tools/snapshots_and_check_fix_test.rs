@@ -145,9 +145,16 @@ fn fix_check_says_would_be_rewritten() {
         }
         assert_eq!(std::fs::read_to_string(ws.join("fx.ol")).unwrap(), src);
     }
-    write(&ws, "m.ol", "let m = #{ \"a\": 1 }\nprintln(map_get(m, \"a\"))\n");
+    write(
+        &ws,
+        "m.ol",
+        "let m = #{ \"a\": 1 }\nprintln(map_get(m, \"a\"))\n",
+    );
     let (out, err, _) = olang(&ws, &["fix", "maps", "--check", "m.ol"]);
-    assert!(out.contains("olang fix maps: would rewrite 1 map_get"), "{out}{err}");
+    assert!(
+        out.contains("olang fix maps: would rewrite 1 map_get"),
+        "{out}{err}"
+    );
     let (out, err, rc) = olang(&ws, &["fix", "defaults", "fx.ol"]);
     assert_eq!(rc, 0, "{out}{err}");
     assert!(out.contains("1 rewritten in 1 file"), "{out}{err}");

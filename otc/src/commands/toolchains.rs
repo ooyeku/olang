@@ -195,9 +195,12 @@ fn project_note() -> Option<serde_json::Value> {
     use olang::pkg::toolchain::{Resolved, for_project, install_hint};
     let (pin, version, olang, missing) = match for_project(&root) {
         Resolved::Unpinned => (None, None, None, None),
-        Resolved::Installed { pin, version, bin } => {
-            (Some(pin), Some(version), Some(bin.display().to_string()), None)
-        }
+        Resolved::Installed { pin, version, bin } => (
+            Some(pin),
+            Some(version),
+            Some(bin.display().to_string()),
+            None,
+        ),
         Resolved::Running { pin } => (Some(pin), Some(olang::VERSION.to_string()), None, None),
         Resolved::Missing { pin } => {
             let hint = install_hint(&pin);
@@ -244,7 +247,10 @@ pub fn list(json: bool, default_folder: Option<String>) -> Result<()> {
         return Ok(());
     }
     if rows.is_empty() {
-        println!("no olang found: none on PATH, none under {}", toolchains.display());
+        println!(
+            "no olang found: none on PATH, none under {}",
+            toolchains.display()
+        );
         println!("(`otc update` installs the latest release)");
         return Ok(());
     }
@@ -281,7 +287,11 @@ pub fn list(json: bool, default_folder: Option<String>) -> Result<()> {
     }
     if let Some(p) = &project {
         let root = p["root"].as_str().unwrap_or("");
-        match (p["pin"].as_str(), p["version"].as_str(), p["install"].as_str()) {
+        match (
+            p["pin"].as_str(),
+            p["version"].as_str(),
+            p["install"].as_str(),
+        ) {
             (None, _, _) => println!("this project ({root}) pins no olang: it runs the active one"),
             (Some(pin), Some(v), _) => {
                 let at = p["olang"]

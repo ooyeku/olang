@@ -81,9 +81,7 @@ gui.close(w)
         if let Some(st) = child.try_wait().unwrap() {
             break st;
         }
-        if done.is_none()
-            && std::fs::read_to_string(&mark).is_ok_and(|m| m.ends_with(" done"))
-        {
+        if done.is_none() && std::fs::read_to_string(&mark).is_ok_and(|m| m.ends_with(" done")) {
             done = Some(Instant::now());
         }
         if asked.elapsed() > Duration::from_secs(15) {

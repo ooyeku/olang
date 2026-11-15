@@ -236,13 +236,17 @@ fn half_sent_requests_hold_workers_only_to_the_deadline() {
     let mut half = Vec::new();
     for _ in 0..4 {
         let mut s = TcpStream::connect(("127.0.0.1", port)).expect("connect");
-        s.write_all(b"GET / HTTP/1.1\r\nHost: x\r\n").expect("write");
+        s.write_all(b"GET / HTTP/1.1\r\nHost: x\r\n")
+            .expect("write");
         half.push(s);
     }
     std::thread::sleep(Duration::from_millis(50));
     let started = std::time::Instant::now();
     let r = raw(port, b"GET / HTTP/1.1\r\nConnection: close\r\n\r\n");
-    assert!(status_line(&r).contains("200"), "behind the slow ones:\n{r}");
+    assert!(
+        status_line(&r).contains("200"),
+        "behind the slow ones:\n{r}"
+    );
     // two rounds of the 600 ms deadline; a 5 s idle wait per read was 10 s
     assert!(
         started.elapsed() < Duration::from_millis(3000),
@@ -268,7 +272,9 @@ fn clients_past_a_full_queue_get_503_not_a_reset() {
                     Err(e) => return format!("connect: {e}"),
                 };
                 s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
-                if let Err(e) = s.write_all(b"GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n") {
+                if let Err(e) =
+                    s.write_all(b"GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+                {
                     return format!("write: {e}");
                 }
                 let mut out = Vec::new();
@@ -282,8 +288,15 @@ fn clients_past_a_full_queue_get_503_not_a_reset() {
     let got: Vec<String> = clients.into_iter().map(|c| c.join().unwrap()).collect();
     let ok = got.iter().filter(|l| l.contains(" 200 ")).count();
     let busy = got.iter().filter(|l| l.contains(" 503 ")).count();
-    assert_eq!(ok + busy, got.len(), "every client answered 200 or 503: {got:?}");
-    assert!(busy > 0 && ok >= 6, "{ok} answered, {busy} turned away: {got:?}");
+    assert_eq!(
+        ok + busy,
+        got.len(),
+        "every client answered 200 or 503: {got:?}"
+    );
+    assert!(
+        busy > 0 && ok >= 6,
+        "{ok} answered, {busy} turned away: {got:?}"
+    );
 }
 
 /// `http.respond` to a client that hung up while it waited answers Err,
@@ -303,13 +316,20 @@ fn handle(req) = if req.path == "/wait" => {
 http.serve(0, handle)"#,
     );
     let mut left = TcpStream::connect(("127.0.0.1", port)).expect("connect");
-    left.write_all(b"GET /wait HTTP/1.1\r\nHost: x\r\n\r\n").expect("write");
+    left.write_all(b"GET /wait HTTP/1.1\r\nHost: x\r\n\r\n")
+        .expect("write");
     std::thread::sleep(Duration::from_millis(50));
     drop(left);
     let r = raw(port, b"GET /result HTTP/1.1\r\nConnection: close\r\n\r\n");
-    assert!(r.contains("Err(") && r.contains("left"), "a client that left:\n{r}");
+    assert!(
+        r.contains("Err(") && r.contains("left"),
+        "a client that left:\n{r}"
+    );
     let waited = raw(port, b"GET /wait HTTP/1.1\r\nHost: x\r\n\r\n");
     assert!(waited.ends_with("late"), "a client that waited:\n{waited}");
     let r = raw(port, b"GET /result HTTP/1.1\r\nConnection: close\r\n\r\n");
-    assert!(r.contains("Ok(())") && !r.contains("Err"), "its respond:\n{r}");
+    assert!(
+        r.contains("Ok(())") && !r.contains("Err"),
+        "its respond:\n{r}"
+    );
 }

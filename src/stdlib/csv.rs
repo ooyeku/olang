@@ -1613,8 +1613,8 @@ mod tests {
         let mut m = crate::ast::ValueMap::default();
         m.insert("a".to_string(), int_val(1));
         let map_row = Value::Map(std::sync::Arc::new(m));
-        let out = csv_stringify_with_headers(vec![list_val(vec![map_row]), headers.clone()])
-            .unwrap();
+        let out =
+            csv_stringify_with_headers(vec![list_val(vec![map_row]), headers.clone()]).unwrap();
         assert_eq!(extract_string(assert_ok(&out)), "a,b\n1,\n");
 
         assert_fails(csv_stringify_with_headers(vec![

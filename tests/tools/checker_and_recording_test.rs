@@ -279,7 +279,10 @@ fn a_deferred_handler_parks_the_connection_and_respond_answers_it_from_a_task() 
     // past a fixed bound (646 ms, OL-544).
     let (quick, quick_took) = get("/quick");
     assert!(quick.contains("quick"), "{quick}");
-    assert!(!waiter.is_finished(), "answered after the deferred one: {quick_took:?}");
+    assert!(
+        !waiter.is_finished(),
+        "answered after the deferred one: {quick_took:?}"
+    );
     let (late, late_took) = waiter.join().unwrap();
     assert!(late.contains("HTTP/1.1 200"), "{late}");
     assert!(late.ends_with("late"), "{late}");

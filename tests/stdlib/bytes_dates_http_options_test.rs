@@ -270,7 +270,11 @@ fn date_string_parsing_is_uniformly_flexible() {
 fn format_datetime_gives_a_moments_offset() {
     // OL-337: a moment was formatted as a naive datetime, so its offset
     // fields were "invalid format string".
-    let f = |fmt: &str| run(&format!("unwrap(dates.format_datetime(\"2026-01-02T03:04:05+05:00\", \"{fmt}\"))"));
+    let f = |fmt: &str| {
+        run(&format!(
+            "unwrap(dates.format_datetime(\"2026-01-02T03:04:05+05:00\", \"{fmt}\"))"
+        ))
+    };
     assert_eq!(f("%H:%M %z").unwrap(), "03:04 +0500");
     assert_eq!(f("%:z").unwrap(), "+05:00");
     assert_eq!(f("%Z").unwrap(), "+05:00");
@@ -400,15 +404,23 @@ fn http_client_failures_say_their_cause() {
         for mut c in l.incoming().flatten() {
             let mut buf = [0u8; 1024];
             let _ = c.read(&mut buf);
-            let _ = c.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\nshort bod");
+            let _ = c.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\nshort bod",
+            );
         }
     });
     let cut = run(&format!(
         "show(http.get(\"http://127.0.0.1:{short}/\", #{{ \"timeout_ms\": 2000 }}))"
     ))
     .unwrap();
-    assert!(cut.starts_with("Err(\"Failed to read response body"), "{cut}");
-    assert!(cut.len() > "Err(\"Failed to read response body: error decoding response body\")".len(), "{cut}");
+    assert!(
+        cut.starts_with("Err(\"Failed to read response body"),
+        "{cut}"
+    );
+    assert!(
+        cut.len() > "Err(\"Failed to read response body: error decoding response body\")".len(),
+        "{cut}"
+    );
     let bad = run("show(http.get(\"not a url\"))").unwrap();
     assert!(bad.contains("builder error: "), "{bad}");
 }

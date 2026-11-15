@@ -685,9 +685,10 @@ fn library_edited(locked: &LockedPackage, dir: &Path) -> bool {
     matches!(
         locked.source,
         LockedSource::Path { .. } | LockedSource::Shelf { rev: None, .. }
-    ) && locked.checksum.as_deref().is_some_and(|recorded| {
-        cache::checksum_dir(dir).is_ok_and(|actual| actual != recorded)
-    })
+    ) && locked
+        .checksum
+        .as_deref()
+        .is_some_and(|recorded| cache::checksum_dir(dir).is_ok_and(|actual| actual != recorded))
 }
 
 /// The path and unpinned shelf libraries whose contents changed since

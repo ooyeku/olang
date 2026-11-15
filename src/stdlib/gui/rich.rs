@@ -2872,7 +2872,11 @@ mod rebase_tests {
                 band.clone().last().map(|i| ed.ys[i] + ed.paras[i].h),
             );
             // and they reach the view's bottom, or the text's end
-            let reach = band.clone().last().map(|i| ed.ys[i] + ed.paras[i].h).unwrap_or(0.0);
+            let reach = band
+                .clone()
+                .last()
+                .map(|i| ed.ys[i] + ed.paras[i].h)
+                .unwrap_or(0.0);
             assert!(
                 reach >= y1 - 0.5 || band.end == ed.paras.len(),
                 "scrolled to line {line}: the band {band:?} ends at {reach}, above the view's bottom {y1}"

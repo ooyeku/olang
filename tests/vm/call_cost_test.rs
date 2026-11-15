@@ -159,7 +159,10 @@ fn compile_time_is_linear_in_the_lambdas_of_a_function() {
             + &" |> ((x) => x + 1)".repeat(n)
             + "\nprintln(\"= \" + to_string(f()))\n"
     };
-    for (name, make, n) in [("flat", &flat as &dyn Fn(usize) -> String, 1000), ("pipe", &pipe, 900)] {
+    for (name, make, n) in [
+        ("flat", &flat as &dyn Fn(usize) -> String, 1000),
+        ("pipe", &pipe, 900),
+    ] {
         let ws = workspace(&format!("lambdas_{name}"));
         let small = make(n);
         let large = make(4 * n);

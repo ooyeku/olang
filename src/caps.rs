@@ -723,7 +723,10 @@ pub fn scope_denial(
             } else {
                 &[0]
             };
-            for p in at_args.iter().filter_map(|i| strings.get(*i).copied().flatten()) {
+            for p in at_args
+                .iter()
+                .filter_map(|i| strings.get(*i).copied().flatten())
+            {
                 let at = gate_path(p);
                 if !roots.iter().any(|r| at.starts_with(r)) {
                     return Some(format!(

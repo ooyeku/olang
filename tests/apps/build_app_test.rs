@@ -125,7 +125,10 @@ fn a_dependency_reached_through_a_symbolic_link_keeps_its_modules() {
         "[package]\nname = \"dep2\"\nversion = \"0.1.0\"\n",
     );
     write(libs.join("dep2/index.ol"), "share use lib.engine { two }\n");
-    write(libs.join("dep2/lib/engine.ol"), "share fn two() = \"two\"\n");
+    write(
+        libs.join("dep2/lib/engine.ol"),
+        "share fn two() = \"two\"\n",
+    );
     // apps/<app>/.claude/libraries -> ../../../libraries, and the app in
     // a worktree two folders below it
     let claude = ws.join("apps/studio/.claude");
@@ -144,7 +147,11 @@ fn a_dependency_reached_through_a_symbolic_link_keeps_its_modules() {
         .current_dir(&app)
         .output()
         .expect("olang build");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     // run where none of the sources are
     fs::remove_dir_all(&libs).unwrap();
     let run = Command::new(&exe)
@@ -192,10 +199,19 @@ fn an_asset_link_out_of_its_package_is_refused() {
         .unwrap();
     let text = String::from_utf8_lossy(&out.stdout).to_string();
     let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(lines.len(), 4, "{text}\n{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        lines.len(),
+        4,
+        "{text}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(lines[0], "inside");
     assert_eq!(lines[1], "inside");
-    assert!(lines[2].contains("leads outside the package"), "{}", lines[2]);
+    assert!(
+        lines[2].contains("leads outside the package"),
+        "{}",
+        lines[2]
+    );
     // OL-619: a file the package does not declare under `assets` is
     // refused from source, as a built application would not carry it.
     assert!(

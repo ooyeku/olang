@@ -305,7 +305,10 @@ fn is_older(a: &str, b: &str) -> bool {
 fn toolchain_name(v: &str) -> Result<String> {
     let v = normalize(v);
     if v.is_empty() || v == "." || v == ".." || v.contains(['/', '\\']) || v.starts_with('.') {
-        bail!("\"{}\" is not a toolchain's name (a version such as 1.0.0, or a name)", v);
+        bail!(
+            "\"{}\" is not a toolchain's name (a version such as 1.0.0, or a name)",
+            v
+        );
     }
     Ok(v)
 }
@@ -627,7 +630,8 @@ mod tests {
     fn the_checksum_is_the_named_files_alone() {
         let a = "a".repeat(64);
         let b = "b".repeat(64);
-        let sums = format!("{a}  x-olang-1.0.0-macos-arm64.tar.gz\n{b}  olang-1.0.0-macos-arm64.tar.gz\n");
+        let sums =
+            format!("{a}  x-olang-1.0.0-macos-arm64.tar.gz\n{b}  olang-1.0.0-macos-arm64.tar.gz\n");
         assert_eq!(
             super::listed_sum(&sums, "olang-1.0.0-macos-arm64.tar.gz").as_deref(),
             Some(b.as_str())
@@ -636,8 +640,14 @@ mod tests {
             super::listed_sum(&format!("{a} *olang.tar.gz\n"), "olang.tar.gz").as_deref(),
             Some(a.as_str())
         );
-        assert_eq!(super::listed_sum("zz  olang.tar.gz\n", "olang.tar.gz"), None);
-        assert_eq!(super::listed_sum(&format!("{a}  x-olang.tar.gz\n"), "olang.tar.gz"), None);
+        assert_eq!(
+            super::listed_sum("zz  olang.tar.gz\n", "olang.tar.gz"),
+            None
+        );
+        assert_eq!(
+            super::listed_sum(&format!("{a}  x-olang.tar.gz\n"), "olang.tar.gz"),
+            None
+        );
     }
 
     #[test]

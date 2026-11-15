@@ -294,13 +294,21 @@ pub fn run(args: &[String]) -> i32 {
             format!(
                 "{failed} of {} file(s) failed{}",
                 files.len(),
-                if save_wanted { "; no baseline saved" } else { "" }
+                if save_wanted {
+                    "; no baseline saved"
+                } else {
+                    ""
+                }
             )
             .red()
         );
     }
 
-    if failed > 0 || (regressed && fail_on_regress) { 1 } else { 0 }
+    if failed > 0 || (regressed && fail_on_regress) {
+        1
+    } else {
+        0
+    }
 }
 
 /// Files as given; directories contribute their immediate .ol children

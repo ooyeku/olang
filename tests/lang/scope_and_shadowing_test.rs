@@ -187,8 +187,14 @@ fn a_task_failure_a_join_handles_prints_nothing() {
     );
     let (out, err, rc) = olang(&ws, &["run", "t.ol"]);
     assert_eq!(rc, 0, "{out}{err}");
-    assert!(out.starts_with("handled: ") && out.contains("the builder died"), "{out}");
-    assert!(!err.contains("olang-spawn-"), "a handled failure was reported: {err}");
+    assert!(
+        out.starts_with("handled: ") && out.contains("the builder died"),
+        "{out}"
+    );
+    assert!(
+        !err.contains("olang-spawn-"),
+        "a handled failure was reported: {err}"
+    );
 
     write(
         &ws,
@@ -200,7 +206,10 @@ fn a_task_failure_a_join_handles_prints_nothing() {
     );
     let (out, err, rc) = olang(&ws, &["run", "d.ol"]);
     assert_eq!(rc, 0, "{out}{err}");
-    assert!(err.contains("task olang-spawn-") && err.contains("dropped"), "{err}");
+    assert!(
+        err.contains("task olang-spawn-") && err.contains("dropped"),
+        "{err}"
+    );
 }
 
 #[test]

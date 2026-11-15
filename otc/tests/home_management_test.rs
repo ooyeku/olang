@@ -207,16 +207,34 @@ fn toolchain_list_shows_every_olang_which_runs_and_why() {
     };
     for args in [&["toolchain", "list"][..], &["toolchain"][..]] {
         let text = list(args);
-        let row = |v: &str| text.lines().find(|l| l.contains(v)).expect(&text).to_string();
-        assert!(row("1.0.0-rc.8").contains("cargo") && row("1.0.0-rc.8").contains("active"), "{text}");
+        let row = |v: &str| {
+            text.lines()
+                .find(|l| l.contains(v))
+                .expect(&text)
+                .to_string()
+        };
+        assert!(
+            row("1.0.0-rc.8").contains("cargo") && row("1.0.0-rc.8").contains("active"),
+            "{text}"
+        );
         assert!(row("1.0.0-rc.8").trim_start().starts_with('→'), "{text}");
-        assert!(row("0.88.0").contains("shims") && row("0.88.0").contains("default"), "{text}");
+        assert!(
+            row("0.88.0").contains("shims") && row("0.88.0").contains("default"),
+            "{text}"
+        );
         assert!(row("0.80.0").contains("managed"), "{text}");
         assert!(text.contains("is ahead of the shims on PATH"), "{text}");
-        assert!(text.contains(&format!("export PATH=\"{}:$PATH\"", home.join("bin").display())), "{text}");
+        assert!(
+            text.contains(&format!(
+                "export PATH=\"{}:$PATH\"",
+                home.join("bin").display()
+            )),
+            "{text}"
+        );
         assert!(text.contains("cargo uninstall olang"), "{text}");
     }
-    let d: serde_json::Value = serde_json::from_str(list(&["toolchain", "list", "--format", "json"]).trim()).unwrap();
+    let d: serde_json::Value =
+        serde_json::from_str(list(&["toolchain", "list", "--format", "json"]).trim()).unwrap();
     assert_eq!(d["kind"], "toolchains");
     assert_eq!(d["active"]["version"], "1.0.0-rc.8");
     assert_eq!(d["active"]["kind"], "cargo");
@@ -224,8 +242,17 @@ fn toolchain_list_shows_every_olang_which_runs_and_why() {
     assert_eq!(rows.len(), 3, "{d}");
     let shims = rows.iter().find(|r| r["default"] == true).unwrap();
     assert_eq!(shims["version"], "0.88.0");
-    assert!(d["shadowed"].as_str().unwrap().contains("ahead of the shims"), "{d}");
-    assert!(d["fix"].as_str().unwrap().starts_with("export PATH="), "{d}");
+    assert!(
+        d["shadowed"]
+            .as_str()
+            .unwrap()
+            .contains("ahead of the shims"),
+        "{d}"
+    );
+    assert!(
+        d["fix"].as_str().unwrap().starts_with("export PATH="),
+        "{d}"
+    );
 
     // in a project, its pin and what answers it
     std::fs::write(

@@ -229,10 +229,7 @@ proc.kill(p)
         ),
     );
     let stopped = "Err(\"interrupted: stop\")\n".repeat(9);
-    assert_eq!(
-        out,
-        format!("{stopped}quick true\nErr(\"interrupted\")\n")
-    );
+    assert_eq!(out, format!("{stopped}quick true\nErr(\"interrupted\")\n"));
 }
 
 #[test]
@@ -273,10 +270,7 @@ println(map(task.list(), (row) => row.state))
 println(task.join(t))
 "#,
     );
-    assert_eq!(
-        out,
-        "true\n[\"interrupting\"]\nErr(\"interrupted: go\")\n"
-    );
+    assert_eq!(out, "true\n[\"interrupting\"]\nErr(\"interrupted: go\")\n");
 }
 
 #[test]

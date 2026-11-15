@@ -670,6 +670,9 @@ pty.kill(tty)
 "#,
     );
     let lines: Vec<&str> = out.lines().collect();
-    assert_eq!(lines[0], "0", "a forged handle reached a host process: {out}");
+    assert_eq!(
+        lines[0], "0",
+        "a forged handle reached a host process: {out}"
+    );
     assert_eq!(lines[1], "false", "{out}");
 }

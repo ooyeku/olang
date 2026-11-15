@@ -50,9 +50,12 @@ fn test_http_error_paths() {
     let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let closed = free.local_addr().unwrap().port();
     drop(free);
-    let source = format!(r#"is_err(http.get("http://127.0.0.1:{closed}/", #{{ "timeout_ms": 2000 }}))"#);
+    let source =
+        format!(r#"is_err(http.get("http://127.0.0.1:{closed}/", #{{ "timeout_ms": 2000 }}))"#);
     let program = parser.parse(&source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("a refused request is a value");
+    let result = interpreter
+        .eval_program(program)
+        .expect("a refused request is a value");
     assert_eq!(result.to_string(), "true");
 
     // A POST of a body that is not JSON: the server takes it as it is.
@@ -63,12 +66,17 @@ fn test_http_error_paths() {
         for mut c in listener.incoming().flatten() {
             let mut buf = [0u8; 4096];
             let _ = c.read(&mut buf);
-            let _ = c.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+            let _ =
+                c.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
         }
     });
-    let source = format!(r#"unwrap(http.post("http://127.0.0.1:{port}/post", "invalid json {{{{{{{{")).status"#);
+    let source = format!(
+        r#"unwrap(http.post("http://127.0.0.1:{port}/post", "invalid json {{{{{{{{")).status"#
+    );
     let program = parser.parse(&source).expect("Failed to parse");
-    let result = interpreter.eval_program(program).expect("the POST is answered");
+    let result = interpreter
+        .eval_program(program)
+        .expect("the POST is answered");
     assert_eq!(result.to_string(), "200");
 }
 
