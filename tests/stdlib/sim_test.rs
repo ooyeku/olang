@@ -740,6 +740,7 @@ fn builder_report(file: &str, seed: u64) -> olang::sim::Report {
 }
 
 #[test]
+#[ignore = "slow: `make test-slow` runs it"]
 fn one_seed_is_one_world_of_nodes_event_for_event() {
     let a = builder_report("kv_world.ol", 3);
     let b = builder_report("kv_world.ol", 3);
@@ -756,6 +757,7 @@ fn one_seed_is_one_world_of_nodes_event_for_event() {
 }
 
 #[test]
+#[ignore = "slow: `make test-slow` runs it"]
 fn loss_and_partitions_make_retries_and_careful_clients_survive_them() {
     let mut timeouts = 0;
     let mut cut = 0;
@@ -772,6 +774,7 @@ fn loss_and_partitions_make_retries_and_careful_clients_survive_them() {
 }
 
 #[test]
+#[ignore = "slow: `make test-slow` runs it"]
 fn olang_sim_finds_the_partition_bug_and_its_seed_replays_it() {
     let file = fixture("kv_partition_bug.ol");
     let file = file.to_str().unwrap();
@@ -938,6 +941,7 @@ w.run(sim.minutes(1))
 }
 
 #[test]
+#[ignore = "slow: `make test-slow` runs it"]
 fn the_log_store_that_syncs_before_it_acks_survives_every_crash() {
     let mut crashes = 0;
     let mut lost = 0;
@@ -983,6 +987,7 @@ fn olang_sim_finds_the_log_store_that_acks_before_it_syncs_and_replays_it() {
 }
 
 #[test]
+#[ignore = "slow: `make test-slow` runs it"]
 fn sqlite_keeps_every_commit_through_crashes_mid_commit_on_an_honest_disk() {
     let mut points = 0;
     for seed in 1..=3 {
@@ -1016,6 +1021,7 @@ fn sqlite_loses_acknowledged_commits_when_fsync_lies() {
 }
 
 #[test]
+#[ignore = "slow: `make test-slow` runs it"]
 fn one_seed_is_one_world_with_disks_and_crashes_event_for_event() {
     let a = builder_report("log_safe.ol", 7);
     let b = builder_report("log_safe.ol", 7);
@@ -1449,6 +1455,7 @@ let twice = [e("invoke", "a", "inc", ()), ok("a", 1), e("invoke", "b", "inc", ()
 }
 
 #[test]
+#[ignore = "slow: `make test-slow` runs it"]
 fn the_kv_partition_bug_is_a_linearizability_violation() {
     let file = fixture("kv_linear.ol");
     let (code, _, err) = sim(&[file.to_str().unwrap(), "--seeds", "16", "--jobs", "4"]);
@@ -1504,6 +1511,7 @@ fn digest_of(err: &str) -> String {
 }
 
 #[test]
+#[ignore = "slow: `make test-slow` runs it"]
 fn one_job_and_four_jobs_give_the_same_results() {
     for (file, seeds) in [
         ("kv_linear.ol", "8"),
@@ -1528,6 +1536,7 @@ fn one_job_and_four_jobs_give_the_same_results() {
 }
 
 #[test]
+#[ignore = "slow: `make test-slow` runs it"]
 fn a_recorded_run_comes_back_exactly_from_its_plan() {
     for file in ["log_bug.ol", "kv_partition_bug.ol", "sqlite_lies.ol"] {
         let path = fixture(file);
@@ -1549,6 +1558,7 @@ fn a_recorded_run_comes_back_exactly_from_its_plan() {
 }
 
 #[test]
+#[ignore = "slow: `make test-slow` runs it"]
 fn the_shrinker_takes_a_noisy_world_down_to_its_one_fault_and_it_replays() {
     let dir = std::env::temp_dir().join(format!("olang-sim-shrink-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -1764,6 +1774,7 @@ fn the_view_model_has_a_lane_per_node_arrows_faults_and_down_stretches() {
 }
 
 #[test]
+#[ignore = "slow: `make test-slow` runs it"]
 fn olang_sim_view_draws_a_run_from_a_file_and_seed_and_from_a_saved_plan() {
     let dir = std::env::temp_dir().join(format!("olang-sim-view-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -1890,6 +1901,7 @@ fn tier_digest(file: &str, seeds: &str, tier: &str) -> String {
 }
 
 #[test]
+#[ignore = "slow: `make test-slow` runs it"]
 fn every_world_runs_the_same_on_the_bytecode_tier_as_on_the_interpreter() {
     // S1 programs, S2 networks, S3 disks and SQLite, S4 properties: the
     // same seeds give the same runs, digest for digest (every event,
@@ -1913,6 +1925,7 @@ fn every_world_runs_the_same_on_the_bytecode_tier_as_on_the_interpreter() {
 }
 
 #[test]
+#[ignore = "slow: `make test-slow` runs it"]
 fn the_tier_a_world_runs_on_reaches_the_workers() {
     // `--jobs` workers run on the tier their parent was asked for
     let run = |tier: &str| {
@@ -1997,6 +2010,7 @@ fn every_sim_and_peg_member_has_help() {
 }
 
 #[test]
+#[ignore = "slow: `make test-slow` runs it"]
 fn olang_sim_reports_on_stdout_and_refuses_events_over_many_seeds() {
     let file = fixture("kv_partition_bug.ol");
     let out = Command::new(olang())
@@ -2065,6 +2079,7 @@ fn scratch(name: &str) -> PathBuf {
 }
 
 #[test]
+#[ignore = "slow: `make test-slow` runs it"]
 fn the_shrinker_sets_aside_a_failure_message_that_varies() {
     // The writer's error names lists that change with every fault removed
     // (the lost version, and each put that went unanswered). The failure
@@ -2098,6 +2113,7 @@ fn the_shrinker_sets_aside_a_failure_message_that_varies() {
 }
 
 #[test]
+#[ignore = "slow: `make test-slow` runs it"]
 fn shrinking_under_partitions_keeps_only_the_cuts_of_the_client_that_failed() {
     // A partition removed no longer shifts every later message's
     // latency (the network's draws are keyed by link and instant), so

@@ -65,6 +65,7 @@ fn check_with(tag: &str, src: &str, env: &[(&str, &str)]) {
 /// function.) Both run on the bytecode VM: with machine code on, the
 /// direct loop can go native and a call through a value cannot yet.
 #[test]
+#[ignore = "slow: `make test-slow` runs it"]
 fn a_call_through_a_function_value_costs_about_a_direct_call() {
     check_with(
         "fnvalue",
@@ -95,6 +96,7 @@ run()
 /// direct call does, so the callee's append is in place: O(1) a call,
 /// not a copy of the list a call (OL-523).
 #[test]
+#[ignore = "slow: `make test-slow` runs it"]
 fn a_call_through_a_function_value_moves_a_rebound_argument() {
     check(
         "fnvaluemove",
@@ -143,6 +145,7 @@ fn run_secs(dir: &Path, src: &str) -> f64 {
 /// for each group, and a pipeline step copied the rest of its chain, all
 /// quadratic. Four times the lambdas took 9 to 16 times as long.
 #[test]
+#[ignore = "slow: `make test-slow` runs it"]
 fn compile_time_is_linear_in_the_lambdas_of_a_function() {
     let flat = |n: usize| {
         let mut s = String::from("fn f() = {\n let mut s = 0\n");
@@ -182,6 +185,7 @@ fn compile_time_is_linear_in_the_lambdas_of_a_function() {
 /// each way: on rc.7 each cost 100-170 ns, three to six times a map
 /// lookup (OL-522). Their answers, errors included, are the interpreter's.
 #[test]
+#[ignore = "slow: `make test-slow` runs it"]
 fn string_tests_from_compiled_code_cost_about_a_map_lookup() {
     check(
         "strops",
@@ -219,6 +223,7 @@ run()
 /// wrapper around it: on rc.7 a call cost with the size of the whole
 /// body, about 5x (OL-526).
 #[test]
+#[ignore = "slow: `make test-slow` runs it"]
 fn an_early_return_costs_the_same_from_a_large_function() {
     check(
         "earlyret",

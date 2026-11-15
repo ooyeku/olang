@@ -57,6 +57,9 @@ fn jobs(args: &[String]) -> Vec<String> {
                 out.push("-j".to_string());
                 out.push(n.clone());
             }
+        } else if a == "--locked" {
+            // the release builds the runtime as it builds olang
+            out.push(a.clone());
         } else if let Some(n) = a.strip_prefix("-j") {
             out.push("-j".to_string());
             out.push(n.to_string());

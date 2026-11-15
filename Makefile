@@ -1,4 +1,4 @@
-.PHONY: all build install remove clean test wasm dist prepush
+.PHONY: all build install remove clean test test-slow wasm dist prepush
 
 WASM_TARGET := wasm32-unknown-unknown
 WASM_ARTIFACT := target/$(WASM_TARGET)/release/olang_playground.wasm
@@ -22,10 +22,16 @@ remove:
 clean:
 	cargo clean
 
-# The test profile is optimized like release but skips whole-program LTO,
-# so the ~170 test binaries link in reasonable time.
+# The test profile is optimized like release but skips whole-program LTO.
+# The integration tests are grouped into a few binaries (tests/<group>/
+# main.rs), so an edit relinks a handful, not one per test file.
 test:
 	cargo test --workspace --profile fasttest
+
+# The slow checks kept out of `make test` (timing and cost bounds, long
+# runs), marked #[ignore]. The release check runs them.
+test-slow:
+	cargo test --workspace --profile fasttest -- --ignored
 
 # The checks CI runs, before a push. Clippy runs on fresh fingerprints:
 # Cargo skips re-linting crates whose files have not changed, so a new
@@ -37,8 +43,7 @@ prepush:
 	@touch src/lib.rs otc/src/main.rs olang-ods/src/lib.rs playground/src/lib.rs
 	cargo clippy --workspace --all-targets -- -D warnings
 	cargo test --workspace --profile fasttest
-	cargo build --release
-	cd examples && ../target/release/olang run run_all.ol
+	cd examples && $${CARGO_TARGET_DIR:-../target}/fasttest/olang run run_all.ol
 
 # Build the browser runtimes: the profile the web SDK and the examples
 # ship, and the whole-stdlib one (target/wasm-full/olang.wasm), which the

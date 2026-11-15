@@ -30,11 +30,15 @@ if ! command -v cargo >/dev/null 2>&1; then
         sh -s -- -y --profile minimal --default-toolchain stable
     PATH="$HOME/.cargo/bin:$PATH"
 fi
-rustup target add wasm32-unknown-unknown
 rustc --version
 
-# The browser runtime the olang binary embeds (build.rs reads it).
-cargo xtask wasm
+# The browser runtime the olang binary embeds (build.rs reads it). The
+# release workflow builds it once and puts it in target/ before this
+# runs; built here only when it is not there.
+if [ ! -f target/wasm32-unknown-unknown/release/olang_playground.wasm ] || [ ! -f target/wasm-full/olang.wasm ]; then
+    rustup target add wasm32-unknown-unknown
+    cargo xtask wasm --locked
+fi
 
 case "$NAME" in
     *-musl)

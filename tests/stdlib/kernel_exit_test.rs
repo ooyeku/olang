@@ -83,7 +83,9 @@ fn ends_with_its_parent(with_notebook: bool) {
     let eval = r#"{"op":"eval","id":1,"cell":"c1","code":"let mut i = 0\nwhile true { i = i + 1 }","line":4}"#;
     std::fs::write(dir.path().join("req"), format!("{eval}\n")).unwrap();
     let script = format!(
-        "(cat req; sleep 30) | '{}' {} >/dev/null 2>&1 & echo $!; sleep 0.8",
+        // the writer's stderr too: left on the shell's, it held this
+        // test's `output()` open for the whole 30 s sleep
+        "(cat req; sleep 30) 2>/dev/null | '{}' {} >/dev/null 2>&1 & echo $!; sleep 0.8",
         olang(),
         a
     );

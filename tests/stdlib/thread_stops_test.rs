@@ -370,6 +370,7 @@ println(len(task.list()))
 }
 
 #[test]
+#[ignore = "slow: `make test-slow` runs it"]
 fn an_idle_scheduler_stays_parked_for_ten_seconds() {
     // Workers wait on the run queue, a handler waits on its reply inside
     // its lane's deadline, the timer task waits on its control channel
