@@ -3557,6 +3557,42 @@ impl Checker {
         }
     }
 
+    /// A call of a name nothing in the file binds that is a native stdlib
+    /// module without `new`: `cancel("k")` with no `cancel` imported means
+    /// some package's function, and the run raises "Cannot call a module
+    /// that has no `new`" (OL-539). A module with `new` is callable
+    /// (`cell(0)` is `cell.new(0)`), and a global builtin of the name wins.
+    fn check_module_called(&mut self, name: &str, span: (u32, u32)) {
+        if self.wildcard_use || self.bound(name) || self.user_bound.contains(name) {
+            return;
+        }
+        let Some(members) = crate::stdlib::native_members().get(name) else {
+            return;
+        };
+        if members.iter().any(|m| m == "new") {
+            return;
+        }
+        static GLOBALS: std::sync::OnceLock<std::collections::HashSet<String>> =
+            std::sync::OnceLock::new();
+        let globals = GLOBALS.get_or_init(|| {
+            crate::builtin::BuiltinFunctions::global_names()
+                .into_iter()
+                .collect()
+        });
+        if globals.contains(name) {
+            return;
+        }
+        self.diag(
+            span,
+            true,
+            format!(
+                "Cannot call `{name}`: it is the stdlib module `{name}`, which has no `new` — \
+import the function you meant (`use some_module {{ {name} }}`), or call one of the \
+module's functions (`{name}.…`)"
+            ),
+        );
+    }
+
     /// A call of a global builtin or a stdlib module's function with an
     /// argument count its implementation refuses. A name the file binds
     /// (a local, a `use`, a top-level `let` or `fn`) is not the builtin.
@@ -5127,6 +5163,11 @@ impl Checker {
         {
             self.check_needs(name, arguments, span);
         }
+        if let Expr::Call { callee, .. } = expr
+            && let Expr::Identifier(name) = callee.as_ref()
+        {
+            self.check_module_called(name, span);
+        }
         if let Expr::Call { callee, arguments } = expr {
             self.check_builtin_arity(callee, arguments, span);
             self.check_native_call(callee, arguments, 0, span);
@@ -5994,6 +6035,28 @@ mod tests {
         assert!(messages[2].starts_with("the lambda parameter `json`"));
         assert!(messages[3].starts_with("the pattern binding `math`"));
         assert!(d.iter().all(|d| d.warning && d.class == Some("shadow")));
+    }
+
+    #[test]
+    fn calling_a_stdlib_module_without_new_is_reported() {
+        // OL-539: `cancel` here meant an unimported package function;
+        // the name is the stdlib module, and the run raises.
+        let d = check("fn f() = [cancel(\"k\")]\nprintln(show(f()))\n");
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert!(!d[0].warning);
+        assert_eq!(d[0].line, 1);
+        assert!(
+            d[0].message
+                .starts_with("Cannot call `cancel`: it is the stdlib module `cancel`"),
+            "{}",
+            d[0].message
+        );
+        // A module with `new` is callable, and an import, a local or a
+        // function of the name is what the call means.
+        assert!(check("let c = cell(0)\nprintln(cell.get(c))\n").is_empty());
+        assert!(check("use loom { cancel }\nlet x = cancel(\"k\")\n").is_empty());
+        assert!(check("fn cancel(k) = k\nlet x = cancel(\"k\")\n").is_empty());
+        assert!(check("let f = (cancel) => cancel(\"k\")\n").is_empty());
     }
 
     #[test]
