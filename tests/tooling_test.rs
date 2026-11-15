@@ -288,6 +288,43 @@ fn bench_fails_cleanly_on_broken_programs_and_bad_paths() {
     assert_eq!(out.status.code(), Some(2));
 }
 
+/// One failing file is reported with the child's own error and the run
+/// goes on to the rest, ending with `finished` and exit 1 (OL-366).
+#[test]
+fn bench_reports_a_failing_file_and_times_the_others() {
+    let dir = fixture_dir("bench_goes_on");
+    std::fs::write(dir.join("bad.ol"), "println(1 / 0)\n").unwrap();
+    std::fs::write(dir.join("good.ol"), "println(1 + 1)\n").unwrap();
+    let out = olang()
+        .args(["bench", "bad.ol", "good.ol", "--runs", "1", "--save", "base.json"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stdout}{stderr}");
+    assert!(stderr.contains("Division by zero"), "the child's reason is lost: {stderr}");
+    assert!(stdout.contains("good"), "the file after the failure was never timed: {stdout}");
+    assert!(stderr.contains("1 of 2 file(s) failed; no baseline saved"), "{stderr}");
+    assert!(!dir.join("base.json").exists(), "a partial baseline was saved");
+
+    let out = olang()
+        .args(["bench", "bad.ol", "good.ol", "--runs", "1", "--format", "json"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let events: Vec<serde_json::Value> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let kinds: Vec<&str> = events.iter().map(|e| e["event"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["start", "error", "result", "finished"], "{events:?}");
+    assert!(events[1]["message"].as_str().unwrap().contains("Division by zero"), "{events:?}");
+    assert_eq!(events[3]["failed"], 1);
+    assert_eq!(events[3]["files"], 1);
+}
+
 /// `olang test` answers for the project's own files: its `lib/` modules'
 /// blocks run (imported or walked), a dependency's do not — Foundry's 13
 /// tests were reported as 133, the rest Shuttle's. `--deps` runs them.

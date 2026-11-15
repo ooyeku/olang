@@ -1489,7 +1489,12 @@ something else.
 
 Comparisons only call a row changed when it moves more than
 max(5%, 2×CV) against the baseline: below that threshold it's noise,
-not news, and prints as `~`. Add `--fail-on-regress` to turn any red
+not news, and prints as `~`.
+
+A file whose run fails (a runtime error, a non-zero exit) is reported
+with the program's own error and the bench goes on to the other files;
+the run then exits 1 and `--save` writes no baseline, since one missing
+that file's row would read as new next time. Add `--fail-on-regress` to turn any red
 row into exit code 1 — that flag is what makes a saved baseline a
 standing guard for performance work.
 
@@ -1505,14 +1510,15 @@ olang bench fib.ol --format json --against base.json --profile profiles/
 {"event":"result","name":"fib","file":"/…/fib.ol","median_s":0.0392,"min_s":0.039,"max_s":0.0413,"cv_pct":3.1,"runs":7,
  "times_s":[…],"stable_output":true,"baseline_s":0.0371,"delta_pct":5.6,"threshold_pct":6.3,"verdict":"same",
  "profile":"profiles/fib.json"}
-{"event":"finished","regressed":false,"files":1,"saved":null}
+{"event":"finished","regressed":false,"files":1,"failed":0,"saved":null}
 ```
 
 `verdict` is `new` (no baseline row), `same` (within the band
 `threshold_pct`, max(5%, 2×CV)), `faster` or `slower` — the table's
 colours as words; `regressed` is true when any row is `slower`, which
 `--fail-on-regress` turns into exit 1. A failed run is
-`{"event":"error","name","file","message"}`. `--profile DIR` runs each
+`{"event":"error","name","file","message"}`, its `message` carrying the
+program's own error line. `--profile DIR` runs each
 file once more, untimed, under `olang profile --format json`, and leaves
 that profile in `DIR/<name>.json`: the flame graph that explains a
 regression, beside the number that shows it. `--save` writes the
