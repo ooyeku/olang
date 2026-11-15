@@ -9800,6 +9800,40 @@ impl BytecodeVm {
                 out[i as usize] = args[2].clone();
                 Some(Ok(OvmValue::new_list(out)))
             }
+            // Built in the VM's own form: bridged, the list the builtin
+            // answered was converted item by item on its way back (a
+            // layout's arrays of floats, 20 µs a call in Loom's bench;
+            // `enumerate` a frame's every list, its items both ways)
+            // (OL-268). A bad length is the bridge's, with its message.
+            "col.filled" if args.len() == 2 => {
+                let ValueData::Integer(n) = args[0].data else {
+                    return None;
+                };
+                if !(0..=crate::builtin::MAX_BUILT_LEN).contains(&n) {
+                    return None;
+                }
+                let n = n as usize;
+                Some(Ok(match &args[1].data {
+                    _ if n == 0 => OvmValue::new_list(Vec::new()),
+                    ValueData::Float(f) => OvmValue::new_float_list(vec![*f; n]),
+                    ValueData::Integer(i) => OvmValue::new_int_list(vec![*i; n]),
+                    _ => OvmValue::new_list(vec![args[1].clone(); n]),
+                }))
+            }
+            "enumerate" if args.len() == 1 => {
+                let ValueData::List(items) = &args[0].data else {
+                    return None;
+                };
+                Some(Ok(OvmValue::new_list(
+                    items
+                        .iter()
+                        .enumerate()
+                        .map(|(i, v)| {
+                            OvmValue::new_tuple(vec![OvmValue::new_integer(i as i64), v.clone()])
+                        })
+                        .collect(),
+                )))
+            }
             "skip" if args.len() == 2 => Some((|| {
                 let n = match &args[1].data {
                     ValueData::Integer(i) if *i >= 0 => *i as usize,
@@ -10129,6 +10163,20 @@ impl BytecodeVm {
                 "same",
                 "hash",
                 "unwrap",
+                // the window builtins and the builders (OL-525, OL-574,
+                // OL-268), and the owned writes (OL-524)
+                "take",
+                "drop",
+                "skip",
+                "col.take",
+                "col.drop",
+                "col.skip",
+                "col.slice",
+                "col.splice",
+                "col.set",
+                "col.filled",
+                "enumerate",
+                "map_remove",
             ]
             .map(String::from),
         );

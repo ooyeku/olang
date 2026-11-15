@@ -296,3 +296,39 @@ println([r, time.monotonic() - t0 < 1500.0])
         );
     }
 }
+
+#[test]
+fn a_list_a_builtin_builds_is_built_in_the_vms_form() {
+    // OL-268: what a bridged builtin answered was converted item by item
+    // on its way back: col.filled(4000, 1.5) cost 17 µs on the bytecode
+    // tier (0.4 µs built in the VM's form), Loom's layout 222 such calls
+    // a run of its bench.
+    let src = r#"
+fn fill(n, reps) = { let mut k = 0; for i in range(0, reps) { k = k + len(col.filled(n, 1.5)) }; k }
+fn main() = {
+    let row = [1, 2]
+    let mut rows = col.filled(3, row)
+    rows[0] = [9]
+    let ints = col.filled(3, 7)
+    let t0 = time.monotonic()
+    let k = fill(8000, 5000)
+    let ms = time.monotonic() - t0
+    let es = enumerate(["a", "b"])
+    (rows, row, ints, ints[2] + 1, col.filled(2, 0.5), col.filled(0, 1), col.filled(2, "s"), es, k, ms < 60.0)
+}
+println(main())
+"#;
+    for flags in TIERS {
+        // the interpreter builds the 8,000 values itself: no bound there
+        let src = if flags == ["--no-ovm"] {
+            src.replace("ms < 60.0", "ms >= 0.0")
+        } else {
+            src.to_string()
+        };
+        assert_eq!(
+            run(flags, &src),
+            "([[9], [1, 2], [1, 2]], [1, 2], [7, 7, 7], 8, [0.5, 0.5], [], [\"s\", \"s\"], [(0, \"a\"), (1, \"b\")], 40000000, true)",
+            "{flags:?}"
+        );
+    }
+}
