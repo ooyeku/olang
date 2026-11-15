@@ -1567,7 +1567,7 @@ fn error_text(e: &InterpreterError) -> String {
 /// Written through a writer that stops the formatting once it has more
 /// than it keeps: an event's detail costs the same for a value of ten
 /// bytes or ten megabytes (it rendered the whole value and cut it, about
-/// a tenth of an olang-track seed's time).
+/// a tenth of an issue tracker seed's time).
 fn render(v: &Value) -> String {
     struct Bounded {
         text: String,
@@ -1691,7 +1691,7 @@ fn simulated(
         "time.sleep" => sleep(ctx, args),
         "chan.bounded" if matches!(args, [Value::Integer(0)]) => Ok(w.new_rendezvous()),
         // the channel's number is the world's (the process's would differ
-        // from one run to the next in one process: Shuttle's log bus
+        // from one run to the next in one process: a web framework's log bus
         // writes it into the environment)
         "chan.stat" => match args {
             [c] => (|| {

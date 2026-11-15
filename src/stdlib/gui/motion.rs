@@ -1,4 +1,4 @@
-//! Motion (loom/SPEC.md §7): a node's `transition` — its opacity, its
+//! Motion: a node's `transition` — its opacity, its
 //! box, its colours, and how it comes and goes — run by the engine on
 //! the window's clock at the display's refresh, with no program turn;
 //! and the curves motion runs on (cubic Béziers and springs).

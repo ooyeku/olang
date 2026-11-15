@@ -106,7 +106,7 @@ fn role_of(n: &Node) -> Role {
 // ── where a node stands in its set, its table's rows and columns ────
 /// What the tree's shape says of a node: its place in its set (a list's
 /// item, a tree's, a tab, a table's row), a table's row and column, a
-/// set's or a table's size. Loom's virtualized lists lay out only the rows
+/// set's or a table's size. A UI framework's virtualized lists lay out only the rows
 /// on screen, so a row's own `pos` wins over its order among the nodes.
 #[derive(Clone, Copy, Default, Debug, PartialEq)]
 pub struct Place {

@@ -107,12 +107,12 @@ impl Font {
 
     fn family_source_bundled(&self) -> String {
         match self.family.as_str() {
-            // The bundled Inter and emoji (Loom's fonts) before the
+            // The bundled Inter and emoji (a UI framework's fonts) before the
             // system's: a window looks the same on every machine.
             "body" | "" => "Inter Variable, Inter, Noto Color Emoji, system-ui, sans-serif".to_string(),
             // The system's own monospace faces by name first: a generic
             // `monospace` resolves to Courier on macOS. The bundled
-            // JetBrains Mono (Loom's fonts) comes before all of them.
+            // JetBrains Mono (a UI framework's fonts) comes before all of them.
             "mono" => "JetBrains Mono, SF Mono, Menlo, Consolas, DejaVu Sans Mono, Noto Sans Mono, Noto Color Emoji, ui-monospace, monospace".to_string(),
             other => other.to_string(),
         }

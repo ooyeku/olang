@@ -2752,7 +2752,7 @@ mod rebase_tests {
 
     /// A line asked for before the first frame, then the caret taken to
     /// the text's end before that frame: the caret is shown, not the line
-    /// asked for (Studio's fuzz seed 41181: a file opened, then ⌘↓).
+    /// asked for (an editor's fuzz seed 41181: a file opened, then ⌘↓).
     #[test]
     fn a_caret_moved_before_the_first_frame_is_followed() {
         let mut ts = system().lock().unwrap_or_else(|e| e.into_inner());
@@ -2783,7 +2783,7 @@ mod rebase_tests {
     }
 
     /// Wrapping turned on with the caret in view: the long lines above it
-    /// break into rows, and the caret is still in view after (Studio's
+    /// break into rows, and the caret is still in view after (an editor's
     /// fuzz seed 40643).
     #[test]
     fn wrapping_toggled_keeps_a_caret_that_was_in_view() {
@@ -2815,7 +2815,7 @@ mod rebase_tests {
     /// One line wrapped over far more rows than the view has, the view
     /// at its caret, and its layout let go (styled again): the view stays
     /// (its reach was read from the line's estimated height, shorter, and
-    /// the view pulled back from the caret; Studio's fuzz seed 60445).
+    /// the view pulled back from the caret; an editor's fuzz seed 60445).
     #[test]
     fn a_view_at_a_long_lines_end_stays_when_its_layout_is_made_again() {
         let mut ts = system().lock().unwrap_or_else(|e| e.into_inner());
@@ -2870,7 +2870,7 @@ mod rebase_tests {
 
     /// A revision the engine moved on by adopting the program's value is
     /// no edit of the field's: the program's next value, made from before
-    /// it, is adopted whole (Studio's join, then its undo).
+    /// it, is adopted whole (an editor's join, then its undo).
     #[test]
     fn a_value_adopted_since_is_not_rebased_over() {
         let mut ts = system().lock().unwrap();

@@ -6,8 +6,8 @@
 //!
 //! A movie is a thread of its own: it owns the player, hears what is
 //! asked of it over a channel, and says where it is in a shared record.
-//! Nothing here runs on a window's thread. (OL-587; OlangStudio's
-//! Recorder plays its recordings this way.)
+//! Nothing here runs on a window's thread. (OL-587; an editor's
+//! screen recorder plays its recordings this way.)
 
 use super::avf::{
     BGRA, CMTime, CVPixelBufferGetBaseAddress, CVPixelBufferGetBytesPerRow, CVPixelBufferGetHeight,

@@ -137,8 +137,8 @@ pub fn install(root: &Path, options: &InstallOptions) -> Result<DependencyMap, P
     }
 
     // A dependency's own path dependencies, at any depth: each resolves
-    // against the manifest that names it (open-track desktop → Loom →
-    // Heddle, all by path), and is locked by its path from this root. A
+    // against the manifest that names it (a desktop app → a UI framework →
+    // a TUI framework, all by path), and is locked by its path from this root. A
     // name the project or a nearer package already maps keeps that
     // mapping, as a direct dependency always wins.
     let mut queue: Vec<PathBuf> = dep_map.values().cloned().collect();
@@ -1002,7 +1002,7 @@ fn sub_dependency_names(dir: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// `target` as a path from `root` (`../loom/../heddle` style, through
+/// `target` as a path from `root` (`../ui/../tui` style, through
 /// their common ancestor), for a lock that stays valid wherever the
 /// workspace is checked out; absolute when they share nothing.
 fn relative_to(root: &Path, target: &Path) -> String {

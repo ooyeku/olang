@@ -1,7 +1,7 @@
 //! Shared pictures: a frame one process draws on the GPU and another
-//! shows, with nothing copied between them (macOS: IOSurface). Studio's
-//! canvas runs a Toad game in a child process; the game's frames reach
-//! Studio's window this way, at the display's rate.
+//! shows, with nothing copied between them (macOS: IOSurface). An editor's
+//! canvas runs a game in a child process; the game's frames reach
+//! the editor's window this way, at the display's rate.
 //!
 //! The producer (the game) draws each frame into one of three surfaces,
 //! the next after the latest, and says which in a small header surface

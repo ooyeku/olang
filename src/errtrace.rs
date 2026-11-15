@@ -1,7 +1,7 @@
 //! Where an error went: the frames it unwound through, each with the
 //! file and line that frame was at.
 //!
-//! A program that catches an error at a boundary (`attempt`, Loom's run
+//! A program that catches an error at a boundary (`attempt`, a UI framework's run
 //! loop, a plugin host's `runtime.call_budget`) used to get the message
 //! alone — "str.trim: argument 1 must be a string, got Unit" with no
 //! idea where. Both tiers now note each frame an error leaves, innermost

@@ -1,5 +1,5 @@
-//! `olang repl --serve` — the REPL as a protocol, for an editor (olang
-//! Studio) that keeps one long-lived REPL per project.
+//! `olang repl --serve` — the REPL as a protocol, for an editor
+//! that keeps one long-lived REPL per project.
 //!
 //! Line-delimited JSON over stdio: one request a line in, one reply a
 //! line out (docs/tooling.md has the messages). The session is bound to
@@ -17,7 +17,7 @@
 //! - **Values.** A reply carries a value as structure, not text: scalars
 //!   with their type, containers with a handle and their first items,
 //!   lists of maps or records as a table, lists of numbers as a series,
-//!   Bytes holding a picture as the picture, a Loom view as a view.
+//!   Bytes holding a picture as the picture, a UI framework's view as a view.
 //!   `expand` asks for more of a handle (a range; a table's rows sorted).
 //! - **Interrupt.** Requests are read on a thread of their own, so an
 //!   `interrupt` reaches a running evaluation: every tier polls one flag
@@ -36,7 +36,7 @@
 //!   reaches for one is refused with `kind` `impure` and the capability
 //!   it wanted, and the session's own grant is back afterwards. An editor
 //!   re-runs on save only what passes.
-//! - **Views.** `render` draws a Loom view value headless (Loom's
+//! - **Views.** `render` draws a UI framework's view value headless (its
 //!   `render_view`, from the project's dependency or a path given) and
 //!   answers a PNG.
 //!
@@ -256,7 +256,7 @@ pub fn serve(no_ovm: bool, notebook: Option<PathBuf>) -> i32 {
 /// export`, `olang notebook pin`): each code cell evaluated in order in the
 /// notebook's own scope — its params bound (`overrides` replace them), its
 /// grant, its folder — and a control cell named by an override set to it
-/// as Studio sets one; then every `${expr}` of its prose evaluated under no
+/// as an editor sets one; then every `${expr}` of its prose evaluated under no
 /// capability. Answers the outputs document (src/notebook_export.rs): each
 /// cell's reply as the kernel gave it. The process enters the notebook's
 /// folder. A notebook with problems, or an override naming nothing, is an
@@ -2849,7 +2849,7 @@ impl Session {
                 json!({ "k": "range", "t": t, "n": n, "s": v.to_string() })
             }
             _ if crate::ods::gg::is_spec(v) => self.encode_gg(v, None, held),
-            // a Loom view written as a record is a view, as a map one is (OL-602)
+            // a UI framework's view written as a record is a view, as a map one is (OL-602)
             Value::Struct { fields, .. } if loom_view_role(fields).is_some() => {
                 let role = loom_view_role(fields).expect("checked");
                 let h = self.hold(v, held);
@@ -3339,7 +3339,7 @@ impl Session {
         let Some(view) = self.handles.get(&h).cloned() else {
             return json!({ "ok": false, "error": { "kind": "gone", "message": "that view is no longer held" } });
         };
-        // Loom: the project's dependency, else the path given
+        // The UI framework: the project's dependency, else the path given
         let own = crate::pkg::manifest::Manifest::load(&self.root)
             .map(|m| m.dependencies.contains_key("loom") || m.package.name == "loom")
             .unwrap_or(false);
@@ -3389,7 +3389,7 @@ impl Session {
         let _ = crate::output::take_collected();
         let ms = round3(t0.elapsed().as_secs_f64() * 1000.0);
         match outcome {
-            // Loom answers a map or a record (OL-594)
+            // The UI framework answers a map or a record (OL-594)
             Ok(ref v) if v.record_fields().is_some() => {
                 let m = v.record_fields().expect("a map or a record");
                 let png = m
@@ -3742,7 +3742,7 @@ const LOOM_ROLES: &[&str] = &[
     "radio",
 ];
 
-/// A Loom view node (`#{ role, key, props, children }`): its role.
+/// A UI framework's view node (`#{ role, key, props, children }`): its role.
 fn loom_view_role(m: &crate::ast::ValueMap) -> Option<String> {
     if m.len() != 4
         || !m.contains_key("props")

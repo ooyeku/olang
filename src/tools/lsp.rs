@@ -240,7 +240,7 @@ pub fn run() -> Result<(), Box<dyn Error + Sync + Send>> {
             retrigger_characters: None,
             work_done_progress_options: Default::default(),
         }),
-        // A file renamed, moved or deleted by the editor (olang Studio's
+        // A file renamed, moved or deleted by the editor (an editor's
         // Rename and Move to Trash): the open documents re-keyed and every
         // one re-checked, so an importer's problem follows the file.
         workspace: Some(lsp_types::WorkspaceServerCapabilities {

@@ -367,7 +367,7 @@ impl Editor {
         self.mutate(ts, |d| d.insert_or_replace_selection(&text))
     }
 
-    /// A key, by its name (Heddle's spelling: `left`, `backspace`,
+    /// A key, by its name (a TUI framework's spelling: `left`, `backspace`,
     /// `home`) and modifiers. `word` is alt on macOS, ctrl elsewhere;
     /// `line` is cmd on macOS (home/end elsewhere).
     pub fn key(

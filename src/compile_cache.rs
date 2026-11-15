@@ -1,7 +1,7 @@
 //! Compiled bytecode kept between runs.
 //!
 //! The parse cache (`crate::parse_cache`) keeps a module's tree between
-//! launches; this keeps what a function compiled to. olang Studio's first
+//! launches; this keeps what a function compiled to. an editor's first
 //! frame compiled ~550 functions to bytecode (~65 ms) at every launch,
 //! from trees that had not changed since the last one.
 //!
@@ -348,7 +348,7 @@ pub fn value_of(p: &Plain) -> crate::ovm::OvmValue {
 //
 // A module's entries share one file (a pack), named by the build and
 // the module's path, read whole the first time one of its functions
-// compiles: a launch reads a file a module, not one a function (Studio:
+// compiles: a launch reads a file a module, not one a function (an editor:
 // 122 reads for ~600 compiles; a read of a small file costs ~30 µs on
 // APFS). Inside, an index (key, when last written or used, offset,
 // length, checksum) and the entries, each decoded when first asked for.
@@ -530,7 +530,7 @@ fn decode(body: &[u8]) -> Option<Entry> {
 
 /// What this process has read of each pack (its bytes, each entry
 /// decoded only when its function compiles: decoded ahead, the entries
-/// of functions a run never called held 67 MB of OlangStudio's start,
+/// of functions a run never called held 67 MB of an editor's start,
 /// OL-408), and the entries it stored, by key (newest first).
 #[derive(Default)]
 struct Memo {

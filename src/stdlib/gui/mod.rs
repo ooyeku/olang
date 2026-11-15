@@ -1,4 +1,4 @@
-//! `gui` — windows drawn by olang: Loom's engine (loom/SPEC.md §16).
+//! `gui` — windows drawn by olang: the engine under a UI framework.
 //!
 //! The program lays its view out (in olang) and sends the engine
 //! positioned, keyed nodes; the engine draws them on the GPU (or with
@@ -19,7 +19,7 @@
 //! loop ([`platform`]); a program that never opens a window never
 //! starts one. Headless windows (`gui.headless`) need no loop and no
 //! display: they draw with the software renderer, take input from
-//! `gui.input`, and are what `loom.test` drives.
+//! `gui.input`, and are what a UI framework's tests drive.
 //!
 //! Module map: [`values`] (reading and making olang values), [`text`]
 //! (shaping, measuring), [`raster`] (glyph images), [`scene`] (the node
@@ -1126,7 +1126,7 @@ fn gui_read(args: Vec<Value>) -> Res<Value> {
 }
 
 /// `gui.read(_, "render")`: frames drawn (and how much of them) and the
-/// renderers' caches, for Loom's HUD and for measuring. Counts are since
+/// renderers' caches, for a UI framework's HUD and for measuring. Counts are since
 /// the process began; bytes are what is held now.
 fn render_stats() -> Value {
     use std::sync::atomic::Ordering::Relaxed;
@@ -1201,7 +1201,7 @@ fn mods_of(v: &Value) -> Res<Mods> {
         shift: flag("shift")?,
         super_: flag("super")?,
     };
-    // `mod` is the platform's command key, as Loom's chords spell it.
+    // `mod` is the platform's command key, as a UI framework's chords spell it.
     if flag("mod")? {
         if cfg!(target_os = "macos") {
             mods.super_ = true;
@@ -1538,7 +1538,7 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
     }
     let input = input_of(&args[1])?;
     // the pointer and its buttons as a platform's would be held: a game
-    // run headless (Studio's canvas) reads them as it reads the mouse
+    // run headless (an editor's canvas) reads them as it reads the mouse
     if let Input::Pointer {
         action,
         x,
@@ -1719,7 +1719,7 @@ fn gui_fonts(args: Vec<Value>) -> Res<Value> {
 /// system's first use (discovering the system's fonts) with them —
 /// while the program goes on; whatever shapes or measures text first
 /// waits until they are in. Answers the number of sources handed over.
-/// Loom's bundled fonts were most of a window's first 60 ms this way
+/// A UI framework's bundled fonts were most of a window's first 60 ms this way
 /// (brotli, 15 MB of faces, and the system's fonts found).
 fn fonts_in_background(items: Vec<Value>) -> Res<Value> {
     let mut sources: Vec<Vec<u8>> = Vec::with_capacity(items.len());
@@ -1773,7 +1773,7 @@ fn fonts_in_background(items: Vec<Value>) -> Res<Value> {
     Ok(Value::Integer(n as i64))
 }
 
-/// Fonts may arrive brotli-compressed (Loom embeds them so).
+/// Fonts may arrive brotli-compressed (a UI framework embeds them so).
 fn maybe_brotli(bytes: Vec<u8>) -> Res<Vec<u8>> {
     let is_font = |b: &[u8]| {
         b.starts_with(&[0, 1, 0, 0])

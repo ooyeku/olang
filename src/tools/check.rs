@@ -777,7 +777,7 @@ fn declared_names(program: &Program, out: &mut std::collections::HashSet<String>
 /// that is an undefined variable the moment the line runs; in a browser
 /// bundle, which is one namespace, it resolves from whichever module is
 /// spliced beside this one — so it works until the day it does not
-/// (open-track's `refresh_fx`, Shuttle's `check_record`). An error.
+/// (a desktop app's `refresh_fx`, a web framework's `check_record`). An error.
 ///
 /// What a file may name without importing it item by item: everything a
 /// bare `use m` brings, and the variants of any enum a context module
@@ -5664,7 +5664,7 @@ pub fn run_tier_as(paths: &[PathBuf], json: bool) -> i32 {
         }
         // The declarations load without effects: a module the file uses
         // runs its top level as it loads, and `check --tier` on a file
-        // opened (olang Studio's tier map does, on every file shown) ran a
+        // opened (an editor's tier map does, on every file shown) ran a
         // module's `os.exec` with the person's privileges. They load with
         // no capability (no fs, net, proc, db, env; a module loaded at run
         // time is held to that too), then the table the check had is put
@@ -6446,7 +6446,7 @@ mod tests {
     fn a_name_re_exported_under_an_alias_is_not_another_module_s() {
         // OL-550: `use index { send }`, where index re-exports `ws_send as
         // send`, beside `use loom { run }`, whose root has a `send(msg)`
-        // of its own. The file's `send` is index's; Loom's signature was
+        // of its own. The file's `send` is index's; that module's signature was
         // checked against it ("Arity mismatch: expected 1, got 3").
         let loom = Parser::new()
             .parse("share fn send(msg) = msg\nshare fn run(p) = p\n")

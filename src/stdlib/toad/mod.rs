@@ -1,4 +1,4 @@
-//! `toad` — the engine under the Toad game framework (olang-world/libraries/toad).
+//! `toad` — the engine under a game framework.
 //!
 //! T0, the spike: kernels (plain olang functions compiled to a scalar
 //! program, [`kernel`]) and swarms (an engine-owned column store of many
@@ -1325,7 +1325,7 @@ fn frame(layers: &Value, view: &Value) -> R {
         let renderer = st.renderer.as_mut().unwrap();
         // `cpu`: the frame's pixels too, published for a window drawn in
         // software; `share`: the frame shared on the GPU with another
-        // process's window (Studio's canvas runs a game in a child)
+        // process's window (an editor's canvas runs a game in a child)
         let cpu = live.is_some() && matches!(vm.get("cpu"), Some(Value::Boolean(true)));
         let share = live.is_some() && matches!(vm.get("share"), Some(Value::Boolean(true)));
         let px = renderer.frame(&view, &parts, want_png || cpu, live.as_deref(), share);

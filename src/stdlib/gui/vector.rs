@@ -1,5 +1,5 @@
-//! A canvas's vector paths made ready for the GPU (loom/ROADMAP.md item
-//! 11): what gpu.rs draws into its coverage atlas instead of a picture
+//! A canvas's vector paths made ready for the GPU:
+//! what gpu.rs draws into its coverage atlas instead of a picture
 //! rasterized on the CPU.
 //!
 //! - **Fills** are triangle fans per contour (curves flattened to within

@@ -1,5 +1,5 @@
 //! `olang test --format json`: the runner's events as line-delimited JSON
-//! on stdout, for an editor (olang Studio's tests panel) — one object a
+//! on stdout, for an editor (its tests panel) — one object a
 //! line, each with an `event` field, written as the run goes:
 //!
 //! - `run`       the files to run and how many test blocks they declare
@@ -10,7 +10,7 @@
 //!   `assert_eq`/`assert_ne` (and a text snapshot) the expected
 //!   and actual values (`kind`: `assert_eq`, `assert_ne`,
 //!   `snapshot`, `pixels`, `error`)
-//! - `snapshot`  a pixel snapshot that differs (Loom's `snapshot`, through
+//! - `snapshot`  a pixel snapshot that differs (a UI framework's `snapshot`, through
 //!   `testing.snapshot_failed`): baseline, actual and diff
 //!   paths and the difference's numbers
 //! - `skipped`   a block of the file the run names that `--only` left out
@@ -323,7 +323,7 @@ pub fn note_values(kind: &str, expected: &Value, actual: &Value) {
 }
 
 /// `testing.snapshot_failed(info)`: a pixel snapshot that differs, from
-/// the library that compares them (Loom's `snapshot`). `info` is a map:
+/// the library that compares them (a UI framework's `snapshot`). `info` is a map:
 /// `name`, `baseline`, `actual`, `diff` (paths), `differing`, `total`,
 /// `worst`, `sizes`. A relative path is `beside`'s: the folder of the
 /// file under test, not the folder the run stands in (its project's root).

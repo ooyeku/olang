@@ -3047,7 +3047,7 @@ mod tests {
 
     /// What `cat` of a hostile file can make the screen do: draw, and
     /// nothing more — no unbounded memory, no answers past a bound, no
-    /// controls or hidden parts in what Studio shows of it.
+    /// controls or hidden parts in what an editor shows of it.
     #[test]
     fn hostile_output_only_draws() {
         // a sequence of a million parameters: ignored, nothing kept

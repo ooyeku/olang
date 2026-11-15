@@ -36,7 +36,7 @@ impl Interpreter {
                         // moment, the same length): not read and hashed
                         // again. Every `use` of a loaded module did, which
                         // was a large program's every import re-reading
-                        // and hashing its file (olang Studio: hundreds).
+                        // and hashing its file (an editor: hundreds).
                         let meta = std::fs::metadata(path).ok();
                         let unchanged = entry.last_modified.is_some()
                             && entry.file_len.is_some()
@@ -283,7 +283,7 @@ impl Interpreter {
     /// - a listed name (`use m { f }`) the program itself bound in this
     ///   scope is an error naming both: alias it (`use m { f as m_f }`).
     ///   A listed stdlib module name is the program's explicit choice
-    ///   (Loom's `use lib.effects { task }`) and binds.
+    ///   (a UI framework's `use lib.effects { task }`) and binds.
     pub(crate) fn bind_module_imports(
         &mut self,
         module: &Value,
@@ -1321,9 +1321,9 @@ already binds — an import never replaces a program's own name. Alias the impor
 
     /// The dependencies of the project holding `dir` (its nearest
     /// `olang.toml`), added where the map has no package of that name: a
-    /// module loaded from another project (`runtime.load_module`: Studio's
+    /// module loaded from another project (`runtime.load_module`: an editor's
     /// canvas running an app) finds its own packages, `use toad` the
-    /// project's Toad rather than the standard module of that name.
+    /// project's own `toad` package rather than the standard module of that name.
     pub fn add_project_dependencies(&mut self, dir: &std::path::Path) {
         let Some(root) = crate::pkg::manifest::Manifest::find_root(dir) else {
             return;

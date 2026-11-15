@@ -325,7 +325,7 @@ fn expand_impl(source: &str, base_dir: Option<&std::path::Path>) -> Result<Expan
             for st in &module_prog.statements {
                 // `share use` and plain `use` alike: an index that imports
                 // `lib/decl.ol { resource }` makes `@resource` a macro of
-                // the package's front door, so `use shuttle` reaches it.
+                // the package's front door, so `use app` reaches it.
                 let sub_path = match st.unwrapped() {
                     crate::ast::Statement::ShareDecl(crate::ast::ShareDecl::Use(su)) => {
                         su.path.clone()
@@ -534,7 +534,7 @@ fn expansion_interpreter() -> crate::interpreter::Interpreter {
     // A file's expansion is bounded, in steps (loop iterations and calls:
     // deterministic, as law 4 asks): a meta fn that never ends must cost
     // one error, not a language server spinning forever on a file opened
-    // (`olang check`, `olang lsp`, Studio's notebook check run expansion)
+    // (`olang check`, `olang lsp`, an editor's notebook check run expansion)
     interp.set_eval_budget(Some(EXPANSION_STEPS), None);
     interp
 }

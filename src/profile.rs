@@ -589,7 +589,7 @@ thread_local! {
     /// what keeps those pushes off the global intern lock, which
     /// otherwise serializes every thread of a parallel program into a
     /// crawl. Hashed with Fx, not SipHash: the key is four machine
-    /// words, looked up on every call of a profiled program (Studio
+    /// words, looked up on every call of a profiled program (an editor
     /// profiling itself pays it on each call of its keystroke).
     static NAME_MEMO: std::cell::RefCell<rustc_hash::FxHashMap<(usize, usize, usize, u32), u32>> =
         std::cell::RefCell::new(rustc_hash::FxHashMap::default());
@@ -808,7 +808,7 @@ pub fn pop() {
 }
 
 /// What `olang profile` writes when the program ends, kept here so a
-/// program that ends with `os.exit` — every Loom application does, from
+/// program that ends with `os.exit` — every application on a UI framework does, from
 /// its loop or a quit — still gets its report: the run's own end and
 /// `os.exit` both take it (`exit_report`), whichever comes first.
 type ExitReport = Box<dyn FnOnce(i32) + Send>;

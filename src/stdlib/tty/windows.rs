@@ -2,7 +2,7 @@
 //! capture, and the console's input records (keys, mouse, resize, focus)
 //! mapped onto the same events the Unix decoder produces. Output is VT
 //! sequences (Windows Terminal and ConPTY consoles; the legacy console
-//! is out of scope, as in Heddle's spec).
+//! is out of scope, as in a TUI framework's spec).
 //!
 //! Compiled and reasoned about, not yet run: the development machine for
 //! H0 is macOS. Known differences from Unix: `tty.query` answers `Err`

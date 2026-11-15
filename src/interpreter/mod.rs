@@ -7750,7 +7750,7 @@ mod tests {
 /// A bridge interpreter's table of the program's functions: the VM's own
 /// table, shared as it is, with the names two definitions share left out
 /// by lookup. Removing them built every bridge a private copy of the
-/// table's nodes, 36.8 MB across OlangStudio's bridges, one a spawned
+/// table's nodes, 36.8 MB across an editor's bridges, one a spawned
 /// task's VM (OL-415).
 #[derive(Clone)]
 struct BridgeFunctions {

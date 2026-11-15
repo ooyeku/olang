@@ -91,7 +91,7 @@ pub const AST_MAP_EAGER: usize = 16;
 /// value into the interpreter's form — a program state that crossed in
 /// once (a loop entered from the tree-walker, a runtime built on it)
 /// stayed a wrapper for good, and each turn converted what it set into
-/// it: Loom's window records, its layout's placements, a frame's index.
+/// it: a UI framework's window records, its layout's placements, a frame's index.
 /// A large map (an application's store) stays a wrapper, as before.
 pub const AST_MAP_PROMOTE: usize = 256;
 
@@ -119,7 +119,7 @@ const TO_AST_CACHE_MIN: usize = 32;
 /// going round the table) and frees those whose collection died. A dead
 /// entry is an interpreter copy nothing can reach again, and freeing it
 /// is the cost: freed in sweeps (every time the table doubled), a frame
-/// of olang Studio that landed on one paid 0.3–1.9 ms of freeing at once,
+/// of an editor that landed on one paid 0.3–1.9 ms of freeing at once,
 /// the copies of several frames' views. Two a time keeps up with any
 /// rate of deaths (the table settles at about twice what is alive) and
 /// spreads the freeing over the turns that made it.
@@ -2231,7 +2231,7 @@ mod tests {
 
     /// An interpreter value freed outermost drains the VM's queue too: VM
     /// values it held deeper than the free's depth bound are queued as
-    /// VM values, and were left there (STU-137: Studio's pool threads
+    /// VM values, and were left there (STU-137: an editor's pool threads
     /// kept hundreds of MB of dead records until restart).
     #[test]
     fn an_interpreter_free_drains_the_vm_queue() {

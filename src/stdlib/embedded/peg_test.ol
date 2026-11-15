@@ -2,7 +2,7 @@
 //
 // JSON, CSV and an expression language, left recursion, precedence and
 // associativity, labels and classes, errors as golden strings, recovery,
-// `peg.check`, fuzzing with `peg.examples`, and olang-track's query
+// `peg.check`, fuzzing with `peg.examples`, and an issue tracker's query
 // language giving the same answers as its hand-written parser on a
 // corpus. The faster checks of the same ground live in peg.ol itself.
 
@@ -624,14 +624,14 @@ test "a grammar built on one thread parses on another" {
     assert_eq(rs, [1, [2], #{ "x": 3 }])
 }
 
-// ── olang-track's query language ───────────────────────────────────────
+// ── an issue tracker's query language ────────────────────────────────
 //
-// The query bar of olang-track (packages/olang-track-query) as a peg
+// The query bar of an issue tracker as a peg
 // grammar. What a parse means — fields, values, relative dates, effort,
-// errors — is olang-track's own rules (lib/lang.ol, lib/values.ol),
+// errors — is the tracker's own rules,
 // ported here over the tree instead of its token loop, so the two can be
 // compared answer for answer. The goldens below are the canonical form of
-// what olang-track's hand-written `parse` answers, hashed: written by
+// what the tracker's hand-written `parse` answers, hashed: written by
 // running that parser over the same queries.
 //
 // One known difference: inside parentheses, a field with no value before
@@ -846,7 +846,7 @@ fn add_word(parsed, w) = {
     else => map_set(parsed, "words", parsed.words + [str.to_lower(t)])
 }
 
-// A token's text as olang-track's tokenizer gives it: a quoted one
+// A token's text as the tracker's tokenizer gives it: a quoted one
 // without its quotes, a bare one trimmed.
 fn tok_text(nd) =
     if nd.kind == "Quoted" => {
@@ -897,7 +897,7 @@ fn sem(items, schema) = {
     if missing != "" => with_error(parsed, missing + ": missing value") else => parsed
 }
 
-// The query, parsed against a schema, as olang-track's `parse` answers.
+// The query, parsed against a schema, as the tracker's `parse` answers.
 fn track_parse(q, schema) = sem(unwrap(QG.parse(q)).children, schema)
 
 // A parse with what cannot be compared (the resolved readers) left out.
@@ -1000,7 +1000,7 @@ let SOUP_GOLDEN = [
     "65370404b5", "e56b4a8e41", "c62e7227e7", "d5f58bbfe4", "dcdecfad90", "a69ecee8c8", "6623efeb5f", "e464fff010",
 ]
 
-// (query, hash of olang-track's answer, its errors)
+// (query, hash of the tracker's answer, its errors)
 let CURATED = [
     ("state: open sort: num", "35711042f4", []),
     ("state: open,done sort: num", "40866bb0c2", []),
@@ -1050,7 +1050,7 @@ let CURATED = [
     ("due: tomorrow is: -big", "5f0778152b", []),
 ]
 
-test "olang-track queries: the same answers as its parser, curated" {
+test "issue tracker queries: the same answers as its parser, curated" {
     for (q, h, errors) in CURATED {
         let p = track_parse(q, TRACK_SCHEMA)
         assert_eq(p.errors, errors, q)
@@ -1058,7 +1058,7 @@ test "olang-track queries: the same answers as its parser, curated" {
     }
 }
 
-test "olang-track queries: the same answers as its parser, 400 generated" {
+test "issue tracker queries: the same answers as its parser, 400 generated" {
     let mut checked = 0
     for k in 0..len(SOUP_GOLDEN) {
         let want = SOUP_GOLDEN[k]
@@ -1071,7 +1071,7 @@ test "olang-track queries: the same answers as its parser, 400 generated" {
     assert_eq(checked, 398)
 }
 
-test "olang-track queries: the grammar takes any text, and its errors are its parser's" {
+test "issue tracker queries: the grammar takes any text, and its errors are its parser's" {
     for k in 0..200 {
         let q = soup(k * 104729 + 7, 1 + k % 12)
         assert_true(QG.accepts(q), q)

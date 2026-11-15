@@ -2233,7 +2233,7 @@ fn render_literal(v: &Value) -> Result<String, Box<dyn std::error::Error>> {
             format!("#{{{}}}", parts?.join(", "))
         }
         // An anonymous object as its literal, `{ a: 1, b: "x" }`, its
-        // fields in order (Heddle's recordings converted objects to maps
+        // fields in order (a TUI framework's recordings converted objects to maps
         // first). Its fields are identifiers, as its literal wrote them.
         Value::Struct { type_name, fields } if type_name == "Object" => {
             let keys: Vec<_> = fields.keys().collect();
@@ -2360,7 +2360,7 @@ impl Drop for ExportsGuard {
 }
 
 /// `meta.exports(path)` — the literal values the module at `path` (as
-/// the expanding file imports it: `"lib.decl"`, `"shuttle"`) binds at
+/// the expanding file imports it: `"lib.decl"`, `"app"`) binds at
 /// its top level, as a map from name to value. `Err` when the module is
 /// not one the file imports, and outside expansion, where there is no
 /// importing file to read from.
