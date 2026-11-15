@@ -252,7 +252,12 @@ directory, recorded relative to the project root no matter where the
 command ran; a bare name is looked up on your shelf. Either way the
 dependency is validated at `add` time and resolution runs immediately,
 so the lockfile is never left behind the manifest, and changing an
-existing dependency's source requires `--force`.
+existing dependency's source requires `--force`. A path must hold an
+`olang.toml` or a root module (`index.ol`, `mod.ol`, `<name>.ol` or
+`src/index.ol`), the same test `olang doctor` makes. A failed `add`
+changes nothing: the `olang.toml` it would have started in a fresh
+directory is written only once the dependency checks out, and one it
+edited is put back if resolution fails.
 
 Dependencies that live elsewhere still work — write them into
 `olang.toml` directly (`{ git = "URL", tag = "v1.0" }`, or a registry

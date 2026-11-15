@@ -124,13 +124,9 @@ fn audit(root: &Path) -> Vec<Finding> {
             match dep {
                 crate::pkg::manifest::Dependency::Path { path } => {
                     let dir = root.join(path);
-                    if dir.join("olang.toml").exists() || dir.join("index.ol").exists() {
-                        out.push(ok(format!("dependency {name}: {}", dir.display())));
-                    } else {
-                        out.push(bad(format!(
-                            "dependency {name}: path {} has no olang.toml or index.ol",
-                            dir.display()
-                        )));
+                    match crate::pkg::path_dependency_problem(&dir, name) {
+                        None => out.push(ok(format!("dependency {name}: {}", dir.display()))),
+                        Some(why) => out.push(bad(format!("dependency {name}: {why}"))),
                     }
                 }
                 crate::pkg::manifest::Dependency::Shelf { shelf: entry } => {

@@ -20,14 +20,10 @@ fn find_root() -> Option<PathBuf> {
         .and_then(|cwd| Manifest::find_root(&cwd))
 }
 
-/// The project root, creating an `olang.toml` in the current directory
-/// when none exists anywhere above — `otc add` in a fresh directory
+/// A fresh `olang.toml` in `cwd` — `otc add` in a fresh directory
 /// should start the project, not lecture about a missing init step.
-fn root_or_init() -> anyhow::Result<PathBuf> {
-    if let Some(root) = find_root() {
-        return Ok(root);
-    }
-    let cwd = std::env::current_dir()?;
+/// Written only once the dependency checked out (OL-368).
+fn init_manifest(cwd: &Path) -> anyhow::Result<()> {
     let name = cwd
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -48,9 +44,9 @@ fn root_or_init() -> anyhow::Result<PathBuf> {
         capabilities: None,
         check: None,
     };
-    manifest.save(&cwd).map_err(|e| anyhow::anyhow!("{}", e))?;
+    manifest.save(cwd).map_err(|e| anyhow::anyhow!("{}", e))?;
     println!("No olang.toml found — created one for '{}'", name);
-    Ok(cwd)
+    Ok(())
 }
 
 fn registry_from_env() -> Option<PathBuf> {
@@ -65,8 +61,21 @@ fn registry_from_env() -> Option<PathBuf> {
 /// `--path` forces the path reading for the rare directory name that
 /// looks like a bare name.
 pub fn add(spec: &str, path_flag: Option<&str>, force: bool) -> anyhow::Result<()> {
-    let root = root_or_init()?;
-    let mut manifest = Manifest::load(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
+    // Nothing is written until the dependency checks out: a failed add
+    // leaves the project as it was, with no new olang.toml (OL-368).
+    let found = find_root();
+    let root = match &found {
+        Some(r) => r.clone(),
+        None => std::env::current_dir()?,
+    };
+    let dependencies = match &found {
+        Some(r) => {
+            Manifest::load(r)
+                .map_err(|e| anyhow::anyhow!("{}", e))?
+                .dependencies
+        }
+        None => Default::default(),
+    };
 
     let looks_like_path =
         path_flag.is_some() || spec.contains(['/', '\\']) || spec.starts_with('.');
@@ -93,6 +102,14 @@ pub fn add(spec: &str, path_flag: Option<&str>, force: bool) -> anyhow::Result<(
             .map(|m| m.package.name)
             .or_else(|| dir.file_name().map(|n| n.to_string_lossy().into_owned()))
             .ok_or_else(|| anyhow::anyhow!("cannot infer a name for '{}'", given))?;
+        // `olang doctor` flags it and `use` cannot load it: refuse it now
+        if let Some(why) = olang::pkg::path_dependency_problem(&dir, &name) {
+            anyhow::bail!(
+                "'{}' is not a package: {}\nPoint at the folder that holds the library's olang.toml or index.ol",
+                given,
+                why
+            );
+        }
         let recorded = pathdiff(&dir, &root).unwrap_or_else(|| dir.display().to_string());
         (name, Dependency::Path { path: recorded })
     } else {
@@ -133,7 +150,7 @@ pub fn add(spec: &str, path_flag: Option<&str>, force: bool) -> anyhow::Result<(
         }
     };
 
-    if let Some(existing) = manifest.dependencies.get(&name)
+    if let Some(existing) = dependencies.get(&name)
         && !force
     {
         anyhow::bail!(
@@ -142,9 +159,13 @@ pub fn add(spec: &str, path_flag: Option<&str>, force: bool) -> anyhow::Result<(
             describe_dependency(existing)
         );
     }
+    let manifest_path = root.join("olang.toml");
+    let before = std::fs::read(&manifest_path).ok();
+    if found.is_none() {
+        init_manifest(&root)?;
+    }
     // edited in place: the manifest's comments and unknown keys stay
     Manifest::write_dependency(&root, &name, &dep).map_err(|e| anyhow::anyhow!("{}", e))?;
-    manifest.dependencies.insert(name.clone(), dep);
 
     // Resolve immediately: `add` means "usable now", not "usable after a
     // second command you may not know about".
@@ -153,7 +174,18 @@ pub fn add(spec: &str, path_flag: Option<&str>, force: bool) -> anyhow::Result<(
         explicit: true,
         ..Default::default()
     };
-    install(&root, &opts).map_err(|e| anyhow::anyhow!("{}", e))?;
+    if let Err(e) = install(&root, &opts) {
+        // put the manifest back as it was, or take away the one made here
+        match &before {
+            Some(text) => {
+                let _ = std::fs::write(&manifest_path, text);
+            }
+            None => {
+                let _ = std::fs::remove_file(&manifest_path);
+            }
+        }
+        anyhow::bail!("{}", e);
+    }
     println!("Added '{}' and updated olang.lock", name);
     lock_never_note(&root);
     Ok(())

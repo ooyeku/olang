@@ -852,6 +852,27 @@ fn locked_dir(
     }
 }
 
+/// Why `dir` cannot be the path dependency `name`, or None when it can:
+/// it holds an `olang.toml`, or a root module `use name` would load
+/// (`index.ol`, `mod.ol`, `<name>.ol`, `src/index.ol`). `otc add` refuses
+/// what `olang doctor` flags, in the same words (OL-368).
+pub fn path_dependency_problem(dir: &Path, name: &str) -> Option<String> {
+    let roots = [
+        dir.join("olang.toml"),
+        dir.join("index.ol"),
+        dir.join("mod.ol"),
+        dir.join(format!("{name}.ol")),
+        dir.join("src").join("index.ol"),
+    ];
+    if roots.iter().any(|p| p.is_file()) {
+        return None;
+    }
+    Some(format!(
+        "path {} has no olang.toml or root module (index.ol, mod.ol, {name}.ol or src/index.ol)",
+        dir.display()
+    ))
+}
+
 /// The directory a project's shelf dependency `name` (shelf library
 /// `shelf_name`) reads from, for the tools that read a project without
 /// installing it (a check, the language server, macro expansion): the
