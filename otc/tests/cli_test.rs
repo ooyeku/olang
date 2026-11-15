@@ -29,6 +29,9 @@ fn run_in(dir: &Path, shelf: &Path, args: &[&str]) -> Run {
         .args(args)
         .current_dir(dir)
         .env("OLANG_SHELF", shelf)
+        .env("OLANG_HOME", shelf.parent().unwrap())
+        .env("OLANG_GITHUB", "http://127.0.0.1:9")
+        .env("OLANG_GITHUB_API", "http://127.0.0.1:9")
         .output()
         .expect("spawn otc");
     Run {
@@ -125,16 +128,16 @@ fn the_local_workflow_end_to_end() {
     assert!(!r.ok, "--lib --web must refuse: {}", r.output);
 
     // ── the shelf ───────────────────────────────────────────────────
-    let r = run_in(&base, &shelf, &["lib", "add", "greetings"]);
+    let r = run_in(&base, &shelf, &["shelf", "add", "greetings"]);
     assert!(r.ok, "lib add: {}", r.output);
-    assert!(r.output.contains("Shelved 'greetings'"), "{}", r.output);
-    let r = run_in(&base, &shelf, &["lib", "list"]);
+    assert!(r.output.contains("added greetings"), "{}", r.output);
+    let r = run_in(&base, &shelf, &["shelf", "list"]);
     assert!(r.output.contains("greetings"), "{}", r.output);
 
     // A directory that is not a library refuses with the fix named.
     let junk = base.join("junk");
     std::fs::create_dir_all(&junk).unwrap();
-    let r = run_in(&base, &shelf, &["lib", "add", "junk"]);
+    let r = run_in(&base, &shelf, &["shelf", "add", "junk"]);
     assert!(!r.ok);
     assert!(r.output.contains("index.ol"), "{}", r.output);
 
@@ -142,7 +145,7 @@ fn the_local_workflow_end_to_end() {
     let app = base.join("myapp");
     let r = run_in(&app, &shelf, &["add", "greetings"]);
     assert!(r.ok, "add by name: {}", r.output);
-    assert!(r.output.contains("from your shelf"), "{}", r.output);
+    assert!(r.output.contains("a library on your shelf"), "{}", r.output);
     let manifest = std::fs::read_to_string(app.join("olang.toml")).unwrap();
     assert!(
         manifest.contains("shelf = \"greetings\""),
@@ -178,7 +181,12 @@ fn the_local_workflow_end_to_end() {
 
     // ── list, install --frozen, remove ──────────────────────────────
     let r = run_in(&app, &shelf, &["list"]);
-    assert!(r.output.contains("shelf:greetings"), "{}", r.output);
+    assert!(
+        r.output.contains("greetings 0.1.0")
+            && r.output.contains("(local: the shelf's local folder)"),
+        "{}",
+        r.output
+    );
 
     let r = run_in(&app, &shelf, &["install", "--frozen"]);
     assert!(r.ok, "frozen replay of a fresh lock: {}", r.output);
@@ -203,9 +211,9 @@ fn the_local_workflow_end_to_end() {
     );
 
     // ── shelf removal ───────────────────────────────────────────────
-    let r = run_in(&base, &shelf, &["lib", "remove", "greetings"]);
+    let r = run_in(&base, &shelf, &["shelf", "remove", "greetings"]);
     assert!(r.ok, "{}", r.output);
-    let r = run_in(&base, &shelf, &["lib", "list"]);
+    let r = run_in(&base, &shelf, &["shelf", "list"]);
     assert!(
         !r.output.contains("greetings"),
         "removed library must be gone: {}",
@@ -214,22 +222,22 @@ fn the_local_workflow_end_to_end() {
     // The starters seeded on first touch are still there — a user
     // removal never disturbs them.
     assert!(r.output.contains("textkit"), "{}", r.output);
-    assert!(r.output.contains("(starter)"), "{}", r.output);
+    assert!(r.output.contains("starter"), "{}", r.output);
 
     // ── starters: remove deletes the shelf-owned copy; restore brings
     // it back and a project can use it ─────────────────────────────
-    let r = run_in(&base, &shelf, &["lib", "remove", "markdown"]);
+    let r = run_in(&base, &shelf, &["shelf", "remove", "markdown"]);
     assert!(r.ok, "{}", r.output);
     assert!(
         r.output.contains("restore"),
         "names the way back: {}",
         r.output
     );
-    let r = run_in(&base, &shelf, &["lib", "list"]);
+    let r = run_in(&base, &shelf, &["shelf", "list"]);
     assert!(!r.output.contains("markdown"), "{}", r.output);
-    let r = run_in(&base, &shelf, &["lib", "restore", "markdown"]);
+    let r = run_in(&base, &shelf, &["shelf", "restore", "markdown"]);
     assert!(r.ok, "restore: {}", r.output);
-    let r = run_in(&base, &shelf, &["lib", "restore", "nonsense"]);
+    let r = run_in(&base, &shelf, &["shelf", "restore", "nonsense"]);
     assert!(!r.ok, "unknown starter must refuse");
     assert!(
         r.output.contains("textkit"),

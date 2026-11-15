@@ -17,6 +17,8 @@ fn otc(dir: &Path, home: &Path, args: &[&str]) -> (bool, String) {
         .args(args)
         .current_dir(dir)
         .env("OLANG_HOME", home)
+        .env("OLANG_GITHUB", "http://127.0.0.1:9")
+        .env("OLANG_GITHUB_API", "http://127.0.0.1:9")
         .env("OLANG_SHELF", home.join("shelf.toml"))
         .env_remove("OLANG_LOCK_READONLY")
         .output()
@@ -63,13 +65,13 @@ fn the_shelf_says_its_version_and_a_newer_one_is_refused() {
         "[package]\nname = \"one\"\nversion = \"1.0.0\"\n",
     )
     .unwrap();
-    let (ok, out) = otc(&lib, &home, &["lib", "add", "."]);
+    let (ok, out) = otc(&lib, &home, &["shelf", "add", "."]);
     assert!(ok, "{out}");
     let shelf = std::fs::read_to_string(home.join("shelf.toml")).unwrap();
-    assert!(shelf.starts_with("version = 1\n"), "{shelf}");
+    assert!(shelf.starts_with("version = 2\n"), "{shelf}");
     let newer = "version = 3\n[libraries]\n";
     std::fs::write(home.join("shelf.toml"), newer).unwrap();
-    let (ok, out) = otc(&lib, &home, &["lib", "list"]);
+    let (ok, out) = otc(&lib, &home, &["shelf", "list"]);
     assert!(!ok, "{out}");
     assert!(out.contains("format version 3"), "{out}");
     assert_eq!(
@@ -109,7 +111,7 @@ fn the_lists_answer_as_data() {
             .unwrap()
             .starts_with('/')
     );
-    let (ok, out) = otc(&app, &home, &["lib", "list", "--format", "json"]);
+    let (ok, out) = otc(&app, &home, &["shelf", "list", "--format", "json"]);
     assert!(ok, "{out}");
     let d: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
     assert_eq!(d["kind"], "shelf");

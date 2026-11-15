@@ -37,12 +37,12 @@ fn starters_seed_once_run_green_and_restore() {
             "{} has a manifest",
             lib.name
         );
-        assert!(shelf.owns(dir), "{} is shelf-owned", lib.name);
+        assert!(shelf.owns(&dir), "{} is shelf-owned", lib.name);
 
         // The standing gate: each starter's own test blocks pass.
         let out = Command::new(olang())
             .arg("test")
-            .arg(dir)
+            .arg(&dir)
             .output()
             .expect("spawn olang test");
         let text = format!(

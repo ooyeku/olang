@@ -24,6 +24,8 @@ fn otc(dir: &Path, home: &Path, args: &[&str]) -> (bool, String) {
         .args(args)
         .current_dir(dir)
         .env("OLANG_HOME", home)
+        .env("OLANG_GITHUB", "http://127.0.0.1:9")
+        .env("OLANG_GITHUB_API", "http://127.0.0.1:9")
         .env("OLANG_SHELF", home.join("shelf.toml"))
         .env_remove("OLANG_LOCK_READONLY")
         .output()
@@ -150,7 +152,7 @@ fn a_pin_nothing_installed_satisfies_is_said_never_installed() {
     let (ok, out) = otc(&dir, &home, &["install"]);
     assert!(ok, "{out}");
     assert!(
-        out.contains("pins olang 9.9") && out.contains("otc toolchain install 9.9"),
+        out.contains("pins olang 9.9") && out.contains("otc toolchain add 9.9"),
         "{out}"
     );
     assert!(!lock(&dir).contains("olang ="), "{}", lock(&dir));
@@ -173,17 +175,34 @@ fn a_local_build_is_linked_as_a_toolchain() {
     let build = scratch("link-build");
     let bin = build.join("target/release");
     std::fs::create_dir_all(&bin).unwrap();
-    std::fs::write(bin.join("olang"), "#!/bin/sh\n").unwrap();
+    std::fs::write(build.join("Cargo.toml"), "[package]\nname = \"olang\"\n").unwrap();
+    std::fs::write(bin.join("olang"), "#!/bin/sh\necho olang 9.9.0\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(bin.join("olang"), std::fs::Permissions::from_mode(0o755)).unwrap();
     let (ok, out) = otc(
         &dir,
         &home,
-        &["toolchain", "link", "9.9.0", build.to_str().unwrap()],
+        &[
+            "toolchain",
+            "link",
+            build.to_str().unwrap(),
+            "--name",
+            "dev",
+        ],
     );
     assert!(ok, "{out}");
+    // a linked build never satisfies a version pin: it is picked by name
     project(&dir, Some("9.9"));
     let (ok, out) = otc(&dir, &home, &["install"]);
     assert!(ok, "{out}");
-    assert!(lock(&dir).contains("olang = \"9.9.0\""), "{}", lock(&dir));
+    assert!(!lock(&dir).contains("olang = "), "{}", lock(&dir));
+    let (ok, out) = otc(&dir, &home, &["use", "dev", "--project", "--local"]);
+    assert!(ok, "{out}");
+    assert!(lock(&dir).contains("olang = \"dev\""), "{}", lock(&dir));
+    // and an install keeps it
+    let (ok, out) = otc(&dir, &home, &["install"]);
+    assert!(ok, "{out}");
+    assert!(lock(&dir).contains("olang = \"dev\""), "{}", lock(&dir));
     let (ok, out) = otc(&dir, &home, &["toolchain", "which"]);
     assert!(ok, "{out}");
     assert_eq!(

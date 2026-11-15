@@ -1,5 +1,5 @@
 //! A lock that pins a shelf library at a commit the shelf has moved past
-//! still means that commit: its snapshot under `pins/` is what runs, a
+//! still means that commit: its copy on the shelf is what runs, a
 //! missing one is made again from the library's repository, a tampered
 //! one is refused by its checksum, and one that cannot be had is named
 //! with both commits and the command that settles it. A dependency's own
@@ -24,6 +24,8 @@ fn otc(dir: &Path, home: &Path, args: &[&str]) -> (bool, String) {
         .args(args)
         .current_dir(dir)
         .env("OLANG_HOME", home)
+        .env("OLANG_GITHUB", "http://127.0.0.1:9")
+        .env("OLANG_GITHUB_API", "http://127.0.0.1:9")
         .env("OLANG_SHELF", home.join("shelf.toml"))
         .output()
         .expect("spawn otc");
@@ -130,11 +132,19 @@ impl Sandbox {
             _guard: guard,
         };
         let lib_path = s.lib.to_string_lossy().to_string();
-        let (ok, out) = otc(&s.root, &s.home, &["lib", "add", &lib_path, "--rev", &s.a]);
+        let (ok, out) = otc(
+            &s.root,
+            &s.home,
+            &["shelf", "add", &lib_path, "--rev", &s.a],
+        );
         assert!(ok, "{out}");
         let (ok, out) = otc(&s.app, &s.home, &["install"]);
         assert!(ok, "{out}");
-        let (ok, out) = otc(&s.root, &s.home, &["lib", "add", &lib_path, "--rev", &s.b]);
+        let (ok, out) = otc(
+            &s.root,
+            &s.home,
+            &["shelf", "add", &lib_path, "--rev", &s.b],
+        );
         assert!(ok, "{out}");
         assert!(
             s.lock().contains(&format!("rev = \"{}\"", s.a)),
@@ -148,16 +158,35 @@ impl Sandbox {
         std::fs::read_to_string(self.app.join("olang.lock")).unwrap()
     }
 
+    /// The shelf's copy of greeter at commit `rev` (made writable, for the
+    /// tests that tamper with it).
     fn pin(&self, rev: &str) -> PathBuf {
-        self.home
-            .join("shelf/pins")
-            .join(format!("greeter-{}", &rev[..12]))
+        let text = std::fs::read_to_string(self.home.join("shelf.toml")).unwrap();
+        let shelf: toml::Table = toml::from_str(&text).unwrap();
+        let copies = shelf["libraries"]["greeter"]["copies"].as_array().unwrap();
+        let dir = copies
+            .iter()
+            .find(|c| c["commit"].as_str() == Some(rev))
+            .map(|c| c["dir"].as_str().unwrap().to_string())
+            .unwrap_or_else(|| format!("greeter/{}", &rev[..12]));
+        let path = self.home.join("shelf").join(dir);
+        let _ = Command::new("chmod")
+            .arg("-R")
+            .arg("u+w")
+            .arg(&path)
+            .status();
+        path
     }
 }
 
 impl Drop for Sandbox {
     fn drop(&mut self) {
         unsafe { std::env::remove_var("OLANG_SHELF") };
+        let _ = Command::new("chmod")
+            .arg("-R")
+            .arg("u+w")
+            .arg(&self.root)
+            .status();
         let _ = std::fs::remove_dir_all(&self.root);
     }
 }
@@ -193,7 +222,10 @@ fn a_missing_snapshot_is_made_again_from_the_repository() {
     assert!(s.pin(&s.a).join("index.ol").exists());
     // The shelf's own registration is left as it was.
     let shelf = std::fs::read_to_string(s.home.join("shelf.toml")).unwrap();
-    assert!(shelf.contains(&format!("greeter = \"{}\"", s.b)), "{shelf}");
+    assert!(
+        shelf.contains(&format!("default = \"{}\"", &s.b[..12])),
+        "{shelf}"
+    );
 }
 
 #[test]
@@ -207,7 +239,7 @@ fn a_missing_snapshot_with_no_repository_names_both_commits() {
     for want in [
         "dependency 'greeter'",
         &format!("pins shelf library 'greeter' at {}", &s.a[..12]),
-        &format!("the shelf has it at {}", &s.b[..12]),
+        &format!("the shelf gives it at {}", &s.b[..12]),
         "`otc install`",
     ] {
         assert!(err.contains(want), "missing {want:?} in: {err}");
@@ -260,7 +292,7 @@ fn a_dependency_s_own_lock_pins_its_shelf_dependencies() {
     )
     .unwrap();
     std::fs::write(mid.join("olang.lock"), s.lock()).unwrap();
-    let (ok, out) = otc(&s.root, &s.home, &["lib", "add", &mid.to_string_lossy()]);
+    let (ok, out) = otc(&s.root, &s.home, &["shelf", "add", &mid.to_string_lossy()]);
     assert!(ok, "{out}");
     std::fs::write(
         s.app.join("olang.toml"),

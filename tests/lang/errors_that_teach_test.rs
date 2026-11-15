@@ -101,7 +101,7 @@ fn module_not_found_help_names_the_shelf_workflow() {
     let text = IntuitiveErrorFormatter::default().format_error(&error);
     assert!(text.contains("Did you mean"), "got: {text}");
     assert!(
-        text.contains("otc lib list"),
+        text.contains("otc shelf list"),
         "shelf guidance missing: {text}"
     );
     assert!(

@@ -18,6 +18,9 @@ fn otc(dir: &Path, shelf: &Path, args: &[&str]) -> (bool, String) {
         .args(args)
         .current_dir(dir)
         .env("OLANG_SHELF", shelf)
+        .env("OLANG_HOME", shelf.parent().unwrap())
+        .env("OLANG_GITHUB", "http://127.0.0.1:9")
+        .env("OLANG_GITHUB_API", "http://127.0.0.1:9")
         .output()
         .expect("spawn otc");
     (
@@ -108,12 +111,13 @@ fn a_shelved_library_pinned_at_a_commit_travels_in_the_lock() {
     let (ok, out) = otc(
         &root,
         &shelf,
-        &["lib", "add", &lib_path, "--rev", &first[..10]],
+        &["shelf", "add", &lib_path, "--rev", &first[..10]],
     );
     assert!(ok && out.contains(&first[..12]), "{out}");
-    let (_, listed) = otc(&root, &shelf, &["lib", "list"]);
+    let (_, listed) = otc(&root, &shelf, &["shelf", "list"]);
     assert!(
-        listed.contains(&format!("pinned at {}", &first[..12])),
+        listed.contains(&format!("@{}", &first[..8]))
+            && listed.contains("greeter  gives 0.1.0 (default)"),
         "{listed}"
     );
     assert_eq!(run_program(&app).as_deref(), Ok("\"one\""));
@@ -122,18 +126,18 @@ fn a_shelved_library_pinned_at_a_commit_travels_in_the_lock() {
 
     // The shelf drifts to the checkout: the lock still pins the first
     // commit, and its snapshot is what runs, not the checkout's "two".
-    let (ok, _) = otc(&root, &shelf, &["lib", "add", &lib_path]);
+    let (ok, _) = otc(&root, &shelf, &["shelf", "add", &lib_path]);
     assert!(ok);
     assert_eq!(run_program(&app).as_deref(), Ok("\"one\""));
 
     // Shelved at that commit again, it runs; an unknown commit is refused.
-    let (ok, _) = otc(&root, &shelf, &["lib", "add", &lib_path, "--rev", &first]);
+    let (ok, _) = otc(&root, &shelf, &["shelf", "add", &lib_path, "--rev", &first]);
     assert!(ok);
     assert_eq!(run_program(&app).as_deref(), Ok("\"one\""));
     let (ok, out) = otc(
         &root,
         &shelf,
-        &["lib", "add", &lib_path, "--rev", "0000000"],
+        &["shelf", "add", &lib_path, "--rev", "0000000"],
     );
     assert!(!ok && out.contains("has no commit"), "{out}");
 
@@ -168,16 +172,17 @@ fn a_library_below_its_repository_root_is_pinned_from_its_own_subtree() {
     let (ok, out) = otc(
         &root,
         &shelf,
-        &["lib", "add", &lib.to_string_lossy(), "--rev", &sha[..10]],
+        &["shelf", "add", &lib.to_string_lossy(), "--rev", &sha[..10]],
     );
     assert!(ok, "{out}");
+    let (_, listed) = otc(&root, &shelf, &["shelf", "list", "sdk", "--format", "json"]);
+    let listed: serde_json::Value = serde_json::from_str(listed.trim()).expect("json");
     let pinned = PathBuf::from(
-        out.lines()
-            .find_map(|l| l.split(" → ").nth(1))
-            .expect("the shelved path is named")
-            .trim(),
+        listed["libraries"][0]["copies"][0]["dir"]
+            .as_str()
+            .expect("the copy's folder"),
     );
-    assert!(pinned.ends_with(format!("sdk-{}", &sha[..12])), "{out}");
+    assert!(pinned.ends_with("sdk/0.1.0"), "{out}");
     assert!(pinned.join("index.ol").exists(), "{out}");
     assert!(
         !pinned.join("README.md").exists(),
@@ -223,7 +228,7 @@ fn otc_install_repins_a_shelf_library_reshelved_at_another_commit() {
     let lock = || std::fs::read_to_string(app.join("olang.lock")).unwrap();
 
     // Pinned at A, installed: the lock carries A.
-    let (ok, out) = otc(&root, &shelf, &["lib", "add", &lib_path, "--rev", &a]);
+    let (ok, out) = otc(&root, &shelf, &["shelf", "add", &lib_path, "--rev", &a]);
     assert!(ok, "{out}");
     let (ok, out) = otc(&app, &shelf, &["install"]);
     assert!(ok, "{out}");
@@ -231,7 +236,7 @@ fn otc_install_repins_a_shelf_library_reshelved_at_another_commit() {
 
     // Re-shelved at B: --frozen refuses the drift and leaves the lock be;
     // a plain install re-pins to B and says so.
-    let (ok, out) = otc(&root, &shelf, &["lib", "add", &lib_path, "--rev", &b]);
+    let (ok, out) = otc(&root, &shelf, &["shelf", "add", &lib_path, "--rev", &b]);
     assert!(ok, "{out}");
     let (ok, out) = otc(&app, &shelf, &["install", "--frozen"]);
     assert!(!ok, "--frozen must fail on a moved shelf pin: {out}");
@@ -254,7 +259,7 @@ fn otc_install_repins_a_shelf_library_reshelved_at_another_commit() {
     );
 
     // Unpinned (registered by directory): the lock drops its rev.
-    let (ok, out) = otc(&root, &shelf, &["lib", "add", &lib_path]);
+    let (ok, out) = otc(&root, &shelf, &["shelf", "add", &lib_path]);
     assert!(ok, "{out}");
     let (ok, out) = otc(&app, &shelf, &["install"]);
     assert!(ok && out.contains("following its directory"), "{out}");

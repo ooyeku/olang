@@ -31,6 +31,8 @@ fn run(home: &Path, args: &[&str]) -> (bool, String) {
         .env("PATH", &path)
         .env("HOME", home)
         .env("OLANG_HOME", home)
+        .env("OLANG_GITHUB", "http://127.0.0.1:9")
+        .env("OLANG_GITHUB_API", "http://127.0.0.1:9")
         // Shelf resolution honors OLANG_SHELF first; point it into the
         // fake home so the test never reads the user's shelf.
         .env("OLANG_SHELF", home.join("shelf.toml"))
@@ -106,7 +108,7 @@ fn doctor_flags_dead_shelf_entries() {
     let (ok, text) = run(&home, &["doctor"]);
     assert!(ok, "{text}");
     assert!(text.contains("ghost"), "{text}");
-    assert!(text.contains("missing path"), "{text}");
+    assert!(text.contains("is gone"), "{text}");
 }
 
 #[test]
@@ -165,10 +167,14 @@ fn toolchain_bookkeeping_lists_defaults_and_refuses_correctly() {
     assert!(ok);
     assert!(!home.join("toolchains/0.78.0").exists());
 
-    // Defaulting to something not installed refuses with the install hint.
-    let (ok, text) = run(&home, &["toolchain", "default", "0.50.0"]);
+    // Switching to something not installed and not reachable refuses,
+    // naming the command that lists what there is.
+    let (ok, text) = run(&home, &["use", "0.50.0"]);
     assert!(!ok);
-    assert!(text.contains("not installed"), "{text}");
+    assert!(
+        text.contains("next: otc toolchain list --available"),
+        "{text}"
+    );
 }
 
 /// An executable that answers `--version` as olang `version` does.
@@ -198,6 +204,8 @@ fn toolchain_list_shows_every_olang_which_runs_and_why() {
             .env("PATH", &path)
             .env("HOME", home.join("user"))
             .env("OLANG_HOME", &home)
+            .env("OLANG_GITHUB", "http://127.0.0.1:9")
+            .env("OLANG_GITHUB_API", "http://127.0.0.1:9")
             .env("OLANG_SHELF", home.join("shelf.toml"))
             .current_dir(&home)
             .output()

@@ -16,6 +16,8 @@ fn otc(dir: &Path, home: &Path, args: &[&str]) -> (bool, String) {
         .args(args)
         .current_dir(dir)
         .env("OLANG_HOME", home)
+        .env("OLANG_GITHUB", "http://127.0.0.1:9")
+        .env("OLANG_GITHUB_API", "http://127.0.0.1:9")
         .env("OLANG_SHELF", home.join("shelf.toml"))
         .env_remove("OLANG_LOCK_READONLY")
         .output()

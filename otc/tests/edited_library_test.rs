@@ -13,6 +13,8 @@ fn otc(dir: &Path, home: &Path, args: &[&str]) -> (bool, String) {
         .args(args)
         .current_dir(dir)
         .env("OLANG_HOME", home)
+        .env("OLANG_GITHUB", "http://127.0.0.1:9")
+        .env("OLANG_GITHUB_API", "http://127.0.0.1:9")
         .env("OLANG_SHELF", home.join("shelf.toml"))
         .env_remove("OLANG_LOCK_READONLY")
         .output()
@@ -51,7 +53,7 @@ fn project(base: &Path, how: &str) -> (PathBuf, PathBuf) {
     assert!(ok, "{out}");
     let app = base.join("app2");
     let target = if how == "shelf" {
-        let (ok, out) = otc(base, &home, &["lib", "add", "./geo"]);
+        let (ok, out) = otc(base, &home, &["shelf", "add", "./geo"]);
         assert!(ok, "{out}");
         "geo"
     } else {
