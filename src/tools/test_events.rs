@@ -325,14 +325,15 @@ pub fn note_values(kind: &str, expected: &Value, actual: &Value) {
 /// `testing.snapshot_failed(info)`: a pixel snapshot that differs, from
 /// the library that compares them (Loom's `snapshot`). `info` is a map:
 /// `name`, `baseline`, `actual`, `diff` (paths), `differing`, `total`,
-/// `worst`, `sizes`. A relative path is `beside`'s: the folder of the
+/// `worst`, `sizes`. `info` is a record or a map: Loom passes a record
+/// since the records rewrite, and both read alike (OL-605). A relative path is `beside`'s: the folder of the
 /// file under test, not the folder the run stands in (its project's root).
 pub fn note_snapshot(info: &Value, beside: Option<&std::path::Path>) {
     if !enabled() {
         return;
     }
-    let j = match info {
-        Value::Map(m) => {
+    let j = match info.record_fields() {
+        Some(m) => {
             let mut o = serde_json::Map::new();
             let keys: Vec<&String> = m.keys().collect();
             for k in keys {
@@ -354,7 +355,7 @@ pub fn note_snapshot(info: &Value, beside: Option<&std::path::Path>) {
             }
             J::Object(o)
         }
-        other => json!({ "message": other.to_string() }),
+        None => json!({ "message": info.to_string() }),
     };
     SNAPSHOTS.with(|s| s.borrow_mut().push(j.clone()));
     let test = with_state(|s| s.test.clone());
@@ -631,10 +632,36 @@ pub fn pretty(v: &Value, indent: usize) -> String {
                 "}",
             )
         }
+        // a record as its literal, as `show` writes it (OL-605)
+        Value::Struct { type_name, fields }
+            if (type_name == "Object" || type_name == "JsonObject")
+                && fields.keys().all(|k| crate::ast::is_identifier(k)) =>
+        {
+            let keys: Vec<&String> = fields.keys().collect();
+            join(
+                "{",
+                keys.iter()
+                    .map(|k| format!("{}: {}", k, pretty(&fields[*k], indent + 1)))
+                    .collect(),
+                "}",
+            )
+        }
+        Value::Struct { type_name, fields }
+            if type_name == "Object" || type_name == "JsonObject" =>
+        {
+            let keys: Vec<&String> = fields.keys().collect();
+            join(
+                "#{",
+                keys.iter()
+                    .map(|k| format!("\"{}\": {}", k, pretty(&fields[*k], indent + 1)))
+                    .collect(),
+                "}",
+            )
+        }
         Value::Struct { type_name, fields } => {
             let keys: Vec<&String> = fields.keys().collect();
             join(
-                &format!("<struct: {}>{{", type_name),
+                &format!("{} {{", type_name),
                 keys.iter()
                     .map(|k| format!("{}: {}", k, pretty(&fields[*k], indent + 1)))
                     .collect(),

@@ -499,3 +499,45 @@ fn a_runaway_recursion_fails_with_its_first_and_last_frames() {
     assert_eq!(frames[40]["file"], J::Null);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `testing.snapshot_failed` takes a record as it takes a map: Loom
+/// passes one, and every fact reaches the event, not one line of text
+/// (OL-605). A record's `pretty` form is its literal.
+#[test]
+fn a_snapshot_said_with_a_record_carries_every_field() {
+    let dir = project(
+        "snap_record",
+        &[(
+            "tests/snap_test.ol",
+            r#"
+test "pixels" {
+    let _s = testing.snapshot_failed({ name: "card", baseline: "a.png", actual: "b.png", diff: "c.png",
+                                       differing: 1, total: 2, worst: 3, sizes: () })
+    assert(false, "x")
+}
+
+test "records" {
+    assert_eq({ name: "a long enough name to wrap", items: [1, 2, 3], more: "and more text here" },
+              { name: "a long enough name to wrap", items: [1, 2, 4], more: "and more text here" })
+}
+"#,
+        )],
+    );
+    let (code, out, err) = olang(&dir, &["test", "--format", "json", "tests/snap_test.ol"], &[]);
+    assert_eq!(code, 1, "{err}");
+    let (evs, _) = events(&out);
+    let pixels = of(&evs, "failed", "pixels");
+    let snap = &pixels["snapshots"][0];
+    assert!(snap.get("message").is_none(), "{snap}");
+    assert_eq!(snap["name"], json!("card"));
+    let beside = |f: &str| json!(dir.join("tests").join(f).display().to_string());
+    assert_eq!(snap["baseline"], beside("a.png"));
+    assert_eq!(snap["actual"], beside("b.png"));
+    assert_eq!(snap["diff"], beside("c.png"));
+    assert_eq!(snap["differing"], json!(1));
+    assert_eq!(snap["worst"], json!(3));
+    let records = of(&evs, "failed", "records");
+    let pretty = records["actual"]["pretty"].as_str().unwrap();
+    assert!(pretty.starts_with("{\n  name: "), "{pretty}");
+    assert_eq!(records["actual"]["value"]["items"], json!([1, 2, 3]));
+}
