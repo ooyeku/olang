@@ -812,42 +812,42 @@ own measured section; the runner medians the repetitions. The tiers
 are on by default, so the olang numbers are what a plain
 `olang program.ol` gets, with no flags.
 
-Median milliseconds on an Apple M5 Pro (6P+12E, 24 GB), macOS 27.0 (Node 26, OpenJDK 25,
-CPython 3.14, Lua 5.5 without LuaJIT, R 4.6; C++ and Rust at `-O3`/`-O`):
+Median milliseconds of five runs with olang 1.0.0 on an Apple M5 Pro (6P+12E, 24 GB),
+macOS 27.3 (Node 26, OpenJDK 25, Go 1.26, CPython 3.14, Lua 5.5 without LuaJIT, R 4.6;
+C++ and Rust at `-O3`/`-O`):
 
 | Bench | olang | C++ | Rust | Go | Java | Node | Lua | Python | R |
 |---|---|---|---|---|---|---|---|---|---|
-| fib(32), naive recursion | 10 | 2 | 3 | 4 | 3 | 15 | 59 | 117 | 709 |
-| collatz, 1..300k | 49 | 24 | 24 | 37 | 44 | 222 | 395 | 1145 | 3000 |
-| sieve to 10M | 922 | 10 | 10 | 12 | 19 | 25 | 271 | 1425 | 771 |
-| n-body, 2M steps | 611 | 39 | 35 | 57 | 71 | 81 | 1829 | 12009 | 6550 |
-| matmul 300×300 | 192 | 18 | 17 | 29 | 18 | 27 | 234 | 1698 | 719 |
-| string build, 2M appends | 263 | 13 | 31 | 20 | 12 | 45 | 145 | 92327 | 1081 |
-| word frequency, 3M words | 1178 | 104 | 143 | 130 | 90 | 358 | 301 | 636 | 7214 |
-| k-means, 200k points | 189 | 10 | 10 | 61 | 76 | 75 | 615 | 4530 | 2206 |
+| fib(32), naive recursion | 11 | 3 | 3 | 4 | 3 | 15 | 58 | 114 | 730 |
+| collatz, 1..300k | 66 | 24 | 24 | 38 | 45 | 226 | 411 | 1167 | 3087 |
+| sieve to 10M | 110 | 9 | 9 | 12 | 19 | 25 | 277 | 1431 | 776 |
+| n-body, 2M steps | 663 | 40 | 36 | 58 | 74 | 82 | 1767 | 12325 | 6757 |
+| matmul 300×300 | 172 | 17 | 18 | 30 | 19 | 26 | 239 | 1731 | 727 |
+| string build, 2M appends | 150 | 13 | 34 | 21 | 12 | 46 | 145 | 98361 | 1086 |
+| word frequency, 3M words | 640 | 107 | 143 | 130 | 92 | 369 | 311 | 628 | 7800 |
+| k-means, 200k points | 185 | 10 | 10 | 62 | 77 | 74 | 623 | 4472 | 2239 |
 
 olang runs ahead of Node on fib and collatz, and ahead of Lua, Python
-and R on five of the eight rows. Float- and array-heavy loops run
-2.5–11× slower than Node and the JVM; the sieve is the outlier (below).
-The remaining distance to C and Rust — roughly an order of magnitude
-on compute loops — is the price of guards, value-semantics copies at
+and R on six of the eight rows. Float- and array-heavy loops (sieve,
+n-body, matmul, k-means) run 2.4–9× slower than Node and the JVM.
+The remaining distance to C and Rust — an order of magnitude or more
+on those loops — is the price of guards, value-semantics copies at
 ownership boundaries, and the refusal rules around allocation in
-loops. The sieve row isolates one specific cost: its marking loop runs
-native, and nearly all of its time is constructing a 10M-element list
-through the boxed representation before the typed conversion.
+loops.
 
 For data-frame workloads the comparison that matters is
 [`benchmarks/run.sh`](../benchmarks/), the checksum-locked pipeline
 against pandas and Polars; the ods engine runs the full pipeline
-within ~25% of Polars and about 7× ahead of pandas. The
+within about 12% of Polars and about 8× ahead of pandas. The
 [Writing fast olang](performance.md#the-data-stack-against-other-engines)
 holds the per-operation numbers.
 
 Against its own interpreter (`--no-ovm`), the tiers are worth roughly
-275× (fib, bytecode + JIT) to ~900× (N-body): the whole N-body simulation —
+140× (n-body: 92 s against 663 ms) to 220× (fib, bytecode + JIT). The
+whole N-body simulation in
+[`examples/concurrency/nbody`](../examples/concurrency/nbody/) —
 construction, stepping, capturing lambdas, struct building, field
-access, `math.sqrt` — runs as 6 promoted functions, 0 rejected, with 7
-tier crossings.
+access, `math.sqrt` — runs as 6 promoted functions, 0 rejected.
 
 The VM appends to a string in place (`s = s + x`, fused when the
 right-hand side cannot observe the target), so building a string in a

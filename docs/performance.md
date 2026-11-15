@@ -220,12 +220,12 @@ Every way sums the same; the best of five runs on an Apple-silicon Mac:
 
 | Sandboxed `price`, 3M calls | ms |
 |---|---:|
-| the check folded (`caps.allowed("net")`) | 750 |
-| the check at run time (`caps.allowed(NET)`) | 1,200 |
-| no network branch at all | 725 |
+| the check folded (`caps.allowed("net")`) | 836 |
+| the check at run time (`caps.allowed(NET)`) | 1,331 |
+| no network branch at all | 801 |
 
 The sandboxed function runs 1.6× faster than with the check left to
-run time, and within 4% of the function written without the branch
+run time, and within 5% of the function written without the branch
 (3M calls under `olang --deny net`, the best of five runs on an
 Apple-silicon Mac).
 
@@ -295,15 +295,15 @@ inside each process:
 
 | Stage | ods | pandas | Polars |
 |---|---|---|---|
-| load (1M-row CSV) | 10 ms | 174 ms | 7 ms |
+| load (1M-row CSV) | 12 ms | 177 ms | 7 ms |
 | clean (drop nulls, derive) | 12 ms | 54 ms | 6 ms |
-| filter | 9 ms | 9 ms | 5 ms |
-| group (2 keys, 3 aggs) | 4 ms | 50 ms | 8 ms |
+| filter | 8 ms | 9 ms | 5 ms |
+| group (2 keys, 3 aggs) | 5 ms | 51 ms | 8 ms |
 | join (dimension table) | 0 ms | 1 ms | 1 ms |
 | sort | 0 ms | 0 ms | 0 ms |
 | daily (group, sort, rolling 7) | 2 ms | 21 ms | 6 ms |
 | write CSV | 0 ms | 1 ms | 1 ms |
-| **whole pipeline** | **38 ms** | **310 ms** | **34 ms** |
+| **whole pipeline** | **38 ms** | **314 ms** | **34 ms** |
 
 The CSV reader finds delimiters and parses each field into its column's
 typed builder in one scan per chunk of records, in parallel; an unquoted

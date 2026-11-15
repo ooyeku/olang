@@ -27,7 +27,7 @@ t = stage("load", t, sales.height)
 clean = sales.drop_nulls().with_columns(
     (pl.col("units").cast(pl.Float64) * pl.col("price")).alias("revenue")
 )
-t = stage("clean", t, f"{round(clean['revenue'].sum()):.1f}")
+t = stage("clean", t, f"{round(clean['revenue'].sum())}")
 
 # 3. filter — the bulk orders.
 bulk = clean.filter(pl.col("units") >= 5)
@@ -39,7 +39,7 @@ grouped = bulk.group_by(["region", "category"]).agg(
     pl.col("units").mean().alias("avg_units"),
     pl.len().alias("orders"),
 )
-t = stage("group", t, f"{grouped.height}:{round(grouped['revenue'].max()):.1f}")
+t = stage("group", t, f"{grouped.height}:{round(grouped['revenue'].max())}")
 
 # 5. join — attach each region's manager.
 dim = pl.read_csv("benchmarks/data/regions.csv")
@@ -54,7 +54,7 @@ t = stage("sort", t, top)
 # 7. daily — revenue per day, 7-day trailing mean.
 daily = bulk.group_by("date").agg(pl.col("revenue").sum()).sort("date")
 smooth = daily["revenue"].rolling_mean(window_size=7)
-t = stage("daily", t, f"{round(smooth.sum()):.1f}")
+t = stage("daily", t, f"{round(smooth.sum())}")
 
 # 8. write
 ranked.write_csv("benchmarks/data/out_polars.csv")

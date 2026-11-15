@@ -55,7 +55,7 @@ skips its column; a timed-out run reports DNF.
 |---|---|---|
 | fib | naive fib(32) | call overhead, recursion |
 | collatz | total steps, 1..300 000 | tight integer while loops |
-| sieve | Eratosthenes to 20 000 000 | bulk indexed writes |
+| sieve | Eratosthenes to 10 000 000 | bulk indexed writes |
 | nbody | 5 bodies × 2 000 000 steps | float arithmetic, small-array read/write |
 | matmul | 300×300 dense multiply | nested-container reads |
 | strbuild | 2 000 000 appends | string accumulation |

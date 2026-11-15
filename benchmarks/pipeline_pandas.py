@@ -25,7 +25,7 @@ t = stage("load", t, len(sales))
 # 2. clean — drop null-price rows, derive revenue.
 clean = sales.dropna().copy()
 clean["revenue"] = clean["units"].astype(float) * clean["price"]
-t = stage("clean", t, f"{round(clean['revenue'].sum()):.1f}")
+t = stage("clean", t, f"{round(clean['revenue'].sum())}")
 
 # 3. filter — the bulk orders.
 bulk = clean[clean["units"] >= 5]
@@ -36,7 +36,7 @@ grouped = (
     bulk.groupby(["region", "category"], as_index=False)
     .agg(revenue=("revenue", "sum"), avg_units=("units", "mean"), orders=("revenue", "size"))
 )
-t = stage("group", t, f"{len(grouped)}:{round(grouped['revenue'].max()):.1f}")
+t = stage("group", t, f"{len(grouped)}:{round(grouped['revenue'].max())}")
 
 # 5. join — attach each region's manager.
 dim = pd.read_csv("benchmarks/data/regions.csv")
@@ -51,7 +51,7 @@ t = stage("sort", t, top)
 # 7. daily — revenue per day, 7-day trailing mean.
 daily = bulk.groupby("date", as_index=False)["revenue"].sum().sort_values("date")
 smooth = daily["revenue"].rolling(7).mean()
-t = stage("daily", t, f"{round(smooth.sum()):.1f}")
+t = stage("daily", t, f"{round(smooth.sum())}")
 
 # 8. write
 ranked.to_csv("benchmarks/data/out_pandas.csv", index=False)
