@@ -323,26 +323,39 @@ fn a_cancel_stops_an_http_request_that_waits() {
     let stalls = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let silent_port = silent.local_addr().unwrap().port();
     let stalls_port = stalls.local_addr().unwrap().port();
+    // Each listener marks a connection taken, so the program cancels a
+    // request that is waiting, not one that has not started (a fixed
+    // pause lost that race on a loaded machine).
+    let dir = tempfile::tempdir().unwrap();
+    let taken = dir.path().join("taken");
+    let mark = taken.clone();
     std::thread::spawn(move || {
         let mut held = Vec::new();
         for c in silent.incoming().flatten() {
             held.push(c);
+            let _ = std::fs::write(&mark, "");
         }
     });
+    let mark = taken.clone();
     std::thread::spawn(move || {
         let mut held = Vec::new();
         for mut c in stalls.incoming().flatten() {
             let _ = c.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\nabc");
             let _ = c.flush();
             held.push(c);
+            let _ = std::fs::write(&mark, "");
         }
     });
+    let taken = taken.display().to_string();
     for port in [silent_port, stalls_port] {
         let got = shows(&format!(
             "let t = cancel.token()\n\
              let out = chan.new()\n\
              let _h = spawn (() => {{ let c = runtime.call_cancellable((u) => http.get(u, #{{ \"timeout_ms\": 20000 }}), [\"http://127.0.0.1:{port}/\"], t)\n chan.send(out, c) }})()\n\
-             time.sleep(300)\n\
+             let mut n = 0\n\
+             while !fs.exists(\"{taken}\") && n < 2000 {{ time.sleep(5)\n n = n + 1 }}\n\
+             fs.remove_file(\"{taken}\")\n\
+             time.sleep(50)\n\
              let t0 = time.monotonic()\n\
              cancel.set(t)\n\
              let c = unwrap(chan.recv(out))\n\
