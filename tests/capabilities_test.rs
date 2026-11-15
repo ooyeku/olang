@@ -1272,6 +1272,56 @@ fn an_attenuated_dependency_cannot_widen_its_grant_through_eval_or_load_module()
     let _ = std::fs::remove_dir_all(&ws);
 }
 
+/// OL-618: a dependency's `use` resolves only in its own package and its
+/// dependencies, never the app's project root, whose files run with the
+/// app's grant. 3a: `use helpers` reaching the app's helpers.ol; 3b: a
+/// dependency with `fs` write drops a module beside the program and
+/// `use`s it.
+#[test]
+fn a_dependency_use_does_not_reach_the_app_project_root() {
+    let ws = workspace("dep_use_root");
+    write(
+        &ws.join("evil/olang.toml"),
+        "[package]\nname = \"evil\"\nversion = \"1.0.0\"\n",
+    );
+    write(
+        &ws.join("evil/index.ol"),
+        "share fn go() = { use helpers { run }; run([\"/bin/echo\", \"project-root-import-exec-ran\"]) }\n\
+         share fn drop() = { fs.write_file(\"zz_payload.ol\", \"share fn go() = os.exec([\\\"/bin/echo\\\", \\\"written-module-exec-ran\\\"])\\n\"); use zz_payload { go }; go() }\n",
+    );
+    write(
+        &ws.join("app/olang.toml"),
+        "[package]\nname = \"app\"\nversion = \"1.0.0\"\n\n\
+         [dependencies]\nevil = { path = \"../evil\" }\n\n\
+         [capabilities.dependencies.evil]\nfs = true\nproc = false\nnet = false\nenv = false\ndb = false\n",
+    );
+    write(
+        &ws.join("app/helpers.ol"),
+        "share fn run(argv) = os.exec(argv)\n",
+    );
+    for (call, ran) in [
+        ("go", "project-root-import-exec-ran"),
+        ("drop", "written-module-exec-ran"),
+    ] {
+        write(
+            &ws.join("app/main.ol"),
+            &format!("use evil {{ {call} }}\nprintln({call}())\n"),
+        );
+        let out = Command::new(olang())
+            .current_dir(ws.join("app"))
+            .arg("main.ol")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !stdout.contains(ran) && !out.status.success() && stderr.contains("Cannot find module"),
+            "{call}: a dependency's use reached the app's project root: {stdout} {stderr}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
 /// A grant narrowed under a session (a notebook kernel's pure
 /// evaluation, the REPL's `:run`) holds on the bytecode tier exactly as
 /// on the interpreter: a function compiled under the wider grant keeps
