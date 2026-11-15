@@ -2174,8 +2174,17 @@ return `Result`, since arbitrary input may not be compressed data.
 | <a id="compress-gzip_level"></a>`compress.gzip_level(data, n)` | gzip at level `n`, 0..=9 |
 | <a id="compress-brotli"></a>`compress.brotli(data)` | brotli at quality 5 — what `Content-Encoding: br` carries; a quarter of the bytes for a wasm |
 | <a id="compress-brotli_level"></a>`compress.brotli_level(data, q)` | brotli at quality `q`, 0..=11: 11 is the smallest output, for a file compressed once and served many times |
-| <a id="compress-gunzip"></a><a id="compress-unbrotli"></a>`compress.gunzip(b)` / `compress.unbrotli(b)` | `Ok(Bytes)` or `Err(message)` |
-| <a id="compress-deflate"></a><a id="compress-inflate"></a>`compress.deflate(data)` / `compress.inflate(b)` | raw deflate, no gzip header, and its inverse |
+| <a id="compress-gunzip"></a><a id="compress-unbrotli"></a>`compress.gunzip(b, opts?)` / `compress.unbrotli(b, opts?)` | `Ok(Bytes)` or `Err(message)` |
+| <a id="compress-deflate"></a><a id="compress-inflate"></a>`compress.deflate(data)` / `compress.inflate(b, opts?)` | raw deflate, no gzip header, and its inverse |
+
+The three decoders stop at a size: `#{ "max_bytes": n }` sets it, and
+past it they answer `Err("… larger than max_bytes (n bytes)")` instead
+of growing. Without the option the limit is the smaller of 1 GiB and
+1000 times the input, so a decompression bomb (a 194 KB `.gz` of
+200 MB of zeros, a 10 MB request body that would be 10 GB) fails fast
+rather than taking the process's memory. Data that really expands more
+than that, such as a large file of one repeated byte, passes a larger
+`max_bytes`.
 
 An `http.serve` handler that compresses a large JSON body sets
 `Content-Encoding` itself; the web SDK's `serve` does this for every

@@ -8915,10 +8915,10 @@ route("GET", "/olang." + map_get(rt, "hash") + ".wasm", (req, p) => { status: 20
         );
         self.doc_ex(
             "compress.unbrotli",
-            "compress.unbrotli(b)",
+            "compress.unbrotli(b, opts?)",
             "Result",
             "Bytes",
-            "Brotli decoded: Ok(Bytes), or Err for bytes that are not brotli.",
+            "Brotli decoded: Ok(Bytes), or Err for bytes that are not brotli or that decode to more than max_bytes (#{\"max_bytes\": n}; by default the smaller of 1 GiB and 1000 times the input).",
             &[r##"unwrap(compress.unbrotli(compress.brotli("hi")))"##],
         );
         self.doc_ex(
@@ -8995,8 +8995,8 @@ if boot != () && boot.running != () => println("running layer " + boot.running) 
             "runtime.load_module(path, grant)",
             "Result",
             "runtime",
-            "Load the olang file at `path` into this running program as a module, read afresh (every module cached from its folder forgotten first, so an edited file is read again), its code — everything under the file's folder — held to `grant`: #{ \"name\", \"fs\": false | \"read\" | true, \"fs_roots\": [folders the fs grant holds under], \"proc\": false | true | [programs it may run, by file name or path], \"net\", \"db\", \"env\" }, a key left out denied; and never the host's own builtins (gui, tty, loading modules, the process's profiler). Ok(module) — its shared names as fields — or Err(message), the folder's previous grant kept and the error's frames in runtime.last_error(). How a host (olang Studio) runs plugins in its own VM.",
-            &[r##"match runtime.load_module("plugins/hello/plugin.ol", #{ "name": "hello", "fs": "read", "fs_roots": ["."], "proc": ["olang"] }) { Ok(m) => println(m.greet("you")), Err(e) => println(e) }"##],
+            "Load the olang file at `path` into this running program as a module, read afresh (every module cached from its folder forgotten first, so an edited file is read again), its code — everything under the file's folder — held to `grant`: #{ \"name\", \"fs\": false | \"read\" | true, \"fs_roots\": [folders the fs grant holds under], \"proc\": false | true | [programs it may run, by file name or path], \"net\", \"db\", \"env\" }, a key left out denied; and never the host's own builtins (gui, tty, loading modules, the process's profiler). `proc`, or an interpreter in its list (olang, sh, python, git, env), amounts to every capability: the program it starts is outside the gate. List only programs that do one fixed thing. Ok(module) — its shared names as fields — or Err(message), the folder's previous grant kept and the error's frames in runtime.last_error(). How a host (olang Studio) runs plugins in its own VM.",
+            &[r##"match runtime.load_module("plugins/hello/plugin.ol", #{ "name": "hello", "fs": "read", "fs_roots": ["."], "proc": ["wc"] }) { Ok(m) => println(m.greet("you")), Err(e) => println(e) }"##],
         );
         self.doc_ex(
             "runtime.unload_module",
