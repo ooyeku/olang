@@ -1865,6 +1865,130 @@ fn serve_connection(
 /// state. Stateful native handles (such as SQLite connections) provide their
 /// own synchronization. The optional third argument configures the pool and
 /// connection limits.
+/// Who serves the next connection: the worker that went idle last.
+///
+/// Workers took connections from one shared queue, so even one request
+/// at a time went round all of them, and each compiled the whole
+/// application for itself: eight workers serving one request at a time
+/// held five warm copies (OL-172). A connection now goes to the most
+/// recently idle worker, whose code is warm; the others stay cold until
+/// the load needs them. Past the idle workers, connections wait in the
+/// queue (`queue_capacity`) for the first worker to finish.
+struct Dispatch {
+    state: std::sync::Mutex<DispatchState>,
+    capacity: usize,
+}
+
+#[derive(Default)]
+struct DispatchState {
+    /// Each worker's hand: a connection given to it while it waits.
+    hands: Vec<Option<std::sync::mpsc::Sender<std::net::TcpStream>>>,
+    /// The workers waiting for a connection, the most recent last.
+    idle: Vec<usize>,
+    /// Connections no worker was free for, oldest first.
+    queue: std::collections::VecDeque<std::net::TcpStream>,
+    /// Workers whose thread is running.
+    working: usize,
+    closed: bool,
+}
+
+enum Next {
+    Serve(std::net::TcpStream),
+    Wait,
+    Stop,
+}
+
+enum Offer {
+    Full(std::net::TcpStream),
+    NoWorkers,
+}
+
+/// A worker's thread is counted while it runs, so a pool whose workers
+/// all ended refuses connections instead of queueing them forever.
+struct Working(Arc<Dispatch>);
+
+impl Drop for Working {
+    fn drop(&mut self) {
+        let mut s = self.0.lock();
+        s.working = s.working.saturating_sub(1);
+    }
+}
+
+impl Dispatch {
+    fn new(capacity: usize) -> Dispatch {
+        Dispatch {
+            state: std::sync::Mutex::new(DispatchState::default()),
+            capacity,
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, DispatchState> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// A worker's hand, by its number (workers are hired in order,
+    /// before their threads start).
+    fn hire(&self, hand: std::sync::mpsc::Sender<std::net::TcpStream>) {
+        self.lock().hands.push(Some(hand));
+    }
+
+    fn working(self: &Arc<Self>) -> Working {
+        self.lock().working += 1;
+        Working(Arc::clone(self))
+    }
+
+    /// What worker `id` does next: a queued connection, or wait on its
+    /// hand (it is idle now), or stop (the pool closed and the queue is
+    /// drained).
+    fn next(&self, id: usize) -> Next {
+        let mut s = self.lock();
+        if let Some(stream) = s.queue.pop_front() {
+            return Next::Serve(stream);
+        }
+        if s.closed {
+            return Next::Stop;
+        }
+        s.idle.push(id);
+        Next::Wait
+    }
+
+    /// Give a connection to the most recently idle worker, or queue it.
+    fn offer(&self, stream: std::net::TcpStream) -> Result<(), Offer> {
+        let mut s = self.lock();
+        let mut stream = stream;
+        while let Some(id) = s.idle.pop() {
+            let Some(hand) = s.hands.get(id).and_then(|h| h.as_ref()) else {
+                continue;
+            };
+            match hand.send(stream) {
+                Ok(()) => return Ok(()),
+                // its thread ended: the next idle worker, or the queue
+                Err(std::sync::mpsc::SendError(back)) => {
+                    s.hands[id] = None;
+                    stream = back;
+                }
+            }
+        }
+        if s.working == 0 {
+            return Err(Offer::NoWorkers);
+        }
+        if s.queue.len() >= self.capacity {
+            return Err(Offer::Full(stream));
+        }
+        s.queue.push_back(stream);
+        Ok(())
+    }
+
+    /// No more connections: waiting workers stop, busy ones drain the
+    /// queue first.
+    fn close(&self) {
+        let mut s = self.lock();
+        s.closed = true;
+        s.idle.clear();
+        s.hands.clear();
+    }
+}
+
 pub fn serve_blocking(
     args: Vec<Value>,
     interpreter: &mut crate::interpreter::Interpreter,
@@ -1939,11 +2063,15 @@ pub fn serve_blocking(
         let _ = out.flush();
     }
 
-    let (sender, receiver) = std::sync::mpsc::sync_channel(config.queue_capacity);
-    let receiver = Arc::new(std::sync::Mutex::new(receiver));
+    let dispatch = Arc::new(Dispatch::new(config.queue_capacity));
     let mut worker_handles = Vec::with_capacity(config.workers);
     for worker_id in 0..config.workers {
-        let receiver = Arc::clone(&receiver);
+        // Hired and counted before its thread starts: a connection the
+        // accept loop offers early waits in the queue, never lost.
+        let (hand, inbox) = std::sync::mpsc::channel::<std::net::TcpStream>();
+        dispatch.hire(hand);
+        let working = dispatch.working();
+        let pool = Arc::clone(&dispatch);
         let handler = handler.clone();
         let worker_config = config.clone();
         let mut worker_interpreter = interpreter.thread_safe_clone();
@@ -1956,16 +2084,17 @@ pub fn serve_blocking(
                 // program that may still receive external requests.
                 let _live = crate::stdlib::chan::live_guard();
                 let _counted = crate::memory::enter_task(&format!("olang-http-{}", worker_id + 1));
+                let _working = working;
                 loop {
-                    let stream = {
-                        let receiver = match receiver.lock() {
-                            Ok(receiver) => receiver,
-                            Err(_) => return,
-                        };
-                        let _parked = crate::profile::blocked();
-                        match receiver.recv() {
-                            Ok(stream) => stream,
-                            Err(_) => return,
+                    let stream = match pool.next(worker_id) {
+                        Next::Serve(stream) => stream,
+                        Next::Stop => return,
+                        Next::Wait => {
+                            let _parked = crate::profile::blocked();
+                            match inbox.recv() {
+                                Ok(stream) => stream,
+                                Err(_) => return,
+                            }
                         }
                     };
                     serve_connection(stream, &mut worker_interpreter, &handler, &worker_config);
@@ -1973,16 +2102,12 @@ pub fn serve_blocking(
             }) {
             Ok(handle) => handle,
             Err(error) => {
-                drop(sender);
+                dispatch.close();
                 return err_val(format!("serve: could not start worker pool: {}", error));
             }
         };
         worker_handles.push(handle);
     }
-    // Only workers should own receiving handles. If every worker exits, the
-    // next send then reports Disconnected instead of filling an orphaned
-    // queue forever.
-    drop(receiver);
 
     // The accept loop polls, so `http.shutdown()` (from a shutdown
     // handler, or any thread) can stop it: no new connections are taken,
@@ -2014,14 +2139,14 @@ pub fn serve_blocking(
         };
         // Connections were accepted non-blocking; their reads must block.
         let _ = stream.set_nonblocking(false);
-        match sender.try_send(stream) {
+        match dispatch.offer(stream) {
             Ok(()) => {}
-            Err(std::sync::mpsc::TrySendError::Full(stream)) => {
+            Err(Offer::Full(stream)) => {
                 // Answered by the turner-away, which reads the request
                 // before it closes (a full one past it is closed as is).
                 let _ = turn_away.try_send(stream);
             }
-            Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+            Err(Offer::NoWorkers) => {
                 return Err(crate::interpreter::InterpreterError::RuntimeError {
                     message: "HTTP worker pool stopped unexpectedly".to_string(),
                 });
@@ -2029,9 +2154,9 @@ pub fn serve_blocking(
         }
     }
 
-    drop(sender);
-    // Idle workers exit as the queue disconnects; busy ones finish the
-    // request in hand. Wait for them up to `drain_ms`, then cut: a long
+    dispatch.close();
+    // Idle workers exit as the pool closes; busy ones finish the request
+    // in hand, and the queue drains. Wait for them up to `drain_ms`, then cut: a long
     // poll that never returns must not hold the process open.
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(config.drain_ms);
     let mut pending = worker_handles;
