@@ -599,7 +599,9 @@ fn find_autolink(s: &str) -> Option<(usize, usize)> {
                 break;
             }
         }
-        let host = &s[at + prefix.len()..end];
+        // the trim can reach into the prefix (`www.` alone loses its
+        // dot): then there is no host, and no link (OL-636)
+        let host = s.get(at + prefix.len()..end).unwrap_or("");
         let valid = !host.is_empty()
             && host.chars().next().is_some_and(|c| c.is_alphanumeric())
             && (prefix != "www." || host.contains('.') || host.len() > 1);
@@ -1726,6 +1728,10 @@ mod tests {
         assert!(h.contains("<a href=\"https://x.io/a_(b)\">"), "{h}");
         assert!(!html("`https://x.io`").contains("<a"));
         assert!(!html("[t](https://a.io) https").contains("https</a>"));
+        // a bare prefix with only punctuation after it is text (OL-636)
+        for s in ["see www. now", "(www.)", "http://.", "https://?"] {
+            assert!(!html(s).contains("<a"), "{s}");
+        }
     }
 
     #[test]
