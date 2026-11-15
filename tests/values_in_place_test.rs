@@ -64,6 +64,70 @@ println(shared())
     }
 }
 
+/// A 16-way tree of tuples and lists, `full` children filled per node.
+const TREE: &str = r#"
+fn tree(depth, full) = {
+    if depth == 0 => return (0, (), "leaf")
+    let mut kids = []
+    for i in range(0, 16) { kids = kids + [if i < full => tree(depth - 1, full) else => ()] }
+    (depth, 0, kids)
+}
+"#;
+
+#[test]
+fn a_list_changed_or_cut_shares_its_items_however_much_they_hold() {
+    // OL-525, OL-574: col.set, take, drop, col.slice and col.splice on a
+    // list something else holds converted every value beneath its items,
+    // there and back: 300 µs a call over a 4-level tree of tuples, where
+    // `ys[i] = v` on a copy is 0.2 µs.
+    let src = format!(
+        "{TREE}{}",
+        r#"
+fn calls(xs, n) = {
+    let mut k = 0
+    for i in range(0, n) {
+        k = k + len(col.set(xs, 0, ())) + len(take(xs, 3)) + len(drop(xs, 3))
+        k = k + len(col.slice(xs, 1, 4)) + len(col.splice(xs, 1, 1, [0, 0])) + len(col.take(xs, 2))
+    }
+    k
+}
+let xs = tree(4, 8)[2]
+let before = show(xs)
+let t0 = time.monotonic()
+let k = calls(xs, 1000)
+let ms = time.monotonic() - t0
+let set = col.set(xs, 1, "new")
+let cut = col.splice(xs, 0, 2, ["a"])
+println([k, ms < 300.0, show(xs) == before, set[1], set[0] == xs[0], len(cut), cut[0], cut[1] == xs[2]])
+println([take([1, 2, 3], 5), drop([1, 2, 3], 1), col.slice([1, 2, 3, 4], 3, 1), col.slice([1.5, 2.5, 3.5], 1, 9), col.splice([1, 2, 3], 2, 9, [7])])
+"#
+    );
+    for flags in TIERS {
+        assert_eq!(
+            run(flags, &src),
+            "[54000, true, true, \"new\", true, 15, \"a\", true]\n[[1, 2, 3], [2, 3], [], [2.5, 3.5], [1, 2, 7]]",
+            "{flags:?}"
+        );
+    }
+}
+
+#[test]
+fn the_window_builtins_raise_as_the_interpreter_does() {
+    for (call, want) in [
+        ("col.slice([1, 2], -1, 2)", "negative"),
+        ("col.set([1, 2], 2, 0)", "out of bounds"),
+        ("take([1, 2], -1)", "non-negative"),
+        ("col.splice((1, 2), 0, 1, [])", "must be a list"),
+    ] {
+        let src = format!(
+            "fn f() = {call}\nprintln(match attempt(f) {{ Ok(v) => show(v), Err(e) => e }})"
+        );
+        let outs: Vec<String> = TIERS.iter().map(|flags| run(flags, &src)).collect();
+        assert!(outs[0].contains(want), "{call}: {}", outs[0]);
+        assert!(outs.iter().all(|o| o == &outs[0]), "{call}: {outs:?}");
+    }
+}
+
 #[test]
 fn typeof_names_every_value_alike_on_every_tier() {
     // OL-521: on the bytecode tier a record or struct crossed to the

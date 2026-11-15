@@ -6394,6 +6394,10 @@ impl BytecodeVm {
                         && let Some(r) = Self::map_set_owned(&mut arg_values)
                     {
                         r
+                    } else if function_name == "col.set"
+                        && let Some(r) = Self::col_set_owned(&mut arg_values)
+                    {
+                        r
                     } else if function_name == "map_remove"
                         && let Some(r) = Self::map_remove_owned(&mut arg_values)
                     {
@@ -8894,9 +8898,10 @@ impl BytecodeVm {
         let args: &[OvmValue] = if !matches!(
             name,
             "len" | "head" | "first" | "last" | "typeof" | "same" | "hash"
-        ) && args
-            .iter()
-            .any(|a| matches!(a.data, ValueData::FloatList(_) | ValueData::IntList(_)))
+        ) && !Self::list_window_name(name)
+            && args
+                .iter()
+                .any(|a| matches!(a.data, ValueData::FloatList(_) | ValueData::IntList(_)))
         {
             normalized = args
                 .iter()
@@ -9710,6 +9715,91 @@ impl BytecodeVm {
                     "concat: arguments must be lists".to_string(),
                 )),
             }),
+            // A part of a list, or the list with some of it replaced,
+            // made of the items themselves: each shared, as `skip` and `+`
+            // share them. Bridged, every value reachable from the items
+            // was converted to the interpreter's form and back, so the
+            // cost was the size of what the items held, not their count
+            // (OL-525, OL-574). Anything these do not take (a bad bound,
+            // a wrapped or odd argument) goes to the bridge, which raises
+            // the interpreter's error.
+            "take" | "drop" | "col.take" | "col.drop" | "col.skip" | "col.slice"
+                if Self::list_window_name(name) =>
+            {
+                let int = |i: usize| match args.get(i).map(|a| &a.data) {
+                    Some(ValueData::Integer(n)) => Some(*n),
+                    _ => None,
+                };
+                let len = match &args[0].data {
+                    ValueData::List(items) => items.len(),
+                    ValueData::IntList(items) => items.len(),
+                    ValueData::FloatList(items) => items.len(),
+                    _ => return None,
+                };
+                let (from, to) = if name == "col.slice" {
+                    if args.len() != 3 {
+                        return None;
+                    }
+                    let (a, b) = (int(1)?, int(2)?);
+                    if a < 0 || b < 0 {
+                        return None;
+                    }
+                    let (a, b) = ((a as usize).min(len), (b as usize).min(len));
+                    (a, b.max(a))
+                } else {
+                    if args.len() != 2 {
+                        return None;
+                    }
+                    let n = int(1).filter(|n| *n >= 0)? as usize;
+                    let n = n.min(len);
+                    if matches!(name, "take" | "col.take") {
+                        (0, n)
+                    } else {
+                        (n, len)
+                    }
+                };
+                Some(Ok(match &args[0].data {
+                    ValueData::List(items) => OvmValue::new_list(items[from..to].to_vec()),
+                    ValueData::IntList(items) => OvmValue::new_int_list(items[from..to].to_vec()),
+                    ValueData::FloatList(items) => {
+                        OvmValue::new_float_list(items[from..to].to_vec())
+                    }
+                    _ => unreachable!("matched a list"),
+                }))
+            }
+            "col.splice" if args.len() == 4 => {
+                let (ValueData::List(list), ValueData::List(items)) =
+                    (&args[0].data, &args[3].data)
+                else {
+                    return None;
+                };
+                let (ValueData::Integer(at), ValueData::Integer(n)) =
+                    (&args[1].data, &args[2].data)
+                else {
+                    return None;
+                };
+                let at = (*at).clamp(0, list.len() as i64) as usize;
+                let n = (*n).clamp(0, (list.len() - at) as i64) as usize;
+                let mut out = Vec::with_capacity(list.len() - n + items.len());
+                out.extend_from_slice(&list[..at]);
+                out.extend_from_slice(&items[..]);
+                out.extend_from_slice(&list[at + n..]);
+                Some(Ok(OvmValue::new_list(out)))
+            }
+            "col.set" if args.len() == 3 => {
+                let ValueData::List(items) = &args[0].data else {
+                    return None;
+                };
+                let ValueData::Integer(i) = args[1].data else {
+                    return None;
+                };
+                if i < 0 || i as usize >= items.len() {
+                    return None;
+                }
+                let mut out = (**items).clone();
+                out[i as usize] = args[2].clone();
+                Some(Ok(OvmValue::new_list(out)))
+            }
             "skip" if args.len() == 2 => Some((|| {
                 let n = match &args[1].data {
                     ValueData::Integer(i) if *i >= 0 => *i as usize,
@@ -10422,6 +10512,43 @@ impl BytecodeVm {
                 }
             }
             _ => unreachable!("matched a map"),
+        }))
+    }
+
+    /// The builtins answering a run of a list's items (`take`, `drop`,
+    /// `col.slice`): they read a typed list in its own layout.
+    fn list_window_name(name: &str) -> bool {
+        matches!(
+            name,
+            "take" | "drop" | "col.take" | "col.drop" | "col.skip" | "col.slice"
+        )
+    }
+
+    /// `col.set(xs, i, v)` on a list the call owns (its argument moved in,
+    /// nothing else holding it): the slot written in place. A list
+    /// anything else holds is copied, its items shared (OL-525). `None`
+    /// for what the native arm or the bridge decides (a bad index, a
+    /// typed or wrapped list).
+    fn col_set_owned(args: &mut [OvmValue]) -> Option<Result<OvmValue, BytecodeError>> {
+        use crate::ovm::value::ValueData;
+        if args.len() != 3 {
+            return None;
+        }
+        let (ValueData::List(items), ValueData::Integer(i)) = (&args[0].data, &args[1].data) else {
+            return None;
+        };
+        let i = *i;
+        if i < 0 || i as usize >= items.len() {
+            return None;
+        }
+        let value = std::mem::replace(&mut args[2], OvmValue::new_unit());
+        let list = std::mem::replace(&mut args[0], OvmValue::new_unit());
+        let ValueData::List(mut items) = list.into_data() else {
+            unreachable!("matched a list")
+        };
+        Arc::make_mut(&mut items)[i as usize] = value;
+        Some(Ok(OvmValue {
+            data: ValueData::List(items),
         }))
     }
 
