@@ -268,7 +268,18 @@ chmod 755 "$STUBS/curl" "$STUBS/wget"
 # (FAKE_OS, FAKE_ARCH, FAKE_LIBC, FAKE_GLIBC, ...). Sets OUT (stdout and
 # stderr together), CODE, LOG (downloads and commands run) and H (HOME).
 # `again` is `run` in the HOME of the case before.
-SCRIPT="$ROOT/install.sh"
+# The cases before the signature section run install.sh with no key, as
+# the releases they pretend to be were made before signing.
+awk '
+    /^SIGNING_KEY=/ {
+        print "SIGNING_KEY=\"\""
+        if ($0 !~ /"$/ || $0 == "SIGNING_KEY=\"") { while ((getline) > 0) if ($0 ~ /"$/) break }
+        next
+    }
+    /^SIGNED_FROM=/ { print "SIGNED_FROM=\"\""; next }
+    { print }
+' "$ROOT/install.sh" >"$T/install-unsigned.sh"
+SCRIPT="$T/install-unsigned.sh"
 run() {
     NAME=$1; shift
     if [ "${KEEP:-}" != 1 ]; then H="$T/home/$NAME"; rm -rf "$H"; mkdir -p "$H"; fi
@@ -478,7 +489,7 @@ if [ -n "$SIGNING" ]; then
     code 1; has "the release signature cannot be checked"
     run sig-signed-then-bad-sum -- --version v1.4.0
     code 1; has "did not match its published checksum"
-    SCRIPT="$ROOT/install.sh"
+    SCRIPT="$T/install-unsigned.sh"
     run sig-unset --
     code 0; lacks "Signature"; unlogged "SHA256SUMS.sig"
 else
