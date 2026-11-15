@@ -959,7 +959,7 @@ pub fn use_shadow_warnings(
             dir.join(format!("{}.ol", last)),
         ];
         for c in candidates {
-            if let Ok(src) = std::fs::read_to_string(&c) {
+            if let Ok(src) = crate::tools::read_source(&c) {
                 let prog = crate::parser::Parser::new().parse(&src).ok()?;
                 share_names(&prog, &mut names);
                 return Some(names);
@@ -1954,7 +1954,7 @@ struct ImportCycles {
 impl ImportCycles {
     fn edges(&mut self, p: &Path) -> Vec<PathBuf> {
         if !self.imports.contains_key(p) {
-            let found = std::fs::read_to_string(p)
+            let found = crate::tools::read_source(p)
                 .ok()
                 .and_then(|src| parsed_module(p, &src))
                 .zip(p.parent())
@@ -2292,7 +2292,7 @@ fn modules_used_by(
             if out.iter().any(|(p, _, _)| *p == c) {
                 break;
             }
-            if let Ok(src) = std::fs::read_to_string(&c) {
+            if let Ok(src) = crate::tools::read_source(&c) {
                 if let Some(prog) = parsed_module(&c, &src) {
                     // A package's index re-exports: the modules it
                     // `share use`s carry the signatures and types.

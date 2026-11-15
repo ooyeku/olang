@@ -290,10 +290,11 @@ fn expand_impl(source: &str, base_dir: Option<&std::path::Path>) -> Result<Expan
                     candidates.push(dir.join(format!("{rest}/index.ol")));
                 }
             }
-            let Some((module_path, module_src)) = candidates
-                .iter()
-                .find_map(|c| std::fs::read_to_string(c).ok().map(|src| (c.clone(), src)))
-            else {
+            let Some((module_path, module_src)) = candidates.iter().find_map(|c| {
+                crate::tools::read_source(c)
+                    .ok()
+                    .map(|src| (c.clone(), src))
+            }) else {
                 continue;
             };
             let label = u.join(".");
@@ -341,7 +342,7 @@ fn expand_impl(source: &str, base_dir: Option<&std::path::Path>) -> Result<Expan
                 ];
                 let Some(sub_src) = sub_candidates
                     .iter()
-                    .find_map(|c| std::fs::read_to_string(c).ok())
+                    .find_map(|c| crate::tools::read_source(c).ok())
                 else {
                     continue;
                 };

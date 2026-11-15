@@ -1882,6 +1882,62 @@ fn a_module_saved_rechecks_the_open_files_that_import_it() {
 }
 
 #[test]
+fn an_unsaved_edit_to_a_module_is_what_its_importers_see() {
+    // OL-398: an importer read the module from the disk, so its problems
+    // followed the saved text, not the buffer being edited.
+    let dir = temp_folder(
+        "buffer-imports",
+        &[
+            ("a.ol", "share fn helper(x: Int) -> Int = x + 1\n"),
+            (
+                "b.ol",
+                "use a { helper }\n\nlet s: String = helper(3)\nprintln(s)\n",
+            ),
+        ],
+    );
+    let a_uri = format!("file://{}/a.ol", dir.display());
+    let b_uri = format!("file://{}/b.ol", dir.display());
+    let mut c = client_in(&dir);
+    let _ = open_doc(&mut c, &a_uri, "share fn helper(x: Int) -> Int = x + 1\n");
+    let b = open_doc(
+        &mut c,
+        &b_uri,
+        &std::fs::read_to_string(dir.join("b.ol")).unwrap(),
+    );
+    let errors = |m: &serde_json::Value| {
+        diagnostics_of(m)
+            .unwrap()
+            .iter()
+            .any(|d| d["severity"] == 1)
+    };
+    assert!(errors(&b), "{b}");
+    // the module fixed in the editor, not saved: the importer's problem goes
+    let fixed = "share fn helper(x: Int) -> String = to_string(x)\n";
+    c.send(
+        &serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didChange","params":{
+        "textDocument":{"uri":a_uri,"version":2},"contentChanges":[{"text":fixed}]}}),
+    );
+    let b2 = c.recv_until(|m| diagnostics_of(m).is_some() && m["params"]["uri"] == b_uri);
+    assert!(!errors(&b2), "{b2}");
+    // hover at the importer's call reads the buffer's signature too
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":9,"method":"textDocument/hover","params":{
+            "textDocument":{"uri":b_uri},"position":{"line":2,"character":17}}
+    }));
+    let h = c.recv_until(|m| m["id"] == 9);
+    assert!(h.to_string().contains("String"), "{h}");
+    // closed without saving: the disk's text again
+    c.send(
+        &serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didClose","params":{
+        "textDocument":{"uri":a_uri}}}),
+    );
+    let b3 = c.recv_until(|m| diagnostics_of(m).is_some() && m["params"]["uri"] == b_uri);
+    assert!(errors(&b3), "{b3}");
+    let _ = c.child.kill();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_comment_completes_nothing_and_a_large_file_is_checked_in_linear_time() {
     let mut text: String = (0..40_000)
         .map(|i| format!("fn f{i}(x: Int) -> Int = x + {i}\n"))
