@@ -10,8 +10,8 @@
 #      CHANGELOG section with something in it, the release signing key
 #      pinned in every copy and its secret set, the compatibility
 #      allow-list's entries for this version named in the CHANGELOG, and
-#      the gates CI runs (fmt, clippy, the test suite, a release build,
-#      the examples, tools/compat-check.sh);
+#      the gates CI runs (fmt, clippy, the test suite, the examples and
+#      tools/compat-check.sh on the olang the tests built);
 #   2. bumps the version everywhere it lives (Cargo.toml, playground,
 #      Cargo.lock), opens the CHANGELOG section and its compare links,
 #      and for a new minor writes its stdlib surface snapshot;
@@ -25,8 +25,11 @@
 # without the signing key; a final release never can.
 #
 # Cargo: $OLANG_RELEASE_CARGO (default `cargo`), for a wrapper that
-# serializes builds. The release binary is looked for at
-# ${CARGO_TARGET_DIR:-target}/release/olang, or $OLANG_RELEASE_BIN.
+# serializes builds. The examples and the compatibility check run on the
+# olang the test gate built (${CARGO_TARGET_DIR:-target}/fasttest/olang,
+# optimized as release is, without its LTO), or $OLANG_RELEASE_BIN: the
+# release binaries are the release workflow's to build. OLANG_RELEASE_BUILD=1
+# also builds them here (--release, LTO) and runs the checks on that.
 # OLANG_RELEASE_SKIP_GATES=1 skips the cargo gates, for trying this
 # script, and is refused without --dry-run.
 set -euo pipefail
@@ -225,7 +228,11 @@ fi
 
 # the gates CI runs, on this tree
 TARGET=${CARGO_TARGET_DIR:-target}
-BIN=${OLANG_RELEASE_BIN:-$TARGET/release/olang}
+if [ "${OLANG_RELEASE_BUILD:-}" = 1 ]; then
+    BIN=${OLANG_RELEASE_BIN:-$TARGET/release/olang}
+else
+    BIN=${OLANG_RELEASE_BIN:-$TARGET/fasttest/olang}
+fi
 if [ "${OLANG_RELEASE_SKIP_GATES:-}" = 1 ]; then
     [ $DRY -eq 1 ] || refuse "OLANG_RELEASE_SKIP_GATES=1 is only for --dry-run: a release runs its gates."
     warn "OLANG_RELEASE_SKIP_GATES=1: fmt, clippy, the tests and the build were NOT run"
@@ -235,8 +242,10 @@ else
     gate "cargo fmt --check" $CARGO fmt --all -- --check
     gate "cargo clippy -D warnings" $CARGO clippy --workspace --all-targets -- -D warnings
     gate "the test suite (cargo test --workspace --profile fasttest)" $CARGO test --workspace --profile fasttest
-    gate "a release build" $CARGO build --release --locked -p olang -p otc
-    [ -x "$BIN" ] || refuse "no release binary at $BIN (set OLANG_RELEASE_BIN)."
+    if [ "${OLANG_RELEASE_BUILD:-}" = 1 ]; then
+        gate "a release build" $CARGO build --release --locked -p olang -p otc
+    fi
+    [ -x "$BIN" ] || refuse "no olang at $BIN (set OLANG_RELEASE_BIN)."
     gate "the examples (examples/run_all.ol)" sh -c "cd examples && '$(cd "$(dirname "$BIN")" && pwd)/olang' run run_all.ol"
 fi
 if [ -x "$BIN" ] || command -v olang >/dev/null; then
