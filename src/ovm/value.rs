@@ -209,6 +209,13 @@ impl VmOwner {
     }
 }
 
+/// Entries in this thread's `TO_AST_CACHE`, live or not yet swept: what
+/// a test reads to see a conversion kept no copy (OL-416).
+#[cfg(test)]
+pub(crate) fn to_ast_cache_entries() -> usize {
+    TO_AST_CACHE.with(|c| c.borrow().len())
+}
+
 fn to_ast_cache_insert(key: usize, owner: VmOwner, converted: &Value) {
     // What an entry evicts is dropped after the borrow ends: dropping an
     // interpreter value never converts, but keep the borrow short anyway.

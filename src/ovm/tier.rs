@@ -923,6 +923,13 @@ impl BytecodeTier {
         )));
         self.vm.clear_error_trace();
         let out = self.vm.native_hof(name, &args);
+        // The VM's copy of the items goes before the answer converts: a
+        // `filter`'s answer (or a `map`'s that returns its items) shares
+        // them, and while the copy held them too each converted through
+        // `TO_AST_CACHE`, whose entry kept an interpreter copy pinned
+        // beside the one returned until it was swept (OL-416). Held by the
+        // answer alone, they convert as it dies, without an entry.
+        drop(args);
         self.vm.release_closure_compile(kernel);
         if self.vm.has_lazy_events() {
             self.sync_lazy();
@@ -982,6 +989,13 @@ impl BytecodeTier {
         )));
         self.vm.clear_error_trace();
         let out = self.vm.native_hof(name, &args);
+        // The VM's copy of the items goes before the answer converts: a
+        // `filter`'s answer (or a `map`'s that returns its items) shares
+        // them, and while the copy held them too each converted through
+        // `TO_AST_CACHE`, whose entry kept an interpreter copy pinned
+        // beside the one returned until it was swept (OL-416). Held by the
+        // answer alone, they convert as it dies, without an entry.
+        drop(args);
         self.vm.release_closure_compile(kernel);
         if self.vm.has_lazy_events() {
             self.sync_lazy();
@@ -1692,6 +1706,44 @@ let t2 = time.monotonic_ms()
             parent_scope: 0,
             run: Default::default(),
         }
+    }
+
+    /// A `filter` run on the tier answers items it was given: once the
+    /// VM's copy of them is gone they convert back as the answer dies,
+    /// so no interpreter copy of each is left in the conversion cache
+    /// beside the one returned (OL-416: 23 MB held so in Studio).
+    #[test]
+    fn a_tier_filter_keeps_no_second_copy_of_its_answer() {
+        let mut tier = BytecodeTier::new(1);
+        let keep_all = Arc::new(Function {
+            name: None,
+            body: Arc::new(Expr::Boolean(true)).into(),
+            ..double_fn()
+        });
+        let items: Vec<Value> = (0..300)
+            .map(|i| {
+                Value::Tuple(Arc::new(
+                    (0..40)
+                        .map(|j| Value::String(Arc::new(format!("{i}.{j}"))))
+                        .collect(),
+                ))
+            })
+            .collect();
+        let held = items.clone();
+        let before = crate::ovm::value::to_ast_cache_entries();
+        let out = tier
+            .try_hof("filter", &keep_all, &items, None)
+            .expect("the tier runs the filter")
+            .expect("the filter succeeds");
+        let after = crate::ovm::value::to_ast_cache_entries();
+        assert_eq!(out, Value::List(Arc::new(held.clone())));
+        // the items the caller still holds are as they were
+        assert_eq!(items, held);
+        assert!(
+            after <= before + 4,
+            "the answer's 300 items left {} cache entries",
+            after.saturating_sub(before)
+        );
     }
 
     /// The table less its ambiguous names is made once per table: a

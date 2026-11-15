@@ -6506,6 +6506,14 @@ impl BytecodeVm {
                         && let Some(r) = Self::map_set_owned(&mut arg_values)
                     {
                         r
+                    } else if function_name == "col.set"
+                        && let Some(r) = Self::col_set_owned(&mut arg_values)
+                    {
+                        r
+                    } else if function_name == "map_remove"
+                        && let Some(r) = Self::map_remove_owned(&mut arg_values)
+                    {
+                        r
                     } else if function_name == "map_set_in"
                         && let Some(r) = Self::map_set_in_owned(&mut arg_values)
                     {
@@ -9078,9 +9086,10 @@ impl BytecodeVm {
         let args: &[OvmValue] = if !matches!(
             name,
             "len" | "head" | "first" | "last" | "typeof" | "same" | "hash"
-        ) && args
-            .iter()
-            .any(|a| matches!(a.data, ValueData::FloatList(_) | ValueData::IntList(_)))
+        ) && !Self::list_window_name(name)
+            && args
+                .iter()
+                .any(|a| matches!(a.data, ValueData::FloatList(_) | ValueData::IntList(_)))
         {
             normalized = args
                 .iter()
@@ -9682,6 +9691,19 @@ impl BytecodeVm {
                     ValueData::Boolean(_) => "Bool",
                     ValueData::String(_) => "String",
                     ValueData::Unit => "Unit",
+                    // A record, a struct, an enum and the rest by their
+                    // tag, the names `Value::type_name` gives their
+                    // interpreter forms: bridged, the value crossed to be
+                    // named (OL-521). A VM-only function, a builtin's
+                    // stand-in and an error keep the bridge's answer.
+                    ValueData::Struct(_)
+                    | ValueData::AstStruct(..)
+                    | ValueData::Enum(_)
+                    | ValueData::Range(_)
+                    | ValueData::Result(_)
+                    | ValueData::Native(_)
+                    | ValueData::AstFunction(_)
+                    | ValueData::Closure(_) => args[0].type_name(),
                     _ => return None,
                 };
                 Some(Ok(OvmValue::new_string(t.to_string())))
@@ -9881,6 +9903,125 @@ impl BytecodeVm {
                     "concat: arguments must be lists".to_string(),
                 )),
             }),
+            // A part of a list, or the list with some of it replaced,
+            // made of the items themselves: each shared, as `skip` and `+`
+            // share them. Bridged, every value reachable from the items
+            // was converted to the interpreter's form and back, so the
+            // cost was the size of what the items held, not their count
+            // (OL-525, OL-574). Anything these do not take (a bad bound,
+            // a wrapped or odd argument) goes to the bridge, which raises
+            // the interpreter's error.
+            "take" | "drop" | "col.take" | "col.drop" | "col.skip" | "col.slice"
+                if Self::list_window_name(name) =>
+            {
+                let int = |i: usize| match args.get(i).map(|a| &a.data) {
+                    Some(ValueData::Integer(n)) => Some(*n),
+                    _ => None,
+                };
+                let len = match &args[0].data {
+                    ValueData::List(items) => items.len(),
+                    ValueData::IntList(items) => items.len(),
+                    ValueData::FloatList(items) => items.len(),
+                    _ => return None,
+                };
+                let (from, to) = if name == "col.slice" {
+                    if args.len() != 3 {
+                        return None;
+                    }
+                    let (a, b) = (int(1)?, int(2)?);
+                    if a < 0 || b < 0 {
+                        return None;
+                    }
+                    let (a, b) = ((a as usize).min(len), (b as usize).min(len));
+                    (a, b.max(a))
+                } else {
+                    if args.len() != 2 {
+                        return None;
+                    }
+                    let n = int(1).filter(|n| *n >= 0)? as usize;
+                    let n = n.min(len);
+                    if matches!(name, "take" | "col.take") {
+                        (0, n)
+                    } else {
+                        (n, len)
+                    }
+                };
+                Some(Ok(match &args[0].data {
+                    ValueData::List(items) => OvmValue::new_list(items[from..to].to_vec()),
+                    ValueData::IntList(items) => OvmValue::new_int_list(items[from..to].to_vec()),
+                    ValueData::FloatList(items) => {
+                        OvmValue::new_float_list(items[from..to].to_vec())
+                    }
+                    _ => unreachable!("matched a list"),
+                }))
+            }
+            "col.splice" if args.len() == 4 => {
+                let (ValueData::List(list), ValueData::List(items)) =
+                    (&args[0].data, &args[3].data)
+                else {
+                    return None;
+                };
+                let (ValueData::Integer(at), ValueData::Integer(n)) =
+                    (&args[1].data, &args[2].data)
+                else {
+                    return None;
+                };
+                let at = (*at).clamp(0, list.len() as i64) as usize;
+                let n = (*n).clamp(0, (list.len() - at) as i64) as usize;
+                let mut out = Vec::with_capacity(list.len() - n + items.len());
+                out.extend_from_slice(&list[..at]);
+                out.extend_from_slice(&items[..]);
+                out.extend_from_slice(&list[at + n..]);
+                Some(Ok(OvmValue::new_list(out)))
+            }
+            "col.set" if args.len() == 3 => {
+                let ValueData::List(items) = &args[0].data else {
+                    return None;
+                };
+                let ValueData::Integer(i) = args[1].data else {
+                    return None;
+                };
+                if i < 0 || i as usize >= items.len() {
+                    return None;
+                }
+                let mut out = (**items).clone();
+                out[i as usize] = args[2].clone();
+                Some(Ok(OvmValue::new_list(out)))
+            }
+            // Built in the VM's own form: bridged, the list the builtin
+            // answered was converted item by item on its way back (a
+            // layout's arrays of floats, 20 µs a call in Loom's bench;
+            // `enumerate` a frame's every list, its items both ways)
+            // (OL-268). A bad length is the bridge's, with its message.
+            "col.filled" if args.len() == 2 => {
+                let ValueData::Integer(n) = args[0].data else {
+                    return None;
+                };
+                if !(0..=crate::builtin::MAX_BUILT_LEN).contains(&n) {
+                    return None;
+                }
+                let n = n as usize;
+                Some(Ok(match &args[1].data {
+                    _ if n == 0 => OvmValue::new_list(Vec::new()),
+                    ValueData::Float(f) => OvmValue::new_float_list(vec![*f; n]),
+                    ValueData::Integer(i) => OvmValue::new_int_list(vec![*i; n]),
+                    _ => OvmValue::new_list(vec![args[1].clone(); n]),
+                }))
+            }
+            "enumerate" if args.len() == 1 => {
+                let ValueData::List(items) = &args[0].data else {
+                    return None;
+                };
+                Some(Ok(OvmValue::new_list(
+                    items
+                        .iter()
+                        .enumerate()
+                        .map(|(i, v)| {
+                            OvmValue::new_tuple(vec![OvmValue::new_integer(i as i64), v.clone()])
+                        })
+                        .collect(),
+                )))
+            }
             "skip" if args.len() == 2 => Some((|| {
                 let n = match &args[1].data {
                     ValueData::Integer(i) if *i >= 0 => *i as usize,
@@ -10210,6 +10351,20 @@ impl BytecodeVm {
                 "same",
                 "hash",
                 "unwrap",
+                // the window builtins and the builders (OL-525, OL-574,
+                // OL-268), and the owned writes (OL-524)
+                "take",
+                "drop",
+                "skip",
+                "col.take",
+                "col.drop",
+                "col.skip",
+                "col.slice",
+                "col.splice",
+                "col.set",
+                "col.filled",
+                "enumerate",
+                "map_remove",
             ]
             .map(String::from),
         );
@@ -10567,6 +10722,70 @@ impl BytecodeVm {
                 None
             }
         }
+    }
+
+    /// `map_remove` on a map the call owns (`m = map_remove(m, k)`, its
+    /// argument moved in): the key leaves in place when nothing else holds
+    /// the map, and a map anything else holds is copied — `Arc::make_mut`
+    /// decides, as for `map_set_owned` (OL-524). `None` for anything else
+    /// (a struct, a bad key): the native arm keeps its checks and messages.
+    fn map_remove_owned(args: &mut [OvmValue]) -> Option<Result<OvmValue, BytecodeError>> {
+        use crate::ovm::value::ValueData;
+        if args.len() != 2 || !matches!(args[0].data, ValueData::Map(_) | ValueData::AstMap(_)) {
+            return None;
+        }
+        let key = Self::key_text_of(&args[1])?;
+        let map = std::mem::replace(&mut args[0], OvmValue::new_unit());
+        Some(Ok(match map.into_data() {
+            ValueData::Map(mut m) => {
+                Arc::make_mut(&mut m).shift_remove(&key);
+                OvmValue::new_map(m)
+            }
+            ValueData::AstMap(mut m) => {
+                Arc::make_mut(&mut m).shift_remove(&key);
+                OvmValue {
+                    data: ValueData::AstMap(m),
+                }
+            }
+            _ => unreachable!("matched a map"),
+        }))
+    }
+
+    /// The builtins answering a run of a list's items (`take`, `drop`,
+    /// `col.slice`): they read a typed list in its own layout.
+    fn list_window_name(name: &str) -> bool {
+        matches!(
+            name,
+            "take" | "drop" | "col.take" | "col.drop" | "col.skip" | "col.slice"
+        )
+    }
+
+    /// `col.set(xs, i, v)` on a list the call owns (its argument moved in,
+    /// nothing else holding it): the slot written in place. A list
+    /// anything else holds is copied, its items shared (OL-525). `None`
+    /// for what the native arm or the bridge decides (a bad index, a
+    /// typed or wrapped list).
+    fn col_set_owned(args: &mut [OvmValue]) -> Option<Result<OvmValue, BytecodeError>> {
+        use crate::ovm::value::ValueData;
+        if args.len() != 3 {
+            return None;
+        }
+        let (ValueData::List(items), ValueData::Integer(i)) = (&args[0].data, &args[1].data) else {
+            return None;
+        };
+        let i = *i;
+        if i < 0 || i as usize >= items.len() {
+            return None;
+        }
+        let value = std::mem::replace(&mut args[2], OvmValue::new_unit());
+        let list = std::mem::replace(&mut args[0], OvmValue::new_unit());
+        let ValueData::List(mut items) = list.into_data() else {
+            unreachable!("matched a list")
+        };
+        Arc::make_mut(&mut items)[i as usize] = value;
+        Some(Ok(OvmValue {
+            data: ValueData::List(items),
+        }))
     }
 
     /// A key the way `map_set` coerces one; `None` for what it refuses
@@ -13619,6 +13838,7 @@ impl BytecodeCompiler {
             }
 
             Expr::FieldAccess { object, field } => {
+                let first = self.register_allocator.next_register;
                 let object_reg = self.compile_expression(object)?;
                 let name_const = self
                     .emitter
@@ -13631,10 +13851,12 @@ impl BytecodeCompiler {
                     cache: FieldCache::default(),
                     object_dead: false,
                 });
+                self.release_read_temp(object, object_reg, first);
                 Ok(dst)
             }
 
             Expr::Index { object, index } => {
+                let first = self.register_allocator.next_register;
                 let object_reg = self.compile_expression(object)?;
                 let object_reg = self.shield_operand(object_reg, !Self::assignment_free(index));
                 let index_reg = self.compile_expression(index)?;
@@ -13644,6 +13866,7 @@ impl BytecodeCompiler {
                     object: object_reg,
                     index: index_reg,
                 });
+                self.release_read_temp(object, object_reg, first);
                 Ok(dst)
             }
 
@@ -14970,6 +15193,29 @@ impl BytecodeCompiler {
                 .instructions
                 .push(Instruction::Release { regs });
         }
+    }
+
+    /// After a read out of a value nothing names (`b[8]` in `b[8][2]`, a
+    /// call's record in `f(b).box`): let go of that value, so the part
+    /// read out is held only where it went. Kept until the register was
+    /// next written, the inner list stayed shared and the next in-place
+    /// update of it copied it whole (OL-527, OL-529). Only a register
+    /// the object's own code allocated and that is no variable's home:
+    /// a variable, or anything named outside the expression, is kept.
+    /// Not after a field of a field (`r.pos.x`): that chain is the hot
+    /// read of numeric code over records, where the release cost 7% of
+    /// a loop the JIT does not take, and a record read so is rarely the
+    /// container of what the statement then updates in place.
+    fn release_read_temp(&mut self, object: &Expr, reg: Register, first: u32) {
+        if !matches!(object, Expr::Index { .. } | Expr::Call { .. })
+            || reg.0 < first
+            || self.is_variable_register(reg)
+        {
+            return;
+        }
+        self.emitter
+            .instructions
+            .push(Instruction::Release { regs: vec![reg] });
     }
 
     /// A `for` loop's end: its registers let go, and its variable's name

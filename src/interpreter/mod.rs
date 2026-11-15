@@ -3382,8 +3382,11 @@ the function it shadows is the usual cause; `olang check` names the parameter",
 
     /// Fuse `xs = xs + [..]` into an in-place extend when xs holds a
     /// sole-owned list — the interpreter half of finding #1, turning O(n²)
-    /// accumulation into O(n). Narrowed to a list *literal* rhs so numeric
-    /// and string accumulation keep their existing path untouched. Guarded
+    /// accumulation into O(n). Narrowed to an rhs that is a list literal,
+    /// a call or a name (`xs = xs + f(x)`, `xs = xs + ys`: OL-615, a
+    /// function refused by the tier copied its list on each append), so
+    /// numeric and string accumulation on other shapes keep their existing
+    /// path untouched; an rhs that is no list finishes as a plain `+`. Guarded
     /// exactly like the bytecode tier: fusion evaluates rhs before touching
     /// xs, so rhs must provably assign nothing (else the read order would
     /// change), and `try_extend_list`'s `Arc::get_mut` guard copies instead
@@ -3406,7 +3409,10 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         let names_target = matches!(left.as_ref(), Expr::Identifier(n) if n == target)
             || matches!(left.as_ref(), Expr::LocalRef { name, .. } if name == target);
         if !names_target
-            || !matches!(right.as_ref(), Expr::List(_))
+            || !matches!(
+                right.as_ref(),
+                Expr::List(_) | Expr::Call { .. } | Expr::Identifier(_) | Expr::LocalRef { .. }
+            )
             || !crate::ovm::bytecode::BytecodeCompiler::assignment_free(right)
         {
             return None;
@@ -3506,7 +3512,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         // (the fix for the quadratic hash-count loop the wordfreq
         // benchmark exposed). Other builtins keep the plain path.
         let is_movable_builtin = matches!(&callee_value, Value::Builtin(b)
-            if matches!(b.name.as_str(), "map_set" | "map_set_in" | "map_update" | "map_merge" | "__index_set_in"));
+            if matches!(b.name.as_str(), "map_set" | "map_set_in" | "map_update" | "map_merge" | "map_remove" | "__index_set_in"));
         if !matches!(callee_value, Value::Function(_)) && !is_movable_builtin {
             return None;
         }
