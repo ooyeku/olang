@@ -7049,6 +7049,17 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         Some((*caps, package.map(|s| s.to_string())))
     }
 
+    /// What a child process the running code starts gets (OL-623): its
+    /// grant, and whether it is a module's (a dependency's, or one loaded
+    /// at run time). None when nothing is restricted.
+    pub fn child_policy(&mut self) -> Option<crate::caps::ChildPolicy> {
+        self.current_caps()
+            .map(|(caps, package)| crate::caps::ChildPolicy {
+                caps,
+                module: package.is_some(),
+            })
+    }
+
     /// The capabilities the running code holds (its package's, or the
     /// module's it belongs to), or None when nothing is restricted.
     pub fn caller_caps(&mut self) -> Option<crate::caps::Caps> {

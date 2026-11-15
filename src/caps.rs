@@ -1113,6 +1113,107 @@ pub fn suggested_block(used: &std::collections::BTreeSet<CapUse>) -> String {
 
 /// Parse a `--deny` list ("fs,net" or "fs=read") into a restriction set
 /// to intersect with whatever the manifest grants.
+impl Caps {
+    /// The `--deny` / `OLANG_DENY` list that narrows a full grant to this
+    /// one: `"fs-write,proc,env"`. Empty for the full grant.
+    pub fn deny_list(&self) -> String {
+        let mut out: Vec<&str> = Vec::new();
+        match self.fs {
+            FsCap::None => out.push("fs"),
+            FsCap::Read => out.push("fs-write"),
+            FsCap::Full => {}
+        }
+        for (allowed, word) in [
+            (self.net, "net"),
+            (self.proc, "proc"),
+            (self.db, "db"),
+            (self.env, "env"),
+        ] {
+            if !allowed {
+                out.push(word);
+            }
+        }
+        out.join(",")
+    }
+}
+
+/// What a child process started by restricted code gets (OL-623): the
+/// grant of the code that starts it, and whether that code is a module
+/// (a dependency, or one loaded with `runtime.load_module`) rather than
+/// the program itself. Set by the builtin gate around a `proc` call, read
+/// where the child's environment is made. None (unrestricted code) leaves
+/// children as they always were.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ChildPolicy {
+    pub caps: Caps,
+    pub module: bool,
+}
+
+thread_local! {
+    static CHILD_POLICY: std::cell::Cell<Option<ChildPolicy>> = const { std::cell::Cell::new(None) };
+}
+
+/// Puts the previous policy back when dropped.
+pub struct ChildPolicyScope(Option<ChildPolicy>);
+
+impl Drop for ChildPolicyScope {
+    fn drop(&mut self) {
+        CHILD_POLICY.with(|c| c.set(self.0));
+    }
+}
+
+/// Hold `policy` for children started on this thread until the scope ends.
+pub fn child_policy_scope(policy: Option<ChildPolicy>) -> ChildPolicyScope {
+    ChildPolicyScope(CHILD_POLICY.with(|c| c.replace(policy)))
+}
+
+/// The policy for a child started now on this thread.
+pub fn child_policy() -> Option<ChildPolicy> {
+    CHILD_POLICY.with(|c| c.get())
+}
+
+/// The variables a child keeps when its starter is denied `env`: enough
+/// to find programs, a home, a locale and a temporary folder, and none of
+/// the secrets the environment holds.
+pub const CHILD_ENV_KEPT: &[&str] = &["PATH", "HOME", "LANG", "TMPDIR"];
+
+/// Whether `name` is a variable the dynamic loader reads (`DYLD_*` on
+/// macOS, `LD_*` elsewhere): set in a child's environment it loads a
+/// library of the setter's choosing into any program it is allowed.
+pub fn is_loader_var(name: &str) -> bool {
+    name.starts_with("DYLD_") || name.starts_with("LD_")
+}
+
+/// The environment `policy` gives a child, applied to `command` after the
+/// call's own options: a starter denied `env` passes on only
+/// [`CHILD_ENV_KEPT`] from this process (and what its options set), and a
+/// restricted starter's grant goes to the child as `OLANG_DENY`, so an
+/// olang child is held to it too.
+pub fn apply_child_policy(
+    command: &mut std::process::Command,
+    policy: Option<ChildPolicy>,
+    set: &[(String, String)],
+) {
+    let Some(policy) = policy else {
+        return;
+    };
+    if !policy.caps.env {
+        command.env_clear();
+        for k in CHILD_ENV_KEPT {
+            if let Some(v) = std::env::var_os(k) {
+                command.env(k, v);
+            }
+        }
+        for (k, v) in set {
+            command.env(k, v);
+        }
+    }
+    let deny = policy.caps.deny_list();
+    if !deny.is_empty() {
+        command.env("OLANG_DENY", deny);
+    }
+}
+
 pub fn parse_deny(list: &str) -> Result<Caps, String> {
     let mut caps = Caps::default();
     for item in list.split(',').map(str::trim).filter(|s| !s.is_empty()) {

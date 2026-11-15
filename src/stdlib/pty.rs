@@ -409,6 +409,7 @@ mod imp {
         for (k, v) in &set {
             cmd.env(k, v);
         }
+        crate::caps::apply_child_policy(&mut cmd, crate::caps::child_policy(), &set);
         if let Some(d) = &cwd {
             cmd.current_dir(d);
         }

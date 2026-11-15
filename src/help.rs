@@ -9093,10 +9093,10 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
         );
         self.doc_ex(
             "compress.gunzip",
-            "compress.gunzip(b)",
+            "compress.gunzip(b, opts?)",
             "Result",
             "Bytes",
-            "Decode gzip data: Ok(Bytes), or Err(message) when the input is not gzip.",
+            "Decode gzip data: Ok(Bytes), or Err(message) when the input is not gzip or decodes to more than max_bytes. #{\"max_bytes\": n} sets the limit; the default is the smaller of 1 GiB and 1000 times the input (the same for inflate and unbrotli).",
             &[r##"unwrap(bytes.to_string(unwrap(compress.gunzip(packed))))"##],
         );
         self.doc_ex(

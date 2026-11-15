@@ -739,6 +739,30 @@ impl BuiltinFunctions {
         // unless profiling is on.
         interpreter.record_caps_use(name);
 
+        // A child process started by restricted code (OL-623): with `env`
+        // denied it gets no environment past PATH, HOME, LANG and TMPDIR;
+        // its starter's grant goes with it as OLANG_DENY; and a module may
+        // not hand it the dynamic loader's variables (DYLD_*, LD_*), which
+        // would run a library of its choosing inside an allowed program.
+        let _child_policy = if crate::caps::required(name) == Some(crate::caps::CapUse::Proc)
+            && name != "os.exit"
+        {
+            let policy = interpreter.child_policy();
+            if let Some(p) = policy
+                && p.module
+                && let Some(var) = loader_var_in_options(&arguments)
+            {
+                return Err(InterpreterError::RuntimeError {
+                    message: format!(
+                        "capability 'proc' denied: {name} sets {var} in the child's env, and a module may not set the dynamic loader's variables (DYLD_*, LD_*)"
+                    ),
+                });
+            }
+            Some(crate::caps::child_policy_scope(policy))
+        } else {
+            None
+        };
+
         // A simulated world (`sim`): inside one, the world answers the
         // clock, randomness and the scheduler's operations, and refuses
         // every effect it does not simulate — before any of them can
@@ -5091,4 +5115,15 @@ fn sum_float(total: f64) -> Result<Value, InterpreterError> {
             message: format!("sum: {}", crate::ast::float_overflow_message("addition")),
         })
     }
+}
+
+/// The first `DYLD_*` / `LD_*` variable an options map's `env` names, in
+/// any argument of a call that starts a process.
+fn loader_var_in_options(arguments: &[Value]) -> Option<String> {
+    arguments.iter().find_map(|a| {
+        let env = a.record_fields()?.get("env")?.record_fields()?;
+        env.keys()
+            .find(|k| crate::caps::is_loader_var(k))
+            .map(|k| k.to_string())
+    })
 }

@@ -1486,6 +1486,31 @@ fn run_eval(cli: &Cli, source: &str) -> i32 {
         }
         interpreter.set_dependency_map(map);
     }
+    // --deny and OLANG_DENY hold `olang eval` as they hold a run: an olang
+    // started by restricted code is handed its grant as OLANG_DENY
+    // (OL-623), and `olang eval` ran with none.
+    let mut deny: Option<olang::caps::Caps> = None;
+    for (from, list) in [
+        ("--deny", cli.deny.clone()),
+        ("OLANG_DENY", std::env::var("OLANG_DENY").ok()),
+    ] {
+        if let Some(list) = list {
+            match olang::caps::parse_deny(&list) {
+                Ok(c) => deny = Some(deny.map_or(c, |d| d.intersect(c))),
+                Err(e) => {
+                    eprintln!("olang eval ({from}): {e}");
+                    return 2;
+                }
+            }
+        }
+    }
+    if let Some(d) = deny {
+        interpreter.set_capabilities_for_run(olang::caps::CapTable {
+            app: d,
+            deps: Vec::new(),
+            fixed: false,
+        });
+    }
     // REPL semantics: the value of a trailing *expression* is printed;
     // a declaration (`let x = 1`) evaluates to its value internally but
     // is not an answer to show.

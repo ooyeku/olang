@@ -1272,6 +1272,56 @@ fn an_attenuated_dependency_cannot_widen_its_grant_through_eval_or_load_module()
     let _ = std::fs::remove_dir_all(&ws);
 }
 
+/// OL-623: a `proc` grant is not an `env` grant. With `env` denied a
+/// child starts with only PATH, HOME, LANG and TMPDIR; the starter's
+/// grant goes to it as OLANG_DENY (an `olang eval` child is held to it);
+/// and a module may not hand a child the dynamic loader's variables.
+#[test]
+fn a_child_process_gets_neither_the_environment_nor_more_than_its_starters_grant() {
+    let ws = workspace("child_env");
+    write(
+        &ws.join("plug/plugin.ol"),
+        "share fn go() = os.exec([\"/usr/bin/true\"], #{ \"env\": #{ \"DYLD_INSERT_LIBRARIES\": \"/tmp/x.dylib\" } })\n",
+    );
+    write(
+        &ws.join("s.ol"),
+        &format!(
+            "fn err(f) = show(runtime.call_budget(f, [], 20000).error)\n\
+             println(\"secret=[\" + str.trim(unwrap(os.exec([\"/usr/bin/printenv\", \"SECRET_TOKEN\"])).stdout) + \"]\")\n\
+             println(\"deny=[\" + str.trim(unwrap(os.exec([\"/usr/bin/printenv\", \"OLANG_DENY\"])).stdout) + \"]\")\n\
+             println(\"child_net=[\" + str.trim(unwrap(os.exec([\"{}\", \"eval\", \"caps.allowed(\\\"net\\\")\"])).stdout) + \"]\")\n\
+             let m = unwrap(runtime.load_module(\"{}\", #{{ \"name\": \"plug\", \"proc\": true }}))\n\
+             println(\"dyld=\" + err(() => m.go()))\n",
+            olang(),
+            ws.join("plug/plugin.ol").display()
+        ),
+    );
+    let out = Command::new(olang())
+        .current_dir(&ws)
+        .env("SECRET_TOKEN", "hunter2")
+        .args(["--deny", "env,net", "s.ol"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let all = format!("{stdout}\n{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        stdout.contains("secret=[]"),
+        "the child saw the environment: {all}"
+    );
+    assert!(stdout.contains("deny=[net,env]"), "{all}");
+    assert!(
+        stdout.contains("child_net=[false]"),
+        "an olang child ran wider: {all}"
+    );
+    assert!(
+        stdout.contains("dyld=")
+            && stdout.contains("DYLD_INSERT_LIBRARIES")
+            && stdout.contains("may not set"),
+        "{all}"
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
 /// OL-618: a dependency's `use` resolves only in its own package and its
 /// dependencies, never the app's project root, whose files run with the
 /// app's grant. 3a: `use helpers` reaching the app's helpers.ol; 3b: a
