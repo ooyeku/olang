@@ -6,7 +6,7 @@
 //! olangs and libraries lives here. otc keeps the olang versions
 //! (`otc use`, `otc toolchain`), the shelf of libraries (`otc shelf`),
 //! and each project's dependencies (`otc add`, `list`, `upgrade`), with
-//! the same verbs for all three (docs/otc-design.md).
+//! the same verbs for all three (docs/packages.md).
 
 // otc surfaces olang's interpreter Results; the large-error refactor is
 // tracked in the olang crate (see olang/src/lib.rs).
@@ -428,13 +428,13 @@ mod tests {
         }
     }
 
-    /// Every `otc …` command in docs/packages.md and docs/otc-design.md is
+    /// Every `otc …` command in docs/packages.md is
     /// one otc reads: a renamed or removed verb fails here.
     #[test]
     fn every_command_in_the_docs_parses() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let mut checked = 0;
-        for doc in ["docs/packages.md", "docs/otc-design.md"] {
+        for doc in ["docs/packages.md"] {
             let text = std::fs::read_to_string(root.join(doc)).unwrap();
             let mut in_block = false;
             for line in text.lines() {

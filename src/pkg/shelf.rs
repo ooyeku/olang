@@ -1,5 +1,5 @@
 //! The library shelf: every library this machine holds, by name, with as
-//! many versions of each as needed (docs/otc-design.md).
+//! many versions of each as needed (docs/packages.md, "The library shelf").
 //!
 //! A name on the shelf has at most one **local** folder (a working copy,
 //! referenced where it is, never copied) and any number of **copies**:

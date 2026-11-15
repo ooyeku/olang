@@ -237,8 +237,7 @@ on this machine (`otc use`, `otc toolchain …`), the shelf of libraries
 (`otc shelf …`), and each project's dependencies (`otc add`, `list`,
 `upgrade`, …). `list` shows what is here, `add` puts something here,
 `use` makes it what runs, `outdated` and `upgrade` move it forward,
-`remove` and `prune` take it away. [The design note](otc-design.md) has
-the reasoning.
+`remove` and `prune` take it away.
 
 ```bash
 otc status                   # what olang runs here and why, this project, the shelf, what to do next

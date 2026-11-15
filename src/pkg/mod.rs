@@ -494,7 +494,7 @@ pub fn shelf_ask(
     }
 }
 
-/// Resolve a shelf or GitHub dependency by the rules (docs/otc-design.md):
+/// Resolve a shelf or GitHub dependency by the rules (docs/packages.md, "Which copy a dependency gets"):
 /// 1. the copy `previous` (its lock entry) pins, while the manifest asks
 ///    the same and the name is not being upgraded;
 /// 2. what the manifest asks for, newest held first, fetched from GitHub
