@@ -265,7 +265,8 @@ fn document(
     doc["file"] = J::String(label.to_string());
     doc["wall_ms"] = J::from(round1(started.elapsed().as_secs_f64() * 1000.0));
     doc["series"] = J::Array(s.series.clone());
-    // every allocation is counted, exactly
+    // every allocation is counted (exact); by function, from the heap
+    // profile's samples when it runs (each function row's own)
     let (n, b) = crate::memory::allocation_stats();
     doc["allocs_n"] = J::from(n.saturating_sub(s.alloc_base.0));
     doc["alloc_b"] = J::from(b.saturating_sub(s.alloc_base.1));

@@ -2200,6 +2200,10 @@ impl BuiltinFunctions {
             };
             if workers > 1 {
                 let chunk_size = items.len().div_ceil(workers);
+                // the caller's frames, carried onto each worker so its
+                // samples and allocations name where the map was called
+                let inherited = crate::profile::inherit();
+                let inherited = &inherited;
                 let joined: Vec<Result<Vec<Value>, (usize, InterpreterError)>> =
                     std::thread::scope(|scope| {
                         let handles: Vec<_> = items
@@ -2227,6 +2231,7 @@ impl BuiltinFunctions {
                                     other => other.clone(),
                                 };
                                 scope.spawn(move || {
+                                    let _frames = inherited.as_ref().map(|f| f.enter());
                                     // Whole-chunk native first: one boundary
                                     // per chunk instead of one per element.
                                     // parallel_apply is always map-shaped

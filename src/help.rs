@@ -8931,6 +8931,56 @@ route("GET", "/olang." + map_get(rt, "hash") + ".wasm", (req, p) => { status: 20
 println("program: " + to_string(map_get(m, "program") / 1048576) + " MB")"##],
         );
         self.doc_ex(
+            "runtime.heap",
+            "runtime.heap()",
+            "Map",
+            "runtime",
+            "What the heap holds now, by the site that allocated it, from the sampled heap profile (runtime.heap_start, or OLANG_HEAP=1 from the start): #{ \"rate\", \"heap\", \"values\", \"sampled\", \"samples\", \"sites\": [#{ \"function\", \"file\", \"line\", \"path\", \"scope\", \"bytes\", \"count\", \"allocated\", \"allocations\", \"key\" }], … }, largest first. A site is the innermost olang function (path: the innermost frames, builtins included) and its scope: values, program (loading it) or code (the runtime's). bytes and count are live; allocated and allocations are since sampling began. Estimates: one sample per rate bytes allocated (512 KiB).",
+            &[r##"runtime.heap_start()
+let xs = map(range(20000), (i) => "item " + to_string(i))
+let top = first(runtime.heap().sites)
+println(top.function + " " + top.scope)"##],
+        );
+        self.doc_ex(
+            "runtime.heap_start",
+            "runtime.heap_start() / runtime.heap_start(#{ \"rate\": bytes })",
+            "Result",
+            "runtime",
+            "Begin the sampled heap profile: from now each allocation is sampled with a chance proportional to its size, one sample per rate bytes allocated on average (524288). Ok(()), or Err when it already runs. Allocations made before are not seen: OLANG_HEAP=1 starts it with the program.",
+            &[r##"runtime.heap_start(#{ "rate": 65536 })
+runtime.heap_stop()"##],
+        );
+        self.doc_ex(
+            "runtime.heap_stop",
+            "runtime.heap_stop()",
+            "Result",
+            "runtime",
+            "End the heap profile and forget its samples: Ok(()), or Err when it is not running.",
+            &[r##"runtime.heap_start()
+runtime.heap_stop()"##],
+        );
+        self.doc_ex(
+            "runtime.heap_diff",
+            "runtime.heap_diff(before, after)",
+            "Map",
+            "runtime",
+            "What changed between two runtime.heap() snapshots, by site: #{ \"span_ms\", \"heap_grew\", \"values_grew\", \"allocated\", \"sites\": [#{ \"function\", \"file\", \"line\", \"path\", \"scope\", \"before\", \"after\", \"grew\", \"count_grew\", \"allocated\" }] }, the most grown first.",
+            &[r##"runtime.heap_start()
+let a = runtime.heap()
+let kept = map(range(20000), (i) => [i, i + 1])
+let d = runtime.heap_diff(a, runtime.heap())
+println(first(d.sites).function)"##],
+        );
+        self.doc_ex(
+            "runtime.heap_write",
+            "runtime.heap_write(path)",
+            "Result",
+            "runtime",
+            "Write a runtime.heap() snapshot to path as JSON, for olang memory show and olang memory diff: Ok(path made absolute), or Err.",
+            &[r##"runtime.heap_start()
+runtime.heap_write("/tmp/heap-now.json")"##],
+        );
+        self.doc_ex(
             "runtime.collect",
             "runtime.collect()",
             "Map",

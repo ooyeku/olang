@@ -2642,6 +2642,11 @@ that serves its own routes reads the same bytes.
 | <a id="runtime-features"></a>`runtime.features()` / `runtime.features(profile)` | what a runtime has: `#{ "profile", "modules", "threads", "fs", "net", "processes", "db", "gui", "dom", "jit", "needs" }` — its name, the modules a program can call there (sorted), and whether it can start threads (`spawn`, `task`, `par_map` workers), reach files, the network, processes, SQLite, windows, a page's DOM, and native code. `needs` maps each function of those modules that reaches a power the profile lacks to that power — `#{ "ods.open_csv": "fs", "gg.save": "fs", "spawn": "threads", … }` (`spawn` is the form) — and is empty natively. With no argument, this runtime; any runtime, the browser's included, also answers for `"native"`, `"browser"` and `"full"` |
 | <a id="runtime-version"></a>`runtime.version()` | the olang version string |
 | <a id="runtime-memory"></a>`runtime.memory()` | `#{ "heap", "program", "code", "values", "embedded", "allocated", "allocations", "tasks" }`, in bytes — where the process's memory is (below) |
+| <a id="runtime-heap"></a>`runtime.heap()` | what the heap holds now by the site that allocated it, from the sampled heap profile: `#{ "sites": [#{ "function", "file", "line", "path", "scope", "bytes", "count", "allocated", "allocations", "key" }], "rate", "heap", "values", "sampled", "samples", … }`, largest first ([What holds the heap](#what-holds-the-heap-by-site)) |
+| <a id="runtime-heap_start"></a>`runtime.heap_start()` `runtime.heap_start(#{ "rate" })` | begin the heap profile: one sample per `rate` bytes allocated on average (524,288). `Ok(())`, or `Err` when it runs. `OLANG_HEAP=1` starts it with the program. Only the program itself may call it |
+| <a id="runtime-heap_stop"></a>`runtime.heap_stop()` | end it and forget its samples: `Ok(())`, or `Err` when it is not running |
+| <a id="runtime-heap_diff"></a>`runtime.heap_diff(before, after)` | what changed between two `runtime.heap()` snapshots, by site: `#{ "span_ms", "heap_grew", "values_grew", "code_grew", "program_grew", "sampled_grew", "allocated", "sites": [#{ "function", "file", "line", "path", "scope", "before", "after", "grew", "count_grew", "allocated", "key" }] }`, the most grown first |
+| <a id="runtime-heap_write"></a>`runtime.heap_write(path)` | a snapshot written to `path` as JSON, for [`olang memory`](tooling.md#olang-memory): `Ok(path)` made absolute, or `Err` |
 | <a id="runtime-collect"></a>`runtime.collect()` | `#{ "freed", "scanned", "roots", "ms" }` — frees, now, the loops through cells and shared references that nothing else holds (they are also found on their own as cells are made); `()` when another thread is collecting |
 | <a id="runtime-profile_start"></a>`runtime.profile_start()` / `runtime.profile_start(interval_us)` | begin sampling this process with the profiler behind `olang profile` (every 1,000 µs by default): `Ok(())`, or `Err` when a profile is already running |
 | <a id="runtime-profile_stop"></a>`runtime.profile_stop()` | end it: `Ok(#{ "interval_us", "ticks", "idle", "blocked", "samples", "rows" })`, where `rows` is `[#{ "function", "tier", "samples", "share" }]`, most first — the functions that were running when the sampler looked, the tier each ran on (`interp`, `vm`, `native`, `builtin`), and its share of the samples that landed in code. `blocked` counts thread-ticks spent parked — a receive, a sleep, a server waiting for a connection, an idle http worker — which are charged to no function. `Err` when no profile is running |
@@ -2713,6 +2718,63 @@ let m = runtime.memory()
 let mb = (key) => to_string(m[key] / 1048576) + " MB"
 println("program " + mb("program") + ", code " + mb("code") + ", values " + mb("values"))
 ```
+
+### What holds the heap, by site
+
+`runtime.memory()` says how much is held and whose it is; the heap
+profile says where it was allocated. While it runs, each allocation is
+sampled with a chance proportional to its size, about one sample per
+`rate` bytes allocated (512 KiB by default), and each sample remembers
+its **site**: the innermost olang function that made it (`function`,
+its `file` and declaration `line`), the innermost frames (`path`,
+innermost first, a builtin such as `map` among them), and its `scope`
+— `values` (the running program's), `program` (loading it) or `code`
+(the runtime compiling it), the split `runtime.memory()` makes. A
+sampled block that is freed, by any thread, comes off its site.
+
+| Site key | Meaning |
+|---|---|
+| `bytes`, `count` | the live bytes and blocks the site's samples stand for |
+| `allocated`, `allocations` | the bytes and blocks allocated there since sampling began, freed or not: the rate, beside what is kept |
+| `key` | what names the site across snapshots of one program (`scope\|file\|path`) |
+
+The figures are estimates: a block of `s` bytes is sampled with
+probability `1 - exp(-s / rate)` and stands for `s / p` bytes, so a
+site's estimate is unbiased and its error shrinks as it grows. A site
+of 8 MB is about sixteen samples at the default rate, within a quarter
+of its size more often than not, and a site under the rate may not be
+seen at all. That is the right trade for the question it answers, what
+holds hundreds of megabytes; `rate` smaller sees more and costs more.
+Only what was allocated after sampling began is seen, so for a whole
+day start it with the program: `OLANG_HEAP=1` (or a rate, `OLANG_HEAP=64k`).
+A snapshot's `sampled` is what its live samples stand for, beside the
+exact `heap`.
+
+What grew between two moments is the diff of two snapshots, the most
+grown site first:
+
+```olang
+runtime.heap_start(#{ "rate": 65536 })
+let cache = cell(#{})
+fn remember(i) = cell.set(cache, map_set(cell.take(cache), "k" + to_string(i), [i, "v" + to_string(i)]))
+let before = runtime.heap()
+for i in 0..20000 { remember(i) }
+let d = runtime.heap_diff(before, runtime.heap())
+println(first(d.sites).function)                 // remember
+```
+
+A program that runs all day need not change to be asked: with
+`OLANG_HEAP=1` and `OLANG_HEAP_DIR=dir` a snapshot is written to
+`dir/heap-<pid>-<unix ms>.json` every `OLANG_HEAP_EVERY` seconds (300),
+and `olang memory diff dir` names what grew from the first to the newest
+([`olang memory`](tooling.md#olang-memory)).
+
+**Cost.** Off, an allocation pays one relaxed load more and a free
+nothing. On, an allocation pays a thread-local subtraction and a free one
+cache-line read of the table of sampled blocks; a sample (one per
+`rate` bytes) takes a few microseconds. The profile records olang frames
+while it runs, which is the profiler's shadow stack. Measured costs are in
+[`olang memory`](tooling.md#olang-memory).
 
 A binary built without the artifact (a fresh checkout's `cargo build`
 before `cargo xtask wasm`, or a `cargo install` from crates.io) answers

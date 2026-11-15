@@ -19,6 +19,12 @@ pub fn create_runtime_module() -> Value {
     module.insert("features".to_string(), builtin("features", 0));
     module.insert("version".to_string(), builtin("version", 0));
     module.insert("memory".to_string(), builtin("memory", 0));
+    // what holds the heap, by allocation site: src/heap_profile.rs
+    module.insert("heap".to_string(), builtin("heap", 0));
+    module.insert("heap_start".to_string(), builtin("heap_start", 0));
+    module.insert("heap_stop".to_string(), builtin("heap_stop", 0));
+    module.insert("heap_diff".to_string(), builtin("heap_diff", 2));
+    module.insert("heap_write".to_string(), builtin("heap_write", 1));
     // frees the loops reference counting cannot: src/cycles.rs
     module.insert("collect".to_string(), builtin("collect", 0));
     module.insert("profile_start".to_string(), builtin("profile_start", 0));
@@ -73,6 +79,11 @@ pub fn call_runtime_function(
         "version" => Ok(Value::String(Arc::new(crate::version::VERSION.to_string()))),
         "wasm" => runtime_wasm(args),
         "memory" => runtime_memory(args),
+        "heap" => runtime_heap(args),
+        "heap_start" => runtime_heap_start(args),
+        "heap_stop" => runtime_heap_stop(args),
+        "heap_diff" => runtime_heap_diff(args),
+        "heap_write" => runtime_heap_write(args),
         "collect" => runtime_collect(args),
         "profile_start" => runtime_profile_start(args),
         "profile_stop" => runtime_profile_stop(args),
@@ -444,6 +455,109 @@ fn runtime_memory(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
     out.insert("allocated".to_string(), Value::Integer(allocated as i64));
     out.insert("allocations".to_string(), Value::Integer(allocations as i64));
     Ok(Value::Map(Arc::new(out)))
+}
+
+fn as_value<T: serde::Serialize>(v: &T) -> Result<Value, Box<dyn std::error::Error>> {
+    let json = serde_json::to_value(v)?;
+    Ok(crate::stdlib::json::json_to_olang_value(json)?)
+}
+
+fn snapshot_arg(
+    v: &Value,
+    which: &str,
+) -> Result<crate::heap_profile::Snapshot, Box<dyn std::error::Error>> {
+    let json = crate::stdlib::json::olang_value_to_json(v)
+        .map_err(|e| format!("runtime.heap_diff: the {which} snapshot: {e}"))?;
+    serde_json::from_value(json).map_err(|e| {
+        format!("runtime.heap_diff: the {which} argument is not a runtime.heap() snapshot: {e}")
+            .into()
+    })
+}
+
+/// `runtime.heap()` — what the heap holds now by allocation site, from
+/// the sampled heap profile (src/heap_profile.rs).
+fn runtime_heap(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if !args.is_empty() {
+        return Err(format!("runtime.heap expects 0 arguments, got {}", args.len()).into());
+    }
+    as_value(&crate::heap_profile::snapshot())
+}
+
+/// `runtime.heap_start()` / `runtime.heap_start(#{ "rate": bytes })`.
+fn runtime_heap_start(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let opts = match args.as_slice() {
+        [Value::Map(m)] => Some(m.clone()),
+        // options given as a record (OL-600)
+        [r] if r.record_fields().is_some() => {
+            Some(Arc::new(r.record_fields().expect("a record").clone()))
+        }
+        _ => None,
+    };
+    let rate = match (args.as_slice(), opts) {
+        ([], _) => crate::heap_profile::DEFAULT_RATE,
+        ([Value::Integer(n)], _) if *n > 0 => *n as u64,
+        (_, Some(m)) => match m.get("rate") {
+            None | Some(Value::Unit) => crate::heap_profile::DEFAULT_RATE,
+            Some(Value::Integer(n)) if *n > 0 => *n as u64,
+            Some(other) => {
+                return Err(format!(
+                    "runtime.heap_start: rate is the bytes between samples, a positive Int, not {}",
+                    other.type_name()
+                )
+                .into());
+            }
+        },
+        _ => {
+            return Err(
+                "runtime.heap_start takes nothing, or #{ \"rate\": bytes between samples }".into(),
+            );
+        }
+    };
+    Ok(match crate::heap_profile::start(rate) {
+        Ok(()) => Value::Ok(Box::new(Value::Unit)),
+        Err(e) => err_value(e),
+    })
+}
+
+fn runtime_heap_stop(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if !args.is_empty() {
+        return Err(format!("runtime.heap_stop expects 0 arguments, got {}", args.len()).into());
+    }
+    Ok(match crate::heap_profile::stop() {
+        Ok(()) => Value::Ok(Box::new(Value::Unit)),
+        Err(e) => err_value(e),
+    })
+}
+
+/// `runtime.heap_diff(before, after)` — what changed, by site.
+fn runtime_heap_diff(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let [a, b] = args.as_slice() else {
+        return Err(format!(
+            "runtime.heap_diff expects 2 arguments (two runtime.heap() snapshots), got {}",
+            args.len()
+        )
+        .into());
+    };
+    let a = snapshot_arg(a, "first")?;
+    let b = snapshot_arg(b, "second")?;
+    as_value(&crate::heap_profile::diff(&a, &b))
+}
+
+/// `runtime.heap_write(path)` — a snapshot written as JSON, for
+/// `olang memory`.
+fn runtime_heap_write(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let [Value::String(path)] = args.as_slice() else {
+        return Err("runtime.heap_write expects a path (a String)".into());
+    };
+    let path = std::path::Path::new(path.as_str());
+    let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let snap = crate::heap_profile::snapshot();
+    Ok(match crate::heap_profile::write_snapshot(&snap, &path) {
+        Ok(()) => Value::Ok(Box::new(Value::String(Arc::new(
+            path.display().to_string(),
+        )))),
+        Err(e) => err_value(e),
+    })
 }
 
 /// `runtime.wasm()` — `Ok(#{ "bytes", "hash", "gzip", "br", "version" })`:

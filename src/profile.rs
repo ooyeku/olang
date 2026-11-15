@@ -359,6 +359,10 @@ fn registry() -> &'static Registry {
 }
 
 thread_local! {
+    /// Set once this thread's `LOCAL` is made, so the allocator may read
+    /// the stack (`peek_frames`) without ever being the one to make it:
+    /// making it locks the registry and allocates.
+    static HAS_LOCAL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static LOCAL: Arc<ThreadStack> = {
         let mut guard = registry().stacks.lock();
         let worker = guard.as_ref().map(|s| !s.is_empty()).unwrap_or(false);
@@ -368,8 +372,129 @@ thread_local! {
         }
         drop(guard);
         publish_for_crash(&stack);
+        let _ = HAS_LOCAL.try_with(|h| h.set(true));
         stack
     };
+}
+
+/// The bit `peek_frames` sets on a builtin's frame id.
+pub const PEEK_BUILTIN: u32 = 1 << 31;
+
+/// This thread's innermost olang frames, innermost first, into `out`:
+/// how many were written. A builtin's id carries `PEEK_BUILTIN`. Takes no
+/// lock and allocates nothing, so the allocator may call it (the heap
+/// profile names a sample's site with it); a thread whose stack was never
+/// made, or is gone, has none.
+pub fn peek_frames(out: &mut [u32]) -> usize {
+    if !HAS_LOCAL.try_with(|h| h.get()).unwrap_or(false) {
+        return 0;
+    }
+    LOCAL
+        .try_with(|stack| {
+            let depth = stack.depth.load(Ordering::Relaxed).min(MAX_FRAMES);
+            let mut n = 0;
+            for i in (0..depth).rev() {
+                if n == out.len() {
+                    break;
+                }
+                let id = stack.frames[i].load(Ordering::Relaxed);
+                let bits = stack.tiers[i].load(Ordering::Relaxed);
+                // the frames of one call on several tiers are one frame
+                if n > 0 && out[n - 1] & !PEEK_BUILTIN == id {
+                    continue;
+                }
+                out[n] = id | if bits & BUILTIN_BIT != 0 { PEEK_BUILTIN } else { 0 };
+                n += 1;
+            }
+            n
+        })
+        .unwrap_or(0)
+}
+
+/// A thread's innermost frames, to be carried onto a worker that runs part
+/// of its call (a parallel `map`'s chunks, a `par for`'s): without them a
+/// worker's samples and allocations name `<lambda>` with no caller.
+pub struct Inherited {
+    ids: [u32; INHERIT],
+    bits: [u8; INHERIT],
+    n: usize,
+}
+
+const INHERIT: usize = 8;
+
+/// This thread's innermost frames (up to eight), when frames are being
+/// recorded.
+pub fn inherit() -> Option<Inherited> {
+    if !enabled() {
+        return None;
+    }
+    LOCAL
+        .try_with(|stack| {
+            let depth = stack.depth.load(Ordering::Relaxed).min(MAX_FRAMES);
+            let from = depth.saturating_sub(INHERIT);
+            let mut out = Inherited {
+                ids: [0; INHERIT],
+                bits: [0; INHERIT],
+                n: 0,
+            };
+            for i in from..depth {
+                out.ids[out.n] = stack.frames[i].load(Ordering::Relaxed);
+                out.bits[out.n] = stack.tiers[i].load(Ordering::Relaxed) & !TAKEN_BIT;
+                out.n += 1;
+            }
+            out
+        })
+        .ok()
+        .filter(|i| i.n > 0)
+}
+
+/// Frames carried onto this thread until the guard drops.
+pub struct InheritGuard(usize);
+
+impl Inherited {
+    /// Push the frames on the calling (worker) thread. Not counted as
+    /// calls: the caller's thread made them.
+    pub fn enter(&self) -> InheritGuard {
+        let n = self.n;
+        let _ = LOCAL.try_with(|stack| {
+            let depth = stack.depth.load(Ordering::Relaxed);
+            for k in 0..n {
+                let at = depth + k;
+                if at < MAX_FRAMES {
+                    stack.frames[at].store(self.ids[k], Ordering::Relaxed);
+                    stack.tiers[at].store(self.bits[k], Ordering::Relaxed);
+                }
+            }
+            stack.depth.store(depth + n, Ordering::Relaxed);
+        });
+        InheritGuard(n)
+    }
+}
+
+impl Drop for InheritGuard {
+    fn drop(&mut self) {
+        let n = self.0;
+        let _ = LOCAL.try_with(|stack| {
+            let depth = stack.depth.load(Ordering::Relaxed);
+            stack.depth.store(depth.saturating_sub(n), Ordering::Relaxed);
+        });
+    }
+}
+
+/// Record frames (with their files) from now on, for the heap profile;
+/// `frames_release` undoes one.
+pub fn frames_retain() {
+    retain();
+}
+
+pub fn frames_release() {
+    release();
+}
+
+/// A frame id's function name and the file it was declared in (when
+/// frames carried files as it was first pushed).
+pub fn frame_key(id: u32) -> (String, Option<String>) {
+    key_of(id & !PEEK_BUILTIN)
 }
 
 /// True while a profiling run is active. One relaxed load — the guard
@@ -648,7 +773,7 @@ pub fn push_at(name: &str, file: Option<&str>, tier: Tier) -> bool {
         return false;
     }
     let anon = is_anonymous(name);
-    let file = if stats_on() || detail_on() || crash_on() {
+    let file = if stats_on() || detail_on() || crash_on() || crate::heap_profile::sampling() {
         file
     } else {
         None
@@ -1554,9 +1679,20 @@ fn json_of(
         let sb: u64 = b.1.iter().sum();
         sb.cmp(&sa).then(b.2.cmp(&a.2)).then(a.0.cmp(&b.0))
     });
+    // what each function allocated itself, from the heap profile (an
+    // estimate from its samples; `()` when it did not run)
+    let allocs = crate::heap_profile::ran().then(crate::heap_profile::by_innermost_frame);
+    let id_of: HashMap<usize, u32> = index.iter().map(|(id, i)| (*i, *id)).collect();
     let functions: Vec<serde_json::Value> = functions
         .into_iter()
         .map(|(i, s, t)| {
+            let alloc = allocs.as_ref().map(|a| {
+                id_of
+                    .get(&i)
+                    .and_then(|id| a.get(id))
+                    .copied()
+                    .unwrap_or((0, 0))
+            });
             let own: u64 = s.iter().sum();
             let tier = (0..4)
                 .max_by_key(|k| (s[*k], 3 - *k))
@@ -1570,6 +1706,8 @@ fn json_of(
                 "total_ms": round3(t as f64 * ms_per_sample),
                 "tiers": { "interpreter": s[0], "bytecode": s[1], "native": s[2], "builtin": s[3] },
                 "tier": tier,
+                "alloc_b": alloc.map(|a| a.0),
+                "allocs_n": alloc.map(|a| a.1),
             })
         })
         .collect();

@@ -6021,6 +6021,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 .clamp(1, items.len());
             if workers > 1 {
                 let chunk_size = items.len().div_ceil(workers);
+                let inherited = crate::profile::inherit();
+                let inherited = &inherited;
                 let joined: Vec<Result<(), (usize, InterpreterError)>> =
                     std::thread::scope(|scope| {
                         let handles: Vec<_> = items
@@ -6030,6 +6032,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                                 let mut worker = self.thread_safe_clone();
                                 scope.spawn(move || {
                                     let _live = crate::stdlib::chan::live_guard();
+                                    let _frames = inherited.as_ref().map(|f| f.enter());
                                     for (i, item) in chunk.iter().enumerate() {
                                         run_one(&mut worker, item.clone())
                                             .map_err(|e| (chunk_idx * chunk_size + i, e))?;

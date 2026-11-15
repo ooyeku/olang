@@ -269,6 +269,33 @@ enum Commands {
         source: String,
     },
 
+    /// What holds the heap, by allocation site: show a snapshot, diff two,
+    /// or run a program with the heap profile on
+    #[command(after_help = "Snapshots come from runtime.heap_write(path), or from OLANG_HEAP=1 with OLANG_HEAP_DIR=dir (one every OLANG_HEAP_EVERY seconds).\n\n  olang memory run app.ol          run it, then show what it holds by site\n  olang memory show snap.json      what one snapshot holds\n  olang memory diff a.json b.json  what grew from a to b\n  olang memory diff DIR            what grew from a folder's first snapshot to its newest")]
+    Memory {
+        /// `run`, `show` or `diff`
+        #[arg(value_name = "ACTION")]
+        action: String,
+        /// A program (run), a snapshot (show), two snapshots or a folder
+        /// of them (diff); then the program's arguments
+        #[arg(
+            value_name = "ARGS",
+            trailing_var_arg = true,
+            allow_hyphen_values = true
+        )]
+        args: Vec<String>,
+        /// How many sites to list (default 25)
+        #[arg(long, value_name = "N", default_value_t = 25)]
+        top: usize,
+        /// `text` or `json`
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        format: String,
+        /// With `run`: bytes between samples (default 512k; smaller sees
+        /// smaller sites and costs more)
+        #[arg(long, value_name = "BYTES")]
+        rate: Option<String>,
+    },
+
     /// Run a program under the sampling profiler
     Profile {
         /// Program to execute
@@ -734,6 +761,9 @@ fn run() -> i32 {
     // crash reports armed from the outside (`OLANG_CRASH_DIR`)
     #[cfg(unix)]
     olang::crash::install_from_env();
+    // the heap profile from the start (`OLANG_HEAP`), before the program
+    // loads, so its frames and its load are seen
+    olang::heap_profile::start_from_env();
     // The main interpreter thread joins the stall detector's census:
     // with every olang-running thread counted, "all counted threads
     // parked" proves a deadlock (src/stdlib/chan.rs).
@@ -1050,6 +1080,11 @@ fn run() -> i32 {
                 .unwrap_or(file.clone())
                 .display()
                 .to_string();
+            // what each function allocates, by the heap profile's samples
+            // (the functions' `alloc_b`, `allocs_n`: OL-324)
+            if !olang::heap_profile::sampling() {
+                let _ = olang::heap_profile::start(olang::heap_profile::PROFILE_RATE);
+            }
             olang::profile_live::start(olang::profile_live::LiveSpec {
                 dir: live.map(|d| std::path::absolute(&d).unwrap_or(d)),
                 every_ms: live_every,
@@ -1121,6 +1156,53 @@ fn run() -> i32 {
             let code = run_program(&cli, file, args, record, logger);
             olang::profile::exit_report(code);
             code
+        }
+
+        Some(Commands::Memory {
+            action,
+            args,
+            top,
+            format,
+            rate,
+        }) => {
+            if action == "run" {
+                let Some((file, rest)) = args.split_first() else {
+                    eprintln!("olang memory run: which program? `olang memory run app.ol`");
+                    return 2;
+                };
+                let rate = match rate.as_deref().map(olang::heap_profile::parse_bytes) {
+                    None => olang::heap_profile::DEFAULT_RATE,
+                    Some(Some(r)) => r,
+                    Some(None) => {
+                        eprintln!("olang memory: --rate is bytes between samples (512k, 64k, 4096)");
+                        return 2;
+                    }
+                };
+                if !olang::heap_profile::sampling() {
+                    let _ = olang::heap_profile::start(rate);
+                }
+                let json = format == "json";
+                olang::heap_profile::at_program_end(Box::new(move || {
+                    use std::io::Write as _;
+                    let snap = olang::heap_profile::snapshot();
+                    let mut so = std::io::stdout().lock();
+                    if json {
+                        let _ = writeln!(so, "{}", serde_json::to_string(&snap).unwrap_or_default());
+                    } else {
+                        let _ = write!(so, "\n{}", olang::heap_profile::show_text(&snap, top));
+                    }
+                    let _ = so.flush();
+                }));
+                // a program that ends with `os.exit` never returns from its body
+                olang::profile::on_exit_report(Box::new(|_code| {
+                    olang::heap_profile::program_ended();
+                }));
+                let record = cli.record.clone();
+                let code = run_program(&cli, PathBuf::from(file), rest.to_vec(), record, logger);
+                olang::profile::exit_report(code);
+                return code;
+            }
+            olang::heap_profile::cli(&action, &args, top, &format)
         }
 
         Some(Commands::Doctor { path }) => {
@@ -4839,6 +4921,8 @@ fn execute_program(
     // now, before anything below prints — an uncaught error must land on
     // the main screen in cooked mode, not in a vanished alternate screen.
     olang::stdlib::tty::restore_terminal();
+    // `olang memory run`: what the program holds, while it still holds it
+    olang::heap_profile::program_ended();
     match outcome {
         Ok(result) => {
             if verbose {

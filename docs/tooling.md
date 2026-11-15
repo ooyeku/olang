@@ -1630,7 +1630,7 @@ program's own output), the counts behind the report:
 |---|---|
 | `frames` | each function seen: `name`, `file`, `line` (its `fn`; a lambda's, its enclosing function's), `lambda`, `builtin` |
 | `stacks` | each distinct path: `f` (frame indices, root first), `t` (each frame's tier: 0 tree-walker, 1 bytecode, 2 native, 3 builtin — a promoted call's frames and recursion folded into one carrying the innermost tier), `n` (samples) |
-| `functions` | per frame: `self` and `total` samples and ms, `tiers` (self samples by tier), `tier` (the one that ran it most) |
+| `functions` | per frame: `self` and `total` samples and ms, `tiers` (self samples by tier), `tier` (the one that ran it most), `alloc_b` and `allocs_n` (the bytes and allocations it made itself, the innermost frame at each: estimates from the heap profile, which a JSON profile runs at one sample per 64 KiB; `()` when it did not run) |
 | `folded` | the stacks as folded lines (`a;b;c 12`), for any flame-graph tool |
 | `tiers`, `samples`, `ticks`, `idle`, `blocked`, `worker_samples`, `interval_us`, `elapsed_ms`, `ms_per_sample` | the totals |
 | `alloc_b`, `allocs_n` | the bytes asked for and the allocations made, every thread's, since the profile began: exact |
@@ -1678,6 +1678,78 @@ olangProfile.stop()       // the final report, and the instrumentation off
 The rows say which view helper a repaint spends its time in and on
 which tier it ran — the answer a wasm-level profiler cannot give,
 since it sees Rust symbols, not olang functions.
+
+## `olang memory`
+
+What holds the heap, by the site that allocated it, and what grew
+between two moments: the [heap profile](stdlib.md#what-holds-the-heap-by-site)
+as a command.
+
+```bash
+olang memory run app.ol                 # run it, then: what it holds by site, and what each site allocated
+OLANG_HEAP=1 OLANG_HEAP_DIR=heap/ olang app.ol   # a long run: a snapshot every 5 minutes
+olang memory diff heap/                 # what grew from the first snapshot to the newest
+olang memory diff 0900.json 1700.json   # or between any two
+olang memory show 1700.json             # what one holds
+```
+
+`run` runs the program as `olang run` would, with the heap profile on
+from its start (`--rate 64k` for more samples), and when it ends prints
+the heap's split and the sites by live bytes:
+
+```text
+heap 61.2 MB: program 3.1 MB, code 2.4 MB, values 55.7 MB
+sampled since start of sampling: 58.0 MB live in 118 samples (one per 512 KB allocated)
+
+      live    blocks  allocated  scope   site
+   41.5 MB    410010    41.5 MB  values  remember via map_set  service.ol:12
+    9.0 MB     90012    1.20 GB  values  handle via <lambda in handle> < map  service.ol:20
+```
+
+`allocated` is what the site asked for in all, freed or not: a site
+that allocates a gigabyte and keeps 9 MB churns; one whose live bytes
+equal what it allocated keeps everything. `diff` lists the sites by how
+much they grew (`grew`, then the live bytes now, the blocks added, and
+what was allocated there in between), then the five that shrank most.
+Snapshots come from `runtime.heap_write(path)`, or from a run with
+`OLANG_HEAP=1` and `OLANG_HEAP_DIR=dir`: `dir/heap-<pid>-<unix ms>.json`
+every `OLANG_HEAP_EVERY` seconds (300, fractions allowed), the first and
+the newest `OLANG_HEAP_KEEP - 1` kept (100). `diff dir` compares the
+folder's newest process's first and newest. `--format json` prints the
+snapshot or the diff as `runtime.heap()` and `runtime.heap_diff` answer
+them; `--top N` lists N sites (25).
+
+**What a site is.** The innermost olang function that made the
+allocation, its file and the line it is declared on, and the frames
+around it (`via`, inner to outer). A builtin's allocations are its
+caller's site with the builtin in the path (`map`, `map_set`). The scope
+is `runtime.memory()`'s split: `values` what the program holds, `program`
+loading it, `code` the runtime compiling it. An allocation on a thread
+running no olang code (a window's renderer, the runtime's own threads),
+or by the program's top-level statements, is `(top level, or no olang
+frame)`; a top-level loop the tier compiled on the fly is `<hot loop>`.
+A parallel `map` or `par for` carries its caller's frames onto its
+workers, so their allocations are the caller's. Frames are recorded from the moment the profile
+starts, so a function already running then is missing from its own
+sites' paths: start it with the program for a whole picture.
+
+**Overhead**, measured on an Apple M5 Pro, median of 11 runs each,
+interleaved, against the same commit without the profile (the machine
+was busy, load 5 to 10, so a few percent is noise):
+
+| run | profile off | frames only (crash reports armed) | `OLANG_HEAP=1` | `OLANG_HEAP=64k` |
+|---|---|---|---|---|
+| 24 M allocations a second (records, strings, lists) | +0 to 4% | +2 to 5% | +6 to 13% | +6 to 13% |
+| a tree-walker-heavy run of small calls | +0 to 2% | +13 to 19% | +13 to 15% | +14 to 17% |
+| compiled arithmetic (native code) | none | none | none | none |
+
+Off, an allocation pays a relaxed load and a free nothing. Most of the
+cost on is recording olang frames, the profiler's shadow stack, which a
+program that arms crash reports (`OLANG_CRASH_DIR`, `runtime.on_crash`)
+already pays; on top of that, sampling costs about 1% where allocations
+are moderate and up to 8% at 24 million a second, almost all of it the
+lookup each free makes. A program that spends its time computing, not
+allocating, sees none.
 
 ## `olang build`
 
@@ -2361,6 +2433,8 @@ nothing should depend on them.
 | `OLANG_ODS_TIMING` | no | `1`: per-phase timings from the ods CSV reader and group-by. |
 | `OLANG_FIX_DEBUG` | no | `<dir>`: when `olang fix` leaves a file because its rewrite would read back differently, write the two trees as read back (`before.json`, `after.json`) and the rewrite (`after.ol`) into `dir`. |
 | `OLANG_KEYS_STATS` | no | The checker's `.key` read coverage, on stderr. |
+| `OLANG_HEAP` | no | `1`, or a rate in bytes (`64k`, `1m`): the heap profile from the start, one sample per that many bytes allocated (512 KiB) — [`runtime.heap()`](stdlib.md#what-holds-the-heap-by-site), [`olang memory`](#olang-memory). |
+| `OLANG_HEAP_DIR`, `OLANG_HEAP_EVERY`, `OLANG_HEAP_KEEP` | no | With `OLANG_HEAP`: write a heap snapshot to `<dir>/heap-<pid>-<unix ms>.json` every `OLANG_HEAP_EVERY` seconds (300), keeping the first and the newest (100 in all). |
 | `OLANG_ALLOC_STATS` | no | `1`: the process's allocation count and bytes asked for, on stderr at exit. |
 | `OLANG_ALLOC_TRACE` | no | `<bytes>`: the backtrace of every allocation at least that large, on stderr (an `alloc-count` build). |
 | `OLANG_DEBUG_*` | no | Engine tracing for one subsystem each (closures, modules, liveness, higher-order calls, auto-parallelism). |

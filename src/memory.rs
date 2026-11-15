@@ -30,6 +30,10 @@
 //! they asked for, ever: `runtime.memory().allocations` and `allocated`,
 //! and a profile's `allocs_n`/`alloc_b` (OL-324). A load and a store on
 //! the slot's own line.
+//!
+//! Where an allocation was made is the heap profile's
+//! (src/heap_profile.rs): the hooks below hand it each allocation while
+//! it samples, and each free while any sampled block is live.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -157,21 +161,41 @@ unsafe impl GlobalAlloc for Counting {
         count_alloc(layout.size(), layout.size() as i64);
         #[cfg(feature = "alloc-count")]
         trace_large(layout.size());
-        unsafe { System.alloc(layout) }
+        let p = unsafe { System.alloc(layout) };
+        if crate::heap_profile::sampling() {
+            crate::heap_profile::on_alloc(p, layout.size());
+        }
+        p
     }
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         count_alloc(layout.size(), layout.size() as i64);
-        unsafe { System.alloc_zeroed(layout) }
+        let p = unsafe { System.alloc_zeroed(layout) };
+        if crate::heap_profile::sampling() {
+            crate::heap_profile::on_alloc(p, layout.size());
+        }
+        p
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         count(-(layout.size() as i64));
+        if crate::heap_profile::has_samples() {
+            crate::heap_profile::on_free(ptr);
+        }
         unsafe { System.dealloc(ptr, layout) }
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         count_alloc(new_size, new_size as i64 - layout.size() as i64);
         #[cfg(feature = "alloc-count")]
         trace_large(new_size);
-        unsafe { System.realloc(ptr, layout, new_size) }
+        // a sampled block that moves or grows is sampled afresh: the old
+        // one is let go of, the new size drawn for like any allocation
+        if crate::heap_profile::has_samples() {
+            crate::heap_profile::on_free(ptr);
+        }
+        let p = unsafe { System.realloc(ptr, layout, new_size) };
+        if crate::heap_profile::sampling() {
+            crate::heap_profile::on_alloc(p, new_size);
+        }
+        p
     }
 }
 
@@ -196,6 +220,20 @@ pub fn allocation_stats() -> (u64, u64) {
             b + s.bytes.load(Ordering::Relaxed),
         )
     })
+}
+
+/// What the running thread's allocation is part of, for the heap
+/// profile: 0 the program's values, 1 loading the program, 2 the
+/// runtime's code. Reads two const thread-locals; no allocation.
+#[inline]
+pub(crate) fn scope_now() -> u8 {
+    if LOAD_DEPTH.try_with(|d| d.get() > 0).unwrap_or(false) {
+        1
+    } else if CODE_DEPTH.try_with(|d| d.get() > 0).unwrap_or(false) {
+        2
+    } else {
+        0
+    }
 }
 
 /// Counts the heap's growth across an outermost load toward `program`.
