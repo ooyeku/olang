@@ -187,9 +187,9 @@ println(task.interrupt(done))
         out,
         concat!(
             "true\n",
-            "Err(\"Runtime error: interrupted: restart\")\n",
+            "Err(\"interrupted: restart\")\n",
             "quick true\n",
-            "Err(\"Runtime error: interrupted\")\n",
+            "Err(\"interrupted\")\n",
             "false\n"
         )
     );
@@ -228,10 +228,10 @@ proc.kill(p)
 "#
         ),
     );
-    let stopped = "Err(\"Runtime error: interrupted: stop\")\n".repeat(9);
+    let stopped = "Err(\"interrupted: stop\")\n".repeat(9);
     assert_eq!(
         out,
-        format!("{stopped}quick true\nErr(\"Runtime error: interrupted\")\n")
+        format!("{stopped}quick true\nErr(\"interrupted\")\n")
     );
 }
 
@@ -275,7 +275,7 @@ println(task.join(t))
     );
     assert_eq!(
         out,
-        "true\n[\"interrupting\"]\nErr(\"Runtime error: interrupted: go\")\n"
+        "true\n[\"interrupting\"]\nErr(\"interrupted: go\")\n"
     );
 }
 

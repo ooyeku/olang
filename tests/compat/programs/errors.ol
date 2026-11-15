@@ -32,9 +32,8 @@ fn risky(n) = if n > 2 => 1 + "not a number" else => n * 10
 let jobs = [spawn risky(1), spawn risky(9)]
 println(jobs |> map((j) => match task.join(j) { Ok(v) => v, Err(_) => -1 }))
 let raised = spawn raise("from a task")
-// (stability.md: task.join hands raise's message back as given; OL-627 tracks
-// the "Runtime error: " prefix it carries today, so only the end is pinned)
-println(match task.join(raised) { Err(e) => str.ends_with(e, "from a task"), _ => false })
+// stability.md: task.join hands raise's message back as given (OL-627)
+println(match task.join(raised) { Err(e) => e == "from a task", _ => false })
 
 // the sentinels are contract
 let c = chan.new()

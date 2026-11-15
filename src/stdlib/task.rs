@@ -151,7 +151,11 @@ fn raise(message: String) -> InterpreterError {
 pub(crate) fn settle(outcome: Result<Value, String>) -> Value {
     match outcome {
         Ok(v) => Value::Ok(Box::new(v)),
-        Err(e) => Value::Err(Box::new(Value::String(Arc::new(e)))),
+        // the message as `raise` gave it, as `attempt` hands it back
+        // (docs/stability.md; OL-627): not the reporter's "Runtime error: "
+        Err(e) => Value::Err(Box::new(Value::String(Arc::new(
+            crate::builtin::strip_error_prefixes(&e),
+        )))),
     }
 }
 
