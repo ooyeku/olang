@@ -1,5 +1,5 @@
 // window.ol — a window with a text field, a button and a list, drawn by
-// olang's own window engine (`gui`, the layer under Loom) and laid out by
+// olang's own window engine (`gui`, the layer under a UI framework) and laid out by
 // hand.
 //
 //   olang examples/gui/window.ol                     open the window
@@ -30,7 +30,7 @@ let w = if headless_png != "" => gui.headless(#{ "size": (520, 380), "scale": 2 
 let events = gui.events()
 
 // ── the model ───────────────────────────────────────────────────────
-// One map, changed only by `update`, drawn only by `view` — Loom's
+// One map, changed only by `update`, drawn only by `view` — a UI framework's
 // shape, written by hand.
 let initial = #{
     "name": "", "rev": 0, "at": 0, "width": 520.0, "height": 380.0,

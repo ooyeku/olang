@@ -250,7 +250,7 @@ fn browser_modules() = ["lib/html.ol", "lib/forms.ol", "lib/ui.ol",
                         "lib/state.ol", "lib/view.ol", "lib/api.ol",
                         "lib/store.ol"]
 
-/// The first path segment of a `use` line: "shuttle" for `use shuttle {
+/// The first path segment of a `use` line: "app" for `use app {
 /// msg }`, "lib" for `use lib.store`.
 fn use_root(t) = {
     let rest = str.trim(str.substring(t, 4, str.length(t)))

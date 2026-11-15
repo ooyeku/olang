@@ -7,13 +7,13 @@
 #
 # Stages (all of them when none is named, in this order):
 #   build    cargo build --release -j 4 (olang's lib and bin)
-#   loom     Loom's tools/verify.sh with OLANG = the Linux binary
-#   pty      Loom's terminal face in a real pseudo-terminal (tools/pty_check.py)
-#   app      olang-track/desktop's tools/verify.sh, same binary
+#   loom     a UI framework's tools/verify.sh with OLANG = the Linux binary
+#   pty      the UI framework's terminal face in a real pseudo-terminal (tools/pty_check.py)
+#   app      a desktop app's tools/verify.sh, same binary
 #   guitest  cargo test -j 4 --test gui_test (debug)
-#   heddle   Heddle's suite (olang test)
-#   baseline Loom's benchmark gate re-recorded for Linux
-#            (loom/tools/bench_baseline.linux.json; not in the default run)
+#   heddle   a TUI framework's suite (olang test)
+#   baseline the UI framework's benchmark gate re-recorded for Linux
+#            (its tools/bench_baseline.linux.json; not in the default run)
 #   shell    an interactive shell in the same container setup
 #
 # The sibling repos are found next to olang (OLANG_WORLD, default the
@@ -39,8 +39,8 @@ mem="${LINUX_CHECK_MEM:-8g}"
 # The image: Rust's official one plus what olang's Linux build links or
 # loads (the list .github/workflows install: OpenSSL, fontconfig,
 # xkbcommon, Wayland, and udev and ALSA for the gamepad and audio
-# features the default build has), python3 for Loom's pty check, procps (pgrep) for
-# Heddle's process tests, and Mesa's software Vulkan (lavapipe) so
+# features the default build has), python3 for the UI framework's pty check, procps (pgrep) for
+# the TUI framework's process tests, and Mesa's software Vulkan (lavapipe) so
 # gui_test's GPU-against-software comparisons run rather than skip. The
 # image is built once; LINUX_CHECK_REBUILD_IMAGE=1 builds it again.
 if [ -z "$(docker images -q "$image" 2>/dev/null)" ] || [ "${LINUX_CHECK_REBUILD_IMAGE:-0}" = 1 ]; then

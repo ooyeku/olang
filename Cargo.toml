@@ -33,12 +33,12 @@ full = ["regex-module", "rsa-crypto"]
 alloc-count = []
 regex-module = ["dep:regex"]
 rsa-crypto = ["dep:rsa"]
-# `gui`: windows drawn by olang (Loom's engine, src/stdlib/gui/): the
+# `gui`: windows drawn by olang (a UI framework's engine, src/stdlib/gui/): the
 # platform's windows and events (winit), the GPU renderer (wgpu), the
 # software renderer and reference (tiny-skia), text (parley), the
 # platform accessibility APIs (AccessKit), the clipboard, dialogs, and on
 # macOS the menu bar. Native only; on in the released binaries.
-# `toad`: the engine under the Toad game framework (src/stdlib/toad/):
+# `toad`: the engine under a game framework (src/stdlib/toad/):
 # kernels compiled from olang functions and swarms stepped on the CPU,
 # in any build (the browser's too). With `gui` as well, show swarms and
 # frames run on `gui`'s wgpu device.
@@ -338,7 +338,7 @@ fontique = { version = "0.11", features = ["fontconfig-dlopen"], optional = true
 [target.'cfg(windows)'.dependencies]
 crossterm = { version = "0.29", default-features = false, features = ["events", "windows", "bracketed-paste"] }
 
-# The native menu bar (macOS only: elsewhere Loom draws the window's menu).
+# The native menu bar (macOS only: elsewhere a UI framework draws the window's menu).
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "0.21", default-features = false, optional = true }
 # The system's appearance, contrast, motion, transparency, and accent
@@ -349,7 +349,7 @@ block2 = { version = "0.6", optional = true }
 # A closed window's teardown in an autorelease pool of its own.
 objc2 = { version = "0.6", optional = true }
 # Shared pictures (gui/shared.rs): a frame drawn in one process shown by
-# another's window, on IOSurfaces (Studio's canvas runs a Toad game so).
+# another's window, on IOSurfaces (an editor's canvas runs a game so).
 objc2-metal = { version = "0.3", default-features = false, features = ["std", "MTLDevice", "MTLTexture", "MTLResource", "MTLAllocation", "MTLPixelFormat", "MTLTypes", "objc2-io-surface"], optional = true }
 objc2-io-surface = { version = "0.3", default-features = false, features = ["std", "IOSurfaceRef", "IOSurfaceTypes", "objc2-core-foundation", "libc"], optional = true }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFBase", "CFDictionary", "CFNumber", "CFString"], optional = true }

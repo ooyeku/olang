@@ -1,5 +1,5 @@
 // The `peg` budget (plans/PEG.md, G2; plans/PEG-NATIVE.md): a JSON
-// grammar against the built-in `json.parse`, and olang-track's query
+// grammar against the built-in `json.parse`, and an issue tracker's query
 // bar against its hand-written parser, on the same machine in the same
 // run. `olang benchmarks/peg.ol`.
 //
@@ -7,13 +7,13 @@
 // `json.parse` (native Rust); `accepts` (the grammar recognising the
 // text, no tree); `parse` (the tree, every node a map with its kind,
 // text, span, children and labels); `parse` with actions (the values
-// `json.parse` gives, checked equal). The query bar is olang-track's
+// `json.parse` gives, checked equal). The query bar is an issue tracker's
 // grammar over four typical queries, in microseconds a query. Each is
 // measured on the native matcher and on the olang engine it replaced
 // (`#{ "engine": "olang" }`), and set against its budget.
 //
-// olang-track's hand-written parser (tokenizer and the meaning of the
-// clauses, packages/olang-track-query) is in its own repository; its
+// the tracker's hand-written parser (tokenizer and the meaning of the
+// clauses) is in its own repository; its
 // figure, measured on the machine that wrote this file in the same
 // harness, is HAND below.
 //
@@ -24,9 +24,9 @@
 //   peg values        178 ms  (112×)         44 ms   (27×)
 //   query, accepts    27 µs                  1.3 µs
 //   query, tree       77 µs   (1.5×)         8.5 µs  (0.17×)   1× HAND
-//   query, tree + olang-track's meaning of it (peg_test.ol's port):
+//   query, tree + the tracker's meaning of it (peg_test.ol's port):
 //                     139 µs  (2.8×)         51 µs   (1.0×)
-//   HAND (olang-track's own parse): 50 µs
+//   HAND (the tracker's own parse): 50 µs
 //
 // (Apple M-series, olang 1.0.0-rc.6 release build, best of several
 // runs; a tree's time counts freeing it.) The tree misses its budget:
