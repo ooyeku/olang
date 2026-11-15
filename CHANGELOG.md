@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Four names from rc.8 and rc.9, settled before 1.0** (the name
+  review, OL-555). With no deprecated aliases:
+  - `weak.alive(w)` is `weak.is_alive(w)`, a question as `cancel.is_set`
+    and `fs.is_dir` are.
+  - `crypto.ed25519_keypair()` is `crypto.ed25519_key_pair()`, as
+    `generate_key_pair` and the `KeyPair` it answers spell it.
+  - `str.fold(s)` is `str.fold_case(s)`, so it does not read as the
+    `fold` every list has.
+  - `olang inspect --format json`'s `build_commit` is `olang_commit`,
+    beside `olang`, the version it names.
+- **Every module has a tier.** `toad` is Experimental, as `gui` is. The
+  modules written in olang mark each shared item `/// @stable`, and
+  `peg`'s `/// @experimental`, as docs/stability.md tiers them.
+
 ## [1.0.0-rc.9] - 2026-11-11
 
 ### Added

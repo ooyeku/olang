@@ -27,23 +27,29 @@
 // without rebinding — they write nothing.
 
 // A new, empty heap.
+/// @stable
 share fn new() = [0]
 
 // The number of pairs in the heap.
+/// @stable
 share fn size(h) = h[0]
 
 // True when the heap holds nothing. On an empty heap `top_prio` and
 // `top_item` answer `()` and `pop` answers the heap unchanged.
+/// @stable
 share fn is_empty(h) = h[0] == 0
 
 // The smallest priority in the heap, without removing it; `()` when empty.
+/// @stable
 share fn top_prio(h) = if h[0] == 0 => () else => h[1]
 
 // The item paired with the smallest priority, without removing it; `()`
 // when empty.
+/// @stable
 share fn top_item(h) = if h[0] == 0 => () else => h[2]
 
 // The heap with (prio, item) added: `h = heap.push(h, prio, item)`.
+/// @stable
 share fn push(h, prio, item) = {
     let n = h[0]
     h = col.set(h, 0, n + 1)
@@ -68,6 +74,7 @@ share fn push(h, prio, item) = {
 
 // The heap with its smallest pair removed: read `top_prio`/`top_item`
 // first, then `h = heap.pop(h)`. An empty heap is answered unchanged.
+/// @stable
 share fn pop(h) = {
     if h[0] == 0 => { return h }
     let n = h[0] - 1
@@ -92,6 +99,7 @@ share fn pop(h) = {
 
 // A heap built from parallel lists of priorities and items — O(n) sifts
 // against O(n log n) repeated pushes.
+/// @stable
 share fn from_lists(prios, items) = {
     let mut h = [len(prios)]
     for k in range(0, len(prios)) {

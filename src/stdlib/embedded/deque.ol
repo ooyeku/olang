@@ -20,27 +20,33 @@
 // `pop_back` answer the deque unchanged, the same contract as `heap`.
 
 // A new, empty deque (with a small initial ring).
+/// @stable
 share fn new() = [0, 0, 4, (), (), (), ()]
 
 // The number of elements.
+/// @stable
 share fn size(q) = q[1]
 
 // True when the deque holds nothing.
+/// @stable
 share fn is_empty(q) = q[1] == 0
 
 // The front element, without removing it; `()` when empty.
+/// @stable
 share fn front(q) = {
     if q[1] == 0 => { () }
     else => { q[3 + q[0]] }
 }
 
 // The back element, without removing it; `()` when empty.
+/// @stable
 share fn back(q) = {
     if q[1] == 0 => { () }
     else => { q[3 + (q[0] + q[1] - 1) % q[2]] }
 }
 
 // The deque with `x` appended at the back: `q = deque.push_back(q, x)`.
+/// @stable
 share fn push_back(q, x) = {
     q = grow_if_full(q)
     let at = (q[0] + q[1]) % q[2]
@@ -50,6 +56,7 @@ share fn push_back(q, x) = {
 }
 
 // The deque with `x` prepended at the front: `q = deque.push_front(q, x)`.
+/// @stable
 share fn push_front(q, x) = {
     q = grow_if_full(q)
     let at = (q[0] + q[2] - 1) % q[2]
@@ -61,6 +68,7 @@ share fn push_front(q, x) = {
 
 // The deque with its front element removed: read `front` first, then
 // `q = deque.pop_front(q)`. An empty deque is answered unchanged.
+/// @stable
 share fn pop_front(q) = {
     if q[1] == 0 => { return q }
     let head = q[0]
@@ -72,6 +80,7 @@ share fn pop_front(q) = {
 
 // The deque with its back element removed: read `back` first, then
 // `q = deque.pop_back(q)`. An empty deque is answered unchanged.
+/// @stable
 share fn pop_back(q) = {
     if q[1] == 0 => { return q }
     let at = (q[0] + q[1] - 1) % q[2]
@@ -81,6 +90,7 @@ share fn pop_back(q) = {
 }
 
 // The elements front-to-back, as a plain list.
+/// @stable
 share fn to_list(q) = {
     let mut out = []
     for k in range(0, q[1]) {

@@ -202,7 +202,7 @@ fn weak_of<'a>(v: &'a Value, who: &str) -> Result<&'a WeakObject, String> {
 
 pub fn create_weak_module() -> Value {
     let mut module = crate::ast::ValueMap::default();
-    for (name, arity) in [("new", 1), ("get", 1), ("alive", 1)] {
+    for (name, arity) in [("new", 1), ("get", 1), ("is_alive", 1)] {
         module.insert(
             name.to_string(),
             Value::Builtin(crate::ast::BuiltinFunction {
@@ -221,8 +221,8 @@ pub fn call_weak_function(name: &str, args: Vec<Value>) -> Result<Value, String>
     match (name, args.as_slice()) {
         ("new", [v]) => Ok(Value::Native(NativeHandle::new(WeakObject(referent_of(v))))),
         ("get", [w]) => weak_of(w, "weak.get")?.get_ast(),
-        ("alive", [w]) => Ok(Value::Boolean(weak_of(w, "weak.alive")?.alive())),
-        ("new" | "get" | "alive", _) => Err(format!(
+        ("is_alive", [w]) => Ok(Value::Boolean(weak_of(w, "weak.is_alive")?.alive())),
+        ("new" | "get" | "is_alive", _) => Err(format!(
             "weak.{name} expects one argument, got {}",
             args.len()
         )),

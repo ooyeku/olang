@@ -1040,7 +1040,7 @@ and a negative position raises. `str.char_at(s, i)` raises on a negative
 each end (`split("abc", "")` is `["", "a", "b", "c", ""]`). Strings are
 compared and searched as their code points, so `"é"` (one code point)
 and `"e\u{301}"` (two) are different strings. Normalize both with
-`str.normalize(s, "nfc")`, or `str.fold` for a case-insensitive
+`str.normalize(s, "nfc")`, or `str.fold_case` for a case-insensitive
 comparison, when they should match. `str.to_upper` and `str.to_lower` apply Unicode's
 full case mapping, which may change the length (`str.to_upper("straße")`
 is `"STRASSE"`), with no locale (no Turkish dotless i).

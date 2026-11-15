@@ -78,7 +78,7 @@ fn the_rfc_8032_vectors_sign_and_verify() {
 #[test]
 fn a_new_pair_signs_and_verifies_strings_and_bytes() {
     let out = run(r#"
-let keys = unwrap(crypto.ed25519_keypair())
+let keys = unwrap(crypto.ed25519_key_pair())
 let sig = unwrap(crypto.ed25519_sign("release 1.2.0", keys.private_key))
 let raw = bytes.from_string("release 1.2.0")
 [

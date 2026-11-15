@@ -1699,6 +1699,7 @@ fn inline_tokens(e, byname, depth) = {
 // "all" or "none") and, for testing peg itself, `engine`: "native" (the
 // default) or "olang", the reference engine that writes the grammar out
 // as olang functions — slower, and kept to check the native one against.
+/// @experimental
 share fn grammar(text, actions = #{}, options = #{}) = {
     let (rules, cs) = read_rules(text)?
     let byname = validate(rules, cs, actions, options.start)?
@@ -2004,11 +2005,13 @@ fn finish(input, cs, root, actions) = {
 
 // Parse `input` with a grammar: `g.parse(input)`, or with options
 // (`start`, `recover`) `g.parse_with(input, opts)`.
+/// @experimental
 share fn parse(g, input, opts = #{}) = g.parse_with(input, opts)
 
 // A tree as indented text, one node a line: its kind, the labels that
 // name it, its text when it has no children, and the fields that are
 // not nodes (a precedence node's `op`). For tests and for looking.
+/// @experimental
 share fn dump(tree) = join(dump_lines(tree, "", ""), "\n")
 
 fn is_node(v) = typeof(v) != "List" && typeof(v) != "String" && v != () && map_has_key(v, "kind") && map_has_key(v, "span")
@@ -2206,6 +2209,7 @@ fn check_rules(P) = {
 // earlier one hides, repetitions of what can match nothing, and left
 // recursion that can never get started. `[#{ "kind", "rule",
 // "message" }]`, empty when there are none. Takes a grammar or its text.
+/// @experimental
 share fn check(grammar) = {
     let g = if typeof(grammar) == "String" => match grammar_of_text(grammar) { Ok(x) => x, Err(e) => raise(e.message) } else => grammar
     g.check()
@@ -2332,6 +2336,7 @@ fn examples_of(P, n, seed) = {
 // Up to `n` different texts the grammar accepts, generated from its
 // rules with a seeded generator (the same seed, the same texts): for
 // fuzzing what consumes the trees. Takes a grammar or its text.
+/// @experimental
 share fn examples(grammar, n, seed = 1) = {
     let g = if typeof(grammar) == "String" => match grammar_of_text(grammar) { Ok(x) => x, Err(e) => raise(e.message) } else => grammar
     g.examples(n, seed)

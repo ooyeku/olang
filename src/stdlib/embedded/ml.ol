@@ -37,19 +37,23 @@ fn opts(m) = {
 
 /// `#{ train, test }`: a seeded split, `test` a fraction or a row count,
 /// stratified by a column's classes when `stratify` names one.
+/// @stable
 share fn split(data, test = 0.25, stratify = (), shuffle = true, seed = ()) =
     learn.split(data, opts(#{ "test": test, "stratify": stratify, "shuffle": shuffle, "seed": seed }))
 
 /// An Int Series of fold ids (0..k) for the rows of `data` (a Frame or a
 /// row count), stratified when `stratify` names a column.
+/// @stable
 share fn kfold(data, k = 5, stratify = (), shuffle = true, seed = ()) =
     learn.kfold(data, k, opts(#{ "stratify": stratify, "shuffle": shuffle, "seed": seed }))
 
 /// The k folds as a list of `#{ fold, train, test }` Frames.
+/// @stable
 share fn folds(data, k = 5, stratify = (), shuffle = true, seed = ()) =
     learn.folds(data, k, opts(#{ "stratify": stratify, "shuffle": shuffle, "seed": seed }))
 
 /// Rolling-origin splits for ordered data: a list of `#{ train, test }`.
+/// @stable
 share fn time_splits(data, n_splits = 5, test_size = (), gap = 0, max_train = ()) =
     learn.time_splits(data, n_splits, opts(#{ "test_size": test_size, "gap": gap, "max_train": max_train }))
 
@@ -57,52 +61,63 @@ share fn time_splits(data, n_splits = 5, test_size = (), gap = 0, max_train = ()
 
 /// A scaler fitted on `data` (`"standard"`, `"minmax"` or `"robust"`);
 /// apply it to any frame with `ml.transform`.
+/// @stable
 share fn scaler(data, cols = (), method = "standard") =
     learn.scaler(data, cols, #{ "method": method })
 
 /// A one-hot encoder of String columns (all of them when `cols` is ()).
+/// @stable
 share fn one_hot(data, cols = (), drop_first = false) =
     learn.one_hot(data, cols, #{ "drop_first": drop_first })
 
 /// An imputer: `"mean"`, `"median"`, `"most_frequent"` or `"constant"`
 /// (with `fill`).
+/// @stable
 share fn imputer(data, cols = (), strategy = "mean", fill = ()) =
     learn.imputer(data, cols, opts(#{ "strategy": strategy, "fill": fill }))
 
 /// Apply a fitted scaler, encoder, imputer or PCA to a frame.
+/// @stable
 share fn transform(model, data) = learn.transform(model, data)
 
 /// Fit a transformer on `data` and apply it there: `#{ model, data }`.
+/// @stable
 share fn fit_transform(model_fn, data) = {
     let m = model_fn(data)
     #{ "model": m, "data": learn.transform(m, data) }
 }
 
 /// Polynomial (and interaction) columns of numeric `cols`, appended.
+/// @stable
 share fn poly(data, cols = (), degree = 2, interaction_only = false) =
     learn.poly(data, cols, degree, #{ "interaction_only": interaction_only })
 
 // ── linear models ──────────────────────────────────────────────────────
 
 /// Ordinary least squares with standard errors, t, p and intervals.
+/// @stable
 share fn linear(data, y, x = (), intercept = true, weights = ()) =
     learn.linear(data, y, x, opts(#{ "intercept": intercept, "weights": weights }))
 
 /// Ridge regression (L2): ‖y − Xβ‖² + alpha‖β‖².
+/// @stable
 share fn ridge(data, y, x = (), alpha = 1.0, intercept = true) =
     learn.ridge(data, y, x, #{ "alpha": alpha, "intercept": intercept })
 
 /// The lasso (L1) by coordinate descent.
+/// @stable
 share fn lasso(data, y, x = (), alpha = 1.0, intercept = true, max_iter = (), tol = ()) =
     learn.lasso(data, y, x, opts(#{ "alpha": alpha, "intercept": intercept, "max_iter": max_iter, "tol": tol }))
 
 /// Elastic net: alpha·l1_ratio of L1 plus alpha·(1 − l1_ratio)/2 of L2.
+/// @stable
 share fn elastic_net(data, y, x = (), alpha = 1.0, l1_ratio = 0.5, intercept = true, max_iter = (), tol = ()) =
     learn.elastic_net(data, y, x, opts(#{ "alpha": alpha, "l1_ratio": l1_ratio, "intercept": intercept,
                                           "max_iter": max_iter, "tol": tol }))
 
 /// Logistic regression (binary, or multinomial for 3+ classes) by
 /// Newton's method; `C` or `penalty` adds an L2 penalty.
+/// @stable
 share fn logistic(data, y, x = (), C = (), penalty = (), class_weight = (), weights = (), max_iter = ()) =
     learn.logistic(data, y, x, opts(#{ "C": C, "penalty": penalty, "class_weight": class_weight,
                                        "weights": weights, "max_iter": max_iter }))
@@ -111,6 +126,7 @@ share fn logistic(data, y, x = (), C = (), penalty = (), class_weight = (), weig
 
 /// A CART decision tree (classification for a String, Bool or Int
 /// target, regression for a Float one; `task` overrides).
+/// @stable
 share fn tree(data, y, x = (), max_depth = (), min_samples_split = (), min_samples_leaf = (),
               criterion = (), max_features = (), class_weight = (), task = (), seed = ()) =
     learn.tree(data, y, x, opts(#{ "max_depth": max_depth, "min_samples_split": min_samples_split,
@@ -120,6 +136,7 @@ share fn tree(data, y, x = (), max_depth = (), min_samples_split = (), min_sampl
 
 /// A random forest: `trees` bootstrapped trees grown in parallel, each
 /// split choosing among `max_features` (√k for classification).
+/// @stable
 share fn forest(data, y, x = (), trees = 100, max_depth = (), max_features = (), min_samples_leaf = (),
                 min_samples_split = (), bootstrap = true, max_samples = (), oob = false, criterion = (),
                 class_weight = (), task = (), seed = ()) =
@@ -137,6 +154,7 @@ share fn forest(data, y, x = (), trees = 100, max_depth = (), max_features = (),
 /// the data's to fit, held out), `validation_rows` (row indices of the
 /// data), or `validation_tail: n` (the last n rows: a time series' most
 /// recent). `m.valid_loss` is the loss on them each round (`m.best_iter` the least).
+/// @stable
 share fn boost(data, y, x = (), trees = 100, learning_rate = 0.1, max_depth = 3, max_leaf_nodes = (),
                min_samples_leaf = (), l2 = (), subsample = 1.0, bins = 255, early_stopping = false,
                validation = 0.1, validation_rows = (), validation_tail = (), patience = 10, task = (),
@@ -158,27 +176,33 @@ share fn boost(data, y, x = (), trees = 100, learning_rate = 0.1, max_depth = 3,
 // ── other models ───────────────────────────────────────────────────────
 
 /// k-nearest neighbours; `weights_by: "distance"` weighs by 1/d.
+/// @stable
 share fn knn(data, y, x = (), k = 5, weights_by = "uniform", task = ()) =
     learn.knn(data, y, x, opts(#{ "k": k, "weights_by": weights_by, "task": task }))
 
 /// Gaussian naive Bayes.
+/// @stable
 share fn naive_bayes(data, y, x = (), var_smoothing = ()) =
     learn.naive_bayes(data, y, x, opts(#{ "var_smoothing": var_smoothing }))
 
 /// k-means with k-means++ starts; the best of `n_init` by inertia.
+/// @stable
 share fn kmeans(data, k, cols = (), n_init = 10, max_iter = 300, seed = ()) =
     learn.kmeans(data, cols, k, opts(#{ "n_init": n_init, "max_iter": max_iter, "seed": seed }))
 
 /// A Gaussian mixture (full covariances) fitted by EM.
+/// @stable
 share fn gmm(data, k, cols = (), max_iter = 100, seed = ()) =
     learn.gmm(data, cols, k, opts(#{ "max_iter": max_iter, "seed": seed }))
 
 /// Principal components (`n` of them, all by default), on standardized
 /// columns when `scale`.
+/// @stable
 share fn pca(data, cols = (), n = (), scale = false) =
     learn.pca(data, cols, opts(#{ "n_components": n, "scale": scale }))
 
 /// The mean silhouette coefficient of a labelling.
+/// @stable
 share fn silhouette(data, labels, cols = (), sample = (), seed = ()) =
     learn.silhouette(data, cols, labels, opts(#{ "sample": sample, "seed": seed }))
 
@@ -189,28 +213,36 @@ share fn silhouette(data, labels, cols = (), sample = (), seed = ()) =
 /// classes), `"probs"`, `"link"`, `"confidence"` / `"prediction"` (an
 /// OLS interval Frame at `level`). `trees: k`: a boosted model's
 /// prediction from its first k trees (staged predictions).
+/// @stable
 share fn predict(model, data, kind = "auto", level = 0.95, trees = ()) =
     learn.predict(model, data, opts(#{ "kind": kind, "level": level, "trees": trees }))
 
 /// The positive-class probability (binary) or a Frame of class
 /// probabilities.
+/// @stable
 share fn prob(model, data) = learn.predict(model, data, #{ "kind": "prob" })
 
+/// @stable
 share fn importance(model) = learn.importance(model)
 
+/// @stable
 share fn summary(model, level = 0.95) = learn.summary(model, #{ "level": level })
 
+/// @stable
 share fn params(model) = learn.params(model)
 
 /// One metric of the model on a frame that carries the target.
+/// @stable
 share fn score(model, data, metric) = learn.score(model, data, metric)
 
 /// How to fit, without fitting: for `cross_validate`, `learning_curve`
 /// and `grid_search`, which refit it natively. `options` is a map or an
 /// object (`{ n_trees: 200 }`); an unknown key raises.
+/// @stable
 share fn spec(kind, y = (), x = (), options = #{}) = learn.spec(kind, y, x, options)
 
 /// Fit a spec (or refit a model's) on new data.
+/// @stable
 share fn fit(spec, data) = learn.fit(spec, data)
 
 // ── evaluation ─────────────────────────────────────────────────────────
@@ -223,6 +255,7 @@ fn default_metrics(m) =
 /// A Frame of per-fold scores. `fit` is a model, a spec, or a function
 /// `(train) => model` — the first two refit natively (in parallel), the
 /// function is called once per fold.
+/// @stable
 share fn cross_validate(fit, data, folds = 5, metrics = (), stratify = (), seed = ()) = {
     if typeof(fit) != "Function" => {
         learn.cross_validate(fit, data, opts(#{ "folds": folds, "metrics": metrics, "seed": seed }))
@@ -245,53 +278,77 @@ share fn cross_validate(fit, data, folds = 5, metrics = (), stratify = (), seed 
 
 /// The drop in a metric when each input is shuffled: a Frame of
 /// feature, importance, std.
+/// @stable
 share fn permutation_importance(model, data, metric = (), repeats = 5, seed = ()) =
     learn.permutation_importance(model, data, opts(#{ "metric": metric, "repeats": repeats, "seed": seed }))
 
 /// Average prediction as `feature` sweeps a grid: a Frame to plot.
+/// @stable
 share fn partial_dependence(model, data, feature, grid = (), points = 50, sample = (), seed = ()) =
     learn.partial_dependence(model, data, feature, opts(#{ "grid": grid, "points": points, "sample": sample, "seed": seed }))
 
 /// Train and test scores as the training set grows: a Frame of n_train,
 /// train, train_sd, test, test_sd. `fit` is a model or a spec.
+/// @stable
 share fn learning_curve(fit, data, sizes = (), folds = 5, metric = (), seed = ()) =
     learn.learning_curve(fit, data, opts(#{ "sizes": sizes, "folds": folds, "metric": metric, "seed": seed }))
 
 /// Cross-validated search over a grid of options (`{ max_depth: [3,
 /// 5, 8] }`, or the same as a map): `#{ results, best, best_score, metric, model }`, the model
 /// refit on all of `data` with the best options.
+/// @stable
 share fn grid_search(fit, data, grid, folds = 5, metric = (), seed = ()) =
     learn.grid_search(fit, data, grid, opts(#{ "folds": folds, "metric": metric, "seed": seed }))
 
 // ── metrics ────────────────────────────────────────────────────────────
 
+/// @stable
 share fn rmse(y, pred) = learn.rmse(y, pred)
+/// @stable
 share fn mse(y, pred) = learn.mse(y, pred)
+/// @stable
 share fn mae(y, pred) = learn.mae(y, pred)
+/// @stable
 share fn mape(y, pred) = learn.mape(y, pred)
+/// @stable
 share fn r2(y, pred) = learn.r2(y, pred)
+/// @stable
 share fn accuracy(y, pred) = learn.accuracy(y, pred)
 
+/// @stable
 share fn precision(y, pred, average = (), pos = ()) =
     learn.precision(y, pred, opts(#{ "average": average, "pos": pos }))
+/// @stable
 share fn recall(y, pred, average = (), pos = ()) =
     learn.recall(y, pred, opts(#{ "average": average, "pos": pos }))
+/// @stable
 share fn f1(y, pred, average = (), pos = ()) =
     learn.f1(y, pred, opts(#{ "average": average, "pos": pos }))
 
 /// Log loss of probabilities: a Series (binary) or a Frame of class
 /// probabilities.
+/// @stable
 share fn log_loss(y, p, pos = ()) =
     if typeof(p) == "Frame" => learn.log_loss(y, p) else => learn.log_loss(y, p, opts(#{ "pos": pos }))
+/// @stable
 share fn brier(y, p, pos = ()) = learn.brier(y, p, opts(#{ "pos": pos }))
+/// @stable
 share fn auc(y, p, pos = ()) = learn.auc(y, p, opts(#{ "pos": pos }))
+/// @stable
 share fn average_precision(y, p, pos = ()) = learn.average_precision(y, p, opts(#{ "pos": pos }))
+/// @stable
 share fn roc(y, p, pos = ()) = learn.roc(y, p, opts(#{ "pos": pos }))
+/// @stable
 share fn pr_curve(y, p, pos = ()) = learn.pr_curve(y, p, opts(#{ "pos": pos }))
+/// @stable
 share fn confusion(y, pred) = learn.confusion(y, pred)
+/// @stable
 share fn classification_report(y, pred) = learn.classification_report(y, pred)
+/// @stable
 share fn at_threshold(y, p, threshold = 0.5, pos = ()) =
     learn.at_threshold(y, p, opts(#{ "threshold": threshold, "pos": pos }))
+/// @stable
 share fn threshold_sweep(y, p, pos = ()) = learn.threshold_sweep(y, p, opts(#{ "pos": pos }))
+/// @stable
 share fn calibration(y, p, bins = 10, strategy = "uniform", pos = ()) =
     learn.calibration(y, p, opts(#{ "bins": bins, "strategy": strategy, "pos": pos }))

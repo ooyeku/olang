@@ -420,8 +420,8 @@ main()
 fn normalize_and_fold_compare_text_as_readers_do() {
     let src = r#"
 fn main() = [str.normalize("e\u{301}", "nfc") == "é", str.normalize("é", "nfd") == "e\u{301}",
-             str.normalize("ﬁ", "nfkc"), str.fold("Straße") == str.fold("STRASSE"), str.fold("İ"),
-             str.fold("ΣΑΣ")]
+             str.normalize("ﬁ", "nfkc"), str.fold_case("Straße") == str.fold_case("STRASSE"), str.fold_case("İ"),
+             str.fold_case("ΣΑΣ")]
 main()
 "#;
     assert_eq!(

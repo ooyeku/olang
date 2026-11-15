@@ -512,7 +512,7 @@ every function returns a new string.
 | <a id="str-stats"></a>`str.stats(s)` | `#{bytes, chars, lines, graphemes, utf16, width, last_line_len}` in one call, at memory speed for ASCII: what each count's own function answers |
 | <a id="str-word_bounds"></a><a id="str-line_breaks"></a>`str.word_bounds(s)` / `str.line_breaks(s, #{"hard"})` | byte offsets of the UAX #29 word boundaries, and of the UAX #14 places a line may wrap (only the forced ones with `hard: true`) |
 | <a id="str-bidi_runs"></a>`str.bidi_runs(s, #{"direction", "visual"})` | runs of one bidirectional level, `#{start, end, level}` in bytes (an odd level is right-to-left), in logical order or, with `visual: true`, the order a line shows them. `direction` is `"ltr"`, `"rtl"` or `"auto"` (the default: the paragraph's first strong character decides) |
-| <a id="str-normalize"></a><a id="str-fold"></a>`str.normalize(s, form)` / `str.fold(s)` | Unicode normalization (`"nfc"`, `"nfd"`, `"nfkc"`, `"nfkd"`) and full case folding: the forms to compare text in |
+| <a id="str-normalize"></a><a id="str-fold_case"></a>`str.normalize(s, form)` / `str.fold_case(s)` | Unicode normalization (`"nfc"`, `"nfd"`, `"nfkc"`, `"nfkd"`) and full case folding: the forms to compare text in |
 | <a id="str-trim"></a><a id="str-trim_start"></a><a id="str-trim_end"></a>`str.trim` / `str.trim_start` / `str.trim_end` | strip whitespace |
 | <a id="str-pad_start"></a><a id="str-pad_end"></a>`str.pad_start(s, n, fill)` / `str.pad_end` | pad to width |
 | <a id="str-repeat"></a>`str.repeat(s, n)` | repetition |
@@ -567,13 +567,13 @@ println(str.chunks("ab\ncd\nefgh", 5, {prefer: "\n"}))  // ["ab\n", "cd\n", "efg
 accent) differ, and `to_lower` is a display rule, not a comparison one
 (`to_lower("İ")` keeps the dot as a separate mark). Normalize both sides
 to NFC with `str.normalize` before comparing or storing. To ignore case,
-compare `str.fold` of both, which also folds `ß` to `ss`. Word motion and
+compare `str.fold_case` of both, which also folds `ß` to `ss`. Word motion and
 word diffs step over `str.word_bounds`, and wrapping cuts only at
 `str.line_breaks`. Right-to-left text is laid out by `str.bidi_runs`.
 
 ```olang
 println(str.normalize("e\u{301}", "nfc") == "é")              // true
-println(str.fold("Straße") == str.fold("STRASSE"))            // true
+println(str.fold_case("Straße") == str.fold_case("STRASSE"))  // true
 println(str.word_bounds("can't stop"))                        // [0, 5, 6, 10]
 println(str.lines("a\r\nb\n", {keep_ends: true}) == ["a\r\n", "b\n"])   // true
 println(str.line_starts("ab\ncd\n"))                         // [0, 3, 6]
@@ -1857,7 +1857,7 @@ more.
 |---|---|
 | <a id="weak-new"></a>`weak.new(v)` | a weak reference to `v` |
 | <a id="weak-get"></a>`weak.get(w)` | `v` while something else still holds it, `()` once it has been freed |
-| <a id="weak-alive"></a>`weak.alive(w)` | whether `v` is still held |
+| <a id="weak-is_alive"></a>`weak.is_alive(w)` | whether `v` is still held |
 
 Only a value with memory of its own can be freed: a list, a map, a
 struct, a tuple, a string, a closure, an enum with a payload, a native
@@ -2008,7 +2008,7 @@ secrets, because `==` can leak information through its timing.
 | <a id="crypto-hash_password"></a><a id="crypto-verify_password"></a><a id="crypto-derive_key"></a>Passwords | `hash_password` `verify_password` `derive_key` |
 | Symmetric | `encrypt_aes` `decrypt_aes` |
 | <a id="crypto-encrypt_rsa"></a><a id="crypto-decrypt_rsa"></a><a id="crypto-generate_key_pair"></a><a id="crypto-export_public_key"></a><a id="crypto-import_public_key"></a><a id="crypto-sign_data"></a><a id="crypto-verify_signature"></a>Asymmetric | `generate_key_pair` `encrypt_rsa` `decrypt_rsa` `sign_data` `verify_signature` `export_public_key` `import_public_key` — not in the browser runtime the web SDK ships, which says so when one is called |
-| <a id="crypto-ed25519_keypair"></a><a id="crypto-ed25519_public_key"></a><a id="crypto-ed25519_sign"></a><a id="crypto-ed25519_verify"></a>Ed25519 | `ed25519_keypair` `ed25519_public_key` `ed25519_sign` `ed25519_verify` — in every build, the browser's too |
+| <a id="crypto-ed25519_key_pair"></a><a id="crypto-ed25519_public_key"></a><a id="crypto-ed25519_sign"></a><a id="crypto-ed25519_verify"></a>Ed25519 | `ed25519_key_pair` `ed25519_public_key` `ed25519_sign` `ed25519_verify` — in every build, the browser's too |
 | <a id="crypto-hex_encode"></a><a id="crypto-hex_decode"></a><a id="crypto-secure_compare"></a>Utilities | `random_bytes` `random_hex` `hex_encode` `hex_decode` `secure_compare` |
 
 ```olang
@@ -2022,7 +2022,7 @@ the form those feeds write; each function also takes them as `Bytes`, and
 the data signed may be a String or `Bytes`. The private key is the
 32-byte seed. `ed25519_verify` answers `Ok(false)` for a signature that
 does not verify (or is not 64 bytes) and `Err` only for a public key that
-is not one. `ed25519_keypair()` answers `Ok` of a `KeyPair` with
+is not one. `ed25519_key_pair()` answers `Ok` of a `KeyPair` with
 `private_key` and `public_key`, and `ed25519_public_key(private_key)`
 derives the public key again from a stored seed. A key or signature may
 also be written in hex. `ed25519_sign` answers `Err` for a private key
@@ -2030,7 +2030,7 @@ that is not 32 bytes. It is strict: a signature has exactly one form that passes
 `sign_data` and `verify_signature`, the RSA pair, take `Bytes` data too.
 
 ```olang
-let keys = unwrap(crypto.ed25519_keypair())
+let keys = unwrap(crypto.ed25519_key_pair())
 let sig = unwrap(crypto.ed25519_sign("release 1.2.0", keys.private_key))
 println(crypto.ed25519_verify("release 1.2.0", sig, keys.public_key))   // Ok(true)
 println(crypto.ed25519_verify("release 1.2.1", sig, keys.public_key))   // Ok(false)

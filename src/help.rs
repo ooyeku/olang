@@ -3191,12 +3191,12 @@ task.watch(service, inbox)   // a dead service is an Err at the next recv, not a
             &[r##"weak.get(w) ?? recompute()"##],
         );
         self.doc_ex(
-            "weak.alive",
-            "weak.alive(w)",
+            "weak.is_alive",
+            "weak.is_alive(w)",
             "Bool",
             "weak",
             "whether the value is still held somewhere",
-            &[r##"weak.alive(w)"##],
+            &[r##"weak.is_alive(w)"##],
         );
 
         // pmap, pvec, psorted — persistent collections (OL-424)
@@ -7876,15 +7876,15 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             return_type: "String".to_string(),
             examples: vec!["str.normalize(\"e\\u{301}\", \"nfc\") == \"é\"  // true".to_string()],
             category: "String".to_string(),
-            see_also: vec!["str.fold".to_string()],
+            see_also: vec!["str.fold_case".to_string()],
         });
         self.add_function(FunctionDoc {
-            name: "str.fold".to_string(),
+            name: "str.fold_case".to_string(),
             description: "Unicode full case folding: the form to compare text in when case should not matter (\"Straße\" and \"STRASSE\" fold alike). Not for display; to_lower is.".to_string(),
-            syntax: "str.fold(s)".to_string(),
+            syntax: "str.fold_case(s)".to_string(),
             parameters: vec![],
             return_type: "String".to_string(),
-            examples: vec!["str.fold(\"Straße\") == str.fold(\"STRASSE\")  // true".to_string()],
+            examples: vec!["str.fold_case(\"Straße\") == str.fold_case(\"STRASSE\")  // true".to_string()],
             category: "String".to_string(),
             see_also: vec!["str.to_lower".to_string(), "str.normalize".to_string()],
         });
@@ -13698,14 +13698,14 @@ For function-specific syntax, use: {}:help <function_name>{}",
         });
 
         self.add_function(FunctionDoc {
-            name: "crypto.ed25519_keypair".to_string(),
+            name: "crypto.ed25519_key_pair".to_string(),
             description:
                 "A new Ed25519 key pair; each key is base64 (the private key is its 32-byte seed)"
                     .to_string(),
-            syntax: "crypto.ed25519_keypair()".to_string(),
+            syntax: "crypto.ed25519_key_pair()".to_string(),
             parameters: vec![],
             return_type: "Result<{private_key: String, public_key: String}, Error>".to_string(),
-            examples: vec!["let keys = unwrap(crypto.ed25519_keypair())".to_string()],
+            examples: vec!["let keys = unwrap(crypto.ed25519_key_pair())".to_string()],
             category: "Crypto".to_string(),
             see_also: vec![
                 "crypto.ed25519_sign".to_string(),
@@ -13726,7 +13726,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
                     .to_string(),
             ],
             category: "Crypto".to_string(),
-            see_also: vec!["crypto.ed25519_keypair".to_string()],
+            see_also: vec!["crypto.ed25519_key_pair".to_string()],
         });
 
         self.add_function(FunctionDoc {

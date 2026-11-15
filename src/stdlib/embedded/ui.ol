@@ -15,16 +15,19 @@
 
 // ── building trees ─────────────────────────────────────────────────────
 
+/// @stable
 share fn h(tag, attrs, children) = #{
     "tag": tag, "attrs": attrs, "children": children, "key": ""
 }
 
+/// @stable
 share fn hk(key, tag, attrs, children) = #{
     "tag": tag, "attrs": attrs, "children": children, "key": key
 }
 
 // ── rendering to HTML (pure) ───────────────────────────────────────────
 
+/// @stable
 share fn esc(s) = {
     let raw = if typeof(s) == "String" => s else => to_string(s)
     str.replace(str.replace(str.replace(str.replace(raw,
@@ -34,6 +37,7 @@ share fn esc(s) = {
 fn is_void(tag) =
     contains(["br", "hr", "img", "input", "meta", "link", "area", "col"], tag)
 
+/// @stable
 share fn html(node) = {
     if typeof(node) == "String" => esc(node)
     else => {
@@ -64,6 +68,7 @@ fn is_num(v) = typeof(v) == "Int" || typeof(v) == "Float"
 
 fn label_of(v) = if typeof(v) == "String" => v else => show(v)
 
+/// @stable
 share fn control(kind, value, spec) = {
     let node = if kind == "slider" => {
         let mut attrs = #{ "type": "range", "min": spec.min, "max": spec.max, "value": value }
@@ -87,6 +92,7 @@ share fn control(kind, value, spec) = {
 
 /// A number chosen between `min` and `max` (by `step`, when given): an
 /// Int slider when the value and both bounds are Ints.
+/// @stable
 share fn slider(value, min, max, step = ()) = {
     if !is_num(value) || !is_num(min) || !is_num(max) =>
         raise("ui.slider: the value, min and max are numbers")
@@ -98,6 +104,7 @@ share fn slider(value, min, max, step = ()) = {
 }
 
 /// One of `options` (a non-empty list).
+/// @stable
 share fn select(value, options) = {
     if typeof(options) != "List" || len(options) == 0 => raise("ui.select: options is a non-empty list")
     if !contains(options, value) =>
@@ -111,18 +118,21 @@ fn date_like(s) = typeof(s) == "String" && len(s) == 10 &&
     is_ok(str.parse_int(str.substring(s, 8, 10)))
 
 /// A day, as a "YYYY-MM-DD" String.
+/// @stable
 share fn date(value) = {
     if !date_like(value) => raise("ui.date: the value is a \"YYYY-MM-DD\" String, got " + show(value))
     runtime.bind(control("date", value, #{}), value)
 }
 
 /// A line of text.
+/// @stable
 share fn text(value) = {
     if typeof(value) != "String" => raise("ui.text: the value is a String, got " + typeof(value))
     runtime.bind(control("text", value, #{}), value)
 }
 
 /// On or off.
+/// @stable
 share fn toggle(value) = {
     if typeof(value) != "Bool" => raise("ui.toggle: the value is a Bool, got " + typeof(value))
     runtime.bind(control("toggle", value, #{}), value)
@@ -134,6 +144,7 @@ fn is_gg(v) = typeof(v) == "Map" && map_has_key(v, "$gg")
 /// the range along its horizontal axis in data units, a log10, sqrt or
 /// reversed scale undone, in the panel dragged): `()` for none, or
 /// `[x0, x1]`.
+/// @stable
 share fn brush(chart, value = ()) = {
     if !is_gg(chart) && (typeof(chart) != "String" || is_err(plot.describe(chart))) =>
         raise("ui.brush: the chart is a gg plot or a plot chart's SVG (one that carries its description)")
@@ -158,6 +169,7 @@ fn child_key(child, index) = {
 
 // Render a keyed list of children into `el` (which must carry an id).
 // Keys should be short id-safe tokens; unkeyed children key by index.
+/// @stable
 share fn render(el, children) = {
     let mount = dom.get_attr(el, "id")
     let prev = unwrap_or(json.parse(dom.get_attr(el, "data-ui")),
