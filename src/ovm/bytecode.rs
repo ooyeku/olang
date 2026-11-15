@@ -1201,6 +1201,9 @@ pub struct BytecodeDebugInfo {
     pub instruction_to_source: HashMap<usize, SourceLocation>,
     pub register_names: HashMap<Register, String>,
     pub function_name: Option<String>,
+    /// The line the function is declared on (a lambda's start), its
+    /// frames' line where no statement placed one (OL-392); 0 unknown.
+    pub decl_line: u32,
     pub local_variables: HashMap<u32, String>,
     pub line_table: Vec<(usize, u32)>, // (instruction_index, line_number)
 }
@@ -2669,7 +2672,7 @@ impl BytecodeVm {
         func: &Arc<crate::ast::Function>,
     ) -> Result<(), String> {
         let decl = FunctionDecl {
-            name_span: None,
+            name_span: (func.line > 0).then_some((func.line, 1)),
             name: name.to_string(),
             type_params: Vec::new(),
             type_param_bounds: Vec::new(),
@@ -4498,7 +4501,7 @@ impl BytecodeVm {
                 .rev()
                 .find(|&&(start, _, _)| start <= pc)
                 .map(|&(_, line, _)| line)
-                .unwrap_or(0);
+                .unwrap_or(bytecode.debug_info.decl_line);
             crate::errtrace::note(
                 fresh,
                 (0, 0),
@@ -7910,7 +7913,8 @@ impl BytecodeVm {
         let shareable = self.hof_shareable(func);
 
         let decl = FunctionDecl {
-            name_span: None,
+            // a lambda's line, for its frames (OL-392)
+            name_span: (func.line > 0).then_some((func.line, 1)),
             name: func
                 .name
                 .clone()
@@ -11897,6 +11901,7 @@ impl BytecodeCompiler {
             callee_names: self.emitter.take_callee_names(),
             debug_info: BytecodeDebugInfo {
                 function_name: Some(func.name.clone()),
+                decl_line: func.name_span.map_or(0, |(line, _)| line),
                 ..Default::default()
             },
             optimization_level: 1,
@@ -13028,7 +13033,8 @@ impl BytecodeCompiler {
                 parameters,
                 body,
                 return_type,
-            } => self.compile_lambda(parameters, body, None, return_type.as_ref()),
+                line,
+            } => self.compile_lambda(parameters, body, None, return_type.as_ref(), line.0),
 
             Expr::Tuple(items) => {
                 // The empty tuple is Unit — `()` in source. The
@@ -13507,6 +13513,7 @@ impl BytecodeCompiler {
         body: &Expr,
         self_name: Option<&str>,
         return_type: Option<&crate::ast::TypeAnnotation>,
+        line: u32,
     ) -> Result<Register, BytecodeError> {
         // Only lambdas that reference nothing but their own parameters.
         // Such a lambda is a compile-time constant: with no free
@@ -13621,6 +13628,7 @@ impl BytecodeCompiler {
             body: body.clone(),
             captured: captured.keys().cloned().collect(),
             def_file: self.pending_def_file.as_deref().map(str::to_string),
+            line,
         };
         let lambda_src = self.emitter.recording.then(lambda_src);
 
@@ -13638,6 +13646,7 @@ impl BytecodeCompiler {
             // it (a lambda a plugin makes answers to the plugin's grant,
             // as the interpreter's does), never to the host's.
             def_file: self.pending_def_file.as_deref().map(str::to_string),
+            line,
             parent_scope: 0,
             // A lambda sees the siblings its enclosing function sees.
             run: self.enclosing_run.clone(),
@@ -13673,7 +13682,7 @@ impl BytecodeCompiler {
         self.pending_lambdas.push((
             lambda_id,
             FunctionDecl {
-                name_span: None,
+                name_span: (line > 0).then_some((line, 1)),
                 name: self_name.unwrap_or("<lambda>").to_string(),
                 type_params: Vec::new(),
                 type_param_bounds: Vec::new(),
@@ -15303,6 +15312,7 @@ impl BytecodeCompiler {
                             parameters,
                             body,
                             return_type,
+                            line,
                         }),
                     ) if !parameters.iter().any(|p| &p.name == name)
                         && !self.local_variables.contains_key(name)
@@ -15313,14 +15323,21 @@ impl BytecodeCompiler {
                             parameters.iter().map(|p| p.name.clone()).collect();
                         let mut free = std::collections::HashSet::new();
                         (Self::collect_free_vars(body, &bound, &mut free) && free.contains(name))
-                            .then_some((name.as_str(), parameters, body, return_type))
+                            .then_some((name.as_str(), parameters, body, return_type, line.0))
                     }
                     _ => None,
                 };
                 let value_reg = match &let_decl.value {
                     _ if self_named.is_some() => {
-                        let (name, parameters, body, return_type) = self_named.expect("checked");
-                        self.compile_lambda(parameters, body, Some(name), return_type.as_ref())?
+                        let (name, parameters, body, return_type, line) =
+                            self_named.expect("checked");
+                        self.compile_lambda(
+                            parameters,
+                            body,
+                            Some(name),
+                            return_type.as_ref(),
+                            line,
+                        )?
                     }
                     Some(expr) => self.compile_expression(expr)?,
                     None => {
@@ -15371,6 +15388,7 @@ impl BytecodeCompiler {
                     &decl.body,
                     Some(&decl.name),
                     decl.return_type.as_ref(),
+                    0,
                 )?;
                 let var_reg = self.register_allocator.allocate_register();
                 self.local_variables.insert(decl.name.clone(), var_reg);

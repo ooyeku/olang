@@ -472,6 +472,7 @@ impl BytecodeCompiler {
             closure: Arc::new(closure),
             param_bounds: Vec::new(),
             def_file: src.def_file.clone(),
+            line: src.line,
             parent_scope: 0,
             run: self.enclosing_run.clone(),
         })
@@ -614,6 +615,7 @@ impl BytecodeVm {
                 span_table: code.span_table.clone(),
                 callee_names: code.callee_names.clone(),
                 function_name: code.debug_info.function_name.clone(),
+                decl_line: code.debug_info.decl_line,
                 optimization_level: code.optimization_level,
                 entry_point: code.entry_point,
             });
@@ -741,6 +743,7 @@ impl BytecodeVm {
                 callee_names: member.callee_names,
                 debug_info: super::BytecodeDebugInfo {
                     function_name: member.function_name,
+                    decl_line: member.decl_line,
                     ..Default::default()
                 },
                 optimization_level: member.optimization_level,

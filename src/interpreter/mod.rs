@@ -1272,6 +1272,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     closure: Arc::new(closure.clone()),
                     param_bounds: Vec::new(),
                     def_file: self.current_module_path.clone(),
+                    line: 0,
                     parent_scope: self.environment.scope_id,
                     run: Default::default(),
                 };
@@ -1309,6 +1310,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 closure: Arc::new(closure.clone()),
                 param_bounds: Vec::new(),
                 def_file: self.current_module_path.clone(),
+                line: 0,
                 parent_scope: self.environment.scope_id,
                 run: Default::default(),
             };
@@ -1831,6 +1833,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             } else {
                 self.defining_file()
             },
+            line: 0,
             parent_scope: if early_root {
                 0
             } else {
@@ -2070,6 +2073,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 parameters,
                 body,
                 return_type,
+                line,
             } => {
                 // What this lambda expression is, worked out once: its body
                 // with identifiers resolved to slots, and every name the
@@ -2110,6 +2114,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     closure: Arc::new(closure),
                     param_bounds: Vec::new(),
                     def_file: self.defining_file(),
+                    line: line.0,
                     parent_scope: self.environment.scope_id,
                     // A lambda sees the siblings its enclosing function sees.
                     run: self.environment.run.clone(),
@@ -4051,7 +4056,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     (self as *const Self as usize, self.call_depth),
                     crate::errtrace::Frame {
                         file: func.def_file.clone().or_else(|| self.entry_file.clone()),
-                        line: 0,
+                        // a lambda's own line (OL-392); a named
+                        // function's declaration line is errtrace's
+                        line: func.line,
                         function: func.name.clone(),
                     },
                 );

@@ -391,8 +391,45 @@ println(runtime.shape(#{ "n": 1, "items": ["a"], "s": Ok(#{ "k": 2.0 }) }))
     assert_eq!(lines[4], "plugin.ol:1 boom");
     assert_eq!(lines[5], "plugin.ol:3 deeper");
     assert_eq!(lines[6], "host.ol:2 outer");
-    assert_eq!(lines[7], "host.ol:0 <lambda>");
+    assert_eq!(
+        lines[7], "host.ol:9 <lambda>",
+        "a lambda: the line it starts on (OL-392)"
+    );
     assert_eq!(lines[8], "{items:[String],n:Int,s:Ok({k:Float})}");
+}
+
+#[test]
+fn a_lambda_failing_under_a_top_level_attempt_is_placed_at_the_lambda() {
+    // OL-392: the frame said line 0 (a tool showed the `let` line), not
+    // the lambda the failure was in.
+    let ws = workspace("lambda_line");
+    let out = run(
+        &ws,
+        r#"let big = 9223372036854775807
+let r = attempt(
+    () =>
+        big + 1
+)
+println(show(r))
+for f in runtime.last_error().frames { println(show(f.line) + " " + show(f.function)) }
+fn inside() = {
+    let q = attempt(() => big + 2)
+    runtime.last_error().frames
+}
+for f in inside() { println(show(f.line) + " " + show(f.function)) }
+let named = attempt(() => {
+    let z = big
+    z + 1
+})
+println(show(first(runtime.last_error().frames).line))
+"#,
+    );
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(lines[0].starts_with("Err(\"Integer overflow"), "{out}");
+    assert_eq!(lines[1], "3 <lambda>", "{out}");
+    assert_eq!(lines[2], "9 <lambda>", "{out}");
+    // a block body still names the statement that failed
+    assert_eq!(lines.last(), Some(&"15"), "{out}");
 }
 
 /// A module held to a list of programs runs only those, and only the

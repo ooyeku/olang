@@ -284,6 +284,7 @@ impl Resolver {
                 parameters,
                 body,
                 return_type,
+                line,
             } => {
                 // A lambda body runs in its own future call frame; its free
                 // variables resolve from its captured closure by name. Do
@@ -293,6 +294,7 @@ impl Resolver {
                     parameters: parameters.clone(),
                     body: body.clone(),
                     return_type: return_type.clone(),
+                    line: *line,
                 }
             }
 

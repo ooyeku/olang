@@ -1689,6 +1689,7 @@ let t2 = time.monotonic_ms()
             param_checks: Vec::new(),
             return_check: None,
             def_file: None,
+            line: 0,
             parent_scope: 0,
             run: Default::default(),
         }
@@ -1836,6 +1837,7 @@ let t2 = time.monotonic_ms()
             param_checks: Vec::new(),
             return_check: None,
             def_file: None,
+            line: 0,
             parent_scope: 0,
             run: Default::default(),
         };
@@ -1882,6 +1884,7 @@ let t2 = time.monotonic_ms()
             param_checks: Vec::new(),
             return_check: None,
             def_file: None,
+            line: 0,
             parent_scope: 0,
             run: Default::default(),
         };
@@ -1946,6 +1949,7 @@ let t2 = time.monotonic_ms()
             param_checks: Vec::new(),
             return_check: None,
             def_file: None,
+            line: 0,
             parent_scope: 0,
             run: Default::default(),
         };
