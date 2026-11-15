@@ -1694,17 +1694,29 @@ olang memory show 1700.json             # what one holds
 ```
 
 `run` runs the program as `olang run` would, with the heap profile on
-from its start (`--rate 64k` for more samples), and when it ends prints
-the heap's split and the sites by live bytes:
+from its start (`--rate 64k` for more samples), and when its body is
+over, before its values go, prints the heap's split and the sites by
+live bytes. A diff reads the same way. This is a worker-pool service (a
+pool of tasks renders jobs, the main loop keeps a ring of recent
+results, a per-user tally and an audit trail nobody trims) after 19
+minutes, snapshots taken every minute with `OLANG_HEAP=1
+OLANG_HEAP_DIR=heap OLANG_HEAP_EVERY=60`:
 
 ```text
-heap 61.2 MB: program 3.1 MB, code 2.4 MB, values 55.7 MB
-sampled since start of sampling: 58.0 MB live in 118 samples (one per 512 KB allocated)
+$ olang memory --top 3 diff heap
+over 19.0 min: heap +212.1 MB, values +212.1 MB, code +0 B, program +0 B; 285.63 GB allocated meanwhile
+sampled live: +217.0 MB
 
-      live    blocks  allocated  scope   site
-   41.5 MB    410010    41.5 MB  values  remember via map_set  service.ol:12
-    9.0 MB     90012    1.20 GB  values  handle via <lambda in handle> < map  service.ol:20
+      grew        now    blocks  allocated  scope   site
+ +217.5 MB   226.0 MB  +3673069    1.17 GB  values  record_audit  service.ol:42
+   +522 KB     522 KB       +27  116.79 GB  values  note_recent  service.ol:31
+     +4 KB     516 KB     -8673   97.13 GB  values  render  service.ol:12
 ```
+
+The audit trail is what grew. The ring and the renderer hold steady
+while allocating a hundred gigabytes between them: `note_recent` copies
+its 500 results on every call, which is a cost the diff's `allocated`
+column shows even though it is not a leak.
 
 `allocated` is what the site asked for in all, freed or not: a site
 that allocates a gigabyte and keeps 9 MB churns; one whose live bytes
