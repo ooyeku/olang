@@ -1,0 +1,8 @@
+# A package whose public surface is marked @stable, so that
+# `olang check --against <version>` (tools/compat-check.sh) holds every
+# later olang to it: a removed or re-signed @stable item is a break.
+[package]
+name = "compat_surface"
+version = "1.0.0"
+description = "olang's compatibility fixture: a public surface marked @stable"
+public = ["lib.shapes"]

@@ -1,0 +1,42 @@
+// compat: the system modules — fs, os, proc, dates, time, crypto, random.
+// Only what is the same on every machine is printed.
+
+let dir = fs.join(os.temp_dir(), `olang-compat-${os.pid()}`)
+fs.create_dir_all(fs.join(dir, "sub"))
+let file = fs.join(dir, "note.txt")
+println(fs.write_file(file, "one\n"))
+println(fs.append_file(file, "two\n"))
+println(fs.read_file(file))
+println(fs.exists(file) && fs.is_file(file) && fs.is_dir(dir))
+println(fs.file_size(file))
+println(fs.basename(file) + " " + fs.ext(file))
+println(fs.list_dir(dir) |> result_map((names) => sort(names)))
+println(is_err(fs.read_file(fs.join(dir, "missing.txt"))))
+println(fs.write_bytes(fs.join(dir, "b.bin"), bytes.from_list([1, 2, 255])))
+println(fs.read_bytes(fs.join(dir, "b.bin")) |> result_map((b) => bytes.to_list(b)))
+println(fs.remove_dir_all(dir))
+println(fs.exists(dir))
+
+os.set_env("OLANG_COMPAT_VAR", "set")
+println(os.get_env("OLANG_COMPAT_VAR"))
+println(is_err(os.get_env("OLANG_COMPAT_SURELY_UNSET")))
+println(typeof(os.args()))
+
+let d = unwrap(dates.date(2024, 2, 28))
+println(dates.add_days(d, 1))
+println(dates.is_leap_year(2024))
+println(dates.days_in_month(2023, 2))
+println(dates.format_date(unwrap(dates.add_months(d, 1)), "%Y-%m-%d"))
+println(dates.diff_days(unwrap(dates.date(2024, 1, 1)), unwrap(dates.date(2024, 12, 31))))
+println(dates.weekday(unwrap(dates.date(2026, 11, 14))))
+println(dates.parse_date("2026-11-14"))
+println(time.monotonic_ms() >= 0)
+
+println(crypto.sha256("olang"))
+println(crypto.md5("olang"))
+println(crypto.hmac_sha256("key", "message"))
+println(crypto.hex_encode("hi"))
+
+let r = random.randint(1, 6)
+println(r >= 1 && r <= 6)
+println(len(random.shuffle([1, 2, 3])))

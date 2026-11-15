@@ -1,0 +1,28 @@
+# Intended breaks of the 1.x compatibility promise, reviewed.
+#
+# tests/compat_test.rs fails when a compatibility program's output or exit
+# status changes, or when a name of an earlier release's stdlib surface
+# (tests/compat/surface/) is gone. A change that is meant goes here, never
+# into a silently edited .out or snapshot: tools/compat-check.sh refuses
+# a release whose expectations changed without an entry naming them, and
+# tools/release.sh refuses one whose entries for that version the
+# CHANGELOG section does not mention by issue.
+#
+# What a 1.x release may break (docs/stability.md, Versioning):
+#   kind = "bug-fix"       behavior that was a bug (recorded under Fixed)
+#   kind = "experimental"  an Experimental surface, in a minor release only
+#   kind = "major"         anything else, and only in a new major version
+#
+# Each entry:
+#
+# [[break]]
+# what = "programs/text.ol"     # a fixture as the test names it, or
+#                               # "surface:str.some_name" for a stdlib name
+# version = "1.2.0"             # the release that makes the break
+# issue = "OL-1234"             # the issue that decided it
+# kind = "bug-fix"
+# reason = "str.split on an empty separator now splits into characters, as documented"
+#
+# An entry stays as the record of the decision; the .out it excuses may be
+# brought up to date in the same commit (compat-check.sh then sees the
+# change named here).

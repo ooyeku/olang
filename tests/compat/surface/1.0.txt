@@ -1,0 +1,1432 @@
+# The stdlib surface of olang 1.0: every global builtin and module member,
+# the Experimental modules left out. Every later 1.x keeps each name
+# (tests/compat_test.rs). Written once by OLANG_COMPAT_SNAPSHOT=1.0; never edited.
+asset.exists
+asset.path
+asset.read
+base64.decode
+base64.decode_bytes
+base64.decode_no_pad
+base64.decode_url_safe
+base64.encode
+base64.encode_no_pad
+base64.encode_url_safe
+base64.is_valid
+bigint.abs
+bigint.gcd
+bigint.mod_pow
+bigint.neg
+bigint.of
+bigint.parse
+bigint.pow
+bigint.to_float
+bigint.to_int
+builtin abs
+builtin all
+builtin any
+builtin assert
+builtin assert_close
+builtin assert_eq
+builtin assert_false
+builtin assert_ne
+builtin assert_true
+builtin attempt
+builtin average
+builtin chunk
+builtin clamp
+builtin concat
+builtin cons
+builtin contains
+builtin drop
+builtin ends_with
+builtin entries
+builtin enumerate
+builtin eprint
+builtin eprintln
+builtin filter
+builtin find
+builtin first
+builtin flatten
+builtin fold
+builtin group_by
+builtin hash
+builtin head
+builtin implements
+builtin is_err
+builtin is_ok
+builtin join
+builtin last
+builtin len
+builtin map
+builtin map_clear
+builtin map_filtered
+builtin map_get
+builtin map_get_in
+builtin map_get_or
+builtin map_has_key
+builtin map_keys
+builtin map_len
+builtin map_merge
+builtin map_remove
+builtin map_set
+builtin map_set_in
+builtin map_update
+builtin map_values
+builtin max
+builtin min
+builtin par_filter
+builtin par_map
+builtin print
+builtin println
+builtin raise
+builtin range
+builtin reduce
+builtin result_map
+builtin result_map_err
+builtin reverse
+builtin same
+builtin set_parallel
+builtin show
+builtin skip
+builtin sort
+builtin split
+builtin starts_with
+builtin sum
+builtin tail
+builtin take
+builtin to_float
+builtin to_int
+builtin to_string
+builtin typeof
+builtin unwrap
+builtin unwrap_or
+builtin unwrap_or_else
+builtin zip
+bytes.build
+bytes.builder
+bytes.compare
+bytes.concat
+bytes.decode
+bytes.from_hex
+bytes.from_list
+bytes.from_string
+bytes.get_f32
+bytes.get_f64
+bytes.get_i16
+bytes.get_i32
+bytes.get_i64
+bytes.get_i8
+bytes.get_u16
+bytes.get_u32
+bytes.get_u64
+bytes.get_u8
+bytes.index_of
+bytes.join
+bytes.len
+bytes.pack
+bytes.push
+bytes.slice
+bytes.to_hex
+bytes.to_list
+bytes.to_string
+bytes.to_string_lossy
+bytes.unpack
+cancel.is_set
+cancel.set
+cancel.token
+cell.get
+cell.new
+cell.set
+cell.take
+cell.update
+chan.ask
+chan.bounded
+chan.close
+chan.new
+chan.on_drop
+chan.recv
+chan.recv_timeout
+chan.send
+chan.stat
+chan.try_recv
+cli.args
+cli.help
+cli.parse
+col.all
+col.any
+col.contains
+col.count_by
+col.drop
+col.drop_while
+col.filled
+col.filter
+col.flat_map
+col.flatten
+col.fold
+col.frequencies
+col.head
+col.index_of
+col.last
+col.map
+col.max
+col.max_by
+col.min
+col.min_by
+col.partition
+col.reverse
+col.set
+col.skip
+col.slice
+col.sort
+col.sort_by
+col.splice
+col.sum
+col.sum_by
+col.swap
+col.tail
+col.take
+col.take_while
+col.unique
+col.window
+col.zip
+col.zip_with
+collections.alg
+collections.alg.bfs
+collections.alg.bin_search
+collections.alg.dijkstra
+collections.alg.graph
+collections.alg.lower_bound
+collections.alg.select_kth
+collections.alg.sort
+collections.alg.sort_by_key
+collections.alg.topo_sort
+collections.alg.upper_bound
+collections.alg.wgraph
+collections.bitset
+collections.bitset.add
+collections.bitset.capacity
+collections.bitset.count
+collections.bitset.difference
+collections.bitset.has
+collections.bitset.intersect
+collections.bitset.new
+collections.bitset.remove
+collections.bitset.to_list
+collections.bitset.union
+collections.deque
+collections.deque.back
+collections.deque.front
+collections.deque.is_empty
+collections.deque.new
+collections.deque.pop_back
+collections.deque.pop_front
+collections.deque.push_back
+collections.deque.push_front
+collections.deque.size
+collections.deque.to_list
+collections.dsu
+collections.dsu.connected
+collections.dsu.find
+collections.dsu.groups
+collections.dsu.new
+collections.dsu.size
+collections.dsu.union
+collections.heap
+collections.heap.from_lists
+collections.heap.is_empty
+collections.heap.new
+collections.heap.pop
+collections.heap.push
+collections.heap.size
+collections.heap.top_item
+collections.heap.top_prio
+collections.table
+collections.table.get
+collections.table.get_or
+collections.table.has
+collections.table.keys
+collections.table.new
+collections.table.put
+collections.table.remove
+collections.table.size
+collections.table.values
+colx.all
+colx.any
+colx.count_by
+colx.drop_while
+colx.flat_map
+colx.frequencies
+colx.last
+colx.max_by
+colx.min_by
+colx.partition
+colx.sort_by
+colx.sum_by
+colx.take_while
+colx.unique
+colx.window
+colx.zip_with
+compress.brotli
+compress.brotli_level
+compress.deflate
+compress.gunzip
+compress.gzip
+compress.gzip_level
+compress.inflate
+compress.unbrotli
+crypto.blake3
+crypto.decrypt_aes
+crypto.decrypt_rsa
+crypto.derive_key
+crypto.ed25519_keypair
+crypto.ed25519_public_key
+crypto.ed25519_sign
+crypto.ed25519_verify
+crypto.encrypt_aes
+crypto.encrypt_rsa
+crypto.export_public_key
+crypto.generate_key_pair
+crypto.hash_password
+crypto.hex_decode
+crypto.hex_encode
+crypto.hmac_sha256
+crypto.hmac_sha512
+crypto.import_public_key
+crypto.md5
+crypto.random_bytes
+crypto.random_hex
+crypto.secure_compare
+crypto.sha1
+crypto.sha256
+crypto.sha512
+crypto.sign_data
+crypto.verify_password
+crypto.verify_signature
+crypto.xxh3
+csv.add_column
+csv.add_row
+csv.column_count
+csv.filter_rows
+csv.from_json
+csv.get_headers
+csv.parse
+csv.parse_with_headers
+csv.read_cell
+csv.read_column
+csv.read_row
+csv.row_count
+csv.set_cell
+csv.set_headers
+csv.sort_by_column
+csv.stringify
+csv.stringify_with_headers
+csv.to_json
+dash.card
+dash.grid
+dash.half
+dash.kpi
+dash.stat
+dash.styles
+dash.wide
+dates.add_days
+dates.add_months
+dates.add_weeks
+dates.add_years
+dates.date
+dates.datetime
+dates.day
+dates.days_in_month
+dates.diff_days
+dates.epoch_day
+dates.format_date
+dates.format_datetime
+dates.format_time
+dates.from_epoch_day
+dates.from_timestamp
+dates.from_timestamp_s
+dates.hour
+dates.is_leap_year
+dates.iso_weekday
+dates.minute
+dates.month
+dates.now
+dates.parse
+dates.parse_date
+dates.parse_datetime
+dates.parse_time
+dates.second
+dates.stamp
+dates.stamp_ms
+dates.start_of_month
+dates.start_of_week
+dates.time
+dates.timestamp
+dates.timestamp_s
+dates.today
+dates.utc_now
+dates.weekday
+dates.year
+db.begin
+db.close
+db.close_cursor
+db.columns
+db.commit
+db.cursor
+db.execute
+db.insert_frame
+db.interrupt
+db.migrate
+db.next
+db.open
+db.query
+db.query_frame
+db.query_one
+db.query_rows
+db.rollback
+db.transaction
+fs.abs_path
+fs.append_file
+fs.basename
+fs.chunks
+fs.copy_file
+fs.create_dir
+fs.create_dir_all
+fs.dirname
+fs.exists
+fs.ext
+fs.file_info
+fs.file_size
+fs.glob
+fs.is_dir
+fs.is_file
+fs.join
+fs.list_dir
+fs.move_file
+fs.next_chunk
+fs.read_bytes
+fs.read_file
+fs.read_range
+fs.real_path
+fs.remove_dir
+fs.remove_dir_all
+fs.remove_file
+fs.scan
+fs.search
+fs.sync
+fs.trash
+fs.walk
+fs.watch
+fs.watch_close
+fs.watch_next
+fs.write_bytes
+fs.write_file
+gg.abline
+gg.aes
+gg.after_stat
+gg.annotate
+gg.area
+gg.bar
+gg.bin2d
+gg.boxplot
+gg.col
+gg.constant
+gg.coord_cartesian
+gg.coord_fixed
+gg.coord_flip
+gg.crossbar
+gg.density
+gg.ecdf
+gg.errorbar
+gg.facet_grid
+gg.facet_wrap
+gg.freqpoly
+gg.ggtitle
+gg.hex
+gg.histogram
+gg.hline
+gg.jitter
+gg.label
+gg.labs
+gg.layer
+gg.line
+gg.linerange
+gg.path
+gg.plot
+gg.point
+gg.pointrange
+gg.position_dodge
+gg.position_dodge2
+gg.position_fill
+gg.position_jitter
+gg.position_nudge
+gg.position_stack
+gg.qq
+gg.qq_line
+gg.raster
+gg.rect
+gg.ribbon
+gg.rug
+gg.save
+gg.scale_alpha
+gg.scale_color_discrete
+gg.scale_color_gradient
+gg.scale_color_gradient2
+gg.scale_color_gradientn
+gg.scale_color_grey
+gg.scale_color_identity
+gg.scale_color_manual
+gg.scale_color_viridis_c
+gg.scale_color_viridis_d
+gg.scale_fill_discrete
+gg.scale_fill_gradient
+gg.scale_fill_gradient2
+gg.scale_fill_gradientn
+gg.scale_fill_grey
+gg.scale_fill_identity
+gg.scale_fill_manual
+gg.scale_fill_viridis_c
+gg.scale_fill_viridis_d
+gg.scale_linetype
+gg.scale_linewidth
+gg.scale_shape
+gg.scale_size
+gg.scale_x_continuous
+gg.scale_x_date
+gg.scale_x_datetime
+gg.scale_x_discrete
+gg.scale_x_log10
+gg.scale_x_reverse
+gg.scale_x_sqrt
+gg.scale_y_continuous
+gg.scale_y_date
+gg.scale_y_datetime
+gg.scale_y_discrete
+gg.scale_y_log10
+gg.scale_y_reverse
+gg.scale_y_sqrt
+gg.scene
+gg.segment
+gg.smooth
+gg.step
+gg.summary
+gg.svg
+gg.text
+gg.theme
+gg.tile
+gg.violin
+gg.vline
+gg.xlab
+gg.ylab
+http.decode_query
+http.delete
+http.encode_query
+http.get
+http.parse_url
+http.post
+http.put
+http.request
+json.array_get
+json.array_length
+json.array_push
+json.deep_clone
+json.get
+json.get_keys
+json.get_type
+json.get_values
+json.has_key
+json.is_valid
+json.merge
+json.minify
+json.parse
+json.prettify
+json.remove
+json.set
+json.stringify
+json.stringify_pairs
+learn.accuracy
+learn.at_threshold
+learn.auc
+learn.average_precision
+learn.boost
+learn.brier
+learn.calibration
+learn.classification_report
+learn.conf_int
+learn.confusion
+learn.cross_validate
+learn.elastic_net
+learn.f1
+learn.fit
+learn.folds
+learn.forest
+learn.gmm
+learn.grid_search
+learn.importance
+learn.imputer
+learn.kfold
+learn.kmeans
+learn.knn
+learn.lasso
+learn.learning_curve
+learn.linear
+learn.log_loss
+learn.logistic
+learn.mae
+learn.mape
+learn.mse
+learn.naive_bayes
+learn.one_hot
+learn.params
+learn.partial_dependence
+learn.pca
+learn.permutation_importance
+learn.poly
+learn.pr_curve
+learn.precision
+learn.predict
+learn.r2
+learn.recall
+learn.ridge
+learn.rmse
+learn.roc
+learn.scaler
+learn.score
+learn.silhouette
+learn.spec
+learn.split
+learn.summary
+learn.threshold_sweep
+learn.time_splits
+learn.transform
+learn.tree
+mat.abs
+mat.acos
+mat.asin
+mat.atan
+mat.cbrt
+mat.cdist
+mat.ceil
+mat.cholesky
+mat.clip
+mat.col
+mat.cos
+mat.cosh
+mat.eigh
+mat.exp
+mat.exp2
+mat.expm1
+mat.floor
+mat.gram
+mat.identity
+mat.inv
+mat.ln
+mat.ln1p
+mat.log10
+mat.log2
+mat.logit
+mat.matmul
+mat.mean
+mat.of
+mat.pow
+mat.round
+mat.row
+mat.shape
+mat.sigmoid
+mat.sign
+mat.sin
+mat.sinh
+mat.solve
+mat.sqrt
+mat.std
+mat.sum
+mat.t
+mat.tan
+mat.tanh
+mat.to_frame
+mat.to_list
+mat.trunc
+math.E
+math.LN_10
+math.LN_2
+math.LOG10_E
+math.LOG2_E
+math.PI
+math.SQRT_2
+math.SQRT_3
+math.TAU
+math.abs
+math.acos
+math.asin
+math.atan
+math.atan2
+math.cbrt
+math.ceil
+math.clz
+math.cos
+math.cosh
+math.ctz
+math.degrees
+math.exp
+math.exp2
+math.factorial
+math.floor
+math.fract
+math.gcd
+math.lcm
+math.ln
+math.log
+math.log10
+math.log2
+math.max
+math.min
+math.popcount
+math.pow
+math.radians
+math.rotl
+math.rotr
+math.round
+math.sign
+math.sin
+math.sinh
+math.sqrt
+math.tan
+math.tanh
+math.trunc
+math.ushr
+math.wrapping_add
+math.wrapping_mul
+math.wrapping_shl
+math.wrapping_sub
+mathx.E
+mathx.PI
+mathx.TAU
+mathx.abs
+mathx.ceil
+mathx.degrees
+mathx.factorial
+mathx.floor
+mathx.fract
+mathx.gcd
+mathx.lcm
+mathx.max
+mathx.min
+mathx.radians
+mathx.round
+mathx.sign
+mathx.sqrt
+mathx.trunc
+md.front
+md.headings
+md.parse
+md.render
+md.slug
+md.text
+meta.encode
+meta.eval
+meta.expand
+meta.exports
+meta.fingerprint
+meta.fresh
+meta.highlight
+meta.lit
+meta.parse
+meta.parse_items
+meta.rename
+meta.resolve
+meta.tokens
+meta.types
+meta.unresolved
+ml.accuracy
+ml.at_threshold
+ml.auc
+ml.average_precision
+ml.boost
+ml.brier
+ml.calibration
+ml.classification_report
+ml.confusion
+ml.cross_validate
+ml.elastic_net
+ml.f1
+ml.fit
+ml.fit_transform
+ml.folds
+ml.forest
+ml.gmm
+ml.grid_search
+ml.importance
+ml.imputer
+ml.kfold
+ml.kmeans
+ml.knn
+ml.lasso
+ml.learning_curve
+ml.linear
+ml.log_loss
+ml.logistic
+ml.mae
+ml.mape
+ml.mse
+ml.naive_bayes
+ml.one_hot
+ml.params
+ml.partial_dependence
+ml.pca
+ml.permutation_importance
+ml.poly
+ml.pr_curve
+ml.precision
+ml.predict
+ml.prob
+ml.r2
+ml.recall
+ml.ridge
+ml.rmse
+ml.roc
+ml.scaler
+ml.score
+ml.silhouette
+ml.spec
+ml.split
+ml.summary
+ml.threshold_sweep
+ml.time_splits
+ml.transform
+ml.tree
+module asset
+module base64
+module bigint
+module bytes
+module cancel
+module cell
+module chan
+module cli
+module col
+module collections
+module collections.alg
+module collections.bitset
+module collections.deque
+module collections.dsu
+module collections.heap
+module collections.table
+module colx
+module compress
+module crypto
+module csv
+module dash
+module dates
+module db
+module fs
+module gg
+module http
+module json
+module learn
+module mat
+module math
+module mathx
+module md
+module meta
+module ml
+module ods
+module os
+module plot
+module pmap
+module proc
+module psorted
+module pvec
+module random
+module random.Rng
+module re
+module runtime
+module shared
+module stats
+module stats.beta
+module stats.binom
+module stats.chi2
+module stats.f
+module stats.gamma
+module stats.lognorm
+module stats.norm
+module stats.poisson
+module stats.t
+module stats.ts
+module str
+module task
+module term
+module testing
+module time
+module toml
+module ui
+module value
+module vec
+module viz
+module weak
+ods.abs
+ods.acos
+ods.add_days
+ods.add_months
+ods.agg
+ods.alias
+ods.all
+ods.all_of
+ods.any
+ods.any_of
+ods.apply
+ods.arange
+ods.argmax
+ods.argmin
+ods.argsort
+ods.asin
+ods.asof_join
+ods.at_end
+ods.atan
+ods.between
+ods.cast
+ods.cbrt
+ods.ceil
+ods.clip
+ods.coalesce
+ods.codes
+ods.col
+ods.column
+ods.columns
+ods.concat
+ods.contains
+ods.corr
+ods.cos
+ods.cosh
+ods.count
+ods.cov
+ods.crosstab
+ods.cum_max
+ods.cum_min
+ods.cumprod
+ods.cumsum
+ods.date
+ods.date_part
+ods.day
+ods.day_name
+ods.day_of_year
+ods.describe
+ods.diff
+ods.distinct
+ods.dot
+ods.drop
+ods.drop_null
+ods.dummies
+ods.ends_with
+ods.eq
+ods.exp
+ods.exp2
+ods.expm1
+ods.fill_null
+ods.filter
+ods.first
+ods.floor
+ods.format
+ods.frame
+ods.frame_from_records
+ods.frame_info
+ods.full
+ods.full_like
+ods.get
+ods.group_by
+ods.groups
+ods.head
+ods.hour
+ods.interact
+ods.interpolate
+ods.is_in
+ods.is_nan
+ods.is_null
+ods.is_weekend
+ods.join
+ods.join_anti
+ods.join_full
+ods.join_left
+ods.join_semi
+ods.last
+ods.len
+ods.len_chars
+ods.levels
+ods.linspace
+ods.lit
+ods.ln
+ods.ln1p
+ods.log10
+ods.log2
+ods.logit
+ods.lookup
+ods.lower
+ods.map
+ods.matrix
+ods.max
+ods.mean
+ods.median
+ods.min
+ods.minute
+ods.mode
+ods.month
+ods.month_name
+ods.months_between
+ods.n_cols
+ods.n_rows
+ods.n_unique
+ods.ne
+ods.next_chunk
+ods.not
+ods.not_null
+ods.null_count
+ods.ones
+ods.open_csv
+ods.open_jsonl
+ods.over
+ods.pad_end
+ods.pad_start
+ods.pct_change
+ods.pivot
+ods.pow
+ods.quantile
+ods.quarter
+ods.rank
+ods.read_csv
+ods.read_csv_file
+ods.read_frame
+ods.read_jsonl
+ods.read_jsonl_file
+ods.recode
+ods.rename
+ods.repeat
+ods.replace
+ods.replace_re
+ods.resample
+ods.rolling
+ods.round
+ods.row
+ods.rows_read
+ods.run_id
+ods.runs
+ods.sample
+ods.schema
+ods.searchsorted
+ods.second
+ods.select
+ods.series
+ods.shift
+ods.sigmoid
+ods.sign
+ods.sin
+ods.sinh
+ods.size
+ods.slice
+ods.sort
+ods.sort_by
+ods.split
+ods.split_at
+ods.split_n
+ods.sqrt
+ods.starts_with
+ods.std
+ods.substring
+ods.sum
+ods.tail
+ods.take
+ods.tan
+ods.tanh
+ods.tile
+ods.to_category
+ods.to_csv
+ods.to_date
+ods.to_datetime
+ods.to_float
+ods.to_int
+ods.to_jsonl
+ods.to_list
+ods.to_matrix
+ods.to_records
+ods.transform
+ods.trim
+ods.trim_end
+ods.trim_start
+ods.trunc
+ods.try_frame_from_records
+ods.try_series
+ods.unique
+ods.unpivot
+ods.upper
+ods.value_counts
+ods.var
+ods.version
+ods.week
+ods.weekday
+ods.where
+ods.with
+ods.with_column
+ods.write_csv
+ods.write_frame
+ods.write_jsonl
+ods.year
+ods.zeros
+os.arch
+os.args
+os.chdir
+os.color_enabled
+os.cwd
+os.env
+os.exe_path
+os.exec
+os.exit
+os.family
+os.flush
+os.get_env
+os.has_env
+os.home_dir
+os.hostname
+os.interrupted
+os.is_tty
+os.list_env
+os.on_interrupt
+os.on_shutdown
+os.os_type
+os.path_separator
+os.pid
+os.read_line
+os.remove_env
+os.reset_interrupt
+os.set_env
+os.stdin
+os.stdin_is_tty
+os.stdin_lines
+os.temp_dir
+os.username
+plot.area
+plot.bar
+plot.bars
+plot.box
+plot.describe
+plot.gg
+plot.gg_scene
+plot.heatmap
+plot.hist
+plot.line
+plot.lines
+plot.ramp
+plot.scatter
+plot.stacked
+plot.xy
+pmap.diff
+pmap.entries
+pmap.get
+pmap.has
+pmap.keys
+pmap.len
+pmap.new
+pmap.of
+pmap.remove
+pmap.set
+pmap.to_map
+pmap.values
+proc.close_stdin
+proc.kill
+proc.pid
+proc.pipeline
+proc.read_all
+proc.read_line
+proc.spawn
+proc.stderr
+proc.wait
+proc.write
+proc.write_frame
+proc.write_line
+psorted.diff
+psorted.entries
+psorted.first
+psorted.get
+psorted.has
+psorted.keys
+psorted.last
+psorted.len
+psorted.new
+psorted.of
+psorted.range
+psorted.remove
+psorted.set
+psorted.to_map
+psorted.values
+pvec.concat
+pvec.get
+pvec.last
+pvec.len
+pvec.new
+pvec.of
+pvec.pop
+pvec.push
+pvec.set
+pvec.slice
+pvec.to_list
+random.Rng
+random.Rng.binomial
+random.Rng.choice
+random.Rng.integers
+random.Rng.lognormal
+random.Rng.normal
+random.Rng.permutation
+random.Rng.poisson
+random.Rng.shuffle
+random.Rng.spawn
+random.Rng.uniform
+random.choice
+random.choices
+random.gauss
+random.randbool
+random.randint
+random.random
+random.randstr
+random.randstr_alnum
+random.randstr_alpha
+random.randstr_numeric
+random.rng
+random.sample
+random.seed
+random.shuffle
+random.uniform
+re.captures
+re.find
+re.find_all
+re.find_spans
+re.is_match
+re.is_valid
+re.replace
+re.replace_first
+re.split
+runtime.bind
+runtime.build
+runtime.call_budget
+runtime.call_cancellable
+runtime.code_layer
+runtime.collect
+runtime.features
+runtime.last_error
+runtime.load_module
+runtime.memory
+runtime.module_grant
+runtime.module_permits
+runtime.on_crash
+runtime.preset
+runtime.profile_live_start
+runtime.profile_live_stop
+runtime.profile_start
+runtime.profile_stop
+runtime.shape
+runtime.unload_module
+runtime.version
+runtime.wasm
+shared.compare_and_set
+shared.get
+shared.new
+shared.set
+shared.swap
+stats.beta
+stats.beta.cdf
+stats.beta.pdf
+stats.beta.ppf
+stats.beta.sample
+stats.binom
+stats.binom.cdf
+stats.binom.pmf
+stats.binom.ppf
+stats.binom.sample
+stats.bootstrap
+stats.chi2
+stats.chi2.cdf
+stats.chi2.pdf
+stats.chi2.ppf
+stats.chi2.sample
+stats.chi2_test
+stats.corr
+stats.cov
+stats.describe
+stats.f
+stats.f.cdf
+stats.f.pdf
+stats.f.ppf
+stats.f.sample
+stats.gamma
+stats.gamma.cdf
+stats.gamma.pdf
+stats.gamma.ppf
+stats.gamma.sample
+stats.iqr
+stats.lm
+stats.lognorm
+stats.lognorm.cdf
+stats.lognorm.pdf
+stats.lognorm.ppf
+stats.lognorm.sample
+stats.mad
+stats.mann_whitney
+stats.n_for_power
+stats.norm
+stats.norm.cdf
+stats.norm.pdf
+stats.norm.ppf
+stats.norm.sample
+stats.poisson
+stats.poisson.cdf
+stats.poisson.pmf
+stats.poisson.ppf
+stats.poisson.sample
+stats.power_t
+stats.prop_z_test
+stats.spearman
+stats.t
+stats.t.cdf
+stats.t.pdf
+stats.t.ppf
+stats.t.sample
+stats.t_test
+stats.ts
+stats.ts.acf
+stats.ts.decompose
+stats.ts.forecast
+stats.ts.holt_winters
+stats.ts.pacf
+stats.ts.seasonal_naive
+stats.tukey_fences
+stats.zscore
+str.bidi_runs
+str.byte_len
+str.byte_to_char
+str.capitalize
+str.cell_width
+str.char_at
+str.char_code
+str.char_to_byte
+str.chars
+str.chunks
+str.contains
+str.count
+str.encode
+str.ends_with
+str.fixed
+str.fmt
+str.fold
+str.from_char_code
+str.fuzzy_score
+str.graphemes
+str.hash
+str.index_of
+str.is_ascii
+str.is_empty
+str.join
+str.last_index_of
+str.length
+str.line_breaks
+str.line_starts
+str.lines
+str.money
+str.normalize
+str.pad_end
+str.pad_start
+str.parse_float
+str.parse_int
+str.pct
+str.repeat
+str.replace
+str.replace_first
+str.reverse
+str.slice_bytes
+str.split
+str.starts_with
+str.stats
+str.substring
+str.thousands
+str.to_lower
+str.to_upper
+str.trim
+str.trim_end
+str.trim_start
+str.utf16_len
+str.width
+str.word_bounds
+str.words
+task.interrupt
+task.join
+task.join_timeout
+task.list
+task.parked
+task.qos
+task.set_parallelism
+task.set_qos
+task.watch
+term.bar
+term.black
+term.blue
+term.bold
+term.color
+term.confirm
+term.cyan
+term.dim
+term.gray
+term.green
+term.italic
+term.magenta
+term.prompt
+term.red
+term.rule
+term.select
+term.style
+term.table
+term.underline
+term.visible_len
+term.white
+term.yellow
+testing.assert_eq
+testing.assert_err
+testing.assert_false
+testing.assert_ne
+testing.assert_ok
+testing.assert_true
+testing.fail
+testing.reset_tests
+testing.snapshot
+testing.snapshot_dir
+testing.snapshot_failed
+testing.test_summary
+time.monotonic
+time.monotonic_ms
+time.now_ms
+time.sleep
+toml.is_valid
+toml.parse
+toml.stringify
+ui.brush
+ui.control
+ui.date
+ui.esc
+ui.h
+ui.hk
+ui.html
+ui.render
+ui.select
+ui.slider
+ui.text
+ui.toggle
+value.decode
+value.encode
+vec.add
+vec.dot
+vec.mean
+vec.norm
+vec.scale
+vec.sub
+vec.sum
+viz.brush
+viz.chart
+viz.check
+viz.draw
+viz.on_mark
+viz.tooltip
+weak.alive
+weak.get
+weak.new

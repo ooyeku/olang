@@ -383,6 +383,43 @@ by `olang check` where it can be.
   under `--ovm-tier=1` and diffs stdout, stderr, and exit status.
 - `colx`/`mathx` differential tests exercise the language against its own
   stdlib.
+- Every release after 1.0 proves it keeps 1.0, before it is tagged and
+  again once it is published ([below](#the-1x-compatibility-check)).
+
+### The 1.x compatibility check
+
+Each 1.x release is held to 1.0 by three checks, which `tools/release.sh`
+runs before every tag and `tools/release-check.sh` against every
+published release:
+
+- **Compatibility programs.** `tests/compat/programs/` has a program for
+  each Stable area: the core language, pattern matching, functions,
+  user-defined types and traits, the error model and its sentinels,
+  number semantics, modules, macros, the text, data and system modules,
+  concurrency, test blocks, the embedded packages, and the scope rules
+  refused before a program runs. Each must keep printing exactly what
+  its `.out` file says and exiting as it says. They print only what is contract: values and
+  `raise` messages, never error text, and a report's fields rather than
+  the whole record a later release may add to.
+- **The stdlib surface.** `tests/compat/surface/1.0.txt` names every
+  global builtin and every member of every module outside the
+  Experimental tier as 1.0 has them. A later release must still have
+  every one; each minor release adds its own list, which the releases
+  after it keep in turn.
+- **`@stable` items.** `olang check --against 1.0.0` holds olang's own
+  packages to the `@stable` items they had at 1.0
+  ([Stable items across versions](tooling.md#stable-items-across-versions)).
+
+`tests/compat_test.rs` runs the first two with the test suite (its opening comment says how to add a program or record a break), and
+`tools/compat-check.sh` runs all three with any olang binary.
+
+**An intended break says so.** What 1.x may change is listed under
+[Versioning](#versioning): a bug fix, or an Experimental surface in a
+minor release. When such a change alters a compatibility program or
+removes a name, it is recorded in `tests/compat/allow.toml`, reviewed,
+with the release, the issue, the kind of change and the reason, and the
+release's CHANGELOG names the issue. A changed expectation with no such
+entry fails the release; nothing changes silently.
 
 Documented behavior that does not match the implementation is a bug in
 one of them.

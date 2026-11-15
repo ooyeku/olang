@@ -1,0 +1,18 @@
+true true
+4
+-1
+-16
+Ok(30)
+Ok(42)
+true
+Ok(42)
+true
+{ kind: "button" }
+Err("widget: no kind dial")
+2
+[10, -1]
+true
+Err("channel is closed")
+Err("timed out")
+()
+fallback

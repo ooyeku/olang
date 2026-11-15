@@ -1,0 +1,38 @@
+The quick brown fox
+["a", "b", "", "c"]
+x-y-z
+bbb
+true
+true
+2
+el
+007
+ababab
+["h", "é", "l", "l", "o"]
+5
+["one", "two"]
+["two", "words"]
+Ok(42)
+true
+Olang
+cba
+Ok(true)
+Ok(["1", "22", "333"])
+Ok("b_n_n_")
+Ok(["a", "b", "c"])
+Ok(["me@host", "me", "host"])
+aGVsbG8sIG9sYW5n
+Ok("hello, olang")
+Ok({ name: "olang", tags: ["a", "b"], n: 1.5, none: () })
+Ok("{\"b\":[1,2],\"a\":true}")
+Ok("{\n  \"a\": 1\n}")
+true
+Ok({ title: "x", server: { port: 8080 } })
+Ok("name = \"pkg\"\nversion = \"1.0.0\"\n")
+Ok([#{"name": "apple", "qty": "3"}, #{"name": "pear", "qty": "5"}])
+Ok("a,b\n1,\"2,3\"\n")
+<h1 id="title">Title</h1>
+<p>Some <em>emphasis</em>.</p>
+
+hello-world
+["1 One one", "2 Two two"]
