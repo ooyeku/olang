@@ -214,3 +214,41 @@ run()
 "#,
     );
 }
+
+/// An early return from a large function costs what it does from a small
+/// wrapper around it: on rc.7 a call cost with the size of the whole
+/// body, about 5x (OL-526).
+#[test]
+fn an_early_return_costs_the_same_from_a_large_function() {
+    check(
+        "earlyret",
+        r#"fn helper_a(v, t) = (v.count, t)
+fn helper_b(v, id, x, c) = { first: v.first + 1, count: c }
+fn big(w, now) = {
+    if w.first > now => return ([], w)
+    let mut v = w
+    let mut fired = []
+    while v.first <= now {
+        let (id, t) = helper_a(v, v.first)
+        fired = fired + [id]
+        v = helper_b(v, id, (), v.count - 1)
+        let (id2, t2) = helper_a(v, t)
+        fired = fired + [id2 + t2]
+        v = helper_b(v, id2, (), v.count - 1)
+    }
+    (fired, v)
+}
+fn wrapper(w, now) = if w.first > now => ([], w) else => big(w, now)
+fn loop_of(f, n) = { let mut w = { first: 99, count: 5 }; let t0 = time.monotonic(); let mut i = 0; while i < n { w = f(w, 0)[1]; i = i + 1 }; time.monotonic() - t0 }
+fn run() = {
+    println("= " + show(big({ first: 0, count: 9 }, 3)) + " " + show(wrapper({ first: 0, count: 9 }, 3)))
+    loop_of(big, 20000)
+    loop_of(wrapper, 20000)
+    let mut best = 100.0
+    for k in 0..3 { best = math.min(best, loop_of(big, 100000) / loop_of(wrapper, 100000)) }
+    println("ok " + to_string(best < 1.5) + " " + to_string(best))
+}
+run()
+"#,
+    );
+}
