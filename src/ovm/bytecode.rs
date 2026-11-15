@@ -224,6 +224,19 @@ pub struct BytecodeVm {
     /// function once per CALL of the function, and the JIT gave each
     /// compile machine code it can never free: ~1.3 KB a call, forever.
     hof_shared: HashMap<usize, Vec<HofShared>>,
+    /// What `hof_function_id` answered for one function value, by the
+    /// value's own allocation: a call through a function value held in a
+    /// record field or a local (`r.f(x)`, `f(x)`) finds its compiled id
+    /// with one pointer hash instead of `hof_cache`'s SipHash and
+    /// `hof_shared`'s field-by-field compare (OL-520). The weak reference
+    /// keeps the allocation, so its address is never reused while the
+    /// entry stands; an entry is good for the epoch it was made in, and
+    /// the whole map goes when any compiled code is evicted.
+    #[allow(clippy::type_complexity)]
+    fn_value_ids: rustc_hash::FxHashMap<
+        usize,
+        (std::sync::Weak<crate::ast::Function>, u64, FunctionId),
+    >,
     /// Closures compiled one by one (not shared), per body: past
     /// `HOF_JIT_CLOSURES` the body is churning and its compiles stay on
     /// the bytecode VM, whose artifacts are freed with the closure.
@@ -892,6 +905,16 @@ pub enum Instruction {
         /// interpreter binds them. Empty for a positional call.
         #[serde(default)]
         names: Vec<String>,
+        /// As `CallValue`'s: the arguments dead after the call, taken from
+        /// their registers when the method is a function in a field
+        /// (`r.f(b, x)`), so `b = r.f(b, x)` hands `b` over solely owned
+        /// (OL-523).
+        #[serde(default)]
+        arg_moves: u64,
+        /// One-entry cache of the field's index in a struct receiver's
+        /// shape, checked against the field's name on a hit.
+        #[serde(skip)]
+        cache: FieldCache,
     },
     /// Call whatever function value the callee register holds — a
     /// parameter, a local, the result of another call. Compiled function
@@ -1170,6 +1193,12 @@ pub enum Instruction {
         /// because bytecode is shared (Arc) across calls and threads.
         #[serde(skip)]
         cache: FieldCache,
+        /// The object's register is dead after the read (set by the
+        /// liveness pass): it is let go at once, so a field read off a
+        /// call's answer (`b = f(b, x).box`) is not also held by the
+        /// answer, and the next call takes it solely owned (OL-523).
+        #[serde(default)]
+        object_dead: bool,
     },
     /// Subscript: `dst = object[index]`. Lists, tuples, and strings with an
     /// integer index (a negative one out of range), matching the interpreter.
@@ -1357,6 +1386,8 @@ pub enum VmException {
 
 /// `hof_cache` is swept every time it has grown by this many entries…
 const HOF_SWEEP_MIN: usize = 8;
+/// The most function values `fn_value_ids` remembers before it starts over.
+const FN_VALUE_IDS_MAX: usize = 1024;
 /// …and a LIVE set this large is retired from the index (as the old
 /// fixed bound of 512 did by clearing it).
 const HOF_LIVE_CAP: usize = 4096;
@@ -1835,6 +1866,7 @@ impl BytecodeVm {
             hof_owned: HashMap::new(),
             hof_retired: Vec::new(),
             hof_shared: HashMap::new(),
+            fn_value_ids: rustc_hash::FxHashMap::default(),
             hof_churn: HashMap::new(),
             hof_epoch: 0,
             jit_withheld: std::collections::HashSet::new(),
@@ -6002,7 +6034,51 @@ impl BytecodeVm {
                     method,
                     args,
                     names,
+                    arg_moves,
+                    cache,
                 } => {
+                    // A function in a struct's field whose compiled id is
+                    // known (`r.f(x)`, a contract record's part): the
+                    // direct call's own entry, as CallValue (OL-520). A
+                    // struct's field wins over a method, so this is the
+                    // call the general path below would make.
+                    let known = match &self.execution_state.register_ref(*object)?.data {
+                        crate::ovm::value::ValueData::Struct(st) if names.is_empty() => {
+                            let (shape, at) = cache.load();
+                            let at = at as usize;
+                            let index = if shape == st.shape.id
+                                && at < st.len()
+                                && st.shape.field_names.get(at).is_some_and(|n| n == method)
+                            {
+                                Some(at)
+                            } else {
+                                st.shape
+                                    .field_index(method)
+                                    .map(|i| i as usize)
+                                    .filter(|&i| i < st.len())
+                                    .inspect(|&i| cache.store(st.shape.id, i as u32))
+                            };
+                            index.and_then(|i| match &st.peek(i).data {
+                                crate::ovm::value::ValueData::AstFunction(f) => self
+                                    .fn_value_ids
+                                    .get(&(Arc::as_ptr(f) as usize))
+                                    .filter(|(weak, epoch, _)| {
+                                        *epoch == self.hof_epoch
+                                            && std::ptr::eq(weak.as_ptr(), Arc::as_ptr(f))
+                                            && f.parameters.len() == args.len()
+                                    })
+                                    .map(|(_, _, id)| *id),
+                                _ => None,
+                            })
+                        }
+                        _ => None,
+                    };
+                    if let Some(func_id) = known {
+                        let result = self.execute_from_regs(func_id, args, *arg_moves)?;
+                        self.execution_state.set_register(*dst, result)?;
+                        pc += 1;
+                        continue;
+                    }
                     let receiver = self.execution_state.get_register(*object)?;
                     // Struct fields take precedence over methods, exactly as
                     // interpreted: field access that happens to hold a
@@ -6030,11 +6106,17 @@ impl BytecodeVm {
                     let result = if let Some(callee) = field_callee {
                         let mut arg_values = self.arg_pool.pop().unwrap_or_default();
                         arg_values.reserve(args.len());
-                        for arg_reg in args {
-                            arg_values.push(self.execution_state.get_register(*arg_reg)?);
+                        let take = names.is_empty();
+                        for (i, arg_reg) in args.iter().enumerate() {
+                            arg_values.push(if take && i < 64 && arg_moves & (1 << i) != 0 {
+                                self.execution_state.take_register(*arg_reg)?
+                            } else {
+                                self.execution_state.get_register(*arg_reg)?
+                            });
                         }
-                        let r = if names.is_empty() {
-                            self.call_function_value(&callee, &arg_values)
+                        let r = if take {
+                            // by move into the callee's frame, as CallValue
+                            self.call_function_value_taking(&callee, &mut arg_values)
                         } else {
                             self.bridge_call(&callee, &arg_values, names)
                         };
@@ -6159,6 +6241,28 @@ impl BytecodeVm {
                     args,
                     arg_moves,
                 } => {
+                    // A function value whose compiled id is known: the
+                    // direct call's own entry, straight from the
+                    // registers, with no argument buffer and no copy of
+                    // the callee (OL-520).
+                    let known = match &self.execution_state.register_ref(*callee)?.data {
+                        crate::ovm::value::ValueData::AstFunction(f) => self
+                            .fn_value_ids
+                            .get(&(Arc::as_ptr(f) as usize))
+                            .filter(|(weak, epoch, _)| {
+                                *epoch == self.hof_epoch
+                                    && std::ptr::eq(weak.as_ptr(), Arc::as_ptr(f))
+                                    && f.parameters.len() == args.len()
+                            })
+                            .map(|(_, _, id)| *id),
+                        _ => None,
+                    };
+                    if let Some(func_id) = known {
+                        let result = self.execute_from_regs(func_id, args, *arg_moves)?;
+                        self.execution_state.set_register(*dst, result)?;
+                        pc += 1;
+                        continue;
+                    }
                     let mut arg_values = self.arg_pool.pop().unwrap_or_default();
                     arg_values.reserve(args.len());
                     for (i, arg_reg) in args.iter().enumerate() {
@@ -6169,7 +6273,11 @@ impl BytecodeVm {
                         });
                     }
                     let callee_value = self.execution_state.get_register(*callee)?;
-                    let result = match self.call_function_value(&callee_value, &arg_values) {
+                    // The arguments go into the callee's frame by move, as
+                    // a direct call's do: a value rebound to what the call
+                    // answers (`b = f(b, x)`) is held only there, so the
+                    // callee updates it in place (OL-523).
+                    let result = match self.call_function_value_taking(&callee_value, &mut arg_values) {
                         // A value called as a function: the bridge's error
                         // does not know the identifier; this site does.
                         Err(BytecodeError::RuntimeError(msg)) if msg.contains("cannot call a") => {
@@ -6390,6 +6498,10 @@ impl BytecodeVm {
                         .filter(|_| self.home_function(function_name, bytecode));
                     let outcome = if let Some(func_id) = user {
                         self.execute(func_id, &arg_values)
+                    } else if let Some(op) = function_name.strip_prefix("str.")
+                        && let Some(r) = Self::str_native(op, &arg_values)
+                    {
+                        r
                     } else if function_name == "map_set"
                         && let Some(r) = Self::map_set_owned(&mut arg_values)
                     {
@@ -6782,6 +6894,7 @@ impl BytecodeVm {
                     object,
                     name_const,
                     cache,
+                    object_dead,
                 } => {
                     // Inline-cache fast path: same shape as last time means
                     // the field index is already known — an integer compare
@@ -6803,6 +6916,9 @@ impl BytecodeVm {
                         Some(value) => value,
                         None => self.get_field_slow(bytecode, *name_const, object_value, cache)?,
                     };
+                    if *object_dead {
+                        self.execution_state.take_register(*object)?;
+                    }
                     self.execution_state.set_register(*dst, result)?;
                 }
 
@@ -7632,6 +7748,7 @@ impl BytecodeVm {
         if ids.is_empty() {
             return;
         }
+        self.fn_value_ids.clear();
         if let Ok(mut cache) = self.bytecode_cache.write() {
             for id in ids {
                 cache.remove(id);
@@ -7869,6 +7986,30 @@ impl BytecodeVm {
                 self.release_closure_compile(&f);
             }
         }
+    }
+
+    /// `hof_function_id` for a function value, remembered by the value's
+    /// allocation (`fn_value_ids`): the call-through-a-value path.
+    fn fn_value_id(
+        &mut self,
+        f: &Arc<crate::ast::Function>,
+        arity: usize,
+    ) -> Option<FunctionId> {
+        let key = Arc::as_ptr(f) as usize;
+        if let Some((weak, epoch, id)) = self.fn_value_ids.get(&key)
+            && *epoch == self.hof_epoch
+            && std::ptr::eq(weak.as_ptr(), Arc::as_ptr(f))
+            && f.parameters.len() == arity
+        {
+            return Some(*id);
+        }
+        let id = self.hof_function_id(f, arity)?;
+        if self.fn_value_ids.len() >= FN_VALUE_IDS_MAX {
+            self.fn_value_ids.clear();
+        }
+        self.fn_value_ids
+            .insert(key, (Arc::downgrade(f), self.hof_epoch, id));
+        Some(id)
     }
 
     pub(crate) fn hof_function_id(
@@ -8379,6 +8520,53 @@ impl BytecodeVm {
         }
     }
 
+    /// The string tests and slices compiled code calls in its loops
+    /// (`str.index_of`, `str.substring`, `str.starts_with`, `ends_with`,
+    /// `contains`), answered on the VM's own strings: through the bridge
+    /// each converted its arguments and dispatched by name, about 100 ns a
+    /// call (OL-522). The answers are the interpreter's own functions';
+    /// anything else (a wrong type, a negative position, another arity)
+    /// is `None` and takes the bridge, which raises its exact error.
+    fn str_native(op: &str, args: &[OvmValue]) -> Option<Result<OvmValue, BytecodeError>> {
+        use crate::ovm::value::ValueData;
+        use crate::stdlib::string as st;
+        let text = |i: usize| match args.get(i).map(|v| &v.data) {
+            Some(ValueData::String(s)) => Some(s),
+            _ => None,
+        };
+        let int = |i: usize| match args.get(i).map(|v| &v.data) {
+            Some(ValueData::Integer(n)) if *n >= 0 => Some(*n as usize),
+            _ => None,
+        };
+        let v = match op {
+            "starts_with" if args.len() == 2 => {
+                OvmValue::new_boolean(text(0)?.starts_with(text(1)?.as_str()))
+            }
+            "ends_with" if args.len() == 2 => {
+                OvmValue::new_boolean(text(0)?.ends_with(text(1)?.as_str()))
+            }
+            "contains" if args.len() == 2 => {
+                OvmValue::new_boolean(text(0)?.contains(text(1)?.as_str()))
+            }
+            "index_of" if args.len() == 2 => match st::index_of(text(0)?, text(1)?) {
+                Some(i) => OvmValue::new_integer(i),
+                None => OvmValue::new_unit(),
+            },
+            "substring" if args.len() == 3 => {
+                let s = text(0)?;
+                let slice = st::substring(s, int(1)?, int(2)?);
+                if slice.len() == s.len() {
+                    // the whole text: the same string, not a copy
+                    args[0].clone()
+                } else {
+                    OvmValue::new_string(slice.to_string())
+                }
+            }
+            _ => return None,
+        };
+        Some(Ok(v))
+    }
+
     /// `call_function_value` with the arguments handed over: a compiled
     /// callee's frame takes them by move, so a value nothing else holds
     /// stays uniquely held there. Anything else is called as
@@ -8386,24 +8574,24 @@ impl BytecodeVm {
     fn call_function_value_taking(
         &mut self,
         callee: &OvmValue,
-        mut args: Vec<OvmValue>,
+        args: &mut Vec<OvmValue>,
     ) -> Result<OvmValue, BytecodeError> {
         use crate::ovm::value::ValueData;
         match &callee.data {
             ValueData::AstFunction(f) if f.parameters.len() == args.len() => {
                 let f = f.clone();
-                if let Some(func_id) = self.hof_function_id(&f, args.len()) {
-                    return self.execute_taking(func_id, &mut args);
+                if let Some(func_id) = self.fn_value_id(&f, args.len()) {
+                    return self.execute_taking(func_id, args);
                 }
             }
             ValueData::Closure(c) if c.template.parameters.len() == args.len() => {
                 let c = c.clone();
                 args.extend(c.captured.iter().cloned());
-                return self.execute_taking(c.func_id, &mut args);
+                return self.execute_taking(c.func_id, args);
             }
             _ => {}
         }
-        self.call_function_value(callee, &args)
+        self.call_function_value(callee, args)
     }
 
     fn call_function_value(
@@ -8415,7 +8603,7 @@ impl BytecodeVm {
         match &callee.data {
             ValueData::AstFunction(f) => {
                 let f = f.clone();
-                if let Some(func_id) = self.hof_function_id(&f, args.len()) {
+                if let Some(func_id) = self.fn_value_id(&f, args.len()) {
                     return self.execute(func_id, args);
                 }
                 // A short call whose missing defaults are all literals
@@ -10498,7 +10686,7 @@ impl BytecodeVm {
                 // handed over, not lent: the function's frame then holds
                 // the old value's only reference, so a table nested in a
                 // map is updated in place (OL-266)
-                let new = self.call_function_value_taking(&f, vec![old])?;
+                let new = self.call_function_value_taking(&f, &mut vec![old])?;
                 Arc::make_mut(&mut m).insert(key, new);
                 Ok(OvmValue::new_map(m))
             }
@@ -12518,6 +12706,8 @@ impl BytecodeCompiler {
                                 method: field.clone(),
                                 args: arg_regs,
                                 names,
+                                arg_moves: 0,
+                                cache: FieldCache::default(),
                             });
                             return Ok(dst_reg);
                         }
@@ -13051,23 +13241,12 @@ impl BytecodeCompiler {
                 Ok(dst_reg)
             }
 
-            Expr::Pipeline { left, right } => {
-                // `x |> f(a)` is `f(x, a)`; `x |> f` is `f(x)`
-                let desugared = match right.as_ref() {
-                    Expr::Call { callee, arguments } => {
-                        let mut args = Vec::with_capacity(arguments.len() + 1);
-                        args.push(crate::ast::Argument::Positional((**left).clone()));
-                        args.extend(arguments.iter().cloned());
-                        Expr::Call {
-                            callee: callee.clone(),
-                            arguments: args,
-                        }
-                    }
-                    other => Expr::Call {
-                        callee: Box::new(other.clone()),
-                        arguments: vec![crate::ast::Argument::Positional((**left).clone())],
-                    },
-                };
+            Expr::Pipeline { .. } => {
+                // `x |> f(a)` is `f(x, a)`; `x |> f` is `f(x)`. The whole
+                // chain is rewritten at once: rewriting one step at a time
+                // copied the rest of the chain at every step, quadratic in
+                // its length (OL-361).
+                let desugared = Self::desugar_pipeline(expr);
                 self.compile_expression(&desugared)
             }
 
@@ -13450,6 +13629,7 @@ impl BytecodeCompiler {
                     object: object_reg,
                     name_const,
                     cache: FieldCache::default(),
+                    object_dead: false,
                 });
                 Ok(dst)
             }
@@ -14007,6 +14187,7 @@ impl BytecodeCompiler {
                         object: value_reg,
                         name_const,
                         cache: FieldCache::default(),
+                        object_dead: false,
                     });
                     self.compile_pattern_test(sub, field_reg, fail_label)?;
                 }
@@ -15018,8 +15199,45 @@ impl BytecodeCompiler {
     /// Compile expressions evaluated left-to-right whose registers feed a
     /// single instruction (call arguments, list/tuple elements), shielding
     /// each from assignments in the expressions after it.
+    /// A pipeline chain as the calls it means, its left spine rewritten in
+    /// one pass (`a |> f |> g(b)` is `g(f(a), b)`), each part copied once.
+    fn desugar_pipeline(expr: &Expr) -> Expr {
+        let mut rights = Vec::new();
+        let mut at = expr;
+        while let Expr::Pipeline { left, right } = at {
+            rights.push(right.as_ref());
+            at = left;
+        }
+        let mut value = at.clone();
+        for right in rights.into_iter().rev() {
+            value = match right {
+                Expr::Call { callee, arguments } => {
+                    let mut args = Vec::with_capacity(arguments.len() + 1);
+                    args.push(crate::ast::Argument::Positional(value));
+                    args.extend(arguments.iter().cloned());
+                    Expr::Call {
+                        callee: callee.clone(),
+                        arguments: args,
+                    }
+                }
+                other => Expr::Call {
+                    callee: Box::new(other.clone()),
+                    arguments: vec![crate::ast::Argument::Positional(value)],
+                },
+            };
+        }
+        value
+    }
+
     fn compile_operands(&mut self, exprs: &[&Expr]) -> Result<Vec<Register>, BytecodeError> {
-        let last_assigning = exprs.iter().rposition(|e| !Self::assignment_free(e));
+        // Only an operand before an assigning one needs shielding, so one
+        // operand never does: not walking it keeps a deep chain of
+        // one-argument calls linear (OL-361).
+        let last_assigning = if exprs.len() < 2 {
+            None
+        } else {
+            exprs.iter().rposition(|e| !Self::assignment_free(e))
+        };
         let mut regs = Vec::with_capacity(exprs.len());
         for (i, expr) in exprs.iter().enumerate() {
             let reg = self.compile_expression(expr)?;
@@ -15955,6 +16173,110 @@ impl BytecodeOptimizer {
         instructions
     }
 
+    /// Basic blocks of a resolved instruction stream, as `(first, past)`
+    /// ranges in order, and the registers live at each block's end, as
+    /// bitsets of `nregs` bits. Successors are the eliminate pass's own:
+    /// a jump's target, a branch's target and the next instruction, a
+    /// self tail call's entry, nothing after a return or a match or try
+    /// failure, and otherwise the next instruction.
+    fn block_liveness(instructions: &[Instruction], nregs: usize) -> (Vec<(usize, usize)>, Vec<Vec<u64>>) {
+        use Instruction as I;
+        let n = instructions.len();
+        let words = nregs.div_ceil(64).max(1);
+        let mut leader = vec![false; n + 1];
+        leader[0] = true;
+        for (pc, inst) in instructions.iter().enumerate() {
+            match inst {
+                I::Jump { target }
+                | I::JumpIfTrue { target, .. }
+                | I::JumpIfFalse { target, .. } => {
+                    leader[(target.0 as usize).min(n)] = true;
+                    leader[pc + 1] = true;
+                }
+                I::TailCallSelf { .. } | I::Return { .. } | I::MatchFail | I::TryFail => {
+                    leader[pc + 1] = true;
+                }
+                _ => {}
+            }
+        }
+        let mut blocks = Vec::new();
+        let mut block_of = vec![usize::MAX; n + 1];
+        let mut first = 0;
+        for pc in 1..=n {
+            if leader[pc] || pc == n {
+                for b in first..pc {
+                    block_of[b] = blocks.len();
+                }
+                blocks.push((first, pc));
+                first = pc;
+            }
+        }
+        // each block's successors, by block index
+        let succs: Vec<Vec<usize>> = blocks
+            .iter()
+            .map(|&(_, past)| {
+                let last = past - 1;
+                let at = |t: usize| (t < n).then(|| block_of[t]);
+                match &instructions[last] {
+                    I::Jump { target } => at(target.0 as usize).into_iter().collect(),
+                    I::JumpIfTrue { target, .. } | I::JumpIfFalse { target, .. } => {
+                        at(target.0 as usize).into_iter().chain(at(past)).collect()
+                    }
+                    I::TailCallSelf { .. } => at(0).into_iter().collect(),
+                    I::Return { .. } | I::MatchFail | I::TryFail => Vec::new(),
+                    _ => at(past).into_iter().collect(),
+                }
+            })
+            .collect();
+        // each block's own reads before any write (gen) and writes (kill)
+        let mut gens = vec![vec![0u64; words]; blocks.len()];
+        let mut kills = vec![vec![0u64; words]; blocks.len()];
+        let mut uses = Vec::new();
+        let mut defs = Vec::new();
+        for (b, &(first, past)) in blocks.iter().enumerate() {
+            for pc in (first..past).rev() {
+                uses.clear();
+                defs.clear();
+                Self::uses_defs_into(&instructions[pc], &mut uses, &mut defs);
+                for &d in &defs {
+                    if (d as usize) < nregs {
+                        let (w, bit) = (d as usize / 64, 1u64 << (d % 64));
+                        gens[b][w] &= !bit;
+                        kills[b][w] |= bit;
+                    }
+                }
+                for &u in &uses {
+                    if (u as usize) < nregs {
+                        gens[b][u as usize / 64] |= 1u64 << (u % 64);
+                    }
+                }
+            }
+        }
+        let mut live_in = vec![vec![0u64; words]; blocks.len()];
+        let mut live_out = vec![vec![0u64; words]; blocks.len()];
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for b in (0..blocks.len()).rev() {
+                let mut out = vec![0u64; words];
+                for &s in &succs[b] {
+                    for (o, i) in out.iter_mut().zip(&live_in[s]) {
+                        *o |= *i;
+                    }
+                }
+                let new_in: Vec<u64> = (0..words)
+                    .map(|w| gens[b][w] | (out[w] & !kills[b][w]))
+                    .collect();
+                live_out[b] = out;
+                if new_in != live_in[b] {
+                    live_in[b] = new_in;
+                    changed = true;
+                }
+            }
+        }
+        (blocks, live_out)
+    }
+
     fn eliminate_dead_moves_once(mut instructions: Vec<Instruction>) -> (Vec<Instruction>, bool) {
         use Instruction as I;
         let mut any_rewrite = false;
@@ -15969,51 +16291,24 @@ impl BytecodeOptimizer {
                 Self::visit_registers(inst, &mut track);
             }
         }
-        // live[pc] = registers possibly read at or after pc along some path.
-        let mut live_in: Vec<Vec<bool>> = vec![vec![false; nregs]; n];
-        let mut changed = true;
-        while changed {
-            changed = false;
-            for pc in (0..n).rev() {
-                let mut out = vec![false; nregs];
-                let mut succ = |t: usize| {
-                    if t < n {
-                        for (i, b) in live_in[t].iter().enumerate() {
-                            if *b {
-                                out[i] = true;
-                            }
-                        }
-                    }
-                };
-                match &instructions[pc] {
-                    I::Jump { target } => succ(target.0 as usize),
-                    I::JumpIfTrue { target, .. } | I::JumpIfFalse { target, .. } => {
-                        succ(target.0 as usize);
-                        succ(pc + 1);
-                    }
-                    I::TailCallSelf { .. } => succ(0),
-                    I::Return { .. } | I::MatchFail | I::TryFail => {}
-                    _ => succ(pc + 1),
-                }
-                let mut new_in = out;
-                let (uses, defs) = Self::uses_defs(&instructions[pc]);
-                for d in defs {
-                    if (d as usize) < nregs {
-                        new_in[d as usize] = false;
-                    }
-                }
-                for u in uses {
-                    if (u as usize) < nregs {
-                        new_in[u as usize] = true;
-                    }
-                }
-                if new_in != live_in[pc] {
-                    live_in[pc] = new_in;
-                    changed = true;
-                }
-            }
-        }
-        for pc in 0..n {
+        // Liveness by basic block, as bitsets: a dense registers-by-
+        // instructions table made this pass quadratic in a function's
+        // size, the most of a large function's compile (OL-361). The
+        // decisions below are made in one backward scan of each block,
+        // from what is live after each instruction in the original code.
+        let words = nregs.div_ceil(64).max(1);
+        let (blocks, block_out) = Self::block_liveness(&instructions, nregs);
+        let mut uses = Vec::new();
+        let mut defs = Vec::new();
+        let mut running = vec![0u64; words];
+        for (b, &(first, past)) in blocks.iter().enumerate() {
+        running.copy_from_slice(&block_out[b]);
+        for pc in (first..past).rev() {
+            // what this instruction reads and writes, before any rewrite
+            uses.clear();
+            defs.clear();
+            Self::uses_defs_into(&instructions[pc], &mut uses, &mut defs);
+            let live = |r: u32| (r as usize) < nregs && running[r as usize / 64] >> (r % 64) & 1 == 1;
             // Calls consume dead-after argument registers by move: filling
             // the mask here (rather than cloning at frame push) is what
             // keeps a handle passed into a callee from staying pinned in
@@ -16029,7 +16324,7 @@ impl BytecodeOptimizer {
                 let mut mask = 0u64;
                 for (i, r) in args.iter().enumerate().take(64) {
                     let unique = args.iter().filter(|a| a.0 == r.0).count() == 1;
-                    let dead = !(pc + 1 < n && live_in[pc + 1][r.0 as usize]);
+                    let dead = !live(r.0);
                     if unique && dead {
                         mask |= 1 << i;
                     }
@@ -16043,8 +16338,18 @@ impl BytecodeOptimizer {
                 lhs_dead,
             } = &mut instructions[pc]
             {
-                let dead = !(pc + 1 < n && live_in[pc + 1][lhs.0 as usize]);
+                let dead = !live(lhs.0);
                 *lhs_dead = dead && lhs != rhs && dst != rhs;
+            }
+            if let I::GetField {
+                dst,
+                object,
+                object_dead,
+                ..
+            } = &mut instructions[pc]
+            {
+                let dead = !live(object.0);
+                *object_dead = dead && dst != object;
             }
             if let I::MapSetAssign {
                 target,
@@ -16053,7 +16358,7 @@ impl BytecodeOptimizer {
                 value_dead,
             } = &mut instructions[pc]
             {
-                let dead = !(pc + 1 < n && live_in[pc + 1][value.0 as usize]);
+                let dead = !live(value.0);
                 *value_dead = dead && value != target && value != key;
             }
             if let I::CallValue {
@@ -16068,8 +16373,25 @@ impl BytecodeOptimizer {
                 let mut mask = 0u64;
                 for (i, r) in args.iter().enumerate().take(64) {
                     let unique = args.iter().filter(|a| a.0 == r.0).count() == 1;
-                    let dead = !(pc + 1 < n && live_in[pc + 1][r.0 as usize]);
+                    let dead = !live(r.0);
                     if unique && dead && r != callee {
+                        mask |= 1 << i;
+                    }
+                }
+                *arg_moves = mask;
+            }
+            if let I::CallMethod {
+                object,
+                args,
+                arg_moves,
+                ..
+            } = &mut instructions[pc]
+            {
+                // the receiver is read before the arguments: never one
+                let mut mask = 0u64;
+                for (i, r) in args.iter().enumerate().take(64) {
+                    let unique = args.iter().filter(|a| a.0 == r.0).count() == 1;
+                    if unique && !live(r.0) && r != object {
                         mask |= 1 << i;
                     }
                 }
@@ -16082,7 +16404,7 @@ impl BytecodeOptimizer {
                 let mut mask = 0u64;
                 for (i, r) in args.iter().enumerate().take(64) {
                     let unique = args.iter().filter(|a| a.0 == r.0).count() == 1;
-                    let dead = !(pc + 1 < n && live_in[pc + 1][r.0 as usize]);
+                    let dead = !live(r.0);
                     if unique && dead {
                         mask |= 1 << i;
                     }
@@ -16092,7 +16414,7 @@ impl BytecodeOptimizer {
             if debug_flag(&DEBUG_LIVENESS, "OLANG_DEBUG_LIVENESS")
                 && let I::Move { dst, src } = &instructions[pc]
             {
-                let la = |r: u32| pc + 1 < n && live_in[pc + 1][r as usize];
+                let la = live;
                 eprintln!(
                     "[live] pc={} Move dst=r{}(live_after={}) src=r{}(live_after={})",
                     pc,
@@ -16104,7 +16426,7 @@ impl BytecodeOptimizer {
             }
             let rewrite = match &instructions[pc] {
                 I::Move { dst, src } if dst != src => {
-                    let live_after = |r: u32| pc + 1 < n && live_in[pc + 1][r as usize];
+                    let live_after = live;
                     if !live_after(dst.0) {
                         // Nobody reads the destination: the Move (and the
                         // reference it would plant) can go. Its old value
@@ -16136,6 +16458,17 @@ impl BytecodeOptimizer {
                 instructions[pc] = inst;
                 any_rewrite = true;
             }
+            for &d in &defs {
+                if (d as usize) < nregs {
+                    running[d as usize / 64] &= !(1u64 << (d % 64));
+                }
+            }
+            for &u in &uses {
+                if (u as usize) < nregs {
+                    running[u as usize / 64] |= 1u64 << (u % 64);
+                }
+            }
+        }
         }
         (instructions, any_rewrite)
     }
