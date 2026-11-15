@@ -23,8 +23,7 @@
 // program for a recursive-descent matcher and answers a handle; a parse
 // hands it the input and gets back the tree — built in Rust as the maps
 // below, the actions called bottom up — or the data of the error, which
-// `parse_error` makes the error value. plans/PEG-NATIVE.md has the
-// design and the measurements.
+// `parse_error` makes the error value.
 //
 // The reference engine (`#{ "engine": "olang" }`, for testing peg
 // itself) writes each rule out as olang source instead: recursive

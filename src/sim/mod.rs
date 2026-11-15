@@ -1,4 +1,4 @@
-//! `sim` — deterministic simulation of a whole program (plans/SIM.md).
+//! `sim` — deterministic simulation of a whole program (docs/sim.md).
 //!
 //! A *world* runs an olang program on a virtual clock, with randomness
 //! drawn from streams split from one seed, under a cooperative scheduler
@@ -11,7 +11,7 @@
 //! world is refused inside one (`effects::sim_handling`), never run for
 //! real.
 //!
-//! **How it fits the runtime** (plans/SIM-S1.md has the design note):
+//! **How it fits the runtime**:
 //!
 //! - **One dispatch point.** Every builtin passes
 //!   `BuiltinFunctions::call_internal`; inside a world it first asks
@@ -30,11 +30,11 @@
 //!   tier's bridge dispatch is intercepted the same way. A world still
 //!   runs on the interpreter tier (as record and replay do): `run_fn`
 //!   sets the bytecode tier aside while the world runs.
-//! - **Nodes and the network** (S2, plans/SIM-S2.md): a node is a task
+//! - **Nodes and the network** (S2): a node is a task
 //!   tree with an interpreter of its own (`node.rs`); `http` between
 //!   nodes is messages on the world's timer queue (`wire.rs`, `http.rs`),
 //!   and what a link does to each one is `net.rs`'s draw.
-//! - **The disk and crashes** (S3, plans/SIM-S3.md): each node has an
+//! - **The disk and crashes** (S3): each node has an
 //!   in-memory disk whose files keep what was synced apart from what was
 //!   only written (`disk.rs`); `fs.*` answers from it (`files.rs`), and
 //!   SQLite reaches it through a VFS that can lie about `fsync`, tear

@@ -301,10 +301,6 @@ order, so read whichever subject interests you.
   through the data stack, and a scheduling pipeline across the bundled
   collections. Every stage is checked against an answer computed another
   way, and `--heavy` makes it ten times bigger.
-- `language/utils/` holds three small shared modules (`math`, `string`,
-  `validation`) imported by dotted path, as in
-  `use utils.math { calculate_average }`. It has no `main.ol`, so the
-  harness does not run it.
 - `gui/window.ol` opens a window with olang's own window engine,
   `gui/menubar.ol` puts a live readout in the macOS menu bar with a
   panel and a notification, and

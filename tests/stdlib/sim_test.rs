@@ -1,5 +1,5 @@
 //! `sim` S1: a world runs an olang program on virtual time with seeded
-//! scheduling of `spawn`, `task` and `chan` (plans/SIM.md, SIM-S1.md).
+//! scheduling of `spawn`, `task` and `chan` (docs/sim.md).
 //!
 //! What these hold: one seed is one run, event for event; different
 //! seeds interleave differently; a known race is found by some seed and
@@ -1156,78 +1156,6 @@ let inside = sim.world(#{ "seed": 1 }).run_fn(() => db.query(conn, "SELECT 1 AS 
     let parts = list(&v);
     assert!(s(&parts[0]).contains("opened outside it"), "{}", parts[0]);
     assert_eq!(parts[1].to_string(), "1");
-}
-
-// ─── S3, the stretch: olang-track as a node ──────────────────────────
-
-/// The olang-track checkout beside this one, when this machine has it
-/// and the shelf its server reads (its packages are files on the node's
-/// disk, copied from there by the fixture).
-fn olang_track() -> Option<PathBuf> {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../libraries/olang-track");
-    let shelf = std::env::var("HOME")
-        .map(|h| PathBuf::from(h).join(".olang/shelf.toml"))
-        .ok()?;
-    (dir.join("lib/server.ol").is_file() && shelf.is_file()).then_some(dir)
-}
-
-fn track_sim(dir: &std::path::Path, crash: &str, args: &[&str]) -> (i32, String) {
-    let out = Command::new(olang())
-        .arg("sim")
-        .arg(fixture("track_world.ol"))
-        .args(args)
-        .env("OLANG_TRACK_DIR", dir)
-        .env("CRASH", crash)
-        .env("MINUTES", "2")
-        .env("EVERY", "20")
-        .output()
-        .expect("run olang sim");
-    (
-        out.status.code().unwrap_or(-1),
-        (String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr))
-            .to_string(),
-    )
-}
-
-#[test]
-fn olang_track_keeps_every_acknowledged_issue_through_kills_and_stops() {
-    let Some(dir) = olang_track() else {
-        eprintln!("skipped: no olang-track checkout (and shelf) beside this one");
-        return;
-    };
-    let (code, err) = track_sim(&dir, "kill", &["--seeds", "3"]);
-    assert_eq!(code, 0, "{err}");
-    assert!(err.contains("3 passed"), "{err}");
-}
-
-#[test]
-fn olang_track_runs_the_same_on_one_job_and_three() {
-    // A real application in one process, seed after seed, gives what a
-    // fresh worker gives: no process-wide counter (a connection's id, a
-    // channel's) reaches a run.
-    let Some(dir) = olang_track() else {
-        eprintln!("skipped: no olang-track checkout (and shelf) beside this one");
-        return;
-    };
-    let (c1, e1) = track_sim(&dir, "power", &["--seeds", "3", "--jobs", "1"]);
-    let (c3, e3) = track_sim(&dir, "power", &["--seeds", "3", "--jobs", "3"]);
-    assert_eq!((c1, c3), (0, 0), "{e1}\n{e3}");
-    assert_eq!(digest_of(&e1), digest_of(&e3), "{e1}\n{e3}");
-}
-
-#[test]
-fn olang_track_keeps_acknowledged_issues_through_power_cuts() {
-    // S3 found WAL at synchronous=NORMAL losing the issues acknowledged
-    // since the last checkpoint to a power cut; olang-track now syncs
-    // every commit (synchronous=FULL, its commit cc4fd13), and power cuts
-    // lose nothing acknowledged. Run across two worker processes.
-    let Some(dir) = olang_track() else {
-        eprintln!("skipped: no olang-track checkout (and shelf) beside this one");
-        return;
-    };
-    let (code, err) = track_sim(&dir, "power", &["--seeds", "2", "--jobs", "2"]);
-    assert_eq!(code, 0, "{err}");
-    assert!(err.contains("2 passed"), "{err}");
 }
 
 // ─── S4: properties, search and shrinking ────────────────────────────

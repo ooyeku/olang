@@ -19,7 +19,7 @@ A line that is a deliberate exception says `// allow: rule_<name>`.
 Run them by hand:
 
 ```bash
-olang check --rules ~/Code/olang-world/olang/tools/idioms/rules.ol path/
+olang check --rules path/to/olang/tools/idioms/rules.ol path/
 ```
 
 ## The ratchet (`ratchet.ol`)
@@ -30,7 +30,7 @@ olang tools/idioms/ratchet.ol update path/to/project
 ```
 
 `check` fails (exit 1) when a file has more findings of a rule than
-`baselines/<project>.tsv` allows, and treats files not in the baseline as
+the project's `tests/idioms_baseline.tsv` allows, and treats files not in the baseline as
 zero. `update` rewrites the baseline from the project as it stands. Run it
 after a cleanup so the lower counts hold. Don't run it to accept a
 regression. Fixtures, `.build/`, `target/`, `dist/` and shelf pins are

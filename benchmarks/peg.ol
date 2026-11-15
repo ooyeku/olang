@@ -1,4 +1,4 @@
-// The `peg` budget (plans/PEG.md, G2; plans/PEG-NATIVE.md): a JSON
+// The `peg` budget: a JSON
 // grammar against the built-in `json.parse`, and an issue tracker's query
 // bar against its hand-written parser, on the same machine in the same
 // run. `olang benchmarks/peg.ol`.
@@ -33,7 +33,7 @@
 // the matching is about a millisecond, and the rest is making 52,000
 // nodes as olang maps — about fifteen allocations a node: a map and its
 // span with eight String keys, the text, the children — and freeing
-// them. plans/PEG-NATIVE.md has the profile.
+// them.
 
 use peg
 

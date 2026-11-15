@@ -3,16 +3,15 @@
 //! was taken. A file may only get better. A file the baseline does not
 //! list is held to zero, so new files start clean.
 //!
-//!     olang tools/idioms/ratchet.ol check  <project> [name]
-//!     olang tools/idioms/ratchet.ol update <project> [name]
+//!     olang tools/idioms/ratchet.ol check  <project>
+//!     olang tools/idioms/ratchet.ol update <project>
 //!
 //! `check` exits 1 when any file has more findings of a rule than its
 //! baseline, naming each one. `update` writes the baseline from what the
 //! project has now: run it after a file improves, so the lower count
-//! holds. The baseline is `baselines/<name>.tsv` beside this file (the
-//! package name in its olang.toml by default, so a worktree of it
-//! reads the same baseline), one `file<TAB>rule<TAB>count` a
-//! line, sorted, so a diff of it reads as what changed.
+//! holds. The baseline is the project's own `tests/idioms_baseline.tsv`,
+//! one `file<TAB>rule<TAB>count` a line, sorted, so a diff of it reads
+//! as what changed.
 
 let HERE = fs.dirname(unwrap_or(fs.abs_path(os.args()[0]), os.args()[0]))
 let RULES = fs.join(HERE, "rules.ol")
@@ -47,9 +46,9 @@ fn current(project) = {
     Ok(fold(found, #{}, (counts, (file, rule)) => map_update(counts, file + "\t" + rule, (n) => (n ?? 0) + 1)))
 }
 
-fn baseline_path(name) = fs.join(HERE, "baselines", name + ".tsv")
+fn baseline_path(project) = fs.join(project, "tests", "idioms_baseline.tsv")
 
-fn read_baseline(name) = match fs.read_file(baseline_path(name)) {
+fn read_baseline(project) = match fs.read_file(baseline_path(project)) {
     Err(_) => #{},
     Ok(text) => str.lines(text)
         |> filter((l) => l != "")
@@ -59,13 +58,13 @@ fn read_baseline(name) = match fs.read_file(baseline_path(name)) {
         }),
 }
 
-fn write_baseline(name, counts) = {
+fn write_baseline(project, counts) = {
     let text = map_keys(counts)
         |> sort
         |> map((k) => k + "\t" + to_string(counts[k]))
         |> join("\n")
-    fs.create_dir_all(fs.join(HERE, "baselines"))?
-    fs.write_file(baseline_path(name), text + "\n")
+    fs.create_dir_all(fs.join(project, "tests"))?
+    fs.write_file(baseline_path(project), text + "\n")
 }
 
 fn total(counts) = fold(map_values(counts), 0, (s, n) => s + n)
@@ -83,13 +82,13 @@ fn report_worse(rows) = for r in rows {
     println(`${parts[0]}: ${parts[1]} ${r.was} → ${r.now}`)
 }
 
-fn check(project, name) = {
+fn check(project) = {
     let now = current(project)?
-    let base = read_baseline(name)
+    let base = read_baseline(project)
     let rows = worse(now, base)
     let gained = better(now, base)
     if len(rows) > 0 => {
-        println(`idioms: ${len(rows)} file and rule pairs got worse than the baseline (${baseline_path(name)}):`)
+        println(`idioms: ${len(rows)} file and rule pairs got worse than the baseline (${baseline_path(project)}):`)
         report_worse(rows)
         println("Write the idiom the finding names, or mark a deliberate exception with `// allow: rule_<name>`.")
         return Ok(1)
@@ -99,34 +98,24 @@ fn check(project, name) = {
     Ok(0)
 }
 
-fn update(project, name) = {
+fn update(project) = {
     let now = current(project)?
-    write_baseline(name, now)?
-    println(`idioms: baseline ${baseline_path(name)} written (${total(now)} findings in ${len(map_keys(now))} file and rule pairs)`)
+    write_baseline(project, now)?
+    println(`idioms: baseline ${baseline_path(project)} written (${total(now)} findings in ${len(map_keys(now))} file and rule pairs)`)
     Ok(0)
 }
 
-// The `name = "…"` of the project's olang.toml, else its folder's name.
-fn package_name(project) = {
-    let toml_text = unwrap_or(fs.read_file(fs.join(project, "olang.toml")), "")
-    let found = str.lines(toml_text)
-        |> map((l) => unwrap_or(re.captures("^name\\s*=\\s*\"([^\"]+)\"", l), ()))
-        |> filter((c) => c != ())
-    if len(found) > 0 => first(found)[1] else => fs.basename(project)
-}
-
 fn usage() = {
-    println("usage: olang tools/idioms/ratchet.ol check|update <project> [name]")
+    println("usage: olang tools/idioms/ratchet.ol check|update <project>")
     2
 }
 
 fn main(args) = {
     if len(args) < 3 => return usage()
     let project = unwrap_or(fs.abs_path(args[2]), args[2])
-    let name = if len(args) > 3 => args[3] else => package_name(project)
     let run = match args[1] {
-        "check" => check(project, name),
-        "update" => update(project, name),
+        "check" => check(project),
+        "update" => update(project),
         _ => return usage(),
     }
     match run {

@@ -212,7 +212,7 @@ more) under an exception the owner made to the freeze. From rc.8 to
 | Item | Where it stands |
 |---|---|
 | `[stdlib]` MCP, agents, `ai` and Draft | built on branches now kept as the tags `archive/ag-ai`, `archive/ag-check`, `archive/ag-core`, `archive/ag-draft`, `archive/ag-sandbox`, `archive/ag-trust` and `archive/integrate`; ship as Experimental after 1.0 |
-| `[stdlib]` `sim`: what S6 left | `gui` apps in a world (`gui.platform()` answered there, so the headless driver can load); `w.client` reaching module cells; a stopped node refusing connections; tasks as coroutines rather than threads for speed (plans/SIM-S6-ENGINE.md) |
+| `[stdlib]` `sim`: what S6 left | `gui` apps in a world (`gui.platform()` answered there, so the headless driver can load); `w.client` reaching module cells; a stopped node refusing connections; tasks as coroutines rather than threads for speed |
 | `[olang]` The bytecode tier recompiles a lambda whose captures change | `db.transaction`'s callback is compiled again at every call (`hof_function_id` in src/ovm/bytecode.rs) |
 | `[stdlib]` The `toad` module on the web | skipped for 1.0 |
 | `[olang]` Field shorthand in record literals, `{ holes }` for `{ holes: holes }` | patterns and parameters take it already; a literal refuses it (OL-592). From [Writing idiomatic olang](idioms.md) |

@@ -11,8 +11,7 @@
 //!
 //! The handle is immutable and shared freely across threads: every parse
 //! has its own state. Nothing here blocks or spawns, so the browser
-//! playground runs it as it is. Design and measurements:
-//! plans/PEG-NATIVE.md.
+//! playground runs it as it is.
 
 mod grammar;
 mod machine;
