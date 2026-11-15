@@ -14,6 +14,12 @@
 //!
 //! The harness is off: AppKit needs the process's first thread, which
 //! `gui::platform::host` takes for winit's loop.
+//!
+//! The display is kept awake while it runs (`caffeinate -d` for this
+//! process), since an idle display stops presenting frames. If the display
+//! sleeps anyway, or the window is covered while a run goes (another app
+//! brought in front, another Space), nothing can be timed, so the test says
+//! it was skipped rather than failing (OL-617).
 
 #[cfg(all(feature = "gui", target_os = "macos"))]
 mod mac {
@@ -67,6 +73,34 @@ mod mac {
         gui.close(w)
         n
     "##;
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGMainDisplayID() -> u32;
+        fn CGDisplayIsAsleep(display: u32) -> u32;
+    }
+
+    // Whether the test's window can be seen now: an occluded window's
+    // display link rests, so it presents nothing (NSWindowOcclusionStateVisible).
+    fn window_visible() -> bool {
+        on_main(|| {
+            let app_cls = AnyClass::get(c"NSApplication").unwrap();
+            let app: Retained<AnyObject> = unsafe { msg_send![app_cls, sharedApplication] };
+            let wins: Retained<objc2_foundation::NSArray<AnyObject>> =
+                unsafe { msg_send![&*app, windows] };
+            wins.to_vec().iter().any(|w| {
+                let t: Option<Retained<NSString>> = unsafe { msg_send![&**w, title] };
+                let state: usize = unsafe { msg_send![&**w, occlusionState] };
+                t.is_some_and(|t| t.to_string() == "olang latency") && state & (1 << 1) != 0
+            })
+        })
+    }
+
+    // Whether the main display is asleep: a window on it presents nothing.
+    fn display_asleep() -> bool {
+        // SAFETY: plain CoreGraphics queries, no pointers.
+        unsafe { CGDisplayIsAsleep(CGMainDisplayID()) != 0 }
+    }
 
     unsafe extern "C" {
         static _dispatch_main_q: c_void;
@@ -166,6 +200,10 @@ mod mac {
         // SAFETY: set before any thread reads the environment.
         unsafe { std::env::set_var("GUI_LATENCY", "1") };
         olang::stdio::set_panic_hook();
+        // the display kept awake for as long as this process lives
+        let _awake = std::process::Command::new("/usr/bin/caffeinate")
+            .args(["-d", "-w", &std::process::id().to_string()])
+            .spawn();
         std::thread::spawn(|| {
             std::thread::sleep(Duration::from_secs(120));
             eprintln!("gui_macos_latency_test: timed out");
@@ -175,6 +213,8 @@ mod mac {
         type Run = (String, Vec<(f64, f64)>);
         static RUNS: Mutex<Vec<Run>> = Mutex::new(Vec::new());
         static ANIM: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+        // whether the window was covered at the end of a run
+        static HIDDEN: Mutex<bool> = Mutex::new(false);
         let code = platform::host(|| {
             std::thread::spawn(|| {
                 let prober = std::thread::spawn(|| {
@@ -205,12 +245,18 @@ mod mac {
                         Duration::from_millis(60),
                         1.0,
                     );
+                    if !window_visible() {
+                        *HIDDEN.lock().unwrap() = true
+                    }
                     let b = run(
                         "flood (a key every 4 ms, a turn of 5 ms)",
                         200,
                         Duration::from_millis(4),
                         5.0,
                     );
+                    if !window_visible() {
+                        *HIDDEN.lock().unwrap() = true
+                    }
                     // the box in place, then moved twice
                     animate(10.0);
                     std::thread::sleep(Duration::from_millis(600));
@@ -222,6 +268,9 @@ mod mac {
                             n
                         })
                         .collect();
+                    if !window_visible() {
+                        *HIDDEN.lock().unwrap() = true
+                    }
                     let hz = std::env::var("GUI_LINK_HZ").unwrap_or_else(|_| "the screen's".into());
                     println!("a 500 ms transition (link at {hz} Hz): {moved:?} frames presented");
                     ANIM.lock().unwrap().extend(moved);
@@ -240,6 +289,19 @@ mod mac {
             })
         });
         assert_eq!(code, 0);
+        // a display that went to sleep, or a window covered while it ran,
+        // presents nothing to time: said, not failed
+        let why = if display_asleep() {
+            Some("the display went to sleep")
+        } else if *HIDDEN.lock().unwrap() {
+            Some("its window was covered while it ran")
+        } else {
+            None
+        };
+        if let Some(why) = why {
+            println!("gui_macos_latency_test: skipped ({why}, so no frame could be timed)");
+            return;
+        }
         for (what, s) in RUNS.lock().unwrap().iter() {
             assert!(!s.is_empty(), "{what}: no frame was timed");
             let worst = s.iter().map(|x| x.1).fold(0.0, f64::max);
