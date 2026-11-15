@@ -57,6 +57,7 @@ fn installer_parses_as_posix_sh() {
 /// against pretend computers and a pretend GitHub, under every POSIX
 /// shell this computer has.
 #[test]
+#[ignore = "slow: `make test-slow` runs it"]
 fn installer_works_on_pretend_computers_under_each_shell() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let harness = root.join("tests/install/harness.sh");
