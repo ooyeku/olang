@@ -3505,7 +3505,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         // (the fix for the quadratic hash-count loop the wordfreq
         // benchmark exposed). Other builtins keep the plain path.
         let is_movable_builtin = matches!(&callee_value, Value::Builtin(b)
-            if matches!(b.name.as_str(), "map_set" | "map_set_in" | "map_update" | "map_merge" | "__index_set_in"));
+            if matches!(b.name.as_str(), "map_set" | "map_set_in" | "map_update" | "map_merge" | "map_remove" | "__index_set_in"));
         if !matches!(callee_value, Value::Function(_)) && !is_movable_builtin {
             return None;
         }

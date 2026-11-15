@@ -6394,6 +6394,10 @@ impl BytecodeVm {
                         && let Some(r) = Self::map_set_owned(&mut arg_values)
                     {
                         r
+                    } else if function_name == "map_remove"
+                        && let Some(r) = Self::map_remove_owned(&mut arg_values)
+                    {
+                        r
                     } else if function_name == "map_set_in"
                         && let Some(r) = Self::map_set_in_owned(&mut arg_values)
                     {
@@ -10379,6 +10383,33 @@ impl BytecodeVm {
                 None
             }
         }
+    }
+
+    /// `map_remove` on a map the call owns (`m = map_remove(m, k)`, its
+    /// argument moved in): the key leaves in place when nothing else holds
+    /// the map, and a map anything else holds is copied — `Arc::make_mut`
+    /// decides, as for `map_set_owned` (OL-524). `None` for anything else
+    /// (a struct, a bad key): the native arm keeps its checks and messages.
+    fn map_remove_owned(args: &mut [OvmValue]) -> Option<Result<OvmValue, BytecodeError>> {
+        use crate::ovm::value::ValueData;
+        if args.len() != 2 || !matches!(args[0].data, ValueData::Map(_) | ValueData::AstMap(_)) {
+            return None;
+        }
+        let key = Self::key_text_of(&args[1])?;
+        let map = std::mem::replace(&mut args[0], OvmValue::new_unit());
+        Some(Ok(match map.into_data() {
+            ValueData::Map(mut m) => {
+                Arc::make_mut(&mut m).shift_remove(&key);
+                OvmValue::new_map(m)
+            }
+            ValueData::AstMap(mut m) => {
+                Arc::make_mut(&mut m).shift_remove(&key);
+                OvmValue {
+                    data: ValueData::AstMap(m),
+                }
+            }
+            _ => unreachable!("matched a map"),
+        }))
     }
 
     /// A key the way `map_set` coerces one; `None` for what it refuses

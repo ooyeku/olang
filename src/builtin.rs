@@ -4394,13 +4394,16 @@ impl BuiltinFunctions {
         };
 
         // Like map_set, removal works on any struct-like value and returns a
-        // new value of the same kind without the key.
+        // new value of the same kind without the key. A map the call holds
+        // alone (`m = map_remove(m, k)`, the argument moved in) loses the
+        // key in place, as map_set inserts in place (OL-524); one anything
+        // else holds is copied, and the holder keeps the key.
+        let mut args = args;
+        if let Value::Map(map_ref) = &mut args[0] {
+            std::sync::Arc::make_mut(map_ref).shift_remove(&key);
+            return Ok(std::mem::replace(&mut args[0], Value::Unit));
+        }
         match &args[0] {
-            Value::Map(map_ref) => {
-                let mut new_map = (**map_ref).clone();
-                new_map.shift_remove(&key);
-                Ok(Value::Map(std::sync::Arc::new(new_map)))
-            }
             Value::Struct { type_name, fields } => {
                 let mut new_fields = fields.as_ref().clone();
                 new_fields.shift_remove(&key);
