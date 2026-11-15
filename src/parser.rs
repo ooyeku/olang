@@ -74,6 +74,18 @@ impl PositionInfo {
     }
 }
 
+/// The two-line snippet a positioned error shows: `line`'s text with a
+/// caret under `column`.
+pub(crate) fn snippet_at(line: usize, text: &str, column: usize) -> String {
+    format!(
+        "{:4} | {}\n{:4} | {}^",
+        line,
+        sanitize_snippet(text.trim_end_matches('\r')),
+        "",
+        " ".repeat(column.saturating_sub(1))
+    )
+}
+
 /// Very basic snippet sanitizer to avoid leaking sensitive content in logs.
 /// - Truncates long lines
 /// - Replaces control characters with spaces
@@ -982,6 +994,16 @@ impl Parser {
         }
     }
 
+    /// The 1-based line a pair starts on, from the index when there is one.
+    fn pair_line(&self, pair: &Pair<Rule>) -> u32 {
+        let starts = self.line_starts.borrow();
+        let offset = pair.as_span().start();
+        if starts.is_empty() {
+            return pair.as_span().start_pos().line_col().0 as u32;
+        }
+        starts.partition_point(|s| *s <= offset) as u32
+    }
+
     /// Index the input's line starts for `line_col`.
     fn index_lines(&self, input: &str) {
         *self.line_starts.borrow_mut() = line_starts_of(input);
@@ -1852,8 +1874,9 @@ impl Parser {
                 Rule::unary_expr => {
                     match Self::bare_primary(&pair, Rule::lambda) {
                         Some(lambda) if after_pipe => {
+                            let line = self.pair_line(&lambda);
                             let (stage, spill_ops, spill_operands) =
-                                self.build_lambda_stage(lambda.into_inner())?;
+                                self.build_lambda_stage(lambda.into_inner(), line)?;
                             operands.push(stage);
                             operators.extend(spill_ops);
                             operands.extend(spill_operands);
@@ -1918,6 +1941,7 @@ impl Parser {
     fn build_lambda_stage(
         &self,
         pairs: Pairs<Rule>,
+        line: u32,
     ) -> Result<(Expr, Vec<(Rule, String)>, Vec<Expr>), ParseError> {
         let mut parameters = Vec::new();
         let mut lets = Vec::new();
@@ -1949,6 +1973,7 @@ impl Parser {
                 parameters,
                 return_type,
                 body: Box::new(Self::destructure_params(lets, body)),
+                line: crate::ast::SrcLine(line),
             },
             spill.0,
             spill.1,
@@ -2003,7 +2028,8 @@ impl Parser {
                 if let Some(if_pair) = Self::bare_primary(&unary, Rule::if_expr) {
                     Some(self.build_if_stage(if_pair.into_inner())?)
                 } else if let Some(lambda) = Self::bare_primary(&unary, Rule::lambda) {
-                    Some(self.build_lambda_stage(lambda.into_inner())?)
+                    let line = self.pair_line(&lambda);
+                    Some(self.build_lambda_stage(lambda.into_inner(), line)?)
                 } else {
                     None
                 }
@@ -2467,7 +2493,10 @@ impl Parser {
             message: "Empty primary expression".to_string(),
         })?;
         match pair.as_rule() {
-            Rule::lambda => self.build_lambda(pair.into_inner()),
+            Rule::lambda => {
+                let line = self.pair_line(&pair);
+                self.build_lambda(pair.into_inner(), line)
+            }
             Rule::spawn_expr => self.build_spawn_expr(pair.into_inner()),
             Rule::match_expr => self.build_match_expr(pair.into_inner()),
             Rule::if_expr => self.build_if_expr(pair.into_inner()),
@@ -2604,7 +2633,7 @@ impl Parser {
         Ok(result)
     }
 
-    fn build_lambda(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+    fn build_lambda(&self, mut pairs: Pairs<Rule>, line: u32) -> Result<Expr, ParseError> {
         let mut parameters = Vec::new();
         let mut lets = Vec::new();
         let mut return_type = None;
@@ -2639,6 +2668,7 @@ impl Parser {
             parameters,
             return_type,
             body: Box::new(Self::destructure_params(lets, body_expr)),
+            line: crate::ast::SrcLine(line),
         })
     }
 

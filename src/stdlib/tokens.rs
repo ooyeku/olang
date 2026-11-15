@@ -505,6 +505,29 @@ mod tests {
         }
     }
 
+    #[test]
+    fn an_all_caps_name_is_a_constant_where_it_is_bound_too() {
+        // OL-536: the binding was an ident, the use a constant.
+        for src in [
+            "let RATE = Point\nRATE + 1",
+            "let mut RATE = 3\nRATE",
+            "let (MIN, MAX) = (1, 2)\nMIN + MAX",
+        ] {
+            let k = kinds(src);
+            let caps: Vec<_> = k
+                .iter()
+                .filter(|(t, _)| ["RATE", "MIN", "MAX"].contains(&t.as_str()))
+                .collect();
+            assert!(caps.len() >= 2, "{src}: {k:?}");
+            assert!(
+                caps.iter().all(|(_, kind)| *kind == "constant"),
+                "{src}: {k:?}"
+            );
+        }
+        // a lowercase binding is still an ident
+        assert!(kinds("let rate = 3").contains(&("rate".to_string(), "ident")));
+    }
+
     /// Every keyword and keyword form grammar.pest knows, in a place
     /// it is one, is a keyword token; the contextual ones stay names
     /// where the grammar reads a name.

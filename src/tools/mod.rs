@@ -26,6 +26,68 @@ pub mod test_runner;
 
 use std::path::{Path, PathBuf};
 
+// ── Open buffers (OL-398) ───────────────────────────────────────────
+//
+// The language server's open documents, by path: what an importer's
+// check, hover and definition read of a module the editor has open, so an
+// unsaved edit to it is seen at once, as an editor user expects. Empty
+// (and never consulted past one load) outside the server.
+
+static OPEN_ANY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn open_buffers() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, String>> {
+    static OPEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<PathBuf, String>>> =
+        std::sync::OnceLock::new();
+    OPEN.get_or_init(Default::default)
+}
+
+/// The key a path is kept under: the file as the disk names it when it is
+/// there (a symlinked folder, `/tmp` and `/private/tmp`), else its
+/// absolute form with `.` and `..` resolved (a file not saved yet).
+fn buffer_key(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| {
+        crate::vfs::normalize(&std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf()))
+    })
+}
+
+/// The editor's text of `path` from now on (`Some`), or the disk's again
+/// (`None`, the document closed).
+pub fn set_open_buffer(path: &Path, text: Option<&str>) {
+    let key = buffer_key(path);
+    let mut open = open_buffers().lock().unwrap_or_else(|e| e.into_inner());
+    match text {
+        Some(t) => {
+            open.insert(key, t.to_string());
+        }
+        None => {
+            open.remove(&key);
+        }
+    }
+    OPEN_ANY.store(!open.is_empty(), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Drop the open buffers of `path`, a file or every file under a folder:
+/// it was deleted, and an importer meets the missing module, open in the
+/// editor or not.
+pub fn forget_open_buffers(path: &Path) {
+    let key = buffer_key(path);
+    let mut open = open_buffers().lock().unwrap_or_else(|e| e.into_inner());
+    open.retain(|p, _| p != &key && !p.starts_with(&key) && p != path && !p.starts_with(path));
+    OPEN_ANY.store(!open.is_empty(), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// A source file's text as the editor has it open, else as it is on disk:
+/// how the tools read a module another file imports.
+pub fn read_source(path: &Path) -> std::io::Result<String> {
+    if OPEN_ANY.load(std::sync::atomic::Ordering::Relaxed) {
+        let open = open_buffers().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(text) = open.get(&buffer_key(path)) {
+            return Ok(text.clone());
+        }
+    }
+    std::fs::read_to_string(path)
+}
+
 /// Every program olang reads at or below `path`: `.ol` files and `.olmd`
 /// notebooks, sorted, skipping what `discover_ol_files` skips. A file
 /// path returns just itself. What `olang test`, `check` and `fmt` walk.

@@ -1834,9 +1834,12 @@ fn a_shared_name_is_renamed_in_every_file_that_imports_it() {
 }
 
 #[test]
-fn a_module_saved_rechecks_the_open_files_that_import_it() {
+fn an_unsaved_edit_to_a_module_is_what_its_importers_see() {
+    // OL-398: an importer read the module from the disk, so its problems
+    // followed the saved text, not the buffer being edited (a save was
+    // what re-checked it).
     let dir = temp_folder(
-        "save-recheck",
+        "buffer-imports",
         &[
             ("a.ol", "share fn helper(x: Int) -> Int = x + 1\n"),
             (
@@ -1854,29 +1857,35 @@ fn a_module_saved_rechecks_the_open_files_that_import_it() {
         &b_uri,
         &std::fs::read_to_string(dir.join("b.ol")).unwrap(),
     );
-    assert!(
-        diagnostics_of(&b)
+    let errors = |m: &serde_json::Value| {
+        diagnostics_of(m)
             .unwrap()
             .iter()
-            .any(|d| d["severity"] == 1),
-        "{b}"
-    );
-    // the module fixed and saved: the importer's problem goes, unedited
+            .any(|d| d["severity"] == 1)
+    };
+    assert!(errors(&b), "{b}");
+    // the module fixed in the editor, not saved: the importer's problem goes
     let fixed = "share fn helper(x: Int) -> String = to_string(x)\n";
-    std::fs::write(dir.join("a.ol"), fixed).unwrap();
     c.send(
         &serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didChange","params":{
         "textDocument":{"uri":a_uri,"version":2},"contentChanges":[{"text":fixed}]}}),
     );
-    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didSave","params":{"textDocument":{"uri":a_uri}}}));
     let b2 = c.recv_until(|m| diagnostics_of(m).is_some() && m["params"]["uri"] == b_uri);
-    assert!(
-        !diagnostics_of(&b2)
-            .unwrap()
-            .iter()
-            .any(|d| d["severity"] == 1),
-        "{b2}"
+    assert!(!errors(&b2), "{b2}");
+    // hover at the importer's call reads the buffer's signature too
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":9,"method":"textDocument/hover","params":{
+            "textDocument":{"uri":b_uri},"position":{"line":2,"character":17}}
+    }));
+    let h = c.recv_until(|m| m["id"] == 9);
+    assert!(h.to_string().contains("String"), "{h}");
+    // closed without saving: the disk's text again
+    c.send(
+        &serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didClose","params":{
+        "textDocument":{"uri":a_uri}}}),
     );
+    let b3 = c.recv_until(|m| diagnostics_of(m).is_some() && m["params"]["uri"] == b_uri);
+    assert!(errors(&b3), "{b3}");
     let _ = c.child.kill();
     let _ = std::fs::remove_dir_all(&dir);
 }

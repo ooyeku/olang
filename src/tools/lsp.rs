@@ -347,6 +347,7 @@ fn main_loop(
                         };
                     let uri = params.text_document.uri;
                     let text = params.text_document.text;
+                    note_buffer(&uri, Some(&text));
                     publish(connection, &uri, &text)?;
                     docs.insert(uri, text);
                 }
@@ -367,6 +368,15 @@ fn main_loop(
                     for change in params.content_changes {
                         apply_change(&mut text, change);
                     }
+                    note_buffer(&uri, Some(&text));
+                    // An importer reads the open buffer (OL-398): the
+                    // other open documents that may import this one are
+                    // checked again with it, once the client is quiet.
+                    for u in importers_of(&docs, &uri) {
+                        if !stale.contains(&u) {
+                            stale.push(u);
+                        }
+                    }
                     docs.insert(uri.clone(), text);
                     if !stale.contains(&uri) {
                         stale.push(uri);
@@ -383,14 +393,21 @@ fn main_loop(
                             }
                         };
                     docs.remove(&params.text_document.uri);
+                    note_buffer(&params.text_document.uri, None);
+                    // closed unsaved, its importers read the disk again
+                    for u in importers_of(&docs, &params.text_document.uri) {
+                        if !stale.contains(&u) {
+                            stale.push(u);
+                        }
+                    }
                     stale.retain(|u| u != &params.text_document.uri);
                     // Clear diagnostics for closed files.
                     send_diagnostics(connection, params.text_document.uri, Vec::new())?;
                 }
                 // A file saved: every other open document is checked again
-                // once the client is quiet — an importer reads the saved
-                // module from the disk, and its problems stood as they were
-                // (a fixed signature's error stayed) until it was typed in.
+                // once the client is quiet. An importer already read the
+                // module's open buffer; the save is a change of the disk
+                // under every file that is not open.
                 "textDocument/didSave" => {
                     if let Ok(p) =
                         serde_json::from_value::<lsp_types::DidSaveTextDocumentParams>(note.params)
@@ -413,7 +430,9 @@ fn main_loop(
                         };
                     for f in &params.files {
                         for (old, new) in renamed_docs(&docs, &f.old_uri, &f.new_uri) {
+                            note_buffer(&old, None);
                             if let Some(text) = docs.remove(&old) {
+                                note_buffer(&new, Some(&text));
                                 docs.insert(new.clone(), text);
                             }
                             stale.retain(|u| u != &old);
@@ -439,6 +458,11 @@ fn main_loop(
                         };
                     for f in &params.files {
                         forget_parses(&f.uri);
+                        if let Ok(u) = Uri::parse(&f.uri)
+                            && let Ok(path) = u.to_file_path()
+                        {
+                            crate::tools::forget_open_buffers(&path);
+                        }
                     }
                     stale.clear();
                     for (uri, text) in &docs {
@@ -495,6 +519,52 @@ fn renamed_docs(docs: &HashMap<Uri, String>, old: &str, new: &str) -> Vec<(Uri, 
         }
     }
     out
+}
+
+/// The editor's text of an open `.ol` document is what its importers read
+/// of it (`crate::tools::read_source`); `None` when it closes.
+fn note_buffer(uri: &Uri, text: Option<&str>) {
+    if let Ok(path) = uri.to_file_path()
+        && path.extension().is_some_and(|e| e == "ol")
+    {
+        crate::tools::set_open_buffer(&path, text);
+    }
+}
+
+/// The other open documents that may import `uri`: those whose text names
+/// its module (its file's stem, or its folder's for an `index.ol`) as a
+/// word. A check of each is the cost of one edit, so a file that cannot
+/// name it is left alone.
+fn importers_of(docs: &HashMap<Uri, String>, uri: &Uri) -> Vec<Uri> {
+    let Ok(path) = uri.to_file_path() else {
+        return Vec::new();
+    };
+    if !path.extension().is_some_and(|e| e == "ol") {
+        return Vec::new();
+    }
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    let name = if stem == "index" {
+        path.parent()
+            .and_then(|d| d.file_name())
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+    } else {
+        stem
+    };
+    if name.is_empty() {
+        return Vec::new();
+    }
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let names = |text: &str| {
+        text.match_indices(name).any(|(at, _)| {
+            !text[..at].chars().next_back().is_some_and(word)
+                && !text[at + name.len()..].chars().next().is_some_and(word)
+        })
+    };
+    docs.iter()
+        .filter(|(u, t)| *u != uri && names(t))
+        .map(|(u, _)| u.clone())
+        .collect()
 }
 
 /// Forget the module parses kept for a path renamed or deleted (a file,

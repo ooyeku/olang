@@ -797,7 +797,10 @@ pub fn tokens(text: &str, is_builtin: &dyn Fn(&str) -> bool, modules: &[&str]) -
                 if let Some(b) = binding
                     && (pw == b || pw == "mut" || pw == "(" || pw == "," || pw == "[")
                 {
-                    push(T_VARIABLE, M_DECLARATION);
+                    // An ALL-CAPS name is a constant where it is bound as
+                    // where it is read (OL-536): `let RATE = 3`, `RATE + 1`.
+                    let readonly = if all_caps(w) { M_READONLY } else { 0 };
+                    push(T_VARIABLE, M_DECLARATION | readonly);
                     continue;
                 }
                 let first_upper = w.chars().next().is_some_and(|c| c.is_uppercase());
@@ -904,7 +907,8 @@ mod tests {
         assert!(k.contains(&("\"a".into(), "string", 0)));
         assert!(k.contains(&("b\"".into(), "string", 0)));
         assert!(k.contains(&("share".into(), "keyword", 0)));
-        assert!(k.contains(&("MAX".into(), "variable", M_DECLARATION)));
+        // an ALL-CAPS binding is readonly, as its uses are (OL-536)
+        assert!(k.contains(&("MAX".into(), "variable", M_DECLARATION | M_READONLY)));
         assert!(k.contains(&("Point".into(), "type", M_DECLARATION)));
         assert!(
             k.contains(&("x".into(), "property", 0)) || k.contains(&("x".into(), "variable", 0))

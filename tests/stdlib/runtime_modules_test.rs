@@ -378,6 +378,11 @@ let le = runtime.last_error()
 println(map_get(le, "message"))
 for f in map_get(le, "frames") { println(fs.basename(show(map_get(f, "path"))) + ":" + show(map_get(f, "line")) + " " + show(map_get(f, "function"))) }
 println(runtime.shape(#{ "n": 1, "items": ["a"], "s": Ok(#{ "k": 2.0 }) }))
+let big = 9223372036854775807
+let late = attempt(
+    () => big + 1
+)
+println(show(first(runtime.last_error().frames).line))
 "#,
     );
     let lines: Vec<&str> = out.lines().collect();
@@ -391,8 +396,15 @@ println(runtime.shape(#{ "n": 1, "items": ["a"], "s": Ok(#{ "k": 2.0 }) }))
     assert_eq!(lines[4], "plugin.ol:1 boom");
     assert_eq!(lines[5], "plugin.ol:3 deeper");
     assert_eq!(lines[6], "host.ol:2 outer");
-    assert_eq!(lines[7], "host.ol:0 <lambda>");
+    assert_eq!(
+        lines[7], "host.ol:9 <lambda>",
+        "a lambda: the line it starts on (OL-392)"
+    );
     assert_eq!(lines[8], "{items:[String],n:Int,s:Ok({k:Float})}");
+    assert_eq!(
+        lines[9], "16",
+        "the lambda's own line, not its `let`'s (OL-392)"
+    );
 }
 
 /// A module held to a list of programs runs only those, and only the

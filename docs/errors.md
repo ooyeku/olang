@@ -116,6 +116,7 @@ it is read. The usual causes:
 | `unwrap_or: first argument must be a Result type (Ok or Err)` | `unwrap_or(m.key, 0)` on a map read | `m.key ?? 0` |
 | `Index must be an integer` | slicing, `xs[1..3]` | `take(skip(xs, 1), 2)` |
 | `Only lists, tuples, and strings can be indexed` | `[i]` on a number or `()` | check the value first |
+| ``Cannot call a module that has no `new` `` | a package's function called without its import, where a stdlib module has the name (`cancel("k")` with no `cancel` imported); `olang check` reports it before the run | import it (`use loom { cancel }`), or call the module's function (`cancel.token()`) |
 | `module 'str' has no member 'upper'` | a function the module does not have | look it up in [the reference](stdlib.md) (`str.to_upper`) |
 | `max: cannot take max of an empty list` | `min`, `max` or `average` of `[]` (each names itself) | check `len(xs) > 0` first |
 | `Invalid binary operation: cannot apply '*' to String and Int` | an operator between kinds it does not take | `str.repeat(s, n)` for strings |

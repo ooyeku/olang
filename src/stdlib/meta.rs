@@ -635,7 +635,9 @@ fn meta_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     }
     Ok(match parse_nodes(&source, shift, line_shift) {
         Ok(nodes) => Value::Ok(Box::new(list(nodes))),
-        Err(e) => Value::Err(Box::new(s(&e.to_string()))),
+        Err(e) => Value::Err(Box::new(s(&message_at_file_lines(
+            &e, &source, line_shift, None,
+        )))),
     })
 }
 
@@ -776,10 +778,77 @@ fn meta_parse_items(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
     Ok(list(items))
 }
 
+/// A parse error's message for `text` that sits `line_shift` lines into
+/// its file: the line it names and its snippet's gutter are the file's
+/// (OL-535). The text is parsed again behind that many blank lines, so
+/// every line the message mentions moves with it; only a broken item
+/// pays for the second parse. `whole` is the file around the item, with
+/// its first line at `whole_line`: the snippet shows the file's line
+/// there, not the item's (an item ends before the line after it).
+fn message_at_file_lines(
+    e: &crate::parser::ParseError,
+    text: &str,
+    line_shift: usize,
+    whole: Option<(&str, usize)>,
+) -> String {
+    use crate::parser::ParseError as P;
+    if line_shift == 0 && whole.is_none() {
+        return e.to_string();
+    }
+    let mut padded = "\n".repeat(line_shift);
+    padded.push_str(text);
+    let shifted = match crate::parser::Parser::new().parse_with_spans(&padded) {
+        Err(shifted)
+            if shifted.line_column().map(|(l, c)| (l - line_shift, c)) == e.line_column() =>
+        {
+            shifted
+        }
+        _ => return e.to_string(),
+    };
+    let resnip = |line: usize, column: usize| -> Option<std::sync::Arc<str>> {
+        let (src, first) = whole?;
+        let text = src.split('\n').nth(line.checked_sub(first)?)?;
+        Some(crate::parser::snippet_at(line, text, column).into())
+    };
+    match shifted {
+        P::InvalidSyntaxWithPosition {
+            message,
+            line,
+            column,
+            snippet,
+        } => P::InvalidSyntaxWithPosition {
+            snippet: resnip(line, column).unwrap_or(snippet),
+            message,
+            line,
+            column,
+        }
+        .to_string(),
+        P::UnexpectedTokenWithPosition {
+            token,
+            line,
+            column,
+            snippet,
+        } => P::UnexpectedTokenWithPosition {
+            snippet: resnip(line, column).unwrap_or(snippet),
+            token,
+            line,
+            column,
+        }
+        .to_string(),
+        other => other.to_string(),
+    }
+}
+
 /// One parse error as a node: its message and where it is, in the whole
 /// file's coordinates.
-fn error_node(e: &crate::parser::ParseError, text: &str, shift: usize, line_shift: usize) -> Value {
-    let message = format!("{}", e);
+fn error_node(
+    e: &crate::parser::ParseError,
+    text: &str,
+    shift: usize,
+    line_shift: usize,
+    whole: Option<(&str, usize)>,
+) -> Value {
+    let message = message_at_file_lines(e, text, line_shift, whole);
     let (line, column) = e.line_column().unwrap_or((1, 1));
     let starts = line_starts_of(text);
     let at = starts
@@ -837,7 +906,13 @@ fn parse_recovering(source: &str, shift: usize, line_shift: usize) -> Value {
         let item_lines = line_shift + line_of(&starts, a) - 1;
         match parse_nodes(text, shift + a, item_lines) {
             Ok(nodes) => items.extend(nodes),
-            Err(e) => errors.push(error_node(&e, text, shift + a, item_lines)),
+            Err(e) => errors.push(error_node(
+                &e,
+                text,
+                shift + a,
+                item_lines,
+                Some((source, line_shift + 1)),
+            )),
         }
     }
     map(vec![("items", list(items)), ("errors", list(errors))])

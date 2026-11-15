@@ -2003,6 +2003,7 @@ impl OvmValue {
                     closure,
                     param_bounds: Vec::new(),
                     def_file: c.template.def_file.clone(),
+                    line: c.template.line,
                     parent_scope: 0,
                     run: c.template.run.clone(),
                 })))

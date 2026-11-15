@@ -220,6 +220,17 @@ pub struct Parameter {
     pub default_value: Option<Expr>,
 }
 
+/// A source line kept as metadata: equal to every other, so moving code
+/// (`olang fmt`'s AST gate) changes nothing that compares trees.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct SrcLine(pub u32);
+
+impl PartialEq for SrcLine {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
 /// Expression types supported by olang
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Expr {
@@ -271,6 +282,10 @@ pub enum Expr {
         parameters: Vec<Parameter>,
         body: Box<Expr>,
         return_type: Option<TypeAnnotation>,
+        /// The line the lambda starts on, for the frame a failure inside
+        /// it names (OL-392); 0 when built, not parsed. Never part of
+        /// equality, as a statement's position is not.
+        line: SrcLine,
     },
 
     // Pipeline operator
@@ -1028,6 +1043,12 @@ pub struct Function {
     /// another. `None` for reconstructed values and dynamic contexts.
     #[serde(default)]
     pub def_file: Option<String>,
+    /// The line a lambda starts on: its frame's line when a failure in
+    /// its body (an expression, with no located statement) unwinds it
+    /// (OL-392). 0 for a named function, whose declaration line errtrace
+    /// keeps (OL-180).
+    #[serde(default)]
+    pub line: u32,
     /// The scope this function was declared in: the id of the enclosing
     /// call frame for a nested `fn` or a lambda, 0 at a file's top level.
     /// A call frame records it as its lexical parent, and name resolution

@@ -218,6 +218,9 @@ pub struct LambdaSrc {
     /// attributed by (a plugin's lambda answers to the plugin's grant).
     #[serde(default)]
     pub def_file: Option<String>,
+    /// The line the lambda starts on (OL-392).
+    #[serde(default)]
+    pub line: u32,
 }
 
 /// Where a constant came from.
@@ -259,6 +262,10 @@ pub struct Member {
     pub span_table: Vec<(u32, u32, u32)>,
     pub callee_names: Vec<(u32, String)>,
     pub function_name: Option<String>,
+    /// The function's declaration line, its frames' line where no
+    /// statement placed it (OL-392).
+    #[serde(default)]
+    pub decl_line: u32,
     pub optimization_level: u8,
     pub entry_point: usize,
 }

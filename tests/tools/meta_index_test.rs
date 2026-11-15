@@ -70,6 +70,43 @@ fn a_file_mid_edit_keeps_its_other_items() {
 }
 
 #[test]
+fn a_recovered_errors_message_names_the_files_line() {
+    // OL-535: the message said the line inside its item ("line 2", a
+    // `2 |` gutter) while its line field said the file's (9).
+    let file = "use a.b { c }\n\n/// doc\nshare fn f(x: Int) = {\n    let y = x\n    g(y)\n}\nfn g(z) = z +\nlet k = 3\n";
+    let src = format!(
+        r#"let e = first(meta.parse({}, #{{"recover": true}}).errors)
+let plain = match meta.parse({}) {{ Err(m) => m, _ => "" }}
+[e.line, e.message, plain]"#,
+        lit(file),
+        lit(file)
+    );
+    let got = eval(&src);
+    let Value::List(got) = &got else {
+        panic!("a list")
+    };
+    assert_eq!(got[0], Value::Integer(9));
+    let (Value::String(message), Value::String(plain)) = (&got[1], &got[2]) else {
+        panic!("strings: {got:?}")
+    };
+    assert!(message.contains("line 9,"), "{message}");
+    assert!(message.contains("   9 | "), "{message}");
+    assert!(!message.contains("line 2,"), "{message}");
+    // the same words a plain parse says
+    assert_eq!(message.as_str(), plain.as_str());
+    // and an item parsed alone with its line_offset says the file's line
+    let alone = format!(
+        r#"match meta.parse({}, #{{"line_offset": 7}}) {{ Err(m) => m, _ => "" }}"#,
+        lit("fn g(z) = z +\nlet k = 3\n")
+    );
+    let alone = eval(&alone);
+    let Value::String(alone) = &alone else {
+        panic!("a string")
+    };
+    assert!(alone.contains("line 9,"), "{alone}");
+}
+
+#[test]
 fn an_item_reparsed_alone_has_the_files_spans() {
     let h = FILE.find("let h").unwrap();
     let item = "let h = f(2)\n";
