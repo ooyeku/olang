@@ -7,10 +7,12 @@
 // the differential-tested olang mirror.
 
 // Deduplicate, preserving first-seen order.
+/// @stable
 share fn unique(xs) = xs |> fold([], (acc, x) =>
     if contains(acc, x) => acc else => concat(acc, [x]))
 
 // Split into (matching, non-matching) by a predicate.
+/// @stable
 share fn partition(xs, pred) = {
     let yes = xs |> filter(pred)
     let no = xs |> filter((x) => if pred(x) => false else => true)
@@ -18,15 +20,19 @@ share fn partition(xs, pred) = {
 }
 
 // Sum of f(x) over the list.
+/// @stable
 share fn sum_by(xs, f) = xs |> fold(0, (acc, x) => acc + f(x))
 
 // Do all elements satisfy the predicate?
+/// @stable
 share fn all(xs, pred) = xs |> fold(true, (acc, x) => acc && pred(x))
 
 // Does any element satisfy the predicate?
+/// @stable
 share fn any(xs, pred) = xs |> fold(false, (acc, x) => acc || pred(x))
 
 // Count occurrences of each key produced by key_fn -> map.
+/// @stable
 share fn count_by(xs, key_fn) = xs |> fold(#{}, (acc, x) => {
     let k = key_fn(x)
     map_set(acc, k, if map_has_key(acc, k) => map_get(acc, k) + 1 else => 1)
@@ -36,6 +42,7 @@ share fn count_by(xs, key_fn) = xs |> fold(#{}, (acc, x) => {
 // taking" flag is threaded through the fold accumulator (a (list, bool)
 // tuple) rather than mutated in the closure — a lambda cannot write back to
 // a variable it captured, so purely-functional state threading is required.
+/// @stable
 share fn take_while(xs, pred) = {
     let final = xs |> fold(([], true), (acc, x) => {
         let (taken, taking) = acc
@@ -47,6 +54,7 @@ share fn take_while(xs, pred) = {
 }
 
 // Suffix after the take_while prefix.
+/// @stable
 share fn drop_while(xs, pred) = {
     let final = xs |> fold(([], true), (acc, x) => {
         let (kept, dropping) = acc
@@ -58,6 +66,7 @@ share fn drop_while(xs, pred) = {
 }
 
 // Map then flatten one level; a non-list result is kept as a single element.
+/// @stable
 share fn flat_map(xs, f) = xs |> fold([], (acc, x) => {
     let mapped = f(x)
     if typeof(mapped) == "List" => concat(acc, mapped)
@@ -65,16 +74,20 @@ share fn flat_map(xs, f) = xs |> fold([], (acc, x) => {
 })
 
 // Count occurrences of each distinct value (count_by with identity).
+/// @stable
 share fn frequencies(xs) = count_by(xs, (x) => x)
 
 // The last element, `()` when the list is empty (as the global `last`).
+/// @stable
 share fn last(xs) = if len(xs) == 0 => () else => xs[len(xs) - 1]
 
 // The element with the smallest key; ties keep the first seen.
+/// @stable
 share fn min_by(xs, key_fn) = xs |> fold(head(xs), (best, x) =>
     if key_fn(x) < key_fn(best) => x else => best)
 
 // The element with the largest key; ties keep the first seen.
+/// @stable
 share fn max_by(xs, key_fn) = xs |> fold(head(xs), (best, x) =>
     if key_fn(x) > key_fn(best) => x else => best)
 
@@ -93,10 +106,12 @@ fn insert_by_key(sorted, x, key_fn) = {
     if placed => out else => concat(out, [x])
 }
 
+/// @stable
 share fn sort_by(xs, key_fn) = xs |> fold([], (sorted, x) =>
     insert_by_key(sorted, x, key_fn))
 
 // Sliding windows of a fixed size: window([1,2,3,4], 2) = [[1,2],[2,3],[3,4]].
+/// @stable
 share fn window(xs, size) = {
     let n = len(xs)
     if size > n => []
@@ -104,6 +119,7 @@ share fn window(xs, size) = {
 }
 
 // Combine parallel elements with f; truncates to the shorter list.
+/// @stable
 share fn zip_with(a, b, f) = zip(a, b) |> map((pair) => {
     let (x, y) = pair
     f(x, y)

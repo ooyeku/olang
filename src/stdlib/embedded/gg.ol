@@ -65,6 +65,7 @@ fn pick(color, colour) = color ?? colour
 // ── the plot and its mapping ───────────────────────────────────────────
 
 /// A plot of `data` (a Frame, or records) with a default mapping.
+/// @stable
 share fn plot(data = (), mapping = ()) =
     #{ "$gg": 1, "data": frame_of(data), "mapping": mapping, "layers": [], "scales": [],
        "facet": (), "coord": (), "labels": #{}, "theme": #{} }
@@ -73,6 +74,7 @@ share fn plot(data = (), mapping = ()) =
 /// a constant mapping (a number or Bool, or gg.constant(…)): one value for
 /// every row that still groups and keys a legend, as ggplot's
 /// `aes(group = 1)` and `aes(colour = "all")` do.
+/// @stable
 share fn aes(x = (), y = (), color = (), colour = (), fill = (), size = (), shape = (), alpha = (),
              linetype = (), linewidth = (), group = (), label = (), xmin = (), xmax = (), ymin = (), ymax = (),
              xend = (), yend = (), weight = (), sample = (), xintercept = (), yintercept = ()) =
@@ -83,26 +85,31 @@ share fn aes(x = (), y = (), color = (), colour = (), fill = (), size = (), shap
                ["xintercept", xintercept], ["yintercept", yintercept]])
 
 /// A variable the layer's stat computes, as a mapping (`y: gg.after_stat("density")`).
+/// @stable
 share fn after_stat(name) = "after_stat(" + name + ")"
 
 /// One value for every row, as a mapping (`color: gg.constant("all")`): a
 /// String in `aes` names a column, so a constant String says so here. A
 /// number or Bool in `aes` is a constant already (`group: 1`).
+/// @stable
 share fn constant(value) = "constant(" + to_string(value) + ")"
 
 /// Any geom with any stat and position: the general form of every layer.
+/// @stable
 share fn layer(p, geom, stat = (), position = (), mapping = (), data = (), params = #{}, inherit = true, legend = true) =
     add(p, geom, stat, position, mapping, data, inherit, legend, map(map_keys(params), (k) => [k, map_get(params, k)]))
 
 // ── geoms ──────────────────────────────────────────────────────────────
 
 /// Points (a scatter plot).
+/// @stable
 share fn point(p, mapping = (), data = (), color = (), colour = (), fill = (), size = (), shape = (), alpha = (),
                stroke = (), position = (), stat = (), inherit = true, legend = true) =
     add(p, "point", stat, position, mapping, data, inherit, legend,
         [["color", pick(color, colour)], ["fill", fill], ["size", size], ["shape", shape], ["alpha", alpha], ["stroke", stroke]])
 
 /// Points jittered (`width`, `height`: the spread; `seed`).
+/// @stable
 share fn jitter(p, mapping = (), data = (), width = (), height = (), seed = (), color = (), colour = (), size = (),
                 shape = (), alpha = (), inherit = true, legend = true) =
     add(p, "jitter", (), (), mapping, data, inherit, legend,
@@ -112,43 +119,51 @@ fn line_params(color, colour, linewidth, linetype, alpha) =
     [["color", pick(color, colour)], ["linewidth", linewidth], ["linetype", linetype], ["alpha", alpha]]
 
 /// Lines through the points in x order, one per group.
+/// @stable
 share fn line(p, mapping = (), data = (), color = (), colour = (), linewidth = (), linetype = (), alpha = (),
               stat = (), inherit = true, legend = true) =
     add(p, "line", stat, (), mapping, data, inherit, legend, line_params(color, colour, linewidth, linetype, alpha))
 
 /// Lines through the points in the data's order.
+/// @stable
 share fn path(p, mapping = (), data = (), color = (), colour = (), linewidth = (), linetype = (), alpha = (),
               inherit = true, legend = true) =
     add(p, "path", (), (), mapping, data, inherit, legend, line_params(color, colour, linewidth, linetype, alpha))
 
 /// A staircase through the points (`direction`: "hv" or "vh").
+/// @stable
 share fn step(p, mapping = (), data = (), direction = (), color = (), colour = (), linewidth = (), linetype = (),
               inherit = true, legend = true) =
     add(p, "step", (), (), mapping, data, inherit, legend,
         line_params(color, colour, linewidth, linetype, ()) + [["direction", direction]])
 
 /// An area from zero to y, stacked by group.
+/// @stable
 share fn area(p, mapping = (), data = (), fill = (), color = (), colour = (), alpha = (), position = (),
               inherit = true, legend = true) =
     add(p, "area", (), position, mapping, data, inherit, legend, [["fill", fill], ["color", pick(color, colour)], ["alpha", alpha]])
 
 /// A band from ymin to ymax.
+/// @stable
 share fn ribbon(p, mapping = (), data = (), fill = (), color = (), colour = (), alpha = (), inherit = true, legend = true) =
     add(p, "ribbon", (), (), mapping, data, inherit, legend, [["fill", fill], ["color", pick(color, colour)], ["alpha", alpha]])
 
 /// Bars counting each x (stacked by group; `position: "dodge"` or "fill").
+/// @stable
 share fn bar(p, mapping = (), data = (), fill = (), color = (), colour = (), alpha = (), width = (), position = (),
              stat = (), inherit = true, legend = true) =
     add(p, "bar", stat, position, mapping, data, inherit, legend,
         [["fill", fill], ["color", pick(color, colour)], ["alpha", alpha], ["width", width]])
 
 /// Bars of height y.
+/// @stable
 share fn col(p, mapping = (), data = (), fill = (), color = (), colour = (), alpha = (), width = (), position = (),
              inherit = true, legend = true) =
     add(p, "col", (), position, mapping, data, inherit, legend,
         [["fill", fill], ["color", pick(color, colour)], ["alpha", alpha], ["width", width]])
 
 /// A histogram: x binned (`bins`, `binwidth`, `boundary`, `center`, `breaks`).
+/// @stable
 share fn histogram(p, mapping = (), data = (), bins = (), binwidth = (), boundary = (), center = (), breaks = (),
                    fill = (), color = (), colour = (), alpha = (), position = (), inherit = true, legend = true) =
     add(p, "histogram", (), position, mapping, data, inherit, legend,
@@ -156,6 +171,7 @@ share fn histogram(p, mapping = (), data = (), bins = (), binwidth = (), boundar
          ["fill", fill], ["color", pick(color, colour)], ["alpha", alpha]])
 
 /// A frequency polygon: a histogram's counts as a line.
+/// @stable
 share fn freqpoly(p, mapping = (), data = (), bins = (), binwidth = (), color = (), colour = (), linewidth = (),
                   inherit = true, legend = true) =
     add(p, "freqpoly", (), (), mapping, data, inherit, legend,
@@ -163,6 +179,7 @@ share fn freqpoly(p, mapping = (), data = (), bins = (), binwidth = (), color = 
 
 /// A kernel density estimate (`bw`: "nrd0", "nrd", "scott" or a number;
 /// `adjust`; `kernel`; `n`; `trim`).
+/// @stable
 share fn density(p, mapping = (), data = (), bw = (), adjust = (), kernel = (), n = (), trim = (), fill = (),
                  color = (), colour = (), alpha = (), linewidth = (), linetype = (), position = (), inherit = true,
                  legend = true) =
@@ -171,6 +188,7 @@ share fn density(p, mapping = (), data = (), bw = (), adjust = (), kernel = (), 
          ["color", pick(color, colour)], ["alpha", alpha], ["linewidth", linewidth], ["linetype", linetype]])
 
 /// Boxplots: median, hinges, 1.5 IQR whiskers, outliers.
+/// @stable
 share fn boxplot(p, mapping = (), data = (), width = (), coef = (), outliers = (), fill = (), color = (),
                  colour = (), alpha = (), linewidth = (), position = (), inherit = true, legend = true) =
     add(p, "boxplot", (), position, mapping, data, inherit, legend,
@@ -179,6 +197,7 @@ share fn boxplot(p, mapping = (), data = (), width = (), coef = (), outliers = (
 
 /// Violins: each group's density mirrored (`scale`: "area", "count",
 /// "width"; `draw_quantiles`: e.g. [0.25, 0.5, 0.75]).
+/// @stable
 share fn violin(p, mapping = (), data = (), scale = (), trim = (), bw = (), adjust = (), draw_quantiles = (),
                 width = (), fill = (), color = (), colour = (), alpha = (), inherit = true, legend = true) =
     add(p, "violin", (), (), mapping, data, inherit, legend,
@@ -190,21 +209,25 @@ fn range_params(color, colour, linewidth, width, size, alpha) =
 
 /// Error bars from ymin to ymax (`position`: "dodge" or
 /// gg.position_dodge(width: …) sets groups side by side).
+/// @stable
 share fn errorbar(p, mapping = (), data = (), width = (), color = (), colour = (), linewidth = (), alpha = (),
                   position = (), inherit = true, legend = true) =
     add(p, "errorbar", (), position, mapping, data, inherit, legend, range_params(color, colour, linewidth, width, (), alpha))
 
 /// A point at y on a line from ymin to ymax (`position` as errorbar's).
+/// @stable
 share fn pointrange(p, mapping = (), data = (), color = (), colour = (), linewidth = (), size = (), alpha = (),
                     position = (), inherit = true, legend = true) =
     add(p, "pointrange", (), position, mapping, data, inherit, legend, range_params(color, colour, linewidth, (), size, alpha))
 
 /// A line from ymin to ymax (`position` as errorbar's).
+/// @stable
 share fn linerange(p, mapping = (), data = (), color = (), colour = (), linewidth = (), alpha = (), position = (),
                    inherit = true, legend = true) =
     add(p, "linerange", (), position, mapping, data, inherit, legend, range_params(color, colour, linewidth, (), (), alpha))
 
 /// A box from ymin to ymax with a line at y (`position` as errorbar's).
+/// @stable
 share fn crossbar(p, mapping = (), data = (), width = (), color = (), colour = (), linewidth = (), alpha = (),
                   position = (), inherit = true, legend = true) =
     add(p, "crossbar", (), position, mapping, data, inherit, legend, range_params(color, colour, linewidth, width, (), alpha))
@@ -213,6 +236,7 @@ share fn crossbar(p, mapping = (), data = (), width = (), color = (), colour = (
 /// "mean_sdl", "median_hilow", "mean", "median"; `level`), drawn as
 /// `geom` ("pointrange", "errorbar", "crossbar", "point", "line", "col");
 /// `alpha`, `fill`, `linewidth` and `position` as that geom takes them.
+/// @stable
 share fn summary(p, mapping = (), data = (), fun = (), level = (), mult = (), geom = "pointrange", color = (),
                  colour = (), fill = (), size = (), width = (), alpha = (), linewidth = (), position = (),
                  inherit = true, legend = true) =
@@ -222,6 +246,7 @@ share fn summary(p, mapping = (), data = (), fun = (), level = (), mult = (), ge
 
 /// A smoother with its standard-error band (`method`: "lm", "loess",
 /// "gam", "auto"; `se`; `level`; `span`; `degree`; `k`; `n`; `fullrange`).
+/// @stable
 share fn smooth(p, mapping = (), data = (), method = (), se = (), level = (), span = (), degree = (), k = (),
                 n = (), fullrange = (), color = (), colour = (), fill = (), linewidth = (), linetype = (),
                 alpha = (), inherit = true, legend = true) =
@@ -238,76 +263,91 @@ fn nudged(nudge_x, nudge_y) = if typeof(nudge_x) == "Unit" && typeof(nudge_y) ==
 
 /// Text at each point (the label aesthetic; `size` in pixels; `hjust`,
 /// `vjust`, `nudge_x`, `nudge_y`, `check_overlap`, `fontface`).
+/// @stable
 share fn text(p, mapping = (), data = (), label = (), color = (), colour = (), size = (), hjust = (), vjust = (),
               nudge_x = (), nudge_y = (), check_overlap = (), fontface = (), inherit = true, legend = true) =
     add(p, "text", (), nudged(nudge_x, nudge_y), mapping, data, inherit, legend,
         text_params(label, color, colour, size, hjust, vjust, nudge_x, nudge_y, check_overlap, fontface, ()))
 
 /// Text on a box.
+/// @stable
 share fn label(p, mapping = (), data = (), label = (), color = (), colour = (), fill = (), size = (), hjust = (),
                vjust = (), nudge_x = (), nudge_y = (), inherit = true, legend = true) =
     add(p, "label", (), nudged(nudge_x, nudge_y), mapping, data, inherit, legend,
         text_params(label, color, colour, size, hjust, vjust, nudge_x, nudge_y, (), (), fill))
 
 /// Tiles at each (x, y), filled (a heatmap).
+/// @stable
 share fn tile(p, mapping = (), data = (), width = (), height = (), fill = (), color = (), colour = (), linewidth = (),
               alpha = (), inherit = true, legend = true) =
     add(p, "tile", (), (), mapping, data, inherit, legend,
         [["width", width], ["height", height], ["fill", fill], ["color", pick(color, colour)], ["linewidth", linewidth], ["alpha", alpha]])
 
 /// Tiles that abut exactly (a raster image of a grid).
+/// @stable
 share fn raster(p, mapping = (), data = (), fill = (), alpha = (), inherit = true, legend = true) =
     add(p, "raster", (), (), mapping, data, inherit, legend, [["fill", fill], ["alpha", alpha]])
 
 /// Rectangles from xmin to xmax, ymin to ymax (an edge not mapped is the
 /// panel's).
+/// @stable
 share fn rect(p, mapping = (), data = (), fill = (), color = (), colour = (), alpha = (), inherit = true, legend = true) =
     add(p, "rect", (), (), mapping, data, inherit, legend, [["fill", fill], ["color", pick(color, colour)], ["alpha", alpha]])
 
 /// Horizontal reference lines at `yintercept` (a number or a list).
+/// @stable
 share fn hline(p, yintercept = (), mapping = (), data = (), color = (), colour = (), linetype = (), linewidth = (), alpha = ()) =
     add(p, "hline", (), (), mapping, data, typeof(yintercept) == "Unit", false,
         [["yintercept", yintercept]] + line_params(color, colour, linewidth, linetype, alpha))
 
 /// Vertical reference lines at `xintercept`.
+/// @stable
 share fn vline(p, xintercept = (), mapping = (), data = (), color = (), colour = (), linetype = (), linewidth = (), alpha = ()) =
     add(p, "vline", (), (), mapping, data, typeof(xintercept) == "Unit", false,
         [["xintercept", xintercept]] + line_params(color, colour, linewidth, linetype, alpha))
 
 /// A line y = intercept + slope · x (in the scales' transformed space).
+/// @stable
 share fn abline(p, slope = 1.0, intercept = 0.0, color = (), colour = (), linetype = (), linewidth = (), alpha = ()) =
     add(p, "abline", (), (), (), (), false, false,
         [["slope", slope], ["intercept", intercept]] + line_params(color, colour, linewidth, linetype, alpha))
 
 /// Ticks along the axes at each value (`sides`: "bl", "b", "l", "tr"…).
+/// @stable
 share fn rug(p, mapping = (), data = (), sides = (), length = (), color = (), colour = (), alpha = (), inherit = true, legend = true) =
     add(p, "rug", (), (), mapping, data, inherit, legend,
         [["sides", sides], ["length", length], ["color", pick(color, colour)], ["alpha", alpha]])
 
 /// Segments from (x, y) to (xend, yend).
+/// @stable
 share fn segment(p, mapping = (), data = (), color = (), colour = (), linewidth = (), linetype = (), alpha = (),
                  inherit = true, legend = true) =
     add(p, "segment", (), (), mapping, data, inherit, legend, line_params(color, colour, linewidth, linetype, alpha))
 
 /// Hexagonal 2-D bins, filled by count (`bins`, `binwidth`).
+/// @stable
 share fn hex(p, mapping = (), data = (), bins = (), binwidth = (), inherit = true, legend = true) =
     add(p, "hex", (), (), mapping, data, inherit, legend, [["bins", bins], ["binwidth", binwidth]])
 
 /// Rectangular 2-D bins, filled by count (`bins`, `binwidth`).
+/// @stable
 share fn bin2d(p, mapping = (), data = (), bins = (), binwidth = (), inherit = true, legend = true) =
     add(p, "bin2d", (), (), mapping, data, inherit, legend, [["bins", bins], ["binwidth", binwidth]])
 
 /// The empirical cdf of x, as a staircase.
+/// @stable
 share fn ecdf(p, mapping = (), data = (), color = (), colour = (), linewidth = (), inherit = true, legend = true) =
     add(p, "ecdf", (), (), mapping, data, inherit, legend, line_params(color, colour, linewidth, (), ()))
 
 /// A normal Q-Q plot of the sample aesthetic (`mean`, `sd` of the reference).
+/// @stable
 share fn qq(p, mapping = (), data = (), mean = (), sd = (), color = (), colour = (), size = (), alpha = (),
             inherit = true, legend = true) =
     add(p, "qq", (), (), mapping, data, inherit, legend,
         [["mean", mean], ["sd", sd], ["color", pick(color, colour)], ["size", size], ["alpha", alpha]])
 
 /// The line through a Q-Q plot's quartiles.
+/// @stable
 share fn qq_line(p, mapping = (), data = (), mean = (), sd = (), color = (), colour = (), linetype = (),
                  inherit = true, legend = true) =
     add(p, "qq_line", (), (), mapping, data, inherit, legend,
@@ -317,6 +357,7 @@ share fn qq_line(p, mapping = (), data = (), mean = (), sd = (), color = (), col
 /// line): `gg.annotate(p, "text", x: 3, y: 9, label: "peak")`. A rect's
 /// edge left out is the panel's (ggplot's -Inf/Inf): `gg.annotate(p,
 /// "rect", xmin: 3, xmax: 5)` spans the panel's height.
+/// @stable
 share fn annotate(p, geom, x = (), y = (), xend = (), yend = (), xmin = (), xmax = (), ymin = (), ymax = (),
                   label = (), color = (), colour = (), fill = (), alpha = (), size = (), linetype = (), hjust = (),
                   vjust = ()) = {
@@ -338,18 +379,24 @@ share fn annotate(p, geom, x = (), y = (), xend = (), yend = (), xmin = (), xmax
 // ── positions ──────────────────────────────────────────────────────────
 
 /// Stacked (`reverse`: the first group at the bottom).
+/// @stable
 share fn position_stack(reverse = ()) = put(#{ "name": "stack" }, "reverse", reverse)
 /// Stacked and scaled to 1 at each x.
+/// @stable
 share fn position_fill(reverse = ()) = put(#{ "name": "fill" }, "reverse", reverse)
 /// Side by side (`width`: the space the groups share; each mark keeps
 /// its own width, shared among them, as ggplot dodges).
+/// @stable
 share fn position_dodge(width = ()) = put(#{ "name": "dodge" }, "dodge_width", width)
 /// Side by side with `padding` between.
+/// @stable
 share fn position_dodge2(width = (), padding = ()) = put(put(#{ "name": "dodge2" }, "dodge_width", width), "padding", padding)
 /// Moved at random (`width`, `height`; `seed` keeps it reproducible).
+/// @stable
 share fn position_jitter(width = (), height = (), seed = ()) =
     put(put(put(#{ "name": "jitter" }, "width", width), "height", height), "seed", seed)
 /// Moved by a constant (`x`, `y`).
+/// @stable
 share fn position_nudge(x = (), y = ()) = put(put(#{ "name": "nudge" }, "nudge_x", x), "nudge_y", y)
 
 // ── scales ─────────────────────────────────────────────────────────────
@@ -361,47 +408,61 @@ fn axis_pairs(name, breaks, labels, limits, expand, prefix, suffix) =
 /// The x axis, continuous (`labels`: "percent", "comma", "dollar",
 /// "short", "scientific", or a list; `breaks`; `limits`: [lo, hi];
 /// `trans`: "log10", "sqrt", "reverse"; `prefix`, `suffix`).
+/// @stable
 share fn scale_x_continuous(p, name = (), breaks = (), labels = (), limits = (), expand = (), trans = (), prefix = (), suffix = ()) =
     add_scale(p, "x", "continuous", axis_pairs(name, breaks, labels, limits, expand, prefix, suffix) + [["trans", trans]])
 /// The y axis, continuous.
+/// @stable
 share fn scale_y_continuous(p, name = (), breaks = (), labels = (), limits = (), expand = (), trans = (), prefix = (), suffix = ()) =
     add_scale(p, "y", "continuous", axis_pairs(name, breaks, labels, limits, expand, prefix, suffix) + [["trans", trans]])
 /// The x axis on a log10 scale (breaks at powers of ten).
+/// @stable
 share fn scale_x_log10(p, name = (), breaks = (), labels = (), limits = (), expand = ()) =
     add_scale(p, "x", "log10", axis_pairs(name, breaks, labels, limits, expand, (), ()))
 /// The y axis on a log10 scale.
+/// @stable
 share fn scale_y_log10(p, name = (), breaks = (), labels = (), limits = (), expand = ()) =
     add_scale(p, "y", "log10", axis_pairs(name, breaks, labels, limits, expand, (), ()))
 /// The x axis on a square-root scale.
+/// @stable
 share fn scale_x_sqrt(p, name = (), breaks = (), labels = (), limits = ()) =
     add_scale(p, "x", "sqrt", axis_pairs(name, breaks, labels, limits, (), (), ()))
 /// The y axis on a square-root scale.
+/// @stable
 share fn scale_y_sqrt(p, name = (), breaks = (), labels = (), limits = ()) =
     add_scale(p, "y", "sqrt", axis_pairs(name, breaks, labels, limits, (), (), ()))
 /// The x axis reversed.
+/// @stable
 share fn scale_x_reverse(p, name = (), breaks = (), labels = (), limits = ()) =
     add_scale(p, "x", "reverse", axis_pairs(name, breaks, labels, limits, (), (), ()))
 /// The y axis reversed.
+/// @stable
 share fn scale_y_reverse(p, name = (), breaks = (), labels = (), limits = ()) =
     add_scale(p, "y", "reverse", axis_pairs(name, breaks, labels, limits, (), (), ()))
 /// The x axis as categories (`limits`: their order; `labels`: a list or
 /// a map of level to label).
+/// @stable
 share fn scale_x_discrete(p, name = (), limits = (), labels = (), breaks = ()) =
     add_scale(p, "x", "discrete", [["name", name], ["limits", limits], ["labels", labels], ["breaks", breaks]])
 /// The y axis as categories.
+/// @stable
 share fn scale_y_discrete(p, name = (), limits = (), labels = (), breaks = ()) =
     add_scale(p, "y", "discrete", [["name", name], ["limits", limits], ["labels", labels], ["breaks", breaks]])
 /// The x axis as dates (ISO strings parsed; `date_breaks`: "1 month";
 /// `date_labels`: "%b %Y").
+/// @stable
 share fn scale_x_date(p, name = (), date_breaks = (), date_labels = (), limits = (), breaks = ()) =
     add_scale(p, "x", "date", [["name", name], ["date_breaks", date_breaks], ["date_labels", date_labels], ["limits", limits], ["breaks", breaks]])
 /// The y axis as dates.
+/// @stable
 share fn scale_y_date(p, name = (), date_breaks = (), date_labels = (), limits = ()) =
     add_scale(p, "y", "date", [["name", name], ["date_breaks", date_breaks], ["date_labels", date_labels], ["limits", limits]])
 /// The x axis as date-times.
+/// @stable
 share fn scale_x_datetime(p, name = (), date_breaks = (), date_labels = (), limits = ()) =
     add_scale(p, "x", "datetime", [["name", name], ["date_breaks", date_breaks], ["date_labels", date_labels], ["limits", limits]])
 /// The y axis as date-times.
+/// @stable
 share fn scale_y_datetime(p, name = (), date_breaks = (), date_labels = (), limits = ()) =
     add_scale(p, "y", "datetime", [["name", name], ["date_breaks", date_breaks], ["date_labels", date_labels], ["limits", limits]])
 
@@ -410,16 +471,20 @@ fn color_pairs(name, values, labels, limits, breaks, guide) =
 
 /// Colours by hand: `values` a list (in the levels' order) or a map of
 /// level to colour.
+/// @stable
 share fn scale_color_manual(p, values, name = (), labels = (), limits = (), breaks = (), guide = ()) =
     add_scale(p, "color", "manual", color_pairs(name, values, labels, limits, breaks, guide))
 /// Fills by hand.
+/// @stable
 share fn scale_fill_manual(p, values, name = (), labels = (), limits = (), breaks = (), guide = ()) =
     add_scale(p, "fill", "manual", color_pairs(name, values, labels, limits, breaks, guide))
 /// Categorical colours from a named palette ("quiet", the default, or a
 /// viridis option).
+/// @stable
 share fn scale_color_discrete(p, palette = (), name = (), labels = (), limits = (), guide = ()) =
     add_scale(p, "color", "palette", color_pairs(name, (), labels, limits, (), guide) + [["palette", palette]])
 /// Categorical fills from a named palette.
+/// @stable
 share fn scale_fill_discrete(p, palette = (), name = (), labels = (), limits = (), guide = ()) =
     add_scale(p, "fill", "palette", color_pairs(name, (), labels, limits, (), guide) + [["palette", palette]])
 
@@ -428,61 +493,80 @@ fn viridis_pairs(option, begin, end, direction, name, labels, limits, breaks, gu
 
 /// Categorical colours from the viridis family (`option`: "viridis",
 /// "magma", "inferno", "plasma", "cividis", "mako", "rocket").
+/// @stable
 share fn scale_color_viridis_d(p, option = (), begin = (), end = (), direction = (), name = (), labels = (), limits = (), guide = ()) =
     add_scale(p, "color", "viridis_d", viridis_pairs(option, begin, end, direction, name, labels, limits, (), guide))
 /// Categorical fills from the viridis family.
+/// @stable
 share fn scale_fill_viridis_d(p, option = (), begin = (), end = (), direction = (), name = (), labels = (), limits = (), guide = ()) =
     add_scale(p, "fill", "viridis_d", viridis_pairs(option, begin, end, direction, name, labels, limits, (), guide))
 /// Continuous colours along a viridis ramp.
+/// @stable
 share fn scale_color_viridis_c(p, option = (), begin = (), end = (), direction = (), name = (), labels = (), limits = (), breaks = (), trans = (), guide = ()) =
     add_scale(p, "color", "viridis_c", viridis_pairs(option, begin, end, direction, name, labels, limits, breaks, guide) + [["trans", trans]])
 /// Continuous fills along a viridis ramp.
+/// @stable
 share fn scale_fill_viridis_c(p, option = (), begin = (), end = (), direction = (), name = (), labels = (), limits = (), breaks = (), trans = (), guide = ()) =
     add_scale(p, "fill", "viridis_c", viridis_pairs(option, begin, end, direction, name, labels, limits, breaks, guide) + [["trans", trans]])
 /// Continuous colours from `low` to `high`.
+/// @stable
 share fn scale_color_gradient(p, low = (), high = (), name = (), labels = (), limits = (), breaks = (), trans = (), guide = ()) =
     add_scale(p, "color", "gradient", color_pairs(name, (), labels, limits, breaks, guide) + [["low", low], ["high", high], ["trans", trans]])
 /// Continuous fills from `low` to `high`.
+/// @stable
 share fn scale_fill_gradient(p, low = (), high = (), name = (), labels = (), limits = (), breaks = (), trans = (), guide = ()) =
     add_scale(p, "fill", "gradient", color_pairs(name, (), labels, limits, breaks, guide) + [["low", low], ["high", high], ["trans", trans]])
 /// Diverging colours centred on `midpoint` (0): `low`, `mid`, `high`.
+/// @stable
 share fn scale_color_gradient2(p, low = (), mid = (), high = (), midpoint = (), name = (), labels = (), limits = (), breaks = (), guide = ()) =
     add_scale(p, "color", "gradient2", color_pairs(name, (), labels, limits, breaks, guide) + [["low", low], ["mid", mid], ["high", high], ["midpoint", midpoint]])
 /// Diverging fills centred on `midpoint`.
+/// @stable
 share fn scale_fill_gradient2(p, low = (), mid = (), high = (), midpoint = (), name = (), labels = (), limits = (), breaks = (), guide = ()) =
     add_scale(p, "fill", "gradient2", color_pairs(name, (), labels, limits, breaks, guide) + [["low", low], ["mid", mid], ["high", high], ["midpoint", midpoint]])
 /// Continuous colours through a list of `colors`.
+/// @stable
 share fn scale_color_gradientn(p, colors, name = (), labels = (), limits = (), breaks = (), guide = ()) =
     add_scale(p, "color", "gradientn", color_pairs(name, (), labels, limits, breaks, guide) + [["colors", colors]])
 /// Continuous fills through a list of `colors`.
+/// @stable
 share fn scale_fill_gradientn(p, colors, name = (), labels = (), limits = (), breaks = (), guide = ()) =
     add_scale(p, "fill", "gradientn", color_pairs(name, (), labels, limits, breaks, guide) + [["colors", colors]])
 /// Greys for categories (`start`, `end` in [0, 1]).
+/// @stable
 share fn scale_color_grey(p, start = (), end = (), name = (), guide = ()) =
     add_scale(p, "color", "grey", color_pairs(name, (), (), (), (), guide) + [["start", start], ["end", end]])
 /// Grey fills for categories.
+/// @stable
 share fn scale_fill_grey(p, start = (), end = (), name = (), guide = ()) =
     add_scale(p, "fill", "grey", color_pairs(name, (), (), (), (), guide) + [["start", start], ["end", end]])
 /// The column's values are the colours themselves (names or `#hex`).
+/// @stable
 share fn scale_color_identity(p) = add_scale(p, "color", "identity", [])
 /// The column's values are the fills themselves.
+/// @stable
 share fn scale_fill_identity(p) = add_scale(p, "fill", "identity", [])
 /// Point sizes by area (`range`: [smallest, largest] in size units).
+/// @stable
 share fn scale_size(p, range = (), name = (), breaks = (), labels = (), limits = (), trans = (), guide = ()) =
     add_scale(p, "size", "area", [["range", range], ["name", name], ["breaks", breaks], ["labels", labels], ["limits", limits], ["trans", trans], ["guide", guide]])
 /// Opacities (`range`: [least, most]).
+/// @stable
 share fn scale_alpha(p, range = (), name = (), breaks = (), labels = (), limits = (), guide = ()) =
     add_scale(p, "alpha", "continuous", [["range", range], ["name", name], ["breaks", breaks], ["labels", labels], ["limits", limits], ["guide", guide]])
 /// Shapes for categories (`values`: e.g. ["circle", "triangle", "square"]).
+/// @stable
 share fn scale_shape(p, values = (), name = (), labels = (), limits = (), guide = ()) =
     add_scale(p, "shape", "shape", [["values", values], ["name", name], ["labels", labels], ["limits", limits], ["guide", guide]])
 /// Line widths (`range`: [thinnest, thickest] in linewidth units, default
 /// [0.25, 2]), for a `linewidth` mapping.
+/// @stable
 share fn scale_linewidth(p, range = (), name = (), breaks = (), labels = (), limits = (), trans = (), guide = ()) =
     add_scale(p, "linewidth", "linewidth", [["range", range], ["name", name], ["breaks", breaks], ["labels", labels], ["limits", limits],
                                             ["trans", trans], ["guide", guide]])
 /// Dash patterns for categories (`values`: "solid", "dashed", "dotted",
 /// "dotdash", "longdash", "twodash").
+/// @stable
 share fn scale_linetype(p, values = (), name = (), labels = (), limits = (), guide = ()) =
     add_scale(p, "linetype", "linetype", [["values", values], ["name", name], ["labels", labels], ["limits", limits], ["guide", guide]])
 
@@ -492,25 +576,31 @@ fn names_of(v) = if typeof(v) == "Unit" => [] else if typeof(v) == "List" => v e
 
 /// Small multiples: one panel per value of `facets` (a column or a list),
 /// wrapped into `ncol` columns (`scales`: "fixed", "free", "free_x", "free_y").
+/// @stable
 share fn facet_wrap(p, facets, ncol = (), nrow = (), scales = "fixed") =
     map_set(check_plot(p, "facet_wrap"), "facet", #{ "kind": "wrap", "rows": names_of(facets), "cols": [], "ncol": ncol, "nrow": nrow, "scales": scales })
 
 /// A grid of panels: `rows` by `cols` (either may be ()).
+/// @stable
 share fn facet_grid(p, rows = (), cols = (), scales = "fixed") =
     map_set(check_plot(p, "facet_grid"), "facet", #{ "kind": "grid", "rows": names_of(rows), "cols": names_of(cols), "scales": scales })
 
 // ── coordinates ────────────────────────────────────────────────────────
 
 /// The axes swapped: x drawn vertically (horizontal bars, boxes).
+/// @stable
 share fn coord_flip(p, xlim = (), ylim = ()) = map_set(check_plot(p, "coord_flip"), "coord", #{ "kind": "flip", "xlim": xlim, "ylim": ylim })
 /// One unit of y the length of `ratio` units of x.
+/// @stable
 share fn coord_fixed(p, ratio = 1.0, xlim = (), ylim = ()) = map_set(check_plot(p, "coord_fixed"), "coord", #{ "kind": "fixed", "ratio": ratio, "xlim": xlim, "ylim": ylim })
 /// Zoomed to `xlim`, `ylim` without dropping data (unlike a scale's limits).
+/// @stable
 share fn coord_cartesian(p, xlim = (), ylim = ()) = map_set(check_plot(p, "coord_cartesian"), "coord", #{ "kind": "cartesian", "xlim": xlim, "ylim": ylim })
 
 // ── labels and theme ───────────────────────────────────────────────────
 
 /// Titles: the plot's, a subtitle, a caption, the axes', the legends'.
+/// @stable
 share fn labs(p, title = (), subtitle = (), caption = (), x = (), y = (), color = (), colour = (), fill = (),
               size = (), shape = (), alpha = (), linetype = (), linewidth = ()) = {
     let new = pairs_map([["title", title], ["subtitle", subtitle], ["caption", caption], ["x", x], ["y", y],
@@ -520,10 +610,13 @@ share fn labs(p, title = (), subtitle = (), caption = (), x = (), y = (), color 
 }
 
 /// The plot's title.
+/// @stable
 share fn ggtitle(p, title, subtitle = ()) = labs(p, title: title, subtitle: subtitle)
 /// The x axis's title.
+/// @stable
 share fn xlab(p, title) = labs(p, x: title)
 /// The y axis's title.
+/// @stable
 share fn ylab(p, title) = labs(p, y: title)
 
 /// The look: `name` ("minimal" — the default, Studio's quiet instrument —
@@ -535,6 +628,7 @@ share fn ylab(p, title) = labs(p, y: title)
 /// show through), `ink` (every word and line in one CSS colour:
 /// "currentColor" takes the page's), and `id` (the prefix of the ids the
 /// SVG names; by default one derived from the SVG).
+/// @stable
 share fn theme(p, name = (), appearance = (), base_size = (), legend_position = (), width = (), height = (),
                grid = (), font = (), paper = (), ink = (), id = ()) = {
     let new = pairs_map([["name", name], ["appearance", appearance], ["base_size", base_size],
@@ -546,10 +640,13 @@ share fn theme(p, name = (), appearance = (), base_size = (), legend_position = 
 // ── output ─────────────────────────────────────────────────────────────
 
 /// The plot as SVG text.
+/// @stable
 share fn svg(p) = native.gg(check_plot(p, "svg"))
 
 /// The plot's scene as JSON text: what a host draws natively.
+/// @stable
 share fn scene(p) = native.gg_scene(check_plot(p, "scene"))
 
 /// The plot written to `path` as SVG.
+/// @stable
 share fn save(p, path) = fs.write_file(path, svg(p))

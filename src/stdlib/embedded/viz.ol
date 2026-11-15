@@ -113,6 +113,7 @@ fn check_spec_keys(spec, where_) = {
 /// `Err(message)` — an unknown key, or no data points to draw — so a
 /// chart over records from a file, a request, or a user is guarded once:
 /// `match viz.check(spec) { Ok(s) => viz.chart(s), Err(e) => ... }`.
+/// @stable
 share fn check(spec) = {
     let problems = spec_problems(spec, "the chart spec")
     if len(problems) > 0 => Err(problems[0])
@@ -198,6 +199,7 @@ fn vmax(v) = if typeof(v) == "List" => to_float(max(v)) else => ods.max(v)
 
 // ── the SVG target ─────────────────────────────────────────────────────
 
+/// @stable
 share fn chart(spec) = {
     check_spec_keys(spec, "the chart spec")
     let mark = norm_mark(opt(spec, "mark", "line"))
@@ -271,6 +273,7 @@ let palette = ["#3ddc97", "#5aa9e6", "#f4b84c", "#f0854a",
 // canvas label is noise.
 fn fmt(v) = show(math.round(to_float(v) * 100.0) / 100.0)
 
+/// @stable
 share fn draw(el, spec) = {
     let w = to_float(unwrap(str.parse_int(dom.get_attr(el, "width"))))
     let h = to_float(unwrap(str.parse_int(dom.get_attr(el, "height"))))
@@ -389,6 +392,7 @@ fn tip_text(d) = {
 
 // Attach a hover tooltip to a chart container: hovering any
 // interactive mark shows its datum, leaving hides it.
+/// @stable
 share fn tooltip(el) = {
     let tip = dom.create("div")
     for (k, v) in entries(#{
@@ -416,6 +420,7 @@ share fn tooltip(el) = {
 
 // Delegated mark events: the handler fires only when the event target
 // was an interactive mark, and receives the mark's data map.
+/// @stable
 share fn on_mark(el, event, handler) =
     dom.on(el, event, (e) => {
         let d = e.data
@@ -426,6 +431,7 @@ share fn on_mark(el, event, handler) =
 // receives #{ "from", "to" } as fractions of the element's width
 // (0.0 at the left edge, 1.0 at the right). Taps shorter than 2% of
 // the width are ignored — they are clicks, not brushes.
+/// @stable
 share fn brush(el, handler) = {
     let anchor = dom.create("input")
     dom.set_attr(anchor, "type", "hidden")

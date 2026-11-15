@@ -26,6 +26,7 @@
 // absence by `get` alone; `has` answers presence exactly.
 
 // A new, empty table (with a small initial slot count).
+/// @stable
 share fn new() = {
     let mut t = col.filled(3 + 8 * 3, 0)
     t = col.set(t, 2, 8)
@@ -33,12 +34,15 @@ share fn new() = {
 }
 
 // The number of live entries.
+/// @stable
 share fn size(t) = t[0]
 
 // True when `k` is present.
+/// @stable
 share fn has(t, k) = slot_of(t, k) >= 0
 
 // The value under `k`, or `()` when absent.
+/// @stable
 share fn get(t, k) = {
     let at = slot_of(t, k)
     if at >= 0 => { t[at + 2] } else => { () }
@@ -46,6 +50,7 @@ share fn get(t, k) = {
 
 // The value under `k`, or `fallback` when absent — the pattern for
 // counters: `t = table.put(t, k, table.get_or(t, k, 0) + 1)`.
+/// @stable
 share fn get_or(t, k, fallback) = {
     let at = slot_of(t, k)
     if at >= 0 => { t[at + 2] } else => { fallback }
@@ -53,6 +58,7 @@ share fn get_or(t, k, fallback) = {
 
 // The table with `k` set to `v` (inserted or overwritten):
 // `t = table.put(t, k, v)`.
+/// @stable
 share fn put(t, k, v) = {
     t = grow_if_crowded(t)
     let cap = t[2]
@@ -92,6 +98,7 @@ share fn put(t, k, v) = {
 
 // The table with `k` removed (a no-op when absent):
 // `t = table.remove(t, k)`.
+/// @stable
 share fn remove(t, k) = {
     let at = slot_of(t, k)
     if at < 0 => { t }
@@ -106,6 +113,7 @@ share fn remove(t, k) = {
 
 // The live keys, in slot order (an arbitrary but stable order between
 // writes).
+/// @stable
 share fn keys(t) = {
     let mut out = []
     for slot in range(0, t[2]) {
@@ -116,6 +124,7 @@ share fn keys(t) = {
 }
 
 // The live values, in the same slot order as `keys`.
+/// @stable
 share fn values(t) = {
     let mut out = []
     for slot in range(0, t[2]) {

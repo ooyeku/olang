@@ -19,6 +19,7 @@
 // `union` brings sequences of mixed operations close to constant per op.
 
 // A new structure of `n` elements, each in its own group.
+/// @stable
 share fn new(n) = {
     let mut d = col.filled(1 + n * 2, 0)
     d = col.set(d, 0, n)
@@ -29,10 +30,12 @@ share fn new(n) = {
 }
 
 // The number of elements (not groups) in the structure.
+/// @stable
 share fn size(d) = d[0]
 
 // The root representative of `x`'s group. A read: follows parent links
 // without rewriting them.
+/// @stable
 share fn find(d, x) = {
     let mut c = x
     while d[1 + c] != c {
@@ -42,12 +45,14 @@ share fn find(d, x) = {
 }
 
 // True when `a` and `b` are in the same group.
+/// @stable
 share fn connected(d, a, b) = find(d, a) == find(d, b)
 
 // The structure with `a`'s and `b`'s groups merged:
 // `d = dsu.union(d, a, b)`. Compresses both walked paths and links by
 // rank. Uniting elements already in one group returns the structure
 // unchanged (aside from compression).
+/// @stable
 share fn union(d, a, b) = {
     let ra = find(d, a)
     let rb = find(d, b)
@@ -85,6 +90,7 @@ share fn union(d, a, b) = {
 }
 
 // The number of distinct groups.
+/// @stable
 share fn groups(d) = {
     let mut count = 0
     for i in range(0, d[0]) {

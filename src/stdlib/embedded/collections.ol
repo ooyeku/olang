@@ -30,9 +30,15 @@ use dsu
 use table
 use alg
 
+/// @stable
 share let heap = heap
+/// @stable
 share let deque = deque
+/// @stable
 share let bitset = bitset
+/// @stable
 share let dsu = dsu
+/// @stable
 share let table = table
+/// @stable
 share let alg = alg

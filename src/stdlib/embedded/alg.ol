@@ -39,6 +39,7 @@ fn smaller(a, b) = if a < b => a else => b
 // raises otherwise, naming the offending pair. Iterative bottom-up
 // merge sort: O(n log n) always, no recursion bookkeeping, one aux
 // buffer reused across passes.
+/// @stable
 share fn sort(xs) = {
     let n = len(xs)
     if n < 2 => { xs }
@@ -92,6 +93,7 @@ share fn sort(xs) = {
 
 // The list sorted ascending and stable by `key_fn(x)` — called once per
 // element. Sorts (key, index) pairs, then gathers the elements.
+/// @stable
 share fn sort_by_key(xs, key_fn) = {
     let n = len(xs)
     if n < 2 => { xs }
@@ -117,6 +119,7 @@ share fn sort_by_key(xs, key_fn) = {
 
 // The first index whose element is >= x — the insertion point that
 // keeps `xs` sorted. `len(xs)` when every element is smaller.
+/// @stable
 share fn lower_bound(xs, x) = {
     let mut lo = 0
     let mut hi = len(xs)
@@ -130,6 +133,7 @@ share fn lower_bound(xs, x) = {
 
 // The first index whose element is > x. With `lower_bound`, brackets
 // the run of elements equal to x.
+/// @stable
 share fn upper_bound(xs, x) = {
     let mut lo = 0
     let mut hi = len(xs)
@@ -143,6 +147,7 @@ share fn upper_bound(xs, x) = {
 
 // The index of `x` in sorted `xs`, or `()` when absent — Unit is the
 // absence value, the same contract as `str.index_of`.
+/// @stable
 share fn bin_search(xs, x) = {
     let at = lower_bound(xs, x)
     if at < len(xs) && xs[at] == x => { at } else => { () }
@@ -153,6 +158,7 @@ share fn bin_search(xs, x) = {
 // The k-th smallest element (0-based) without sorting: quickselect over
 // a working copy, expected O(n). The classic answer to medians and
 // percentiles when a full sort is more than the question needs.
+/// @stable
 share fn select_kth(xs, k) = {
     let mut a = xs
     let mut lo = 0
@@ -189,6 +195,7 @@ share fn select_kth(xs, k) = {
 
 // A directed graph of `n` nodes from an edge list `[[u, v], ...]`, as a
 // flat CSR handle. Build once, traverse many times.
+/// @stable
 share fn graph(n, edges) = {
     let m = len(edges)
     // Counting sort of edges by source: offsets by prefix sum, then a
@@ -215,6 +222,7 @@ share fn graph(n, edges) = {
 
 // A weighted directed graph from `[[u, v, w], ...]` — the CSR handle
 // with a parallel weight array appended. Weights are numbers.
+/// @stable
 share fn wgraph(n, edges) = {
     let m = len(edges)
     let mut g = col.filled(2 + n + 1 + m * 2, 0)
@@ -242,6 +250,7 @@ share fn wgraph(n, edges) = {
 // Hop distances from `src`: a list with -1 for unreachable nodes.
 // Breadth-first over the CSR arrays, the frontier in a ring-buffer
 // deque.
+/// @stable
 share fn bfs(g, src) = {
     let n = g[0]
     let mut dist = col.filled(n, -1)
@@ -266,6 +275,7 @@ share fn bfs(g, src) = {
 // when the graph has one, which is data about the input, not a bug.
 // Kahn's algorithm: repeatedly emit a node with no remaining incoming
 // edges.
+/// @stable
 share fn topo_sort(g) = {
     let n = g[0]
     let mut indegree = col.filled(n, 0)
@@ -295,6 +305,7 @@ share fn topo_sort(g) = {
 // handle, non-negative weights): a list with -1 for unreachable nodes.
 // Dijkstra with a `heap` of (distance, node) pairs and lazy deletion —
 // a popped pair older than the node's settled distance is skipped.
+/// @stable
 share fn dijkstra(g, src) = {
     let n = g[0]
     let m = g[1]

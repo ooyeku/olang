@@ -21,6 +21,7 @@
 // list's own index error — a bad position is a caller's bug, not data.
 
 // A new, empty set with capacity for members 0..n-1.
+/// @stable
 share fn new(n) = {
     let mut b = col.filled(1 + (n + 63) / 64, 0)
     b = col.set(b, 0, n)
@@ -28,12 +29,15 @@ share fn new(n) = {
 }
 
 // The capacity the set was created with.
+/// @stable
 share fn capacity(b) = b[0]
 
 // True when `i` is a member.
+/// @stable
 share fn has(b, i) = (b[1 + math.ushr(i, 6)] & math.wrapping_shl(1, i & 63)) != 0
 
 // The set with `i` added: `b = bitset.add(b, i)`.
+/// @stable
 share fn add(b, i) = {
     let at = 1 + math.ushr(i, 6)
     let word = b[at] | math.wrapping_shl(1, i & 63)
@@ -42,6 +46,7 @@ share fn add(b, i) = {
 }
 
 // The set with `i` removed: `b = bitset.remove(b, i)`.
+/// @stable
 share fn remove(b, i) = {
     let at = 1 + math.ushr(i, 6)
     let word = b[at] & (math.wrapping_shl(1, i & 63) ^ -1)
@@ -50,6 +55,7 @@ share fn remove(b, i) = {
 }
 
 // The number of members: a popcount per word.
+/// @stable
 share fn count(b) = {
     let mut total = 0
     for w in range(1, len(b)) { total = total + math.popcount(b[w]) }
@@ -57,6 +63,7 @@ share fn count(b) = {
 }
 
 // The union of two sets of equal capacity: members of either.
+/// @stable
 share fn union(a, b) = {
     let mut out = a
     for w in range(1, len(a)) { out = col.set(out, w, a[w] | b[w]) }
@@ -64,6 +71,7 @@ share fn union(a, b) = {
 }
 
 // The intersection of two sets of equal capacity: members of both.
+/// @stable
 share fn intersect(a, b) = {
     let mut out = a
     for w in range(1, len(a)) { out = col.set(out, w, a[w] & b[w]) }
@@ -71,6 +79,7 @@ share fn intersect(a, b) = {
 }
 
 // The difference of two sets of equal capacity: members of `a` not in `b`.
+/// @stable
 share fn difference(a, b) = {
     let mut out = a
     for w in range(1, len(a)) { out = col.set(out, w, a[w] & (b[w] ^ -1)) }
@@ -79,6 +88,7 @@ share fn difference(a, b) = {
 
 // The members, in ascending order, as a list of Ints. Each step takes
 // the lowest set bit of a word (`ctz`) and clears it.
+/// @stable
 share fn to_list(b) = {
     let mut out = []
     for w in range(1, len(b)) {
