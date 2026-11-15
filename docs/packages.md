@@ -606,10 +606,11 @@ they differ, one line says which shadows which and the fix:
 ```
 
 Read the versions before taking the fix: when the shadowing olang is
-the newer one, keep it and remove the old toolchains instead. olang is
-not published on crates.io, so `cargo install olang` does not bring a
-removed one back; a cargo-installed olang comes from a checkout
-(`cargo install --path .`).
+the newer one, keep it and remove the old toolchains instead. On
+crates.io the name `olang` belongs to another project, so `cargo install
+olang` installs something else; Cargo installs olang from its repository
+(`cargo install --locked --git https://github.com/ooyeku/olang.git olang
+otc`, as [Installing olang](installation.md) says).
 
 Inside a project one more line says what its pin resolves to. In
 `--format json` each row is `#{ version, olang, real, kind, folder,
