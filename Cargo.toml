@@ -25,11 +25,10 @@ default = ["native", "full", "gui", "toad", "gamepad", "audio"]
 # needs. A playground that runs any program keeps them
 # (`runtime.wasm("full")`; `cargo xtask wasm` builds both).
 full = ["regex-module", "rsa-crypto"]
-# `alloc-count`: has the accounting allocator (`src/memory.rs`) also count
-# allocations made, for measuring allocations per benchmark iteration;
-# with `OLANG_ALLOC_TRACE=<bytes>` it prints the backtrace of every
-# allocation at least that large (`OLANG_ALLOC_STATS=1 olang run x.ol` prints
-# the count at exit). A measurement build, not a shipping one.
+# `alloc-count`: with `OLANG_ALLOC_TRACE=<bytes>`, the accounting allocator
+# (`src/memory.rs`) prints the backtrace of every allocation at least that
+# large. A measurement build, not a shipping one. (Allocation counts are in
+# every build now: `runtime.memory().allocations`, `OLANG_ALLOC_STATS=1`.)
 alloc-count = []
 regex-module = ["dep:regex"]
 rsa-crypto = ["dep:rsa"]

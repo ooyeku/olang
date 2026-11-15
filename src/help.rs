@@ -8926,7 +8926,7 @@ route("GET", "/olang." + map_get(rt, "hash") + ".wasm", (req, p) => { status: 20
             "runtime.memory()",
             "Map",
             "runtime",
-            "Where the process's memory is, in bytes: #{ \"heap\", \"program\", \"values\", \"embedded\", \"tasks\": [#{ \"name\", \"bytes\" }] } — what is allocated and not freed, the share the loaded program holds (measured across parsing the entry file and each use), the rest, the browser runtime in the binary's image, and each spawned task and http worker with what it allocated and has not itself freed, largest first.",
+            "Where the process's memory is, in bytes: #{ \"heap\", \"program\", \"code\", \"values\", \"embedded\", \"allocated\", \"allocations\", \"tasks\": [#{ \"name\", \"bytes\" }] } — what is allocated and not freed, the share the loaded program holds (measured across parsing the entry file and each use), the share the runtime's own compiled code holds, the rest, the browser runtime in the binary's image, the bytes asked for and the allocations made since the process began (exact), and each spawned task and http worker with what it allocated and has not itself freed, largest first.",
             &[r##"let m = runtime.memory()
 println("program: " + to_string(map_get(m, "program") / 1048576) + " MB")"##],
         );

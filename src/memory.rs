@@ -25,6 +25,11 @@
 //! body built on first read, a bridge interpreter built (OL-418). Code
 //! the tier lets go of again (an evicted closure's) is taken back off.
 //! `values` is the rest of the heap: what the running program holds.
+//!
+//! Each slot also counts the allocations its thread made and the bytes
+//! they asked for, ever: `runtime.memory().allocations` and `allocated`,
+//! and a profile's `allocs_n`/`alloc_b` (OL-324). A load and a store on
+//! the slot's own line.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -37,14 +42,21 @@ const SLOTS: usize = 192;
 const ANONYMOUS: usize = 128;
 const UNSET: usize = usize::MAX;
 
+/// One thread's counters, on a cache line of their own: the bytes it
+/// holds (allocated less freed), and the allocations it has made and
+/// the bytes they asked for, ever (OL-324).
 #[repr(align(64))]
 struct Slot {
     live: AtomicI64,
+    allocs: AtomicU64,
+    bytes: AtomicU64,
 }
 
 #[allow(clippy::declare_interior_mutable_const)]
 const EMPTY: Slot = Slot {
     live: AtomicI64::new(0),
+    allocs: AtomicU64::new(0),
+    bytes: AtomicU64::new(0),
 };
 static LIVE: [Slot; SLOTS] = [EMPTY; SLOTS];
 /// Names of the claimed slots (the named range only).
@@ -52,8 +64,6 @@ static NAMES: Mutex<Vec<Option<String>>> = Mutex::new(Vec::new());
 static NEXT_ANONYMOUS: AtomicU64 = AtomicU64::new(0);
 static PROGRAM: AtomicI64 = AtomicI64::new(0);
 static CODE: AtomicI64 = AtomicI64::new(0);
-static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
-static REQUESTED: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
     // Const-initialized and without a destructor, so the allocator may
@@ -88,6 +98,25 @@ fn my_slot() -> usize {
 #[inline]
 fn count(delta: i64) {
     LIVE[my_slot()].live.fetch_add(delta, Ordering::Relaxed);
+}
+
+/// An allocation of `size` bytes (a realloc's new size counts as one):
+/// the bytes held move by `delta`, and the thread's allocation count and
+/// bytes asked for grow.
+#[inline]
+fn count_alloc(size: usize, delta: i64) {
+    let slot = &LIVE[my_slot()];
+    slot.live.fetch_add(delta, Ordering::Relaxed);
+    // A load and a store, not an atomic add: the slot is its thread's
+    // own, and an add per allocation cost 4% of a run that allocates 24
+    // million times a second. Only when more threads than anonymous
+    // slots share one can an increment be lost, and these are counts.
+    slot.allocs
+        .store(slot.allocs.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
+    slot.bytes.store(
+        slot.bytes.load(Ordering::Relaxed) + size as u64,
+        Ordering::Relaxed,
+    );
 }
 
 /// `OLANG_ALLOC_TRACE=<bytes>` in an `alloc-count` build: every
@@ -125,21 +154,13 @@ fn trace_large(size: usize) {
 
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        count(layout.size() as i64);
+        count_alloc(layout.size(), layout.size() as i64);
         #[cfg(feature = "alloc-count")]
         trace_large(layout.size());
-        if cfg!(feature = "alloc-count") {
-            ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
-            REQUESTED.fetch_add(layout.size() as u64, Ordering::Relaxed);
-        }
         unsafe { System.alloc(layout) }
     }
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        count(layout.size() as i64);
-        if cfg!(feature = "alloc-count") {
-            ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
-            REQUESTED.fetch_add(layout.size() as u64, Ordering::Relaxed);
-        }
+        count_alloc(layout.size(), layout.size() as i64);
         unsafe { System.alloc_zeroed(layout) }
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
@@ -147,13 +168,9 @@ unsafe impl GlobalAlloc for Counting {
         unsafe { System.dealloc(ptr, layout) }
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        count(new_size as i64 - layout.size() as i64);
+        count_alloc(new_size, new_size as i64 - layout.size() as i64);
         #[cfg(feature = "alloc-count")]
         trace_large(new_size);
-        if cfg!(feature = "alloc-count") {
-            ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
-            REQUESTED.fetch_add(new_size as u64, Ordering::Relaxed);
-        }
         unsafe { System.realloc(ptr, layout, new_size) }
     }
 }
@@ -169,13 +186,16 @@ pub fn program_bytes() -> u64 {
     PROGRAM.load(Ordering::Relaxed).max(0) as u64
 }
 
-/// Allocations made and bytes requested so far — counted only under the
-/// `alloc-count` feature.
+/// Allocations made and bytes asked for so far, across every thread
+/// (a realloc counts as one, of its new size). Counted in every build,
+/// on each thread's own slot (OL-324).
 pub fn allocation_stats() -> (u64, u64) {
-    (
-        ALLOCATIONS.load(Ordering::Relaxed),
-        REQUESTED.load(Ordering::Relaxed),
-    )
+    LIVE.iter().fold((0, 0), |(n, b), s| {
+        (
+            n + s.allocs.load(Ordering::Relaxed),
+            b + s.bytes.load(Ordering::Relaxed),
+        )
+    })
 }
 
 /// Counts the heap's growth across an outermost load toward `program`.
@@ -289,6 +309,10 @@ impl Drop for TaskGuard {
         // starts from zero.
         let left = LIVE[self.slot].live.swap(0, Ordering::Relaxed);
         LIVE[self.before].live.fetch_add(left, Ordering::Relaxed);
+        let allocs = LIVE[self.slot].allocs.swap(0, Ordering::Relaxed);
+        LIVE[self.before].allocs.fetch_add(allocs, Ordering::Relaxed);
+        let bytes = LIVE[self.slot].bytes.swap(0, Ordering::Relaxed);
+        LIVE[self.before].bytes.fetch_add(bytes, Ordering::Relaxed);
         let mut names = NAMES.lock().unwrap_or_else(|e| e.into_inner());
         names[self.slot] = None;
     }
@@ -312,10 +336,9 @@ pub fn tasks() -> Vec<(String, u64)> {
     out
 }
 
-/// Print the allocation counts to stderr when `OLANG_ALLOC_STATS` is set,
-/// in a build with the `alloc-count` feature.
+/// Print the allocation counts to stderr when `OLANG_ALLOC_STATS` is set.
 pub fn report_if_asked() {
-    if cfg!(feature = "alloc-count") && std::env::var_os("OLANG_ALLOC_STATS").is_some() {
+    if std::env::var_os("OLANG_ALLOC_STATS").is_some() {
         let (n, bytes) = allocation_stats();
         eprintln!(
             "allocations: {} ({} MB requested)",

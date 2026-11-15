@@ -433,6 +433,7 @@ fn runtime_memory(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
             Value::Map(Arc::new(row))
         })
         .collect();
+    let (allocations, allocated) = crate::memory::allocation_stats();
     let mut out = crate::ast::ValueMap::default();
     out.insert("heap".to_string(), Value::Integer(heap as i64));
     out.insert("program".to_string(), Value::Integer(program as i64));
@@ -440,6 +441,8 @@ fn runtime_memory(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
     out.insert("values".to_string(), Value::Integer(values as i64));
     out.insert("embedded".to_string(), Value::Integer(embedded as i64));
     out.insert("tasks".to_string(), Value::List(Arc::new(tasks)));
+    out.insert("allocated".to_string(), Value::Integer(allocated as i64));
+    out.insert("allocations".to_string(), Value::Integer(allocations as i64));
     Ok(Value::Map(Arc::new(out)))
 }
 

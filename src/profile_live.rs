@@ -64,6 +64,9 @@ struct State {
     prev_tiers: [u64; 4],
     prev_calls: Option<(u64, u64)>,
     attaches: u64,
+    /// The process's allocations made and bytes asked for when the
+    /// profile began (OL-324).
+    alloc_base: (u64, u64),
 }
 
 struct Live {
@@ -117,6 +120,7 @@ fn start_as(spec: LiveSpec, by_program: bool) -> bool {
         prev_tiers: [0; 4],
         prev_calls: None,
         attaches: if attached_now { 1 } else { 0 },
+        alloc_base: crate::memory::allocation_stats(),
     };
     // the series' first point at the start, so even a short run spans its time
     point(&mut first, started);
@@ -261,6 +265,10 @@ fn document(
     doc["file"] = J::String(label.to_string());
     doc["wall_ms"] = J::from(round1(started.elapsed().as_secs_f64() * 1000.0));
     doc["series"] = J::Array(s.series.clone());
+    // every allocation is counted, exactly
+    let (n, b) = crate::memory::allocation_stats();
+    doc["allocs_n"] = J::from(n.saturating_sub(s.alloc_base.0));
+    doc["alloc_b"] = J::from(b.saturating_sub(s.alloc_base.1));
     if let Some(code) = exit_code {
         doc["exit"] = J::from(code);
     }
@@ -292,6 +300,8 @@ fn point(s: &mut State, started: crate::clock::Instant) {
         "code": code,
         "values": values,
         "tasks": crate::memory::tasks().len(),
+        "allocations": crate::memory::allocation_stats().0,
+        "allocated": crate::memory::allocation_stats().1,
         "olang_threads": crate::profile::thread_counts().0,
         "parked": crate::profile::thread_counts().1,
     });

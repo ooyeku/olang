@@ -1633,7 +1633,8 @@ program's own output), the counts behind the report:
 | `functions` | per frame: `self` and `total` samples and ms, `tiers` (self samples by tier), `tier` (the one that ran it most) |
 | `folded` | the stacks as folded lines (`a;b;c 12`), for any flame-graph tool |
 | `tiers`, `samples`, `ticks`, `idle`, `blocked`, `worker_samples`, `interval_us`, `elapsed_ms`, `ms_per_sample` | the totals |
-| `series` | the process over time, a point a snapshot: `t_ms`, `samples` by tier since the last point, `rss_kb`, `threads`, `cpu_ms` (the kernel's), `heap`, `program`, `code`, `values` (the counting allocator's, as `runtime.memory()`), `tasks` (counted apart), `olang_threads`, `parked`; with `--ovm-stats` also `calls` and `deopts` since the last point |
+| `alloc_b`, `allocs_n` | the bytes asked for and the allocations made, every thread's, since the profile began: exact |
+| `series` | the process over time, a point a snapshot: `t_ms`, `samples` by tier since the last point, `rss_kb`, `threads`, `cpu_ms` (the kernel's), `heap`, `program`, `code`, `values` (the counting allocator's, as `runtime.memory()`), `tasks` (counted apart), `allocated` and `allocations` (since the process began, exact), `olang_threads`, `parked`; with `--ovm-stats` also `calls` and `deopts` since the last point |
 | `live`, `done`, `attached`, `attaches`, `pid`, `file`, `wall_ms`, `exit` | the run |
 
 `--live DIR` writes the document so far (without `folded`) to
@@ -2360,7 +2361,8 @@ nothing should depend on them.
 | `OLANG_ODS_TIMING` | no | `1`: per-phase timings from the ods CSV reader and group-by. |
 | `OLANG_FIX_DEBUG` | no | `<dir>`: when `olang fix` leaves a file because its rewrite would read back differently, write the two trees as read back (`before.json`, `after.json`) and the rewrite (`after.ol`) into `dir`. |
 | `OLANG_KEYS_STATS` | no | The checker's `.key` read coverage, on stderr. |
-| `OLANG_ALLOC_STATS`, `OLANG_ALLOC_TRACE` | no | Allocation counts (an `alloc-count` build). |
+| `OLANG_ALLOC_STATS` | no | `1`: the process's allocation count and bytes asked for, on stderr at exit. |
+| `OLANG_ALLOC_TRACE` | no | `<bytes>`: the backtrace of every allocation at least that large, on stderr (an `alloc-count` build). |
 | `OLANG_DEBUG_*` | no | Engine tracing for one subsystem each (closures, modules, liveness, higher-order calls, auto-parallelism). |
 | `OLANG_VERIFY_SELFTEST` | no | Make `--verify-tiers` see a divergence, to test what reports one. |
 | `OLANG_WARM_DIR` | no | Where the warm tier profiles live (tests). |
