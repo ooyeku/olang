@@ -1,4 +1,4 @@
-//! Damage tracking (loom/ROADMAP.md item 6) and the differential fuzz of
+//! Damage tracking and the differential fuzz of
 //! the engine's drawing (item 25): random patches, input, pictures and
 //! text, and every frame drawn three ways — whole, damaged over the kept
 //! frame, and on the GPU — which must agree.

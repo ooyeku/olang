@@ -48,7 +48,7 @@ fn ak<'a>(tree: &'a accesskit::TreeUpdate, k: &str) -> &'a accesskit::Node {
         .1
 }
 
-// A table as Loom's table_view lays it out: a header row of column
+// A table as a UI framework's table view lays it out: a header row of column
 // headers (not one of its rows), a body that scrolls, and only the rows
 // on screen (rows 40 to 42 of 1,000), each saying its place.
 const TABLE: &str = r##"[

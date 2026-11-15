@@ -1,5 +1,5 @@
 //! The system's settings a window answers without the program branching
-//! on them (Loom's SPEC §11): the dark appearance, increased contrast,
+//! on them (as a UI framework's spec asks): the dark appearance, increased contrast,
 //! reduced motion, reduced transparency, and the accent colour. Read
 //! where the platform says (macOS); elsewhere the window's own theme
 //! answers dark, and the rest are off.

@@ -240,7 +240,7 @@ impl Drop for KillOnDrop {
 
 #[test]
 fn an_http_handler_a_module_serves_reads_the_program_s_names() {
-    // Shuttle's shape: the module owns `http.serve` and a `routes`
+    // A web framework's shape: the module owns `http.serve` and a `routes`
     // function; the program hands it a hook that reads its own `routes`.
     let runner = r#"
 share fn routes() = "runner's routes"

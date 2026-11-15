@@ -16,7 +16,7 @@
 //! }
 //! ```
 //!
-//! grew the heap by ~1.3 KB a call, forever (heddle-sql's FINDINGS: a
+//! grew the heap by ~1.3 KB a call, forever (a TUI SQL client's findings: a
 //! terminal UI leaking ~30 KB a frame), and spent ~80 µs a call
 //! compiling. The same function with `break`, or with the lambda moved
 //! to a helper, was flat because the tier took the whole function.
@@ -53,7 +53,7 @@ fn run(dir: &Path, file: &str, source: &str, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).to_string()
 }
 
-/// Every shape of the table in heddle-sql's FINDINGS, and the early exits
+/// Every shape of the table in a TUI SQL client's findings, and the early exits
 /// around it. Each row is warmed up (500 calls: promotion, first
 /// compiles, the JIT), then measured over 4,000 calls; it prints its
 /// heap growth per call and a checksum of its results.

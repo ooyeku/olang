@@ -356,7 +356,7 @@ fn to_string(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     })
 }
 
-/// Lowercase hex, two digits a byte (heddle-sql drew a blob's bytes
+/// Lowercase hex, two digits a byte (a TUI SQL client drew a blob's bytes
 /// through a 256-entry table in olang: ~90 ms a MB).
 fn to_hex(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";

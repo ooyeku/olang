@@ -3,7 +3,7 @@
 //!
 //! An olang program opens a window with a scrolling list, then runs a
 //! turn of 1.5 s that touches nothing of the engine's (`gui.turn(true)`
-//! before, `gui.turn(false)` after, as Loom's loop does). While it runs
+//! before, `gui.turn(false)` after, as a UI framework's loop does). While it runs
 //! the test moves the pointer over the list and turns the wheel (AppKit's
 //! events, given to the window's view as AppKit gives them): the list scrolls — the
 //! engine's, with no turn of the program's — and frames go on being

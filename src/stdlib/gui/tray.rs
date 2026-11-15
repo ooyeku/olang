@@ -7,7 +7,7 @@
 //!   ... a `status` event: the item was clicked ...
 //!   let panel = unwrap(gui.open(#{ "panel": item, "size": (320, 420) }))
 //!   ... a `dismiss` event: a click outside it, or Escape ...
-//!   gui.notify(#{ "title": "Studio", "body": "Memory is climbing", "action": "open" })
+//!   gui.notify(#{ "title": "Editor", "body": "Memory is climbing", "action": "open" })
 //!
 //! Everything AppKit does here runs on the loop's thread (the process's
 //! first): the builtins ask it there through [`platform::on_main`] and
@@ -978,7 +978,7 @@ mod tests {
         assert!(note_of("t", None).is_err());
         let n = note_of(
             "t",
-            Some(&m(vec![("title", s("Studio")), ("action", s("open"))])),
+            Some(&m(vec![("title", s("Editor")), ("action", s("open"))])),
         )
         .unwrap();
         assert_eq!(n.action.as_deref(), Some("open"));

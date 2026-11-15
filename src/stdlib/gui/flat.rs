@@ -1,11 +1,11 @@
-//! The flat layout's two per-node steps, for Loom (loom/lib/layout.ol):
+//! The flat layout's two per-node steps, for a UI framework's layout:
 //! a view read into the layout core's arrays (`gui.flatten`), and the
 //! core's boxes made into placements (`gui.flat_emit`, `gui.flat_join`).
 //!
-//! The rules stay Loom's: which roles are layers, fill, shrink, or read
+//! The rules stay the UI framework's: which roles are layers, fill, shrink, or read
 //! the context; each leaf's natural size; the theme's tokens and looks —
-//! all arrive in `spec`, a map Loom builds once a theme. The core's
-//! passes (loom/lib/flex.ol) run between the two steps, in olang, on the
+//! all arrive in `spec`, a map the framework builds once a theme. The core's
+//! passes run between the two steps, in olang, on the
 //! native tier. What is here is the work per node that olang's bytecode
 //! VM was slow at: reading props, measuring text, building maps.
 //!
@@ -119,7 +119,7 @@ impl<'a> Spec<'a> {
     }
 }
 
-// ── olang's small helpers, as Loom uses them ────────────────────────
+// ── olang's small helpers, as a UI framework uses them ───────────
 const EMPTY: &[Value] = &[];
 
 // `()`, to answer by reference where olang answers `()` for a missing
@@ -322,7 +322,7 @@ fn border_of(p: Option<&crate::ast::ValueMap>) -> f64 {
     }
 }
 
-// ── styles (loom/lib/theme.ol: tok, font_style, with_style) ─────────
+// ── styles (the framework's tok, font_style, with_style) ─────────
 fn tok(spec: &Spec, v: &Value) -> Value {
     match v {
         Value::String(s) => match spec.theme.get(s.as_str()) {
@@ -505,7 +505,7 @@ fn label_size(spec: &Spec, ts: &mut TextSystem, label: &Value, width: f64) -> Re
 }
 
 /// A leaf's natural size at `avail` pixels, by its rule in `spec.leaves`
-/// (loom/lib/layout.ol LY_LEAVES, which `ly_leaf_size` reads too).
+/// (the framework's LY_LEAVES, which `ly_leaf_size` reads too).
 fn leaf_size(
     spec: &Spec,
     ts: &mut TextSystem,
@@ -588,7 +588,7 @@ fn leaf_size(
 // ── gui.flatten ─────────────────────────────────────────────────────
 /// `gui.flatten(root, spec, prev)`: the view read into the core's arrays
 /// — `#{ n, id, nodes, paths, index, gkeys, glifts, wraps, changed }` — or
-/// `()` when the view holds a `memo` node (Loom expands those first).
+/// `()` when the view holds a `memo` node (the framework expands those first).
 /// A fourth argument names the root's path (`"0"` without one): a
 /// subtree laid out on its own — a row of a virtual list — keeps the
 /// paths, and so the keys of its keyless nodes, it has in the whole.
@@ -626,7 +626,7 @@ pub fn gui_flatten(args: Vec<Value>) -> Res<Value> {
     flatten_full(root, &spec, &mut ts, prev.as_ref(), &base)
 }
 
-/// A split's share for the core (`F_RATIO`, Loom's lib/flex.ol): its
+/// A split's share for the core (`F_RATIO`, the framework's flex pass): its
 /// ratio (0 to 1); or, sized in pixels (`size`), `2 + size` for the
 /// first pane's or `-(1 + size)` for the second's (`fixed: "second"`).
 fn split_ratio(p: Option<&crate::ast::ValueMap>) -> f64 {
@@ -1653,7 +1653,7 @@ fn group_op(
 
 // ── what the placements are read from, in either tier's form ────────
 /// A list's items as the interpreter holds them, or as olang's VM does:
-/// last frame's placements come back from Loom in the form they were
+/// last frame's placements come back from the framework in the form they were
 /// answered in (the VM's own lists, when the VM asked).
 #[derive(Clone, Copy)]
 enum Items<'a> {
@@ -1806,7 +1806,7 @@ impl<'a> FlatIn<'a> {
     }
 }
 
-/// Last frame's placements as Loom completed them (`flat_emit`'s `prev`).
+/// Last frame's placements as the framework completed them (`flat_emit`'s `prev`).
 struct PrevOut<'a> {
     recs: Items<'a>,
     gkeys: Items<'a>,
@@ -1913,7 +1913,7 @@ enum Placed<'a> {
 }
 
 /// What `emit` worked out: each node's placements, what comes before
-/// each (a split's divider), and the leaves left for Loom.
+/// each (a split's divider), and the leaves left for the framework.
 struct Emitted<'a> {
     placed: Vec<Placed<'a>>,
     /// each node's gkey as it is answered
@@ -2192,7 +2192,7 @@ fn emit<'a>(
     })
 }
 
-/// `rs` (a node's placements) with its first one's path `path`, as Loom's
+/// `rs` (a node's placements) with its first one's path `path`, as the framework's
 /// keyed keep wrote it (`map_set(rs[0], "path", …)`).
 fn with_first_path(rs: Value, path: &Value) -> Value {
     match &rs {
@@ -2295,7 +2295,7 @@ impl<'a> PrevFlat<'a> {
     }
 }
 
-/// `a == b` as olang answers it, false where it raises (Loom's `ly_same`).
+/// `a == b` as olang answers it, false where it raises (the framework's `ly_same`).
 fn ly_same(a: &Value, b: &Value) -> bool {
     matches!(crate::interpreter::ops::search_eq(a, b), Ok(true))
 }
@@ -2304,7 +2304,7 @@ fn field_or_unit<'a>(v: &'a Value, k: &str) -> &'a Value {
     fields(v).and_then(|m| m.get(k)).unwrap_or(&UNIT.0)
 }
 
-/// Loom's `ly_own_same`: the same role, key and props.
+/// The framework's `ly_own_same`: the same role, key and props.
 fn ly_own_same(a: &Value, b: &Value) -> bool {
     ly_same(field_or_unit(a, "role"), field_or_unit(b, "role"))
         && ly_same(field_or_unit(a, "key"), field_or_unit(b, "key"))
@@ -2326,10 +2326,10 @@ fn subtree_ends(n: usize, iv: &[i64], kids: &[i64]) -> Vec<usize> {
     e
 }
 
-// A subtree this large or smaller is compared whole (Loom's LY_WHOLE_MAX).
+// A subtree this large or smaller is compared whole (the framework's LY_WHOLE_MAX).
 const WHOLE_MAX: usize = 400;
 
-/// Loom's keyed keep (`ly_keyed_keep`, lib/layout.ol), on a frame whose
+/// The framework's keyed keep (`ly_keyed_keep`), on a frame whose
 /// shape changed: a node is kept when last frame had its key and it is
 /// placed as it was — its own role, key and props the same, not placed
 /// every frame, the same kind and number of children, the same box and
@@ -2486,13 +2486,13 @@ fn boxes_for(held: &FlatState, given: Option<Vec<f64>>) -> Res<Arc<Vec<f64>>> {
 /// from the core's boxes `geo` (x, y, w, h a node; `()`: those
 /// `gui.flat_keep` kept), by index — `#{ recs, gkeys, probs, lifts, pre,
 /// todo }`. A node `keep` marks (1) takes `prev`'s (last frame's answer,
-/// as Loom completed it) unless its parent's gkey changed. With `keep`
+/// as the framework completed it) unless its parent's gkey changed. With `keep`
 /// `"keyed"` (a frame whose shape changed), `prev` is `#{ flat, out }`,
 /// last frame's flatten answer and its placements, and the nodes kept are
-/// worked out here by engine key (Loom's keyed keep: `gui.platform()`
+/// worked out here by engine key (the framework's keyed keep: `gui.platform()`
 /// says `flat_keyed`). Groups, regions, splits, and the leaves in
 /// `spec.placed` are placed here; the other leaves are listed in `todo`
-/// for Loom to place, their entries left empty. `pre[i]` is what comes
+/// for the framework to place, their entries left empty. `pre[i]` is what comes
 /// before node i (a split's divider, before its second pane).
 pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
     if args.len() != 5 {
@@ -2563,7 +2563,7 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
 /// own maps and lists instead, a frame made afresh cost twice what the
 /// engine spent making it, and a frame laid out from code on the
 /// tree-walker (a test, a benchmark's loop) converted it back whole each
-/// time — and Loom reads the placements natively anyway (`gui.flat_diff`,
+/// time — and the framework reads the placements natively anyway (`gui.flat_diff`,
 /// `gui.flat_index`, its loops over a wrapped list). `None` for arguments
 /// of another shape, and for any error (the call then goes the usual way,
 /// which raises it).
@@ -2721,7 +2721,7 @@ fn vm_flat_join(args: &[OvmValue]) -> Option<Res<OvmValue>> {
         items(&args[3])?,
     );
     // every list the interpreter's (the placements as flat_emit answers
-    // them, written in place by Loom): joined in that form, wrapped
+    // them, written in place by the framework): joined in that form, wrapped
     if [pre, recs, probs, lifts]
         .iter()
         .all(|l| !matches!(l, Some(Items::Vm(_))))
@@ -3140,14 +3140,14 @@ impl<'a, T> Entries<'a, T> {
     }
 }
 
-/// `gui.flat_diff(prev, nodes)`: Loom's `patch_of` (lib/diff.ol) up to
+/// `gui.flat_diff(prev, nodes)`: a UI framework's `patch_of` up to
 /// its children's order — the engine operation (`gop`) of each placed
 /// node against last frame's by key: `#{ out, removes, next, moved, idx }`.
 /// `out`: the operations that changed, in order, but those that only
 /// moved among their siblings; `removes`: a `remove` for each key that
 /// left; `next`: this frame's operations by key; `moved`: the parents
 /// with a child that kept its parent but not its index (by where the
-/// first such child is); `idx`: those the same but for their index. Loom
+/// first such child is); `idx`: those the same but for their index. The framework
 /// works out their order (`df_moves`) when `moved` holds any.
 fn diff<O: Out>(prev: R, nodes: &[R]) -> Res<O> {
     let mut next: Entries<R> = Entries::new();
@@ -3226,7 +3226,7 @@ fn vm_flat_diff(args: &[OvmValue]) -> Option<Res<OvmValue>> {
     diff(R::V(&args[0]), &nodes).ok().map(Ok)
 }
 
-/// `gui.flat_index(nodes, wkey)`: what Loom's frame (lib/engine.ol,
+/// `gui.flat_index(nodes, wkey)`: what a UI framework's frame (its
 /// `rt_frame`) reads off every placement, in one pass —
 /// `#{ index, present, nkeys, fregions, fcontent, sregions, scontent,
 /// rare }`. `index`: each placement by its gkey; `present`: the keys
@@ -3236,7 +3236,7 @@ fn vm_flat_diff(args: &[OvmValue]) -> Option<Res<OvmValue>> {
 /// (`follow`) and the height of each one's first child; `sregions`/
 /// `scontent`: the regions that ask where they are scrolled
 /// (`on_scroll`: `(node, height, content)`) and the height of each
-/// one's first child; `rare`: the placements that ask more of Loom (a
+/// one's first child; `rare`: the placements that ask more of the framework (a
 /// list, a range, a scroll to make, a scroller, a drop zone, files,
 /// a size, a scroll position or a slot), in order.
 fn frame_index<'a, O: Out>(nodes: &[R<'a>], wkey: R<'a>) -> Res<O> {

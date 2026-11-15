@@ -1,4 +1,4 @@
-//! `gui` (Loom's engine, L0): headless windows driven through the same
+//! `gui` (a UI framework's engine): headless windows driven through the same
 //! input path a platform window uses, the accessibility tree, and the
 //! GPU renderer checked against the software reference.
 //!
@@ -1087,7 +1087,7 @@ fn under_a_zoom_the_pointer_lands_where_the_pixels_show() {
 #[test]
 fn a_line_aligned_to_its_end_is_cut_never_wrapped() {
     // shaped at its box's width an aligned line wrapped onto lines its
-    // box could not hold (olang Studio's status notice, its completions'
+    // box could not hold (an editor's status notice, its completions'
     // descriptions): one line, cut with an ellipsis, nothing under its box
     let _turn = events_turn();
     let v = run(r##"

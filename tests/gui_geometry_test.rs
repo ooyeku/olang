@@ -1,4 +1,4 @@
-//! The engine's geometry (loom/ROADMAP.md items 11–13): boxes on whole
+//! The engine's geometry: boxes on whole
 //! device pixels at every scale, continuous corners, analytic shadows —
 //! each drawn alike by the software reference and the GPU.
 //!

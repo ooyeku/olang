@@ -5,7 +5,7 @@
 // default) and once on the olang engine (`#{ "engine": "olang" }`, the
 // grammar written out as olang functions — the engine peg had before
 // the native one, kept for this). Over JSON, CSV, an expression
-// language, olang-track's query bar and a handful of grammars for the
+// language, an issue tracker's query bar and a handful of grammars for the
 // corners (labels, silent rules, left recursion, lookahead, Unicode,
 // recovery), both must answer the same trees, the same values and the
 // same errors, to the text of `show()`: on thousands of sentences from
@@ -274,7 +274,7 @@ test "differential: expressions, precedence, left recursion" {
     report("left recursion", compare(NL, OL, lr + corpus(NL, [1, 2, 3], 100, LR_ALPHA, 3), #{}))
 }
 
-test "differential: olang-track's query bar" {
+test "differential: an issue tracker's query bar" {
     let (N, O) = both(QUERY, #{}, #{})
     let PIECES = ["state:", "tag:", "due:", "sort:", "top:", "nope:", "open", "-done", "ui,server", "<2026-09-05",
         ">-3d", "OR", "or", "(", ")", "((", "))", "\"", "\"quoted phrase\"", "\"open", "-", ",", ":", "::", "word",

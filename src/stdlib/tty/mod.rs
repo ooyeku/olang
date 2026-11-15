@@ -2,7 +2,7 @@
 //! alternate screen, decoded key / mouse / paste / focus / resize /
 //! signal events on a channel, unbuffered writes, capability queries,
 //! and a restore guard that gives the terminal back however the process
-//! ends. It is the layer a full-screen program (Heddle) stands on; the
+//! ends. It is the layer a full-screen program (a TUI framework) stands on; the
 //! line-oriented `os.is_tty` / `os.read_line` and the `term` styling
 //! helpers stay as they are.
 //!

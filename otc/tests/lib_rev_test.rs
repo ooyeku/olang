@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn otc(dir: &Path, shelf: &Path, args: &[&str]) -> (bool, String) {
-    // A caller's OLANG_LOCK_READONLY=1 (Studio's Checks set it) would keep
+    // A caller's OLANG_LOCK_READONLY=1 (an editor's checks set it) would keep
     // the locks these tests expect unwritten.
     unsafe { std::env::remove_var("OLANG_LOCK_READONLY") };
     let out = Command::new(env!("CARGO_BIN_EXE_otc"))
@@ -47,7 +47,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
 }
 
 fn run_program(project: &Path) -> Result<String, String> {
-    // A caller's OLANG_LOCK_READONLY=1 (Studio's Checks set it) would keep
+    // A caller's OLANG_LOCK_READONLY=1 (an editor's checks set it) would keep
     // the locks these tests expect unwritten.
     unsafe { std::env::remove_var("OLANG_LOCK_READONLY") };
     let (map, missing) =

@@ -63,7 +63,7 @@ pub enum Mode {
 
 /// A cell's options, from the record after `olang` in its info string:
 /// ```` ```olang {name: load, hide: code, run: manual, pin: true} ````.
-/// Kept for the notebook pane (Studio); the program does not read them.
+/// Kept for the notebook pane (an editor); the program does not read them.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CellOptions {
     /// The cell's id for links and runs.

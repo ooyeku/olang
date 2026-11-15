@@ -362,7 +362,7 @@ impl CapTable {
 
 // ── modules loaded at run time ──────────────────────────────────────
 //
-// A host (olang Studio) loads code it did not write into its own running
+// A host (an editor) loads code it did not write into its own running
 // VM — a plugin — with `runtime.load_module(path, grant)`. The grant is
 // attributed exactly as a dependency's is, by the directory the code was
 // defined in, so the module's functions, the lambdas they make, and

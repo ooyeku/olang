@@ -3,7 +3,7 @@
 //! and the module cache is keyed by the resolved file rather than the
 //! dotted name — so two packages that each have a `lib.util` never hand
 //! one another's module out, whatever the load order. Both shapes were
-//! observed building open-track against the web SDK: a consumer hit
+//! observed building an app against the web SDK: a consumer hit
 //! "Cannot find module 'lib.state'" unless the SDK's index.ol imported
 //! its modules in a lucky order, and a wrapper function ran another
 //! package's same-named import.
@@ -101,7 +101,7 @@ fn the_consumers_same_named_module_is_untouched_by_the_dependency() {
     let _ = fs::remove_dir_all(&ws);
 }
 
-/// The open-track shape: two packages export a generic name (`check`);
+/// An app's shape: two packages export a generic name (`check`);
 /// a wrapper module imports one of them by name; the application imports
 /// the wrapper whole and the *other* package's `check` by name.
 #[test]

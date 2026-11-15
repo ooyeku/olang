@@ -573,7 +573,7 @@ println(fs.exists(map_get(b, "exe")))
 }
 
 // A program that starts the `gui` engine (a headless window, drawn and
-// read) and ends with `os.exit`, as every Loom application does from its
+// read) and ends with `os.exit`, as every application on a UI framework does from its
 // loop: the profile covers its whole run — the series' points sample
 // to the end — and is reported though the program never returns.
 const GUI_EXIT: &str = r##"use gui

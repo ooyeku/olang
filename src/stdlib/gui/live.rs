@@ -89,7 +89,7 @@ pub fn publish(name: &str, view: wgpu::TextureView, w: u32, h: u32) -> u64 {
 
 /// Publish a frame's pixels (RGBA8, `w` × `h`, display-encoded and
 /// opaque) as `name`'s picture: for a window drawn in software (headless,
-/// Studio's canvas), which draws pixels, not textures. Answers its id.
+/// an editor's canvas), which draws pixels, not textures. Answers its id.
 pub fn publish_pixels(name: &str, w: u32, h: u32, rgba: Vec<u8>) -> u64 {
     let id = super::canvas::next_picture_id();
     let pic = Arc::new(Picture {

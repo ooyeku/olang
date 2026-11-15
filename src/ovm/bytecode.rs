@@ -3643,7 +3643,7 @@ impl BytecodeVm {
         let selftest = env_on!("OLANG_VERIFY_SELFTEST");
         // Two maps (or records) built by the two tiers are two
         // allocations: `OvmValue`'s equality compares those by pointer,
-        // so the results are compared as values (every Studio run under
+        // so the results are compared as values (every editor run under
         // --verify-tiers stopped at its first function building a map)
         let same = |vm: &OvmValue| {
             vm == native
@@ -9068,7 +9068,7 @@ impl BytecodeVm {
         // authority — except for the O(1) probes below, which answer
         // through the wrapper without conversion.
         // A wrapped list the loops below take too (`hof_items`): a list an
-        // engine answered (Loom's placements) mapped or filtered by a
+        // engine answered (a UI framework's placements) mapped or filtered by a
         // compiled lambda ran the lambda on the tree-walker, the list
         // converted in and the answer converted back out, per call.
         if args.iter().any(|a| matches!(a.data, ValueData::AstList(_)))
@@ -9847,7 +9847,7 @@ impl BytecodeVm {
             }),
             // `first(xs)` / `last(xs)`: O(1) on every layout. Bridged, each
             // call converted the whole list — `fold(xs, [0], (acc, x) =>
-            // acc + [last(acc) + x])` was quadratic (olang Studio's diff
+            // acc + [last(acc) + x])` was quadratic (an editor's diff
             // offsets: 1.2 s for 20,000 rows). Empty is `()`, as the
             // interpreter says; a string's character too.
             "first" | "last" if args.len() == 1 => {
@@ -11153,11 +11153,11 @@ impl BytecodeVm {
         args: &[OvmValue],
         pregranted: bool,
     ) -> Result<OvmValue, BytecodeError> {
-        // The flat layout's arrays and boxes, handed between Loom's native
+        // The flat layout's arrays and boxes, handed between a UI framework's native
         // passes and the engine as typed lists sharing one allocation —
         // bridged, every number would be boxed one way and detected back.
         // The flat layout's answers (gui.flatten, flat_emit, flat_join)
-        // come back in the VM's form: Loom reads the placements natively.
+        // come back in the VM's form: a UI framework reads the placements natively.
         // Code of a module loaded at run time goes the usual way, where
         // the host-only gate refuses it.
         // In a simulated world `gui` is refused: the bridge below asks the

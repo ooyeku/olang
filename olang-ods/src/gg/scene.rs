@@ -1,6 +1,6 @@
 //! The scene: a plot resolved to a display list in plot pixels, and its
 //! two serializations — SVG (an export, a page) and JSON (what a host
-//! such as Studio draws natively, decimated for the screen, with each
+//! such as an editor draws natively, decimated for the screen, with each
 //! mark's values for hover and each panel's scales for zoom and brush).
 
 use super::theme::{Appearance, quiet};

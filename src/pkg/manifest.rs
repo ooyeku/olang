@@ -413,7 +413,7 @@ impl Manifest {
     /// (a misspelling is otherwise silently ignored), and a top-level
     /// section that is a near miss of one olang reads (`[dependency]`,
     /// `[Package]`). Other top-level sections belong to other tools —
-    /// Loom's bundler reads `[bundle]`, Studio `[plugin]` — and pass.
+    /// an app bundler reads `[bundle]`, an editor `[plugin]` — and pass.
     /// `[capabilities]` is not here: a key it does not know is refused.
     pub fn unknown_keys(text: &str) -> Vec<String> {
         let Ok(toml::Value::Table(top)) = toml::from_str::<toml::Value>(text) else {

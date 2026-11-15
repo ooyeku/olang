@@ -1,4 +1,4 @@
-// A counter store served the way olang-track serves its rpc: POST /rpc
+// A counter store served the way an issue tracker serves its rpc: POST /rpc
 // with a JSON body, a JSON answer. The state lives in one task (an
 // actor the handlers ask), so the server's four workers share it.
 //

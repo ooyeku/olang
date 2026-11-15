@@ -454,7 +454,7 @@ fn every_command_answers_over_the_protocol() {
     let r = s.cmd(":ml_x_unknown");
     assert!(out(&r).contains(":help lists them"), "{r}");
 
-    // eval with a leading colon is a command (what Studio's prompt typed)
+    // eval with a leading colon is a command (what an editor's prompt typed)
     let r = s.ask(json!({ "op": "eval", "code": ":help" }));
     assert_eq!(r["command"], json!(":help"), "{r}");
 }

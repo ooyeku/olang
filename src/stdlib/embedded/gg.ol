@@ -619,7 +619,7 @@ share fn xlab(p, title) = labs(p, x: title)
 /// @stable
 share fn ylab(p, title) = labs(p, y: title)
 
-/// The look: `name` ("minimal" — the default, Studio's quiet instrument —
+/// The look: `name` ("minimal" — the default, an editor's quiet instrument —
 /// "classic", "bw", "gray", "linedraw", "void", or "light", "dark",
 /// "contrast" for minimal in that appearance), `appearance`, `base_size`,
 /// `legend_position` ("right", "bottom", "top", "left", "none"),

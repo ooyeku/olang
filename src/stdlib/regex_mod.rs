@@ -119,7 +119,7 @@ fn err(msg: String) -> Value {
 
 /// Patterns compiled on this thread, by their text: a `re` call compiled
 /// its pattern every time (~28 µs for a character class against 0.1 µs
-/// for `str.contains`; Heddle's painter asked thousands of times a
+/// for `str.contains`; a TUI framework's painter asked thousands of times a
 /// frame). A compiled `Regex` is shared by reference, so a hit is a
 /// clone of a pointer. Bounded: past `PATTERNS_KEPT` the cache starts
 /// over (a program building patterns from data does not grow it).

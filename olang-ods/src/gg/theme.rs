@@ -1,5 +1,5 @@
 //! Themes: what the frame of a plot looks like. The default, `minimal`,
-//! is Studio's quiet instrument: no panel fill, hairline gridlines at the
+//! is an editor's quiet instrument: no panel fill, hairline gridlines at the
 //! major breaks, no ticks or axis lines, one type scale, ink for words
 //! and a second ink for everything that only orients. Every frame colour
 //! is a role (`Paint::Role`) so a host draws it in its own tokens and an

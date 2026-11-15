@@ -4,7 +4,7 @@
 //!
 //! The bytecode tier cloned every argument of a builtin call out of its
 //! register, and its native `map_set` cloned the map besides; `+` on a
-//! list copied its left side however temporary it was. Loom's layout
+//! list copied its left side however temporary it was. A UI framework's layout
 //! grows a memo table through `cell.take` (`map_set(cell.take(c), k, v)`,
 //! `cell.take(c) + [e]`) and paid a copy per insert: 8,000 inserts, 548 ms
 //! compiled against 12 ms interpreted. Builtin calls now take a mask of

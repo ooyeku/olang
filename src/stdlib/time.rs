@@ -13,7 +13,7 @@ use std::sync::OnceLock;
 
 /// The monotonic clock's origin: the process's start, as the kernel
 /// recorded it (where it cannot be read, the first time anything asked).
-/// A program that times its own start (Loom's `LOOM_TRACE=launch`) reads
+/// A program that times its own start (a UI framework's launch trace) reads
 /// from the moment the process began, not from its first reading — which
 /// came after its modules loaded, and hid them.
 #[cfg(feature = "native")]

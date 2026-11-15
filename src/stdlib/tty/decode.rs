@@ -122,7 +122,7 @@ impl Key {
     /// ctrl, alt, shift, super, then the key (`"ctrl+d"`, `"alt+enter"`,
     /// `"shift+tab"`). A capital letter typed plainly is itself (`"G"`);
     /// with ctrl or alt it is spelled with shift (`"ctrl+shift+g"`).
-    /// This is the spelling Heddle's key table parses to.
+    /// This is the spelling a TUI framework's key table parses to.
     pub fn chord(&self) -> String {
         let mut key = self.key.clone();
         let mut shift = self.shift;

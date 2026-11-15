@@ -1768,7 +1768,7 @@ impl Analyzer {
                     }
 
                     // An import of a name the language also provides
-                    // (`use loom { task, find }`) rebinds it, as the
+                    // (`use ui { task, find }`) rebinds it, as the
                     // runtime does — not a duplicate.
                     self.bind(name, false);
                 }

@@ -162,7 +162,7 @@ fn deep_stacks_name_every_frame_identically() {
 
 /// An error raised inside an imported module's function names the
 /// module's file with the module's line — on both tiers — never the
-/// entry file with the callee's line (Foundry: `fs.join` in
+/// entry file with the callee's line (a CI runner: `fs.join` in
 /// lib/config.ol reported as main.ol:44, a comment).
 #[test]
 fn an_error_inside_a_module_names_the_modules_file() {

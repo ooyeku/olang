@@ -2841,7 +2841,7 @@ fn collect_app(
         .preload_uses(program)
         .map_err(|e| anyhow::anyhow!("loading the program's modules: {}", e))?;
     // Every path by its real place: a dependency named through a symbolic
-    // link (`../../libraries/loom`, the link in a worktree) had some of
+    // link (`../../libraries/ui`, the link in a worktree) had some of
     // its files loaded by the link's path and some by the real one, so
     // the latter were carried outside the package and its own `use
     // lib.x` found nothing in the application (OL-537).
@@ -3203,7 +3203,7 @@ fn bundle_record_from<R: std::io::Read + std::io::Seek>(
 }
 
 /// A macOS application's program, beside its executable: a signed
-/// executable must end where its Mach-O ends, so `loom bundle` puts the
+/// executable must end where its Mach-O ends, so an app bundler puts the
 /// plain runtime in `Contents/MacOS/` and the program (`olang build
 /// --payload`) in `Contents/Resources/app.olb`. Only that layout: a
 /// stray file beside an ordinary `olang` never runs in its place.

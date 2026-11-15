@@ -747,7 +747,7 @@ pub(crate) fn free_bounded<T>(
         // other, so freeing one queues the other's deep parts too. A
         // drain of its own queue alone left the VM's values an
         // interpreter value queued waiting for the next outermost VM
-        // free on this thread — on a worker, perhaps never (Studio's
+        // free on this thread — on a worker, perhaps never (an editor's
         // pool threads held hundreds of MB of dead records: STU-137).
         drain_queued();
     }
@@ -1068,7 +1068,7 @@ pub struct Function {
 /// A top-level declaration keeps its body as written, encoded, and builds
 /// the tree the first time anything reads it. The tree is about fifteen
 /// times its source and twenty-five times the encoding, and most of a
-/// large program's functions are never called in a given run: OlangStudio
+/// large program's functions are never called in a given run: an editor
 /// declared 7,500 functions whose trees held 106 MB before its first frame
 /// (OL-408). Clones share one cell, so the tree is built once and every
 /// clone reads the same `Arc`: what identity checks compare (`ptr_eq`).

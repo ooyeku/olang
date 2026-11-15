@@ -3,7 +3,7 @@
 //! scope (its declarations, a parameter that is not bound, errors with
 //! frames), what a program prints, interrupting a tight loop on every
 //! tier without losing the session, a module reloaded (and a reload that
-//! fails keeping the old one), a Loom view rendered headless, a
+//! fails keeping the old one), a UI framework's view rendered headless, a
 //! function's parameters bound for one evaluation (`bind`), an
 //! evaluation under no capability (`pure`) refused when it reaches out,
 //! and a notebook's kernel (`--notebook`): its params, its grant, its
@@ -473,11 +473,11 @@ fn a_saved_module_reloads_keeping_state_and_a_broken_one_is_kept() {
 }
 
 #[test]
-fn a_loom_view_renders_headless_to_a_picture() {
-    // Loom is a sibling checkout; without it there is nothing to draw with
+fn a_ui_view_renders_headless_to_a_picture() {
+    // The UI framework is a sibling checkout; without it there is nothing to draw with
     let loom = Path::new(env!("CARGO_MANIFEST_DIR")).join("../libraries/loom");
     if !loom.join("lib/test.ol").exists() {
-        eprintln!("no ../libraries/loom: skipped");
+        eprintln!("no sibling UI framework checkout: skipped");
         return;
     }
     let dir = project();
@@ -499,11 +499,11 @@ fn a_loom_view_renders_headless_to_a_picture() {
 }
 
 #[test]
-fn a_loom_view_written_as_a_record_is_a_view_and_renders() {
-    // OL-602: Loom's views are records now; the panel draws them as it drew maps
+fn a_ui_view_written_as_a_record_is_a_view_and_renders() {
+    // OL-602: the UI framework's views are records now; the panel draws them as it drew maps
     let loom = Path::new(env!("CARGO_MANIFEST_DIR")).join("../libraries/loom");
     if !loom.join("lib/test.ol").exists() {
-        eprintln!("no ../libraries/loom: skipped");
+        eprintln!("no sibling UI framework checkout: skipped");
         return;
     }
     let dir = project();

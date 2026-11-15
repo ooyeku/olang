@@ -165,8 +165,9 @@ fn a_struct_holding_a_closure_is_callable_from_another_task() {
     // A spawned task runs on its own VM, which cannot resolve the
     // building VM's function ids: such a struct crosses as the
     // interpreter's own map, its closures as interpreter functions. It
-    // used to cross wrapped and fail "Function not found" (work-scheduler,
-    // loom). The scalar struct beside it still crosses wrapped.
+    // used to cross wrapped and fail "Function not found" (a job
+    // scheduler, a UI framework). The scalar struct beside it still
+    // crosses wrapped.
     let v = agree(
         "fn mk(n) = { id: n, job: { f: (x, cx) => x + n, cost: 1 }, fs: [(x) => x * n] }\n\
          fn call(r) = r.job.f(1, ()) + r.fs[0](2)\n\

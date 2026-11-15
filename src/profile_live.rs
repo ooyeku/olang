@@ -1,6 +1,6 @@
 //! A live profile: the sampling profiler's aggregate and the process's
 //! vital signs, written to a file while the program runs, for an editor
-//! to draw as it goes (olang Studio's profiler page).
+//! to draw as it goes (an editor's profiler page).
 //!
 //! Two ways in:
 //!

@@ -141,7 +141,7 @@ fn first_line(s: &str) -> String {
 }
 
 /// Whether the file declares, binds or imports a `name` of its own: its
-/// calls of `name` are not the builtin's (Shuttle's weft shares a
+/// calls of `name` are not the builtin's (a web framework's module shares a
 /// `map_get_or` of its own, which evaluates its default eagerly).
 fn shadows(src: &str, name: &str) -> bool {
     let word = |rest: &str| {

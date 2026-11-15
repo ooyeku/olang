@@ -6,8 +6,8 @@
 //! Everything here reads **an outputs document**: the notebook's code
 //! cells' replies as the kernel gave them (`olang repl --serve`'s `eval`
 //! replies: a value's kind, a table's columns and first rows, a chart's
-//! SVG and description, printed lines, an error), in the shape olang
-//! Studio keeps a run in:
+//! SVG and description, printed lines, an error), in the shape an
+//! editor keeps a run in:
 //!
 //! ```json
 //! {"v": 1, "cells": [{"name": "load", "line": 29, "reply": {…}, "page": [{"i": 0, "c": ["…"]}]}],
@@ -17,7 +17,7 @@
 //!
 //! A cell is found by its first code line (`line`), else its `name`, else
 //! its place among the cells with neither. `olang notebook export --json`
-//! writes the document from a run; Studio writes it from what it drew.
+//! writes the document from a run; an editor writes it from what it drew.
 
 use serde_json::{Value as J, json};
 use std::fmt::Write as _;
@@ -102,7 +102,7 @@ fn interp_of(doc: &J) -> Vec<(String, J)> {
 }
 
 // ── values in words ─────────────────────────────────────────────────
-/// A float's text as a person reads it, as Studio draws one: six
+/// A float's text as a person reads it, as an editor draws one: six
 /// significant digits, no trailing zeros but one after the point
 /// (`0.290016`, `1204.5`, `12.0`); a very large or small one as it is.
 pub fn human_float(s: &str) -> String {
@@ -171,7 +171,7 @@ fn num_type(t: &str) -> bool {
 type TableOf = (Vec<String>, Vec<String>, Vec<Vec<Option<String>>>, u64);
 
 /// A table's columns, types and rows: a Frame's, a Series', a list of
-/// records'. `page` (Studio's first page) when given, else the value's own
+/// records'. `page` (an editor's first page) when given, else the value's own
 /// first rows.
 fn table_of(v: &J, page: Option<&J>) -> Option<TableOf> {
     let table = v.get("table")?;
@@ -495,7 +495,7 @@ fn picture_at(path: &str) -> Option<(&'static str, Vec<u8>)> {
 /// frame or object, no handler (`onload=`), no source or link but to a
 /// place inside itself, no tag that ends the SVG for an HTML parser.
 /// What olang draws passes; anything else (a cached output, a reply) is
-/// shown as a picture instead (`chart_html`). Studio's `nc_svg_ok`.
+/// shown as a picture instead (`chart_html`). As an editor checks it.
 pub fn svg_ok(svg: &str) -> bool {
     let low = svg.trim().to_lowercase();
     let b = low.as_bytes();
@@ -1650,7 +1650,7 @@ fn ms_text(ms: f64) -> String {
     }
 }
 
-/// The page's styles: Studio's notebook as a document — its tokens (Loom's
+/// The page's styles: an editor's notebook as a document — its tokens (a UI framework's
 /// light and dark themes), the 680 reading measure, cells as quiet
 /// surfaces with a hairline edge, outputs under them on the page.
 const PAGE_CSS: &str = r#"

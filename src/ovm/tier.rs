@@ -273,7 +273,7 @@ impl BytecodeTier {
     pub fn compile_ahead(&mut self, file: Option<&str>) -> Vec<(String, String)> {
         // Only the file's own functions are compiled here (what they call
         // compiles as their dependency): checking one file of a program
-        // that imports a large library (Loom) compiled the whole library
+        // that imports a large library (a UI framework) compiled the whole library
         // first, seconds for a verdict about one file.
         let mut names: Vec<String> = self
             .known_functions
@@ -1189,7 +1189,7 @@ impl BytecodeTier {
         // function has no unresolved callee left. The bound is a backstop
         // against a compiler that reports the same name forever, not a
         // limit on how many functions one function may call: at 64 a
-        // message dispatch with one callee per message (168 in open-track)
+        // message dispatch with one callee per message (168 in a desktop app)
         // never compiled.
         const MAX_RESOLUTION_STEPS: usize = 4096;
 
@@ -1491,7 +1491,7 @@ impl BytecodeTier {
             // kept its own value alive and never read as dead. A parsed
             // JSON object (a wrapped struct) handed to a compiled function
             // from a builtin stayed until 512 of them were held, each with
-            // everything under it: OlangStudio profiling itself kept a
+            // everything under it: an editor profiling itself kept a
             // snapshot a second, 17 GB an hour (OL-575).
             if matches!(
                 converted.data,
@@ -1544,7 +1544,7 @@ static UNAMBIGUOUS: std::sync::Mutex<Option<Unambiguous>> = std::sync::Mutex::ne
 /// `functions` without the `ambiguous` names, made once per table and
 /// shared by every tier seeded from it. A spawned task's VM shares its
 /// parent's table, and each of its bridges removing the names again
-/// copied the table's nodes: 18.9 MB across OlangStudio's bridges
+/// copied the table's nodes: 18.9 MB across an editor's bridges
 /// (OL-415).
 fn unambiguous(
     functions: &im::HashMap<String, Arc<Function>>,

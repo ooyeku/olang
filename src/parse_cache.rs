@@ -2,7 +2,7 @@
 //!
 //! A program on a UI framework loads tens of thousands of lines of
 //! modules that do not change from one launch to the next, and parsing
-//! them was most of its cold start (olang Studio: ~175 ms of a ~390 ms
+//! them was most of its cold start (an editor: ~175 ms of a ~390 ms
 //! launch). The parsed tree of each module is kept on disk as the program
 //! image keeps one for the browser (`crate::olb`: postcard behind a
 //! header), and read back the next time the same bytes are loaded by the
@@ -17,7 +17,7 @@
 //! kept: its expansion depends on other files. Which modules do is the
 //! parser's answer (`Parser::parse_module`), not a guess from the text:
 //! an `@` in a string (`lsp@p1`) or the word `meta` in a comment kept a
-//! module out, and a quarter of olang Studio's modules were parsed on
+//! module out, and a quarter of an editor's modules were parsed on
 //! every launch for it. Failures are silent — a read-only home never
 //! fails a program.
 //!

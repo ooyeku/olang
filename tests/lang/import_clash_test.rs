@@ -154,7 +154,7 @@ fn a_listed_name_the_program_binds_is_refused() {
 
 #[test]
 fn a_listed_stdlib_module_name_binds() {
-    // Loom's `use lib.effects { task }`: listing it is the choice.
+    // A UI framework's `use lib.effects { task }`: listing it is the choice.
     let dir = project(&[
         ("lib/effects.ol", "share fn task(x) = \"wrapped \" + x\n"),
         (
@@ -195,7 +195,7 @@ fn check_knows_each_stdlib_module_s_members() {
 
 #[test]
 fn an_item_named_as_its_module_stays_the_item() {
-    // Loom's `use lib.theme { theme }`: the namespace never replaces the
+    // A UI framework's `use lib.theme { theme }`: the namespace never replaces the
     // item, on the first run nor a second.
     let dir = project(&[
         ("lib/theme.ol", "share fn theme(x) = \"themed \" + x\n"),

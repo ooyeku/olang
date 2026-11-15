@@ -186,7 +186,7 @@ fn a_cell_nested_inside_a_sent_value_is_also_refused() {
 
 #[test]
 fn a_closure_that_captured_a_cell_crosses_a_send() {
-    // A closure is not refused for a cell it captured: Loom's performer
+    // A closure is not refused for a cell it captured: a UI framework's performer
     // hands tasks to pooled workers through a channel, and their closures
     // capture cells they never read there. Reading one on the other side
     // is what fails.

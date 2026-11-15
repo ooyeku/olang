@@ -130,7 +130,7 @@ fn closing_the_channel_is_the_clean_way_out() {
 
 #[test]
 fn a_short_timed_recv_does_not_wait_behind_a_long_one() {
-    // Foundry's runner: a 3000 ms timed wait and a 100 ms one on the same
+    // A CI runner: a 3000 ms timed wait and a 100 ms one on the same
     // channel. The short one is bounded by its own timeout.
     let (code, text) = run("let stop = chan.new()\n\
          let long = spawn { let r = chan.recv_timeout(stop, #{ \"timeout_ms\": 3000 }) ; \"done\" }\n\

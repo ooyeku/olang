@@ -153,7 +153,7 @@ impl Clipboard for NoClipboard {
 pub struct WinState {
     pub id: u64,
     pub headless: bool,
-    /// Driven by a script (`gui.set(w, #{ "scripted": true })`, Loom's
+    /// Driven by a script (`gui.set(w, #{ "scripted": true })`, a UI framework's
     /// `run` with a script): a person's keys, pointer, wheel and drops on
     /// the real window are not taken — only `gui.input`'s — so the mouse
     /// passing over a test's window cannot move what the script drags.

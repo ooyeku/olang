@@ -204,7 +204,7 @@ fn proxy() -> Result<EventLoopProxy<Cmd>, String> {
 static WARM_WINDOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Start the platform's loop now, without waiting for it: a program
-/// about to open its first window (Loom's `run`) asks before it computes
+/// about to open its first window (a UI framework's `run`) asks before it computes
 /// that window's first frame, so the application's start on the main
 /// thread (AppKit's, tens of milliseconds) runs meanwhile instead of
 /// after. Nothing when the loop is already started, has failed, or there
@@ -251,7 +251,7 @@ pub fn available() -> bool {
 /// there: that is `available`):
 ///
 /// - `native_menu`: `gui.menu` sets the system's menu bar (macOS);
-///   elsewhere it answers `false` and Loom draws the window's menu.
+///   elsewhere it answers `false` and a UI framework draws the window's menu.
 /// - `clipboard_image`: `gui.clipboard_image` reads a picture (macOS).
 /// - `file_drop`: files dragged in from another program arrive as
 ///   `files` events (macOS, Windows; winit has no Wayland drag and drop).
@@ -282,7 +282,7 @@ pub fn available() -> bool {
 /// - `flat_keyed`: `gui.flat_emit` takes `keep` `"keyed"` (a frame whose
 ///   shape changed: what last frame placed is kept by engine key here);
 ///   `flat_diff`: `gui.flat_diff` (a frame's placements against last
-///   frame's operations: Loom's patch, but its children's order);
+///   frame's operations: a UI framework's patch, but its children's order);
 ///   `flat_index`: `gui.flat_index` (what a frame's placements say, by key).
 /// - `transitions`: a style's `transition` (motion.rs), and `gui.set`'s
 ///   `motion` (a headless window's transitions run on its clock).
@@ -303,10 +303,10 @@ pub fn available() -> bool {
 ///   what has `expanded` (`expand`/`collapse`), and scroll a page.
 ///
 /// - `flash`: `gui.set(w, #{ "flash": true })` tints every region a frame
-///   draws, each frame its own colour (the repaint rainbow of Loom's
+///   draws, each frame its own colour (the repaint rainbow of a UI framework's
 ///   inspector); `false` draws the window whole again.
 ///
-/// A program (Loom) asks before it uses what an older engine refuses.
+/// A program (a UI framework) asks before it uses what an older engine refuses.
 pub fn capabilities() -> Value {
     let mac = cfg!(target_os = "macos");
     let windows = cfg!(target_os = "windows");
@@ -1471,7 +1471,7 @@ fn present_soft(
     buf.present_with_damage(&damaged).is_ok()
 }
 
-/// Heddle's names for keys (`left`, `enter`, `f5`); a character key is
+/// A TUI framework's names for keys (`left`, `enter`, `f5`); a character key is
 /// its character, lowercased when it is a letter.
 fn key_name(key: &Key) -> Option<String> {
     Some(match key {
@@ -3099,13 +3099,13 @@ fn run_dialog(kind: &str, opts: &Value) -> Result<Value, String> {
 
 pub fn menu(spec: &Value) -> Result<Value, String> {
     if !cfg!(target_os = "macos") {
-        // Elsewhere the menu is drawn in the window, by Loom.
+        // Elsewhere the menu is drawn in the window, by a UI framework.
         return Ok(Value::Boolean(false));
     }
     // Read and checked here, every error the program's; made on the main
     // thread without waiting for it — a program's first frame is still
     // being presented there when its menu is set, and a menu of a large
-    // program's commands takes ~10 ms to make (olang Studio's start
+    // program's commands takes ~10 ms to make (an editor's start
     // waited for both).
     let spec = menu_spec(spec)?;
     let p = proxy().map_err(|e| format!("gui.menu: {e}"))?;
@@ -3490,7 +3490,7 @@ impl App {
 
     /// A standard Edit item chosen for window `id`: its chord, as though
     /// pressed — the focused field edits with it, and anything else hears
-    /// it as the key (Loom's command for that chord in the focused role's
+    /// it as the key (a UI framework's command for that chord in the focused role's
     /// context). The modifiers the window knew are kept (a menu clicked
     /// with the mouse holds none).
     fn edit_item(&mut self, id: u64, role: &str) {
@@ -3736,7 +3736,7 @@ pub fn context_menu_origin(
 }
 
 /// Show `menu` with its top left at `(x, y)`, the window's content
-/// points from its top left (Loom's), over `view`. winit's view is
+/// points from its top left (as a UI framework places it), over `view`. winit's view is
 /// flipped (y down), so the point is the view's own; a view that is not
 /// would be turned. muda's `show_context_menu_for_nsview` turned it as
 /// though every view were unflipped, so a menu opened mirrored about the
@@ -5715,7 +5715,7 @@ pub mod turn_watch {
     }
 }
 
-/// Loom's chord spelling as muda's: `mod+shift+p` → `CmdOrCtrl+Shift+P`.
+/// A UI framework's chord spelling as muda's: `mod+shift+p` → `CmdOrCtrl+Shift+P`.
 fn accel_spelling(keys: &str) -> String {
     keys.split('+')
         .map(|p| match p {
@@ -5752,7 +5752,7 @@ fn accel_spelling(keys: &str) -> String {
 /// `applicationShouldTerminate:`). winit only says the loop is ending
 /// (`applicationWillTerminate:`) and the process ended with nothing of
 /// the program's quit run — no session saved, no children stopped. A
-/// program that asks (`gui.hold_quit(true)`, Loom's run loop) hears the
+/// program that asks (`gui.hold_quit(true)`, a UI framework's run loop) hears the
 /// request as a `quit` event (`why`: "quit", "logout", "restart" or
 /// "shutdown") and the platform waits (NSTerminateLater) until the
 /// program ends; its end replies, and the process exits with its code.

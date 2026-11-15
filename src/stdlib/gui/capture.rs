@@ -16,7 +16,7 @@
 //!   frames/NNNNNN.png   a frame, RGB, 8 bits a channel
 //!   index.jsonl         a line a frame, appended: `{"t":ms,"f":n}`
 //!
-//! `t` counts from the capture's start. (OL-587; OlangStudio's Recorder.)
+//! `t` counts from the capture's start. (OL-587; an editor's screen recorder.)
 
 use std::collections::VecDeque;
 use std::io::Write;

@@ -62,7 +62,7 @@ P { x: 1 } == P { x: 1 }
 #[test]
 fn assert_eq_compares_as_equality_does() {
     // `==` holds between a parsed JSON object and the `#{}` map it reads
-    // as; `assert_eq` failed on the same pair (Foundry). Every form: the
+    // as; `assert_eq` failed on the same pair (a CI runner). Every form: the
     // statement, the call in expression position, and testing.assert_eq.
     let src = r#"
 let j = unwrap(json.parse("{\"a\":1,\"b\":[{\"c\":2}]}"))

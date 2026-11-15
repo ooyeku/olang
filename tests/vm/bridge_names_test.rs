@@ -4,7 +4,7 @@
 //! bridge interpreter and finds the program's names through the host's
 //! root. A bridge's own tier handed the next bridge the first bridge's
 //! root instead, so a main-file function two bridges down — a page's
-//! state shaper called from a served route, in open-track — missed every
+//! state shaper called from a served route, in an issue tracker — missed every
 //! imported name: "Undefined variable: as_str". Every tier.
 
 use std::path::PathBuf;

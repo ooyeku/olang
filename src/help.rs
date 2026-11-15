@@ -2100,8 +2100,8 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
         }
     }
 
-    /// The `gui` module: windows drawn by olang (Loom's engine).
-    /// `toad`: the engine under the Toad game framework (src/stdlib/toad/).
+    /// The `gui` module: windows drawn by olang (a UI framework's engine).
+    /// `toad`: the engine under a game framework (src/stdlib/toad/).
     fn add_toad_docs(&mut self) {
         let k = r##"fn spark(p, w) = #{ "pos": p.pos + p.vel * w.dt, "life": p.life - w.dt, "dead": p.life <= 0.0 }"##;
         self.doc_ex(

@@ -1,5 +1,5 @@
 //! The retained tree a window draws: keyed nodes positioned by the
-//! program (Loom's layout runs in olang), their styles, their
+//! program (a UI framework's layout runs in olang), their styles, their
 //! accessibility, and the patch operations `gui.apply` takes.
 //!
 //! A node's `rect` is relative to its parent's content origin — the

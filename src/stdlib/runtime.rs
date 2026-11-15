@@ -36,7 +36,7 @@ pub fn create_runtime_module() -> Value {
     module.insert("on_crash".to_string(), builtin("on_crash", 1));
     // which code layer this application booted: src/layers.rs
     module.insert("code_layer".to_string(), builtin("code_layer", 0));
-    // A host loading code it did not write (olang Studio's plugins):
+    // A host loading code it did not write (an editor's plugins):
     // see `call_host`.
     module.insert("load_module".to_string(), builtin("load_module", 2));
     module.insert("unload_module".to_string(), builtin("unload_module", 1));
@@ -254,7 +254,7 @@ fn runtime_profile_stop(args: Vec<Value>) -> Result<Value, Box<dyn std::error::E
 /// default), its snapshot written to `DIR/<pid>.json` every `every_ms`
 /// (500 by default, 50 at least) in the same format, cumulative and
 /// replaced atomically, so a program can draw its own profile while it
-/// runs (olang Studio's "Studio" view). `Ok(())`, or `Err` when a live
+/// runs (an editor's profiler view). `Ok(())`, or `Err` when a live
 /// profile already runs (`--profile-live`, an earlier call) or another
 /// profile does. Until it is called the process pays nothing for it.
 fn runtime_profile_live_start(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {

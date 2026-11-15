@@ -1086,7 +1086,7 @@ impl BuiltinFunctions {
                 .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 
-        // Handle gui functions (windows drawn by olang: Loom's engine)
+        // Handle gui functions (windows drawn by olang: a UI framework's engine)
         #[cfg(feature = "gui")]
         if let Some(gui_function) = name.strip_prefix("gui.") {
             return crate::stdlib::gui::call_gui_function(gui_function, arguments)
@@ -1237,9 +1237,9 @@ impl BuiltinFunctions {
             return testing_snapshot(arguments, interpreter);
         }
         // `testing.snapshot_dir()`: where snapshots of the file under test
-        // live, for a library keeping its own kind (Loom's pixels).
+        // live, for a library keeping its own kind (a UI framework's pixels).
         // `testing.snapshot_failed(info)`: a library that compares its own
-        // snapshots (Loom's pixels) says one differs, for `olang test
+        // snapshots (a UI framework's pixels) says one differs, for `olang test
         // --format json`'s `snapshot` event. Nothing otherwise.
         if name == "testing.snapshot_failed" {
             if arguments.len() != 1 {

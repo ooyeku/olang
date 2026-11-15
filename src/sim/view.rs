@@ -9,7 +9,7 @@
 //! page (`view.html`: one file, no network, a canvas so a run of a
 //! million events scrolls), written with `--html` and opened in the
 //! system's browser otherwise; `--json` writes the model itself, for
-//! another renderer (a Loom panel, Studio) to draw.
+//! another renderer (a UI framework's panel, an editor) to draw.
 //!
 //! A run is replayed to be seen: a plan replays bit for bit (its digest is
 //! checked, and a view of a run that diverged says so on stderr), and a

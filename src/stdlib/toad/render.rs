@@ -1751,7 +1751,7 @@ impl Renderer {
             );
             rb
         });
-        // shared with another process's window (Studio's canvas): the
+        // shared with another process's window (an editor's canvas): the
         // frame copied on the GPU into the next shared surface
         #[cfg(target_os = "macos")]
         let shared = share

@@ -1100,7 +1100,7 @@ fn the_server_outlives_wide_characters_an_empty_document_and_bad_params() {
 
 #[test]
 fn a_renamed_file_moves_its_document_and_rechecks_its_importers() {
-    // Studio's Rename (its navigator) says `workspace/didRenameFiles` and
+    // An editor's Rename (its navigator) says `workspace/didRenameFiles` and
     // reopens the document under its new name: the open documents follow
     // it, its old name's problems are cleared, and an importer of the old
     // name is checked again without an edit.
