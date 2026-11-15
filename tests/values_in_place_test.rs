@@ -263,3 +263,36 @@ println(main())
     assert!(outs[0].ends_with("true)"), "{}", outs[0]);
     assert!(outs.iter().all(|o| o == &outs[0]), "{outs:?}");
 }
+
+#[test]
+fn a_list_grown_by_what_a_call_answers_grows_in_place_when_interpreted() {
+    // OL-615: a function the tier refused (vector-graphics' path_bounds,
+    // which passes `math.min` as a value) ran on the interpreter, whose
+    // `xs = xs + f(x)` copied the list each time: 8,000 appends 670 ms,
+    // quadratic. The list a call answers is now extended in place, as a
+    // literal's is, and a list held elsewhere is still copied.
+    let src = r#"
+fn two(x) = [x, x + 1]
+fn grow(n) = {
+    let mut xs = []
+    let mut snap = []
+    for i in range(0, n) {
+        xs = xs + two(i)
+        if i == 10 => { snap = xs }
+    }
+    let ys = [9]
+    xs = xs + ys
+    (len(xs), len(snap), snap[21], fold(xs, xs[0], math.max), ys)
+}
+let t0 = time.monotonic()
+let r = grow(30000)
+println([r, time.monotonic() - t0 < 1500.0])
+"#;
+    for flags in TIERS {
+        assert_eq!(
+            run(flags, src),
+            "[(60001, 22, 11, 30000, [9]), true]",
+            "{flags:?}"
+        );
+    }
+}
