@@ -575,12 +575,14 @@ check_signature() {
     [ -n "$SIGNING_KEY" ] || return 0
     fetch "$GITHUB/$REPO/releases/download/$VERSION/SHA256SUMS.sig" "$workdir/SHA256SUMS.sig"
     rc=$?
+    # A release older than the signatures may have none (and a 404 is not
+    # always curl's exit 22: some curls answer 56).
+    if [ $rc -ne 0 ] && [ -n "$SIGNED_FROM" ] && ! release_at_least "$VERSION" "$SIGNED_FROM"; then
+        note "Release $VERSION is older than olang's release signatures (they start at $SIGNED_FROM)," \
+            "so only its checksum was checked."
+        return 0
+    fi
     if [ $rc -eq 22 ]; then
-        if [ -n "$SIGNED_FROM" ] && ! release_at_least "$VERSION" "$SIGNED_FROM"; then
-            note "Release $VERSION is older than olang's release signatures (they start at $SIGNED_FROM)," \
-                "so only its checksum was checked."
-            return 0
-        fi
         [ "${OLANG_ALLOW_UNSIGNED:-}" = 1 ] && {
             note "Release $VERSION has no signature. Going on because OLANG_ALLOW_UNSIGNED=1."
             return 0
