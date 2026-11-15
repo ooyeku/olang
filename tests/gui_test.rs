@@ -443,6 +443,40 @@ fn content_lets_a_list_scroll_past_its_laid_out_rows() {
 }
 
 #[test]
+fn group_hover_shows_a_row_s_hidden_control_with_no_program_turn() {
+    // OL-269: a control hidden (`visible: false`) until the pointer is on
+    // its row (`group_hover` with `hover: #{ visible: true }`) is neither
+    // drawn nor under the pointer before, and both after, with no hover
+    // event for the program to answer
+    let _turn = events_turn();
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (200, 100) })
+        let ev = gui.events()
+        gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 200, 100) },
+          #{ "key": "row", "parent": "root", "box": (0, 0, 200, 40), "style": #{ "hover": #{ "bg": "#f4f4f5" } } },
+          #{ "key": "x", "parent": "row", "role": "button", "box": (160, 8, 24, 24), "text": "×",
+             "style": #{ "bg": "#dc2626", "visible": false, "group_hover": true, "hover": #{ "visible": true } } }
+        ])
+        let before = [gui.read(w, "hit", (170, 20)), gui.read(w, "prims")]
+        gui.input(w, #{ "kind": "pointer", "action": "move", "x": 40, "y": 20 })
+        let on_row = [gui.read(w, "hit", (170, 20)), gui.read(w, "prims")]
+        gui.input(w, #{ "kind": "pointer", "action": "move", "x": 170, "y": 20 })
+        let on_x = gui.read(w, "hit", (170, 20))
+        gui.input(w, #{ "kind": "pointer", "action": "move", "x": 40, "y": 80 })
+        let off = [gui.read(w, "hit", (170, 20)), gui.read(w, "prims")]
+        let mut kinds = []
+        let mut more = true
+        while more { match chan.try_recv(ev) { Ok(()) => { more = false }, Ok(e) => { kinds = kinds + [map_get(e, "kind")] }, _ => { more = false } } }
+        [before[0], on_row[0], on_x, off[0], on_row[1] > before[1], off[1] == before[1], contains(kinds, "hover"), gui.platform().visible]
+    "##);
+    assert_eq!(
+        text(&v),
+        r#"["row", "x", "x", "row", true, true, false, true]"#
+    );
+}
+
+#[test]
 fn a_modal_layer_keeps_the_focus_and_hears_a_press_outside() {
     let _turn = events_turn();
     let v = run(r##"

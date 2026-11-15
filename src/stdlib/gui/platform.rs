@@ -277,7 +277,8 @@ pub fn available() -> bool {
 ///   canvas's `ime` (the input method's text as `text` and `preedit`
 ///   events while it has the focus) and a canvas text's `italic`.
 /// - `group_hover`: a style's `hover` look shown over an ancestor too;
-///   `scroll_bars`: scrollers draw overlay bars (bars.rs).
+///   `visible`: a style's `visible` (a variant's too: shown on hover with
+///   no turn); `scroll_bars`: scrollers draw overlay bars (bars.rs).
 /// - `flat_keyed`: `gui.flat_emit` takes `keep` `"keyed"` (a frame whose
 ///   shape changed: what last frame placed is kept by engine key here);
 ///   `flat_diff`: `gui.flat_diff` (a frame's placements against last
@@ -333,6 +334,7 @@ pub fn capabilities() -> Value {
         // a style's `group_hover`, and the overlay scroll bars (a code
         // field's `track` and `past_end`)
         ("group_hover", b(true)),
+        ("visible", b(true)),
         ("scroll_bars", b(true)),
         // a node's `wheel_x`: it hears the wheel's sideways part only
         ("wheel_x", b(true)),

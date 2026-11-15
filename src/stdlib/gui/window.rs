@@ -2793,7 +2793,7 @@ impl WinState {
         let w = rect[2] * s;
         let h = rect[3] * s;
         let opacity = opacity * st.opacity;
-        if opacity <= 0.0 {
+        if opacity <= 0.0 || !st.visible {
             return;
         }
         let fade =
