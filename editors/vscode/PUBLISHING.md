@@ -17,7 +17,7 @@ every release artifact into `dist/out/`.
 Anyone can install the file directly — no Marketplace involved:
 
 - UI: Extensions view → `…` menu → **Install from VSIX…**
-- CLI: `code --install-extension olang-0.1.0.vsix`
+- CLI: `code --install-extension olang-0.2.0.vsix`
 
 Attaching the .vsix to the GitHub Release (or sharing the file any
 other way) is a complete distribution channel by itself.

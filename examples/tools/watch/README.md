@@ -31,7 +31,7 @@ Press Ctrl-C to stop; the run count and last exit code are reported.
 
 The command is split on spaces (no shell, no quoting), so `watch "grep
 foo"` is the program `grep` with the argument `foo`. Without a terminal —
-piped, or under the [example runner](../run_all.ol) — there is no one to
+piped, or under the [example runner](../../run_all.ol) — there is no one to
 press Ctrl-C, so a `--count 0` ("forever") watch caps itself at two runs
 and exits.
 

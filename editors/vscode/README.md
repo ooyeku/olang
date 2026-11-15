@@ -8,9 +8,11 @@ binary (`olang lsp`).
 
 ## Requirements
 
-The extension launches `olang lsp` from your PATH. Install olang first —
-from a release tarball, `brew install ooyeku/olang/olang`, or a source
-build (`make install` in the repository). If the binary lives somewhere
+The extension launches `olang lsp` from your PATH. Install olang first,
+with the installer (`curl -fsSL
+https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh`),
+`brew install ooyeku/olang/olang`, or a source build (`make install` in
+the repository). If the binary lives somewhere
 else, point `olang.serverPath` at it in your settings.
 
 ## Settings

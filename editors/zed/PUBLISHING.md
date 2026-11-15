@@ -44,7 +44,7 @@ existing GitHub account. No new accounts, no tokens.
    [olang]
    submodule = "extensions/olang"
    path = "editors/zed"
-   version = "0.1.0"
+   version = "0.3.0"
    ```
 
    `version` must match `extension.toml` in `editors/zed`.
@@ -66,10 +66,3 @@ Bump `version` in `editors/zed/extension.toml`, push to `main`, then in
 the fork: update the `extensions/olang` submodule to the new commit,
 bump `version` in `extensions.toml` to match, `pnpm sort-extensions`,
 PR again.
-
-## Note on `editors/zed-olang`
-
-`editors/zed` (this directory) is the canonical extension — it carries
-the language-server config and the SHA-pinned grammar. `editors/
-zed-olang` is the earlier highlight-only variant kept for reference;
-don't submit it.

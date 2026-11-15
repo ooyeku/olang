@@ -1,4 +1,4 @@
-Fixtures for tests/matrix_formula_test.rs: a seeded dataset (data.csv)
+Fixtures for tests/stdlib/matrix_formula_test.rs: a seeded dataset (data.csv)
 and reference.json, the values NumPy 2.5, SciPy 1.18 and pandas 3.0
 compute on it: products, the Gram matrix, solve, inverse, Cholesky,
 eigh, distances, correlation and covariance, and least-squares fits of

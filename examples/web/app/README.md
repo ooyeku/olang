@@ -92,5 +92,5 @@ its focus. `window.olangBoot` reports the boot phases and
 
 The API contract — validation shapes, filter semantics, 404/405/401
 behavior, CSV output, the audit trail — is locked by
-`tests/tracker_app_test.rs`, which boots this actual app on an ephemeral
+`tests/apps/tracker_app_test.rs`, which boots this actual app on an ephemeral
 port and drives it over the wire.

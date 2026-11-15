@@ -48,4 +48,4 @@ net = false
 
 Attenuation can only shrink a grant, never widen it, so a dependency cannot
 exceed what the application allows regardless of what it or its transitive
-dependencies attempt. See [Capabilities](../../docs/packages.md#capabilities).
+dependencies attempt. See [Capabilities](../../../docs/packages.md#capabilities).

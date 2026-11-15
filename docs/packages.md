@@ -553,6 +553,9 @@ against the release's `SHA256SUMS` and `SHA256SUMS` against its
 signature (`SHA256SUMS.sig`) by olang's release key, which `otc` carries
 pinned, installs it under `~/.olang/toolchains/<version>/`, and atomically repoints the shims in
 `~/.olang/bin` — the running binaries are never overwritten in place.
+`otc update` never goes down: when the release the server names is
+older than the olang running it, nothing changes and it says so
+(`otc toolchain install` takes an older release on purpose).
 `otc update --check` reports the current and latest versions without
 installing anything. Nothing contacts the network except these two
 invocations, explicitly.
@@ -562,10 +565,8 @@ installed, as is a release without one from the first signed release
 on (`OLANG_ALLOW_UNSIGNED=1` lets an unsigned one through; a bad
 signature never). An older release, from before signing began,
 installs on its checksum with a note. `otc toolchain install` checks
-the same way. Until olang's release key is pinned (see
-[`dist/signing/README.md`](../dist/signing/README.md)), only the
-checksum is checked, and `otc update` says plainly that the release's
-signature was not verified.
+the same way. Releases are signed from 1.0.0 on
+([`dist/signing/README.md`](../dist/signing/README.md)).
 
 olang 1.0 is built, tested and supported on macOS; the installer also runs on Linux and Windows, where olang is an
 unsupported preview ([Stability](stability.md#platforms)).
@@ -598,10 +599,10 @@ first on PATH, is marked `active` (→); the shims' is `default`. When
 they differ, one line says which shadows which and the fix:
 
 ```
-  → 1.0.0-rc.8  cargo     active          /Users/me/.cargo/bin/olang
-    0.88.0      shims     default         /Users/me/.olang/bin/olang
-    0.80.0      managed                   /Users/me/.olang/toolchains/0.80.0/bin/olang
-/Users/me/.cargo/bin/olang (cargo, 1.0.0-rc.8) is ahead of the shims on PATH, so `olang` runs it, not the default 0.88.0: export PATH="/Users/me/.olang/bin:$PATH" — or remove it: cargo uninstall olang
+  → 1.0.0   cargo     active          /Users/me/.cargo/bin/olang
+    0.88.0  shims     default         /Users/me/.olang/bin/olang
+    0.80.0  managed                   /Users/me/.olang/toolchains/0.80.0/bin/olang
+/Users/me/.cargo/bin/olang (cargo, 1.0.0) is ahead of the shims on PATH, so `olang` runs it, not the default 0.88.0: export PATH="/Users/me/.olang/bin:$PATH" — or remove it: cargo uninstall olang
 ```
 
 Inside a project one more line says what its pin resolves to. In
