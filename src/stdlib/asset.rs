@@ -48,7 +48,21 @@ fn located(args: &[Value], what: &str) -> Result<std::path::PathBuf, String> {
     let root = crate::vfs::package_root(&package).ok_or_else(|| {
         format!("asset.{what}: no package \"{package}\" is known (it is neither this project nor one of its dependencies)")
     })?;
-    Ok(root.join(path))
+    let at = root.join(&path);
+    // On disk (a program run from source) the file is where the system
+    // takes it, links followed, and that must be inside the package too:
+    // a package can ship a link (`leak -> ~/.ssh/id_ed25519`), and
+    // `asset.read` answered the file it led to. A built application's
+    // files are in its own section and have no links.
+    if let (Ok(real_root), Ok(real)) = (std::fs::canonicalize(&root), std::fs::canonicalize(&at))
+        && !real.starts_with(&real_root)
+    {
+        return Err(format!(
+            "asset.{what}: \"{path}\" leads outside the package (to {})",
+            real.display()
+        ));
+    }
+    Ok(at)
 }
 
 pub fn call_asset_function(

@@ -23,7 +23,7 @@
 
 use crate::ast::Value;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, OnceLock};
 
 type Res = Result<Value, Box<dyn std::error::Error>>;
@@ -116,7 +116,6 @@ pub fn call_pty_function(name: &str, args: Vec<Value>) -> Res {
     }
 }
 
-static NEXT_ID: AtomicI64 = AtomicI64::new(1);
 
 fn handle(id: i64) -> Value {
     let mut fields = crate::ast::ValueMap::default();
@@ -489,8 +488,11 @@ mod imp {
             exit: Mutex::new(None),
             eof: std::sync::atomic::AtomicBool::new(false),
         });
-        let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
-        ptys().lock().unwrap().insert(id, p);
+        // random, as a process's: see `proc::unguessable_id`
+        let mut table = ptys().lock().unwrap();
+        let id = crate::stdlib::proc::unguessable_id(|id| table.contains_key(&id));
+        table.insert(id, p);
+        drop(table);
         Ok(ok(handle(id)))
     }
 

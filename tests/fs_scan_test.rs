@@ -452,3 +452,32 @@ fn walk_and_scan_agree_on_links() {
     )));
     assert_eq!(walked, scanned);
 }
+
+/// `fs.search` reads no file outside its root: a link in the tree to a
+/// file outside, or a `files` entry with `..` or an absolute path, was
+/// read and its lines answered, though the root alone was judged (a
+/// module held to its folders searched anything). A link that stays
+/// inside is searched as before.
+#[test]
+#[cfg(unix)]
+fn search_reads_nothing_outside_its_root() {
+    let top = tempfile::tempdir().unwrap();
+    let root = top.path().join("root");
+    fs::create_dir_all(root.join("sub")).unwrap();
+    fs::create_dir_all(top.path().join("outside")).unwrap();
+    fs::write(root.join("sub/in.txt"), "KEY=in").unwrap();
+    fs::write(top.path().join("outside/secret.txt"), "KEY=out").unwrap();
+    let secret = fs::canonicalize(top.path().join("outside/secret.txt")).unwrap();
+    std::os::unix::fs::symlink(&secret, root.join("out.txt")).unwrap();
+    std::os::unix::fs::symlink("sub/in.txt", root.join("inlink.txt")).unwrap();
+    let r = fs::canonicalize(&root).unwrap().to_string_lossy().to_string();
+    let found = s(eval(&format!(
+        r#"show(map(unwrap(fs.search("{r}", "KEY")), (m) => m.path))"#
+    )));
+    assert_eq!(found, r#"["inlink.txt", "sub/in.txt"]"#);
+    let named = s(eval(&format!(
+        r#"show(len(unwrap(fs.search("{r}", "KEY", #{{ "files": ["../outside/secret.txt", "{}", "out.txt"] }}))))"#,
+        secret.display()
+    )));
+    assert_eq!(named, "0");
+}

@@ -171,6 +171,20 @@ pub fn update(check: bool) -> Result<()> {
         println!("already up to date ({}).", current);
         return Ok(());
     }
+    // Never down: "latest" is whatever the release server says, and an
+    // older release is signed as well as a newer one, so a server (or a
+    // mistake) that named an old release made it the default, with the
+    // bugs this one fixed. `otc toolchain install` takes an older one on
+    // purpose.
+    if is_older(&latest, current) {
+        bail!(
+            "the newest release the server names, {}, is older than this olang ({}); nothing was \
+             changed. `otc toolchain install {}` installs it if you mean to go back.",
+            normalize(&latest),
+            current,
+            normalize(&latest)
+        );
+    }
     install_version(&normalize(&latest))?;
     set_default(&normalize(&latest))?;
     print_path_hint()?;
@@ -185,7 +199,8 @@ pub fn toolchain(cmd: ToolchainCommand) -> Result<()> {
             super::toolchains::list(json, default_toolchain()?)
         }
         ToolchainCommand::Install { version } => {
-            install_version(&normalize(&version))?;
+            let version = toolchain_name(&version)?;
+            install_version(&version)?;
             println!(
                 "installed {}; `otc toolchain default {}` switches to it.",
                 normalize(&version),
@@ -194,7 +209,7 @@ pub fn toolchain(cmd: ToolchainCommand) -> Result<()> {
             Ok(())
         }
         ToolchainCommand::Default { version } => {
-            let v = normalize(&version);
+            let v = toolchain_name(&version)?;
             let dir = toolchains_dir()?.join(&v);
             if !dir.join("bin").join("olang").is_file() {
                 bail!("{} is not installed (otc toolchain install {})", v, v);
@@ -228,7 +243,7 @@ pub fn toolchain(cmd: ToolchainCommand) -> Result<()> {
             Ok(())
         }
         ToolchainCommand::Link { version, path } => {
-            let v = normalize(&version);
+            let v = toolchain_name(&version)?;
             let given = PathBuf::from(&path);
             let bin = if given.is_dir() {
                 given.join("target").join("release").join("olang")
@@ -250,7 +265,7 @@ pub fn toolchain(cmd: ToolchainCommand) -> Result<()> {
             Ok(())
         }
         ToolchainCommand::Remove { version } => {
-            let v = normalize(&version);
+            let v = toolchain_name(&version)?;
             if default_toolchain()?.as_deref() == Some(v.as_str()) {
                 bail!("{} is the default toolchain; switch defaults first", v);
             }
@@ -267,6 +282,42 @@ pub fn toolchain(cmd: ToolchainCommand) -> Result<()> {
 
 fn normalize(v: &str) -> String {
     v.trim_start_matches('v').to_string()
+}
+
+/// Whether release `a` is older than `b` (both as semver; false when
+/// either does not read).
+fn is_older(a: &str, b: &str) -> bool {
+    match (
+        semver::Version::parse(&normalize(a)),
+        semver::Version::parse(&normalize(b)),
+    ) {
+        (Ok(a), Ok(b)) => a < b,
+        _ => false,
+    }
+}
+
+/// A toolchain's name as given, normalized, and checked to be one
+/// folder's name under the toolchains folder: `otc toolchain remove ..`
+/// removed the toolchains folder's parent, `~/.olang`, whole.
+fn toolchain_name(v: &str) -> Result<String> {
+    let v = normalize(v);
+    if v.is_empty() || v == "." || v == ".." || v.contains(['/', '\\']) || v.starts_with('.') {
+        bail!("\"{}\" is not a toolchain's name (a version such as 1.0.0, or a name)", v);
+    }
+    Ok(v)
+}
+
+/// The checksum `SHA256SUMS` lists for exactly `file` (`<hex>  <file>`,
+/// or `<hex> *<file>`): a line was taken when it merely ended with the
+/// name, so `x-olang-…tar.gz` answered for `olang-…tar.gz`.
+fn listed_sum(sums: &str, file: &str) -> Option<String> {
+    sums.lines().find_map(|l| {
+        let (hash, name) = l.trim_end().split_once(' ')?;
+        let name = name.trim_start_matches(' ');
+        let name = name.strip_prefix('*').unwrap_or(name);
+        (name == file && hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit()))
+            .then(|| hash.to_ascii_lowercase())
+    })
 }
 
 fn toolchains_dir() -> Result<PathBuf> {
@@ -437,12 +488,7 @@ fn install_version(version: &str) -> Result<()> {
         ),
     }
 
-    let expected = sums
-        .lines()
-        .find_map(|l| {
-            l.strip_suffix(tarball.as_str())
-                .map(|h| h.trim().to_string())
-        })
+    let expected = listed_sum(&sums, &tarball)
         .with_context(|| format!("{} is not listed in SHA256SUMS", tarball))?;
     let actual = hex(&Sha256::digest(&bytes));
     if actual != expected {
@@ -572,6 +618,37 @@ mod tests {
             check_signature("", "", "1.0.0", &sums, Some(b"anything"), false).unwrap(),
             Signature::NotSetUp
         );
+    }
+
+    #[test]
+    fn the_checksum_is_the_named_files_alone() {
+        let a = "a".repeat(64);
+        let b = "b".repeat(64);
+        let sums = format!("{a}  x-olang-1.0.0-macos-arm64.tar.gz\n{b}  olang-1.0.0-macos-arm64.tar.gz\n");
+        assert_eq!(
+            super::listed_sum(&sums, "olang-1.0.0-macos-arm64.tar.gz").as_deref(),
+            Some(b.as_str())
+        );
+        assert_eq!(
+            super::listed_sum(&format!("{a} *olang.tar.gz\n"), "olang.tar.gz").as_deref(),
+            Some(a.as_str())
+        );
+        assert_eq!(super::listed_sum("zz  olang.tar.gz\n", "olang.tar.gz"), None);
+        assert_eq!(super::listed_sum(&format!("{a}  x-olang.tar.gz\n"), "olang.tar.gz"), None);
+    }
+
+    #[test]
+    fn a_toolchain_name_is_one_folder_and_update_never_goes_down() {
+        for bad in ["..", ".", "", "../x", "a/b", "v..", ".hidden"] {
+            assert!(super::toolchain_name(bad).is_err(), "{bad}");
+        }
+        assert_eq!(super::toolchain_name("v1.2.0").unwrap(), "1.2.0");
+        assert_eq!(super::toolchain_name("dev").unwrap(), "dev");
+        assert!(super::is_older("v1.0.0", "1.0.1"));
+        assert!(super::is_older("1.0.0-rc.9", "1.0.0"));
+        assert!(!super::is_older("v1.1.0", "1.0.0"));
+        assert!(!super::is_older("1.0.0", "1.0.0"));
+        assert!(!super::is_older("nonsense", "1.0.0"));
     }
 
     #[test]

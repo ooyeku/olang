@@ -553,3 +553,111 @@ fn a_module_from_another_project_finds_that_projects_packages() {
     );
     assert_eq!(out.trim(), "6");
 }
+
+/// The security pass before 1.0: what a module held to its roots and
+/// its programs reached around them. An `ods` writer's path comes second
+/// and went unchecked; `db.open` opened a database file anywhere; and a
+/// relative program path was judged from the host's folder but run from
+/// the `cwd` the module gave its child, so `bin/echo` with `cwd` its own
+/// folder ran a file it shipped.
+#[test]
+fn a_module_reaches_nothing_around_its_roots_and_programs() {
+    let ws = workspace("around");
+    std::fs::create_dir_all(ws.join("proj")).unwrap();
+    write(
+        &ws.join("plug/p/plugin.ol"),
+        r#"share fn csv(p) = ods.write_csv(ods.frame(#{ "a": [1] }), p)
+share fn open(p) = db.open(p)
+share fn run(prog, dir) = os.exec([prog, "hi"], #{ "cwd": dir })
+"#,
+    );
+    write(&ws.join("plug/p/bin/echo"), "#!/bin/sh\necho shipped\n");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            ws.join("plug/p/bin/echo"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+    }
+    let out = run(
+        &ws,
+        r#"let m = unwrap(runtime.load_module("plug/p/plugin.ol", #{ "name": "p", "fs": true, "db": true, "fs_roots": ["proj"], "proc": ["echo"] }))
+fn said(r) = if map_get(r, "ok") => show(is_ok(map_get(r, "value"))) else => map_get(r, "error")
+println(said(runtime.call_budget(m.csv, ["proj/in.csv"], 1000)))
+println(said(runtime.call_budget(m.csv, ["outside.csv"], 1000)))
+println(said(runtime.call_budget(m.open, ["proj/in.db"], 1000)))
+println(said(runtime.call_budget(m.open, [":memory:"], 1000)))
+println(said(runtime.call_budget(m.open, ["outside.db"], 1000)))
+println(said(runtime.call_budget(m.open, ["file:outside.db"], 1000)))
+println(said(runtime.call_budget(m.run, ["bin/echo", "plug/p"], 1000)))
+println(show(fs.exists("outside.csv")) + " " + show(fs.exists("outside.db")))
+"#,
+    );
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[0], "true", "{out}");
+    assert!(
+        lines[1].starts_with("capability 'fs' denied: ods.write_csv reaches"),
+        "{}",
+        lines[1]
+    );
+    assert_eq!(lines[2], "true", "{out}");
+    assert_eq!(lines[3], "true", "{out}");
+    assert!(
+        lines[4].starts_with("capability 'fs' denied: db.open reaches"),
+        "{}",
+        lines[4]
+    );
+    assert!(
+        lines[5].starts_with("capability 'fs' denied: db.open of a SQLite URI"),
+        "{}",
+        lines[5]
+    );
+    assert!(
+        lines[6].contains("os.exec runs bin/echo, and module 'p' may only run echo"),
+        "{}",
+        lines[6]
+    );
+    assert_eq!(lines[7], "false false", "{out}");
+}
+
+/// A process handle is a struct any code can write, and a call on one
+/// goes through on its start's authority: with counted ids a module held
+/// to one program wrote to the host's own shell as `Process { id: 1 }`.
+/// Ids are random now, so a module names only the handles it was given.
+#[test]
+#[cfg(unix)]
+fn a_module_cannot_name_the_hosts_processes() {
+    let ws = workspace("handles");
+    write(
+        &ws.join("plug/p/plugin.ol"),
+        r#"type Process = struct { id: Int }
+type Pty = struct { id: Int }
+fn landed(f) = match attempt(f) { Ok(r) => is_ok(r), Err(_) => false }
+share fn forge() = {
+    let mut hit = 0
+    for i in range(1, 9) {
+        if landed(() => proc.write_line(Process { id: i }, "HIJACKED")) => { hit = hit + 1 } else => {}
+        if landed(() => pty.write(Pty { id: i }, "HIJACKED\n")) => { hit = hit + 1 } else => {}
+    }
+    hit
+}
+"#,
+    );
+    let out = run(
+        &ws,
+        r#"let cat = unwrap(proc.spawn(["cat"]))
+let tty = unwrap(pty.spawn(["cat"]))
+let m = unwrap(runtime.load_module("plug/p/plugin.ol", #{ "name": "p", "proc": ["echo"] }))
+let r = runtime.call_budget(m.forge, [], 3000)
+println(show(map_get(r, "value") ?? map_get(r, "error")))
+unwrap(proc.close_stdin(cat))
+println(show(str.contains(unwrap(proc.read_all(cat)), "HIJACKED")))
+pty.kill(tty)
+"#,
+    );
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[0], "0", "a forged handle reached a host process: {out}");
+    assert_eq!(lines[1], "false", "{out}");
+}
