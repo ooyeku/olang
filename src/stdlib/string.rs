@@ -514,10 +514,17 @@ fn str_split(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 fn str_index_of(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let s = arg_str(&args, 0, "index_of")?;
     let sub = arg_str(&args, 1, "index_of")?;
-    Ok(match s.find(sub) {
-        Some(byte_idx) => Value::Integer(s[..byte_idx].chars().count() as i64),
+    Ok(match index_of(s, sub) {
+        Some(i) => Value::Integer(i),
         None => Value::Unit,
     })
+}
+
+/// `str.index_of`'s answer: the character position of the first `sub`.
+/// Shared with the bytecode tier's native call (OL-522).
+pub(crate) fn index_of(s: &str, sub: &str) -> Option<i64> {
+    s.find(sub)
+        .map(|byte_idx| s[..byte_idx].chars().count() as i64)
 }
 
 fn str_last_index_of(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
@@ -743,7 +750,12 @@ fn str_substring(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         )
         .into());
     }
-    let (a, b) = (a as usize, b as usize);
+    Ok(ok_string(substring(s, a as usize, b as usize).to_string()))
+}
+
+/// `str.substring`'s slice for positions already checked non-negative.
+/// Shared with the bytecode tier's native call (OL-522).
+pub(crate) fn substring(s: &str, a: usize, b: usize) -> &str {
     // Characters to bytes by walking only as far as `end` (an ASCII
     // prefix is a byte a character): a slice of a large text costs the
     // slice, not a copy of the text as characters.
@@ -759,12 +771,7 @@ fn str_substring(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         };
         (start, end)
     };
-    let slice = if start < end {
-        s[start..end].to_string()
-    } else {
-        String::new()
-    };
-    Ok(ok_string(slice))
+    if start < end { &s[start..end] } else { "" }
 }
 
 fn str_pad(args: Vec<Value>, start: bool) -> Result<Value, Box<dyn std::error::Error>> {

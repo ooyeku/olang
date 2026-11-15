@@ -43,6 +43,21 @@ fn answers(out: &str) -> Vec<&str> {
     out.lines().filter(|l| l.starts_with('=')).collect()
 }
 
+fn check(tag: &str, src: &str) {
+    check_with(tag, src, &[])
+}
+
+fn check_with(tag: &str, src: &str, env: &[(&str, &str)]) {
+    let ws = workspace(tag);
+    let out = run_with(&ws, src, &[], env);
+    for line in out.lines().filter(|l| l.starts_with("ok ")) {
+        assert!(line.starts_with("ok true"), "{tag}: {line}\n{out}");
+    }
+    assert!(out.contains("ok "), "{tag}: no check ran\n{out}");
+    let plain = run(&ws, src, &["--no-ovm"]);
+    assert_eq!(answers(&out), answers(&plain), "{tag}: the tiers disagree");
+}
+
 /// Seconds `olang` takes to run `src` (best of two).
 fn run_secs(dir: &Path, src: &str) -> f64 {
     let mut best = f64::MAX;
@@ -92,4 +107,42 @@ fn compile_time_is_linear_in_the_lambdas_of_a_function() {
             4 * n
         );
     }
+}
+
+/// `str.index_of`, `str.substring` and `str.starts_with` from compiled
+/// code are answered on the VM's strings, not bridged with a conversion
+/// each way: on rc.7 each cost 100-170 ns, three to six times a map
+/// lookup (OL-522). Their answers, errors included, are the interpreter's.
+#[test]
+fn string_tests_from_compiled_code_cost_about_a_map_lookup() {
+    check(
+        "strops",
+        r#"fn l_mhk(n, m) = { let t0 = time.monotonic(); let mut acc = 0; let mut i = 0; while i < n { if map_has_key(m, "worker") => acc = acc + 1; i = i + 1 }; time.monotonic() - t0 }
+fn l_idx(n, s) = { let t0 = time.monotonic(); let mut acc = 0; let mut i = 0; while i < n { acc = acc + str.index_of(s, ":"); i = i + 1 }; time.monotonic() - t0 }
+fn l_sub(n, s) = { let t0 = time.monotonic(); let mut acc = 0; let mut i = 0; while i < n { acc = acc + len(str.substring(s, 0, 8)); i = i + 1 }; time.monotonic() - t0 }
+fn l_sw(n, s) = { let t0 = time.monotonic(); let mut acc = 0; let mut i = 0; while i < n { if str.starts_with(s, "net.send") => acc = acc + 1; i = i + 1 }; time.monotonic() - t0 }
+fn answers() = {
+    let cases = ["net.send:lane/a", "", "é:ü:x", "no colon", ":"]
+    for s in cases {
+        println("= " + show(str.index_of(s, ":")) + " " + show(str.substring(s, 1, 3)) + " " + show(str.substring(s, 0, 99)) + " " + show(str.substring(s, 3, 1))
+            + " " + show(str.starts_with(s, "net")) + " " + show(str.ends_with(s, "x")) + " " + show(str.contains(s, "ü")) + " " + show(str.index_of(s, "")))
+    }
+    println("= " + show(attempt(() => str.substring("abc", -1, 2))) + " " + show(attempt(() => str.index_of(1, ":"))) + " " + show(attempt(() => str.starts_with("a", 2))))
+}
+fn run() = {
+    answers()
+    let s = "net.send:lane/a"
+    let m = #{ "worker": 1, "net": 2 }
+    let n = 200000
+    let mut worst = 100.0
+    for k in 0..3 {
+        let base = l_mhk(n, m)
+        let r = math.max(l_idx(n, s), math.max(l_sub(n, s), l_sw(n, s))) / base
+        worst = math.min(worst, r)
+    }
+    println("ok " + to_string(worst < 2.0) + " " + to_string(worst))
+}
+run()
+"#,
+    );
 }

@@ -6390,6 +6390,10 @@ impl BytecodeVm {
                         .filter(|_| self.home_function(function_name, bytecode));
                     let outcome = if let Some(func_id) = user {
                         self.execute(func_id, &arg_values)
+                    } else if let Some(op) = function_name.strip_prefix("str.")
+                        && let Some(r) = Self::str_native(op, &arg_values)
+                    {
+                        r
                     } else if function_name == "map_set"
                         && let Some(r) = Self::map_set_owned(&mut arg_values)
                     {
@@ -8377,6 +8381,53 @@ impl BytecodeVm {
                 std::sync::atomic::Ordering::Relaxed,
             );
         }
+    }
+
+    /// The string tests and slices compiled code calls in its loops
+    /// (`str.index_of`, `str.substring`, `str.starts_with`, `ends_with`,
+    /// `contains`), answered on the VM's own strings: through the bridge
+    /// each converted its arguments and dispatched by name, about 100 ns a
+    /// call (OL-522). The answers are the interpreter's own functions';
+    /// anything else (a wrong type, a negative position, another arity)
+    /// is `None` and takes the bridge, which raises its exact error.
+    fn str_native(op: &str, args: &[OvmValue]) -> Option<Result<OvmValue, BytecodeError>> {
+        use crate::ovm::value::ValueData;
+        use crate::stdlib::string as st;
+        let text = |i: usize| match args.get(i).map(|v| &v.data) {
+            Some(ValueData::String(s)) => Some(s),
+            _ => None,
+        };
+        let int = |i: usize| match args.get(i).map(|v| &v.data) {
+            Some(ValueData::Integer(n)) if *n >= 0 => Some(*n as usize),
+            _ => None,
+        };
+        let v = match op {
+            "starts_with" if args.len() == 2 => {
+                OvmValue::new_boolean(text(0)?.starts_with(text(1)?.as_str()))
+            }
+            "ends_with" if args.len() == 2 => {
+                OvmValue::new_boolean(text(0)?.ends_with(text(1)?.as_str()))
+            }
+            "contains" if args.len() == 2 => {
+                OvmValue::new_boolean(text(0)?.contains(text(1)?.as_str()))
+            }
+            "index_of" if args.len() == 2 => match st::index_of(text(0)?, text(1)?) {
+                Some(i) => OvmValue::new_integer(i),
+                None => OvmValue::new_unit(),
+            },
+            "substring" if args.len() == 3 => {
+                let s = text(0)?;
+                let slice = st::substring(s, int(1)?, int(2)?);
+                if slice.len() == s.len() {
+                    // the whole text: the same string, not a copy
+                    args[0].clone()
+                } else {
+                    OvmValue::new_string(slice.to_string())
+                }
+            }
+            _ => return None,
+        };
+        Some(Ok(v))
     }
 
     /// `call_function_value` with the arguments handed over: a compiled
