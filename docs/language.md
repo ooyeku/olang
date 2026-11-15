@@ -2361,6 +2361,12 @@ let results = jobs |> map((j) => match task.join(j) { Ok(v) => v, Err(e) => -1 }
 println(to_string(results))   // [0, -1, 20]
 ```
 
+A failure no join collects is never silent: `task olang-spawn-N failed:
+…` goes to stderr once nothing can join the task any more — its last
+handle is dropped, the stall detector reports a deadlock, or the program
+ends. A failure a `task.join` (or a `task.join_timeout` that sees the
+end) collects is the program's to handle, and prints nothing.
+
 ### Bounding the wait
 
 `task.join_timeout(t, ms)` returns `Ok` of what `task.join` would answer

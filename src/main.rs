@@ -715,6 +715,8 @@ fn main() {
     // Whatever ran, the terminal is given back before the process ends
     // (a no-op unless a program entered `tty` and is still in it).
     olang::stdlib::tty::restore_terminal();
+    // a task that failed and that no join collected is said, once
+    olang::stdlib::task::report_unjoined_failures();
     olang::memory::report_if_asked();
     let _ = olang::profile_live::finish(Some(exit_code));
     // what the run compiled, kept for the next (a moment at most)

@@ -2032,7 +2032,7 @@ where
             // `task.watch`ed channels close as the task ends, under its
             // baton, so their waiters see it in order.
             if let Some(global) = global {
-                for channel in crate::interpreter::spawn_registry::finish(global) {
+                for channel in crate::interpreter::spawn_registry::finish(global, None) {
                     close_watched(&world, local, &channel);
                 }
             }

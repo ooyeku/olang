@@ -2598,18 +2598,19 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                             }
                             other => other,
                         };
-                        // A task that ends by raising says so, once, on
-                        // stderr — as an uncaught error in main would. The
-                        // Err still reaches `task.join`; what this adds is
-                        // the line for the task nobody joins (a channel
-                        // service whose death otherwise leaves every
-                        // `chan.recv` on it waiting forever, silently).
-                        if let Err(e) = &outcome {
-                            eprintln!("task olang-spawn-{} failed: {}", task_id, e);
-                        }
+                        // A task that ends by raising is said once on
+                        // stderr when nobody handles it — as an uncaught
+                        // error in main would — so a channel service's
+                        // death is never silent. A `task.join` that
+                        // collects the Err handles it, and then nothing
+                        // is printed (OL-387): the registry keeps the
+                        // failure until a join takes it or no join can
+                        // come (the last handle dropped, a deadlock, the
+                        // program's end).
+                        let failure = outcome.as_ref().err().map(String::as_str);
                         // The channels declared to die with this task
                         // (`task.watch`) close now, whichever way it ended.
-                        for channel in spawn_registry::finish(task_id) {
+                        for channel in spawn_registry::finish(task_id, failure) {
                             crate::stdlib::chan::close_value(&channel);
                         }
                         outcome

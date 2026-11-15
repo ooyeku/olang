@@ -84,6 +84,12 @@ impl NativeObject for TaskObject {
 
 /// Wrap a freshly registered task id as an olang value. Called by the
 /// interpreter's `spawn`.
+/// Say on stderr every task failure no `task.join` collected: the
+/// program is ending (OL-387).
+pub fn report_unjoined_failures() {
+    crate::interpreter::spawn_registry::report_unjoined_failures();
+}
+
 pub fn handle(id: u64) -> Value {
     Value::Native(NativeHandle::new(TaskObject {
         id,

@@ -172,6 +172,37 @@ fn a_task_that_raises_reports_itself_on_stderr() {
     );
 }
 
+/// A failure `task.join` collects is handled: no stderr line, even when
+/// the task died before the join (OL-387). One whose handle is dropped
+/// unjoined is still said.
+#[test]
+fn a_task_failure_a_join_handles_prints_nothing() {
+    let ws = workspace("taskjoined");
+    write(
+        &ws,
+        "t.ol",
+        "let t = spawn { unwrap(Err(\"the builder died\")) }\n\
+         time.sleep(100)\n\
+         match task.join(t) { Ok(v) => println(\"ok\"), Err(e) => println(\"handled: \" + e) }\n",
+    );
+    let (out, err, rc) = olang(&ws, &["run", "t.ol"]);
+    assert_eq!(rc, 0, "{out}{err}");
+    assert!(out.starts_with("handled: ") && out.contains("the builder died"), "{out}");
+    assert!(!err.contains("olang-spawn-"), "a handled failure was reported: {err}");
+
+    write(
+        &ws,
+        "d.ol",
+        "fn start() = { let t = spawn { unwrap(Err(\"dropped\")) }\n 1 }\n\
+         start()\n\
+         time.sleep(100)\n\
+         println(\"main continues\")\n",
+    );
+    let (out, err, rc) = olang(&ws, &["run", "d.ol"]);
+    assert_eq!(rc, 0, "{out}{err}");
+    assert!(err.contains("task olang-spawn-") && err.contains("dropped"), "{err}");
+}
+
 #[test]
 fn check_warns_about_a_parameter_that_shadows_a_called_import() {
     let ws = workspace("paramshadow");

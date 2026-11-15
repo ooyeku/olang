@@ -1009,6 +1009,8 @@ fn os_exit(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     // anywhere gets its terminal back (atexit covers Unix too; Windows's
     // ExitProcess runs no atexit handlers, so this call is the guarantee).
     crate::stdlib::tty::restore_terminal();
+    // a task that failed and that no join collected is said, once (OL-387)
+    crate::interpreter::spawn_registry::report_unjoined_failures();
     // `olang profile`'s report, a live profile's last snapshot, and the
     // tier statistics a run keeps, are written as it ends, however it ends
     crate::profile::exit_report(exit_code);
