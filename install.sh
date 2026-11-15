@@ -42,8 +42,11 @@ MIN_GLIBC="2.28"
 # checksum in it. dist/signing/README.md says how the key is made.
 # Empty until signing is set up; then every release from SIGNED_FROM on
 # must carry a good SHA256SUMS.sig.
-SIGNING_KEY=""
-SIGNED_FROM=""
+SIGNING_KEY="-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE36cXQoV1JHERlNekWav8gfY3uw6J
+LvVlnGRVnXmoiR0E/OuqLIfeejOe9XvwIJjf+PwFwPWl6p0ghxHXjUBWIg==
+-----END PUBLIC KEY-----"
+SIGNED_FROM="v1.0.0"
 
 # ── output ──────────────────────────────────────────────────────────
 QUIET=""

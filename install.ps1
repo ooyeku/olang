@@ -41,8 +41,11 @@ $HelpUrl = 'https://olang.dev/book/installation/'
 # key as install.sh's SIGNING_KEY. dist/signing/README.md says how it is
 # made. Empty until signing is set up; then every release from
 # $SignedFrom on must carry a good SHA256SUMS.sig.
-$SigningKey = ''
-$SignedFrom = ''
+$SigningKey = '-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE36cXQoV1JHERlNekWav8gfY3uw6J
+LvVlnGRVnXmoiR0E/OuqLIfeejOe9XvwIJjf+PwFwPWl6p0ghxHXjUBWIg==
+-----END PUBLIC KEY-----'
+$SignedFrom = 'v1.0.0'
 
 function Say([string]$Text = '') { if (-not $Quiet) { Write-Host $Text } }
 function Row([string]$Label, [string]$Value) {
