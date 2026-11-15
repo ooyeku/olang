@@ -5158,6 +5158,34 @@ impl Parser {
             }
         }
 
+        // `use a.b as x`: a whole module takes no alias (OL-591), said where
+        // it is written rather than failing on `as` when the program runs
+        if let Some(alias) = pairs.next_if(|p| p.as_rule() == Rule::use_module_alias) {
+            let (line, column) = alias.line_col();
+            let module = path.join(".");
+            let last = path.last().cloned().unwrap_or_default();
+            let text = sanitize_snippet(
+                alias
+                    .get_input()
+                    .lines()
+                    .nth(line.saturating_sub(1))
+                    .unwrap_or(""),
+            );
+            let snippet = format!(
+                "{line:4} | {text}\n     | {}^",
+                " ".repeat(column.saturating_sub(1))
+            );
+            return Err(ParseError::InvalidSyntaxWithPosition {
+                message: format!(
+                    "a whole module takes no alias: write `use {module} {{}}` and call `{last}.name(...)`, \
+                     or name what you take, `use {module} {{ name as other }}`"
+                ),
+                line,
+                column,
+                snippet: snippet.into(),
+            });
+        }
+
         // No `{ ... }`: a stdlib module (`use gg`, `use str`) binds its
         // namespace alone — `gg.plot(...)` — so its many short names
         // (`plot`, `summary`, `folds`, `text`) never land on a program's

@@ -136,7 +136,10 @@ function_decl = { fn_kw ~ identifier ~ type_params? ~ "(" ~ param_list? ~ ")" ~ 
 share_decl = { share_kw ~ (use_decl | function_decl | let_decl | type_decl | trait_decl | impl_decl) }
 // `use m {}` lists nothing: the namespace `m` alone. `use_open` marks
 // that braces were written, so the bare form can be told from it.
-use_decl = { use_kw ~ use_path ~ (use_open ~ NL* ~ use_list? ~ NL* ~ "}")? }
+use_decl = { use_kw ~ use_path ~ use_module_alias? ~ (use_open ~ NL* ~ use_list? ~ NL* ~ "}")? }
+// `use a.b as x`: 1.0 has no alias for a whole module. Parsed only so the
+// parser can say so (OL-591) instead of `as` being read as a name.
+use_module_alias = { as_kw ~ identifier }
 use_open = { "{" }
 use_path = { identifier ~ ("." ~ identifier)* }
 use_list = { use_item ~ (NL* ~ "," ~ NL* ~ use_item)* ~ (NL* ~ ",")? }
