@@ -8,8 +8,10 @@
 //! **dependency map** (`name -> directory`) it uses to resolve `use` paths.
 
 pub mod cache;
+pub mod github;
 pub mod lock;
 pub mod manifest;
+pub mod projects;
 pub mod registry;
 pub mod resolver;
 pub mod shelf;
@@ -72,6 +74,11 @@ pub struct InstallOptions {
     /// only keeps incidental installs — a run, a test, the REPL, the
     /// language server, a check — from touching it.
     pub explicit: bool,
+    /// Names whose lock pins may move to the newest their manifest
+    /// allows (`otc upgrade`): every other versioned shelf or GitHub
+    /// dependency keeps the copy its lock pins while the manifest allows
+    /// it (rule 1), however the shelf changed.
+    pub upgrade: Vec<String>,
     /// Fetch nothing: use what this machine already holds (a cached git
     /// checkout, a path, the shelf) and say a dependency that is not
     /// there as missing; write no lock. What opening a project does (a
@@ -113,11 +120,18 @@ pub fn install(root: &Path, options: &InstallOptions) -> Result<DependencyMap, P
     let mut dep_map = DependencyMap::new();
 
     // Registry resolution (MVS) over just the registry dependencies.
-    let registry_roots: Vec<(String, String)> = manifest
-        .dependencies
-        .iter()
-        .filter_map(|(name, dep)| dep.version_req().map(|r| (name.clone(), r.to_string())))
-        .collect();
+    // A bare version string is a registry requirement only where a
+    // registry is configured; otherwise it asks the shelf for that version.
+    let registry_roots: Vec<(String, String)> = if options.registry.is_some() {
+        manifest
+            .dependencies
+            .iter()
+            .filter_map(|(name, dep)| dep.version_req().map(|r| (name.clone(), r.to_string())))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let previous = Lockfile::load(root).ok();
 
     let resolution = if registry_roots.is_empty() {
         Default::default()
@@ -131,7 +145,14 @@ pub fn install(root: &Path, options: &InstallOptions) -> Result<DependencyMap, P
 
     // Direct dependencies from the manifest.
     for (name, dep) in &manifest.dependencies {
-        let (dir, locked) = resolve_dependency(root, name, dep, &resolution, options)?;
+        let (dir, locked) = resolve_dependency_with(
+            root,
+            name,
+            dep,
+            &resolution,
+            options,
+            previous.as_ref().and_then(|l| l.package.get(name)),
+        )?;
         dep_map.insert(name.clone(), dir);
         lock.package.insert(name.clone(), locked);
     }
@@ -230,8 +251,18 @@ pub fn install(root: &Path, options: &InstallOptions) -> Result<DependencyMap, P
     // OLANG_LOCK_READONLY=1 keeps the lock (or its absence) as it is. A
     // project whose manifest says `lock = "never"` (a test fixture) is read
     // the same way by everything but an explicit otc command.
-    if !lock_readonly() && !options.offline && (options.explicit || !manifest.lock_never()) {
+    // A copy on the shelf is read-only: what it resolves to is never
+    // written into it.
+    let shelf_copy = root.starts_with(shelf::Shelf::home());
+    if !lock_readonly()
+        && !options.offline
+        && !shelf_copy
+        && (options.explicit || !manifest.lock_never())
+    {
         lock.save(root).map_err(PkgError::Lock)?;
+    }
+    if options.explicit && !options.offline {
+        projects::record(root);
     }
     if let Some((_, e)) = transitive_shelf(&mut dep_map, options).into_iter().next() {
         return Err(e);
@@ -258,17 +289,41 @@ fn transitive_shelf(map: &mut DependencyMap, options: &InstallOptions) -> Vec<(S
         };
         let sub_lock = Lockfile::load(&dir).ok();
         for (name, dep) in &sub.dependencies {
-            let Dependency::Shelf { shelf: sname } = dep else {
+            let Some((sname, _, ask)) = shelf_ask(name, dep, options) else {
                 continue;
             };
-            if map.contains_key(name) || failed.iter().any(|(n, _)| n == name) {
+            let sname = &sname;
+            if let Some(have) = map.get(name) {
+                // one project gets one version of a name: a library asking
+                // for a version the project's copy does not meet is refused,
+                // naming both
+                if let Some(req) = ask.as_deref().and_then(|a| a.strip_prefix("version "))
+                    && let Some(v) = shelf::folder_version(have)
+                    && !shelf::version_matches(req, &v)
+                    && !failed.iter().any(|(n, _)| n == name)
+                {
+                    failed.push((
+                        name.clone(),
+                        PkgError::Resolve(format!(
+                            "'{name}': this project gets {name} {v} ({}), and {} asks for {name} {req}; \
+                             one project uses one version of a name. Ask for a version both allow \
+                             (`otc upgrade {name} --major` moves the project's requirement), or upgrade {}",
+                            have.display(),
+                            sub.package.name,
+                            sub.package.name
+                        )),
+                    ));
+                }
+                continue;
+            }
+            if failed.iter().any(|(n, _)| n == name) {
                 continue;
             }
             let pinned = sub_lock
                 .as_ref()
                 .and_then(|l| l.package.get(name))
                 .filter(|l| {
-                    matches!(&l.source, LockedSource::Shelf { shelf, rev: Some(_) } if shelf == sname)
+                    matches!(&l.source, LockedSource::Shelf { shelf, rev: Some(_), .. } if shelf == sname)
                 });
             let resolved = match pinned {
                 Some(locked) => locked_dir(&dir, name, locked, options)
@@ -333,8 +388,8 @@ pub fn install_lenient(
                 // machine cannot produce is missing, by that reason, rather
                 // than run at whatever commit the shelf holds.
                 if let Some(locked) = lock.as_ref().and_then(|l| l.package.get(name))
-                    && matches!(&locked.source, LockedSource::Shelf { shelf, rev: Some(_) }
-                        if matches!(dep, Dependency::Shelf { shelf: s } if s == shelf))
+                    && matches!(&locked.source, LockedSource::Shelf { shelf, rev: Some(_), .. }
+                        if shelf_ask(name, dep, options).is_some_and(|(s, _, _)| &s == shelf))
                 {
                     match locked_dir(root, name, locked, options).and_then(|dir| {
                         verify_checksum(name, locked.checksum.as_deref(), &dir).map(|_| dir)
@@ -372,6 +427,218 @@ fn resolve_dependency(
     resolution: &resolver::Resolution,
     options: &InstallOptions,
 ) -> Result<(PathBuf, LockedPackage), PkgError> {
+    resolve_dependency_with(root, name, dep, resolution, options, None)
+}
+
+/// A dependency the shelf answers: `(shelf name, GitHub repository, what
+/// is asked)`. A bare version string is one where no registry is
+/// configured. `None` for a path, git or registry dependency.
+pub fn shelf_ask(
+    name: &str,
+    dep: &Dependency,
+    options: &InstallOptions,
+) -> Option<(String, Option<String>, Option<String>)> {
+    match dep {
+        Dependency::Shelf { shelf, version } => Some((
+            shelf.clone(),
+            None,
+            version.as_ref().map(|v| format!("version {v}")),
+        )),
+        Dependency::GitHub {
+            github,
+            version,
+            tag,
+            branch,
+            rev,
+        } => {
+            let shelf_name = github.rsplit('/').next().unwrap_or(github).to_string();
+            let ask = rev
+                .as_ref()
+                .map(|r| format!("rev {r}"))
+                .or_else(|| tag.as_ref().map(|t| format!("tag {t}")))
+                .or_else(|| branch.as_ref().map(|b| format!("branch {b}")))
+                .or_else(|| version.as_ref().map(|v| format!("version {v}")));
+            // the library's own name, when the shelf holds this repository
+            let shelf_name = shelf::Shelf::load()
+                .ok()
+                .and_then(|s| {
+                    s.libraries
+                        .iter()
+                        .find(|(n, l)| {
+                            n.as_str() == name
+                                && l.copies
+                                    .iter()
+                                    .any(|c| shelf::same_origin(c.from.as_deref(), github))
+                        })
+                        .map(|(n, _)| n.clone())
+                })
+                .unwrap_or_else(|| {
+                    if name.is_empty() {
+                        shelf_name
+                    } else {
+                        name.to_string()
+                    }
+                });
+            Some((shelf_name, Some(github.clone()), ask))
+        }
+        Dependency::Registry(v) if options.registry.is_none() => {
+            Some((name.to_string(), None, Some(format!("version {v}"))))
+        }
+        Dependency::RegistryExplicit {
+            version,
+            registry: None,
+        } if options.registry.is_none() => {
+            Some((name.to_string(), None, Some(format!("version {version}"))))
+        }
+        _ => None,
+    }
+}
+
+/// Resolve a shelf or GitHub dependency by the rules (docs/otc-design.md):
+/// 1. the copy `previous` (its lock entry) pins, while the manifest asks
+///    the same and the name is not being upgraded;
+/// 2. what the manifest asks for, newest held first, fetched from GitHub
+///    when none is held and the dependency names its repository;
+/// 3. with nothing asked, the shelf's default, local folder, or newest copy.
+fn resolve_shelf(
+    name: &str,
+    sname: &str,
+    github: Option<&str>,
+    ask: Option<&str>,
+    options: &InstallOptions,
+    previous: Option<&LockedPackage>,
+) -> Result<(PathBuf, LockedPackage), PkgError> {
+    let mut shelf = shelf::Shelf::load().map_err(|e| PkgError::Resolve(format!("shelf: {}", e)))?;
+    let shelf_err = |e: shelf::ShelfError| PkgError::Resolve(e.to_string());
+    let lock_entry = |dir: &Path, version: Option<String>, rev: Option<String>| LockedPackage {
+        version,
+        source: LockedSource::Shelf {
+            shelf: sname.to_string(),
+            rev,
+            github: github.map(str::to_string),
+            reference: ask.map(str::to_string),
+        },
+        checksum: cache::checksum_dir(dir).ok(),
+        dependencies: sub_dependency_names(dir),
+    };
+    // rule 1: the lock's copy, while the manifest asks the same
+    if ask.is_some()
+        && !options.refresh
+        && !options.upgrade.iter().any(|n| n == name)
+        && let Some(prev) = previous
+        && let LockedSource::Shelf {
+            shelf: s,
+            rev: Some(rev),
+            github: g,
+            reference,
+        } = &prev.source
+        && s == sname
+        && g.as_deref() == github
+        && reference.as_deref() == ask
+        && let Some(dir) = shelf.held_copy(sname, rev)
+    {
+        return Ok((
+            dir.clone(),
+            lock_entry(&dir, prev.version.clone(), Some(rev.clone())),
+        ));
+    }
+    let lib = shelf.library(sname);
+    let found: Option<(PathBuf, Option<String>, Option<String>)> = match ask {
+        None => lib
+            .and_then(|l| l.pick())
+            .map(|(p, _)| (p.path(), p.version(), p.commit().map(str::to_string))),
+        Some(a) => {
+            let (kind, value) = a.split_once(' ').unwrap_or((a, ""));
+            let pick = lib.and_then(|l| match kind {
+                "version" => l.select(value, github),
+                "tag" | "branch" => l.by_ref(github, value).map(shelf::Pick::Copy),
+                "rev" => l.by_commit(value).map(shelf::Pick::Copy),
+                _ => None,
+            });
+            pick.map(|p| (p.path(), p.version(), p.commit().map(str::to_string)))
+        }
+    };
+    if let Some((dir, version, rev)) = found {
+        if !dir.exists() {
+            return Err(PkgError::Resolve(format!(
+                "shelf library '{}' points at '{}', which no longer exists \
+                 (re-register it: `otc shelf add <path>`, or forget it: `otc shelf remove {} --yes`)",
+                sname,
+                dir.display(),
+                sname
+            )));
+        }
+        return Ok((dir.clone(), lock_entry(&dir, version, rev)));
+    }
+    // nothing held answers: fetch from GitHub when the dependency says where
+    if let Some(repo) = github {
+        if options.offline {
+            return Err(PkgError::Fetch(format!(
+                "'{name}' ({repo}) is not on this machine's shelf; it is fetched by `otc install`"
+            )));
+        }
+        let gask = match ask.map(|a| a.split_once(' ').unwrap_or((a, ""))) {
+            None => github::Ask::Newest,
+            Some(("version", v)) => github::Ask::Version(v.to_string()),
+            Some(("tag", t)) => github::Ask::Tag(t.to_string()),
+            Some(("branch", b)) => github::Ask::Branch(b.to_string()),
+            Some(("rev", r)) => github::Ask::Rev(r.to_string()),
+            Some(_) => github::Ask::Newest,
+        };
+        let f = github::fetch(&mut shelf, repo, &gask, Some(sname), false).map_err(shelf_err)?;
+        shelf.save().map_err(shelf_err)?;
+        let dir = f.copy.path();
+        return Ok((
+            dir.clone(),
+            lock_entry(&dir, Some(f.copy.version.clone()), f.copy.commit.clone()),
+        ));
+    }
+    let held = lib
+        .map(|l| {
+            let mut v: Vec<String> = l.copies.iter().map(|c| c.version.clone()).collect();
+            if l.local.is_some() {
+                v.push("a local folder".to_string());
+            }
+            v.join(", ")
+        })
+        .unwrap_or_default();
+    Err(PkgError::Resolve(match (lib, ask) {
+        (None, _) => format!(
+            "dependency '{}' names shelf library '{}', which is not on your shelf \
+             (put it there: `otc shelf add <path>` or `otc shelf add <owner/repo>`)",
+            name, sname
+        ),
+        (Some(_), Some(a)) => format!(
+            "dependency '{name}' asks for {sname} {}, and the shelf holds {held}: \
+             `otc shelf add <owner/repo>@<tag>` fetches another version, `otc shelf list {sname}` shows them",
+            a.split_once(' ').map(|x| x.1).unwrap_or(a)
+        ),
+        (Some(_), None) => {
+            format!("shelf library '{sname}' holds nothing (`otc shelf list {sname}`)")
+        }
+    }))
+}
+
+/// `resolve_dependency`, with the dependency's previous lock entry for
+/// rule 1.
+fn resolve_dependency_with(
+    root: &Path,
+    name: &str,
+    dep: &Dependency,
+    resolution: &resolver::Resolution,
+    options: &InstallOptions,
+    previous: Option<&LockedPackage>,
+) -> Result<(PathBuf, LockedPackage), PkgError> {
+    if let Some((sname, github, ask)) = shelf_ask(name, dep, options) {
+        return resolve_shelf(
+            name,
+            &sname,
+            github.as_deref(),
+            ask.as_deref(),
+            options,
+            previous,
+        );
+    }
     match dep {
         Dependency::Path { path } => {
             let dir = normalize(root, path);
@@ -432,41 +699,8 @@ fn resolve_dependency(
                 },
             ))
         }
-        Dependency::Shelf { shelf: shelf_name } => {
-            let shelf =
-                shelf::Shelf::load().map_err(|e| PkgError::Resolve(format!("shelf: {}", e)))?;
-            let dir = shelf.resolve(shelf_name).cloned().ok_or_else(|| {
-                PkgError::Resolve(format!(
-                    "dependency '{}' names shelf library '{}', which is not on your shelf                      (register it: `otc lib add <path>`, or use a path: `otc add <path>`)",
-                    name, shelf_name
-                ))
-            })?;
-            if !dir.exists() {
-                return Err(PkgError::Resolve(format!(
-                    "shelf library '{}' points at '{}', which no longer exists                      (re-register it: `otc lib add <path>`)",
-                    shelf_name,
-                    dir.display()
-                )));
-            }
-            let checksum = cache::checksum_dir(&dir).ok();
-            Ok((
-                dir.clone(),
-                LockedPackage {
-                    version: None,
-                    // Locked by shelf name, not by the machine path the
-                    // name resolved to: a lock is committed, and a clone
-                    // elsewhere resolves the name through its own shelf.
-                    // `verify` treats it with the path-dep leniency
-                    // (editing your own library is development, not
-                    // tampering).
-                    source: LockedSource::Shelf {
-                        shelf: shelf_name.clone(),
-                        rev: shelf.rev_of(shelf_name).map(str::to_string),
-                    },
-                    checksum,
-                    dependencies: sub_dependency_names(&dir),
-                },
-            ))
+        Dependency::Shelf { .. } | Dependency::GitHub { .. } => {
+            unreachable!("answered by the shelf above")
         }
         Dependency::Registry(_) | Dependency::RegistryExplicit { .. } => {
             let version = resolution.get(name).ok_or_else(|| {
@@ -554,23 +788,23 @@ fn replay_lock(
                 path == locked_path
             }
             (
-                Dependency::Shelf { shelf: sname },
+                dep,
                 LockedSource::Shelf {
                     shelf: locked,
                     rev: locked_rev,
+                    github: locked_github,
+                    reference,
                 },
-            ) => {
-                sname == locked
-                    && (!options.repin_shelf || !shelf_moved(sname, locked_rev.as_deref()))
-            }
-            // Older locks pinned a shelf library by the path it resolved
-            // to on the machine that wrote them; honored while it agrees.
-            (Dependency::Shelf { shelf: sname }, LockedSource::Path { path: locked_path }) => {
-                shelf::Shelf::load()
-                    .ok()
-                    .and_then(|s| s.resolve(sname).cloned())
-                    .map(|dir| dir == Path::new(locked_path))
-                    .unwrap_or(false)
+            ) if shelf_ask(name, dep, options).is_some() => {
+                let (sname, github, ask) = shelf_ask(name, dep, options).expect("checked");
+                &sname == locked
+                    && github == *locked_github
+                    && ask == *reference
+                    && !options.upgrade.iter().any(|n| n == name)
+                    // a bare name follows the shelf: a re-shelved one re-pins
+                    && (ask.is_some()
+                        || !options.repin_shelf
+                        || !shelf_moved(&sname, locked_rev.as_deref()))
             }
             (
                 Dependency::Git {
@@ -733,15 +967,17 @@ pub fn moved_shelf_pins(root: &Path) -> Vec<(String, Option<String>, Option<Stri
     lock.package
         .values()
         .filter_map(|locked| match &locked.source {
-            LockedSource::Shelf { shelf: name, rev }
-                if shelf.resolve(name).is_some() && shelf.rev_of(name) != rev.as_deref() =>
-            {
-                Some((
-                    name.clone(),
-                    rev.clone(),
-                    shelf.rev_of(name).map(str::to_string),
-                ))
-            }
+            // a bare name follows the shelf; one asked for a version keeps its copy
+            LockedSource::Shelf {
+                shelf: name,
+                rev,
+                reference: None,
+                ..
+            } if shelf.resolve(name).is_some() && shelf.rev_of(name) != rev.as_deref() => Some((
+                name.clone(),
+                rev.clone(),
+                shelf.rev_of(name).map(str::to_string),
+            )),
             _ => None,
         })
         .collect()
@@ -767,7 +1003,7 @@ pub fn lock_behind_shelf(root: &Path) -> Vec<String> {
                 Some(rev) if !shelf::Shelf::is_pin(&name, rev) => {
                     "; that is not a commit id".to_string()
                 }
-                Some(rev) if shelf::Shelf::pin_dir(&name, rev).is_dir() => {
+                Some(rev) if shelf.held_copy(&name, rev).is_some() => {
                     "; its snapshot is here and is what runs".to_string()
                 }
                 Some(_) if shelf.repo_of(&name).is_some_and(|r| r.exists()) => format!(
@@ -800,22 +1036,36 @@ fn locked_dir(
         LockedSource::Shelf {
             shelf: shelf_name,
             rev,
+            github,
+            ..
         } => {
-            let shelf =
+            let mut shelf =
                 shelf::Shelf::load().map_err(|e| PkgError::Resolve(format!("shelf: {}", e)))?;
             // A lock that pins a revision is a promise about what the name
             // means: that commit's snapshot is used, whatever commit the
             // shelf holds the name at now (`otc install` moves the lock to
-            // the shelf's pin). The shelf keeps its snapshots under
-            // `pins/`, and makes a missing one again from the library's
-            // repository when it knows it.
+            // the shelf's pin). The shelf keeps its copies, makes a
+            // missing folder snapshot again from its repository, and
+            // fetches a missing GitHub commit from the repository the lock
+            // names.
             if let Some(wanted) = rev {
-                return pinned_shelf_dir(&shelf, shelf_name, wanted);
+                if let Some(repo) = github
+                    && shelf::Shelf::is_pin(shelf_name, wanted)
+                    && shelf.held_copy(shelf_name, wanted).is_none()
+                    && !options.offline
+                {
+                    return github::copy_at(&mut shelf, shelf_name, repo, wanted, true)
+                        .map_err(|e| PkgError::Fetch(e.to_string()))?
+                        .ok_or_else(|| {
+                            PkgError::Fetch(format!("{repo} at {wanted} could not be fetched"))
+                        });
+                }
+                return pinned_shelf_dir(&mut shelf, shelf_name, wanted);
             }
-            shelf.resolve(shelf_name).cloned().ok_or_else(|| {
+            shelf.resolve(shelf_name).ok_or_else(|| {
                 PkgError::Resolve(format!(
                     "the lock names shelf library '{}', which is not on this machine's shelf \
-                     (register it: `otc lib add <path>`)",
+                     (put it there: `otc shelf add <path>`)",
                     shelf_name
                 ))
             })
@@ -886,22 +1136,27 @@ pub fn shelf_dependency_dir(root: &Path, name: &str, shelf_name: &str) -> Option
             LockedSource::Shelf {
                 shelf,
                 rev: Some(rev),
+                ..
             } if shelf == shelf_name => Some(rev.clone()),
             _ => None,
         })
     });
     match locked_rev {
-        Some(rev) => shelf.pinned_copy(shelf_name, &rev).ok().flatten(),
-        None => shelf.resolve(shelf_name).cloned(),
+        Some(rev) => shelf.held_copy(shelf_name, &rev),
+        None => shelf.resolve(shelf_name),
     }
 }
 
 /// The snapshot of shelf library `name` at commit `wanted`, which a lock
-/// pins: the shelf's pin when it is that commit, else `pins/<name>-<rev>`,
+/// pins: the shelf's pin when it is that commit, else the copy of that commit,
 /// else one made again from the library's repository. Neither there nor
 /// makeable is an error that names the library, both commits and the
 /// commands that settle it.
-fn pinned_shelf_dir(shelf: &shelf::Shelf, name: &str, wanted: &str) -> Result<PathBuf, PkgError> {
+fn pinned_shelf_dir(
+    shelf: &mut shelf::Shelf,
+    name: &str,
+    wanted: &str,
+) -> Result<PathBuf, PkgError> {
     if !shelf::Shelf::is_pin(name, wanted) {
         return Err(PkgError::Lock(format!(
             "the lock pins shelf library {:?} at {:?}, which is not a commit id \
@@ -911,7 +1166,7 @@ fn pinned_shelf_dir(shelf: &shelf::Shelf, name: &str, wanted: &str) -> Result<Pa
     }
     let short = |r: &str| r[..r.len().min(12)].to_string();
     let has = match shelf.rev_of(name) {
-        Some(have) => format!("the shelf has it at {}", short(have)),
+        Some(have) => format!("the shelf gives it at {}", short(have)),
         None if shelf.resolve(name).is_some() => {
             "the shelf has it following its directory".to_string()
         }
@@ -921,11 +1176,10 @@ fn pinned_shelf_dir(shelf: &shelf::Shelf, name: &str, wanted: &str) -> Result<Pa
         Ok(Some(dir)) => Ok(dir),
         Ok(None) => Err(PkgError::Resolve(format!(
             "the lock pins shelf library '{name}' at {wanted_s}, which this machine does not hold \
-             ({pin} is not there, and the shelf knows no repository to make it from); {has}. \
+             (no copy of that commit, and the shelf knows no repository to make it from); {has}. \
              Run `otc install` to move the lock to the shelf's pin, \
-             or shelve that commit: `otc lib add <path> --rev {wanted_s}`",
+             or shelve that commit: `otc shelf add <path> --rev {wanted_s}`",
             wanted_s = short(wanted),
-            pin = shelf::Shelf::pin_dir(name, wanted).display(),
         ))),
         Err(e) => Err(PkgError::Resolve(format!(
             "the lock pins shelf library '{name}' at {wanted_s}, which this machine does not hold, \

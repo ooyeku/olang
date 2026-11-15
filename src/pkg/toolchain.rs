@@ -16,9 +16,9 @@
 //! version) and keeps a lock's `olang` when the manifest names none; the
 //! newest installed toolchain satisfying it is the one chosen; an olang
 //! older than it warns as it runs the project. What is installed is
-//! `~/.olang/toolchains/<version>/bin/olang` (`otc update`, `otc
-//! toolchain install`; a local build registered with `otc toolchain link
-//! <version> <binary>`), and the olang running now. Nothing here downloads
+//! `~/.olang/toolchains/<version>/bin/olang` (`otc use`, `otc toolchain
+//! add`), and the olang running now. A linked local build (`otc toolchain
+//! link`, recorded in `toolchains.toml`) answers only a lock that names it. Nothing here downloads
 //! anything: a pin no installed olang satisfies is said, with the command
 //! that installs one.
 
@@ -35,10 +35,16 @@ pub fn lock_pin(root: &Path) -> Option<String> {
 }
 
 /// The oldest version a `[package] olang` value names: `"0.88"` is
-/// 0.88.0, `"1"` 1.0.0, `"0.88.2"` itself (a leading `v` ignored).
-/// `None` for anything that is not one to three numbers.
+/// 0.88.0, `"1"` 1.0.0, `"0.88.2"` itself, and a full version with a
+/// prerelease (`"1.0.0-rc.8"`) itself (a leading `v` ignored). `None` for
+/// anything else.
 pub fn minimum(req: &str) -> Option<semver::Version> {
     let req = req.trim().trim_start_matches('v');
+    if req.contains('-')
+        && let Ok(v) = semver::Version::parse(req)
+    {
+        return Some(v);
+    }
     let parts: Vec<&str> = req.split('.').collect();
     if parts.is_empty() || parts.len() > 3 {
         return None;
@@ -158,6 +164,18 @@ pub fn for_project(root: &Path) -> Resolved {
     let shown = req
         .clone()
         .unwrap_or_else(|| lock.clone().unwrap_or_default());
+    // a lock naming a linked local build (`otc use <name> --project
+    // --local`): that build, while it is linked and built
+    if let Some(l) = &lock
+        && let Some(linked) = Toolchains::load().linked.get(l.as_str())
+        && linked.olang().is_file()
+    {
+        return Resolved::Installed {
+            pin: shown,
+            version: l.clone(),
+            bin: linked.olang(),
+        };
+    }
     // the lock's exact version first, while the manifest still allows it
     if let Some(l) = &lock
         && req.as_deref().is_none_or(|r| satisfies(r, l))
@@ -189,6 +207,12 @@ pub fn for_project(root: &Path) -> Resolved {
 /// that does (a toolchain or the running one); without one, the lock's
 /// as it was (a lock's `olang` is never dropped).
 pub fn lock_entry(manifest_pin: Option<&str>, previous: Option<&str>) -> Option<String> {
+    // a linked build's name stays while it is linked: it was asked for
+    if let Some(p) = previous
+        && Toolchains::load().linked.contains_key(p)
+    {
+        return Some(p.to_string());
+    }
     let Some(req) = manifest_pin else {
         return previous.map(|s| s.to_string());
     };
@@ -206,7 +230,82 @@ pub fn lock_entry(manifest_pin: Option<&str>, previous: Option<&str>) -> Option<
 /// The command that installs a toolchain for `pin` (said, never run).
 pub fn install_hint(pin: &str) -> String {
     let v = pin.trim().trim_start_matches(['=', '^', '~', '>', 'v']);
-    format!("otc toolchain install {}", v)
+    format!("otc toolchain add {}", v)
+}
+
+/// `~/.olang/toolchains.toml`: the default toolchain (what the shims
+/// point at), the one before it (`otc use -`), and linked local builds.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Toolchains {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous: Option<String>,
+    /// Local builds by name: each a checkout whose
+    /// `target/release/olang` is the toolchain, read where it is.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub linked: std::collections::BTreeMap<String, Linked>,
+}
+
+/// A linked local build.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Linked {
+    /// The checkout (its root, holding `Cargo.toml` and `target/`).
+    pub checkout: PathBuf,
+}
+
+impl Linked {
+    /// The build's olang: always the checkout's current release build.
+    pub fn olang(&self) -> PathBuf {
+        self.checkout
+            .join("target")
+            .join("release")
+            .join(exe("olang"))
+    }
+    /// The build's otc, when the checkout has built it.
+    pub fn otc(&self) -> PathBuf {
+        self.checkout
+            .join("target")
+            .join("release")
+            .join(exe("otc"))
+    }
+}
+
+fn exe(name: &str) -> String {
+    if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    }
+}
+
+impl Toolchains {
+    pub fn file() -> Option<PathBuf> {
+        crate::home::toolchains_manifest()
+    }
+
+    /// The record; a missing or unreadable one is empty.
+    pub fn load() -> Toolchains {
+        Self::file()
+            .and_then(|f| std::fs::read_to_string(f).ok())
+            .and_then(|t| toml::from_str(&t).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn save(&self) -> std::io::Result<()> {
+        let Some(f) = Self::file() else {
+            return Err(std::io::Error::other(
+                "no home directory could be determined",
+            ));
+        };
+        if let Some(parent) = f.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let text = toml::to_string_pretty(self).map_err(std::io::Error::other)?;
+        let staged = f.with_extension("toml.new");
+        std::fs::write(&staged, text)?;
+        std::fs::rename(&staged, &f)
+    }
 }
 
 #[cfg(test)]

@@ -55,6 +55,7 @@ pub fn execute(name: String, lib: bool, web: bool, web_bare: bool, verbose: bool
                 dep.to_string(),
                 Dependency::Shelf {
                     shelf: dep.to_string(),
+                    version: None,
                 },
             );
         }

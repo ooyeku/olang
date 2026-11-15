@@ -159,17 +159,36 @@ pub enum Dependency {
         #[serde(default)]
         branch: Option<String>,
     },
+    /// `dep = { shelf = "my-lib" }` — a library on the user's shelf
+    /// (`otc shelf add`), with `version = "1.2"` to ask for a version of
+    /// it. The manifest records only the name, which keeps it free of
+    /// machine-specific paths; the shelf supplies the directory at install
+    /// time and the lockfile pins what resolved.
+    Shelf {
+        shelf: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        version: Option<String>,
+    },
+    /// `dep = { github = "owner/repo", version/tag/branch/rev = "..." }` —
+    /// a library from GitHub, held on the shelf (fetched with the person's
+    /// own git when the shelf does not hold what is asked).
+    GitHub {
+        github: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        version: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tag: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        branch: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rev: Option<String>,
+    },
     /// `dep = { version = "1.2", registry = "..." }` — explicit registry form.
     RegistryExplicit {
         version: String,
         #[serde(default)]
         registry: Option<String>,
     },
-    /// `dep = { shelf = "my-lib" }` — a library registered on the user's
-    /// local shelf (`otc lib add`). The manifest records only the name,
-    /// which keeps it free of machine-specific paths; the shelf supplies
-    /// the directory at install time and the lockfile pins what resolved.
-    Shelf { shelf: String },
 }
 
 impl Dependency {
@@ -362,6 +381,17 @@ impl Manifest {
         })
     }
 
+    /// Set `[package] <key> = "<value>"` in `dir/olang.toml`, in place.
+    pub fn set_package_key(dir: &Path, key: &str, value: &str) -> Result<(), ManifestError> {
+        Self::edit(dir, |doc| {
+            let Some(pkg) = doc.get_mut("package").and_then(|p| p.as_table_like_mut()) else {
+                return Err("olang.toml has no [package] table".to_string());
+            };
+            pkg.insert(key, toml_edit::value(value));
+            Ok(())
+        })
+    }
+
     fn edit(
         dir: &Path,
         change: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<(), String>,
@@ -464,11 +494,13 @@ impl Manifest {
                 } else if t.contains_key("git") {
                     &["git", "tag", "rev", "branch"]
                 } else if t.contains_key("shelf") {
-                    &["shelf"]
+                    &["shelf", "version"]
+                } else if t.contains_key("github") {
+                    &["github", "version", "tag", "branch", "rev"]
                 } else if t.contains_key("version") {
                     &["version", "registry"]
                 } else {
-                    &["path", "git", "shelf", "version"]
+                    &["path", "git", "shelf", "github", "version"]
                 };
                 unknown(&format!("dependency `{name}`"), t, known, &mut out);
             }

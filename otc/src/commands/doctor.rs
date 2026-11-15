@@ -11,12 +11,332 @@
 //! visible, and removing them is left to their own package managers.
 
 use anyhow::Result;
+use olang::pkg::shelf::{Shelf, ShelfCopy};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// The shelf's copies and local folders, checked: each copy's folder is
+/// there and still its checksum; each local folder is there; nothing is
+/// under the shelf's home that no copy records. `--fix` removes the
+/// orphans. Returns (problems, fixed).
+fn check_shelf(shelf: &Shelf, fix: bool) -> (usize, usize) {
+    let (mut problems, mut fixed) = (0, 0);
+    let mut copies = 0;
+    for (name, lib) in &shelf.libraries {
+        if let Some(l) = &lib.local
+            && !l.exists()
+        {
+            println!(
+                "✗ shelf library '{name}' has a local folder that is gone: {} (`otc shelf add <its new place>` re-registers it, `otc shelf remove {name}@local` forgets it)",
+                l.display()
+            );
+            problems += 1;
+        }
+        for c in &lib.copies {
+            copies += 1;
+            let dir = c.path();
+            if !dir.is_dir() {
+                println!(
+                    "✗ shelf copy {name} {} is recorded but its folder is gone: {} (`otc shelf remove {name}@{}` forgets it)",
+                    c.version,
+                    dir.display(),
+                    c.short_commit().unwrap_or_else(|| c.version.clone())
+                );
+                problems += 1;
+                continue;
+            }
+            if let Some(want) = &c.checksum
+                && olang::pkg::cache::checksum_dir(&dir).ok().as_ref() != Some(want)
+            {
+                println!(
+                    "✗ shelf copy {name} {} was changed since it was fetched ({}): remove it and fetch it again",
+                    c.version,
+                    dir.display()
+                );
+                problems += 1;
+            }
+        }
+    }
+    // folders under the shelf's home no copy records
+    let recorded: Vec<PathBuf> = shelf
+        .libraries
+        .values()
+        .flat_map(|l| l.copies.iter().map(ShelfCopy::path))
+        .collect();
+    let home = Shelf::home();
+    if let Ok(names) = std::fs::read_dir(&home) {
+        for n in names.flatten() {
+            let np = n.path();
+            let leaves: Vec<PathBuf> = if n.file_name().to_string_lossy().starts_with('.') {
+                vec![np.clone()]
+            } else if np.is_dir() {
+                std::fs::read_dir(&np)
+                    .map(|r| r.flatten().map(|e| e.path()).collect())
+                    .unwrap_or_default()
+            } else {
+                vec![np.clone()]
+            };
+            for leaf in leaves {
+                if recorded.iter().any(|r| r == &leaf) {
+                    continue;
+                }
+                if fix {
+                    olang::pkg::shelf::remove_tree(&leaf);
+                    let _ = std::fs::remove_file(&leaf);
+                    println!(
+                        "✓ removed {} (on the shelf's disk, recorded nowhere)",
+                        leaf.display()
+                    );
+                    fixed += 1;
+                } else {
+                    println!(
+                        "✗ {} is on the shelf's disk but recorded nowhere — --fix removes it",
+                        leaf.display()
+                    );
+                    problems += 1;
+                }
+            }
+            if np.is_dir() && std::fs::read_dir(&np).is_ok_and(|mut r| r.next().is_none()) {
+                let _ = std::fs::remove_dir(&np);
+            }
+        }
+    }
+    if problems == 0 {
+        println!(
+            "✓ shelf: {} librar{}, {copies} cop{}, every folder there and as fetched",
+            shelf.libraries.len(),
+            if shelf.libraries.len() == 1 {
+                "y"
+            } else {
+                "ies"
+            },
+            if copies == 1 { "y" } else { "ies" }
+        );
+    }
+    (problems, fixed)
+}
+
+/// Move a shelf in the old layout (format 1: `revs`/`repos` tables,
+/// snapshots under `shelf/pins/<name>-<sha>`, starters materialized at
+/// `shelf/<name>/`) to this olang's (copies at `shelf/<name>/<version>/`).
+/// Returns the libraries moved.
+pub(crate) fn migrate_shelf() -> Result<usize> {
+    use olang::pkg::shelf::folder_version;
+    let file = Shelf::file();
+    let text = std::fs::read_to_string(&file).unwrap_or_default();
+    let table: toml::Table = toml::from_str(&text).unwrap_or_default();
+    let get_map = |key: &str| -> Vec<(String, String)> {
+        table
+            .get(key)
+            .and_then(|v| v.as_table())
+            .map(|t| {
+                t.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let libraries = get_map("libraries");
+    let revs: std::collections::BTreeMap<String, String> = get_map("revs").into_iter().collect();
+    let repos: std::collections::BTreeMap<String, String> = get_map("repos").into_iter().collect();
+    // a v2 shelf with folders under the shelf's home (old starters) keeps its copies
+    let mut shelf = Shelf::load().unwrap_or_default();
+    let home = Shelf::home();
+    // everything old under the home moves aside first: copies are made
+    // from there into the new places, which may be inside the old ones
+    let aside = home.with_file_name(".shelf-migrating");
+    olang::pkg::shelf::remove_tree(&aside);
+    if home.is_dir() {
+        std::fs::rename(&home, &aside)?;
+    }
+    let moved_path = |p: &Path| -> PathBuf {
+        match p.strip_prefix(&home) {
+            Ok(rest) => aside.join(rest),
+            Err(_) => p.to_path_buf(),
+        }
+    };
+    // the v2 copies already recorded move back as they were
+    for lib in shelf.libraries.values_mut() {
+        for c in &mut lib.copies {
+            let from = aside.join(&c.dir);
+            let to = c.path();
+            if from.is_dir() {
+                if let Some(parent) = to.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::rename(&from, &to)?;
+            }
+        }
+    }
+    let mut moved = 0;
+    let mut old: Vec<(String, PathBuf)> = libraries
+        .iter()
+        .map(|(n, p)| (n.clone(), PathBuf::from(p)))
+        .collect();
+    // v2 local folders that live under the old home are starters too
+    for (name, lib) in shelf.libraries.iter_mut() {
+        if let Some(l) = lib.local.clone()
+            && l.starts_with(&home)
+        {
+            lib.local = None;
+            old.push((name.clone(), l));
+        }
+    }
+    for (name, path) in old {
+        let src = moved_path(&path);
+        let rev = revs.get(&name).cloned();
+        if !path.starts_with(&home) {
+            // a local folder: referenced, as before
+            let lib = shelf
+                .libraries
+                .entry(name.clone())
+                .or_default();
+            lib.local = Some(path.clone());
+            moved += 1;
+            continue;
+        }
+        if !src.is_dir() {
+            continue;
+        }
+        let copy = ShelfCopy {
+            version: folder_version(&src).unwrap_or_else(|| "0.0.0".to_string()),
+            source: if rev.is_some() {
+                "folder".to_string()
+            } else if olang::pkg::starter::get(&name).is_some() {
+                "starter".to_string()
+            } else {
+                "folder".to_string()
+            },
+            from: repos.get(&name).cloned(),
+            reference: rev.clone(),
+            commit: rev.clone(),
+            checksum: None,
+            dir: String::new(),
+            fetched: None,
+        };
+        let made = shelf.add_copy(&name, &src, copy)?;
+        if rev.is_some() {
+            shelf.libraries.get_mut(&name).expect("added").default = made.short_commit();
+        }
+        moved += 1;
+    }
+    // every other old snapshot, which a project's lock may still pin
+    if let Ok(pins) = std::fs::read_dir(aside.join("pins")) {
+        for e in pins.flatten() {
+            let leaf = e.file_name().to_string_lossy().into_owned();
+            let Some((name, short)) = leaf.rsplit_once('-') else {
+                continue;
+            };
+            if leaf.starts_with('.') || !short.bytes().all(|b| b.is_ascii_hexdigit()) {
+                continue;
+            }
+            if shelf
+                .library(name)
+                .and_then(|l| l.by_commit(short))
+                .is_some()
+            {
+                continue;
+            }
+            let copy = ShelfCopy {
+                version: folder_version(&e.path()).unwrap_or_else(|| "0.0.0".to_string()),
+                source: "folder".to_string(),
+                from: repos.get(name).cloned(),
+                reference: Some(short.to_string()),
+                commit: Some(short.to_string()),
+                checksum: None,
+                dir: String::new(),
+                fetched: None,
+            };
+            shelf.add_copy(name, &e.path(), copy)?;
+        }
+    }
+    shelf.save()?;
+    olang::pkg::shelf::remove_tree(&aside);
+    Ok(moved)
+}
+
+/// Toolchain folders that are old-style links (`toolchains/<version>/bin/
+/// olang` a symlink into a checkout) become linked builds named by their
+/// branch; the default is recorded in toolchains.toml. Returns (problems,
+/// fixed).
+fn migrate_toolchains(fix: bool) -> Result<(usize, usize)> {
+    use olang::pkg::toolchain::{Linked, Toolchains};
+    let (mut problems, mut fixed) = (0, 0);
+    let Some(dir) = olang::home::toolchains() else {
+        return Ok((0, 0));
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Ok((0, 0));
+    };
+    let mut tc = Toolchains::load();
+    let shim = olang::home::bin().map(|b| b.join("olang"));
+    let shim_target = shim.as_ref().and_then(|s| std::fs::read_link(s).ok());
+    for e in entries.flatten() {
+        let bin = e.path().join("bin").join("olang");
+        let Ok(target) = std::fs::read_link(&bin) else {
+            continue;
+        };
+        let Some(checkout) = target
+            .ancestors()
+            .find(|a| a.join("Cargo.toml").is_file())
+            .map(Path::to_path_buf)
+        else {
+            continue;
+        };
+        let folder = e.file_name().to_string_lossy().into_owned();
+        let branch = Command::new("git")
+            .arg("-C")
+            .arg(&checkout)
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|b| !b.is_empty() && b != "HEAD")
+            .unwrap_or_else(|| format!("local-{folder}"));
+        if !fix {
+            println!(
+                "✗ toolchain folder {folder} is an old-style link to {} — --fix makes it the linked build '{branch}'",
+                checkout.display()
+            );
+            problems += 1;
+            continue;
+        }
+        let linked = Linked {
+            checkout: checkout.clone(),
+        };
+        if shim_target.as_ref() == Some(&bin)
+            && let Some(shim) = &shim
+        {
+            let staged = shim.with_file_name(".olang.new");
+            let _ = std::fs::remove_file(&staged);
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(linked.olang(), &staged)?;
+            std::fs::rename(&staged, shim)?;
+            tc.default = Some(branch.clone());
+        }
+        tc.linked.insert(branch.clone(), linked);
+        std::fs::remove_dir_all(e.path())?;
+        println!(
+            "✓ toolchain folder {folder} is now the linked build '{branch}' ({})",
+            checkout.display()
+        );
+        fixed += 1;
+    }
+    if fix && tc.default.is_none() {
+        tc.default = super::update::default_toolchain().ok().flatten();
+    }
+    if fix {
+        tc.save()?;
+    }
+    Ok((problems, fixed))
+}
+
 pub fn run(fix: bool) -> Result<()> {
     let Some(home) = olang::home::root() else {
-        anyhow::bail!("no home directory could be determined");
+        return Err(super::fail(
+            "no home directory could be determined",
+            "export OLANG_HOME=<a folder> (or set HOME)",
+        ));
     };
     let mut problems = 0usize;
     let mut fixed = 0usize;
@@ -158,29 +478,32 @@ pub fn run(fix: bool) -> Result<()> {
         }
     }
 
+    // ── the old layout, moved by --fix ──────────────────────────────
+    let (p, f) = migrate_toolchains(fix)?;
+    problems += p;
+    fixed += f;
+    if olang::pkg::shelf::Shelf::old_layout() {
+        if fix {
+            let moved = migrate_shelf()?;
+            println!(
+                "✓ moved the shelf to this olang's layout ({moved} librar{})",
+                if moved == 1 { "y" } else { "ies" }
+            );
+            fixed += 1;
+        } else {
+            println!(
+                "✗ the shelf is in the old layout (pins under shelf/pins/, starters in shelf/<name>/) — --fix moves it to shelf/<name>/<version>/"
+            );
+            problems += 1;
+        }
+    }
+
     // ── shelf integrity ─────────────────────────────────────────────
     match olang::pkg::shelf::Shelf::load() {
         Ok(shelf) => {
-            let mut broken = 0;
-            for (name, path) in &shelf.libraries {
-                if !path.exists() {
-                    println!(
-                        "✗ shelf entry '{}' points at a missing path: {}",
-                        name,
-                        path.display()
-                    );
-                    broken += 1;
-                }
-            }
-            if broken == 0 {
-                println!(
-                    "✓ shelf: {} entries, all paths resolve",
-                    shelf.libraries.len()
-                );
-            } else {
-                problems += broken;
-                println!("    (otc lib remove <name> drops a dead entry)");
-            }
+            let (p, f) = check_shelf(&shelf, fix);
+            problems += p;
+            fixed += f;
         }
         Err(e) => {
             println!("✗ shelf manifest unreadable: {}", e);

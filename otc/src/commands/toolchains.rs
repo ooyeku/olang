@@ -1,10 +1,11 @@
 //! `otc toolchain list` (and a bare `otc toolchain`): every olang this
-//! machine has, which one runs and why (OL-577).
+//! machine has, which one runs and why (OL-577), and with `--available`
+//! every release on GitHub beside them (OL-578).
 //!
-//! An olang is found three ways: a managed toolchain or a linked local
-//! build under `~/.olang/toolchains`, the shims in `~/.olang/bin` (the
-//! default), and every `olang` on PATH (cargo, Homebrew, a checkout's
-//! build, anything else). Each binary is one row however many ways reach
+//! An olang is found four ways: a managed release under
+//! `~/.olang/toolchains`, a linked local build (`toolchains.toml`), the
+//! shims in `~/.olang/bin` (the default), and every `olang` on PATH
+//! (cargo, Homebrew, a checkout's build, anything else). Each binary is one row however many ways reach
 //! it, and its version is the binary's own answer to `--version`, never a
 //! folder's name. The **active** olang is the first on PATH, the one a
 //! bare `olang` runs; the **default** is the shims'. When they differ,
@@ -12,25 +13,153 @@
 //! project, one more says what its pin resolves to.
 
 use super::doctor::path_dirs;
+use super::{ctx, emit};
 use anyhow::{Context, Result};
+use olang::pkg::toolchain::{Linked, Toolchains};
 use std::path::{Path, PathBuf};
 
 /// One olang binary on this machine.
-struct Row {
+pub(crate) struct Row {
     /// What the binary says it is (`olang --version`), `None` when it
     /// does not answer.
-    version: Option<String>,
+    pub(crate) version: Option<String>,
     /// `managed`, `linked`, `shims`, `cargo`, `homebrew`, `checkout`, `path`.
-    kind: &'static str,
+    pub(crate) kind: &'static str,
     /// Where it was found (a toolchain's `bin/olang`, a PATH entry's).
-    path: PathBuf,
+    pub(crate) path: PathBuf,
     /// The file itself, every link followed: one row per binary.
-    real: PathBuf,
+    pub(crate) real: PathBuf,
     /// The toolchain folder's name, for a managed or linked one.
-    folder: Option<String>,
-    active: bool,
-    default: bool,
-    on_path: bool,
+    pub(crate) folder: Option<String>,
+    pub(crate) active: bool,
+    pub(crate) default: bool,
+    pub(crate) on_path: bool,
+    /// For a linked build: its checkout's state.
+    pub(crate) linked: Option<LinkedInfo>,
+}
+
+/// What a linked build's checkout says of itself.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct LinkedInfo {
+    pub(crate) checkout: PathBuf,
+    pub(crate) branch: Option<String>,
+    pub(crate) commit: Option<String>,
+    /// The last release tag reachable, and the commits since it.
+    pub(crate) last_tag: Option<String>,
+    pub(crate) ahead: Option<u64>,
+    /// The build's own version (`olang --version`).
+    pub(crate) version: Option<String>,
+    /// Why the build is not there, or is behind its source.
+    pub(crate) missing: Option<String>,
+    pub(crate) stale: Option<String>,
+}
+
+impl LinkedInfo {
+    /// `1.0.0-rc.8+39e27324 (main, 41 commits past v1.0.0-rc.8)`.
+    pub(crate) fn describe(&self) -> String {
+        if let Some(m) = &self.missing {
+            return format!("missing: {m}");
+        }
+        let mut v = self.version.clone().unwrap_or_else(|| "?".to_string());
+        if let Some(c) = &self.commit {
+            v = format!("{v}+{}", &c[..c.len().min(8)]);
+        }
+        let mut about = Vec::new();
+        if let Some(b) = &self.branch {
+            about.push(b.clone());
+        }
+        match (&self.last_tag, self.ahead) {
+            (Some(t), Some(0)) => about.push(format!("at {t}")),
+            (Some(t), Some(n)) => about.push(format!(
+                "{n} commit{} past {t}",
+                if n == 1 { "" } else { "s" }
+            )),
+            _ => {}
+        }
+        if about.is_empty() {
+            v
+        } else {
+            format!("{v} ({})", about.join(", "))
+        }
+    }
+}
+
+fn git_in(dir: &Path, args: &[&str]) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success() && !text.is_empty()).then_some(text)
+}
+
+/// A linked build's state: its branch, commit, distance from the last
+/// release, its build's version, and whether the build is missing or
+/// older than the last commit.
+pub(crate) fn linked_info(l: &Linked) -> LinkedInfo {
+    let mut info = LinkedInfo {
+        checkout: l.checkout.clone(),
+        ..Default::default()
+    };
+    if !l.checkout.is_dir() {
+        info.missing = Some(format!(
+            "{} is gone (`otc toolchain link <its new place>` relinks it, `otc toolchain unlink <name>` forgets it)",
+            l.checkout.display()
+        ));
+        return info;
+    }
+    info.branch =
+        git_in(&l.checkout, &["rev-parse", "--abbrev-ref", "HEAD"]).filter(|b| b != "HEAD");
+    info.commit = git_in(&l.checkout, &["rev-parse", "HEAD"]);
+    info.last_tag = git_in(
+        &l.checkout,
+        &["describe", "--tags", "--abbrev=0", "--match", "v*"],
+    );
+    if let Some(t) = &info.last_tag {
+        info.ahead = git_in(&l.checkout, &["rev-list", "--count", &format!("{t}..HEAD")])
+            .and_then(|n| n.parse().ok());
+    }
+    let bin = l.olang();
+    if !bin.is_file() {
+        info.missing = Some(format!(
+            "{} has no build at {} (`cargo build --release` in the checkout)",
+            l.checkout.display(),
+            bin.display()
+        ));
+        return info;
+    }
+    info.version = version_of(&bin);
+    let built = std::fs::metadata(&bin)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs());
+    let committed =
+        git_in(&l.checkout, &["log", "-1", "--format=%ct"]).and_then(|t| t.parse::<u64>().ok());
+    if let (Some(b), Some(c)) = (built, committed)
+        && b + 60 < c
+    {
+        let behind = c - b;
+        let span = if behind >= 86_400 {
+            format!(
+                "{} day{}",
+                behind / 86_400,
+                if behind / 86_400 == 1 { "" } else { "s" }
+            )
+        } else if behind >= 3600 {
+            format!("{} h", behind / 3600)
+        } else {
+            format!("{} min", behind / 60)
+        };
+        info.stale = Some(format!(
+            "built {span} before the last commit: `cargo build --release` in {}",
+            l.checkout.display()
+        ));
+    }
+    info
 }
 
 /// A binary's version: the second word of `olang --version`, given five
@@ -87,7 +216,7 @@ fn olang_name() -> &'static str {
 
 /// Every olang found: PATH order first (so the active one leads), then
 /// the shims, then the toolchains newest first.
-fn rows(home_bin: &Path, toolchains: &Path) -> Vec<Row> {
+pub(crate) fn rows(home_bin: &Path, toolchains: &Path) -> Vec<Row> {
     let mut rows: Vec<Row> = Vec::new();
     let mut add = |path: PathBuf, kind: &'static str, folder: Option<String>, on_path: bool| {
         let real = path.canonicalize().unwrap_or_else(|_| path.clone());
@@ -102,7 +231,11 @@ fn rows(home_bin: &Path, toolchains: &Path) -> Vec<Row> {
             return;
         }
         rows.push(Row {
-            version: version_of(&real),
+            version: if real.is_file() {
+                version_of(&real)
+            } else {
+                None
+            },
             kind,
             path,
             real,
@@ -110,6 +243,7 @@ fn rows(home_bin: &Path, toolchains: &Path) -> Vec<Row> {
             active: false,
             default: false,
             on_path,
+            linked: None,
         });
     };
     let mut first = true;
@@ -146,15 +280,24 @@ fn rows(home_bin: &Path, toolchains: &Path) -> Vec<Row> {
             false,
         );
     }
+    for (name, l) in &Toolchains::load().linked {
+        add(l.olang(), "linked", Some(name.clone()), false);
+    }
     for r in &mut rows {
         r.active = active_real.as_ref() == Some(&r.real);
         r.default = default_real.as_ref() == Some(&r.real);
+        if r.kind == "linked"
+            && let Some(name) = &r.folder
+            && let Some(l) = Toolchains::load().linked.get(name)
+        {
+            r.linked = Some(linked_info(l));
+        }
     }
     rows
 }
 
 /// The line that says the active olang shadows the default, and the fix.
-fn shadow_note(rows: &[Row], home_bin: &Path) -> Option<(String, String)> {
+pub(crate) fn shadow_note(rows: &[Row], home_bin: &Path) -> Option<(String, String)> {
     let default = rows.iter().find(|r| r.default)?;
     let fix = format!("export PATH=\"{}:$PATH\"", home_bin.display());
     let shown = |r: &Row| r.version.clone().unwrap_or_else(|| "?".to_string());
@@ -189,7 +332,7 @@ fn shadow_note(rows: &[Row], home_bin: &Path) -> Option<(String, String)> {
 }
 
 /// What the project here pins, and the olang that answers it.
-fn project_note() -> Option<serde_json::Value> {
+pub(crate) fn project_note() -> Option<serde_json::Value> {
     let cwd = std::env::current_dir().ok()?;
     let root = olang::pkg::manifest::Manifest::find_root(&cwd)?;
     use olang::pkg::toolchain::{Resolved, for_project, install_hint};
@@ -213,37 +356,83 @@ fn project_note() -> Option<serde_json::Value> {
     }))
 }
 
-pub fn list(json: bool, default_folder: Option<String>) -> Result<()> {
+fn row_json(r: &Row) -> serde_json::Value {
+    serde_json::json!({
+        "version": r.version, "olang": r.path.display().to_string(),
+        "real": r.real.display().to_string(), "kind": r.kind, "folder": r.folder,
+        "active": r.active, "default": r.default, "on_path": r.on_path,
+        "linked": r.linked.as_ref().map(|l| serde_json::json!({
+            "checkout": l.checkout.display().to_string(), "branch": l.branch, "commit": l.commit,
+            "last_tag": l.last_tag, "ahead": l.ahead, "missing": l.missing, "stale": l.stale,
+            "describe": l.describe(),
+        })),
+    })
+}
+
+/// `otc toolchain list [--available [--stable] [--offline]]`.
+pub fn list(available: bool, stable: bool, offline: bool) -> Result<()> {
     let home_bin = olang::home::bin().context("no home directory could be determined")?;
     let toolchains = olang::home::toolchains().context("no home directory could be determined")?;
     let rows = rows(&home_bin, &toolchains);
     let shadow = shadow_note(&rows, &home_bin);
     let project = project_note();
-    if json {
-        // `#{ format: 1, kind: "toolchains", dir, default, active, shadowed,
-        // fix, project, toolchains }`, each row `#{ version, olang, kind,
-        // folder, active, default, on_path }`
-        let row_json = |r: &Row| {
-            serde_json::json!({
-                "version": r.version, "olang": r.path.display().to_string(),
-                "real": r.real.display().to_string(), "kind": r.kind, "folder": r.folder,
-                "active": r.active, "default": r.default, "on_path": r.on_path,
-            })
+    let default_name = super::update::default_toolchain()?;
+    let listing = if available {
+        let how = if offline {
+            super::releases::Fetch::Offline
+        } else {
+            super::releases::Fetch::Cached
         };
-        println!(
-            "{}",
-            serde_json::json!({
-                "format": 1,
-                "kind": "toolchains",
-                "dir": toolchains.display().to_string(),
-                "default": default_folder,
-                "active": rows.iter().find(|r| r.active).map(row_json),
-                "shadowed": shadow.as_ref().map(|(s, _)| s),
-                "fix": shadow.as_ref().map(|(_, f)| f),
-                "project": project,
-                "toolchains": rows.iter().map(row_json).collect::<Vec<_>>(),
-            })
-        );
+        Some(super::releases::list(how)?)
+    } else {
+        None
+    };
+    let active_version = rows
+        .iter()
+        .find(|r| r.active)
+        .and_then(|r| r.version.clone());
+    let installed: Vec<String> = olang::pkg::toolchain::installed()
+        .into_iter()
+        .map(|(v, _)| v)
+        .collect();
+    let releases: Vec<serde_json::Value> = listing
+        .as_ref()
+        .map(|l| {
+            l.releases
+                .iter()
+                .filter(|r| !stable || !r.prerelease)
+                .map(|r| {
+                    let newer = active_version.as_deref().is_some_and(|a| {
+                        super::releases::version_cmp(&r.version, a) == std::cmp::Ordering::Greater
+                    });
+                    serde_json::json!({
+                        "version": r.version, "date": r.date, "prerelease": r.prerelease,
+                        "installed": installed.contains(&r.version),
+                        "default": default_name.as_deref() == Some(r.version.as_str()),
+                        "active": active_version.as_deref() == Some(r.version.as_str()),
+                        "newer": newer,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if ctx().json {
+        // `#{ format: 1, kind: "toolchains", dir, default, active, shadowed,
+        // fix, project, toolchains, available, available_age_s, available_note }`
+        emit(serde_json::json!({
+            "format": 1,
+            "kind": "toolchains",
+            "dir": toolchains.display().to_string(),
+            "default": default_name,
+            "active": rows.iter().find(|r| r.active).map(row_json),
+            "shadowed": shadow.as_ref().map(|(s, _)| s),
+            "fix": shadow.as_ref().map(|(_, f)| f),
+            "project": project,
+            "toolchains": rows.iter().map(row_json).collect::<Vec<_>>(),
+            "available": listing.as_ref().map(|_| releases.clone()),
+            "available_age_s": listing.as_ref().map(|l| l.age_s),
+            "available_note": listing.as_ref().and_then(|l| l.note.clone()),
+        }));
         return Ok(());
     }
     if rows.is_empty() {
@@ -251,14 +440,16 @@ pub fn list(json: bool, default_folder: Option<String>) -> Result<()> {
             "no olang found: none on PATH, none under {}",
             toolchains.display()
         );
-        println!("(`otc update` installs the latest release)");
-        return Ok(());
+        println!("next: otc use latest (installs the newest release)");
     }
     let width = rows
         .iter()
         .map(|r| r.version.as_deref().unwrap_or("?").len())
         .max()
         .unwrap_or(1);
+    if !rows.is_empty() && listing.is_some() {
+        println!("on this machine:");
+    }
     for r in &rows {
         let mut marks = Vec::new();
         if r.active {
@@ -267,9 +458,10 @@ pub fn list(json: bool, default_folder: Option<String>) -> Result<()> {
         if r.default {
             marks.push("default");
         }
-        let folder = match (&r.folder, &r.version) {
-            (Some(f), Some(v)) if f != v => format!(" (folder {f})"),
-            (Some(f), None) => format!(" (folder {f})"),
+        let folder = match (&r.folder, &r.version, r.kind) {
+            (Some(f), _, "linked") => format!(" ({f})"),
+            (Some(f), Some(v), _) if f != v => format!(" (folder {f})"),
+            (Some(f), None, _) => format!(" (folder {f})"),
             _ => String::new(),
         };
         println!(
@@ -281,6 +473,12 @@ pub fn list(json: bool, default_folder: Option<String>) -> Result<()> {
             r.path.display(),
             folder,
         );
+        if let Some(l) = &r.linked {
+            println!("      {}", l.describe());
+            if let Some(stale) = &l.stale {
+                println!("      {stale}");
+            }
+        }
     }
     if let Some((why, fix)) = &shadow {
         println!("{why}: {fix}");
@@ -305,6 +503,44 @@ pub fn list(json: bool, default_folder: Option<String>) -> Result<()> {
             ),
             _ => {}
         }
+    }
+    if let Some(l) = &listing {
+        let when = if l.cached {
+            format!(", as fetched {}", super::releases::age(l.age_s))
+        } else {
+            String::new()
+        };
+        println!();
+        println!("released ({} on GitHub{when}):", releases.len());
+        if let Some(note) = &l.note {
+            println!("  ({note})");
+        }
+        for r in &releases {
+            let mut marks = Vec::new();
+            if r["active"].as_bool() == Some(true) {
+                marks.push("active");
+            }
+            if r["default"].as_bool() == Some(true) {
+                marks.push("default");
+            }
+            if r["installed"].as_bool() == Some(true) {
+                marks.push("installed");
+            } else if r["newer"].as_bool() == Some(true) {
+                marks.push("newer");
+            }
+            println!(
+                "  {:<14} {:<10}  {:<10}  {}",
+                r["version"].as_str().unwrap_or(""),
+                r["date"].as_str().unwrap_or(""),
+                if r["prerelease"].as_bool() == Some(true) {
+                    "prerelease"
+                } else {
+                    "stable"
+                },
+                marks.join(", ")
+            );
+        }
+        println!("`otc use <version>` installs one and switches to it");
     }
     Ok(())
 }

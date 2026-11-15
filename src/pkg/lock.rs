@@ -75,13 +75,24 @@ pub enum LockedSource {
     /// shelf instead of a path that only existed here.
     Shelf {
         shelf: String,
-        /// The commit the library was shelved at (`otc lib add <path>
+        /// The commit the library was shelved at (`otc shelf add <path>
         /// --rev <sha>`), when it was: an install on another machine then
         /// requires that machine's shelf to hold the same revision, so two
         /// checkouts resolve one SDK. Absent for a library that follows
         /// its directory.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rev: Option<String>,
+        /// The GitHub repository (`owner/repo`) the copy came from, when it
+        /// did: another machine whose shelf does not hold the commit
+        /// fetches it from there.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        github: Option<String>,
+        /// What the manifest asked for when this was resolved
+        /// (`version 1.2`, `tag v1.2.0`, `branch main`, `rev 9b03e7d`), or
+        /// nothing for a bare name: an install whose manifest asks for
+        /// something else re-resolves.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reference: Option<String>,
     },
 }
 
@@ -185,6 +196,8 @@ mod tests {
                 source: LockedSource::Shelf {
                     shelf: "web".to_string(),
                     rev: None,
+                    github: None,
+                    reference: None,
                 },
                 checksum: None,
                 dependencies: vec![],

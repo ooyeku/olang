@@ -7,11 +7,12 @@
 //! ```text
 //! ~/.olang/
 //!   bin/          shims pointing at the default toolchain
-//!   toolchains/   <version>/bin/{olang, otc} — managed by `otc update`
-//!   shelf/        registered library copies
-//!   shelf.toml    the shelf manifest
-//!   cache/        git/, git-db/ — dependency clones (prunable)
-//!   state/        warm/, history — regenerable runtime state
+//!   toolchains/      <version>/bin/{olang, otc} — managed releases
+//!   toolchains.toml  the default, the one before, linked local builds
+//!   shelf/           <name>/<version>/ — the shelf's copies of libraries
+//!   shelf.toml       the shelf's index
+//!   cache/           git/, git-db/, releases.json — prunable
+//!   state/           warm/, history, projects.json — regenerable
 //! ```
 //!
 //! `OLANG_HOME` overrides the root (tests point it at a temporary
@@ -48,6 +49,12 @@ pub fn toolchains() -> Option<PathBuf> {
     root().map(|r| r.join("toolchains"))
 }
 
+/// The toolchains' record (`toolchains.toml`): the default, the one
+/// before it, and linked local builds.
+pub fn toolchains_manifest() -> Option<PathBuf> {
+    root().map(|r| r.join("toolchains.toml"))
+}
+
 /// The shelf manifest (`shelf.toml`).
 pub fn shelf_manifest() -> Option<PathBuf> {
     root().map(|r| r.join("shelf.toml"))
@@ -71,6 +78,12 @@ pub fn state() -> Option<PathBuf> {
 /// Tier warm hints.
 pub fn warm() -> Option<PathBuf> {
     state().map(|s| s.join("warm"))
+}
+
+/// The projects otc has installed for (`otc shelf list` says what uses
+/// what from it).
+pub fn projects() -> Option<PathBuf> {
+    state().map(|s| s.join("projects.json"))
 }
 
 /// REPL history.

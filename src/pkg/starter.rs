@@ -6,8 +6,8 @@
 //! `///`-documented, each carrying its own test blocks — materialized
 //! to real directories under the shelf's home and registered like
 //! anything else. From there they are ordinary shelf citizens: `otc
-//! add textkit` from any project, `otc lib remove textkit` when
-//! unwanted, `otc lib restore textkit` to bring one back (or refresh
+//! add textkit` from any project, `otc shelf remove textkit` when
+//! unwanted, `otc shelf restore textkit` to bring one back (or refresh
 //! it to the running toolchain's copy).
 //!
 //! The sources live in this crate (`src/pkg/starter/*.ol`) and are
@@ -18,7 +18,7 @@ use std::path::Path;
 
 pub struct StarterLib {
     pub name: &'static str,
-    /// One line for `otc lib list` and the docs.
+    /// One line for `otc shelf list` and the docs.
     pub summary: &'static str,
     /// The library's `index.ol`.
     pub source: &'static str,

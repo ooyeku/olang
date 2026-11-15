@@ -129,8 +129,8 @@ fn audit(root: &Path) -> Vec<Finding> {
                         Some(why) => out.push(bad(format!("dependency {name}: {why}"))),
                     }
                 }
-                crate::pkg::manifest::Dependency::Shelf { shelf: entry } => {
-                    match shelf.as_ref().and_then(|s| s.libraries.get(entry)) {
+                crate::pkg::manifest::Dependency::Shelf { shelf: entry, .. } => {
+                    match shelf.as_ref().and_then(|s| s.resolve(entry)) {
                         Some(dir) if dir.exists() => {
                             out.push(ok(format!("dependency {name}: shelf {entry} at {}", dir.display())))
                         }
@@ -139,7 +139,7 @@ fn audit(root: &Path) -> Vec<Finding> {
                             dir.display()
                         ))),
                         None => out.push(bad(format!(
-                            "dependency {name}: shelf entry {entry} is not registered (otc lib add)"
+                            "dependency {name}: shelf entry {entry} is not on the shelf (otc shelf add)"
                         ))),
                     }
                 }

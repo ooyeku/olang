@@ -225,7 +225,13 @@ fn shelf_dir(name) = {
             Err(e2) => (),
             Ok(t) => {
                 let libs = t.libraries
-                if libs != () && map_has_key(libs, name) => map_get(libs, name) else => ()
+                if libs != () && map_has_key(libs, name) => {
+                    // a folder alone is a string; a library with copies a
+                    // table whose `path` is what the name gives
+                    let entry = map_get(libs, name)
+                    if typeof(entry) == "String" => entry else => entry.path
+                }
+                else => ()
             }
         }
     }
@@ -1119,7 +1125,15 @@ test "the SDK is found on the shelf OLANG_SHELF names, then $HOME's" {
         [["WEB_SDK_DIR", ()], ["OLANG_HOME", ()], ["OLANG_SHELF", ()],
          ["HOME", tmp + "/home"]],
         () => [sdk_dir(), shelf_dir("web")])
+    // A library the shelf holds copies of is a table: its `path` answers.
+    unwrap(fs.write_file(tmp + "/held.toml",
+        "version = 2\n[libraries.web]\npath = \"" + named + "/1.0.0\"\n"))
+    let from_held = with_env(
+        [["WEB_SDK_DIR", ()], ["OLANG_HOME", ()], ["OLANG_SHELF", tmp + "/held.toml"],
+         ["HOME", tmp + "/home"]],
+        () => shelf_dir("web"))
     fs.remove_dir_all(tmp)
     assert_eq(from_named, [named, named])
     assert_eq(from_home, [homed, homed])
+    assert_eq(from_held, named + "/1.0.0")
 }

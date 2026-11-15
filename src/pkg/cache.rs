@@ -52,6 +52,9 @@ fn git(dir: Option<&Path>, args: &[&str]) -> Result<String, CacheError> {
     if let Some(d) = dir {
         cmd.current_dir(d);
     }
+    // never wait on a prompt: a private repository is reached through the
+    // person's own credential helper, or fails, saying so
+    cmd.env("GIT_TERMINAL_PROMPT", "0");
     cmd.args(args);
     let out = cmd.output()?;
     if !out.status.success() {
@@ -257,6 +260,42 @@ fn checkout_via_archive(bare: &Path, rev: &str, dest: &Path) -> Result<(), Cache
         ));
     }
     Ok(())
+}
+
+/// Every ref a remote repository has, as `(ref name, commit)`: tags
+/// peeled to the commit they name. Reaches the network (`git ls-remote`).
+pub fn remote_refs(url: &str) -> Result<Vec<(String, String)>, CacheError> {
+    if url.starts_with('-') {
+        return Err(CacheError::Git(format!(
+            "a git url cannot start with '-' ({url:?})"
+        )));
+    }
+    let out = git(None, &["ls-remote", url])?;
+    let mut refs: Vec<(String, String)> = Vec::new();
+    for line in out.lines() {
+        let mut parts = line.split_whitespace();
+        let (Some(sha), Some(name)) = (parts.next(), parts.next()) else {
+            continue;
+        };
+        if let Some(base) = name.strip_suffix("^{}") {
+            // an annotated tag's peeled commit replaces the tag object
+            refs.retain(|(n, _)| n != base);
+            refs.push((base.to_string(), sha.to_string()));
+        } else if !refs.iter().any(|(n, _)| n == name) {
+            refs.push((name.to_string(), sha.to_string()));
+        }
+    }
+    Ok(refs)
+}
+
+/// Drop what the cache holds of `url` (its mirror) and the checkout at
+/// `rev`: a fetch that was refused keeps nothing.
+pub fn forget(url: &str, rev: Option<&str>) {
+    let Ok(root) = cache_root() else { return };
+    let _ = std::fs::remove_dir_all(root.join("git-db").join(url_hash(url)));
+    if let Some(rev) = rev {
+        let _ = std::fs::remove_dir_all(root.join("git").join(rev));
+    }
 }
 
 /// sha256 of a URL, for stable per-repo cache directory names.

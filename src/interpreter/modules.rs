@@ -1760,7 +1760,7 @@ already binds — an import never replaces a program's own name. Alias the impor
         }
 
         searched_paths.push("Standard library modules".to_string());
-        searched_paths.push("Shelf libraries (otc lib list)".to_string());
+        searched_paths.push("Shelf libraries (otc shelf list)".to_string());
 
         // Get available modules from stdlib
         let stdlib = crate::stdlib::get_stdlib();

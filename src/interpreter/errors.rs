@@ -253,7 +253,7 @@ impl IntuitiveErrorFormatter {
         result.push_str("\nHelp:\n");
         result.push_str("  • Check the module path spelling\n");
         result.push_str("  • A file in this project imports as `use lib.<name>` (lib/) or `use <name>` (same directory)\n");
-        result.push_str("  • Registered shelf libraries import by name — `otc lib list` shows them, `otc lib add <path>` registers one\n");
+        result.push_str("  • Registered shelf libraries import by name — `otc shelf list` shows them, `otc shelf add <path>` adds one\n");
 
         result
     }

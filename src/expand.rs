@@ -711,15 +711,18 @@ pub(crate) fn package_dir(
     {
         match dep {
             Dependency::Path { path } => return Some(root.join(path)),
-            Dependency::Shelf { shelf } => {
+            Dependency::Shelf { shelf, .. } => {
                 return crate::pkg::shelf_dependency_dir(&root, name, shelf);
+            }
+            Dependency::GitHub { .. } => {
+                return crate::pkg::shelf_dependency_dir(&root, name, name);
             }
             _ => {}
         }
     }
     crate::pkg::shelf::Shelf::load()
         .ok()
-        .and_then(|s| s.libraries.get(name).cloned())
+        .and_then(|s| s.resolve(name))
 }
 
 /// The one splice failure with a non-obvious cause: output whose last

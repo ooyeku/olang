@@ -1,345 +1,260 @@
-//! `otc update` and `otc toolchain` — release installation and
-//! side-by-side version management, rustup-shaped but smaller.
+//! The olang versions on this machine: `otc use`, `otc update` and `otc
+//! toolchain list | add | remove | prune | link | unlink | which`
+//! (OL-579, OL-580).
 //!
-//! Releases install into `~/.olang/toolchains/<version>/bin/` and the
-//! shims in `~/.olang/bin/` are symlinks to the default toolchain, so
-//! switching versions is one atomic relink and the running binaries are
-//! never overwritten in place. Downloads come from the project's GitHub
-//! releases and are verified against the release's `SHA256SUMS` before
-//! anything is installed, and `SHA256SUMS` against its signature
-//! (`SHA256SUMS.sig`) by olang's release key, pinned here as
-//! [`RELEASE_SIGNING_KEY`] (OL-491). Nothing checks the network unless explicitly
-//! asked: `otc update` and `otc update --check` are the only calls that
-//! reach out, consistent with the language's capability posture.
-//!
-//! Installations owned by other package managers (Homebrew, cargo) are
-//! never modified; `otc doctor` reports how they shadow each other.
+//! Releases install side by side under `~/.olang/toolchains/<version>/`
+//! (`releases.rs` downloads and verifies them); the shims in
+//! `~/.olang/bin/` are symlinks to the default, so switching is one atomic
+//! relink and a running olang is never overwritten. A linked local build
+//! is a checkout recorded by name in `~/.olang/toolchains.toml`, its olang
+//! always the checkout's current `target/release/olang`. Installations
+//! owned by other package managers (Homebrew, cargo) are never touched.
 
-use anyhow::{Context, Result, bail};
+use super::releases::{self, Fetch, normalize, toolchains_dir};
+use super::{Changes, ctx, fail};
+use crate::say;
+use anyhow::{Context, Result};
 use clap::Subcommand;
-use sha2::{Digest, Sha256};
-use std::path::PathBuf;
-
-const REPO: &str = "ooyeku/olang";
-
-/// The public half of olang's release signing key, an ECDSA P-256 key
-/// as PEM: the key `install.sh` pins as `SIGNING_KEY` and `install.ps1`
-/// as `$SigningKey` (tests/install_script_test.rs checks the copies
-/// agree). The release workflow signs each release's `SHA256SUMS` with
-/// the private half (dist/signing/README.md).
-///
-/// PLACEHOLDER: empty until the owner sets up release signing and pastes
-/// the real public key here, as into the installers. While it is empty
-/// `otc update` checks the checksum only and says the release is
-/// unverified.
-pub const RELEASE_SIGNING_KEY: &str = "-----BEGIN PUBLIC KEY-----
-MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE36cXQoV1JHERlNekWav8gfY3uw6J
-LvVlnGRVnXmoiR0E/OuqLIfeejOe9XvwIJjf+PwFwPWl6p0ghxHXjUBWIg==
------END PUBLIC KEY-----";
-
-/// The first signed release (`v1.0.0`), as `install.sh`'s `SIGNED_FROM`:
-/// an older release carries no signature and installs on its checksum.
-pub const SIGNED_FROM: &str = "v1.0.0";
-
-/// What the check of a release's `SHA256SUMS` signature found.
-#[derive(Debug, PartialEq)]
-enum Signature {
-    /// It verifies with the pinned key.
-    Verified,
-    /// No key is pinned yet: signing is not set up.
-    NotSetUp,
-    /// The release is older than the first signed one and has none.
-    OlderThanSigning,
-    /// It has none, and `OLANG_ALLOW_UNSIGNED=1` lets it through.
-    AllowedUnsigned,
-}
-
-/// Whether `sums` (a release's `SHA256SUMS`) may be trusted: its
-/// signature `sig` (`None` when the release has no `SHA256SUMS.sig`)
-/// must verify with `key`, the pinned public key. A release older than
-/// `signed_from` may lack one; a bad signature is refused always.
-fn check_signature(
-    key: &str,
-    signed_from: &str,
-    version: &str,
-    sums: &[u8],
-    sig: Option<&[u8]>,
-    allow_unsigned: bool,
-) -> Result<Signature> {
-    if key.trim().is_empty() {
-        return Ok(Signature::NotSetUp);
-    }
-    let Some(sig) = sig else {
-        let older = match (
-            semver::Version::parse(normalize(version).as_str()),
-            semver::Version::parse(normalize(signed_from).as_str()),
-        ) {
-            (Ok(v), Ok(from)) => v < from,
-            _ => false,
-        };
-        if older {
-            return Ok(Signature::OlderThanSigning);
-        }
-        if allow_unsigned {
-            return Ok(Signature::AllowedUnsigned);
-        }
-        bail!(
-            "release {version} has no SHA256SUMS.sig, so otc cannot tell that it came from olang; \
-             nothing was installed. Every release from {signed_from} on is signed: please report \
-             this at https://github.com/{REPO}/issues"
-        );
-    };
-    verify_p256(key, sums, sig).map_err(|e| {
-        anyhow::anyhow!(
-            "the signature of release {version}'s SHA256SUMS does not verify with olang's release \
-             key ({e}), so nothing was installed. The files on the download server may have been \
-             changed by someone other than olang: please report this at https://github.com/{REPO}/issues"
-        )
-    })?;
-    Ok(Signature::Verified)
-}
-
-/// The DER prefix of an ECDSA P-256 SubjectPublicKeyInfo: the algorithm
-/// (id-ecPublicKey, prime256v1) and the bit string's header. The 65-byte
-/// uncompressed point follows it.
-const P256_SPKI_PREFIX: [u8; 26] = [
-    0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a,
-    0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00,
-];
-
-/// Verify `sig`, a DER ECDSA signature over SHA-256 (what `openssl dgst
-/// -sha256 -sign` writes), of `msg` with `pem`, a P-256 public key.
-fn verify_p256(pem: &str, msg: &[u8], sig: &[u8]) -> Result<()> {
-    use aws_lc_rs::signature::{ECDSA_P256_SHA256_ASN1, UnparsedPublicKey};
-    use base64::Engine;
-    let body: String = pem
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty() && !l.starts_with("-----"))
-        .collect();
-    let der = base64::engine::general_purpose::STANDARD
-        .decode(body)
-        .context("the pinned key is not base64 PEM")?;
-    let point = der
-        .strip_prefix(&P256_SPKI_PREFIX[..])
-        .filter(|p| p.len() == 65)
-        .context("the pinned key is not an ECDSA P-256 public key")?;
-    UnparsedPublicKey::new(&ECDSA_P256_SHA256_ASN1, point)
-        .verify(msg, sig)
-        .map_err(|_| anyhow::anyhow!("bad signature"))
-}
+use olang::pkg::toolchain::{Linked, Toolchains};
+use std::path::{Path, PathBuf};
 
 #[derive(Subcommand)]
 pub enum ToolchainCommand {
-    /// List every olang on this machine: the toolchains, the shims'
-    /// default, and those on PATH, with the one that runs marked
+    /// Every olang on this machine, which one runs and why; with
+    /// --available, every release too.
+    ///
+    /// Example: otc toolchain list --available
     List {
-        /// `text` (the list) or `json` (the same as data)
-        #[arg(long, value_name = "FORMAT", default_value = "text")]
-        format: String,
+        /// Also every release on GitHub (cached an hour)
+        #[arg(long, alias = "remote")]
+        available: bool,
+        /// With --available: leave prereleases out
+        #[arg(long)]
+        stable: bool,
+        /// With --available: the releases as last fetched, no network
+        #[arg(long)]
+        offline: bool,
     },
-    /// Download and install a specific release (e.g. 1.0.0)
-    Install { version: String },
-    /// Make an installed toolchain the default
-    Default { version: String },
-    /// Remove an installed toolchain (never the default)
-    Remove { version: String },
-    /// Print the olang a project runs: the toolchain its pin resolves to
-    /// (olang.toml `[package] olang`, olang.lock's `olang`)
+    /// Install a version if needed and make it the default (as `otc use`).
+    ///
+    /// Example: otc toolchain use 0.88
+    Use {
+        /// A version, a prefix (1.0), latest, stable, rc, a linked
+        /// build's name, or - for the one before
+        version: String,
+        /// Pin this project (olang.toml and olang.lock) instead
+        #[arg(long)]
+        project: bool,
+        /// With --project: allow a linked build's name in olang.lock
+        #[arg(long)]
+        local: bool,
+    },
+    /// Install a release without switching to it.
+    ///
+    /// Example: otc toolchain add 1.0.0-rc.8
+    #[command(alias = "install")]
+    Add {
+        /// A version, a prefix, latest, stable or rc
+        version: String,
+    },
+    /// Remove an installed release (never the one in use).
+    ///
+    /// Example: otc toolchain remove 0.80.0
+    Remove {
+        version: String,
+        /// Remove it even though known projects pin it
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Remove the releases no known project pins and that are not the
+    /// default (says what first; --yes removes).
+    ///
+    /// Example: otc toolchain prune --yes
+    Prune {
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Make a local checkout's build a toolchain, named by its branch.
+    ///
+    /// Example: otc toolchain link ../olang
+    Link {
+        /// The checkout (its target/release/olang is the toolchain)
+        path: String,
+        /// The name (default: the checkout's branch)
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Forget a linked build (the checkout is not touched).
+    ///
+    /// Example: otc toolchain unlink main
+    Unlink { name: String },
+    /// Print the olang a project runs.
+    ///
+    /// Example: otc toolchain which
     Which {
         /// The project's folder (default: the one this is run in)
         dir: Option<String>,
     },
-    /// Register a local build as a toolchain: VERSION's olang becomes
-    /// PATH (an olang binary, or a checkout holding target/release/olang)
-    Link { version: String, path: String },
-}
-
-/// `otc update [--check]`: install the latest release and make it the
-/// default, or with `--check` just report what the latest is.
-pub fn update(check: bool) -> Result<()> {
-    let latest = latest_version()?;
-    let current = olang::VERSION;
-    if check {
-        println!("current: {}", current);
-        println!("latest:  {}", latest);
-        if normalize(&latest) == current {
-            println!("up to date.");
-        } else {
-            println!("run `otc update` to install {}.", latest);
-        }
-        return Ok(());
-    }
-    if normalize(&latest) == current && default_toolchain()?.as_deref() == Some(current) {
-        println!("already up to date ({}).", current);
-        return Ok(());
-    }
-    // Never down: "latest" is whatever the release server says, and an
-    // older release is signed as well as a newer one, so a server (or a
-    // mistake) that named an old release made it the default, with the
-    // bugs this one fixed. `otc toolchain install` takes an older one on
-    // purpose.
-    if is_older(&latest, current) {
-        bail!(
-            "the newest release the server names, {}, is older than this olang ({}); nothing was \
-             changed. `otc toolchain install {}` installs it if you mean to go back.",
-            normalize(&latest),
-            current,
-            normalize(&latest)
-        );
-    }
-    install_version(&normalize(&latest))?;
-    set_default(&normalize(&latest))?;
-    print_path_hint()?;
-    Ok(())
+    /// Install the newest release and make it the default (as `otc update`).
+    ///
+    /// Example: otc toolchain upgrade
+    Upgrade {
+        /// Only say what the newest is
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 pub fn toolchain(cmd: ToolchainCommand) -> Result<()> {
     match cmd {
-        ToolchainCommand::List { format } => {
-            let json = super::json_format("otc toolchain list", &format)?;
-            // every olang on the machine, which one runs and why (OL-577)
-            super::toolchains::list(json, default_toolchain()?)
+        ToolchainCommand::List {
+            available,
+            stable,
+            offline,
+        } => super::toolchains::list(available, stable, offline),
+        ToolchainCommand::Use {
+            version,
+            project,
+            local,
+        } => use_version(&version, project, local),
+        ToolchainCommand::Add { version } => add(&version),
+        ToolchainCommand::Remove { version, yes } => remove(&version, yes),
+        ToolchainCommand::Prune { yes } => prune(yes),
+        ToolchainCommand::Link { path, name } => link(&path, name.as_deref()),
+        ToolchainCommand::Unlink { name } => unlink(&name),
+        ToolchainCommand::Which { dir } => which(dir),
+        ToolchainCommand::Upgrade { check } => update(check),
+    }
+}
+
+/// What a version argument names.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Target {
+    /// An installed release.
+    Installed(String),
+    /// A release to download first.
+    Release(String),
+    /// A linked local build.
+    Linked(String),
+}
+
+impl Target {
+    pub fn name(&self) -> &str {
+        match self {
+            Target::Installed(v) | Target::Release(v) | Target::Linked(v) => v,
         }
-        ToolchainCommand::Install { version } => {
-            let version = toolchain_name(&version)?;
-            install_version(&version)?;
-            println!(
-                "installed {}; `otc toolchain default {}` switches to it.",
-                normalize(&version),
-                normalize(&version)
-            );
-            Ok(())
-        }
-        ToolchainCommand::Default { version } => {
-            let v = toolchain_name(&version)?;
-            let dir = toolchains_dir()?.join(&v);
-            if !dir.join("bin").join("olang").is_file() {
-                bail!("{} is not installed (otc toolchain install {})", v, v);
-            }
-            set_default(&v)?;
-            print_path_hint()?;
-            Ok(())
-        }
-        ToolchainCommand::Which { dir } => {
-            let start = match dir {
-                Some(d) => PathBuf::from(d),
-                None => std::env::current_dir()?,
-            };
-            let root = olang::pkg::manifest::Manifest::find_root(&start)
-                .with_context(|| format!("no olang.toml at or above {}", start.display()))?;
-            use olang::pkg::toolchain::{Resolved, for_project, install_hint};
-            match for_project(&root) {
-                Resolved::Installed { bin, .. } => println!("{}", bin.display()),
-                Resolved::Running { .. } | Resolved::Unpinned => {
-                    println!(
-                        "{}",
-                        std::env::current_exe()?.with_file_name("olang").display()
-                    )
+    }
+}
+
+/// Whether `v` is in the series `prefix` names (`1.0` is 1.0.x and its
+/// prereleases; `1` every 1.x).
+fn in_series(prefix: &str, v: &str) -> bool {
+    let Ok(v) = semver::Version::parse(v) else {
+        return false;
+    };
+    let parts: Vec<&str> = prefix.split('.').collect();
+    let n: Vec<Option<u64>> = parts.iter().map(|p| p.parse().ok()).collect();
+    if n.iter().any(Option::is_none) || n.is_empty() || n.len() > 3 {
+        return false;
+    }
+    let want = [v.major, v.minor, v.patch];
+    n.iter().enumerate().all(|(i, x)| *x == Some(want[i]))
+}
+
+/// The installed releases, newest first.
+pub fn installed() -> Vec<String> {
+    olang::pkg::toolchain::installed()
+        .into_iter()
+        .map(|(v, _)| v)
+        .collect()
+}
+
+/// Resolve a version argument: an installed match answers without the
+/// network; otherwise the releases list is read (cached for an hour).
+pub fn resolve(spec: &str) -> Result<Target> {
+    let spec = spec.trim();
+    let tc = Toolchains::load();
+    if spec == "-" {
+        return match tc.previous {
+            Some(p) => resolve(&p),
+            None => Err(fail(
+                "there is no olang before this one to go back to",
+                "otc toolchain list",
+            )),
+        };
+    }
+    if tc.linked.contains_key(spec) {
+        return Ok(Target::Linked(spec.to_string()));
+    }
+    let have = installed();
+    let v = normalize(spec);
+    let exact = semver::Version::parse(&v).is_ok();
+    if exact && have.contains(&v) {
+        return Ok(Target::Installed(v));
+    }
+    let series = !exact && v.split('.').all(|p| p.parse::<u64>().is_ok()) && !v.is_empty();
+    if series && let Some(found) = have.iter().find(|h| in_series(&v, h)) {
+        return Ok(Target::Installed(found.clone()));
+    }
+    let word = matches!(spec, "latest" | "stable" | "rc");
+    if !exact && !series && !word {
+        let linked: Vec<String> = tc.linked.keys().cloned().collect();
+        return Err(fail(
+            format!(
+                "'{spec}' is not a version, a series (1.0), latest, stable, rc, or a linked build{}",
+                if linked.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", linked.join(", "))
                 }
-                Resolved::Missing { pin } => bail!(
-                    "olang.toml pins olang {}, and no installed olang satisfies it ({} installs one)",
-                    pin,
-                    install_hint(&pin)
-                ),
-            }
-            Ok(())
-        }
-        ToolchainCommand::Link { version, path } => {
-            let v = toolchain_name(&version)?;
-            let given = PathBuf::from(&path);
-            let bin = if given.is_dir() {
-                given.join("target").join("release").join("olang")
-            } else {
-                given
-            };
-            let bin = bin
-                .canonicalize()
-                .with_context(|| format!("no olang at {}", bin.display()))?;
-            if !bin.is_file() {
-                bail!("{} is not an olang binary", bin.display());
-            }
-            let dir = toolchains_dir()?.join(&v).join("bin");
-            std::fs::create_dir_all(&dir)?;
-            let link = dir.join("olang");
-            let _ = std::fs::remove_file(&link);
-            link_file(&bin, &link).with_context(|| format!("linking {}", link.display()))?;
-            println!("toolchain {} is {}.", v, bin.display());
-            Ok(())
-        }
-        ToolchainCommand::Remove { version } => {
-            let v = toolchain_name(&version)?;
-            if default_toolchain()?.as_deref() == Some(v.as_str()) {
-                bail!("{} is the default toolchain; switch defaults first", v);
-            }
-            let dir = toolchains_dir()?.join(&v);
-            if !dir.exists() {
-                bail!("{} is not installed", v);
-            }
-            std::fs::remove_dir_all(&dir)?;
-            println!("removed {}.", v);
-            Ok(())
-        }
+            ),
+            "otc toolchain list --available",
+        ));
     }
-}
-
-fn normalize(v: &str) -> String {
-    v.trim_start_matches('v').to_string()
-}
-
-/// Whether release `a` is older than `b` (both as semver; false when
-/// either does not read).
-fn is_older(a: &str, b: &str) -> bool {
-    match (
-        semver::Version::parse(&normalize(a)),
-        semver::Version::parse(&normalize(b)),
-    ) {
-        (Ok(a), Ok(b)) => a < b,
-        _ => false,
+    let listing = releases::list(Fetch::Cached)?;
+    if let Some(note) = &listing.note {
+        say!("note: {note} ({})", releases::age(listing.age_s));
     }
-}
-
-/// A toolchain's name as given, normalized, and checked to be one
-/// folder's name under the toolchains folder: `otc toolchain remove ..`
-/// removed the toolchains folder's parent, `~/.olang`, whole.
-fn toolchain_name(v: &str) -> Result<String> {
-    let v = normalize(v);
-    if v.is_empty() || v == "." || v == ".." || v.contains(['/', '\\']) || v.starts_with('.') {
-        bail!(
-            "\"{}\" is not a toolchain's name (a version such as 1.0.0, or a name)",
-            v
-        );
+    let found = listing.releases.iter().find(|r| match spec {
+        "latest" => true,
+        "stable" => !r.prerelease,
+        "rc" => r.prerelease,
+        _ if exact => r.version == v,
+        _ => in_series(&v, &r.version),
+    });
+    match found {
+        Some(r) if have.contains(&r.version) => Ok(Target::Installed(r.version.clone())),
+        Some(r) => Ok(Target::Release(r.version.clone())),
+        None => Err(fail(
+            format!("no release of olang answers '{spec}'"),
+            "otc toolchain list --available",
+        )),
     }
-    Ok(v)
-}
-
-/// The checksum `SHA256SUMS` lists for exactly `file` (`<hex>  <file>`,
-/// or `<hex> *<file>`): a line was taken when it merely ended with the
-/// name, so `x-olang-…tar.gz` answered for `olang-…tar.gz`.
-fn listed_sum(sums: &str, file: &str) -> Option<String> {
-    sums.lines().find_map(|l| {
-        let (hash, name) = l.trim_end().split_once(' ')?;
-        let name = name.trim_start_matches(' ');
-        let name = name.strip_prefix('*').unwrap_or(name);
-        (name == file && hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit()))
-            .then(|| hash.to_ascii_lowercase())
-    })
-}
-
-fn toolchains_dir() -> Result<PathBuf> {
-    olang::home::toolchains().context("no home directory could be determined")
 }
 
 fn bin_dir() -> Result<PathBuf> {
-    olang::home::bin().context("no home directory could be determined")
+    olang::home::bin().context("no home directory could be determined (set HOME or OLANG_HOME)")
 }
 
-/// The default toolchain, read from where the olang shim points.
-fn default_toolchain() -> Result<Option<String>> {
-    let shim = bin_dir()?.join("olang");
+fn exe(name: &str) -> String {
+    if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    }
+}
+
+/// The default toolchain: where the olang shim points, as a release's
+/// version or a linked build's name.
+pub fn default_toolchain() -> Result<Option<String>> {
+    let shim = bin_dir()?.join(exe("olang"));
     let Ok(target) = std::fs::read_link(&shim) else {
         return Ok(None);
     };
+    let tc = Toolchains::load();
+    if let Some((name, _)) = tc.linked.iter().find(|(_, l)| l.olang() == target) {
+        return Ok(Some(name.clone()));
+    }
     // .../toolchains/<version>/bin/olang
     Ok(target
         .parent()
@@ -348,24 +263,66 @@ fn default_toolchain() -> Result<Option<String>> {
         .map(|v| v.to_string_lossy().into_owned()))
 }
 
-fn set_default(version: &str) -> Result<()> {
+/// Repoint the shims at `target` and record it as the default, the old
+/// one as `previous`. Returns a note when the otc shim was left alone.
+fn set_default(target: &Target) -> Result<Option<String>> {
     let bins = bin_dir()?;
     std::fs::create_dir_all(&bins)?;
-    for name in ["olang", "otc"] {
-        let target = toolchains_dir()?.join(version).join("bin").join(name);
-        let shim = bins.join(name);
+    let tc = Toolchains::load();
+    let (olang_bin, otc_bin) = match target {
+        Target::Linked(name) => {
+            let l = tc.linked.get(name).expect("resolved");
+            (l.olang(), l.otc())
+        }
+        Target::Installed(v) | Target::Release(v) => {
+            let dir = toolchains_dir()?.join(v).join("bin");
+            (dir.join(exe("olang")), dir.join(exe("otc")))
+        }
+    };
+    if !olang_bin.is_file() {
+        return Err(fail(
+            format!("{} has no olang at {}", target.name(), olang_bin.display()),
+            match target {
+                Target::Linked(_) => "cargo build --release (in the checkout)".to_string(),
+                _ => format!("otc toolchain add {}", target.name()),
+            },
+        ));
+    }
+    let mut note = None;
+    for (name, bin) in [("olang", &olang_bin), ("otc", &otc_bin)] {
+        if !bin.is_file() {
+            note = Some(format!(
+                "{} has no otc built ({}), so the otc shim still runs the one it did",
+                target.name(),
+                bin.display()
+            ));
+            continue;
+        }
+        let shim = bins.join(exe(name));
         let staged = bins.join(format!(".{}.new", name));
         let _ = std::fs::remove_file(&staged);
-        link_file(&target, &staged).with_context(|| format!("linking {}", shim.display()))?;
+        link_file(bin, &staged).with_context(|| format!("linking {}", shim.display()))?;
         std::fs::rename(&staged, &shim)?;
     }
-    println!("default toolchain is now {}.", version);
-    Ok(())
+    let before = default_from_record_or_shim(&tc);
+    let mut tc = Toolchains::load();
+    if before.as_deref() != Some(target.name()) {
+        tc.previous = before;
+    }
+    tc.default = Some(target.name().to_string());
+    tc.save().context("writing toolchains.toml")?;
+    Ok(note)
+}
+
+fn default_from_record_or_shim(tc: &Toolchains) -> Option<String> {
+    tc.default
+        .clone()
+        .or_else(|| default_toolchain().ok().flatten())
 }
 
 /// A symlink on Unix. Windows lets only administrators and developer
 /// mode make symlinks, so there the file is copied instead.
-fn link_file(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+fn link_file(target: &Path, link: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink(target, link)
@@ -376,299 +333,461 @@ fn link_file(target: &std::path::Path, link: &std::path::Path) -> std::io::Resul
     }
 }
 
-fn print_path_hint() -> Result<()> {
-    let bins = bin_dir()?;
-    let on_path = std::env::var_os("PATH")
-        .map(|p| std::env::split_paths(&p).any(|d| d == bins))
-        .unwrap_or(false);
-    if !on_path {
-        println!();
-        println!("add the shims to your PATH:");
-        println!("    export PATH=\"{}:$PATH\"", bins.display());
-    }
-    Ok(())
-}
-
-fn client() -> Result<reqwest::blocking::Client> {
-    Ok(reqwest::blocking::Client::builder()
-        .user_agent(format!("otc/{}", olang::VERSION))
-        .build()?)
-}
-
-fn latest_version() -> Result<String> {
-    let url = format!("https://api.github.com/repos/{}/releases/latest", REPO);
-    let resp: serde_json::Value = client()?
-        .get(&url)
-        .send()
-        .context("could not reach github.com")?
-        .error_for_status()?
-        .json()?;
-    resp["tag_name"]
-        .as_str()
-        .map(|s| s.to_string())
-        .context("release response carried no tag_name")
-}
-
-fn platform() -> Result<&'static str> {
-    // A static musl build updates to the static build, as the installer
-    // chose it for a reason (Alpine, or a Linux older than glibc 2.28).
-    let musl = cfg!(target_env = "musl");
-    Ok(match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("macos", "aarch64") => "macos-arm64",
-        ("macos", "x86_64") => "macos-x64",
-        ("linux", "x86_64") if musl => "linux-x64-musl",
-        ("linux", "aarch64") if musl => "linux-arm64-musl",
-        ("linux", "x86_64") => "linux-x64",
-        ("linux", "aarch64") => "linux-arm64",
-        ("windows", _) => bail!(
-            "otc update does not update a Windows install yet; run the installer again: \
-             irm https://raw.githubusercontent.com/ooyeku/olang/main/install.ps1 | iex"
-        ),
-        (os, arch) => bail!(
-            "no prebuilt release for {}/{}; build from source (see docs/installation.md)",
-            os,
-            arch
-        ),
+/// What `olang --version` answers now, the binary that answered, and the
+/// line that says something else on PATH shadows the default.
+pub fn now_running() -> serde_json::Value {
+    let home_bin = olang::home::bin().unwrap_or_default();
+    let toolchains = olang::home::toolchains().unwrap_or_default();
+    let rows = super::toolchains::rows(&home_bin, &toolchains);
+    let active = rows.iter().find(|r| r.active);
+    let shadow = super::toolchains::shadow_note(&rows, &home_bin);
+    serde_json::json!({
+        "default": default_toolchain().ok().flatten(),
+        "olang_version": active.and_then(|r| r.version.clone()),
+        "olang": active.map(|r| r.path.display().to_string()),
+        "shadowed": shadow.as_ref().map(|(s, _)| s),
+        "fix": shadow.as_ref().map(|(_, f)| f),
     })
 }
 
-fn install_version(version: &str) -> Result<()> {
-    let plat = platform()?;
-    let dest = toolchains_dir()?.join(version);
-    if dest.join("bin").join("olang").is_file() {
-        println!("{} is already installed.", version);
-        return Ok(());
+fn say_now(now: &serde_json::Value) {
+    match (now["olang_version"].as_str(), now["olang"].as_str()) {
+        (Some(v), Some(at)) => say!("`olang --version` now answers olang {v} ({at})"),
+        _ => say!("no olang is on PATH, so `olang` runs nothing yet"),
     }
-    let base = format!("https://github.com/{}/releases/download/v{}", REPO, version);
-    let tarball = format!("olang-{}-{}.tar.gz", version, plat);
+    if let (Some(why), Some(fix)) = (now["shadowed"].as_str(), now["fix"].as_str()) {
+        say!("{why}");
+        say!("fix: {fix}");
+    } else if now["olang"].is_null() {
+        say!(
+            "fix: export PATH=\"{}:$PATH\"",
+            olang::home::bin().unwrap_or_default().display()
+        );
+    }
+}
 
-    println!("downloading {} ...", tarball);
-    let client = client()?;
-    let bytes = client
-        .get(format!("{}/{}", base, tarball))
-        .send()
-        .context("download failed")?
-        .error_for_status()
-        .with_context(|| format!("no {} in release v{}", tarball, version))?
-        .bytes()?;
-    let sums = client
-        .get(format!("{}/SHA256SUMS", base))
-        .send()?
-        .error_for_status()?
-        .text()?;
-    let sig = if RELEASE_SIGNING_KEY.trim().is_empty() {
-        None
-    } else {
-        let resp = client
-            .get(format!("{}/SHA256SUMS.sig", base))
-            .send()
-            .context("download of SHA256SUMS.sig failed")?;
-        if resp.status() == reqwest::StatusCode::NOT_FOUND {
-            None
-        } else {
-            Some(resp.error_for_status()?.bytes()?.to_vec())
+/// `otc use <version> [--project [--local]]`.
+pub fn use_version(spec: &str, project: bool, local: bool) -> Result<()> {
+    let target = resolve(spec)?;
+    let mut changes = Changes::new("use");
+    if let Target::Release(v) = &target {
+        changes.push(
+            "install",
+            format!("olang {v}"),
+            "downloaded from GitHub, checksum verified",
+        );
+        if !ctx().dry_run {
+            releases::install_version(v)
+                .map_err(|e| fail(format!("{e:#}"), "otc toolchain list --available"))?;
         }
-    };
-    match check_signature(
-        RELEASE_SIGNING_KEY,
-        SIGNED_FROM,
-        version,
-        sums.as_bytes(),
-        sig.as_deref(),
-        std::env::var("OLANG_ALLOW_UNSIGNED").as_deref() == Ok("1"),
-    )? {
-        Signature::Verified => println!("signature verified: signed by olang's release key."),
-        Signature::NotSetUp => println!(
-            "signature NOT verified: this otc has no release key pinned yet, so only the \
-             checksum below is checked, which proves the download is intact but not who \
-             published it (dist/signing/README.md)."
-        ),
-        Signature::OlderThanSigning => println!(
-            "release {} is older than olang's release signatures (they start at {}), \
-             so only its checksum is checked.",
-            version, SIGNED_FROM
-        ),
-        Signature::AllowedUnsigned => println!(
-            "release {} has no signature; going on because OLANG_ALLOW_UNSIGNED=1.",
-            version
-        ),
     }
-
-    let expected = listed_sum(&sums, &tarball)
-        .with_context(|| format!("{} is not listed in SHA256SUMS", tarball))?;
-    let actual = hex(&Sha256::digest(&bytes));
-    if actual != expected {
-        bail!(
-            "checksum mismatch for {} (expected {}, got {})",
-            tarball,
-            expected,
-            actual
+    if project {
+        return pin_project(&target, local, changes);
+    }
+    if default_toolchain()?.as_deref() == Some(target.name())
+        && !matches!(target, Target::Release(_))
+    {
+        say!("olang {} is already the default", target.name());
+    } else {
+        changes.push(
+            "switch",
+            format!("olang {}", target.name()),
+            "the shims in ~/.olang/bin point at it",
         );
+        if !ctx().dry_run
+            && let Some(note) = set_default(&target)?
+        {
+            say!("note: {note}");
+        }
     }
-    println!("checksum verified.");
-
-    // Extract into a staging directory, then rename into place so a
-    // half-finished install never looks installed.
-    let staging = toolchains_dir()?.join(format!(".staging-{}", version));
-    let _ = std::fs::remove_dir_all(&staging);
-    std::fs::create_dir_all(&staging)?;
-    let tar_path = staging.join(&tarball);
-    std::fs::write(&tar_path, &bytes)?;
-    let status = std::process::Command::new("tar")
-        .arg("-xzf")
-        .arg(&tar_path)
-        .arg("-C")
-        .arg(&staging)
-        .status()
-        .context("running tar")?;
-    if !status.success() {
-        bail!("tar extraction failed");
+    let now = now_running();
+    if !ctx().dry_run {
+        say_now(&now);
     }
-    let unpacked = staging.join(format!("olang-{}-{}", version, plat));
-    let bin = dest.join("bin");
-    std::fs::create_dir_all(&bin)?;
-    for name in ["olang", "otc"] {
-        std::fs::rename(unpacked.join(name), bin.join(name))
-            .with_context(|| format!("staging {}", name))?;
-    }
-    let _ = std::fs::remove_dir_all(&staging);
-
-    // Smoke-test what was installed before anyone links to it.
-    let out = std::process::Command::new(bin.join("olang"))
-        .arg("--version")
-        .output()
-        .context("running the installed olang")?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    if !text.contains(version) {
-        let _ = std::fs::remove_dir_all(&dest);
-        bail!(
-            "installed binary reports '{}', expected {}",
-            text.trim(),
-            version
-        );
-    }
-    println!("installed {} to {}.", version, dest.display());
+    changes.finish(now);
     Ok(())
 }
 
-fn hex(digest: &[u8]) -> String {
-    digest.iter().map(|b| format!("{:02x}", b)).collect()
+/// `otc use <v> --project`: the project's `[package] olang` and lock.
+fn pin_project(target: &Target, local: bool, mut changes: Changes) -> Result<()> {
+    let cwd = std::env::current_dir()?;
+    let root = olang::pkg::manifest::Manifest::find_root(&cwd).ok_or_else(|| {
+        fail(
+            format!("no olang.toml at or above {}", cwd.display()),
+            "otc new <name> (or run this inside a project)",
+        )
+    })?;
+    let name = target.name().to_string();
+    let linked = matches!(target, Target::Linked(_));
+    if linked && !local {
+        return Err(fail(
+            format!(
+                "'{name}' is a local build: its name means nothing on another machine, so it goes \
+                 only into this project's olang.lock, and only when asked"
+            ),
+            format!("otc use {name} --project --local"),
+        ));
+    }
+    if !linked {
+        changes.push(
+            "pin",
+            "olang.toml",
+            format!("[package] olang = \"{name}\" (this olang or newer)"),
+        );
+    }
+    changes.push("pin", "olang.lock", format!("olang = \"{name}\""));
+    if !ctx().dry_run {
+        if !linked {
+            olang::pkg::manifest::Manifest::set_package_key(&root, "olang", &name)
+                .map_err(|e| fail(e.to_string(), "otc doctor"))?;
+        }
+        let mut lock = olang::pkg::lock::Lockfile::load(&root)
+            .map_err(|e| fail(e, "otc install (or remove olang.lock to resolve afresh)"))?;
+        lock.olang = Some(name.clone());
+        lock.save(&root).map_err(|e| fail(e, "otc doctor"))?;
+        olang::pkg::projects::record(&root);
+        say!("this project ({}) now runs olang {name}", root.display());
+    }
+    changes.finish(serde_json::json!({ "project": root.display().to_string(), "olang": name }));
+    Ok(())
+}
+
+/// `otc update [--check]`: `otc use latest`.
+pub fn update(check: bool) -> Result<()> {
+    if check {
+        let listing = releases::list(Fetch::Cached)?;
+        let latest = listing.releases.first().map(|r| r.version.clone());
+        let current = default_toolchain()?.unwrap_or_else(|| olang::VERSION.to_string());
+        say!("default: {current}");
+        say!("latest:  {}", latest.as_deref().unwrap_or("?"));
+        match &latest {
+            Some(l) if *l == current => say!("up to date."),
+            Some(l) => say!("`otc use latest` (or `otc update`) installs {l} and switches to it."),
+            None => {}
+        }
+        super::emit(serde_json::json!({
+            "format": 1, "kind": "update-check", "default": current, "latest": latest,
+        }));
+        return Ok(());
+    }
+    // Never down: "latest" is whatever the release server says, and an
+    // older release is signed as well as a newer one, so a server (or a
+    // mistake) that named an old release made it the default, with the
+    // bugs this one fixed. `otc use <version>` takes an older one on
+    // purpose.
+    let latest = resolve("latest")?;
+    let current = default_toolchain()?.unwrap_or_else(|| olang::VERSION.to_string());
+    if releases::is_older(latest.name(), &current) {
+        return Err(fail(
+            format!(
+                "the newest release the server names, {}, is older than this olang ({current}); \
+                 nothing was changed",
+                latest.name()
+            ),
+            format!("otc use {} (if you mean to go back)", latest.name()),
+        ));
+    }
+    use_version("latest", false, false)
+}
+
+fn add(spec: &str) -> Result<()> {
+    let target = resolve(spec)?;
+    let mut changes = Changes::new("toolchain add");
+    match &target {
+        Target::Release(v) => {
+            changes.push("install", format!("olang {v}"), "");
+            if !ctx().dry_run {
+                releases::install_version(v)
+                    .map_err(|e| fail(format!("{e:#}"), "otc toolchain list --available"))?;
+                say!("`otc use {v}` switches to it");
+            }
+        }
+        Target::Installed(v) => {
+            say!("olang {v} is already installed (`otc use {v}` switches to it)")
+        }
+        Target::Linked(n) => say!("'{n}' is a linked build (`otc use {n}` switches to it)"),
+    }
+    changes.finish(now_running());
+    Ok(())
+}
+
+/// The known projects whose lock runs toolchain `name`, or whose pin
+/// resolves to it.
+pub fn projects_using(name: &str) -> Vec<PathBuf> {
+    use olang::pkg::toolchain::{Resolved, for_project};
+    olang::pkg::projects::known()
+        .into_iter()
+        .filter(|root| {
+            olang::pkg::toolchain::lock_pin(root).as_deref() == Some(name)
+                || matches!(for_project(root), Resolved::Installed { version, .. } if version == name)
+        })
+        .collect()
+}
+
+fn remove(spec: &str, yes: bool) -> Result<()> {
+    // one folder's name under the toolchains folder: `..` named its
+    // parent, `~/.olang`, whole
+    let v = releases::toolchain_name(spec)
+        .map_err(|e| fail(format!("{e:#}"), "otc toolchain list"))?;
+    if Toolchains::load().linked.contains_key(&v) {
+        return Err(fail(
+            format!("'{v}' is a linked build"),
+            format!("otc toolchain unlink {v}"),
+        ));
+    }
+    if default_toolchain()?.as_deref() == Some(v.as_str()) {
+        return Err(fail(
+            format!("olang {v} is the default, the one in use; switch to another first"),
+            "otc use <another version> (otc toolchain list shows them)",
+        ));
+    }
+    let dir = toolchains_dir()?.join(&v);
+    if !dir.exists() {
+        return Err(fail(
+            format!("olang {v} is not installed"),
+            "otc toolchain list",
+        ));
+    }
+    let users = projects_using(&v);
+    if !users.is_empty() {
+        say!("olang {v} is pinned by:");
+        for u in &users {
+            say!("  {}", u.display());
+        }
+        if !yes && !ctx().dry_run {
+            return Err(fail(
+                format!(
+                    "{} known project(s) pin olang {v}; they would need it again",
+                    users.len()
+                ),
+                format!("otc toolchain remove {v} --yes"),
+            ));
+        }
+    }
+    let mut changes = Changes::new("toolchain remove");
+    changes.push("remove", format!("olang {v}"), dir.display().to_string());
+    if !ctx().dry_run {
+        olang::pkg::shelf::remove_tree(&dir);
+    }
+    changes.finish(now_running());
+    Ok(())
+}
+
+fn prune(yes: bool) -> Result<()> {
+    let default = default_toolchain()?;
+    let dry = ctx().dry_run || !yes;
+    let mut changes = Changes::new("toolchain prune");
+    let mut kept = Vec::new();
+    let mut freed = 0u64;
+    for v in installed() {
+        if default.as_deref() == Some(v.as_str()) {
+            kept.push((v, "the default".to_string()));
+            continue;
+        }
+        let users = projects_using(&v);
+        if !users.is_empty() {
+            kept.push((v, format!("pinned by {}", users[0].display())));
+            continue;
+        }
+        let dir = toolchains_dir()?.join(&v);
+        let size = super::doctor::dir_size(&dir);
+        freed += size;
+        if dry {
+            say!("would remove olang {v} ({})", super::doctor::human(size));
+        } else {
+            changes.push("remove", format!("olang {v}"), super::doctor::human(size));
+            olang::pkg::shelf::remove_tree(&dir);
+        }
+    }
+    for (v, why) in &kept {
+        say!("keeping olang {v} ({why})");
+    }
+    if dry && freed > 0 {
+        say!(
+            "{} would be freed: `otc toolchain prune --yes` removes them",
+            super::doctor::human(freed)
+        );
+    } else if freed == 0 {
+        say!("nothing to prune");
+    }
+    changes.finish(serde_json::json!({ "freed": freed, "dry_run": dry }));
+    Ok(())
+}
+
+/// A checkout's branch, if git can say.
+fn branch_of(checkout: &Path) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(checkout)
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()?;
+    let b = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success() && !b.is_empty() && b != "HEAD").then_some(b)
+}
+
+fn link(path: &str, name: Option<&str>) -> Result<()> {
+    let given = PathBuf::from(path);
+    let given = given.canonicalize().map_err(|_| {
+        fail(
+            format!("{path} does not exist"),
+            "otc toolchain link <checkout of olang>",
+        )
+    })?;
+    // a checkout, or its target/release/olang
+    let checkout = if given.is_dir() {
+        given
+    } else {
+        given
+            .ancestors()
+            .find(|a| a.join("Cargo.toml").is_file())
+            .map(Path::to_path_buf)
+            .ok_or_else(|| {
+                fail(
+                    format!("{} is not inside an olang checkout", given.display()),
+                    "otc toolchain link <checkout of olang>",
+                )
+            })?
+    };
+    if !checkout.join("Cargo.toml").is_file() {
+        return Err(fail(
+            format!(
+                "{} is not an olang checkout (it has no Cargo.toml)",
+                checkout.display()
+            ),
+            "otc toolchain link <checkout of olang>",
+        ));
+    }
+    let name = match name {
+        Some(n) => n.to_string(),
+        None => branch_of(&checkout).ok_or_else(|| {
+            fail(
+                format!(
+                    "{} has no branch checked out to name it by",
+                    checkout.display()
+                ),
+                format!("otc toolchain link {path} --name <name>"),
+            )
+        })?,
+    };
+    let reserved = matches!(name.as_str(), "latest" | "stable" | "rc" | "-")
+        || semver::Version::parse(&name).is_ok()
+        || name.split('.').all(|p| p.parse::<u64>().is_ok())
+        || name.contains(['/', '\\', ' ']);
+    if reserved {
+        return Err(fail(
+            format!("'{name}' would read as a version; a linked build needs a name of its own"),
+            format!("otc toolchain link {path} --name <name>"),
+        ));
+    }
+    let linked = Linked {
+        checkout: checkout.clone(),
+    };
+    let mut changes = Changes::new("toolchain link");
+    changes.push(
+        "link",
+        format!("'{name}'"),
+        format!("{}", linked.olang().display()),
+    );
+    if !ctx().dry_run {
+        let mut tc = Toolchains::load();
+        tc.linked.insert(name.clone(), linked.clone());
+        tc.save().context("writing toolchains.toml")?;
+        let info = super::toolchains::linked_info(&linked);
+        say!("{name} is {}", info.describe());
+        if let Some(stale) = &info.stale {
+            say!("note: {stale}");
+        }
+        say!("`otc use {name}` switches to it");
+    }
+    changes.finish(serde_json::json!({ "name": name, "checkout": checkout.display().to_string() }));
+    Ok(())
+}
+
+fn unlink(name: &str) -> Result<()> {
+    let tc = Toolchains::load();
+    if !tc.linked.contains_key(name) {
+        return Err(fail(
+            format!("no linked build is named '{name}'"),
+            "otc toolchain list",
+        ));
+    }
+    if default_toolchain()?.as_deref() == Some(name) {
+        return Err(fail(
+            format!("'{name}' is the default, the one in use; switch to another first"),
+            "otc use <version>",
+        ));
+    }
+    let mut changes = Changes::new("toolchain unlink");
+    changes.push("unlink", format!("'{name}'"), "its checkout is not touched");
+    if !ctx().dry_run {
+        let mut tc = tc;
+        tc.linked.remove(name);
+        if tc.previous.as_deref() == Some(name) {
+            tc.previous = None;
+        }
+        tc.save().context("writing toolchains.toml")?;
+    }
+    changes.finish(now_running());
+    Ok(())
+}
+
+fn which(dir: Option<String>) -> Result<()> {
+    let start = match dir {
+        Some(d) => PathBuf::from(d),
+        None => std::env::current_dir()?,
+    };
+    let root = olang::pkg::manifest::Manifest::find_root(&start).ok_or_else(|| {
+        fail(
+            format!("no olang.toml at or above {}", start.display()),
+            "otc toolchain list (the olang outside a project)",
+        )
+    })?;
+    use olang::pkg::toolchain::{Resolved, for_project, install_hint};
+    let (bin, why) = match for_project(&root) {
+        Resolved::Installed { bin, version, pin } => {
+            (bin, format!("its pin {pin} resolves to {version}"))
+        }
+        Resolved::Running { pin } => (
+            std::env::current_exe()?.with_file_name(exe("olang")),
+            format!(
+                "its pin {pin} is met by the running olang {}",
+                olang::VERSION
+            ),
+        ),
+        Resolved::Unpinned => (
+            std::env::current_exe()?.with_file_name(exe("olang")),
+            "it pins no olang".to_string(),
+        ),
+        Resolved::Missing { pin } => {
+            return Err(fail(
+                format!("olang.toml pins olang {pin}, and no installed olang satisfies it"),
+                install_hint(&pin),
+            ));
+        }
+    };
+    if ctx().json {
+        super::emit(serde_json::json!({
+            "format": 1, "kind": "which", "root": root.display().to_string(),
+            "olang": bin.display().to_string(), "why": why,
+        }));
+    } else {
+        println!("{}", bin.display());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    //! The signature check, over a test-only key pair (tests/fixtures/
-    //! release-signing: its private half was never kept). No network.
-    use super::*;
-
-    fn fixture(name: &str) -> Vec<u8> {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/release-signing")
-            .join(name);
-        std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
-    }
-
-    fn key() -> String {
-        String::from_utf8(fixture("test-release.pub")).unwrap()
-    }
+    use super::in_series;
 
     #[test]
-    fn a_good_signature_verifies() {
-        let sums = fixture("SHA256SUMS");
-        let sig = fixture("SHA256SUMS.sig");
-        assert_eq!(
-            check_signature(&key(), "v1.0.0", "1.2.0", &sums, Some(&sig), false).unwrap(),
-            Signature::Verified
-        );
-    }
-
-    #[test]
-    fn changed_sums_or_another_keys_signature_is_refused() {
-        let sums = fixture("SHA256SUMS");
-        let sig = fixture("SHA256SUMS.sig");
-        let mut changed = sums.clone();
-        changed[0] = if changed[0] == b'0' { b'1' } else { b'0' };
-        let err = check_signature(&key(), "v1.0.0", "1.2.0", &changed, Some(&sig), false)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("does not verify"), "{err}");
-        assert!(err.contains("nothing was installed"), "{err}");
-
-        let other = fixture("SHA256SUMS.other-key.sig");
-        assert!(check_signature(&key(), "v1.0.0", "1.2.0", &sums, Some(&other), true).is_err());
-        // garbage is refused, never a panic
-        assert!(check_signature(&key(), "v1.0.0", "1.2.0", &sums, Some(b"nope"), false).is_err());
-    }
-
-    #[test]
-    fn a_missing_signature_is_refused_from_the_first_signed_release_on() {
-        let sums = fixture("SHA256SUMS");
-        let err = check_signature(&key(), "v1.0.0", "1.0.0", &sums, None, false)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("has no SHA256SUMS.sig"), "{err}");
-        assert_eq!(
-            check_signature(&key(), "v1.0.0", "0.99.0", &sums, None, false).unwrap(),
-            Signature::OlderThanSigning
-        );
-        assert_eq!(
-            check_signature(&key(), "v1.0.0", "1.1.0", &sums, None, true).unwrap(),
-            Signature::AllowedUnsigned
-        );
-    }
-
-    #[test]
-    fn with_no_pinned_key_only_the_checksum_is_checked() {
-        let sums = fixture("SHA256SUMS");
-        assert_eq!(
-            check_signature("", "", "1.0.0", &sums, Some(b"anything"), false).unwrap(),
-            Signature::NotSetUp
-        );
-    }
-
-    #[test]
-    fn the_checksum_is_the_named_files_alone() {
-        let a = "a".repeat(64);
-        let b = "b".repeat(64);
-        let sums =
-            format!("{a}  x-olang-1.0.0-macos-arm64.tar.gz\n{b}  olang-1.0.0-macos-arm64.tar.gz\n");
-        assert_eq!(
-            super::listed_sum(&sums, "olang-1.0.0-macos-arm64.tar.gz").as_deref(),
-            Some(b.as_str())
-        );
-        assert_eq!(
-            super::listed_sum(&format!("{a} *olang.tar.gz\n"), "olang.tar.gz").as_deref(),
-            Some(a.as_str())
-        );
-        assert_eq!(
-            super::listed_sum("zz  olang.tar.gz\n", "olang.tar.gz"),
-            None
-        );
-        assert_eq!(
-            super::listed_sum(&format!("{a}  x-olang.tar.gz\n"), "olang.tar.gz"),
-            None
-        );
-    }
-
-    #[test]
-    fn a_toolchain_name_is_one_folder_and_update_never_goes_down() {
-        for bad in ["..", ".", "", "../x", "a/b", "v..", ".hidden"] {
-            assert!(super::toolchain_name(bad).is_err(), "{bad}");
-        }
-        assert_eq!(super::toolchain_name("v1.2.0").unwrap(), "1.2.0");
-        assert_eq!(super::toolchain_name("dev").unwrap(), "dev");
-        assert!(super::is_older("v1.0.0", "1.0.1"));
-        assert!(super::is_older("1.0.0-rc.9", "1.0.0"));
-        assert!(!super::is_older("v1.1.0", "1.0.0"));
-        assert!(!super::is_older("1.0.0", "1.0.0"));
-        assert!(!super::is_older("nonsense", "1.0.0"));
-    }
-
-    #[test]
-    fn a_key_that_is_not_p256_is_refused() {
-        let sums = fixture("SHA256SUMS");
-        let sig = fixture("SHA256SUMS.sig");
-        let not_p256 = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAGb9ECWmEzf6FQbrBZ9w7lshQhqowtrbLDFw4rXAxZuE=\n-----END PUBLIC KEY-----";
-        assert!(verify_p256(not_p256, &sums, &sig).is_err());
+    fn a_series_is_a_prefix_of_the_version() {
+        assert!(in_series("1.0", "1.0.0-rc.8"));
+        assert!(in_series("1.0", "1.0.3"));
+        assert!(!in_series("1.0", "1.1.0"));
+        assert!(in_series("0.88", "0.88.0"));
+        assert!(in_series("1", "1.4.0"));
+        assert!(!in_series("0.8", "0.88.0"));
     }
 }
