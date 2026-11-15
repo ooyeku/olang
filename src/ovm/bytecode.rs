@@ -13051,23 +13051,12 @@ impl BytecodeCompiler {
                 Ok(dst_reg)
             }
 
-            Expr::Pipeline { left, right } => {
-                // `x |> f(a)` is `f(x, a)`; `x |> f` is `f(x)`
-                let desugared = match right.as_ref() {
-                    Expr::Call { callee, arguments } => {
-                        let mut args = Vec::with_capacity(arguments.len() + 1);
-                        args.push(crate::ast::Argument::Positional((**left).clone()));
-                        args.extend(arguments.iter().cloned());
-                        Expr::Call {
-                            callee: callee.clone(),
-                            arguments: args,
-                        }
-                    }
-                    other => Expr::Call {
-                        callee: Box::new(other.clone()),
-                        arguments: vec![crate::ast::Argument::Positional((**left).clone())],
-                    },
-                };
+            Expr::Pipeline { .. } => {
+                // `x |> f(a)` is `f(x, a)`; `x |> f` is `f(x)`. The whole
+                // chain is rewritten at once: rewriting one step at a time
+                // copied the rest of the chain at every step, quadratic in
+                // its length (OL-361).
+                let desugared = Self::desugar_pipeline(expr);
                 self.compile_expression(&desugared)
             }
 
@@ -15018,8 +15007,45 @@ impl BytecodeCompiler {
     /// Compile expressions evaluated left-to-right whose registers feed a
     /// single instruction (call arguments, list/tuple elements), shielding
     /// each from assignments in the expressions after it.
+    /// A pipeline chain as the calls it means, its left spine rewritten in
+    /// one pass (`a |> f |> g(b)` is `g(f(a), b)`), each part copied once.
+    fn desugar_pipeline(expr: &Expr) -> Expr {
+        let mut rights = Vec::new();
+        let mut at = expr;
+        while let Expr::Pipeline { left, right } = at {
+            rights.push(right.as_ref());
+            at = left;
+        }
+        let mut value = at.clone();
+        for right in rights.into_iter().rev() {
+            value = match right {
+                Expr::Call { callee, arguments } => {
+                    let mut args = Vec::with_capacity(arguments.len() + 1);
+                    args.push(crate::ast::Argument::Positional(value));
+                    args.extend(arguments.iter().cloned());
+                    Expr::Call {
+                        callee: callee.clone(),
+                        arguments: args,
+                    }
+                }
+                other => Expr::Call {
+                    callee: Box::new(other.clone()),
+                    arguments: vec![crate::ast::Argument::Positional(value)],
+                },
+            };
+        }
+        value
+    }
+
     fn compile_operands(&mut self, exprs: &[&Expr]) -> Result<Vec<Register>, BytecodeError> {
-        let last_assigning = exprs.iter().rposition(|e| !Self::assignment_free(e));
+        // Only an operand before an assigning one needs shielding, so one
+        // operand never does: not walking it keeps a deep chain of
+        // one-argument calls linear (OL-361).
+        let last_assigning = if exprs.len() < 2 {
+            None
+        } else {
+            exprs.iter().rposition(|e| !Self::assignment_free(e))
+        };
         let mut regs = Vec::with_capacity(exprs.len());
         for (i, expr) in exprs.iter().enumerate() {
             let reg = self.compile_expression(expr)?;
@@ -15955,6 +15981,110 @@ impl BytecodeOptimizer {
         instructions
     }
 
+    /// Basic blocks of a resolved instruction stream, as `(first, past)`
+    /// ranges in order, and the registers live at each block's end, as
+    /// bitsets of `nregs` bits. Successors are the eliminate pass's own:
+    /// a jump's target, a branch's target and the next instruction, a
+    /// self tail call's entry, nothing after a return or a match or try
+    /// failure, and otherwise the next instruction.
+    fn block_liveness(instructions: &[Instruction], nregs: usize) -> (Vec<(usize, usize)>, Vec<Vec<u64>>) {
+        use Instruction as I;
+        let n = instructions.len();
+        let words = nregs.div_ceil(64).max(1);
+        let mut leader = vec![false; n + 1];
+        leader[0] = true;
+        for (pc, inst) in instructions.iter().enumerate() {
+            match inst {
+                I::Jump { target }
+                | I::JumpIfTrue { target, .. }
+                | I::JumpIfFalse { target, .. } => {
+                    leader[(target.0 as usize).min(n)] = true;
+                    leader[pc + 1] = true;
+                }
+                I::TailCallSelf { .. } | I::Return { .. } | I::MatchFail | I::TryFail => {
+                    leader[pc + 1] = true;
+                }
+                _ => {}
+            }
+        }
+        let mut blocks = Vec::new();
+        let mut block_of = vec![usize::MAX; n + 1];
+        let mut first = 0;
+        for pc in 1..=n {
+            if leader[pc] || pc == n {
+                for b in first..pc {
+                    block_of[b] = blocks.len();
+                }
+                blocks.push((first, pc));
+                first = pc;
+            }
+        }
+        // each block's successors, by block index
+        let succs: Vec<Vec<usize>> = blocks
+            .iter()
+            .map(|&(_, past)| {
+                let last = past - 1;
+                let at = |t: usize| (t < n).then(|| block_of[t]);
+                match &instructions[last] {
+                    I::Jump { target } => at(target.0 as usize).into_iter().collect(),
+                    I::JumpIfTrue { target, .. } | I::JumpIfFalse { target, .. } => {
+                        at(target.0 as usize).into_iter().chain(at(past)).collect()
+                    }
+                    I::TailCallSelf { .. } => at(0).into_iter().collect(),
+                    I::Return { .. } | I::MatchFail | I::TryFail => Vec::new(),
+                    _ => at(past).into_iter().collect(),
+                }
+            })
+            .collect();
+        // each block's own reads before any write (gen) and writes (kill)
+        let mut gens = vec![vec![0u64; words]; blocks.len()];
+        let mut kills = vec![vec![0u64; words]; blocks.len()];
+        let mut uses = Vec::new();
+        let mut defs = Vec::new();
+        for (b, &(first, past)) in blocks.iter().enumerate() {
+            for pc in (first..past).rev() {
+                uses.clear();
+                defs.clear();
+                Self::uses_defs_into(&instructions[pc], &mut uses, &mut defs);
+                for &d in &defs {
+                    if (d as usize) < nregs {
+                        let (w, bit) = (d as usize / 64, 1u64 << (d % 64));
+                        gens[b][w] &= !bit;
+                        kills[b][w] |= bit;
+                    }
+                }
+                for &u in &uses {
+                    if (u as usize) < nregs {
+                        gens[b][u as usize / 64] |= 1u64 << (u % 64);
+                    }
+                }
+            }
+        }
+        let mut live_in = vec![vec![0u64; words]; blocks.len()];
+        let mut live_out = vec![vec![0u64; words]; blocks.len()];
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for b in (0..blocks.len()).rev() {
+                let mut out = vec![0u64; words];
+                for &s in &succs[b] {
+                    for (o, i) in out.iter_mut().zip(&live_in[s]) {
+                        *o |= *i;
+                    }
+                }
+                let new_in: Vec<u64> = (0..words)
+                    .map(|w| gens[b][w] | (out[w] & !kills[b][w]))
+                    .collect();
+                live_out[b] = out;
+                if new_in != live_in[b] {
+                    live_in[b] = new_in;
+                    changed = true;
+                }
+            }
+        }
+        (blocks, live_out)
+    }
+
     fn eliminate_dead_moves_once(mut instructions: Vec<Instruction>) -> (Vec<Instruction>, bool) {
         use Instruction as I;
         let mut any_rewrite = false;
@@ -15969,51 +16099,24 @@ impl BytecodeOptimizer {
                 Self::visit_registers(inst, &mut track);
             }
         }
-        // live[pc] = registers possibly read at or after pc along some path.
-        let mut live_in: Vec<Vec<bool>> = vec![vec![false; nregs]; n];
-        let mut changed = true;
-        while changed {
-            changed = false;
-            for pc in (0..n).rev() {
-                let mut out = vec![false; nregs];
-                let mut succ = |t: usize| {
-                    if t < n {
-                        for (i, b) in live_in[t].iter().enumerate() {
-                            if *b {
-                                out[i] = true;
-                            }
-                        }
-                    }
-                };
-                match &instructions[pc] {
-                    I::Jump { target } => succ(target.0 as usize),
-                    I::JumpIfTrue { target, .. } | I::JumpIfFalse { target, .. } => {
-                        succ(target.0 as usize);
-                        succ(pc + 1);
-                    }
-                    I::TailCallSelf { .. } => succ(0),
-                    I::Return { .. } | I::MatchFail | I::TryFail => {}
-                    _ => succ(pc + 1),
-                }
-                let mut new_in = out;
-                let (uses, defs) = Self::uses_defs(&instructions[pc]);
-                for d in defs {
-                    if (d as usize) < nregs {
-                        new_in[d as usize] = false;
-                    }
-                }
-                for u in uses {
-                    if (u as usize) < nregs {
-                        new_in[u as usize] = true;
-                    }
-                }
-                if new_in != live_in[pc] {
-                    live_in[pc] = new_in;
-                    changed = true;
-                }
-            }
-        }
-        for pc in 0..n {
+        // Liveness by basic block, as bitsets: a dense registers-by-
+        // instructions table made this pass quadratic in a function's
+        // size, the most of a large function's compile (OL-361). The
+        // decisions below are made in one backward scan of each block,
+        // from what is live after each instruction in the original code.
+        let words = nregs.div_ceil(64).max(1);
+        let (blocks, block_out) = Self::block_liveness(&instructions, nregs);
+        let mut uses = Vec::new();
+        let mut defs = Vec::new();
+        let mut running = vec![0u64; words];
+        for (b, &(first, past)) in blocks.iter().enumerate() {
+        running.copy_from_slice(&block_out[b]);
+        for pc in (first..past).rev() {
+            // what this instruction reads and writes, before any rewrite
+            uses.clear();
+            defs.clear();
+            Self::uses_defs_into(&instructions[pc], &mut uses, &mut defs);
+            let live = |r: u32| (r as usize) < nregs && running[r as usize / 64] >> (r % 64) & 1 == 1;
             // Calls consume dead-after argument registers by move: filling
             // the mask here (rather than cloning at frame push) is what
             // keeps a handle passed into a callee from staying pinned in
@@ -16029,7 +16132,7 @@ impl BytecodeOptimizer {
                 let mut mask = 0u64;
                 for (i, r) in args.iter().enumerate().take(64) {
                     let unique = args.iter().filter(|a| a.0 == r.0).count() == 1;
-                    let dead = !(pc + 1 < n && live_in[pc + 1][r.0 as usize]);
+                    let dead = !live(r.0);
                     if unique && dead {
                         mask |= 1 << i;
                     }
@@ -16043,7 +16146,7 @@ impl BytecodeOptimizer {
                 lhs_dead,
             } = &mut instructions[pc]
             {
-                let dead = !(pc + 1 < n && live_in[pc + 1][lhs.0 as usize]);
+                let dead = !live(lhs.0);
                 *lhs_dead = dead && lhs != rhs && dst != rhs;
             }
             if let I::MapSetAssign {
@@ -16053,7 +16156,7 @@ impl BytecodeOptimizer {
                 value_dead,
             } = &mut instructions[pc]
             {
-                let dead = !(pc + 1 < n && live_in[pc + 1][value.0 as usize]);
+                let dead = !live(value.0);
                 *value_dead = dead && value != target && value != key;
             }
             if let I::CallValue {
@@ -16068,7 +16171,7 @@ impl BytecodeOptimizer {
                 let mut mask = 0u64;
                 for (i, r) in args.iter().enumerate().take(64) {
                     let unique = args.iter().filter(|a| a.0 == r.0).count() == 1;
-                    let dead = !(pc + 1 < n && live_in[pc + 1][r.0 as usize]);
+                    let dead = !live(r.0);
                     if unique && dead && r != callee {
                         mask |= 1 << i;
                     }
@@ -16082,7 +16185,7 @@ impl BytecodeOptimizer {
                 let mut mask = 0u64;
                 for (i, r) in args.iter().enumerate().take(64) {
                     let unique = args.iter().filter(|a| a.0 == r.0).count() == 1;
-                    let dead = !(pc + 1 < n && live_in[pc + 1][r.0 as usize]);
+                    let dead = !live(r.0);
                     if unique && dead {
                         mask |= 1 << i;
                     }
@@ -16092,7 +16195,7 @@ impl BytecodeOptimizer {
             if debug_flag(&DEBUG_LIVENESS, "OLANG_DEBUG_LIVENESS")
                 && let I::Move { dst, src } = &instructions[pc]
             {
-                let la = |r: u32| pc + 1 < n && live_in[pc + 1][r as usize];
+                let la = live;
                 eprintln!(
                     "[live] pc={} Move dst=r{}(live_after={}) src=r{}(live_after={})",
                     pc,
@@ -16104,7 +16207,7 @@ impl BytecodeOptimizer {
             }
             let rewrite = match &instructions[pc] {
                 I::Move { dst, src } if dst != src => {
-                    let live_after = |r: u32| pc + 1 < n && live_in[pc + 1][r as usize];
+                    let live_after = live;
                     if !live_after(dst.0) {
                         // Nobody reads the destination: the Move (and the
                         // reference it would plant) can go. Its old value
@@ -16136,6 +16239,17 @@ impl BytecodeOptimizer {
                 instructions[pc] = inst;
                 any_rewrite = true;
             }
+            for &d in &defs {
+                if (d as usize) < nregs {
+                    running[d as usize / 64] &= !(1u64 << (d % 64));
+                }
+            }
+            for &u in &uses {
+                if (u as usize) < nregs {
+                    running[u as usize / 64] |= 1u64 << (u % 64);
+                }
+            }
+        }
         }
         (instructions, any_rewrite)
     }

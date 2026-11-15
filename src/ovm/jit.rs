@@ -2541,8 +2541,11 @@ impl JitCache {
                 sigs.entry(*idx)
                     .or_insert_with(|| compiled_sig(param_kinds, *ret_kind, ret_tuple));
             }
-            for (i, slot) in self.table.iter().enumerate() {
-                if let Some(Slot::Ready(j)) = slot {
+            // Only the functions the group calls: scanning the whole
+            // table made each compile cost with every function compiled
+            // before it (OL-361).
+            for i in called_indices(&plans) {
+                if let Some(Some(Slot::Ready(j))) = self.table.get(i) {
                     sigs.entry(i)
                         .or_insert_with(|| compiled_sig(&j.param_kinds, j.ret_kind, &j.ret_tuple));
                 }
@@ -2754,8 +2757,8 @@ impl JitCache {
 
         let mut targets: HashMap<usize, (cranelift_module::FuncId, Kind, Option<Vec<Kind>>)> =
             HashMap::new();
-        for (i, slot) in self.table.iter().enumerate() {
-            if let Some(Slot::Ready(j)) = slot {
+        for i in called_indices(&plans) {
+            if let Some(Some(Slot::Ready(j))) = self.table.get(i) {
                 targets.insert(i, (j.clif_id, j.ret_kind, j.ret_tuple.clone()));
             }
         }
@@ -3677,6 +3680,20 @@ pub(crate) fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
 /// Arc semantics would have diverged them. The one permitted alias is
 /// the exit write-back: a MakeTuple after which only Nops and the
 /// Return remain, so no write can execute once the tuple exists.
+/// The function indices the group's code calls directly (`CallFn`), the
+/// only entries of the table its inference and codegen read.
+fn called_indices(plans: &[PlanFn]) -> std::collections::BTreeSet<usize> {
+    let mut out = std::collections::BTreeSet::new();
+    for plan in plans {
+        for inst in plan.bytecode.instructions.iter() {
+            if let Instruction::CallFn { func_id, .. } = inst {
+                out.insert(func_id.index());
+            }
+        }
+    }
+    out
+}
+
 fn list_write_targets_unaliased(bytecode: &CompiledBytecode) -> bool {
     use std::collections::HashSet;
     let mut targets: HashSet<u32> = HashSet::new();
