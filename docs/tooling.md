@@ -1812,12 +1812,23 @@ The folder holds a state file and one folder per layer:
 ```text
 layers/state.json         {"active": "1.4.0", "tries": 0, "max_tries": 3}
 layers/1.4.0/app.olb      olang build --payload
-layers/1.4.0/app.olb.sig  crypto.ed25519_sign of app.olb's bytes, base64
+layers/1.4.0/app.olb.sig  crypto.ed25519_sign of "olang-layer\0" + "1.4.0" + "\0" + app.olb, base64
 ```
+
+A layer's folder is its version, and the signature covers that version
+with the program: `"olang-layer"`, a NUL byte, the version, a NUL byte,
+then `app.olb`'s bytes. A signed layer copied into a folder named for
+another version does not verify, and a layer whose version is lower
+than the application's own (its Info.plist's
+`CFBundleShortVersionString`, which must be there for any layer to run)
+is refused. Whoever can write the layers folder, which is outside the
+signed bundle, cannot roll the program back to an older signed build
+with a vulnerability since fixed.
 
 At launch the runtime reads `state.json` and runs the `active` layer
 only when it has been tried fewer than `max_tries` times (3 when the file
-says none), its signature verifies with the bundle's key, and its
+says none), its version is no lower than the bundle's, its signature
+verifies with the bundle's key as that version, and its
 payload was built by this olang ([The runtime it runs on](packages.md#the-runtime-it-runs-on)).
 It adds one to `tries` before the program starts, and runs the bytes it
 verified, read once. Otherwise it runs the bundled
@@ -1833,9 +1844,11 @@ it in the layers folder and makes it active, and the program, once it
 is satisfied the new code works, sets `tries` back to 0:
 
 ```olang no-run
-// On the publisher's machine: sign the new build with the release key.
+// On the publisher's machine: sign the new build, as its version,
+// with the release key.
 let program = unwrap(fs.read_bytes("app.olb"))
-let sig = unwrap(crypto.ed25519_sign(program, release_private_key))
+let message = bytes.join(["olang-layer", "1.4.0", program], bytes.from_list([0]))
+let sig = unwrap(crypto.ed25519_sign(message, release_private_key))
 
 // In the updater: put the layer in place and make it the active one.
 unwrap(fs.create_dir_all("layers/1.4.0"))
