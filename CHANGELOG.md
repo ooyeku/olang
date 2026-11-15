@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+olang 1.0. What it commits to is docs/stability.md, and every 1.x
+release proves it keeps those commitments before it is tagged
+(tests/compat/). 1.0.0 is 1.0.0-rc.10 with the fix below; the
+candidates' sections list everything that led here. From 1.0.0 on,
+every release is signed, and install.sh, install.ps1 and `otc update`
+refuse one without a good signature.
+
+### Fixed
+
+- **install.sh installs a release from before the signatures** with
+  any curl. Asked for one (`--version v1.0.0-rc.9`), it stopped with
+  "could not reach GitHub" where curl reports the missing signature's
+  404 as exit 56 rather than 22. It now checks such a release's
+  checksum, as it said it would.
+
 ## [1.0.0-rc.10] - 2026-11-15
 
 ### Added

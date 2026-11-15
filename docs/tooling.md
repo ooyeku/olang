@@ -2035,9 +2035,11 @@ file directly, the `--record <trace>` run option does the same thing:
 Here is the whole idea on a program that rolls three dice. The trace
 file replays the run even after the program is deleted:
 
-```bash
+```text
 $ olang record dice.ol
+olang record: writing trace to dice.olt
 rolled [5, 2, 6], total 13
+olang: recorded 3 event(s) to dice.olt
 $ rm dice.ol
 $ olang replay dice.olt
 rolled [5, 2, 6], total 13

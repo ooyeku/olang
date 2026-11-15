@@ -77,9 +77,11 @@ println(`rolled ${rolls}, total ${sum(rolls)}`)
 Run it twice and you get two different rolls. Record it once, delete
 the program, and replay the trace:
 
-```bash
+```text
 $ olang record dice.ol
+olang record: writing trace to dice.olt
 rolled [5, 2, 6], total 13
+olang: recorded 3 event(s) to dice.olt
 $ rm dice.ol
 $ olang replay dice.olt
 rolled [5, 2, 6], total 13

@@ -88,7 +88,7 @@ assert_eq(left, 20, "two withdrawals of 30 and 50 from 100")
 
 Save it as `bank.ol` and run it, and it almost certainly works:
 
-```bash
+```text
 $ olang bank.ol
 left: 20
 ```
@@ -99,7 +99,7 @@ withdrawal is lost. On a real machine that needs the two tasks to wake
 within microseconds of each other, so it hardly ever happens. In a
 simulated world it is just one of the orders the seed can pick:
 
-```bash
+```text
 $ olang sim bank.ol --seeds 50
 seed 17: failed at 0.006s virtual: two withdrawals of 30 and 50 from 100
 seed 29: failed at 0.004s virtual: two withdrawals of 30 and 50 from 100
@@ -124,7 +124,7 @@ task goes next. Random numbers come from the seed too, so each task's
 Because of that, seed 17 fails every time. Ask for its events to see
 what happened:
 
-```bash
+```text
 $ olang sim bank.ol --seed 17 --events
 left: 50
 events:
@@ -188,7 +188,7 @@ fn withdraw(inbox, amount) = {
 
 Now a thousand seeds pass:
 
-```bash
+```text
 $ olang sim bank.ol --seeds 1000
 olang sim: 1000 seed(s) · 1000 passed · 0 failed · 18.8s simulated per second (0.01 virtual hours) · 1 job(s) · 0.364 s real
 digest: 00e50f83cbbcc4ec
@@ -308,7 +308,7 @@ to an hour. It ends sooner, as `done`, once every client has finished.
 When the file is given to `olang sim`, it runs as an ordinary program,
 and every world it builds takes its seed from the command line:
 
-```bash
+```text
 $ olang sim counter_world.ol --seeds 10
 seed 2: failed at 30m 10.722s virtual: client c: the server counted 819, the client added 818
 seed 4: failed at 30m 05.992s virtual: client c: the server counted 807, the client added 806
@@ -389,7 +389,7 @@ fn add(key, id) = {
 with `add(key, key + "-" + to_string(added))` in the loop. Now a
 hundred seeds pass, run four at a time:
 
-```bash
+```text
 $ olang sim counter_world.ol --seeds 100 --jobs 4
 olang sim: 100 seed(s) · 100 passed · 0 failed · 9h 06m simulated per second (9.11 virtual hours) · 4 job(s) · 5.527 s real
 digest: 8b0d901382138f97
@@ -504,7 +504,7 @@ println(run.outcome)
 
 Every seed loses acknowledged puts:
 
-```bash
+```text
 $ olang sim store_world.ol --seeds 6
 seed 1: failed at 5m 00.163s virtual: client x: x lost acknowledged puts ["530", "591", "638", "639", "640", "755", "1030"]
 seed 2: failed at 5m 00.105s virtual: client z: z lost acknowledged puts ["130", "245", "246", "360", "361", "362", "947", "948", "974"]
@@ -555,7 +555,7 @@ if req.method == "POST" && req.path == "/put" => {
 
 With the world pointed at `store.ol`, every seed passes:
 
-```bash
+```text
 $ olang sim store_world.ol --seeds 40 --jobs 4
 olang sim: 40 seed(s) · 40 passed · 0 failed · 1h 13m simulated per second (1.22 virtual hours) · 4 job(s) · 2.724 s real
 digest: 48ebc74302c95d31
@@ -676,7 +676,7 @@ the latest put a writer was told was kept is already safe on the disk.
 stretch. The `fast_store.ol` version breaks the first property within
 a fraction of a second, without any crash at all:
 
-```bash
+```text
 $ olang sim store_check.ol --seeds 5
 seed 1: "an acknowledged put is on the disk" broke at 0.271s (step 21)
 seed 2: "an acknowledged put is on the disk" broke at 0.220s (step 20)
@@ -773,7 +773,7 @@ let run = w.run({ "for": sim.hours(1), props: [
 println(run.outcome)
 ```
 
-```bash
+```text
 $ olang sim counter_check.ol --seeds 16 --jobs 4
 seed 2: "every add counts once" broke at 30m 10.722s (step 28542): key c: no order of the 819 operations explains the history: after 817 placed, c/4 add(["c", 1]) → 819 completed before it could take effect
 seed 4: "every add counts once" broke at 30m 05.992s (step 28664): key c: no order of the 807 operations explains the history: after 805 placed, c/4 add(["c", 1]) → 807 completed before it could take effect
@@ -822,7 +822,7 @@ still one world on one thread, so the results do not depend on J. The
 summary ends with a digest of every event of every seed, and it is the
 same for one job as for the four used above:
 
-```bash
+```text
 $ olang sim counter_check.ol --seeds 16
 ...
 olang sim: 16 seed(s) · 8 passed · 8 failed · 3h 43m simulated per second (3.72 virtual hours) · 1 job(s) · 2.161 s real
@@ -864,7 +864,7 @@ seven seconds. `"optional": true` tells the shrinker it may leave the
 node out. Seed 6 is the interesting one, since its first crash lost
 nothing:
 
-```bash
+```text
 $ olang sim crash_check.ol --seed 6 --shrink --jobs 4
 ...
 shrinking seed 6 (4 job(s), at most 300 runs)...
@@ -885,7 +885,7 @@ The result is saved as a plan, a small JSON file that names the seed
 and every fault the run should make. `--replay` runs it again and
 checks it reproduced exactly:
 
-```bash
+```text
 $ olang sim --replay .sim/6.simplan
 ...
 olang sim: seed 6: "an acknowledged put survives a crash" broke at 3m 15.308s (step 17627)
@@ -1012,7 +1012,7 @@ A slow answer arrives after the client's one-second timeout, so the
 client retries an add the server has already counted. That is the
 same double count as before, now found without any partitions at all:
 
-```bash
+```text
 $ olang sim quiet_world.ol --seeds 12 --jobs 4
 seed 1: failed at 30m 00.684s virtual: client a: the server counted 884, the client added 678
 seed 7: failed at 30m 00.827s virtual: client c: the server counted 897, the client added 647
@@ -1043,7 +1043,7 @@ block that runs a world is run once for each of three seeds, and every
 world in it takes that seed. Three seeds are not enough for this bug,
 so the test passes, until the search is widened with `--seeds`:
 
-```bash
+```text
 $ olang test bank_test.ol
 bank_test.ol
   ✓ two withdrawals leave the right balance

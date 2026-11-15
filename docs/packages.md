@@ -599,11 +599,17 @@ first on PATH, is marked `active` (→); the shims' is `default`. When
 they differ, one line says which shadows which and the fix:
 
 ```
-  → 1.0.0   cargo     active          /Users/me/.cargo/bin/olang
-    0.88.0  shims     default         /Users/me/.olang/bin/olang
+  → 0.88.0  cargo     active          /Users/me/.cargo/bin/olang
+    1.0.0   shims     default         /Users/me/.olang/bin/olang
     0.80.0  managed                   /Users/me/.olang/toolchains/0.80.0/bin/olang
-/Users/me/.cargo/bin/olang (cargo, 1.0.0) is ahead of the shims on PATH, so `olang` runs it, not the default 0.88.0: export PATH="/Users/me/.olang/bin:$PATH" — or remove it: cargo uninstall olang
+/Users/me/.cargo/bin/olang (cargo, 0.88.0) is ahead of the shims on PATH, so `olang` runs it, not the default 1.0.0: export PATH="/Users/me/.olang/bin:$PATH" — or remove it: cargo uninstall olang
 ```
+
+Read the versions before taking the fix: when the shadowing olang is
+the newer one, keep it and remove the old toolchains instead. olang is
+not published on crates.io, so `cargo install olang` does not bring a
+removed one back; a cargo-installed olang comes from a checkout
+(`cargo install --path .`).
 
 Inside a project one more line says what its pin resolves to. In
 `--format json` each row is `#{ version, olang, real, kind, folder,
