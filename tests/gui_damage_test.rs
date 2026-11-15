@@ -742,6 +742,49 @@ fn a_damaged_frame_is_the_whole_frame_on_the_gpu_and_agrees_with_software() {
     }
 }
 
+/// A scroll's pixels move through a scratch texture the size of the move,
+/// let go once frames stop moving: a full-size one was kept for the
+/// window's life after its first scroll, 28 MB in OlangStudio's (OL-204).
+#[test]
+fn a_target_lets_its_scroll_scratch_go_once_nothing_moves() {
+    let _turn = gpu_turn();
+    let Ok(g) = gpu::gpu(None, None) else {
+        eprintln!("skipped: no GPU here");
+        return;
+    };
+    let mut r = Rng(seed(0x5c2a).max(1));
+    let mut world = World::new(&mut r, 2.0);
+    let before = g.stats().target_bytes;
+    let mut t = gpu::Target::new(g.clone(), wgpu::TextureFormat::Rgba8Unorm);
+    let mut moved = false;
+    for _ in 0..2000 {
+        world.step(&mut r);
+        t.render(&world.st.display_list());
+        if !t.last_shifts.is_empty() {
+            moved = true;
+            break;
+        }
+    }
+    assert!(moved, "the world scrolled within 2,000 steps");
+    let dl = world.st.display_list();
+    let frame = (dl.width * dl.height * 4) as usize;
+    let held = g.stats().target_bytes - before;
+    assert!(
+        held < 2 * frame,
+        "the frame and a scratch the size of the move: {held} bytes, a frame is {frame}"
+    );
+    // frames that move nothing: the scratch goes after 30
+    for _ in 0..31 {
+        t.render(&dl);
+        assert!(t.last_shifts.is_empty(), "the same frame moves nothing");
+    }
+    assert_eq!(
+        g.stats().target_bytes - before,
+        frame,
+        "only the kept frame is held once nothing moves"
+    );
+}
+
 #[test]
 fn an_unchanged_frame_draws_nothing_and_a_caret_move_draws_a_tile_or_two() {
     let mut r = Rng(7);

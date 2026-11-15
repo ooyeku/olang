@@ -1998,6 +1998,9 @@ fn f16_to_f32(h: u16) -> f32 {
     }
 }
 
+/// Frames drawn without a move before a target lets its scratch go.
+const SCRATCH_FRAMES: u32 = 30;
+
 /// A frame kept between frames, so the next draws only what changed.
 pub struct Target {
     gpu: Arc<Gpu>,
@@ -2005,8 +2008,13 @@ pub struct Target {
     tex: Option<(wgpu::Texture, wgpu::TextureView, u32, u32)>,
     tracker: Tracker,
     /// Where a shift's pixels wait between the copies (a texture is not
-    /// copied onto itself).
+    /// copied onto itself): the size of the largest move, not of the
+    /// frame, and let go after `SCRATCH_FRAMES` frames drawn without a
+    /// move. A full-size one was held for the window's life after its
+    /// first scroll: 28 MB in OlangStudio's window (OL-204).
     scratch: Option<(wgpu::Texture, u32, u32)>,
+    /// Frames drawn since the last that moved pixels.
+    unmoved: u32,
     /// The last frame's damage and moves (for a trace and for tests).
     pub last: Damage,
     pub last_shifts: Vec<Shift>,
@@ -2026,6 +2034,7 @@ impl Target {
             tex: None,
             tracker: Tracker::default(),
             scratch: None,
+            unmoved: 0,
             last: Damage::None,
             last_shifts: Vec::new(),
         }
@@ -2049,6 +2058,10 @@ impl Target {
                 std::sync::atomic::Ordering::Relaxed,
             );
         }
+        self.release_scratch();
+    }
+
+    fn release_scratch(&mut self) {
         if let Some((_, w, h)) = self.scratch.take() {
             self.gpu.targets.fetch_sub(
                 (w * h * self.px_bytes()) as usize,
@@ -2117,18 +2130,37 @@ impl Target {
         let Some((tw, th)) = self.tex.as_ref().map(|t| (t.2, t.3)) else {
             return;
         };
-        if !shifts.is_empty() && !matches!(self.scratch, Some((_, w, h)) if (w, h) == (tw, th)) {
-            if let Some((_, w, h)) = self.scratch.take() {
-                self.gpu.targets.fetch_sub(
-                    (w * h * self.px_bytes()) as usize,
-                    std::sync::atomic::Ordering::Relaxed,
-                );
+        // the largest move this frame, clipped to the frame
+        let (mw, mh) = shifts.iter().fold((0u32, 0u32), |(w, h), s| {
+            (
+                w.max((s.src.x1 - s.src.x0).max(0) as u32),
+                h.max((s.src.y1 - s.src.y0).max(0) as u32),
+            )
+        });
+        let (mw, mh) = (mw.min(tw), mh.min(th));
+        if shifts.is_empty() {
+            self.unmoved = self.unmoved.saturating_add(1);
+            if self.unmoved >= SCRATCH_FRAMES {
+                self.release_scratch();
             }
+        } else {
+            self.unmoved = 0;
+        }
+        if mw > 0
+            && mh > 0
+            && !matches!(self.scratch, Some((_, w, h)) if w >= mw && h >= mh)
+        {
+            // grown to hold this move and any it held before
+            let (sw, sh) = match &self.scratch {
+                Some((_, w, h)) => ((*w).max(mw), (*h).max(mh)),
+                None => (mw, mh),
+            };
+            self.release_scratch();
             let s = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("gui frame moves"),
                 size: wgpu::Extent3d {
-                    width: tw,
-                    height: th,
+                    width: sw,
+                    height: sh,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
@@ -2139,22 +2171,22 @@ impl Target {
                 view_formats: &[],
             });
             self.gpu.targets.fetch_add(
-                (tw * th * self.px_bytes()) as usize,
+                (sw * sh * self.px_bytes()) as usize,
                 std::sync::atomic::Ordering::Relaxed,
             );
-            self.scratch = Some((s, tw, th));
+            self.scratch = Some((s, sw, sh));
         }
         let Some((tex, view, _, _)) = &self.tex else {
             return;
         };
-        if let Some((scratch, _, _)) = &self.scratch {
-            fn at<'a>(t: &'a wgpu::Texture, r: &IRect) -> wgpu::TexelCopyTextureInfo<'a> {
+        if let (Some((scratch, _, _)), false) = (&self.scratch, shifts.is_empty()) {
+            fn at<'a>(t: &'a wgpu::Texture, x: i32, y: i32) -> wgpu::TexelCopyTextureInfo<'a> {
                 wgpu::TexelCopyTextureInfo {
                     texture: t,
                     mip_level: 0,
                     origin: wgpu::Origin3d {
-                        x: r.x0 as u32,
-                        y: r.y0 as u32,
+                        x: x as u32,
+                        y: y as u32,
                         z: 0,
                     },
                     aspect: wgpu::TextureAspect::All,
@@ -2166,8 +2198,9 @@ impl Target {
                     height: (s.src.y1 - s.src.y0) as u32,
                     depth_or_array_layers: 1,
                 };
-                enc.copy_texture_to_texture(at(tex, &s.src), at(scratch, &s.src), size);
-                enc.copy_texture_to_texture(at(scratch, &s.src), at(tex, &s.dst), size);
+                // through the scratch's corner: it is the move's size
+                enc.copy_texture_to_texture(at(tex, s.src.x0, s.src.y0), at(scratch, 0, 0), size);
+                enc.copy_texture_to_texture(at(scratch, 0, 0), at(tex, s.dst.x0, s.dst.y0), size);
             }
         }
         self.gpu.encode(enc, p, view, self.format, d, true);
