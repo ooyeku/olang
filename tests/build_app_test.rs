@@ -162,7 +162,8 @@ fn a_dependency_reached_through_a_symbolic_link_keeps_its_modules() {
 
 /// `asset.read` reads only inside the package, where the system takes
 /// the path: a package can ship a link (`leak -> ~/.ssh/…`), and the
-/// file it led to outside the package was answered.
+/// file it led to outside the package was answered. And only what the
+/// package declares under `assets` (OL-619).
 #[test]
 #[cfg(unix)]
 fn an_asset_link_out_of_its_package_is_refused() {
@@ -181,7 +182,7 @@ fn an_asset_link_out_of_its_package_is_refused() {
     .unwrap();
     fs::write(
         app.join("main.ol"),
-        "fn text(r) = match r { Ok(b) => unwrap(bytes.to_string(b)), Err(e) => e }\nprintln(text(asset.read(\"app\", \"data/in.txt\")))\nprintln(text(asset.read(\"app\", \"data/near\")))\nprintln(text(asset.read(\"app\", \"data/leak\")))\n",
+        "fn text(r) = match r { Ok(b) => unwrap(bytes.to_string(b)), Err(e) => e }\nprintln(text(asset.read(\"app\", \"data/in.txt\")))\nprintln(text(asset.read(\"app\", \"data/near\")))\nprintln(text(asset.read(\"app\", \"data/leak\")))\nprintln(text(asset.read(\"app\", \"olang.toml\")))\n",
     )
     .unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_olang"))
@@ -191,9 +192,16 @@ fn an_asset_link_out_of_its_package_is_refused() {
         .unwrap();
     let text = String::from_utf8_lossy(&out.stdout).to_string();
     let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(lines.len(), 3, "{text}\n{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(lines.len(), 4, "{text}\n{}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(lines[0], "inside");
     assert_eq!(lines[1], "inside");
     assert!(lines[2].contains("leads outside the package"), "{}", lines[2]);
+    // OL-619: a file the package does not declare under `assets` is
+    // refused from source, as a built application would not carry it.
+    assert!(
+        lines[3].contains("not one of package \"app\"'s assets") && lines[3].contains("[\"data\"]"),
+        "{}",
+        lines[3]
+    );
     let _ = fs::remove_dir_all(&ws);
 }

@@ -780,7 +780,11 @@ A package can ship files beside its code, such as fonts, images or
 data, and `asset` reads them by the package's name: from its directory when the program runs from
 source, and from the application itself when it was built with `olang
 build --app` (the package lists them under `assets` in `olang.toml`).
-A path stays inside its package.
+Only those files are read, whether the program runs from source or was
+built: a path that is not under one of the package's `assets` is an
+`Err` naming the list, so a dependency cannot read another package's
+`olang.toml` or `.env` through `asset`. A path stays inside its package
+and its asset folder, links followed.
 
 | Function | Description |
 |---|---|

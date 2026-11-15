@@ -62,6 +62,39 @@ fn located(args: &[Value], what: &str) -> Result<std::path::PathBuf, String> {
             real.display()
         ));
     }
+    // Only what the package declares under `assets`, from source as in a
+    // built application (which carries nothing else): without this a
+    // dependency held to `fs = false` read the app's `olang.toml`, `.env`
+    // or any other package's files (OL-619).
+    let declared = crate::pkg::manifest::Manifest::load(&root)
+        .map(|m| m.package.assets)
+        .unwrap_or_default();
+    let clean = |p: &str| -> std::path::PathBuf {
+        p.split('/')
+            .filter(|c| !c.is_empty() && *c != ".")
+            .collect()
+    };
+    let wanted = clean(&path);
+    let Some(entry) = declared
+        .iter()
+        .map(|a| clean(a))
+        .find(|a| !a.as_os_str().is_empty() && wanted.starts_with(a))
+    else {
+        return Err(format!(
+            "asset.{what}: \"{path}\" is not one of package \"{package}\"'s assets (its olang.toml declares assets = {declared:?})"
+        ));
+    };
+    // ...and where a link inside an asset folder leads, it stays there.
+    if let (Ok(real_entry), Ok(real)) = (
+        std::fs::canonicalize(root.join(&entry)),
+        std::fs::canonicalize(&at),
+    ) && !real.starts_with(&real_entry)
+    {
+        return Err(format!(
+            "asset.{what}: \"{path}\" leads outside the package's assets (to {})",
+            real.display()
+        ));
+    }
     Ok(at)
 }
 
