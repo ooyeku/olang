@@ -719,6 +719,10 @@ already binds — an import never replaces a program's own name. Alias the impor
         // What this load leaves on the heap is the program's, not its
         // values' (`runtime.memory()`).
         let _load = crate::memory::load_scope();
+        let _frame = crate::profile::frame_guard(
+            || format!("use {module_path}"),
+            Some(&file_path_str),
+        );
         self.module_name_index
             .entry(module_path.to_string())
             .or_insert_with(|| file_path.clone());

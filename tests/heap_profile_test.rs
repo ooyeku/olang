@@ -264,6 +264,14 @@ println(len(idx))
 
     let (out, _, ok) = olang(&["memory", "show", &format!("{dirs}/b.json")], &[]);
     assert!(ok && out.contains("build_index"), "{out}");
+    // flags after the files are still flags
+    let (out, err, ok) = olang(
+        &["memory", "show", &format!("{dirs}/b.json"), "--top", "1", "--format=json"],
+        &[],
+    );
+    assert!(ok, "{err}");
+    let doc: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert!(doc["sites"].as_array().is_some_and(|s| !s.is_empty()), "{out}");
 
     let (out, err, ok) = olang(&["memory", "diff", &format!("{dirs}/a.json")], &[]);
     assert!(!ok && (out + &err).contains("olang memory"), "a lone file is not a folder");
@@ -353,4 +361,27 @@ println(t)
     if let Some(c) = row("computes") {
         assert!(c["alloc_b"].as_u64().unwrap_or(0) < (lam + own + map_b) / 10);
     }
+}
+
+#[test]
+fn what_loading_a_module_holds_names_the_module() {
+    let d = dir().join("loads");
+    std::fs::create_dir_all(&d).unwrap();
+    let mut big = String::new();
+    for i in 0..3000 {
+        big.push_str(&format!("share fn f{i}(x) = x + {i}\n"));
+    }
+    std::fs::write(d.join("big.ol"), big).unwrap();
+    std::fs::write(
+        d.join("main.ol"),
+        "use big\nlet s = runtime.heap()\nlet own = filter(s.sites, (x) => x.scope == \"program\" && str.starts_with(x.function, \"use big\"))\nprintln(\"big \" + to_string(fold(own, 0, (a, x) => a + x.bytes)))\nprintln(\"program \" + to_string(s.program))\n",
+    )
+    .unwrap();
+    let (out, err, ok) = olang(
+        &[d.join("main.ol").to_str().unwrap()],
+        &[("OLANG_HEAP", "16k")],
+    );
+    assert!(ok, "{out}\n{err}");
+    // the module is most of what the program holds
+    assert!(field(&out, "big") > field(&out, "program") / 3, "{out}");
 }

@@ -4630,7 +4630,12 @@ fn execute_source(
     // The parsed entry file is the program's share of the heap
     // (`runtime.memory()`).
     let load = olang::memory::load_scope();
+    let frame = olang::profile::frame_guard(
+        || format!("load {}", file_path.display()),
+        file_path.to_str(),
+    );
     let parsed = OlangParser::new().parse(source);
+    drop(frame);
     drop(load);
     olang::boot_trace::mark("the entry file parsed");
     let program = match parsed {

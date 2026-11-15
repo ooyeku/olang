@@ -1729,7 +1729,10 @@ running no olang code (a window's renderer, the runtime's own threads),
 or by the program's top-level statements, is `(top level, or no olang
 frame)`; a top-level loop the tier compiled on the fly is `<hot loop>`.
 A parallel `map` or `par for` carries its caller's frames onto its
-workers, so their allocations are the caller's. Frames are recorded from the moment the profile
+workers, so their allocations are the caller's. Loading is framed too:
+what a module's load holds is the site `use <module>` (scope `program`),
+and the entry file's `load <file>`; a CPU profile names the same frames,
+so a slow start says which module it spent its time loading. Frames are recorded from the moment the profile
 starts, so a function already running then is missing from its own
 sites' paths: start it with the program for a whole picture.
 

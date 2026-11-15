@@ -1033,6 +1033,39 @@ fn first_and_newest(dir: &std::path::Path) -> Result<(std::path::PathBuf, std::p
 }
 
 pub fn cli(action: &str, args: &[String], top: usize, format: &str) -> i32 {
+    // `--top`/`--format` after the files land among the arguments (they
+    // are a program's own for `run`): read them here
+    let (mut top, mut format) = (top, format.to_string());
+    let mut files: Vec<String> = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let (flag, inline) = match a.split_once('=') {
+            Some((f, v)) if f.starts_with("--") => (f, Some(v.to_string())),
+            _ => (a.as_str(), None),
+        };
+        match flag {
+            "--top" | "--format" => {
+                let Some(v) = inline.or_else(|| it.next().cloned()) else {
+                    eprintln!("olang memory: {flag} needs a value");
+                    return 2;
+                };
+                if flag == "--top" {
+                    match v.parse() {
+                        Ok(n) => top = n,
+                        Err(_) => {
+                            eprintln!("olang memory: --top is a number, not `{v}`");
+                            return 2;
+                        }
+                    }
+                } else {
+                    format = v;
+                }
+            }
+            _ => files.push(a.clone()),
+        }
+    }
+    let args = files.as_slice();
+    let format = format.as_str();
     if format != "text" && format != "json" {
         eprintln!("olang memory: --format is `text` or `json`, not `{format}`");
         return 2;

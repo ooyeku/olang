@@ -411,6 +411,26 @@ pub fn peek_frames(out: &mut [u32]) -> usize {
         .unwrap_or(0)
 }
 
+/// A frame pushed until the guard drops, when frames are being recorded:
+/// a module's load (`use studio/face/app`), so what loading allocates
+/// and the time it takes name the module.
+pub struct FrameGuard(bool);
+
+pub fn frame_guard(name: impl FnOnce() -> String, file: Option<&str>) -> FrameGuard {
+    if !enabled() {
+        return FrameGuard(false);
+    }
+    FrameGuard(push_at(&name(), file, Tier::Interpreter))
+}
+
+impl Drop for FrameGuard {
+    fn drop(&mut self) {
+        if self.0 {
+            pop();
+        }
+    }
+}
+
 /// A thread's innermost frames, to be carried onto a worker that runs part
 /// of its call (a parallel `map`'s chunks, a `par for`'s): without them a
 /// worker's samples and allocations name `<lambda>` with no caller.
