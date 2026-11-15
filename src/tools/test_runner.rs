@@ -246,8 +246,32 @@ pub fn run_paths(
         if !has_tests {
             continue;
         }
-
         test_files += 1;
+        // Under `--only` a file none of whose blocks match is not run at
+        // all: its top-level code is not the test asked for, so its setup
+        // error can neither fail the filtered run nor print under another
+        // file's heading (OL-349). JSON still says what it left out.
+        if let Some(only) = options.only.as_deref()
+            && !program.statements.iter().any(
+                |s| matches!(s.unwrapped(), Statement::TestDecl(t) if t.name.contains(only)),
+            )
+        {
+            if json {
+                let name = abs_name(file);
+                for s in &program.statements {
+                    let line = match s {
+                        Statement::Located { line, .. } => *line,
+                        _ => 0,
+                    };
+                    if let Statement::TestDecl(t) = s.unwrapped() {
+                        super::test_events::test_skipped(&name, &t.name, line);
+                    }
+                }
+                super::test_events::file_done(&name, 0, 0, None, "error");
+            }
+            continue;
+        }
+
         // Under `--only` a file is named when one of its blocks ran.
         let mut named = options.only.is_none() || json;
         if named && !json {
@@ -447,6 +471,10 @@ pub fn run_paths(
             );
         } else if let Some(e) = run_error {
             file_errors += 1;
+            // the error is this file's: its heading comes first (OL-349)
+            if !named {
+                println!("{}", file.display().to_string().bright_blue());
+            }
             println!("  {} {}", "✗".red().bold(), "file error".bold());
             println!("      {}", e.to_string().red());
             // Name the statement that ran: a top-level effect the module

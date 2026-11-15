@@ -197,7 +197,10 @@ file, and the modules it imports are not part of the answer.
 
 `--only <text>` runs the blocks whose name contains the text, across
 every file under the path, and names only the files that had one — the
-way to check one test of a suite that takes minutes. `--times` prints
+way to check one test of a suite that takes minutes. A file with no
+matching block is not run at all, so its top-level code (and an error
+in it) has no part in the filtered run; under `--format json` its blocks
+are `skipped` and its `file` event has no error. `--times` prints
 each block's milliseconds beside its name and lists the slowest five at
 the end. Both pass through `--watch`, as `--deps` does.
 

@@ -67,6 +67,52 @@ fn test_runner_green_suite_exits_zero() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `--only` runs no file without a matching block, and a file error is
+/// printed under its own file's heading (OL-349).
+#[test]
+fn test_only_leaves_out_files_without_a_match_and_heads_a_file_error() {
+    let dir = fixture_dir("only_setup");
+    std::fs::write(
+        dir.join("a_test.ol"),
+        "test \"doubling works\" { assert_eq(2 * 2, 4) }\ntest \"after red\" { assert_true(true) }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("b_test.ol"),
+        "let x = 1 / 0\ntest \"never\" { assert_true(true) }\n",
+    )
+    .unwrap();
+    let run = |args: &[&str]| {
+        let out = olang().arg("test").args(args).current_dir(&dir).output().unwrap();
+        (out.status.code(), String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+    let (code, stdout) = run(&["--only", "after"]);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert!(stdout.contains("1 passed, 0 failed"), "{stdout}");
+    assert!(!stdout.contains("b_test"), "{stdout}");
+
+    let (code, stdout) = run(&["--only", "zzz", "--fail-if-none"]);
+    assert_eq!(code, Some(1), "{stdout}");
+    assert!(stdout.contains("0 passed, 0 failed"), "{stdout}");
+
+    // a file that does match: its setup error sits under its own heading
+    let (code, stdout) = run(&["--only", "never"]);
+    assert_eq!(code, Some(1), "{stdout}");
+    let heading = stdout.find("b_test.ol").expect(&stdout);
+    let error = stdout.find("file error").expect(&stdout);
+    assert!(heading < error, "{stdout}");
+
+    let out = olang()
+        .args(["test", "--only", "after", "--format", "json"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains(r#""event":"skipped""#) && text.contains("never"), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn test_runner_ignores_files_without_test_blocks() {
     let dir = fixture_dir("none");
