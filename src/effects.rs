@@ -104,6 +104,18 @@ fn cap_of(full_name: &str) -> Option<CapUse> {
     ) {
         return Some(CapUse::FsWrite);
     }
+    // Builtins outside `fs` that read or write a file by its path (OL-624):
+    // `gui.image_info` read any file (and said whether one exists), and
+    // `gui.capture` and `testing.snapshot` wrote, with `fs` denied.
+    // `gui.fonts`, `toad.sound` and `gui.movie` take a path or bytes, and
+    // need `fs` read only for a path: the dispatch gate judges them by
+    // their argument (Interpreter::implied_fs_denial).
+    if full_name == "gui.image_info" {
+        return Some(CapUse::FsRead);
+    }
+    if matches!(full_name, "gui.capture" | "testing.snapshot") {
+        return Some(CapUse::FsWrite);
+    }
     // Process-affecting calls, whatever module they live in. `os.exit`
     // was the hole: a dependency denied `proc` could not spawn a process
     // but could still terminate the host, which is a larger power than

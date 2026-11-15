@@ -291,12 +291,7 @@ pub(crate) fn missing_dir(who: &str, cwd: Option<&str>) -> Option<String> {
 /// module held to one program write to the host's own shell (the first
 /// process it started). Only the code a handle was given can name it.
 pub(crate) fn unguessable_id(taken: impl Fn(i64) -> bool) -> i64 {
-    loop {
-        let id = (rand::random::<u64>() >> 11) as i64;
-        if id != 0 && !taken(id) {
-            return id;
-        }
-    }
+    crate::caps::unguessable_id(taken)
 }
 
 static PROCS: OnceLock<Mutex<HashMap<i64, Arc<Proc>>>> = OnceLock::new();

@@ -31,7 +31,6 @@
 
 use crate::ast::Value;
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use unicode_width::UnicodeWidthChar;
 
@@ -1835,7 +1834,6 @@ fn percent_decode(t: &str) -> String {
 }
 
 // ── the registry ────────────────────────────────────────────────────
-static NEXT_ID: AtomicI64 = AtomicI64::new(1);
 
 fn screens() -> &'static Mutex<HashMap<i64, Arc<Mutex<Term>>>> {
     static SCREENS: OnceLock<Mutex<HashMap<i64, Arc<Mutex<Term>>>>> = OnceLock::new();
@@ -1960,11 +1958,10 @@ pub fn call_vt_function(name: &str, args: Vec<Value>) -> Res {
         if let Some(c) = rgb_of(o.and_then(|m| m.get("bg"))) {
             t.bg_rgb = c;
         }
-        let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
-        screens()
-            .lock()
-            .unwrap()
-            .insert(id, Arc::new(Mutex::new(t)));
+        let mut table = screens().lock().unwrap();
+        let id = crate::caps::unguessable_id(|id| table.contains_key(&id));
+        table.insert(id, Arc::new(Mutex::new(t)));
+        drop(table);
         return Ok(handle(id));
     }
     if name == "free" {

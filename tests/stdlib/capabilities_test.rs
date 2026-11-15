@@ -1322,6 +1322,79 @@ fn a_child_process_gets_neither_the_environment_nor_more_than_its_starters_grant
     let _ = std::fs::remove_dir_all(&ws);
 }
 
+/// OL-624: builtins outside `fs` that read or write files by path answer
+/// to the `fs` grant (`gui.image_info`, `gui.fonts` with a path,
+/// `testing.snapshot`), while fonts given as Bytes need none; and a
+/// database a module held to `fs_roots` opens can attach no other file.
+#[test]
+fn file_readers_outside_fs_are_gated_and_a_rooted_database_attaches_nothing() {
+    let ws = workspace("outside_fs");
+    write(
+        &ws.join("s.ol"),
+        "fn err(f) = show(runtime.call_budget(f, [], 20000).error)\n\
+         println(\"info=\" + err(() => gui.image_info(\"/etc/hosts\")))\n\
+         println(\"fonts=\" + err(() => gui.fonts([\"/etc/hosts\"], #{})))\n\
+         println(\"bytes=\" + err(() => gui.fonts([bytes.from_string(\"not a font\")], #{})))\n\
+         println(\"snap=\" + err(() => testing.snapshot(\"x\", 1)))\n",
+    );
+    let out = Command::new(olang())
+        .current_dir(&ws)
+        .args(["--deny", "fs", "s.ol"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let all = format!("{stdout}\n{}", String::from_utf8_lossy(&out.stderr));
+    for what in ["info=", "fonts=", "snap="] {
+        let line = stdout.lines().find(|l| l.starts_with(what)).unwrap_or("");
+        assert!(
+            line.contains("capability 'fs' denied"),
+            "{what} not gated: {all}"
+        );
+    }
+    let bytes = stdout
+        .lines()
+        .find(|l| l.starts_with("bytes="))
+        .unwrap_or("");
+    assert!(
+        !bytes.contains("denied"),
+        "fonts as Bytes need no fs: {all}"
+    );
+
+    let root = std::fs::canonicalize(&ws).unwrap();
+    write(
+        &ws.join("plug/plugin.ol"),
+        &format!(
+            "share fn go() = {{ let c = unwrap(db.open(\"{0}/plug/own.db\")); show(db.execute(c, \"ATTACH DATABASE '{0}/../elsewhere_{1}.db' AS x\")) }}\n",
+            root.display(),
+            std::process::id()
+        ),
+    );
+    write(
+        &ws.join("m.ol"),
+        &format!(
+            "let m = unwrap(runtime.load_module(\"{0}/plug/plugin.ol\", #{{ \"name\": \"plug\", \"fs\": true, \"fs_roots\": [\"{0}/plug\"], \"db\": true }}))\nprintln(\"attach=\" + m.go())\n",
+            root.display()
+        ),
+    );
+    let out = Command::new(olang())
+        .current_dir(&ws)
+        .arg("m.ol")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("attach=Err") && stdout.contains("too many attached"),
+        "a rooted module's database attached another file: {stdout} {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !root
+            .join(format!("../elsewhere_{}.db", std::process::id()))
+            .exists()
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
 /// OL-618: a dependency's `use` resolves only in its own package and its
 /// dependencies, never the app's project root, whose files run with the
 /// app's grant. 3a: `use helpers` reaching the app's helpers.ol; 3b: a

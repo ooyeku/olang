@@ -28,7 +28,7 @@
 
 use crate::ast::{Value, ValueMap};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -175,8 +175,6 @@ fn watches() -> &'static Mutex<HashMap<i64, Arc<Watch>>> {
     W.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-static NEXT_ID: AtomicI64 = AtomicI64::new(1);
-
 fn handle(id: i64) -> Value {
     let mut fields = ValueMap::default();
     fields.insert("id".to_string(), Value::Integer(id));
@@ -269,8 +267,10 @@ pub fn watch(args: Vec<Value>) -> Res {
     }
     match imp::start(&root, filter, latency_ms) {
         Ok(w) => {
-            let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-            watches().lock().unwrap().insert(id, Arc::new(w));
+            let mut table = watches().lock().unwrap();
+            let id = crate::caps::unguessable_id(|id| table.contains_key(&id));
+            table.insert(id, Arc::new(w));
+            drop(table);
             Ok(ok(handle(id)))
         }
         Err(e) => Ok(err(format!("fs.watch: {}", e))),

@@ -1175,6 +1175,31 @@ pub fn child_policy() -> Option<ChildPolicy> {
     CHILD_POLICY.with(|c| c.get())
 }
 
+thread_local! {
+    static ROOTED_CALL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Puts the previous "rooted" mark back when dropped.
+pub struct RootedScope(bool);
+
+impl Drop for RootedScope {
+    fn drop(&mut self) {
+        ROOTED_CALL.with(|c| c.set(self.0));
+    }
+}
+
+/// Mark the builtin call running on this thread as made by a module held
+/// to `fs_roots` (or not), until the scope ends.
+pub fn rooted_scope(rooted: bool) -> RootedScope {
+    RootedScope(ROOTED_CALL.with(|c| c.replace(rooted)))
+}
+
+/// Whether the builtin call running here was made by a module held to
+/// `fs_roots`: a database it opens gets no `ATTACH` (OL-624).
+pub fn in_rooted_call() -> bool {
+    ROOTED_CALL.with(|c| c.get())
+}
+
 /// The variables a child keeps when its starter is denied `env`: enough
 /// to find programs, a home, a locale and a temporary folder, and none of
 /// the secrets the environment holds.
@@ -1214,6 +1239,21 @@ pub fn apply_child_policy(
     let deny = policy.caps.deny_list();
     if !deny.is_empty() {
         command.env("OLANG_DENY", deny);
+    }
+}
+
+/// A handle's id: random, not counted (53 bits, so it stays an exact
+/// Int anywhere a number travels). A handle is a struct or an Int any
+/// code can write, and the call on it acts on whatever it names, so a
+/// counted id let a module name the host's own process, connection or
+/// deferred request (`http.respond(1, …)`): only code a handle was given
+/// can name it (OL-624).
+pub fn unguessable_id(taken: impl Fn(i64) -> bool) -> i64 {
+    loop {
+        let id = (rand::random::<u64>() >> 11) as i64;
+        if id != 0 && !taken(id) {
+            return id;
+        }
     }
 }
 

@@ -227,10 +227,9 @@ impl ConnEntry {
     }
 }
 
-/// Open connections, keyed by id. `next_id` hands out fresh ids.
+/// Open connections, keyed by an id no code can guess (caps::unguessable_id).
 struct Registry {
     connections: HashMap<i64, Arc<ConnEntry>>,
-    next_id: i64,
 }
 
 fn registry() -> &'static Mutex<Registry> {
@@ -238,7 +237,6 @@ fn registry() -> &'static Mutex<Registry> {
     REGISTRY.get_or_init(|| {
         Mutex::new(Registry {
             connections: HashMap::new(),
-            next_id: 1,
         })
     })
 }
@@ -1320,6 +1318,14 @@ fn open_with(
         Ok(c) => c,
         Err(e) => return Ok(err(format!("db.open: {}: {}", path, e))),
     };
+    // A module held to `fs_roots` opened this one inside them; `ATTACH`
+    // from it would open any file, so it may attach none (OL-624).
+    if crate::caps::in_rooted_call() {
+        // SAFETY: the connection's own handle, live while `conn` is.
+        unsafe {
+            rusqlite::ffi::sqlite3_limit(conn.handle(), rusqlite::ffi::SQLITE_LIMIT_ATTACHED, 0);
+        }
+    }
     let owner = sim.as_ref().map(|s| s.owner).unwrap_or(0);
 
     let control = Arc::new(Control::default());
@@ -1338,8 +1344,7 @@ fn open_with(
     });
 
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    let id = reg.next_id;
-    reg.next_id += 1;
+    let id = crate::caps::unguessable_id(|id| reg.connections.contains_key(&id));
     reg.connections.insert(id, entry);
 
     let mut fields = crate::ast::ValueMap::default();

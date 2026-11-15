@@ -1547,7 +1547,6 @@ thread_local! {
     /// `http.defer()` names its ticket after.
     static CURRENT_CONN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
-static CONN_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 /// Connections a handler deferred, waiting for `http.respond`.
 /// Each with its grant and the request's method (a HEAD's answer has no body).
 #[allow(clippy::type_complexity)]
@@ -1780,7 +1779,16 @@ fn serve_connection(
                 let request_value =
                     request_to_value(&req, forwarded.as_deref().unwrap_or(&remote_addr));
                 let fs_grant = interpreter.effective_fs();
-                let conn_id = CONN_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                // random, not counted: `http.respond` takes the ticket as
+                // a plain Int, and a counted one let any code with `net`
+                // answer the host's deferred requests (OL-624)
+                let conn_id = crate::caps::unguessable_id(|id| {
+                    DEFERRED
+                        .lock()
+                        .ok()
+                        .and_then(|t| t.as_ref().map(|t| t.contains_key(&(id as u64))))
+                        .unwrap_or(false)
+                }) as u64;
                 CURRENT_CONN.with(|c| c.set(conn_id));
                 crate::errtrace::begin();
                 let outcome = interpreter.call_function(handler.clone(), vec![request_value]);

@@ -943,7 +943,14 @@ too, so `db`, `net`, and `ods` are not latent filesystem capabilities:
 opening a file-backed database (`db.open` on a path, or a `db` query that
 runs `ATTACH`) requires `fs`, and an `http.serve` handler that returns a
 `body_file` is refused unless the program may read files. An in-memory
-database (`:memory:`) needs no `fs`.
+database (`:memory:`) needs no `fs`. The same holds outside the
+effectful modules: `gui.image_info` needs `fs` read, and `gui.fonts`,
+`gui.movie` and `toad.sound` need it when given a path (bytes need
+nothing); `gui.capture` and `testing.snapshot` write, and need `fs`
+write. A database that a module held to `fs_roots` opens may attach no
+other (`ATTACH` refused), and the handles a program is given (processes,
+terminals, database connections, watches, `http.defer`'s ticket) carry
+random ids, so code cannot name one it was not handed.
 
 The data stack is gated the same way and at the level it actually uses.
 `ods.read_csv_file`, `ods.read_jsonl_file`, `ods.open_csv`, and

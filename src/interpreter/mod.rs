@@ -7286,6 +7286,27 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             "db.open" => args.first(),
             "db.execute" | "db.query" | "db.query_one" | "db.query_rows" | "db.query_frame"
             | "db.cursor" => args.get(1),
+            // Builtins that take a file's path or its bytes read the file
+            // only for a path (OL-624): `gui.fonts(["/etc/hosts"])` read
+            // it with `fs` denied, while Bytes (a font `asset.read` gave)
+            // need no grant.
+            "gui.fonts" | "toad.sound" | "gui.movie" => {
+                let first = args.first();
+                let names_a_path = match (full_name, first) {
+                    (_, Some(Value::String(_))) => true,
+                    ("gui.fonts", Some(Value::List(items))) => {
+                        items.iter().any(|v| matches!(v, Value::String(_)))
+                    }
+                    ("gui.movie", Some(v)) => v
+                        .record_fields()
+                        .is_some_and(|m| matches!(m.get("open"), Some(Value::String(_)))),
+                    _ => false,
+                };
+                if !names_a_path {
+                    return None;
+                }
+                return self.fs_level_denial(full_name, crate::caps::FsCap::Read);
+            }
             _ => return None,
         };
         let path = match relevant {
@@ -7302,6 +7323,12 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 needed = crate::caps::FsCap::Read;
             }
         }
+        self.fs_level_denial(full_name, needed)
+    }
+
+    /// The `fs` denial for a builtin that needs `needed` of the filesystem
+    /// through its argument, if the running code's grant is short of it.
+    fn fs_level_denial(&mut self, full_name: &str, needed: crate::caps::FsCap) -> Option<String> {
         let (caps, package) = self.current_caps()?;
         if caps.fs.allows(needed) {
             return None;

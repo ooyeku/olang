@@ -769,6 +769,16 @@ impl BuiltinFunctions {
         } else {
             None
         };
+        // A database a module held to `fs_roots` opens is inside them (the
+        // gate checked the path), and `ATTACH` would reach any other file:
+        // its connection allows no attached database (OL-624).
+        let _rooted = (name == "db.open").then(|| {
+            crate::caps::rooted_scope(
+                interpreter
+                    .current_module_grant()
+                    .is_some_and(|g| g.fs_roots.is_some()),
+            )
+        });
 
         // A simulated world (`sim`): inside one, the world answers the
         // clock, randomness and the scheduler's operations, and refuses
