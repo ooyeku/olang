@@ -15,9 +15,13 @@ The key is an ECDSA P-256 key, because `openssl` on every Mac (LibreSSL)
 and every Linux can check one, and Windows can check it with .NET. No
 extra tool is needed on the user's side.
 
-## Setting it up (once)
+Releases are signed from v1.0.0 on. The public key is
+`dist/signing/olang-release.pub`.
 
-On your own computer, outside the repository:
+## How the key was set up
+
+This was done once, before v1.0.0 was tagged. The steps are kept here
+for a key rotation. On your own computer, outside the repository:
 
 ```bash
 # 1. the key pair
@@ -32,7 +36,7 @@ Keep `olang-release.key` somewhere safe and offline (a password manager
 is fine), then delete the copy on disk. Anyone holding it can sign
 releases.
 
-Then, in one commit, before the first signed release is tagged:
+Then, in one commit, before the first signed release was tagged:
 
 1. Copy `olang-release.pub` to `dist/signing/olang-release.pub`.
 2. Paste its contents into `install.sh` as `SIGNING_KEY` (the whole PEM,
@@ -42,23 +46,24 @@ Then, in one commit, before the first signed release is tagged:
    update` checks the same signature.
 3. Set `SIGNED_FROM` in `install.sh`, `$SignedFrom` in `install.ps1` and
    `SIGNED_FROM` in `otc/src/commands/update.rs` to the tag of that
-   first signed release, for example `v1.0.0`.
+   first signed release, `v1.0.0`.
    Releases older than it install with a note that only their checksum
    was checked; releases from it on must carry a good signature.
 
-`tests/install_script_test.rs` checks that the four copies of the key
-agree. The release workflow refuses to publish when `install.sh` carries
-a key but the secret is missing, or when the signature it made does not
-verify against `install.sh`'s key.
+`tests/apps/install_script_test.rs` checks that the four copies of the
+key agree. The release workflow refuses to publish when `install.sh`
+carries a key but the secret is missing, or when the signature it made
+does not verify against `install.sh`'s key.
 
-## What each release then carries
+## What each release carries
 
 - `SHA256SUMS`, the checksums of every download;
 - `SHA256SUMS.sig`, a DER-encoded ECDSA signature of it;
 - a GitHub build provenance attestation for each download, which
   records the workflow run that built it.
 
-To check a download by hand:
+To check a download by hand, put it, `SHA256SUMS`, `SHA256SUMS.sig`
+and `olang-release.pub` in one folder and run:
 
 ```bash
 openssl dgst -sha256 -verify olang-release.pub -signature SHA256SUMS.sig SHA256SUMS

@@ -22,9 +22,9 @@ Part of [the olang book](README.md).
 
 ## Install olang
 
-olang 1.0 is built, tested and supported on macOS; the installer also
-runs on Linux and Windows, where olang is an unsupported preview. See
-[Platforms](#platforms) for the details.
+The current release is olang 1.0.0. It is built, tested and supported
+on macOS; the installer also runs on Linux and Windows, where olang is
+an unsupported preview. See [Platforms](#platforms) for the details.
 
 On a Mac, open a terminal (the Terminal app is in Applications, then
 Utilities), paste this line and press Return. The same line works on
@@ -41,9 +41,9 @@ irm https://raw.githubusercontent.com/ooyeku/olang/main/install.ps1 | iex
 ```
 
 The installer works out what kind of computer you have, downloads the
-matching olang, checks it against the release's published checksums, and puts `olang`
-and `otc` in a folder in your home directory (`~/.olang/bin`). It adds
-that folder to your `PATH`, the list of places your terminal looks for
+matching olang, checks the release's signature and the download's
+checksum, and puts `olang` and `otc` in a folder in your home directory
+(`~/.olang/bin`). It adds that folder to your `PATH`, the list of places your terminal looks for
 programs. It needs no administrator password and no Rust.
 
 A terminal only reads that list when it opens, so the window you
@@ -68,7 +68,7 @@ at `https://raw.githubusercontent.com/ooyeku/olang/main/install.sh` (and
 The installer takes a few options. Put them after `sh -s --`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh -s -- --version v1.0.0-rc.7
+curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh -s -- --version v1.0.0
 ```
 
 | Option | Environment variable | Effect |
@@ -85,12 +85,12 @@ curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh -
 
 `TAG` is a release's tag exactly as the [releases
 page](https://github.com/ooyeku/olang/releases) lists it: a `v`, then
-the version, such as `v1.0.0-rc.7`. A tag that is not on that page is
+the version, such as `v1.0.0`. A tag that is not on that page is
 refused with the list's address, so check there for the release you
 want.
 
 On Windows, set the environment variable first, for example
-`$env:OLANG_VERSION = 'v1.0.0-rc.7'; irm https://raw.githubusercontent.com/ooyeku/olang/main/install.ps1 | iex`.
+`$env:OLANG_VERSION = 'v1.0.0'; irm https://raw.githubusercontent.com/ooyeku/olang/main/install.ps1 | iex`.
 
 In CI, a typical line is:
 
@@ -118,8 +118,9 @@ offers to install Rust too, and asks before doing either.
 
 Run the install command again. It replaces olang in place with the
 newest release. `otc update` does the same from inside olang, and
-`otc update --check` only reports whether a newer release exists. `otc`
-can also keep several releases side by side and switch between them
+checks the release's signature as the installer does. `otc update
+--check` only reports whether a newer release exists. `otc` can also
+keep several releases side by side and switch between them
 with `otc toolchain` ([Packages](packages.md#updating-and-toolchains)).
 
 Homebrew users update with `brew upgrade olang`, and Cargo users by
@@ -161,16 +162,19 @@ Homebrew checks it.
 
 Every [release](https://github.com/ooyeku/olang/releases) has a file per
 platform (see [Platforms](#platforms) for which is which), a
-`SHA256SUMS` file with each file's checksum. To check a download before
-you unpack it, put it and `SHA256SUMS` in one folder and run:
+`SHA256SUMS` file with each file's checksum, and `SHA256SUMS.sig`, the
+release key's signature of that file. The public key is
+[`dist/signing/olang-release.pub`](https://github.com/ooyeku/olang/blob/main/dist/signing/olang-release.pub)
+in the repository. To check a download before you unpack it, put it,
+`SHA256SUMS`, `SHA256SUMS.sig` and `olang-release.pub` in one folder and
+run:
 
 ```bash
+openssl dgst -sha256 -verify olang-release.pub -signature SHA256SUMS.sig SHA256SUMS
 shasum -a 256 -c SHA256SUMS --ignore-missing
 ```
 
-Releases are not signed yet, so there is no release key to fetch and no
-`SHA256SUMS.sig` to check. When signing is switched on, this section will
-say where the public key lives and how to check the signature with it.
+The first line prints `Verified OK` when the checksums came from olang.
 
 With the GitHub CLI, `gh attestation verify olang-1.0.0-macos-arm64.tar.gz
 --repo ooyeku/olang` checks that the file was built by olang's release
@@ -273,14 +277,15 @@ Every download goes over HTTPS, and the installer refuses to fall back
 to plain HTTP. Each release lists a checksum, a fingerprint of the file,
 for every download in `SHA256SUMS`, and the installer compares the file
 it downloaded against it. A checksum proves the file arrived intact, but
-not who made it, since it comes from the same place. So releases are
-also being set up to carry a signature: once release signing is
-switched on, the release workflow signs `SHA256SUMS` with olang's
-release key, and the installer checks that signature with the public
-key written into the installer itself, using `openssl` on macOS and
-Linux and .NET on Windows. A file changed on the download server then
-fails that check, and nothing is installed. Until then, the installer
-checks the checksum only.
+not who made it, since it comes from the same place. So the release
+workflow also signs `SHA256SUMS` with olang's release key, and the
+installer checks that signature with the public key written into the
+installer itself, using `openssl` on macOS and Linux and .NET on
+Windows. `otc update` checks it with the same key, built into `otc`. A
+file changed on the download server then fails that check, and nothing
+is installed. Every release from 1.0.0 on must carry a good
+`SHA256SUMS.sig`; an older one installs with a note that only its
+checksum was checked.
 
 On a Linux without `openssl` the installer still checks the checksum,
 and says that it could not check the signature. Set

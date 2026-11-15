@@ -2349,9 +2349,9 @@ a task's first call of each.
 
 **Failure is a value.** A task that raises (or that meets a bug in
 olang itself, an `"internal error: …"`) yields `Err(message)` from
-`task.join` rather than aborting the program, so worker failure is
-handled with the ordinary Result toolkit and one bad task never kills
-the batch. A task that *returns* an `Err` joins as `Ok(Err(…))`, so the
+`task.join`, the message as `raise` gave it, rather than aborting the
+program, so worker failure is handled with the ordinary Result toolkit
+and one bad task never kills the batch. A task that *returns* an `Err` joins as `Ok(Err(…))`, so the
 two are never confused:
 
 ```olang

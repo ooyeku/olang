@@ -367,10 +367,6 @@ propagating — is a fix, not a break, and lands in a minor or patch
 release. Such changes are recorded in [CHANGELOG.md](../CHANGELOG.md)
 under Fixed, with the reasoning.
 
-**Release candidates.** Until 1.0.0 is tagged, a release candidate may
-still settle a rule, each such change listed in the CHANGELOG and found
-by `olang check` where it can be.
-
 ## How this is enforced
 
 - Every code block in the book runs in CI (`doc_examples_test`).

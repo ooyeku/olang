@@ -1539,7 +1539,7 @@ The model is covered in
 
 | Function | Returns |
 |---|---|
-| <a id="task-join"></a>`task.join(t)` | `Ok(value)` when the task returned (a value that is itself an `Err` included), `Err(message)` when it raised — blocks until it finishes |
+| <a id="task-join"></a>`task.join(t)` | `Ok(value)` when the task returned (a value that is itself an `Err` included), `Err(message)` when it raised, the message as `raise` gave it — blocks until it finishes |
 | <a id="task-join_timeout"></a>`task.join_timeout(t, ms)` / `task.join_timeout(t, #{ timeout_ms })` | `Ok` of what `task.join` answers (`Ok(Ok(v))`, `Ok(Err(e))`) if it finished within `ms`, else `Err("timed out")` |
 | <a id="task-interrupt"></a>`task.interrupt(t, reason?)` | stop the task: it raises `"interrupted"` (`"interrupted: reason"`) at its next statement, loop iteration or call, or at once when it waits (`chan.recv`, `chan.ask`, a full `chan.send`, `task.join`, `time.sleep`, a `proc` read). Asked once, so an `attempt` in the task can catch it. `true` when asked, `false` when the task had already ended |
 | <a id="task-set_qos"></a>`task.set_qos(class)` / `task.set_qos(t, class)` | give the calling thread, or task `t`, a macOS quality-of-service class: `"user-interactive"`, `"user-initiated"`, `"default"`, `"utility"` or `"background"`. A lower class yields the CPU to higher ones under load (on Apple silicon it runs on the efficiency cores). `t` takes it at its next statement, loop iteration or call, or at once in a wait. A task starts with its spawner's class. Answers the class; nothing changes on other systems |
@@ -1594,7 +1594,10 @@ println(task.interrupt(t))                      // false
 
 Joining the same handle twice returns the memoized result rather than
 re-running anything. A handle dropped without ever being joined is
-fire-and-forget: the thread detaches and finishes on its own.
+fire-and-forget: the thread detaches and finishes on its own. If such a
+task fails, its failure goes to stderr once nothing can join it; a
+failure a `task.join` collects prints nothing
+([language.md](language.md#spawn-and-taskjoin)).
 
 ## `cell` — mutable locations
 
@@ -2408,7 +2411,7 @@ when the source has no such part: an `if` with no `else`, a `break` or
 `return` with no value, an arm with no `guard`, an `index_assign` of a
 plain list (`field` is there for `m.k[i] = v`). A parameter, a struct's
 field, and a pattern's field are plain maps without a `kind`. Kinds and
-fields are only ever added; `tests/meta_parse_nodes_test.rs` holds this
+fields are only ever added; `tests/tools/meta_parse_nodes_test.rs` holds this
 table to what `meta.parse` produces.
 
 <!-- meta.parse nodes -->

@@ -115,6 +115,6 @@ vim.filetype.add({ extension = { ol = "olang" } })
 
 ## Protocol coverage
 
-The server is tested at the protocol level — `tests/lsp_test.rs` drives
+The server is tested at the protocol level — `tests/tools/lsp_test.rs` drives
 the real binary over stdio through initialize, didOpen/didChange
 diagnostics, completion, formatting, and clean shutdown.

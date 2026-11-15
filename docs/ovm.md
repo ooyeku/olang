@@ -86,7 +86,7 @@ compiled with its caller). The rules are the eager route's, only later:
 - a native candidate (a function the JIT will specialize at its first
   call) has the callees its group reaches compiled just before it plans,
   since the planner reads their code — a pure, numeric group stays native
-  as before (pinned by `tests/tier_floor_test.rs`);
+  as before (pinned by `tests/vm/tier_floor_test.rs`);
 - `olang check --tier` compiles eagerly, every owed callee included, so
   its static verdicts are unchanged.
 
@@ -135,7 +135,7 @@ launch compiled.
   question, asked again at the same point (the ids it gave callees given
   again), gets the same answer. A changed body, a rebuilt olang, a
   callee's new arity, a renamed module, a name made ambiguous, a folded
-  flag flipped: each compiles afresh (tests/compile_cache_test.rs holds
+  flag flipped: each compiles afresh (tests/vm/compile_cache_test.rs holds
   every case to the same program with the cache off). A key keeps up to
   four entries, for a function compiled under scopes that differ from
   run to run (which callees the registry had met yet).
@@ -335,17 +335,17 @@ as `--ovm-stats=json` reports it.
 handle is rejected at compile time rather than approximated at runtime. This
 rule is enforced by three test suites:
 
-- `tests/bytecode_differential_test.rs` runs programs through
+- `tests/vm/bytecode_differential_test.rs` runs programs through
   *both* the interpreter and the VM and asserts identical results —
   arithmetic and overflow errors, float semantics, comparisons, branches,
   recursion, loops, strings, lists, ranges, arity errors, and a set of
   aliasing cases specific to the register-window design. It also asserts the
   inverse: unsupported features must be *rejected*, never miscompiled.
-- `tests/bytecode_tier_test.rs` runs whole programs with and
+- `tests/vm/bytecode_tier_test.rs` runs whole programs with and
   without the tier enabled and asserts the observable results match,
   including mixed programs where some functions are promoted and others are
   not, transitive and mutual recursion, and function redefinition.
-- `tests/tier_agreement_test.rs` runs the *corpus* — every runnable
+- `tests/vm/tier_agreement_test.rs` runs the *corpus* — every runnable
   example in this book and every standalone example program — under
   `--no-ovm` and under `--ovm-tier=1`, comparing stdout, stderr, and
   exit status, so it catches divergences in code no one thought to
@@ -357,7 +357,7 @@ carries the same call frames, the same spans, and the same message
 whether it ran interpreted, on bytecode, or through a JIT deopt — the
 VM tracks statement spans and rebuilds interpreter-shaped frames on
 the way out, so a stack trace never reveals which tier executed the
-code. `tests/bytecode_tier_test.rs` holds `traces_agree_*` cases
+code. `tests/vm/bytecode_tier_test.rs` holds `traces_agree_*` cases
 asserting exactly that.
 
 If you extend the VM, extend the differential suite in the same change. A
@@ -613,7 +613,7 @@ loop kernels 20–30×; float kernels (Mandelbrot-style orbit loops)
 `par for`) over a jitted kernel multiplies further — workers carry
 their own tier and JIT.
 
-`tests/jit_test.rs` holds the parity suite: every guard edge runs tiered
+`tests/vm/jit_test.rs` holds the parity suite: every guard edge runs tiered
 and interpreted and must agree byte-for-byte.
 
 ### On-stack replacement
@@ -738,7 +738,7 @@ written below its caller, a builtin with no native arm (`drop`,
 callees all compile. `olang check --tier [path]` runs the same compiler
 over every function of a project without running it.
 The counters are deterministic — call counts, not samples — which is
-what makes them assertable: `tests/tier_floor_test.rs` runs
+what makes them assertable: `tests/vm/tier_floor_test.rs` runs
 representative hot shapes under this flag and fails if they stop
 reaching the compiled tiers, so a regression in tier *engagement*
 turns a test red instead of surfacing later as unexplained slowness. A

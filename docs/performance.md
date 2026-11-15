@@ -560,7 +560,7 @@ Rolling windows are sequential: a sliding window's state is a chain.
 Every parallel path joins in a fixed order, so a result is the same run
 to run, and the same on one thread but for a grouped float `sum` or
 `mean`, whose additions the parallel scatter reorders
-(`tests/frames_ergonomics_test.rs` checks both).
+(`tests/stdlib/frames_ergonomics_test.rs` checks both).
 
 ## Statistics and time series
 

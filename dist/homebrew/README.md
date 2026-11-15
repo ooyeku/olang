@@ -44,7 +44,7 @@ The release workflow (`.github/workflows/release.yml`) attaches a
 a release is published:
 
 1. In the tap's `Formula/olang.rb`, set `version` to the new release
-   (tag without the leading `v` — e.g. tag `v0.46.0` → `"0.46.0"`).
+   (tag without the leading `v` — e.g. tag `v1.0.0` → `"1.0.0"`).
    The `url` lines derive from `version` and need no editing.
 2. Replace the four `sha256` placeholders/values with the matching
    lines from the release's `SHA256SUMS`:
@@ -54,7 +54,7 @@ a release is published:
    - `olang-<version>-linux-x64.tar.gz` → `on_linux` / `on_intel`
 
    ```bash
-   curl -LO https://github.com/ooyeku/olang/releases/download/v0.46.0/SHA256SUMS
+   curl -LO https://github.com/ooyeku/olang/releases/download/v1.0.0/SHA256SUMS
    cat SHA256SUMS
    ```
 

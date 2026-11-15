@@ -113,8 +113,9 @@ a one-word change: `map` becomes `par_map`.
 
 ## Installation
 
-olang 1.0 is built, tested and supported on macOS; the installer also
-runs on Linux and Windows, where olang is an unsupported preview.
+The current release is olang 1.0.0. It is built, tested and supported
+on macOS; the installer also runs on Linux and Windows, where olang is
+an unsupported preview.
 
 On a Mac (or Linux), open a terminal, paste this line and press Return:
 
@@ -123,10 +124,9 @@ curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh
 ```
 
 On Windows, run `irm https://raw.githubusercontent.com/ooyeku/olang/main/install.ps1 | iex` in PowerShell.
-The installer picks the right download for your computer, checks it
-against the release's checksums, and needs no Rust and no administrator
-password. Then
-quit and reopen your terminal (or run `source ~/.zshrc`, or whichever
+The installer picks the right download for your computer, checks the
+release's signature and the download's checksum, and needs no Rust and
+no administrator password. Then quit and reopen your terminal (or run `source ~/.zshrc`, or whichever
 file the installer names) and run `olang --version`. With Homebrew,
 `brew install ooyeku/olang/olang` works too.
 [Installation](docs/installation.md) covers every other way to install,

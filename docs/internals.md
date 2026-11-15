@@ -86,10 +86,10 @@ effect an executable specification, one small `match` arm per construct.
 
 Whether an optimizing tier is correct is therefore a testable property:
 run the program both ways and compare. The differential suites
-(`tests/bytecode_differential_test.rs`, `tests/bytecode_tier_test.rs`,
-`tests/jit_test.rs`) do exactly that, over arithmetic edge cases,
+(`tests/vm/bytecode_differential_test.rs`, `tests/vm/bytecode_tier_test.rs`,
+`tests/vm/jit_test.rs`) do exactly that, over arithmetic edge cases,
 overflow errors, aliasing, recursion, and every guard boundary the JIT
-has. `tests/tier_agreement_test.rs` asks the same question at the other
+has. `tests/vm/tier_agreement_test.rs` asks the same question at the other
 scale: it runs every runnable example in this book and every standalone
 example program as a *whole program* under `--no-ovm` and under
 `--ovm-tier=1`, and diffs stdout, stderr, and exit status, which catches

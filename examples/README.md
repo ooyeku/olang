@@ -38,7 +38,7 @@ and exits cleanly.
 If you are not sure where to start, try [`demo/`](concurrency/demo/).
 Harborline is one simulated port that uses nearly every part of the
 language at once. To learn one feature at a time, [the book](../docs/README.md)
-teaches each with runnable snippets. `tests/example_programs_test.rs`
+teaches each with runnable snippets. `tests/apps/example_programs_test.rs`
 keeps the demo working: every module must parse, and a short soak run
 must finish with its invariants intact.
 
@@ -138,7 +138,7 @@ order, so read whichever subject interests you.
   with `:id` path parameters (`lib/router.ol`) dispatching to handlers over
   a SQLite store that persists across requests. GET/POST/DELETE, JSON in and
   out, 404/400 handling. Long-running — `run_all.ol` skips it; it is
-  integration-tested by `tests/http_serve_test.rs`
+  integration-tested by `tests/stdlib/http_serve_test.rs`
 - [`loadtest/`](web/loadtest/) — a self-contained HTTP load test: it boots the
   API (SQLite-backed) in a spawned task, fans a fleet of client workers out
   across `spawn` threads (each firing a burst and timing it), merges the
@@ -223,7 +223,7 @@ order, so read whichever subject interests you.
   security headers, text goes out gzipped, the wasm from its brotli
   sibling, the frontend as a program image, and keyed rows repaint
   through `dom.morph`. Seeded demo data via `seed.ol`; API contract
-  locked by `tests/ledger_app_test.rs`
+  locked by `tests/apps/ledger_app_test.rs`
 - [`app/`](web/app/) — a full-stack issue tracker run entirely by
   `olang main.ol`: a persistent, schema-migrated SQLite backend behind a
   JSON API with request validation (422s that name each field problem),
@@ -236,7 +236,7 @@ order, so read whichever subject interests you.
   [the Browser chapter](../docs/wasm.md)) — served as a program image,
   gzipped, behind security headers, with keyed rows that repaint through
   `dom.morph`, and a drain on SIGTERM. The API contract is
-  locked by `tests/tracker_app_test.rs`, which boots the real app.
+  locked by `tests/apps/tracker_app_test.rs`, which boots the real app.
   Long-running — `run_all.ol` skips it
 - [`survey/`](tools/survey/) — a codebase surveyor and the command-line flagship:
   it turns a directory into a report of files and lines by language, a bar

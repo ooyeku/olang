@@ -1,7 +1,7 @@
 # survey — the command-line flagship
 
 `survey` is to olang's terminal story what the [tracker
-suite](../app/) is to its web story: one real program that exercises
+suite](../../web/app/) is to its web story: one real program that exercises
 the whole command-line toolkit at once.
 
 - **`cli`** — the entire command surface (`summary` / `langs` /
