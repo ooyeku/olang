@@ -3,6 +3,7 @@
 //! tests/install/harness.sh under each shell here. The oldest Rust it
 //! asks for before a source build is the one Cargo.toml (and otc's)
 //! declare, and install.sh and install.ps1 carry the same signing key.
+//! The test profile's LTO is off, not thin-local (OL-414).
 
 use std::path::Path;
 
@@ -187,4 +188,27 @@ fn ps_value(script: &str, name: &str) -> String {
         + 6;
     let end = script[start..].find('\'').expect("closing quote") + start;
     script[start..end].replace("\r\n", "\n")
+}
+
+/// fasttest is optimized and incremental: its LTO must be `"off"`, since
+/// `false` keeps rustc's thin-local LTO, whose promoted `.llvm.<hash>`
+/// symbols an incremental rebuild could leave a test binary linking
+/// against after an edit (OL-414).
+#[test]
+fn the_test_profile_turns_lto_off_and_not_just_false() {
+    let manifest = read("Cargo.toml");
+    let profile: Vec<&str> = manifest
+        .lines()
+        .skip_while(|l| l.trim() != "[profile.fasttest]")
+        .skip(1)
+        .take_while(|l| !l.starts_with('['))
+        .map(str::trim)
+        .collect();
+    assert!(!profile.is_empty(), "Cargo.toml has no [profile.fasttest]");
+    if profile.contains(&"incremental = true") {
+        assert!(
+            profile.contains(&"lto = \"off\""),
+            "[profile.fasttest] is incremental, so its lto must be \"off\": {profile:?}"
+        );
+    }
 }
