@@ -67,9 +67,9 @@ artifact the scaffold cannot write from source: the wasm runtime, which
 the scaffold copies in when it can find one (`OLANG_WASM`, or beside
 `otc`); the API works without it.
 
-A name may be hyphenated (`otc new open-track-query --lib`): the
+A name may be hyphenated (`otc new date-range-query --lib`): the
 directory keeps it, and the package is imported by the identifier form
-(`use open_track_query`), which the manifest records and the usage hint
+(`use date_range_query`), which the manifest records and the usage hint
 prints. Outside a git repository the scaffold ends with a one-line
 reminder to `git init`.
 
@@ -175,8 +175,8 @@ toolchain when it is installed.
 
 A path dependency's own path dependencies are followed, at any depth,
 each resolved against the manifest that names it: an application that
-names `loom = { path = "../loom" }` gets the `heddle` Loom names in its
-own manifest without naming it too. A name the application (or a nearer
+names `ui = { path = "../ui" }` gets the `layout` dependency that `ui`
+names in its own manifest, without naming it too. A name the application (or a nearer
 package) already maps keeps that mapping.
 
 Git dependencies take one of `tag`, `rev`, `branch` — or none, meaning the

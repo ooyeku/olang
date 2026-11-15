@@ -69,26 +69,26 @@ run's end) and the partitions (from `partition` to `heal`, over the
 lanes they cut apart). `view.html` (built in with `include_str!`) draws
 it: one file, no network, no library, every byte the page needs inline.
 
-Why not a native window first (the stdlib `gui` engine, or Loom):
+Why not a native window first (the stdlib `gui` engine, or a UI framework built on `gui`):
 
 - **Headless by nature.** A page is a file: CI writes one for a failing
   seed and keeps it as an artifact, a bug report carries it, and nothing
   needs a display or a main thread. The tests check the model exactly
   (lanes, arrows, faults, down stretches, digest) and the page's
   structure (self-contained, the model inside it, nothing loaded).
-- **No dependency the other way.** olang must not depend on Loom (its
+- **No dependency the other way.** olang must not depend on the UI framework (its
   own repo). A `gui` program inside olang is possible, but `gui` is
   refused inside a world and a window has to be driven to be tested;
   the view's logic would live in an olang program olang ships, tested
   through screenshots. The model in Rust is tested directly.
-- **Big runs.** An hour of four clients is 77,000 events; olang-track's
+- **Big runs.** An hour of four clients is 77,000 events; an issue tracker app's
   ten minutes 24,000; a long run, a million. The page draws on a canvas
   only what is in view (events sorted by time, binary-searched), and
   past 24,000 events in view it draws each lane's density in two-pixel
   columns instead (faults stay individual). SVG with a node an event
   would not scroll.
-- **Loom and Studio later.** `--json` writes the model; a Loom panel or
-  Studio draws the same data with `gui` (S6's "a Loom panel"), with
+- **The UI framework and an IDE later.** `--json` writes the model; a panel in the UI
+  framework or an IDE draws the same data with `gui` (S6's panel), with
   nothing in the model to change. That is the step left for when a
   native view is wanted.
 
@@ -165,7 +165,7 @@ ways:
    and the new test `the_bytecode_tiers_own_natives_are_pure` holds
    each to `effects::sim_handling` = `Pure`: a native path added later
    for an effect fails it. One exception was found and closed:
-   `gui.flat*` runs natively for Loom's layout; inside a world it now
+   `gui.flat*` runs natively for the layout of a UI framework built on `gui`; inside a world it now
    takes the bridge, where `gui` is refused (as on the interpreter).
 
 `spawn` never compiles (the tier refuses it: a task starts on the
@@ -186,17 +186,17 @@ S1–S4 did; `--jobs` workers are started with the parent's choice.
 
 | world | interpreter | bytecode tier | |
 |---|---|---|---|
-| olang-track, 10 simulated minutes, two agents, no crash (`CRASH=none MINUTES=10`, seed 1) | 7.49–7.74 s | 6.76–6.77 s | 1.12× |
+| an issue tracker app, 10 simulated minutes, two agents, no crash (`CRASH=none MINUTES=10`, seed 1) | 7.49–7.74 s | 6.76–6.77 s | 1.12× |
 | `log_safe.ol`, `--seeds 3` (the log store, ~25 crashes a seed) | 2.07 s | 1.53 s | 1.35× |
 | `log_durable_safe.ol`, `--seeds 2` (an `always` over the disk at every instant) | 0.52 s | 0.43 s | 1.21× |
 | `kv_world.ol`, `--seeds 3` (four clients, an hour each) | 1.27 s | 1.14 s | 1.11× |
 | `kv_linear.ol`, `--seeds 3` (with the linearizability check) | 1.22 s | 1.14 s | 1.07× |
 | `sqlite_honest.ol`, `--seeds 2` (SQLite, crashes mid-commit) | 1.60 s | 1.81 s | 0.88× |
 
-(S4 measured olang-track's ten minutes at 7.0 s on a release build; the
+(S4 measured the tracker's ten minutes at 7.0 s on a release build; the
 rows here compare the two tiers on one fasttest binary, best of two.)
 
-**Where olang-track's time goes now.** A `sample` of the bytecode-tier
+**Where the tracker's time goes now.** A `sample` of the bytecode-tier
 run: of the samples in which a thread was busy, about 85–90% are inside
 SQLite (`sqlite3VdbeExec`, B-tree moves, index record comparisons: the
 snapshot rebuild and activity rows of each `issues.create`); the VM's
@@ -205,7 +205,7 @@ rest is the application's SQL and the thread handoffs. About 89
 simulated seconds per real second (0.025 simulated hours; S4's note
 gave 0.086 for its 7.0 s, which is 600 s / 7.0 s read as minutes) for a
 server and two agents, against S6's budget
-of one hour for a server and four clients: S6 needs olang-track's
+of one hour for a server and four clients: S6 needs the tracker's
 queries (or their indexes) looked at, not the language.
 
 **sqlite_honest is slower** on the tier: a node that crashes restarts on
@@ -267,7 +267,7 @@ All in `tests/sim_test.rs` after `// ─── S5`, run with `cargo test
   `log_noisy`, `log_durable_safe`, `sqlite_lies`, `node_env`: the same
   sweep digest with `OLANG_SIM_TIER=interp` and `bytecode`; by hand also
   `kv_world`, `log_safe`, `log_props`, `log_world`, `sqlite_honest`,
-  `sqlite_world` and olang-track's ten minutes (the same output and
+  `sqlite_world` and an issue tracker app's ten minutes (the same output and
   event count). `--jobs 2` workers inherit the tier (the same digest
   both ways and as one process). Every in-process S1–S4 test now runs
   its node programs and builder files on the tier too.
@@ -278,7 +278,7 @@ All in `tests/sim_test.rs` after `// ─── S5`, run with `cargo test
 ## Limits in S5
 
 - **A page, not a window.** The view is drawn by a browser; a native
-  view (Loom, Studio) is the model drawn with `gui`, not built here.
+  view (a UI framework built on `gui`, an IDE) is the model drawn with `gui`, not built here.
 - **One run a page.** A file that runs several worlds shows the one
   `olang sim` reports; a shrunk plan beside its original (S4 asked for
   it) is not drawn side by side (two pages, or the model's JSON, compare
@@ -295,9 +295,10 @@ All in `tests/sim_test.rs` after `// ─── S5`, run with `cargo test
 
 ## What S6 needs from this
 
-- A `gui`/Loom renderer of `view::model` for Studio and the desktop
-  app's simulation suites, if a native view is wanted.
-- olang-track's speed is now SQL-bound: the budget (one simulated hour
+- A renderer of `view::model` in `gui` (or a UI framework built on it)
+  for an IDE and the simulation suites of an issue tracker app's desktop
+  client, if a native view is wanted.
+- The tracker's speed is now SQL-bound: the budget (one simulated hour
   a second) is a question for its queries.
 - A node's compiled code kept across its restarts.
 
@@ -384,5 +385,5 @@ Worlds run on the bytecode tier, as programs do outside one: every
 builtin a compiled function calls is still answered by the world (its
 clock, its network, its disks) or refused, and the runs are the same,
 seed for seed, as on the interpreter alone (`olang --no-ovm sim`). What
-a world costs then is mostly what its program does: for olang-track,
+a world costs then is mostly what its program does: for an issue tracker app,
 its SQL.

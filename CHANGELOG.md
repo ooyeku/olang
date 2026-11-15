@@ -12,8 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - **`gui.capture(window, what)`: a window captured as it draws**
-  (OL-587, the one feature let through the freeze, for OlangStudio's
-  Recorder). Each frame the window presents is drawn again smaller on
+  (OL-587, the one feature let through the freeze, for a screen
+  recorder). Each frame the window presents is drawn again smaller on
   the GPU and copied to a buffer the render thread never waits for; a
   thread of the capture's own writes it as a PNG beside an index of
   when each showed. Sixty frames a second from a full Retina window with
@@ -30,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   rate, pause, exact seeks. AVFoundation is called by hand
   (src/stdlib/gui/avf.rs): no new crate.
 - **`toad.tape(path)`, `toad.mic(path)`, and `toad.play`'s `at`** (with
-  OL-587, for Recorder's sound). `toad.tape` writes what the mixer
+  OL-587, for a screen recorder's sound). `toad.tape` writes what the mixer
   plays to a WAV from now, silence too, so its time is the clock's;
   `toad.mic` writes the system's microphone (an application must say why
   in its Info.plist, or it is refused rather than ended by macOS); each
@@ -40,11 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   lists the microphones with how each is connected; `toad.mic` takes the
   built-in one when the system's is a Bluetooth headset's (a headset's
   own microphone drops it to call mode: a hiss in what it plays, and in
-  OlangStudio's first recordings a voice that was not there), or the one
+  the first recordings made with it a voice that was not there), or the one
   named (`#{ path, device }`). Ending it answers `peak`, the loudest
   sample, so a caller can say a voice was not heard.
 - **A menu bar item, an accessory application, and notifications**
-  (OL-568, for OlangStudio's menu bar helper). `gui.status_item` puts an
+  (OL-568, for a desktop app's menu bar helper). `gui.status_item` puts an
   item in the Mac menu bar (`status_set`, `status_remove`), and a window
   opened with `panel: item` is the panel under it. `gui.accessory(true)`
   runs with no Dock icon or menu bar of its own. `gui.notify` posts a
@@ -69,7 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `env`, http options and headers, `md.parse`, `md.render`, `meta.*`,
   `plot`, `db`, `str`'s option maps, `runtime.on_crash` and
   `profile_live_start`, `sim.linearize` and a world's run options, a
-  toad swarm kernel's answer, and `repl --serve`'s Loom views and gg
+  `toad` swarm kernel's answer, and `repl --serve`'s UI views and gg
   specs. A table-driven test calls each with a map and with the same
   record, on both tiers.
 - **A record equals itself** (OL-598). `==` on two values sharing an
@@ -82,7 +82,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **A record crossing to the interpreter is not walked again** (OL-604).
   Whether a VM record holds a compiled function is asked once and kept
   in the record, so a model full of records no longer walks them all on
-  every message. OlangStudio's profiler frame went from 8.7 to 5.4 ms
+  every message. An IDE's profiler frame went from 8.7 to 5.4 ms
   and a crosshair move from 5.1 to 2.95, faster than with maps.
 
 - **A parsed JSON object passed to a callback is freed** (OL-575). A
@@ -91,14 +91,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   conversion of a struct for the next call, until the struct dies. A
   large `json.parse` object converts to a wrapper around itself, so its
   entry kept it alive and was never let go: each thread held up to 512
-  such objects whole. OlangStudio profiling itself grew by 17 GB an hour.
+  such objects whole. An IDE profiling itself grew by 17 GB an hour.
   Wrapped values are no longer kept.
 - **Freeing a deep value frees all of it** (OL-571). Values deeper than
   the free's depth bound wait in a queue the outermost free drains, one
   queue for the interpreter's values and one for the VM's. A free that
   began at an interpreter value drained only its own: VM values it held
   past the bound stayed alive on that thread, on a worker until the
-  process ended. OlangStudio grew by hundreds of megabytes this way.
+  process ended. An IDE grew by hundreds of megabytes this way.
 - **Loops through a cell or a shared reference are freed** (OL-570). A
   cell holding a list that held the cell, or a closure stored in the
   cell it read, was never freed: values are reference-counted, and a
@@ -300,39 +300,39 @@ fixes land. `sim` and `peg` ship as Experimental (docs/stability.md).
 - **Tuples do arithmetic element by element.** `(1, 2) + (3, 4)` is
   `(4, 6)`, and a number scales a tuple (`pos + vel * dt`), on the
   interpreter and the bytecode tier alike; tuples of different lengths
-  are refused. Toad's game code and kernels write vector maths this way.
-- **`toad`, the game engine's module** (feature `toad`): kernels compiled
+  are refused. Game code and `toad` kernels write vector maths this way.
+- **`toad`, a module for games** (feature `toad`): kernels compiled
   from plain olang functions for the CPU and the GPU, swarms, frames of
-  swarms, shapes and sprites, live in a Loom window; and `gui` live
+  swarms, shapes and sprites, live in a `gui` window; and `gui` live
   pictures (an image whose source is `("live", name)`), held keys for
   games, and `gui.read(w, "frame")`.
-- **Toad's frames are lit and have surfaces.** 2D global illumination by
+- **`toad`'s frames are lit and have surfaces.** 2D global illumination by
   radiance cascades, soft shadows, shapes that emit and cast, swarms that
   pool light, bloom and a grade over AgX; materials drawn in code (nine
   patterns, relief, bump, gloss, a shape's `material`); text in the world
   (a sprite with `text`, set by `gui`'s fonts at the size it shows).
-- **Toad's physics** (rapier2d 0.36, deterministic): `toad.physics`,
+- **`toad`'s physics** (rapier2d 0.36, deterministic): `toad.physics`,
   bodies, joints (pin, weld, slide, rope, spring), pushes, poses, rays and
   overlaps in the game's own units, touches batched once a step; play
   swarms colliding with bodies (`toad.collide`) and with each other
   (`toad.meet`) by a grid of their own. `toad.scripted(true)` makes a
   scripted run hear only its script.
-- **Toad's sound** (feature `audio`: cpal, hound, lewton): `toad.sound`
+- **`toad`'s sound** (feature `audio`: cpal, hound, lewton): `toad.sound`
   makes sounds in code (a synth of waves, slides, envelopes, a low-pass
   and layers) or reads WAV and Ogg Vorbis; `toad.play`, `stop`, `tune`
   and `volume` mix voices on an effects and a music bus without clicks,
   through a soft limiter; `TOAD_MUTE=1` plays silently.
-- **Toad for making games** (T5): screen layers drawn over the finished
-  frame as written (a game's UI), sprite `anchor`, `emit` and `cast`;
-  `toad.walk` (a character controller: walls, slopes, steps, the ground)
-  and one-way platforms; `toad.warm` (a large world's first step no
-  dearer than the rest); show swarms colliding on the GPU; `toad.hold`,
-  `toad.drop` and `toad.swarm`'s `seed`, so a game rebuilt from its
-  inputs (a rewind, a reload) is exactly the game it was; the mouse in
+- **The `toad` module for making games** (T5): screen layers drawn over
+  the finished frame as written (a game's UI), sprite `anchor`, `emit` and
+  `cast`; `toad.walk` (a character controller: walls, slopes, steps, the
+  ground) and one-way platforms; `toad.warm` (a large world's first step
+  no dearer than the rest); show swarms colliding on the GPU; `toad.hold`,
+  `toad.drop` and `toad.swarm`'s `seed`, so a game rebuilt from its inputs
+  (a rewind, a reload) is exactly the game it was; the mouse in
   `toad.input`.
 - **A window can be placed:** `at` `(x, y)` on `gui.open` and `gui.set`
   (its frame's top left on the screen), and `gui.read(w, "place")`
-  answers where its content is and how big. Studio opens a Toad game's
+  answers where its content is and how big. An editor can open a game's
   window beside its own this way.
 - **A notebook cell's printed lines stream while it runs.** `olang repl
   --serve` sends what an `eval` prints as `out` events as it is printed
@@ -370,7 +370,7 @@ fixes land. `sim` and `peg` ship as Experimental (docs/stability.md).
   error texts are unchanged. On the 150 KB JSON benchmark recognising
   takes 0.7× `json.parse` (was 19×), a tree 11.5× (was 99×; the
   budget's 3× is missed, the time is in making olang maps), values 27×
-  (was 112×); olang-track's query bar parses to a tree in 8.5 µs (was
+  (was 112×); an issue tracker's query bar parses to a tree in 8.5 µs (was
   77 µs; its hand-written parser takes 50). The olang engine stays for
   testing peg (`#{ "engine": "olang" }`), and a differential suite
   (peg_native_test.ol) holds the two to the same answers. Design:
@@ -393,7 +393,7 @@ fixes land. `sim` and `peg` ship as Experimental (docs/stability.md).
   duplicated, late, timeouts) and events with each node's name.
   `olang sim FILE` runs a file that builds worlds with every world on
   the seed asked for, so `--seeds N` finds a failing seed and `--seed S`
-  replays it. tests/fixtures/sim has a key-value server in olang-track's
+  replays it. tests/fixtures/sim has a key-value server in an issue tracker's
   rpc style, four clients for a simulated hour (about 0.45 s real per
   seed), and a planted bug only a partition shows (a retry under a new
   request id counts an add twice), found and replayed by seed.
@@ -421,7 +421,7 @@ fixes land. `sim` and `peg` ship as Experimental (docs/stability.md).
   before it syncs loses acknowledged puts on every seed tried, replayed
   by `--seed`, beside one that syncs first and passes; SQLite keeps every
   commit through crashes mid-commit on an honest disk and loses them
-  when fsync lies; olang-track's server runs as a node unchanged and
+  when fsync lies; an issue tracker's server runs as a node unchanged and
   keeps every acknowledged issue through kills and graceful stops, and
   loses them to power cuts (its WAL runs at `synchronous=NORMAL`).
   Design: plans/SIM-S3.md.
@@ -456,11 +456,11 @@ fixes land. `sim` and `peg` ship as Experimental (docs/stability.md).
   three seeds (`--seeds N`), naming the seed that fails. The proof: S2's
   partition bug caught as a linearizability violation, S3's log bug as a
   durability violation; a noisy failing world shrunk from 57 faults to
-  its one power cut; olang-track keeps every acknowledged issue through
+  its one power cut; the issue tracker keeps every acknowledged issue through
   100 seeds of power cuts now that it syncs every commit. A connection's
   `id` and `chan.stat`'s `id` are the world's own numbers in a world, so
   a seed renders the same in any process; event details render at most
-  what they keep (olang-track 7.9 s → 7.0 s a simulated 10 minutes).
+  what they keep (the issue tracker 7.9 s → 7.0 s a simulated 10 minutes).
   Design: plans/SIM-S4.md.
 
 - **`peg`, grammars from text** (Experimental): a grammar written as
@@ -477,10 +477,10 @@ fixes land. `sim` and `peg` ship as Experimental (docs/stability.md).
 - **A unified title bar.** `titlebar: "unified"` runs a window's
   content under a transparent title bar with the traffic lights kept; a
   node with `drag: "window"` moves the window.
-- **Shared and live pictures.** A Toad frame drawn with `share` is shown
+- **Shared and live pictures.** A `toad` frame drawn with `share` is shown
   by another process's image (`("shared", id)`), and a frame drawn with
-  `cpu` is published as a live picture, which is how Studio's canvas
-  shows a running game.
+  `cpu` is published as a live picture, which is how an editor's canvas
+  can show a running game.
 - **`gui.fonts` takes families** (`#{ "body": …, "mono": … }`), so a
   theme can name its own faces.
 - **`--trace` shows where a run's start goes:** each module a `use`
@@ -535,7 +535,7 @@ fixes land. `sim` and `peg` ship as Experimental (docs/stability.md).
   as the other wall-clock reads are; a replay used to read the clock
   live there.
 - **`runtime.features("browser")` and `runtime.features("full")` no
-  longer list `toad`** when the native binary answers: the game engine
+  longer list `toad`** when the native binary answers: the `toad` module
   is native-only, and the browser runtime never had it.
 - **A bare `impl Type { ... }` is a parse error that names the trait
   form** (`impl Name for Type { ... }`), in `olang run`, `olang check`
@@ -626,7 +626,7 @@ after 1.0.
   out.** Inside a project, a folder with an `olang.toml` of its own (a
   test fixture, a sample, a vendored package) is another project: the
   walk skips it unless it is named on the command line. A bare
-  `olang test` in Studio ran its fixture projects' deliberately failing
+  `olang test` in an IDE ran its fixture projects' deliberately failing
   tests, and one rewrote a tracked fixture's `card.diff.png`. Outside
   any project the walk still enters every project below it.
 - **`olang test --format json`: a pixel snapshot's relative paths are
@@ -893,7 +893,7 @@ after 1.0.
   (8.3), `X @ B` 0.8 ms (10.7), `X @ b` 0.7 ms (0.44), `ods.corr` 5.5
   ms (pandas 77.7). A Matrix prints as a grid, and the notebook kernel
   shows it as a Frame of columns `0`, `1`, … (`Matrix[n x k]`), with no
-  Studio change.
+  editor change.
 - **Model formulas.** Every supervised `learn` model takes a formula
   where `y` and `x` go: `learn.linear(f, "price ~ sqft + C(hood) +
   C(kind):C(hour) + I(sqft^2)")`, parsed natively (olang_ods::learn::
@@ -1209,7 +1209,7 @@ after 1.0.
   palette per appearance, sizes, alphas, shapes, linetypes); stack, fill,
   dodge, jitter and nudge; facet_wrap and facet_grid with free scales;
   coord_flip, coord_fixed, coord_cartesian; merged legends and colour
-  bars; titles, subtitles, captions; themes minimal (Studio's quiet
+  bars; titles, subtitles, captions; themes minimal (a quiet
   instrument), classic, bw, gray, linedraw, void, in light, dark and high
   contrast. The plot becomes a scene — the display list in plot pixels,
   each mark's values, each panel's scales — and the SVG is serialized
@@ -1320,17 +1320,17 @@ after 1.0.
   is text runs (a line each, over the field's box) with its selection, so
   Zoom follows its caret and VoiceOver reads it by character and word; a
   scroll area is `AXScrollArea` (it was the unknown role). A group with
-  a role from Loom's flat core says a leaf's `value`, `range`, `live`,
-  `level` and `pos`. `gui.read(w, "a11y")` says each node's `bounds`,
-  `placeholder`, `level`, `expanded`, `live`, `in_set`, `row`, `column`,
-  `size`, `rows`, `columns` and `range`. `gui.platform()` says
+  a role from a UI framework's flat core says a leaf's `value`, `range`,
+  `live`, `level` and `pos`. `gui.read(w, "a11y")` says each node's
+  `bounds`, `placeholder`, `level`, `expanded`, `live`, `in_set`, `row`,
+  `column`, `size`, `rows`, `columns` and `range`. `gui.platform()` says
   `a11y_depth`. tests/gui_a11y_test.rs, tests/gui_macos_a11y_depth_test.rs
   (vendor/accesskit_macos/OLANG.md lists the adapter's changes)
 - **`gui.set(w, #{ "flash": true })`: the repaint rainbow.** Every region
   a frame draws is tinted with that frame's colour, over its pixels and
   unseen by damage, so a region keeps the tint of the frame that last
-  drew it (Loom's inspector, ⌃⌥⌘R); `false` draws the window whole again.
-  Software and GPU alike. `gui.platform()` says `flash`.
+  drew it (as a UI inspector might, ⌃⌥⌘R); `false` draws the window whole
+  again. Software and GPU alike. `gui.platform()` says `flash`.
   tests/gui_flash_test.rs
 
 - **`gui`: the text input client, complete (macOS).** The window's view
@@ -1364,7 +1364,7 @@ after 1.0.
   a headless window steps with its clock), the selection following.
   tests/gui_text_test.rs
 - **`gui.turn(on)`: a program's long turn shown while it runs.** A
-  program says when its turn begins and ends (Loom's loop does, two
+  program says when its turn begins and ends (a UI framework's loop can, two
   atomic writes a turn); one that runs past 2 s
   (`GUI_NOT_RESPONDING_MS`) makes every window show it is waiting — the
   busy cursor, a veil and a spinner over the frame — until it ends. The
@@ -1414,16 +1414,16 @@ after 1.0.
   place panic once (a test's). tests/gui_macos_contain_test.rs,
   tests/gui_hostile_test.rs, src/contain.rs
 - **`gui.flat_diff(prev, nodes)` and `gui.flat_index(nodes, wkey)`**
-  (`gui.platform().flat_diff`, `flat_index`): Loom's per-frame passes
-  over every placement in one native pass each — a frame's operations
-  against last frame's by key (what changed, what left, the parents
-  whose children moved among themselves: Loom works out only their
-  order), and what rt_frame reads off each placement (the index by key,
-  the keys shown, the regions that follow or ask where they are
-  scrolled, and the few placements that ask for more). Both tiers; the
-  VM reads and builds its own values. Studio's notebook scrolled
-  (headless, interleaved, with Loom using them): frame p50 2.47 →
-  1.74 ms, p90 4.39 → 3.24, a cell move 4.90 → 3.95.
+  (`gui.platform().flat_diff`, `flat_index`): a UI framework's per-frame
+  passes over every placement in one native pass each — a frame's
+  operations against last frame's by key (what changed, what left, the
+  parents whose children moved among themselves: the framework works out
+  only their order), and what rt_frame reads off each placement (the index
+  by key, the keys shown, the regions that follow or ask where they are
+  scrolled, and the few placements that ask for more). Both tiers; the VM
+  reads and builds its own values. A notebook editor scrolled (headless,
+  interleaved, with a UI framework using them): frame p50 2.47 → 1.74 ms,
+  p90 4.39 → 3.24, a cell move 4.90 → 3.95.
 
 - **`gui`: the role `alert`** (said at once, interrupting: AccessKit's
   `Alert`, live and assertive) beside `status` (polite).
@@ -1464,7 +1464,7 @@ after 1.0.
 - **A node can hear only the wheel's sideways part** (`wheel_x`, said by
   `gui.platform()`): a `wheel` event with `dy` 0 for it, and down goes on
   to the scrollers around it — lines in a list that scroll across
-  together (olang Studio's side-by-side diff).
+  together (an editor's side-by-side diff).
 - **Notebooks beyond the scratchpad** (docs/notebooks.md). `olang run
   x.olmd --for region=east,west` (or `--for sets.json|.yaml|.csv`) runs a
   notebook once a parameter set; `--param` may name a control cell
@@ -1692,7 +1692,7 @@ after 1.0.
 - **An import binds only what it was asked for.** A bare `use` of a
   stdlib module (`use gg`, `use ml`, `use term`, `use str`) binds its
   namespace alone — `gg.plot(...)`; it used to import every shared name,
-  so `use gg` turned `plot` (the plot module, which Studio's chart
+  so `use gg` turned `plot` (the plot module, which an editor's chart
   templates call) into gg's function and `use ml` replaced a notebook
   param `folds`. `use m {}` binds the namespace alone (it parsed as
   `use m` and an empty map). A wildcard (`use m { * }`, a bare `use` of a
@@ -1700,7 +1700,7 @@ after 1.0.
   already binds in that scope; a listed name the program already binds
   is an error naming it (alias it). `olang check` warns on each skipped
   export and errors on the refused listing. A listed stdlib module name
-  still binds (Loom's `use lib.effects { task }`). docs/language.md,
+  still binds (as in `use lib.effects { task }`). docs/language.md,
   docs/packages.md, tests/import_clash_test.rs.
 - docs/stdlib.md: `dates.date`, `parse`, `from_epoch_day` and
   `epoch_day` say they answer a `Result` (each can fail: a day that is no
@@ -1770,7 +1770,7 @@ after 1.0.
   their least recently drawn quarter, not everything at once, so a shape
   kept keeps its texture. `gui.read(_, "render")` says the frames drawn
   and unchanged, the pixels drawn, and the bytes each cache and the GPU's
-  textures hold (Loom's HUD shows them).
+  textures hold (a UI framework's HUD can show them).
 - **The VM answers more builtins itself.** `map_keys`, `map_values`,
   `map_len` (a VM map, a wrapped map or record, a record built in the
   VM), `contains` of a scalar, `show`, `to_string` and `typeof` of any
@@ -1781,9 +1781,9 @@ after 1.0.
   are the interpreter's (tests/bytecode_differential_test.rs).
 - **A small wrapped map written a VM collection becomes the VM's own**
   (`AST_MAP_PROMOTE`, 256 entries): a program state that crossed into
-  the VM once — Loom's runtime, entered from the tree-walker — stayed a
-  wrapper for good and converted every value set into it, each turn
-  (a frame's placements, its index, a window's record).
+  the VM once — a UI framework's runtime, entered from the tree-walker —
+  stayed a wrapper for good and converted every value set into it, each
+  turn (a frame's placements, its index, a window's record).
 - **`gui.flatten`, `gui.flat_emit` and `gui.flat_join` read the VM's
   values where they are** when the VM calls them (last frame's answer
   and placements are not converted for the call), and `gui.flatten`
@@ -1797,11 +1797,11 @@ after 1.0.
 - **`gui.flat_emit`'s keyed keep** (`keep` `"keyed"`, `prev`
   `#{ flat, out }`; `gui.platform().flat_keyed`): on a frame whose shape
   changed, what last frame placed is kept by engine key in one native
-  pass — Loom's `ly_keyed_keep`, rule for rule. And `gui.flatten` on such
-  a frame takes last frame's entry for a node that has its key and is
-  what it was (its role, key, props, kind, child count and lifted
-  layers), where it read every node after the first that moved again:
-  Studio's notebook scrolled a cell in, 0.59 → 0.43 ms.
+  pass — the keyed keep a UI framework wrote in olang, rule for rule. And
+  `gui.flatten` on such a frame takes last frame's entry for a node that
+  has its key and is what it was (its role, key, props, kind, child count
+  and lifted layers), where it read every node after the first that moved
+  again: a notebook editor scrolled a cell in, 0.59 → 0.43 ms.
 - **`OLANG_TIER_STATS=1` lists what still crosses the bridge**: one
   `bridge-call: name(layouts) calls=… us=…` line per builtin or function
   value, most expensive first.
@@ -1926,15 +1926,16 @@ after 1.0.
   AppleScript's `quit app`, a logout, a restart or a shutdown
   (`applicationShouldTerminate:`) used to end the process at once: winit
   only says the loop is ending, which the engine did not route, so
-  Loom's and Studio's quit never ran — no hot-exit write, no session
-  saved, no instance released, children left running. `gui.hold_quit(true)`
-  now makes it the program's `quit` event (`why`: quit, logout, restart,
-  shutdown) and answers the platform NSTerminateLater; the program's end
-  replies and the process exits with its status. `gui.platform()` says
-  `quit_hold`; `gui.input` takes a `"quit"`. Loom's run loop holds quits
-  and sends the message ⌘Q sends (Loom commit). tests/gui_macos_quit_test.rs
-  sends the request to a real window; checked by hand with Studio in a
-  temporary home: its session and settings written, its instance released.
+  a UI framework's and an editor's quit never ran — no hot-exit write, no
+  session saved, no instance released, children left running.
+  `gui.hold_quit(true)` now makes it the program's `quit` event (`why`:
+  quit, logout, restart, shutdown) and answers the platform
+  NSTerminateLater; the program's end replies and the process exits with
+  its status. `gui.platform()` says `quit_hold`; `gui.input` takes a
+  `"quit"`. A UI framework's run loop can hold quits and send the message
+  ⌘Q sends. tests/gui_macos_quit_test.rs sends the request to a real
+  window; checked by hand with an editor in a temporary home: its session
+  and settings written, its instance released.
 
 - **`olang notebook export` no longer panics on a chart with text beyond
   ASCII** (`gg.labs(x: "°C")`, a title in 温度): the SVG check walked
@@ -1970,7 +1971,7 @@ after 1.0.
 - **No 0.3–1.9 ms stalls freeing the VM's conversions.** The
   VM-to-interpreter conversion cache was swept when it doubled, freeing
   several frames' dead interpreter copies at once inside whatever turn
-  landed on it (olang Studio's notebook scroll: a frame in twenty);
+  landed on it (a notebook editor's scroll: a frame in twenty);
   dead entries now go two at a time as entries are added.
 - **Debug switches read once a process**: `OLANG_DEBUG_ASTLIST`,
   `OLANG_DEBUG_HOF`, `OLANG_OSR_OFF` and the rest were looked up in the
@@ -2033,7 +2034,7 @@ after 1.0.
   vectorizes.** Every Series kernel fanned out at the language's list
   threshold (10,000 elements), where waking 18 workers costs ten times
   the work: at 15,000 elements `ods.mean(s * t)` took 0.150 ms on all
-  cores and 0.015 on one, and olmd/churn ran in 2.2 s (18 s of system
+  cores and 0.015 on one, and a churn notebook ran in 2.2 s (18 s of system
   time) against 0.53 s single-threaded. Each kernel class now has a
   measured threshold (`olang_ods::ParClass`: 500,000 elements between
   columns, 2M with a scalar, 1M for a reduction, 100,000 for a sort;
@@ -2051,7 +2052,7 @@ after 1.0.
 - **`first` and `last` are O(1) on the compiled tiers.** They had no
   native arm, so each call crossed to the interpreter with its whole list
   converted: `fold(xs, [0], (acc, x) => acc + [last(acc) + x])` took
-  1,195 ms for 20,000 items (olang Studio's diff of a large file, every
+  1,195 ms for 20,000 items (an editor's diff of a large file, every
   frame). Every list layout, a tuple and a string answer in place: 1.4 ms.
 - **`fs.search` passes a file with no match at a pass over its bytes.**
   A case-blind search lower-cased and searched a file a line at a time
@@ -2061,7 +2062,7 @@ after 1.0.
 - **A line aligned to its end or centre is cut, never wrapped.** A text
   without `wrap` was shaped at its box's width when aligned, so a line
   wider than its box wrapped onto lines the box could not hold, over
-  what was under it, and `truncate` never cut it (olang Studio's status
+  what was under it, and `truncate` never cut it (an editor's status
   notice at its least window). It is shaped as one line, aligned only
   when it fits, and `truncate` cuts it with an ellipsis whatever its
   alignment.
@@ -2304,8 +2305,8 @@ is tagged final.
   entry it does not know (`autors`, a `rev` beside a `path`), a top-level
   section that is a near miss of one it reads (`[dependancies]`), and a
   `[check] promote` name that is not a class, each with the nearest
-  name. Other tools' sections (Loom's `[bundle]`, Studio's `[plugin]`)
-  pass. `olang doctor` marks warnings `!` and still exits 0.
+  name. Other tools' sections (a UI framework's `[bundle]`, an editor's
+  `[plugin]`) pass. `olang doctor` marks warnings `!` and still exits 0.
 - `[check] promote` is safe to freeze. A finding's class is a field set
   where the checker makes it — the `code` in `--format json` — not
   matched from its message, so rewording a message cannot change what a
@@ -2447,7 +2448,7 @@ is tagged final.
 - `==` on two containers is one walk again. The equality ruling of this
   release first scanned both sides whole for a function, builtin or range
   before comparing, so comparing a large model with the next frame's
-  walked all of it (open-track desktop's keypress at 100,000 rows went
+  walked all of it (an issue tracker's desktop keypress at 100,000 rows went
   from about 2 ms to 85 ms). Now a difference answers at once, and a
   function, builtin or range met where everything else agreed raises:
   `[f] == [g]` and `Ok(f) == Ok(f)` raise as before, `[1, f] == [2, f]`
@@ -2455,9 +2456,9 @@ is tagged final.
 
 - A browser bundle keeps each module's scope, as native modules do. The
   bundle was one namespace with only private names renamed, so two
-  modules sharing a name collided: Foundry's dashboard refused to boot
+  modules sharing a name collided: a web dashboard refused to boot
   with "function 'code' is already declared" (the web SDK's `code`
-  element against Shuttle's `code` field) once the duplicate-`fn` rule
+  element against another module's `code` field) once the duplicate-`fn` rule
   reached the browser. Now every top-level `fn` and `let` a module
   declares, shared or not, takes a name only that module has, and every
   name it imports from another module of the bundle takes that module's
@@ -2474,7 +2475,7 @@ is tagged final.
   program's imported names again. Top-level functions capture nothing in
   this release, and a bridge's own tier was handed the bridge's root as
   the program's, so the next bridge down missed every name the program
-  imported: open-track's served pages failed with "Undefined variable:
+  imported: an issue tracker's served pages failed with "Undefined variable:
   as_str" in a state shaper called from a route. A bridge now hands its
   tier the host's root it falls back to. A failed http handler's log
   line names where it failed (`at path:line in function`).
@@ -2505,7 +2506,7 @@ check` where it can be (the full guide is docs/migrating.md):
 - **A `[capabilities]` olang cannot honour stops the program**: an
   unknown capability key, a value the gate does not take, or an
   `olang.toml` that does not parse while declaring one. These ran wide
-  open before. olang Studio plugins name their grants in
+  open before. An editor's plugins can name their grants in
   `[plugin.capabilities]`.
 - **1.0 promises macOS.** Linux and Windows are unsupported previews
   (docs/stability.md, "Platforms").
@@ -2514,18 +2515,19 @@ check` where it can be (the full guide is docs/migrating.md):
 
 - **`json.stringify_pairs([(k, v), …])`**: one JSON object with its keys
   in the order given, each value written as `json.stringify` writes it
-  (whose maps' keys come out sorted). heddle-sql's `--json` keeps a
+  (whose maps' keys come out sorted). A terminal SQL client's `--json` keeps a
   query's column order and wrote each object by hand. The help's
   `json.stringify` example now shows the sorted keys it produces.
 
 - **`str.is_ascii(s)`**: whether every character is ASCII, one pass over
-  the bytes. Heddle's painter asked "printable ASCII?" of thousands of
+  the bytes. A terminal UI's painter asked "printable ASCII?" of thousands of
   spans a frame (8–16% of the frame) without it.
 
 - **`eprint(v)` and `eprintln(...)`**: `print` and `println` to standard
   error, so a diagnostic stays out of `prog > out.csv`; a stderr that has
-  gone drops the text, and in the browser it joins the output. heddle-sql
-  wrote its errors with `fs.append_file("/dev/stderr", …)` (Unix only).
+  gone drops the text, and in the browser it joins the output. A terminal
+  SQL client wrote its errors with `fs.append_file("/dev/stderr", …)`
+  (Unix only).
 
 - **A field a declared struct never has, reported.** `olang check` and
   the language server warn (advisory class `shape`) on a field read off
@@ -2542,7 +2544,7 @@ check` where it can be (the full guide is docs/migrating.md):
   takes a stdlib module's name and whose scope then reads it as the
   module (`fn table_sort(rows, col) = col.sort_by(…)`, `fn f(str) =
   str.length(s)`) is reported at the binding; one that is never read as
-  the module is not, `col` and `time` being ordinary names. Heddle's
+  the module is not, `col` and `time` being ordinary names. A terminal UI's
   `table_sort` checked clean and failed on `col.sort_by`. Over the
   workspace's corpus it reports nothing.
 
@@ -2552,7 +2554,7 @@ check` where it can be (the full guide is docs/migrating.md):
   1, got 2`; `range` takes 1 to 3), and a stdlib module's function called
   with fewer arguments than it takes is one too (`str.thousands(1234)`:
   `str.thousands: missing argument 2`, which passed the checker and
-  failed at run time in Loom). A pipeline's right side, whose first
+  failed at run time in a UI framework). A pipeline's right side, whose first
   argument the pipeline supplies, and a name the file binds itself are
   not judged; the table of global counts is pinned against the runtime.
   Over the workspace's corpus it reports nothing.
@@ -2563,7 +2565,7 @@ check` where it can be (the full guide is docs/migrating.md):
   code in the JIT; `loop { … }` compiles, and `break value` gives a
   `loop`, `while` or `for` its value on the VM. A function using any of
   them stayed on the tree-walker ("an expression the compiler has no
-  form for (Discriminant(38))"); Heddle packed text attributes as bits
+  form for (Discriminant(38))"); a terminal UI packed text attributes as bits
   and tested them with division instead. Every refusal now names the
   construct in the language's words (`it contains a \`par for\` loop`).
 
@@ -2571,7 +2573,7 @@ check` where it can be (the full guide is docs/migrating.md):
   `max` and `clamp`: the same functions as `math.abs`, `col.all` and
   `col.any`, on every tier (`all`/`any` stop at the first element that
   settles them). A program's own `abs`, `all` or `any` still wins.
-  olang Studio's terminal wheel wrote `abs` as an `if`, and Loom's
+  An editor's terminal wheel wrote `abs` as an `if`, and a UI framework's
   terminal emulator `all` as `len(filter(…)) == 0`.
 
 - **Tuples order lexicographically** under `<`, `<=`, `>`, `>=` and
@@ -2579,16 +2581,17 @@ check` where it can be (the full guide is docs/migrating.md):
   `<`'s rule for that pair (numbers, strings, tuples again), a prefix is
   the smaller, and an unequal pair with no order raises naming its
   kinds. `sort([(2, 1), (1, 2)])` raised "cannot compare values of type
-  Tuple" though `==` compared tuples (Heddle; otc-hub sorted by key
-  functions instead). `col.sort_by` with a tuple key orders its numbers
-  as numbers (it compared the keys' text: `(10, 1)` before `(9, 2)`).
+  Tuple" though `==` compared tuples (a terminal UI; another program
+  sorted by key functions instead). `col.sort_by` with a tuple key orders
+  its numbers as numbers (it compared the keys' text: `(10, 1)` before
+  `(9, 2)`).
 
 - **`raise(message)`**: a runtime error whose message is `message`, word
   for word — `attempt` answers it as `Err(message)`, and uncaught it is
   reported as `Runtime error: message`, on every tier. A library that
   must stop a caller who used it wrongly had `unwrap(Err(t))` (the
   message prefixed and quoted) or `assert(false, t)` (reported as a
-  failed assertion); Heddle's and Loom's `refuse` was the workaround.
+  failed assertion); two UI frameworks' `refuse` was the workaround.
   The error model is unchanged: nothing catches a runtime error but
   `attempt` and the structural boundaries (language.md, "Where failure
   stops").
@@ -2603,7 +2606,7 @@ check` where it can be (the full guide is docs/migrating.md):
   object, `m.k[i] = v` replaces an element of the list at `m.k` (in place
   when `m` and the list are held once); deeper paths and `m.k = v` are
   not supported. It was a parse error ("possible assignment in
-  expression context"), and olang Studio's replace rebuilt each list a
+  expression context"), and an editor's replace rebuilt each list a
   line changed in.
 
 - **The checker sees keys** (roadmap E4): `olang check` (and the
@@ -2615,7 +2618,7 @@ check` where it can be (the full guide is docs/migrating.md):
   (advisory class `keys`); a value it cannot follow is never reported,
   and a presence test (`== ()`, `??`) is not. Over the workspace's
   corpus it checks the reads whose keys it knows (about 440 of 49,000
-  `.` reads) and reports two, both true: open-track's `run_key` reads
+  `.` reads) and reports two, both true: an issue tracker's `run_key` reads
   `entry.send` and `entry.arg` in a branch no caller can reach (its one
   caller passes `#{ "island": … }`). The language server completes those
   keys after `name.`. `tools/keys.rs`; tests in it and
@@ -2632,9 +2635,10 @@ check` where it can be (the full guide is docs/migrating.md):
   stored `()` exactly as `??` does.) Run over every program in the
   workspace, each repository's suite and verify passing as before:
   26,092 `map_get` → `.` and 2,119 `map_get_or` → `??` in 499 files
-  (olang's own 862 in 67; Loom 4,317 and 622; Heddle 1,681 and 142;
-  heddle-sql 863 and 76; Shuttle 2,546; olang Studio 8,921 and 994; open-track
-  desktop 2,468 and 281; open-track 4,178; Foundry 254 and 4); 19
+  (olang's own 862 in 67; a UI framework 4,317 and 622; a terminal UI
+  framework 1,681 and 142; a terminal SQL client 863 and 76; a web
+  framework 2,546; an IDE 8,921 and 994; an issue tracker's desktop app
+  2,468 and 281; the issue tracker 4,178; a dashboard 254 and 4); 19
   flagged, 1,870 left (a key that is no identifier, a called value).
 - **Spreads and nested updates** (roadmap E6): `#{ ...m, "k": v }` and
   `{ ...o, k: v }` build a copy with the written keys laid over it in
@@ -2678,7 +2682,7 @@ check` where it can be (the full guide is docs/migrating.md):
   unused name), 1-based `line`/`column` to `end_line`/`end_column` in
   characters and the server's own `range`; exit 1 on an error, as the
   text form. The server's diagnostics now carry the same `code`.
-  (olang Studio's `--check` opened every file in a language server to
+  (An editor's `--check` opened every file in a language server to
   hear its problems.) tests/lsp_check_agreement_test.rs.
 - **The language server follows files renamed, moved and deleted**
   (`workspace/didRenameFiles`, `workspace/didDeleteFiles`, registered
@@ -2723,9 +2727,9 @@ check` where it can be (the full guide is docs/migrating.md):
   program's thread (renamed over, whole), held under 64 MB
   (`OLANG_COMPILE_CACHE_MB`); a damaged one is ignored and rewritten.
   `OLANG_COMPILE_CACHE=0` turns it off. Native code is compiled each run
-  as before. olang Studio's real-window start (`tools/launch.ol`): ~218 →
+  as before. An IDE's real-window start (its launch script): ~218 →
   ~173 ms with a warm cache (its ~545 compiles ~65 → ~8 ms), ~225 cold;
-  olang Studio.app's first frame from its process's start ~252 → ~215–230
+  the IDE's app bundle's first frame from its process's start ~252 → ~215–230
   ms (it now waits on AppKit's warm-up).
   `OLANG_BOOT_TRACE`'s summary counts compiles from the cache, stale and
   kept, and is printed at exit by a program that opens no window.
@@ -2757,15 +2761,15 @@ check` where it can be (the full guide is docs/migrating.md):
   `olang build --app` writes each file's sha256 into the application's
   index; a launch checks a file the first time it reads it (a file that
   does not match is not there), instead of the whole section before the
-  program starts (`inspect --verify` still checks it whole). olang
-  Studio.app's payload (5.5 MB, Loom's fonts most of it) was ~22 ms of its
+  program starts (`inspect --verify` still checks it whole). An IDE's
+  app payload (5.5 MB, its UI framework's fonts most of it) was ~22 ms of its
   start; now ~2. `OLANG_BOOT_TRACE` says when the application's program
   was read and its files installed.
 
 - **fs.search: what each match becomes.** `replace` (a template) makes
   each match say `with`, a regular expression's groups expanded (`$1`,
-  `${name}`, `$$`): olang Studio's replace across files previews and
-  applies it.
+  `${name}`, `$$`): an editor's replace across files can preview and
+  apply it.
 - **gui: a span's background, strike and underline on plain text**, as a
   styled field drew them.
 
@@ -2779,8 +2783,8 @@ check` where it can be (the full guide is docs/migrating.md):
   tab); `gui.set`'s `tab` chooses the next or previous tab, merges every
   window, moves a tab out or toggles the bar; a `tabs` event says which
   windows a window is shown with as it comes forward. `gui.input` takes
-  `open` and `new_tab` for tests. What olang Studio.app's document
-  types and window tabs run on.
+  `open` and `new_tab` for tests. What a desktop editor's document
+  types and window tabs can run on.
 
 - **runtime: modules loaded at run time, under their own grant.**
   `runtime.load_module(path, grant)` loads a file into the running
@@ -2790,7 +2794,7 @@ check` where it can be (the full guide is docs/migrating.md):
   host's builtins (`gui`, `tty`, loading code, the profiler). A failed
   load keeps the grant before it. `runtime.unload_module`,
   `module_grant` and `module_permits` (the same gate, asked by a host
-  about to act for a module) go with it. What olang Studio's plugins run
+  about to act for a module) go with it. What an editor's plugins can run
   on.
 - **runtime: a call held to a time budget.** `runtime.call_budget(f,
   args, ms)` stops a call past `ms` — an interrupt aimed at the calling
@@ -2799,8 +2803,8 @@ check` where it can be (the full guide is docs/migrating.md):
 - **Where a caught error went.** Both tiers note each frame an error
   leaves with its file and line; `attempt`, `call_budget` and
   `load_module` keep the trace and `runtime.last_error()` reads it back
-  (Loom prints it when a program stops with an error). `runtime.shape`
-  describes a value's structure.
+  (a UI framework can print it when a program stops with an error).
+  `runtime.shape` describes a value's structure.
 
 - **gui: scrolling sideways around what scrolls down.** The wheel gives
   each axis to the nearest scroller that can still move along it (two
@@ -2842,9 +2846,9 @@ check` where it can be (the full guide is docs/migrating.md):
   and no window position, off macOS no native menu, clipboard picture,
   or system contrast and motion settings.
 - **tools/linux-check.sh and tools/windows-check.sh.** The Linux build
-  and its headless tests (Loom, open-track desktop, gui_test, Heddle) in
-  a local container, and a Windows `cargo check` (and a MinGW link) with
-  zig as the C toolchain — no CI, nothing from Microsoft.
+  and its headless tests (`gui`-based applications, gui_test, a terminal
+  UI) in a local container, and a Windows `cargo check` (and a MinGW link)
+  with zig as the C toolchain — no CI, nothing from Microsoft.
 
 - **dates: day numbers and the calendar's edges.** `dates.epoch_day(d)`
   is a date's day number (days since 1970-01-01; a stamp's day is the one
@@ -2852,8 +2856,8 @@ check` where it can be (the full guide is docs/migrating.md):
   day as a coordinate, what a timeline or a calendar lays out and snaps
   to. `dates.start_of_week(d)` (the Monday on or before; weeks start on
   Monday, as ISO 8601 says) and `dates.start_of_month(d)` answer in kind.
-  (open-track desktop's timeline carried a civil-date algorithm twice for
-  want of these.)
+  (An issue tracker's desktop timeline carried a civil-date algorithm
+  twice for want of these.)
 
 - **gui: a styled, editable text — a paragraph laid out at a time.** A
   `textarea` with `rich: true` (src/stdlib/gui/rich.rs) keeps a parley
@@ -2872,8 +2876,8 @@ check` where it can be (the full guide is docs/migrating.md):
   client's selection is taken; the tree is built only while a client
   listens. A field's `pass_keys` may name `shift+tab` and are never in
   force while the input method composes. A text node's style may carry
-  `spans` too, measured as drawn. (Loom's editor in open-track desktop
-  is the first user.)
+  `spans` too, measured as drawn. (A UI framework's editor in an issue
+  tracker's desktop app is the first user.)
 
 - **gui: a canvas drawn as primitives, with clips, transforms, gradients,
   hit regions, the wheel and the pinch.** A canvas's rectangles, lines
@@ -2889,8 +2893,8 @@ check` where it can be (the full guide is docs/migrating.md):
   pinch (`pinch`, from winit's `PinchGesture`; macOS) before any scroller
   around it; `gui.input` sends both, the wheel with modifiers. A node's
   `active` names its active descendant to assistive output, and a
-  group's `inert` reaches the engine from the flat layout. (Loom's
-  timeline in open-track desktop is the first user.)
+  group's `inert` reaches the engine from the flat layout. (A UI
+  framework's timeline in an issue tracker's desktop app is the first user.)
 
 - `gui.read(w, "key")`: whether the window is the key one.
 
@@ -2900,7 +2904,7 @@ check` where it can be (the full guide is docs/migrating.md):
   wrapped line's row as much as a line's) is now hidden whole, as under
   sticky scroll's pinned rows, and the line's number goes to its first
   row still in view (tests/gui_test.rs). A decoration that is only a
-  colour (no fill, no underline) recolours its glyphs — olang Studio's
+  colour (no fill, no underline) recolours its glyphs — an editor's
   unused names, faded. Text after a line's end gives way at the field's
   edge: cut at a word's end with nothing hanging before the ellipsis, or
   left out whole where only a stub ("unused variable:…") would show.
@@ -2908,7 +2912,7 @@ check` where it can be (the full guide is docs/migrating.md):
 - **`gui.context_menu` opened the menu mirrored about the window's
   middle.** muda's `show_context_menu_for_nsview` turns y as though the
   view were unflipped, and winit's view is flipped: a right click near a
-  window's top opened its menu near the bottom (over olang Studio's
+  window's top opened its menu near the bottom (over an editor's
   terminal). The engine now places the menu itself
   (`popUpMenuPositioningItem:atLocation:inView:` in the view's own
   points), at the click, opening upward or to the left where the screen's
@@ -2924,7 +2928,7 @@ check` where it can be (the full guide is docs/migrating.md):
 - **pty.close reaps an interactive shell.** A session leader's exit waits
   for its terminal's output to drain, and nothing read the master once
   the handle was closed: an interactive zsh hung up with its prompt
-  unread stayed exiting (`?Es`) until the program ended (olang Studio's
+  unread stayed exiting (`?Es`) until the program ended (an editor's
   terminal closed a session and left its shell). The reaper now reads
   and drops what the child writes while it ends, then reaps it
   (tests/pty_test.rs).
@@ -2951,14 +2955,14 @@ check` where it can be (the full guide is docs/migrating.md):
 - **The language server's problems are `olang check`'s.** The server ran
   its own analyzer and published where it stopped as an error, so an
   editor showed problems the checker and the program did not have:
-  importing a name the language also provides (`use loom { task, find,
+  importing a name the language also provides (`use ui { task, find,
   split }`) was a "Duplicate variable", a `let` constant written below
   the function reading it an "Undefined variable", a second `let` of one
   name a duplicate — and the first stop hid every finding after it
-  (olang Studio's own project: 11 errors in its Problems, `olang check`
+  (an IDE's own project: 11 errors in its Problems, `olang check`
   clean). Errors and warnings now come from the checker's own pass for
   the file (`check::file_diagnostics`: the same module resolution, scope
-  rules and `[check] promote`); Studio, Loom and open-track-desktop open
+  rules and `[check] promote`); an IDE, a UI framework and a desktop app open
   with exactly `olang check`'s findings. A name nothing reads is a hint
   tagged unnecessary (faded in the editor, not a problem), and those are
   now right: uses in match guards, assertions, struct literals and
@@ -2974,7 +2978,7 @@ check` where it can be (the full guide is docs/migrating.md):
 - **An armed run attached before it starts is sampled from its first
   call.** `--profile-live DIR` with `DIR/attach` already there looked for
   it only at the first snapshot (250–500 ms in), so a shorter run ended
-  with no samples (Loom's `tools/bench.ol` under Studio's Profile File:
+  with no samples (a UI framework's benchmark under an IDE's Profile File:
   0 samples of a 250 ms run). The attach file is read as the run starts
   and every 50 ms after; the series begins with a point at the start.
 
@@ -3028,7 +3032,7 @@ check` where it can be (the full guide is docs/migrating.md):
   the bytecode tier.** `==` answered false across list layouts (the
   different-types shortcut, and `OvmValue`'s own equality, rejected
   before the arms that compare by element): `a == map(a, (x) => x)` was
-  false for 80 ints, and Heddle's terminal check failed 51 tests.
+  false for 80 ints, and a terminal UI's terminal check failed 51 tests.
 - **No argument fingerprint without a timeline replaying.** Every
   nondeterministic builtin rendered and SHA-256 hashed its arguments (a
   `gui` call's whole view) before looking whether a timeline was
@@ -3059,7 +3063,7 @@ check` where it can be (the full guide is docs/migrating.md):
 - **`http` responses as Bytes**: `#{ "bytes": true }` among a request's
   options.
 
-- **`gui`: windows drawn by olang (Loom's L0).** A program lays its
+- **`gui`: windows drawn by olang.** A program lays its
   view out and sends positioned, keyed nodes (`gui.apply`); the engine
   draws them on the GPU (wgpu) or with the software reference
   (tiny-skia), shapes text with parley (complex scripts, bidi, font
@@ -3075,7 +3079,7 @@ check` where it can be (the full guide is docs/migrating.md):
   are what tests drive. `gui.measure`, `gui.fonts`, the clipboard,
   platform dialogs, and the macOS menu bar. The process's first thread
   hosts the platform's event loop (macOS requires it); a program that
-  never opens a window never starts one (docs/stdlib.md, loom/SPEC.md).
+  never opens a window never starts one (docs/stdlib.md).
 - **`gui`: canvases and images.** A node's `draw` is a list of shape
   and text operations, rasterized at the window's scale and cached; its
   `image` is a PNG (a path or Bytes) fitted to its box (`fit`:
@@ -3093,7 +3097,7 @@ check` where it can be (the full guide is docs/migrating.md):
   COLRv1 emoji (Noto Color Emoji, Segoe UI Emoji) is painted from its
   paint graph — gradients, transforms, clips, layers and their composite
   modes — where swash drew only its outline. `body` text is Inter, then
-  the emoji font, before the system's, when Loom has registered them; a
+  the emoji font, before the system's, when a program has registered them; a
   character followed by U+FE0F ("❤️", "1️⃣") is drawn from an emoji font.
 - **`olang build --app` and `asset`.** An application carries every
   module its entry uses — its own package's and its dependencies' — with
@@ -3103,7 +3107,7 @@ check` where it can be (the full guide is docs/migrating.md):
   or from the application.
 - **`testing.snapshot_dir()`** answers the `__snapshots__` directory
   beside the file under test, for a library keeping snapshots of its own
-  kind (Loom's pixel snapshots).
+  kind (a UI framework's pixel snapshots).
 
 ### Changed
 
@@ -3121,8 +3125,8 @@ check` where it can be (the full guide is docs/migrating.md):
   generic `UPDATE_SNAPSHOTS=1` refreshes snapshots beside
   `OLANG_UPDATE_SNAPSHOTS=1`, and a library with its own update
   variable passes it: `testing.snapshot(name, value, #{ "update": true
-  })` (Heddle set `OLANG_UPDATE_SNAPSHOTS` from `HEDDLE_UPDATE_SNAPSHOTS`
-  for every call).
+  })` (a terminal UI framework set `OLANG_UPDATE_SNAPSHOTS` from its own
+  update variable for every call).
 - **A lambda stage ends at the next `|>`.** An unparenthesized lambda
   written as a pipeline stage took the stages after it into its body, so
   `5 |> (v) => if v > 3 => v else => 0 |> g` applied `g` only in the
@@ -3133,7 +3137,7 @@ check` where it can be (the full guide is docs/migrating.md):
   to `map`) keeps its whole expression. Over the workspace 33 lambda
   stages read differently; in 29 the result is the same (the cut stage's
   body was arithmetic feeding the pipe), and in the other four, all
-  open-track's `sets_of` (lib/client/actions_list.ol), the old reading
+  one issue tracker's `sets_of`, the old reading
   was the bug: a bulk edit setting the state ignored every other field
   (the later stages ran only in the first one's `else`). language.md's
   Pipelines section states the rule.
@@ -3160,10 +3164,10 @@ check` where it can be (the full guide is docs/migrating.md):
   rewritten, and pitfalls.md's map entries with it.
 - **`re` keeps the patterns it compiled** (per thread, up to 256): a
   call compiled its pattern every time (~28 µs for a character class;
-  Heddle's painter asked thousands of times a frame).
+  a terminal UI's painter asked thousands of times a frame).
 
 - **A program's start: callees compile at their first call, and the
-  rest of a window's first 600 ms.** olang Studio in a real window, from
+  rest of a window's first 600 ms.** An IDE in a real window, from
   the process's start to its first frame (medians of nine, load 2.4–3.0):
   ~600 ms → ~206 ms with the parse cache warm, ~396 ms with it off
   (`OLANG_PARSE_CACHE=0`). What went:
@@ -3171,7 +3175,7 @@ check` where it can be (the full guide is docs/migrating.md):
     compiled every function it could reach first; now a callee with no
     id yet is given one at its caller's compile and compiled when that
     call first runs (refused, it is called through its value, as a
-    callee the tier cannot compile always was). Studio's first frame
+    callee the tier cannot compile always was). The IDE's first frame
     compiled 2,520 attempts in 235 ms; now 484 in 45. A native
     candidate has the callees its group reaches compiled just before
     the JIT plans it; `olang check --tier` still compiles everything.
@@ -3179,7 +3183,7 @@ check` where it can be (the full guide is docs/migrating.md):
   - *Parsing modules a guess kept out of the parse cache.* A module
     with an `@` anywhere (a string: `"lsp@p1"`) or the word `meta` was
     never kept; the parser now says whether a text held a macro, and
-    every other module is kept — a quarter of Studio's, 75 ms a launch.
+    every other module is kept — a quarter of the IDE's, 75 ms a launch.
   - *Hashing every module file again at every `use`.* A loaded module's
     file was read and SHA-256'd on each import of it (and twice more
     when it loaded, its whole tree cloned to estimate its size); now an
@@ -3188,18 +3192,20 @@ check` where it can be (the full guide is docs/migrating.md):
   - *The platform after the frame, not beside it.* `gui.prepare()`
     starts the event loop without waiting, and a loop so started makes
     a hidden window and lets it go — AppKit's first window costs ~25
-    ms, a second ~5 — while the program boots (Loom's `run` asks).
+    ms, a second ~5 — while the program boots (a UI framework's `run` can
+    ask).
   - *Fonts on the critical path.* `gui.fonts(sources, #{ "background":
     true })` decompresses and registers them on a thread of their own,
     the text system's first use (the system's fonts found) with them;
-    whatever shapes text meanwhile waits (Loom's bundled fonts: ~55 ms).
+    whatever shapes text meanwhile waits (a UI framework's bundled fonts:
+    ~55 ms).
   - *Waiting for the menu bar.* `gui.menu` checks its spec on the
     calling thread and has the main thread make it without waiting (it
     was ~20 ms behind the first frame's presentation).
   - *The clock.* `time.monotonic()` now reads from the process's start
     (the kernel's record of it) rather than its first use, which came
-    after a program's modules loaded: a start timed with it (Loom's
-    `LOOM_TRACE=launch`) left out the ~260 ms before.
+    after a program's modules loaded: a start timed with it (a UI
+    framework's launch trace) left out the ~260 ms before.
   `OLANG_BOOT_TRACE=1` says where a start goes, landmark by landmark.
 
 - **Values cross the tier boundary without converting whole.** A parsed
@@ -3214,14 +3220,15 @@ check` where it can be (the full guide is docs/migrating.md):
   only through `Arc::get_mut`, which refuses while the cache's `Weak`
   exists), and a changed collection converts only what changed beneath
   it. `map_get_or` and `map_remove` run on the VM's values instead of
-  bridging. open-track desktop at 100,000 rows (the old and new olang
-  alternated on one machine, medians of five, load 2.8–3.2): a live
-  update's first page 16.9 → 7.3 ms, a page on screen 10.5 → 3.7 ms, the
-  table's `j` 8.7 → 3.8 ms, a key 4.4 → 2.9 ms. Loom (tools/gate.ol, the
-  same way): a keypress 0.73 → 0.34 ms, boot 0.60 → 0.35 ms, a scrolling
-  table frame 1.29 → 0.94 ms, an update's layout 0.71 → 0.70 ms; a layout
-  from scratch 2.66 → 2.93 ms (its first conversions now kept, and the
-  layout's own work on the VM rather than the tree-walker).
+  bridging. An issue tracker's desktop app at 100,000 rows (the old and
+  new olang alternated on one machine, medians of five, load 2.8–3.2): a
+  live update's first page 16.9 → 7.3 ms, a page on screen 10.5 → 3.7 ms,
+  the table's `j` 8.7 → 3.8 ms, a key 4.4 → 2.9 ms. A UI framework (its
+  gate benchmark, the same way): a keypress 0.73 → 0.34 ms, boot 0.60 →
+  0.35 ms, a scrolling table frame 1.29 → 0.94 ms, an update's layout 0.71
+  → 0.70 ms; a layout from scratch 2.66 → 2.93 ms (its first conversions
+  now kept, and the layout's own work on the VM rather than the
+  tree-walker).
 - **A function value compiles around what it cannot compile.** A
   function reached as a value (a program's `view`, a name two modules
   define, a lambda) gave up after eight unresolved callees, on any callee
@@ -3230,7 +3237,7 @@ check` where it can be (the full guide is docs/migrating.md):
   tree-walker, its arguments converted at every call, with `olang check
   --tier` green. It now resolves every callee, calls one that cannot
   compile through the bridge, and fills literal defaults (now also `()`,
-  `#{}`, `[]`, and negated numbers) on both call paths. Loom's frame
+  `#{}`, `[]`, and negated numbers) on both call paths. A UI framework's frame
   (`rt_frame`, `layout`, a program's `view`) runs compiled again with the
   terminal face loaded. `OLANG_DEBUG_HOF=1` says what a function value
   declined and why.
@@ -3240,17 +3247,18 @@ check` where it can be (the full guide is docs/migrating.md):
   `return` ends the call with its value, its declared return type checked
   as at the body's end, on the VM and the native tier alike (a promoted
   loop or an OSR region holding one still refuses, so the return keeps
-  its meaning). Loom's runtime frame (`rt_frame` and six other engine
-  functions) moved off the tree-walker with it: a turn of a 500-row page
-  went from 16.8 to 10.3 ms. Heddle reported 104 of its functions
-  refused for this.
+  its meaning). A UI framework's runtime frame (`rt_frame` and six other
+  engine functions) moved off the tree-walker with it: a turn of a 500-row
+  page went from 16.8 to 10.3 ms. A terminal UI framework reported 104 of
+  its functions refused for this.
 - **`?` compiles to the bytecode tier.** `expr?` unwraps an `Ok`, ends
   the call with an `Err` (as the interpreter's propagation does, at the
   nearest function boundary), and on any other value raises the
   interpreter's TypeError word for word (a new `TryFail` instruction; the
   native tier deopts to it, as for a failed match). A function using `?`
   no longer stays on the tree-walker — nor leaks per call when it also
-  hands a lambda to the VM (heddle-sql measured ~1.3 KB a call; now 3 B).
+  hands a lambda to the VM (a terminal SQL client measured ~1.3 KB a call;
+  now 3 B).
 
 ### Fixed
 
@@ -3276,25 +3284,26 @@ check` where it can be (the full guide is docs/migrating.md):
 - **The REPL's `:env`, `:help tutorials`, `:tutorial` and `:search` print
   the same every run**: bindings by name, tutorials by level then name,
   search results and suggestions by score then name (three piped runs
-  gave three outputs; olang Studio's pinned transcripts left them out).
+  gave three outputs; an editor's pinned transcripts left them out).
   `:env` no longer lists the parser's own forms (`__spread`). The terminal
   transcripts in tests/repl_commands_test.rs now pin all four.
 - **A path dependency's own path dependencies are followed** (by `otc`,
   a run, the language server — everything that installs), at any depth,
   each against the manifest that names it, and locked by their path from
-  the project. open-track desktop → Loom → Heddle, all by path, failed
-  with "Cannot find module 'heddle'" until the application named Heddle
-  too; a lock already holding such an entry replays as it is.
+  the project. A desktop app → a UI framework → a terminal UI framework, all
+  by path, failed with "Cannot find module" for the last until the
+  application named it too; a lock already holding such an entry replays
+  as it is.
 - **A dropped `db` connection is closed.** Connections lived in the
   module's registry until `db.close`: 3,000 opened and dropped left 3,010
-  descriptors open (heddle-sql). `db.open`'s `Connection` now carries a
-  `handle` field every copy shares, and when the last copy goes the
-  connection closes, once the cursors that hold it are dropped too. A
+  descriptors open (a terminal SQL client). `db.open`'s `Connection` now
+  carries a `handle` field every copy shares, and when the last copy goes
+  the connection closes, once the cursors that hold it are dropped too. A
   recorded run replays it as a handle that owns nothing. `show(conn)`
   shows the field.
 - **A missing `}` in a map literal names the literal.** A statement
   starting inside a `#{` an earlier line did not close was reported as
-  "expected an operator" at the statement (Heddle); the parse error now
+  "expected an operator" at the statement (a terminal UI); the parse error now
   says that the map literal opened at its line and column is still open
   — a `}` missing after its last entry, or a `,` between two entries —
   in `olang run`, `olang check` and the language server alike.
@@ -3309,7 +3318,7 @@ check` where it can be (the full guide is docs/migrating.md):
 - **`if a == (x, y) => …` compares with the tuple.** On the right of a
   comparison, a parenthesized group followed by `=>` parsed as a
   lambda's parameters, so the `if` lost its `=>` ("expected an operator"
-  at the next line; olang Studio's terminal had to bind the tuple
+  at the next line; an editor's terminal had to bind the tuple
   first). It is an operand now, as `()` already was there.
 - **A module's missing member used as a receiver names the nearest
   member again.** Since a missing member reads as `()`,
@@ -3325,13 +3334,13 @@ check` where it can be (the full guide is docs/migrating.md):
   (tests/deep_drop_test.rs's boundary case aborted). Its contents are
   now taken out whole when this is the one strong handle.
 - **`olang profile` reports a program that ends with `os.exit`** — every
-  Loom application, from its loop or a quit — in text and as JSON
+  application on a UI framework, from its loop or a quit — in text and as JSON
   (`--out`); before, such a run printed nothing at all, so a windowed
   application could not be profiled from the command line. Sampling a
   program that starts the `gui` engine covers its whole run, headless or
   in a real window (checked over a 12 s busy real window, a hidden one,
-  a Loom loop on a timer, Studio's Control Center opened 1,800 times
-  headless — 39,804 ticks over 10.2 s at 200 µs — and olang Studio in a
+  a UI framework's loop on a timer, an IDE's Control Center opened 1,800 times
+  headless — 39,804 ticks over 10.2 s at 200 µs — and the IDE in a
   real window for 10.6 s of typing and palettes, ended by its quit:
   14,883 samples, 700–740 in every half second to the end); the "1,499
   samples over 0.46 s" the roadmap recorded did not reproduce. tests/profile_json_test.rs.
@@ -3352,7 +3361,7 @@ check` where it can be (the full guide is docs/migrating.md):
   closing the key window hands the key back, each change said as a
   `window_focus` event; a field's caret and focus ring are drawn only
   there and `gui.read(w, "key")` says which. Every headless window was
-  key, so two windows both showed a caret (olang Studio's fuzzer, seed
+  key, so two windows both showed a caret (an editor's fuzzer, seed
   1028). Kept per thread that made the windows, so tests side by side in
   one process do not take each other's key. tests/gui_test.rs.
 
@@ -3385,8 +3394,8 @@ check` where it can be (the full guide is docs/migrating.md):
 
 - **Comparing two closures no longer walks what they capture.** A
   closure inside a compared value (a map holding a row source, as
-  Loom's layout memo compares) was compared by deriving equality over
-  its captured environment — the prelude and the module's functions,
+  a UI framework's layout memo compares) was compared by deriving equality
+  over its captured environment — the prelude and the module's functions,
   each with its own environment — in hash order, stopping at the first
   difference: 2 ms or 2 seconds, by chance. Functions now compare the
   cheap facts first and captured functions by identity.
@@ -3411,7 +3420,7 @@ check` where it can be (the full guide is docs/migrating.md):
 ### Added
 
 - **`db`: interrupts, time limits, cursors, rows as SQL has them, and
-  open options (heddle-sql).** `db.interrupt(conn)` stops the statement
+  open options.** `db.interrupt(conn)` stops the statement
   a connection is running, from any task, without waiting for it: the
   stopped call answers `Err("db.<fn>: interrupted")` and the connection
   goes on. `timeout_ms` (`db.query(conn, sql, params, #{ "timeout_ms":
@@ -3430,7 +3439,7 @@ check` where it can be (the full guide is docs/migrating.md):
   `db.query` still answers maps, and a BLOB there is still a (lossy)
   String (docs/stdlib.md).
 
-- **`tty`: the terminal as an interactive device (Heddle's H0).**
+- **`tty`: the terminal as an interactive device.**
   `tty.enter(opts)` takes the terminal — raw mode by default, and on
   request the alternate screen, mouse reporting (SGR), bracketed paste,
   focus events, the kitty keyboard protocol, a hidden cursor — and
@@ -3497,8 +3506,8 @@ check` where it can be (the full guide is docs/migrating.md):
   its own lock, held for one statement. `db.open`'s errors name the
   path.
 - **`olang test` runs the project's own blocks; `--deps` the rest.** An
-  imported module's test blocks ran whatever it was: Foundry's 13 tests
-  were reported as 133, the other 120 Shuttle's. A module's blocks run
+  imported module's test blocks ran whatever it was: a dashboard's 13 tests
+  were reported as 133, the other 120 a dependency's. A module's blocks run
   when it is the project's own — under the package root and not a
   dependency — so a `lib/` module's still run from `olang test tests/`;
   a shelf, lock, or path dependency's, and the runtime's embedded
@@ -3569,15 +3578,15 @@ check` where it can be (the full guide is docs/migrating.md):
   lambda; the tier compiles lambdas by closure identity, so a lambda
   handed to `fold`, `map`, `filter`, `col.sort_by` or called directly
   was compiled and JIT-compiled again on every call — and the JIT never
-  frees code. ~0.8–2.8 KB of heap a call, forever (heddle-sql's
-  FINDINGS: ~30 KB a frame in Heddle's layout), and ~80 µs a call
-  compiling. Closures of one body whose captures are the same values
-  (scalars, short strings, declared functions, builtins, modules) now
-  share one compile, and a body whose captures change on every call
-  keeps its compiles on the bytecode VM, freed with the closure, after
-  its first four. Every row of the finding's table is now under
-  10 B a call; the repro runs 30× faster. Escaping closures keep their
-  own captures (tests/early_exit_lambda_test.rs).
+  frees code. ~0.8–2.8 KB of heap a call, forever (a terminal SQL
+  client's findings: ~30 KB a frame in a terminal UI's layout), and ~80 µs
+  a call compiling. Closures of one body whose captures are the same
+  values (scalars, short strings, declared functions, builtins, modules)
+  now share one compile, and a body whose captures change on every call
+  keeps its compiles on the bytecode VM, freed with the closure, after its
+  first four. Every row of the finding's table is now under 10 B a call;
+  the repro runs 30× faster. Escaping closures keep their own captures
+  (tests/early_exit_lambda_test.rs).
 - **Receivers on one channel wait side by side.** A channel's receiving
   end sat behind a lock held for the whole wait, so waiters took turns:
   a `chan.recv_timeout(c, 100)` waited out another thread's
@@ -3716,8 +3725,8 @@ check` where it can be (the full guide is docs/migrating.md):
   failed attempt's artifacts go at once, and an entry displaced because
   its addresses were reused is evicted rather than forgotten. 3,000
   closures each capturing a 20,000-element list: 948 MB of live values →
-  under 30 MB. open-track under 2,000 reads: 453 → 1,380 MB and climbing
-  → 442 → about 600 MB, flat at 255 MB with four workers (open-track
+  under 30 MB. An issue tracker under 2,000 reads: 453 → 1,380 MB and climbing
+  → 442 → about 600 MB, flat at 255 MB with four workers (the tracker's
   OL-146). `OLANG_DEBUG_HOF_SWEEP=1` prints each sweep's counts.
 - The tier's argument cache sweeps its dead entries once it has grown by
   a few dozen, not at a fixed 512: a converted tuple pins what it holds (a
@@ -4068,7 +4077,8 @@ check` where it can be (the full guide is docs/migrating.md):
 - **`mount` adopts a server first paint** when the merged state is what
   the server rendered from: no render runs at boot.
 - **A package's front door carries the macros its index imports** with a
-  plain `use`, so `use shuttle` reaches `@resource`.
+  plain `use`, so importing the package reaches a macro such as
+  `@resource`.
 
 ### Fixed
 
@@ -4299,7 +4309,7 @@ check` where it can be (the full guide is docs/migrating.md):
 - **`db.query_one`'s absent shape is stated**: `Ok(())`, unambiguous
   because a row is always a map.
 
-- **W11, the second reading of open-track.** A test block is its own
+- **W11, the second reading of an issue tracker.** A test block is its own
   scope. A path import (`use lib.csv`) wins over a stdlib module of the
   same name. A manifest dependency that cannot be resolved no longer
   fails every module: the resolvable ones load, and the `use` that needs
@@ -4376,7 +4386,7 @@ check` where it can be (the full guide is docs/migrating.md):
 
 ### Added
 
-- **W9 — what building open-track asked for.** The first large program
+- **W9 — what building an issue tracker asked for.** The first large program
   written against olang's packages from outside the repository produced
   forty-six rows (docs/roadmap.md, W9); this release lands them.
 

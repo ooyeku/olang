@@ -29,7 +29,7 @@ use collections { heap, table, dsu, bitset, alg }
 
 let lines = [
     ["Red", [
-        ["Union", "Foundry", 3], ["Foundry", "Millbank", 2],
+        ["Union", "Forge", 3], ["Forge", "Millbank", 2],
         ["Millbank", "Harbor", 4], ["Harbor", "Lighthouse", 6],
         ["Union", "Court", 2], ["Court", "Northgate", 3],
         ["Northgate", "Quarry", 5]]],
@@ -39,7 +39,7 @@ let lines = [
         ["Union", "Chapel", 3], ["Chapel", "Westfield", 4],
         ["Westfield", "Orchard", 3]]],
     ["Green", [
-        ["Market", "Foundry", 2], ["Grove", "Riverside", 2],
+        ["Market", "Forge", 2], ["Grove", "Riverside", 2],
         ["Riverside", "Millbank", 3], ["Riverside", "Fairground", 4],
         ["Fairground", "Observatory", 5]]],
     ["Coast", [

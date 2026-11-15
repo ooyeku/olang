@@ -9,7 +9,7 @@ the budget).*
 recursive-descent function a rule. Every olang call costs 0.3–1 µs and
 the JIT refuses the generated code, so on a 151 KB JSON document `peg`
 recognised in 22× `json.parse`'s time, built its tree in 100× and its
-values in 115×; olang-track's query bar took 83 µs to its hand-written
+values in 115×; an issue tracker app's query bar took 83 µs to its hand-written
 parser's 51. The budget is JSON within 3× of `json.parse` and the query
 bar within 2× (here: within 1×).
 
@@ -154,7 +154,7 @@ error's data; `peg.ol` makes the error values and the combined `show()`.
 ## Testing
 
 - **The suites unchanged**: peg_test.ol's 26 blocks and peg.ol's 5 pass
-  on the native engine, the olang-track goldens included (398 generated
+  on the native engine, the goldens of an issue tracker app's query bar included (398 generated
   queries and 46 curated, hashed answers).
 - **Differential** (src/stdlib/embedded/peg_native_test.ol, 6 blocks,
   ~4 s): every grammar built on both engines (`#{ "engine": "olang" }`
@@ -172,7 +172,7 @@ error's data; `peg.ol` makes the error values and the combined `show()`.
   | CSV | 1,207 | 838 | 369 |
   | expressions (precedence table, calls) | 2,415 | 1,296 | 1,119 |
   | left recursion (two heads on a cycle, a left-recursive token) | 1,207 | 619 | 588 |
-  | olang-track's query bar (1,200 generated queries + examples) | 1,800 | 1,800 | — (it accepts any text) |
+  | the tracker's query bar (1,200 generated queries + examples) | 1,800 | 1,800 | — (it accepts any text) |
   | labels, silent rules, lookahead, Unicode, comments in skip | 1,449 | 729 | 720 |
   | recovery (`recover: [";"]`) | 1,505 | 663 | 842 |
   | **total** | **12,006** | **7,117** | **4,889** |
@@ -204,11 +204,11 @@ measures as in the first column on this build.
 | query bar, recognise | 27 µs | 1.3 µs | |
 | query bar, tree | 77 µs (1.5× hand) | 8.5 µs (0.17×) | 1× hand |
 | query bar, tree + its meaning | 139 µs (2.8×) | 51 µs (1.0×) | |
-| olang-track's hand-written parser | 50 µs | | |
+| an issue tracker app's hand-written parser | 50 µs | | |
 
 (The hand-written parser was measured in the same harness from a copy
-of packages/olang-track-query/lib; "its meaning" is peg_test.ol's port
-of olang-track's clause rules over the tree, which is olang code and the
+of the tracker's query library; "its meaning" is peg_test.ol's port
+of the tracker's clause rules over the tree, which is olang code and the
 same in both columns.)
 
 ### Where the tree's time goes

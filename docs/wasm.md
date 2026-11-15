@@ -242,7 +242,7 @@ of event type, so handlers pick the fields they need:
 80 ms) on, or the keyboard focus reaches, the nearest element carrying
 `data-intent` — once per carrier until it is left — and its `data` is
 that carrier's (`intent`, `intentArgs`). A framework prefetches on it
-(Shuttle answers the click's identical rpc from what it fetched).
+(and can answer the click's identical rpc from what it fetched).
 
 A repaint is a **view transition** when the program marks
 `<html data-transition>` before it (`dom.set_attr(dom.find("html"),

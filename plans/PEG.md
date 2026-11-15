@@ -5,7 +5,7 @@ remote stays on rc.5.*
 
 ## What it is for
 
-Programs keep meeting text with structure: a query bar (olang-track's
+Programs keep meeting text with structure: a query bar (an issue tracker app's
 `project: OL is: overdue sort: -updated`), a config format, a log line,
 a formula, a route pattern, a small rules notation, a protocol. Today
 each one is a hand-written scanner with its own bugs and its own poor
@@ -61,7 +61,7 @@ match Query.parse("project: OL is: overdue -draft") {
 - The furthest point the parse reached and what could have come there,
   in words: `expected a value after "is:" (1:13)`.
 - `e.show()` prints the line with a caret; `e.span`, `e.expected` and
-  `e.found` are data for an app (olang-track's query bar underlines the
+  `e.found` are data for an app (an issue tracker app's query bar underlines the
   spot).
 - **Recovery, when asked** (`#{ "recover": ["\n", ";"] }`): the parse
   skips to the next sync point and goes on, so one pass reports every
@@ -80,7 +80,7 @@ the reference engine kept for testing: plans/PEG-NATIVE.md.)*
   memory stays flat on simple grammars.
 - **A budget, tested in the benchmarks:**
   - a JSON grammar within 3× of the built-in `json.parse`;
-  - olang-track's query language within 2× of its current hand-written parser.
+  - an issue tracker app's query language within 2× of its current hand-written parser.
 
 ## Tests and tools in the box
 
@@ -93,16 +93,16 @@ the reference engine kept for testing: plans/PEG-NATIVE.md.)*
 
 | | milestone | done when |
 |---|---|---|
-| G1 | parse | grammars from text, tokens and `skip`, labels, trees with spans, left recursion, precedence tables, errors with expected sets; tested over JSON, CSV, an expression language and olang-track's query language |
+| G1 | parse | grammars from text, tokens and `skip`, labels, trees with spans, left recursion, precedence tables, errors with expected sets; tested over JSON, CSV, an expression language and an issue tracker app's query language |
 | G2 | fast | the grammar compiled to olang functions on the bytecode tier, packrat only where needed; the budget met and held by a benchmark |
 | G3 | useful | actions, recovery, `peg.check`, `peg.examples`; docs/stdlib.md's `peg` section with three worked examples |
-| G4 | proven | olang-track's query bar parsed by `peg` with the same answers and errors at least as good, at the budget's speed |
+| G4 | proven | the tracker's query bar parsed by `peg` with the same answers and errors at least as good, at the budget's speed |
 
 ## Separately: expansion cost
 
 Not part of `peg`, but measured on the way: expanding an imported
 `meta fn` cost about a second on rc.5 (one `@timed` use, 0.95 s of
-olang-track's start). It is worth its own fix on `rc6` whether or not
+an issue tracker app's start). It is worth its own fix on `rc6` whether or not
 `peg` uses macros.
 
 ## Done, and polished, when

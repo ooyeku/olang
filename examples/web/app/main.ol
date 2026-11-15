@@ -298,7 +298,7 @@ fn backup(req, params) = {
 fn health(req, params) = {
     let n = unwrap(db.query_one(conn, "SELECT COUNT(*) AS n FROM issues")).n
     json_response(200, {
-        status: "ok", service: "olang-tracker", db: db_path,
+        status: "ok", service: "tracker", db: db_path,
         issues: n, uptime_ms: time.monotonic_ms() - boot_ms
     })
 }

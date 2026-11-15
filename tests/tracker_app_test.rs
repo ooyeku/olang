@@ -94,7 +94,7 @@ fn crud_validation_filters_and_stats() {
     // Health names the service and counts the seed data.
     let (status, body) = call(port, "GET", "/health", "", "");
     assert_eq!(status, 200);
-    assert!(body.contains("\"olang-tracker\""), "got: {body}");
+    assert!(body.contains("\"tracker\""), "got: {body}");
     assert!(body.contains("\"issues\":4"), "got: {body}");
 
     // Create: valid → 201 with the row back.
