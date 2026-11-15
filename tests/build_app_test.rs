@@ -159,3 +159,41 @@ fn a_dependency_reached_through_a_symbolic_link_keeps_its_modules() {
     );
     let _ = fs::remove_dir_all(&ws);
 }
+
+/// `asset.read` reads only inside the package, where the system takes
+/// the path: a package can ship a link (`leak -> ~/.ssh/…`), and the
+/// file it led to outside the package was answered.
+#[test]
+#[cfg(unix)]
+fn an_asset_link_out_of_its_package_is_refused() {
+    let ws = std::env::temp_dir().join(format!("olang_asset_link_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&ws);
+    let app = ws.join("app");
+    fs::create_dir_all(app.join("data")).unwrap();
+    fs::write(ws.join("secret.txt"), "outside").unwrap();
+    fs::write(app.join("data/in.txt"), "inside").unwrap();
+    std::os::unix::fs::symlink(ws.join("secret.txt"), app.join("data/leak")).unwrap();
+    std::os::unix::fs::symlink("in.txt", app.join("data/near")).unwrap();
+    fs::write(
+        app.join("olang.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\nassets = [\"data\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        app.join("main.ol"),
+        "fn text(r) = match r { Ok(b) => unwrap(bytes.to_string(b)), Err(e) => e }\nprintln(text(asset.read(\"app\", \"data/in.txt\")))\nprintln(text(asset.read(\"app\", \"data/near\")))\nprintln(text(asset.read(\"app\", \"data/leak\")))\n",
+    )
+    .unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_olang"))
+        .arg("main.ol")
+        .current_dir(&app)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 3, "{text}\n{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(lines[0], "inside");
+    assert_eq!(lines[1], "inside");
+    assert!(lines[2].contains("leads outside the package"), "{}", lines[2]);
+    let _ = fs::remove_dir_all(&ws);
+}

@@ -831,6 +831,17 @@ pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         None => walk_files(&root, &w),
     };
     stopped()?;
+    // Every file read is inside the root, where the system takes it: a
+    // link in the tree to a file outside it, or a `files` entry with
+    // `..` or an absolute path, was read, though the gate had judged the
+    // root alone (a module held to its folders searched anything). A
+    // link that stays inside is read as before.
+    let canon_root = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
+    let inside = |rel: &str| {
+        std::fs::canonicalize(root.join(rel))
+            .map(|at| at.starts_with(&canon_root))
+            .unwrap_or(false)
+    };
     use rayon::prelude::*;
     // A stop asked of the calling thread (a cancelled token, a budget)
     // is seen by the workers before each file: the files not yet read
@@ -841,7 +852,7 @@ pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             .par_iter()
             .enumerate()
             .map(|(i, rel)| {
-                if probe.should_stop() {
+                if probe.should_stop() || !inside(rel) {
                     return (i, Vec::new());
                 }
                 (
