@@ -130,9 +130,11 @@ enum Commands {
         #[arg(long)]
         check: bool,
     },
-    /// Manage side-by-side toolchain installs
-    #[command(subcommand)]
-    Toolchain(commands::update::ToolchainCommand),
+    /// Manage side-by-side toolchain installs (alone: list every olang)
+    Toolchain {
+        #[command(subcommand)]
+        cmd: Option<commands::update::ToolchainCommand>,
+    },
     /// Print a shell completion script (zsh, bash, fish, elvish)
     Completions {
         /// The shell to generate for
@@ -165,7 +167,11 @@ fn main() {
         Commands::Doctor { fix } => commands::doctor::run(fix),
         Commands::Clean { cache, state, all } => commands::clean::run(cache, state, all),
         Commands::Update { check } => commands::update::update(check),
-        Commands::Toolchain(cmd) => commands::update::toolchain(cmd),
+        Commands::Toolchain { cmd } => commands::update::toolchain(cmd.unwrap_or(
+            commands::update::ToolchainCommand::List {
+                format: "text".to_string(),
+            },
+        )),
         Commands::Completions { shell } => {
             use clap::CommandFactory;
             clap_complete::generate(shell, &mut Cli::command(), "otc", &mut std::io::stdout());

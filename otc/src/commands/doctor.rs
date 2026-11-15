@@ -230,7 +230,7 @@ pub fn run(fix: bool) -> Result<()> {
     Ok(())
 }
 
-fn path_dirs() -> Vec<PathBuf> {
+pub(crate) fn path_dirs() -> Vec<PathBuf> {
     let mut seen = std::collections::HashSet::new();
     std::env::var_os("PATH")
         .map(|p| {

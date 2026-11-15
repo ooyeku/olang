@@ -573,8 +573,8 @@ unsupported preview ([Stability](stability.md#platforms)).
 Multiple releases install side by side:
 
 ```bash
-otc toolchain list              # installed versions, default marked
-otc toolchain list --format json  # #{ format, kind: "toolchains", dir, default, toolchains }
+otc toolchain list              # every olang here, which one runs and why (also: otc toolchain)
+otc toolchain list --format json  # #{ format, kind: "toolchains", dir, default, active, shadowed, fix, project, toolchains }
 otc toolchain install 1.0.0     # add a specific release
 otc toolchain default 1.0.0     # switch the shims
 otc toolchain remove 1.0.0      # remove (the default refuses)
@@ -583,15 +583,39 @@ otc toolchain link 1.1.0 ../olang    # a local build as a toolchain (a binary, o
 ```
 
 A toolchain is a folder `~/.olang/toolchains/<version>/` holding
-`bin/olang`; its version is the folder's name. A project's `[package]
+`bin/olang`, named for its version. A project's `[package]
 olang` pin picks among them (the lock's exact version first, while the
 manifest still allows it; else the newest that satisfies the
 requirement; else the olang running when it satisfies it).
 
+`otc toolchain list` shows every olang on the machine, one row per
+binary however many ways reach it: the managed toolchains and linked
+builds, the shims' default in `~/.olang/bin`, and every `olang` on
+PATH (cargo, Homebrew, a checkout's build). Each version is the
+binary's own answer to `--version`, never a folder's name (a folder
+named otherwise is shown beside it). The olang a bare `olang` runs, the
+first on PATH, is marked `active` (→); the shims' is `default`. When
+they differ, one line says which shadows which and the fix:
+
+```
+  → 1.0.0-rc.8  cargo     active          /Users/me/.cargo/bin/olang
+    0.88.0      shims     default         /Users/me/.olang/bin/olang
+    0.80.0      managed                   /Users/me/.olang/toolchains/0.80.0/bin/olang
+/Users/me/.cargo/bin/olang (cargo, 1.0.0-rc.8) is ahead of the shims on PATH, so `olang` runs it, not the default 0.88.0: export PATH="/Users/me/.olang/bin:$PATH" — or remove it: cargo uninstall olang
+```
+
+Inside a project one more line says what its pin resolves to. In
+`--format json` each row is `#{ version, olang, real, kind, folder,
+active, default, on_path }` (`kind` one of `managed`, `linked`,
+`shims`, `cargo`, `homebrew`, `checkout`, `path`), `active` is the
+active row, `shadowed` and `fix` the line above, and `project` `#{
+root, pin, version, olang, install }`.
+
 Installations from Homebrew or cargo are independent of this
-machinery; `otc doctor` shows how the copies on PATH shadow one
-another, and `olang --version --verbose` reports which binary answered
-and from where.
+machinery: the list shows them, and removing them is left to their own
+package managers. `otc doctor` shows how the copies of olang and otc on
+PATH shadow one another, and `olang --version --verbose` reports which
+binary answered and from where.
 
 Shell completion scripts for both tools come from the tools
 themselves: `otc completions zsh` and `olang completions zsh` (also
