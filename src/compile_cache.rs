@@ -406,9 +406,88 @@ struct Row {
     sum: [u8; 8],
 }
 
+/// A pack's bytes: the file mapped read-only where the system can, so
+/// they are the file's clean pages, which the system may drop and read
+/// again, not the process's heap (OL-607: 3.5 MB of a small Loom
+/// window's 40 MB). A pack is only ever replaced by renaming a new file
+/// over it, never written in place, so a mapping keeps reading the pack
+/// it opened.
+enum PackBytes {
+    Heap(Vec<u8>),
+    #[cfg(unix)]
+    Mapped(*const u8, usize),
+}
+
+// SAFETY: a read-only mapping of a file nothing writes, unmapped once,
+// on drop.
+#[cfg(unix)]
+unsafe impl Send for PackBytes {}
+#[cfg(unix)]
+unsafe impl Sync for PackBytes {}
+
+impl PackBytes {
+    fn read(path: &std::path::Path) -> Option<PackBytes> {
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            let file = std::fs::File::open(path).ok()?;
+            let len = file.metadata().ok()?.len() as usize;
+            if len == 0 {
+                return Some(PackBytes::Heap(Vec::new()));
+            }
+            // SAFETY: a private read-only mapping of the whole file; the
+            // descriptor may close after, the mapping stays.
+            let at = unsafe {
+                libc::mmap(
+                    std::ptr::null_mut(),
+                    len,
+                    libc::PROT_READ,
+                    libc::MAP_PRIVATE,
+                    file.as_raw_fd(),
+                    0,
+                )
+            };
+            if at != libc::MAP_FAILED {
+                return Some(PackBytes::Mapped(at as *const u8, len));
+            }
+        }
+        std::fs::read(path).ok().map(PackBytes::Heap)
+    }
+}
+
+impl From<Vec<u8>> for PackBytes {
+    fn from(bytes: Vec<u8>) -> PackBytes {
+        PackBytes::Heap(bytes)
+    }
+}
+
+impl std::ops::Deref for PackBytes {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        match self {
+            PackBytes::Heap(v) => v,
+            // SAFETY: mapped readable for `len` bytes until drop
+            #[cfg(unix)]
+            PackBytes::Mapped(at, len) => unsafe { std::slice::from_raw_parts(*at, *len) },
+        }
+    }
+}
+
+impl Drop for PackBytes {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let PackBytes::Mapped(at, len) = self {
+            // SAFETY: the mapping made in `read`, unmapped once
+            unsafe {
+                libc::munmap(*at as *mut libc::c_void, *len);
+            }
+        }
+    }
+}
+
 /// A pack as read: its bytes, its index, what has been decoded.
 struct Pack {
-    bytes: Vec<u8>,
+    bytes: PackBytes,
     body: usize,
     /// Each key's entries, newest first.
     rows: HashMap<Key, Vec<Row>>,
@@ -417,7 +496,7 @@ struct Pack {
 impl Pack {
     fn empty() -> Pack {
         Pack {
-            bytes: Vec::new(),
+            bytes: PackBytes::Heap(Vec::new()),
             body: 0,
             rows: HashMap::new(),
         }
@@ -425,7 +504,8 @@ impl Pack {
 
     /// A pack's header and index, if they are whole and of this build;
     /// a body is checked when it is read.
-    fn parse(bytes: Vec<u8>) -> Option<Pack> {
+    fn parse(bytes: impl Into<PackBytes>) -> Option<Pack> {
+        let bytes: PackBytes = bytes.into();
         let stamp = stamp();
         let mut at = 0usize;
         let take = |at: &mut usize, n: usize| -> Option<std::ops::Range<usize>> {
@@ -495,7 +575,7 @@ impl Pack {
     }
 
     fn read(path: &std::path::Path) -> Option<Pack> {
-        Pack::parse(std::fs::read(path).ok()?)
+        Pack::parse(PackBytes::read(path)?)
     }
 }
 

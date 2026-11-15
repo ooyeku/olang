@@ -10,7 +10,7 @@ use std::slice::{Iter as SliceIter, IterMut as SliceIterMut};
 use std::{mem, ptr};
 
 use bitmaps::Bits;
-use sized_chunks::sparse_chunk::{Iter as ChunkIter, IterMut as ChunkIterMut, SparseChunk};
+use self::compact::Compact;
 use typenum::{Pow, Unsigned, U2};
 
 use crate::config::HashLevelSize;
@@ -42,39 +42,18 @@ pub trait HashValue {
 
 #[derive(Clone)]
 pub(crate) struct Node<A> {
-    data: SparseChunk<Entry<A>, HashWidth>,
+    // olang: only the entries present (see `Compact`), not 32 slots.
+    data: Compact<Entry<A>>,
 }
 
-#[allow(unsafe_code)]
-impl<A> PoolDefault for Node<A> {
-    #[cfg(feature = "pool")]
-    unsafe fn default_uninit(target: &mut mem::MaybeUninit<Self>) {
-        SparseChunk::default_uninit(
-            target
-                .as_mut_ptr()
-                .cast::<mem::MaybeUninit<SparseChunk<Entry<A>, HashWidth>>>()
-                .as_mut()
-                .unwrap(),
-        )
-    }
-}
+// olang: `Compact` has no in-place construction, so the vendored crate
+// does not build with refpool's pool; olang never enables it.
+#[cfg(feature = "pool")]
+compile_error!("olang's vendored im does not support the `pool` feature");
 
-#[allow(unsafe_code)]
-impl<A> PoolClone for Node<A>
-where
-    A: Clone,
-{
-    #[cfg(feature = "pool")]
-    unsafe fn clone_uninit(&self, target: &mut mem::MaybeUninit<Self>) {
-        self.data.clone_uninit(
-            target
-                .as_mut_ptr()
-                .cast::<mem::MaybeUninit<SparseChunk<Entry<A>, HashWidth>>>()
-                .as_mut()
-                .unwrap(),
-        )
-    }
-}
+impl<A> PoolDefault for Node<A> {}
+
+impl<A> PoolClone for Node<A> where A: Clone {}
 
 #[derive(Clone)]
 pub(crate) struct CollisionNode<A> {
@@ -131,7 +110,7 @@ impl<A> Node<A> {
     #[inline]
     pub(crate) fn new() -> Self {
         Node {
-            data: SparseChunk::new(),
+            data: Compact::new(),
         }
     }
 
@@ -174,21 +153,21 @@ impl<A> Node<A> {
     #[inline]
     pub(crate) fn unit(index: usize, value: Entry<A>) -> Self {
         Node {
-            data: SparseChunk::unit(index, value),
+            data: Compact::unit(index, value),
         }
     }
 
     #[inline]
     pub(crate) fn pair(index1: usize, value1: Entry<A>, index2: usize, value2: Entry<A>) -> Self {
         Node {
-            data: SparseChunk::pair(index1, value1, index2, value2),
+            data: Compact::pair(index1, value1, index2, value2),
         }
     }
 
     #[inline]
     pub(crate) fn single_child(pool: &Pool<Node<A>>, index: usize, node: Self) -> Self {
         Node {
-            data: SparseChunk::unit(index, Entry::from_node(pool, node)),
+            data: Compact::unit(index, Entry::from_node(pool, node)),
         }
     }
 
@@ -502,8 +481,8 @@ impl<A: HashValue> CollisionNode<A> {
 
 pub(crate) struct Iter<'a, A> {
     count: usize,
-    stack: Vec<ChunkIter<'a, Entry<A>, HashWidth>>,
-    current: ChunkIter<'a, Entry<A>, HashWidth>,
+    stack: Vec<SliceIter<'a, Entry<A>>>,
+    current: SliceIter<'a, Entry<A>>,
     collision: Option<(HashBits, SliceIter<'a, A>)>,
 }
 
@@ -582,8 +561,8 @@ impl<'a, A> FusedIterator for Iter<'a, A> where A: 'a {}
 pub(crate) struct IterMut<'a, A> {
     count: usize,
     pool: Pool<Node<A>>,
-    stack: Vec<ChunkIterMut<'a, Entry<A>, HashWidth>>,
-    current: ChunkIterMut<'a, Entry<A>, HashWidth>,
+    stack: Vec<SliceIterMut<'a, Entry<A>>>,
+    current: SliceIterMut<'a, Entry<A>>,
     collision: Option<(HashBits, SliceIterMut<'a, A>)>,
 }
 
@@ -753,5 +732,211 @@ impl<A: HashValue + fmt::Debug> fmt::Debug for Node<A> {
             }
         }
         write!(f, " ]")
+    }
+}
+
+mod compact {
+    // olang: a hash node's entries, only the ones present.
+    //
+    // im's `SparseChunk` keeps a slot for each of the 32 places a node has,
+    // present or not: a node of olang's scope maps (`String` to `Value`,
+    // 72 bytes an entry) was 2.3 KB however few entries it held, and a map
+    // of a few hundred names is mostly nodes of three or four. A scope map
+    // is copied a node path at a time whenever a closure has captured it,
+    // so loading Shuttle left 1,600 of them, 4 MB of its 11 MB program
+    // (OL-607). This keeps the same bitmap and only the entries present,
+    // in index order, so a node costs what it holds and every iteration
+    // visits entries in the order `SparseChunk` did.
+
+    use std::ops::{Index, IndexMut};
+    use std::slice::{Iter, IterMut};
+
+    #[derive(Clone)]
+    pub(crate) struct Compact<A> {
+        map: u32,
+        values: Vec<A>,
+    }
+
+    impl<A> Compact<A> {
+        #[inline]
+        pub(crate) fn new() -> Self {
+            Compact {
+                map: 0,
+                values: Vec::new(),
+            }
+        }
+
+        #[inline]
+        fn bit(index: usize) -> u32 {
+            debug_assert!(index < 32, "Compact: index out of bounds");
+            1u32 << index
+        }
+
+        /// Where the entry for `index` is (or would go) in `values`.
+        #[inline]
+        fn slot(&self, index: usize) -> usize {
+            (self.map & (Self::bit(index) - 1)).count_ones() as usize
+        }
+
+        #[inline]
+        fn has(&self, index: usize) -> bool {
+            index < 32 && self.map & Self::bit(index) != 0
+        }
+
+        pub(crate) fn unit(index: usize, value: A) -> Self {
+            let mut chunk = Compact {
+                map: 0,
+                values: Vec::with_capacity(1),
+            };
+            chunk.insert(index, value);
+            chunk
+        }
+
+        pub(crate) fn pair(index1: usize, value1: A, index2: usize, value2: A) -> Self {
+            let mut chunk = Compact {
+                map: 0,
+                values: Vec::with_capacity(2),
+            };
+            chunk.insert(index1, value1);
+            chunk.insert(index2, value2);
+            chunk
+        }
+
+        #[inline]
+        pub(crate) fn len(&self) -> usize {
+            self.values.len()
+        }
+
+        #[inline]
+        pub(crate) fn get(&self, index: usize) -> Option<&A> {
+            if self.has(index) {
+                Some(&self.values[self.slot(index)])
+            } else {
+                None
+            }
+        }
+
+        #[inline]
+        pub(crate) fn get_mut(&mut self, index: usize) -> Option<&mut A> {
+            if self.has(index) {
+                let slot = self.slot(index);
+                Some(&mut self.values[slot])
+            } else {
+                None
+            }
+        }
+
+        /// Put `value` at `index`, answering what was there.
+        pub(crate) fn insert(&mut self, index: usize, value: A) -> Option<A> {
+            let slot = self.slot(index);
+            if self.has(index) {
+                Some(std::mem::replace(&mut self.values[slot], value))
+            } else {
+                // A node grows an entry at a time and most never reach 32:
+                // room for exactly what it holds, not a doubled buffer.
+                self.values.reserve_exact(1);
+                self.values.insert(slot, value);
+                self.map |= Self::bit(index);
+                None
+            }
+        }
+
+        pub(crate) fn remove(&mut self, index: usize) -> Option<A> {
+            if self.has(index) {
+                let slot = self.slot(index);
+                self.map &= !Self::bit(index);
+                Some(self.values.remove(slot))
+            } else {
+                None
+            }
+        }
+
+        /// Remove the entry at the lowest index, as `SparseChunk::pop` does.
+        pub(crate) fn pop(&mut self) -> Option<A> {
+            if self.map == 0 {
+                return None;
+            }
+            self.map &= self.map - 1;
+            Some(self.values.remove(0))
+        }
+
+        #[inline]
+        pub(crate) fn first_index(&self) -> Option<usize> {
+            if self.map == 0 {
+                None
+            } else {
+                Some(self.map.trailing_zeros() as usize)
+            }
+        }
+
+        /// The indices present, lowest first.
+        pub(crate) fn indices(&self) -> impl Iterator<Item = usize> {
+            let mut map = self.map;
+            std::iter::from_fn(move || {
+                if map == 0 {
+                    return None;
+                }
+                let index = map.trailing_zeros() as usize;
+                map &= map - 1;
+                Some(index)
+            })
+        }
+
+        #[inline]
+        pub(crate) fn iter(&self) -> Iter<'_, A> {
+            self.values.iter()
+        }
+
+        #[inline]
+        pub(crate) fn iter_mut(&mut self) -> IterMut<'_, A> {
+            self.values.iter_mut()
+        }
+    }
+
+    impl<A> Index<usize> for Compact<A> {
+        type Output = A;
+
+        fn index(&self, index: usize) -> &A {
+            self.get(index).expect("Compact: no entry at that index")
+        }
+    }
+
+    impl<A> IndexMut<usize> for Compact<A> {
+        fn index_mut(&mut self, index: usize) -> &mut A {
+            self.get_mut(index).expect("Compact: no entry at that index")
+        }
+    }
+
+    #[cfg(test)]
+    mod test {
+        use super::Compact;
+
+        #[test]
+        fn keeps_index_order_and_answers_like_a_sparse_chunk() {
+            let mut c = Compact::new();
+            assert_eq!(c.insert(9, "nine"), None);
+            assert_eq!(c.insert(2, "two"), None);
+            assert_eq!(c.insert(31, "thirty-one"), None);
+            assert_eq!(c.insert(0, "zero"), None);
+            assert_eq!(c.insert(9, "NINE"), Some("nine"));
+            assert_eq!(c.len(), 4);
+            assert_eq!(c.indices().collect::<Vec<_>>(), vec![0, 2, 9, 31]);
+            assert_eq!(
+                c.iter().copied().collect::<Vec<_>>(),
+                vec!["zero", "two", "NINE", "thirty-one"]
+            );
+            assert_eq!(c.get(5), None);
+            assert_eq!(c.get(32), None);
+            assert_eq!(c[31], "thirty-one");
+            assert_eq!(c.first_index(), Some(0));
+            assert_eq!(c.remove(2), Some("two"));
+            assert_eq!(c.remove(2), None);
+            assert_eq!(c.pop(), Some("zero"));
+            assert_eq!(c.first_index(), Some(9));
+            assert_eq!(c.pop(), Some("NINE"));
+            assert_eq!(c.pop(), Some("thirty-one"));
+            assert_eq!(c.pop(), None);
+            assert_eq!(c.len(), 0);
+        }
     }
 }
