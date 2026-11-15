@@ -181,17 +181,17 @@ pub struct Interpreter {
     pub module_debug_config: ModuleDebugConfig,
 
     // Modules
-    module_cache: HashMap<String, ModuleCacheEntry>,
+    module_cache: Arc<HashMap<String, ModuleCacheEntry>>,
     /// Each name an import bound, with the value it bound: a binding that
     /// still holds that value is the import's (a re-run `use` refreshes
     /// it); any other is the program's own, which an import never
     /// replaces (`let folds = 3` then `use ml { * }` keeps `folds`).
-    pub(crate) imported: HashMap<String, Value>,
+    pub(crate) imported: Arc<HashMap<String, Value>>,
     /// Dotted import name → the file it resolved to, first resolution
     /// wins. The cache itself is keyed by file; this is the name view
     /// the REPL's `:help` needs (`geometry.point` → its index.ol).
-    module_name_index: HashMap<String, std::path::PathBuf>,
-    dependency_tracker: ModuleDependencyTracker,
+    module_name_index: Arc<HashMap<String, std::path::PathBuf>>,
+    dependency_tracker: Arc<ModuleDependencyTracker>,
     current_module_path: Option<String>, // For tracking current module during loading
     /// Interned frame owners, keyed by defining file (see `Environment::owner`).
     owners: HashMap<String, Arc<str>>,
@@ -466,10 +466,10 @@ impl Interpreter {
             module_debug_config: ModuleDebugConfig::default(),
 
             // Modules
-            module_cache: HashMap::new(),
-            imported: HashMap::new(),
-            module_name_index: HashMap::new(),
-            dependency_tracker: ModuleDependencyTracker::new(),
+            module_cache: Arc::default(),
+            imported: Arc::default(),
+            module_name_index: Arc::default(),
+            dependency_tracker: Arc::new(ModuleDependencyTracker::new()),
             current_module_path: None, // For tracking current module during loading
             owners: HashMap::new(),
             fallback_globals: None,
@@ -572,7 +572,7 @@ impl Interpreter {
                 cache_generation: 0,
                 memory_size: 0,
             };
-            self.module_cache.insert(path_str.to_string(), cache_entry);
+            Arc::make_mut(&mut self.module_cache).insert(path_str.to_string(), cache_entry);
         }
     }
 
@@ -7701,8 +7701,7 @@ mod tests {
             .unwrap();
 
         // Set up dependency: B depends on A
-        interpreter
-            .dependency_tracker
+        Arc::make_mut(&mut interpreter.dependency_tracker)
             .add_dependency("module_b".to_string(), "module_a".to_string());
 
         // Verify both modules are cached
@@ -7722,14 +7721,11 @@ mod tests {
         let mut interpreter = Interpreter::new();
 
         // Create dependency chain: A -> B -> C -> D
-        interpreter
-            .dependency_tracker
+        Arc::make_mut(&mut interpreter.dependency_tracker)
             .add_dependency("A".to_string(), "B".to_string());
-        interpreter
-            .dependency_tracker
+        Arc::make_mut(&mut interpreter.dependency_tracker)
             .add_dependency("B".to_string(), "C".to_string());
-        interpreter
-            .dependency_tracker
+        Arc::make_mut(&mut interpreter.dependency_tracker)
             .add_dependency("C".to_string(), "D".to_string());
 
         let chain = interpreter.get_dependency_chain("A");
@@ -7762,8 +7758,7 @@ mod tests {
         interpreter
             .cache_module("module2".to_string(), test_module, None, Vec::new())
             .unwrap();
-        interpreter
-            .dependency_tracker
+        Arc::make_mut(&mut interpreter.dependency_tracker)
             .add_dependency("module1".to_string(), "module2".to_string());
 
         // Verify modules are cached and dependencies exist
@@ -7786,11 +7781,9 @@ mod tests {
         let mut interpreter = Interpreter::new();
 
         // Set up a simple dependency chain: A -> B -> C
-        interpreter
-            .dependency_tracker
+        Arc::make_mut(&mut interpreter.dependency_tracker)
             .add_dependency("A".to_string(), "B".to_string());
-        interpreter
-            .dependency_tracker
+        Arc::make_mut(&mut interpreter.dependency_tracker)
             .add_dependency("B".to_string(), "C".to_string());
 
         // Test various potential circular dependencies

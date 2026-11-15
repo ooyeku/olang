@@ -58,7 +58,7 @@ impl Interpreter {
             };
 
         // Now safely access the cache entry
-        if let Some(entry) = self.module_cache.get_mut(module_path) {
+        if let Some(entry) = Arc::make_mut(&mut self.module_cache).get_mut(module_path) {
             // Update access statistics
             entry.access_count += 1;
             entry.last_accessed = system_now();
@@ -71,7 +71,7 @@ impl Interpreter {
             {
                 // Content changed, invalidate cache
                 self.cache_statistics.invalidations += 1;
-                self.module_cache.remove(module_path);
+                Arc::make_mut(&mut self.module_cache).remove(module_path);
                 return Ok(None);
             }
 
@@ -149,7 +149,7 @@ impl Interpreter {
             memory_size,
         };
 
-        self.module_cache.insert(module_path.clone(), cache_entry);
+        Arc::make_mut(&mut self.module_cache).insert(module_path.clone(), cache_entry);
         crate::log::get_logger().debug(
             "interpreter",
             &format!("cached module: {} ({}KB)", module_path, memory_size / 1024),
@@ -268,7 +268,7 @@ impl Interpreter {
     /// Bind `name` to an imported `value`, remembering that the import
     /// made the binding.
     fn define_imported(&mut self, name: String, value: Value) {
-        self.imported.insert(name.clone(), value.clone());
+        Arc::make_mut(&mut self.imported).insert(name.clone(), value.clone());
         self.environment.define(name, value);
     }
 
@@ -428,8 +428,8 @@ already binds — an import never replaces a program's own name. Alias the impor
 
     /// Clear the module cache.
     pub fn clear_module_cache(&mut self) {
-        self.module_cache.clear();
-        self.dependency_tracker = ModuleDependencyTracker::new();
+        Arc::make_mut(&mut self.module_cache).clear();
+        self.dependency_tracker = Arc::new(ModuleDependencyTracker::new());
         self.cache_statistics = CacheStatistics::default();
         crate::log::get_logger().debug("interpreter", "module cache cleared");
     }
@@ -480,7 +480,7 @@ already binds — an import never replaces a program's own name. Alias the impor
             {
                 cleanup_stats.bytes_freed += memory_size;
                 cleanup_stats.files_removed += 1;
-                self.module_cache.remove(module_path);
+                Arc::make_mut(&mut self.module_cache).remove(module_path);
             }
         }
 
@@ -558,7 +558,7 @@ already binds — an import never replaces a program's own name. Alias the impor
         let dependents = self.get_module_dependents(module_path);
 
         // Remove the module from cache
-        self.module_cache.remove(module_path);
+        Arc::make_mut(&mut self.module_cache).remove(module_path);
         crate::log::get_logger().debug(
             "interpreter",
             &format!("Invalidated module: {}", module_path),
@@ -651,13 +651,13 @@ already binds — an import never replaces a program's own name. Alias the impor
         if loaded.is_err() {
             let (cache, scopes, names) = forgotten;
             for (k, e) in cache {
-                self.module_cache.insert(k, e);
+                Arc::make_mut(&mut self.module_cache).insert(k, e);
             }
             for (k, sc) in scopes {
                 self.module_scopes.insert(k, sc);
             }
             for (k, f) in names {
-                self.module_name_index.insert(k, f);
+                Arc::make_mut(&mut self.module_name_index).insert(k, f);
             }
         }
         loaded
@@ -691,7 +691,7 @@ already binds — an import never replaces a program's own name. Alias the impor
         let mut cache = Vec::new();
         let mut scopes = Vec::new();
         for k in keys {
-            if let Some(e) = self.module_cache.remove(&k) {
+            if let Some(e) = Arc::make_mut(&mut self.module_cache).remove(&k) {
                 cache.push((k.clone(), e));
             }
             if let Some(sc) = self.module_scopes.remove(&k) {
@@ -704,7 +704,7 @@ already binds — an import never replaces a program's own name. Alias the impor
             .filter(|(_, f)| f.starts_with(dir))
             .map(|(k, f)| (k.clone(), f.clone()))
             .collect();
-        self.module_name_index.retain(|_, f| !f.starts_with(dir));
+        Arc::make_mut(&mut self.module_name_index).retain(|_, f| !f.starts_with(dir));
         (cache, scopes, names)
     }
 
@@ -723,7 +723,7 @@ already binds — an import never replaces a program's own name. Alias the impor
             || format!("use {module_path}"),
             Some(&file_path_str),
         );
-        self.module_name_index
+        Arc::make_mut(&mut self.module_name_index)
             .entry(module_path.to_string())
             .or_insert_with(|| file_path.clone());
 
@@ -914,7 +914,7 @@ already binds — an import never replaces a program's own name. Alias the impor
             cache_generation: 0,
             memory_size: 0,
         };
-        self.module_cache
+        Arc::make_mut(&mut self.module_cache)
             .insert(file_path_str.clone(), placeholder_entry);
 
         // Execute the module and collect exports. A closure, not a block: a
@@ -935,7 +935,7 @@ already binds — an import never replaces a program's own name. Alias the impor
             // A function declared twice in the file is refused, as in a
             // program file (`scoping::duplicate_functions`).
             if let Some(dup) = crate::scoping::duplicate_functions(&program.statements).first() {
-                self.module_cache.remove(&file_path_str);
+                Arc::make_mut(&mut self.module_cache).remove(&file_path_str);
                 return Err(InterpreterError::RuntimeError {
                     message: format!("{}:{}: {}", file_path_str, dup.line, dup.message),
                 });
