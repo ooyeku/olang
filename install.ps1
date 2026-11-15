@@ -9,14 +9,14 @@
 # %USERPROFILE%\.olang\bin, and adds that folder to your PATH.
 #
 # Options, as environment variables set before the line above:
-#   $env:OLANG_VERSION = 'v1.0.0-rc.7' install this release (default: the newest)
+#   $env:OLANG_VERSION = 'v1.0.0'     install this release (default: the newest)
 #   $env:OLANG_INSTALL_DIR = 'D:\bin' install there instead
 #   $env:OLANG_NO_MODIFY_PATH = '1'   leave PATH alone
 #   $env:OLANG_FORCE = '1'            reinstall the same version
 #   $env:OLANG_QUIET = '1'            print nothing but errors
 #   $env:OLANG_UNINSTALL = '1'        remove olang instead
 # or as parameters when the script is saved first:
-#   .\install.ps1 -Version v1.0.0-rc.7 -Dir D:\bin -NoModifyPath -Force -Quiet -Uninstall
+#   .\install.ps1 -Version v1.0.0 -Dir D:\bin -NoModifyPath -Force -Quiet -Uninstall
 #
 # It writes only to the install folder and your user PATH, and deletes
 # its temporary files when it ends. It never asks for administrator
@@ -39,8 +39,8 @@ $HelpUrl = 'https://olang.dev/book/installation/'
 
 # The public half of olang's release signing key (ECDSA P-256), the same
 # key as install.sh's SIGNING_KEY. dist/signing/README.md says how it is
-# made. Empty until signing is set up; then every release from
-# $SignedFrom on must carry a good SHA256SUMS.sig.
+# made. Every release from $SignedFrom on must carry a good
+# SHA256SUMS.sig.
 $SigningKey = '-----BEGIN PUBLIC KEY-----
 MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE36cXQoV1JHERlNekWav8gfY3uw6J
 LvVlnGRVnXmoiR0E/OuqLIfeejOe9XvwIJjf+PwFwPWl6p0ghxHXjUBWIg==
@@ -145,7 +145,7 @@ function Resolve-Version {
     if ($Version) {
         $v = 'v' + $Version.TrimStart('v')
         if ($v -notmatch '^v\d+\.\d+\.\d+') {
-            Stop-Install "'$Version' is not a version number." @("Use a release tag, e.g. v1.0.0-rc.7 (see $GitHub/$Repo/releases), or leave it out to get the newest.")
+            Stop-Install "'$Version' is not a version number." @("Use a release tag, e.g. v1.0.0 (see $GitHub/$Repo/releases), or leave it out to get the newest.")
         }
         if (-not (Get-Url "$GitHubApi/repos/$Repo/releases/tags/$v")) {
             Stop-Install "there is no olang release called $v." @("See the list of releases at $GitHub/$Repo/releases.")
