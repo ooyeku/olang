@@ -252,63 +252,63 @@ disk model and the VFS in `src/sim/{disk,vfs}.rs`.
 | `log_safe.ol`: the store, 3 writers, ~30 crashes, torn writes | 10 min | 0.68 s | 0.25 |
 | `sqlite_honest.ol`: SQLite, 3 writers, ~30 crashes (some mid-commit), ~6,900 syncs | 10 min | 0.74 s | 0.22 |
 | `log_bug.ol` / `sqlite_lies.ol`: 20 of 20 seeds fail | to the failure (21 s to 3 min) | 0.03 / 0.05 s | |
-| `track_world.ol`: olang-track, 2 agents, no crash | 10 min | 7.8 s | 0.08 |
-| `track_world.ol`: olang-track, kills and stops every ~30 s | 2 min + the check | 2.6 s | 0.01 |
+| `track_world.ol`: an issue tracker app, 2 agents, no crash | 10 min | 7.8 s | 0.08 |
+| `track_world.ol`: the tracker, kills and stops every ~30 s | 2 min + the check | 2.6 s | 0.01 |
 | `kv_world.ol` (S2's, unchanged) | 1 h | 0.45 s | 2.24 (S2: 2.3) |
 
 The disk costs little: a store with a sync per put runs at about a
 quarter of S2's key-value world, most of it the same interpreter work.
-olang-track is slower because it is a real application on the
+The tracker is slower because it is a real application on the
 interpreter tier: an `issues.create` is a transaction, an activity row, a
 mention pass and a snapshot rebuild, about 19 ms of real time each; a
 restart (module load, migrations, the doctor, the backup) is about
 0.4 s.
 
-## The stretch: olang-track as a node
+## The stretch: an issue tracker app as a node
 
-**It runs, unchanged.** `track_world.ol` starts olang-track's headless
-server (`api.ol` → `lib/server.ol`'s `run_server`) as a node, from the
+**It runs, unchanged.** `track_world.ol` starts the tracker's headless
+server (its `run_server`) as a node, from the
 checkout, with its sources (`lib/`, `static/`, `packages/`, the entries)
 and the shelf libraries it reads as files (the web SDK's stylesheet and
-browser modules, Shuttle's runtime, a `shelf.toml` naming them) copied
+browser modules, the runtime of the web framework it uses, a `shelf.toml` naming them) copied
 onto the node's disk by the builder (outside the world; read-only on the
 checkout), its database at `/data/track.db` on the node's disk, and
-`use shuttle`/`use web` resolved from the checkout's `olang.toml` and
+the framework's `use` and `use web` resolved from the checkout's `olang.toml` and
 lock. Everything of the boot runs: the banner, the env check (it warns
 that the node's shelf has no `.olang` packages, correctly), the data
 folder, migrations through `db.migrate`, `harden` (WAL, NORMAL), the
 corruption check, the run marker, the doctor, seed, purge, the daily
-`VACUUM INTO` backup gzipped to the node's disk, Shuttle's jobs, the
+`VACUUM INTO` backup gzipped to the node's disk, the web framework's jobs, the
 meter, `os.on_shutdown`, and `serve` on four simulated workers. Two
 agents file issues (`issues.create`) every 1–5 s and read each
 acknowledged one back (`issues.get`) at the end.
 
-What it took (no olang-track change): per-node `fs`, SQLite through the
+What it took (no change to the tracker): per-node `fs`, SQLite through the
 VFS, `os.set_env`, `os.on_shutdown`, `os.pid`, `os.temp_dir`,
 `os.color_enabled`, `runtime.wasm` as pure, package resolution for
 `olang sim`, and the shelf's files on the node's disk.
 
 **The durability check:**
 
-- **Kills and stops** (SIGKILL, or SIGTERM with olang-track's drain):
+- **Kills and stops** (SIGKILL, or SIGTERM with the tracker's drain):
   **1,000 seeds, 1,000 passed.** `CRASH=kill MINUTES=2 EVERY=20 olang
   sim track_world.ol --seed S --seeds 250`, four processes side by side
   (seeds 1–1,000), about 700 s of wall time each (fasttest build). A seed
   is two minutes of two agents filing about 70 issues, about three
   kills or stops (37 in a 12-seed sample: some 3,000 over the sweep;
-  each graceful stop runs olang-track's two shutdown handlers, drains
+  each graceful stop runs the tracker's two shutdown handlers, drains
   `serve` and returns in about 4 ms), restarts three seconds later (each
   boot finds the run marker set after a kill and says so), and the read
   back of every acknowledged issue. No acknowledged issue was ever lost.
-  The run also shows olang-track's boot is idempotent under restarts:
+  The run also shows the tracker's boot is idempotent under restarts:
   migrations, `seed`, `purge`, the backup and `backfill` all ran again
   and again on the same database without harm.
-- **Power cuts**: olang-track **loses acknowledged issues**: 100 of 100
+- **Power cuts**: the tracker **loses acknowledged issues**: 100 of 100
   seeds (`CRASH=power`, the same sweep's shape), and it reuses their ids (an issue another agent was told was
-  `OLT-8` comes back as someone else's). The cause is `harden`'s
+  issue 8 comes back as someone else's). The cause is `harden`'s
   `PRAGMA synchronous=NORMAL` in WAL mode: SQLite syncs the WAL only at a
-  checkpoint (olang-track's every ten minutes), so a power cut or an OS
-  crash takes every commit since. lib/server.ol's comment ("a crash
+  checkpoint (the tracker's every ten minutes), so a power cut or an OS
+  crash takes every commit since. The server's own comment ("a crash
   loses at most ten minutes of checkpointing, never data") holds for a
   process crash, not for the machine's. `synchronous=FULL` (a sync per
   commit) would close it; whether that is worth its cost on a laptop is
@@ -334,7 +334,7 @@ VFS, `os.set_env`, `os.on_shutdown`, `os.pid`, `os.temp_dir`,
   same on any machine).
 - **Module loading still reads the real disk**: a node's `use` loads
   code from the real files, as S2's did; its `fs` reads see only its
-  disk, so a program that reads its own sources (olang-track's build
+  disk, so a program that reads its own sources (an issue tracker app's build
   stamp) needs them copied on (`#{ files }`).
 - **`print`** in a world still reaches the real stdout as well as the
   events (S1's behaviour).
@@ -353,7 +353,7 @@ VFS, `os.set_env`, `os.on_shutdown`, `os.pid`, `os.temp_dir`,
   survives a crash", ...)` wants to read a node's durable state from a
   property; the disk is reachable from the world (`World.disks`), not
   yet from olang.
-- **`--jobs`.** The 1,000-seed olang-track sweep ran as four processes by
+- **`--jobs`.** The 1,000-seed sweep of an issue tracker app ran as four processes by
   hand; `olang sim --jobs` should do that.
-- **Speed.** A world still runs on the interpreter tier; olang-track's
+- **Speed.** A world still runs on the interpreter tier; the tracker's
   boot (module load, migrations) is most of a seed's time.

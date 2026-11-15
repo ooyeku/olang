@@ -124,7 +124,7 @@ world, `http` cannot open a socket: the in-world path never reaches
 
 ## The proof
 
-- `tests/fixtures/sim/kv_server.ol`: a counter store in olang-track's
+- `tests/fixtures/sim/kv_server.ol`: a counter store in an issue tracker app's
   rpc style (POST /rpc, JSON in and out), its state in one actor task
   the four workers ask. `add` is idempotent by request id.
 - `kv_client.ol`: a client adds to its own key every 0.5–3 s for an
@@ -166,14 +166,14 @@ every switch, on the interpreter tier.
 - A node is olang: a non-olang program as a scripted stub is later.
 - The world runs on the interpreter tier (as S1).
 
-## The stretch: olang-track as a node
+## The stretch: an issue tracker app as a node
 
-Not attempted past reading it: olang-track's server (`api.ol` →
-`lib/server.ol`'s `run_server`) needs, before it serves a request,
+Not attempted past reading it: the tracker's server (its
+`run_server`) needs, before it serves a request,
 `fs.exists`/`fs.read_file`/`fs.list_dir` (its repository files and data
 folder), `db.open` and `db.query` (SQLite: the schema, migrations, every
 rpc), `os.set_env`, `os.on_shutdown`, `os.read_line` (the lifeline) and
-`os.exit`, and the `shuttle` package (`olang sim` loads no package
+`os.exit`, and the package of the web framework it uses (`olang sim` loads no package
 dependencies yet). Its db and fs needs are S3's (an in-memory fs per
 node, SQLite through a VFS); `os.set_env`, `on_shutdown` and a stdin per
 node are small additions that belong with them.
@@ -188,9 +188,9 @@ node are small additions that belong with them.
   cache; its `fsync` and page writes are the fault points. A crash then
   is "memory gone, disk as it really was".
 - **`os.set_env`, `os.on_shutdown`, a stdin per node, `os.exit`** (a
-  node's exit: its main task ends, its servers close), so olang-track's
+  node's exit: its main task ends, its servers close), so an issue tracker app's
   `run_server` runs unchanged; and package dependencies for `olang sim`
-  (shuttle), resolved the way `olang run` resolves them.
+  (the web framework it uses), resolved the way `olang run` resolves them.
 - **Restart semantics**: `on_shutdown` handlers run on a graceful stop
   but never on a crash; a restart re-reads the disk.
 - **Search over crash points** (S4) needs crashes at any yield point:

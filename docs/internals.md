@@ -380,15 +380,15 @@ half do not need — `run_all.ol` discovers either, by looking for the
 
 ## The gui engine's threads
 
-`gui` (src/stdlib/gui/, Loom's engine) runs on four kinds of thread,
+`gui` (src/stdlib/gui/, olang's window engine) runs on four kinds of thread,
 and no one of them waits for another for long:
 
 - **The main thread** (the process's first; AppKit's, winit's loop):
   input, the engine's own answers to it (hover and pressed looks,
   region scrolls, text fields, the caret), menus, accessibility, and
   listing each frame — the display list, with its text already shaped.
-- **The program's thread** (olang): Loom's update, view, layout and
-  diff, then `gui.apply` and `gui.measure`.
+- **The program's thread** (olang): the program's update, view, layout
+  and diff, then `gui.apply` and `gui.measure`.
 - **The render thread** (macOS, one a process; render.rs): every GPU
   window's surface, its kept frame and damage, the display link and the
   pacing, device-loss recovery. It takes frames, never patches.

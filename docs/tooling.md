@@ -287,7 +287,7 @@ are absolute paths.
 | `test` | A block starts: `file`, `name`, `line`. |
 | `passed` | It passed: `ms`. |
 | `failed` | It failed: `ms`, `message`, `kind`, `at` (the failing assertion or error: `file`, `line`, `col`; `null` for an assertion that tallies instead of raising, `testing.assert_*`), `stmt` (the block's statement it surfaced from — its place in the test file when `at` is in a library), `frames` (innermost first, each `name`, `file`, and the `line` of its `fn` when the file declares one). `kind` is `assert_eq`, `assert_ne`, `snapshot` (a text snapshot), `pixels` (a pixel snapshot: `snapshots` lists them) or `error`; for the first three, `expected` and `actual` are the values: `type`, `show` (the display form), `pretty` (the display form an entry a line, when a list, map, tuple or record is longer than 60 characters — what a line diff reads), `value` (as JSON, where the value has a form there), `string` (a string's own text), `clipped` (past 20,000 characters). |
-| `snapshot` | A pixel snapshot differs, said by the library that compares it (`testing.snapshot_failed`, which Loom's `snapshot` calls): `snapshot` holds `name`, `baseline`, `actual`, `diff` (paths, a relative one said beside the test file), `differing`, `total`, `worst`, `sizes`. |
+| `snapshot` | A pixel snapshot differs, said by the library that compares it (`testing.snapshot_failed`, which a UI library's `snapshot` calls): `snapshot` holds `name`, `baseline`, `actual`, `diff` (paths, a relative one said beside the test file), `differing`, `total`, `worst`, `sizes`. |
 | `skipped` | A block of a named file that `--only` left out. |
 | `divergence` | `--verify-tiers` found native code and the VM disagreeing: `function` (`fn name (native call)`, or an on-stack-replacement region), `native`, `vm` (the two results, rendered), and the block under way (`file`, `name`, `line`). A `finished` event with `aborted: "divergence"` and `code` 102 follows, and the process ends. |
 | `file` | A file is done: its `passed` and `failed`, and `error` — the file's parse error (`kind` `parse`) or an error outside any block (`kind` `error`, with its `line`, `col` and `frames`). |
@@ -799,7 +799,7 @@ the tier refuses with the compiler's reason:
 ```text
 lib/snapshot.ol
   ⚠ `start_snapshot` stays on the tree-walker: Compilation failed: it contains a `spawn` (a task starts on the interpreter)
-lib/weft.ol
+lib/records.ol
   ⚠ `client_problems` stays on the tree-walker: calls 'check_record', which nothing in its scope defines (a missing import? ...)
 ```
 
@@ -1001,8 +1001,8 @@ comment](#allowing-one-line), which wins over `promote`. A name
 `promote` does not know is warned about, with the nearest class, by
 `olang check` and `olang doctor`, as is any key or section of
 olang.toml that olang does not read (a near miss such as
-`[dependancies]` or `autors`; other tools' sections, Loom's `[bundle]`
-and Studio's `[plugin]`, pass).
+`[dependancies]` or `autors`; other tools' sections, such as `[bundle]`
+or `[plugin]`, pass).
 
 ### Stable items across versions
 
@@ -1363,7 +1363,7 @@ A prompt's evaluations (no `file`) are the session's history (`:history`,
   the rest by range, filtered and sorted (below);
 - `bytes`: `n`, `h`, and for a picture `img: {format, w, h}` and the
   picture itself (`png`, base64);
-- `view`: a Loom view node (`#{ role, key, props, children }`) — `role`
+- `view`: a UI view node (`#{ role, key, props, children }`) — `role`
   and `h`, for `render`.
 
 **A column's summary.** A table's `sum` is a list aligned with its `cols`,
@@ -1459,11 +1459,11 @@ call the module loaded now; what was evaluated there by hand stays), and
 the bytecode and native tiers start afresh (compiled code links its
 callees directly).
 
-**Views.** `render` draws a held Loom view headless with Loom's
-`render_view` (lib/test.ol), in the theme and scale asked for, at its
-natural size within `width`. Loom comes from the project's dependency,
-else from the `loom` path given (a project with its own `loom`
-dependency keeps it).
+**Views.** `render` draws a held view headless with the UI library's
+`render_view` (its lib/test.ol), in the theme and scale asked for, at
+its natural size within `width`. The library comes from the project's
+dependency, else from the path given in the request (a project with
+its own dependency keeps it).
 
 ## `olang bench`
 
@@ -1552,7 +1552,7 @@ route. Time a thread spends parked — a channel receive, a sleep, a
 join, `http.serve` waiting for a connection, an idle http worker — is
 counted as blocked and charged to no function; a served app's profile
 is its handlers, not its server's idle loop. A program that ends with
-`os.exit` — every Loom application does, from its loop or a quit — is
+`os.exit` — as a windowed application often does, from its loop or a quit — is
 reported all the same (text or JSON), as it exits; a windowed program is
 sampled for its whole run, the platform's loop on the first thread and
 the program on its own. The report names, for

@@ -1,5 +1,5 @@
 // window.ol — a window with a text field, a button and a list, drawn by
-// olang's own window engine (`gui`, the layer under Loom) and laid out by
+// olang's own window engine (`gui`, the layer a UI framework builds on) and laid out by
 // hand.
 //
 //   olang examples/gui/window.ol                     open the window
@@ -21,7 +21,7 @@ fn index_of(xs, x) = fold(range(0, len(xs)), -1, (found, i) => if found < 0 && x
 let headless_png = arg_after("--headless")
 let quit_after = if arg_after("--quit-after") == "" => -1 else => to_int(arg_after("--quit-after"))
 
-let opts = #{ "title": "Loom L0", "size": (520, 380), "min": (360, 300) }
+let opts = #{ "title": "People", "size": (520, 380), "min": (360, 300) }
 let w = if headless_png != "" => gui.headless(#{ "size": (520, 380), "scale": 2 })
         else => match gui.open(opts) {
             Ok(win) => win,
@@ -30,8 +30,8 @@ let w = if headless_png != "" => gui.headless(#{ "size": (520, 380), "scale": 2 
 let events = gui.events()
 
 // ── the model ───────────────────────────────────────────────────────
-// One map, changed only by `update`, drawn only by `view` — Loom's
-// shape, written by hand.
+// One map, changed only by `update`, drawn only by `view` — the shape a
+// UI framework gives an app, written by hand.
 let initial = #{
     "name": "", "rev": 0, "at": 0, "width": 520.0, "height": 380.0,
     "status": "Type a name and press Enter.",

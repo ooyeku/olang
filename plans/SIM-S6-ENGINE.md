@@ -93,7 +93,7 @@ building, so wall times are noisy; instruction counts come from
 
 The budget is at least one simulated hour per real second for a server
 and four clients. `kv_world` meets it, at about 2.3 hours a second
-unloaded and about 1.5 under load. olang-track does not meet it; its
+unloaded and about 1.5 under load. An issue tracker app does not meet it; its
 time is its own SQL, which is another agent's work.
 
 ## Findings, not changed
@@ -137,8 +137,8 @@ tested, not reviewed):
   time, and the builder's thread waits inside the world while they run.
   A task they spawn is still refused.
 - **E3**: `gui.platform()` is answered in a world, as a fact about the
-  build (like `runtime.features`), so Loom can load. Not yet checked
-  against an actual Loom program in a world.
+  build (like `runtime.features`), so a UI framework built on `gui` can load. Not yet
+  checked against an actual program on that framework in a world.
 - **Refusal**: a request to a node whose process ended (killed, stopped,
   or its program returned) while its machine is still on is now refused
   at once. A node whose power went (`w.crash`) still answers nothing.
@@ -148,7 +148,7 @@ tested, not reviewed):
 Not started:
 - The tier kept across restarts (see above).
 - Further perf work.
-- A `gui`/Loom renderer of the view model.
+- A renderer of the view model in `gui` or a UI framework built on it.
 - The `doc_examples`, `doc_references`, `help_examples` and
   `bytecode_differential` suites have not been run on this branch; only
   `sim_test` and the lib's `sim::`/`effects` tests have.

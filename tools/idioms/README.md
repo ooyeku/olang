@@ -25,8 +25,8 @@ olang check --rules ~/Code/olang-world/olang/tools/idioms/rules.ol path/
 ## The ratchet (`ratchet.ol`)
 
 ```bash
-olang tools/idioms/ratchet.ol check  ~/Code/olang-world/apps/studio
-olang tools/idioms/ratchet.ol update ~/Code/olang-world/apps/studio
+olang tools/idioms/ratchet.ol check  path/to/project
+olang tools/idioms/ratchet.ol update path/to/project
 ```
 
 `check` fails (exit 1) when a file has more findings of a rule than
@@ -36,7 +36,7 @@ after a cleanup so the lower counts hold. Don't run it to accept a
 regression. Fixtures, `.build/`, `target/`, `dist/` and shelf pins are
 skipped. `OLANG` picks the olang binary.
 
-Studio, Loom and work-scheduler run `check` from `tests/idioms_test.ol`, so `olang test` holds it.
+A project can run `check` from its own `tests/idioms_test.ol`, so `olang test` holds it.
 
 Once a project reaches zero for a rule, that project can list `rules.ol`
 under `[check] rules` in its `olang.toml`. From then on a finding fails

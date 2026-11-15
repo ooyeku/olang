@@ -5,7 +5,7 @@ remote stays on rc.5.*
 
 ## The idea in one paragraph
 
-Run a whole system (three olang-track servers, a desktop client, a
+Run a whole system (three servers of an issue tracker app, a desktop client, a
 flaky network, a disk that lies) inside one process, on a clock that is
 not the wall clock and a scheduler driven by a seed. Simulated time runs
 as fast as the CPU allows: an hour of traffic in half a second. Every
@@ -70,7 +70,7 @@ smallest schedule that still fails remains. The trace replays it
 bit-for-bit, any number of times.
 
 ### 3. Watch it happen
-`olang sim view` (and Studio, and a Loom panel) draws the run as
+`olang sim view` (and an IDE, and a panel in a UI framework built on `gui`) draws the run as
 swimlanes, one per node. Messages are arrows between lanes, faults
 are marks, and each node's state can be inspected at any instant. Scrub
 to 2h 41m 03.120s and see the WAL append, the crash 40 µs later, and
@@ -78,18 +78,18 @@ the restart reading a torn page. Every value there can be inspected,
 because a simulated run is also a recorded one.
 
 ### 4. Bugs it would find in this workspace today
-- **olang-track:**
+- **An issue tracker app:**
   - a crash between the WAL append and the checkpoint;
   - two MCP agents updating one issue (the 409 path, run ten thousand ways);
   - the long poll under a server restart (the `draining` answer);
   - the web client's offline queue replaying out of order;
   - the daily backup racing a migration.
-- **Shuttle:** `drain` with requests in flight; the outbox's retries under a flaky webhook endpoint; the session limiter.
-- **Studio:** the kernel protocol when the kernel dies mid-reply; the language server under fast edits.
-- **The desktop app and its server together:** Loom's headless driver as a simulated node. The app's built-in server crashes while you type a description: does the draft survive, does the app restart it, does the save land once?
+- **A web framework:** `drain` with requests in flight; the outbox's retries under a flaky webhook endpoint; the session limiter.
+- **An IDE:** the kernel protocol when the kernel dies mid-reply; the language server under fast edits.
+- **The tracker's desktop client and its server together:** the headless driver of a UI framework built on `gui` as a simulated node. The app's built-in server crashes while you type a description: does the draft survive, does the app restart it, does the save land once?
 
 ### 5. Beyond testing
-- **Capacity:** "1,000 clients against one olang-track". Simulated, the queueing shows before any hardware is bought.
+- **Capacity:** "1,000 clients against one tracker server". Simulated, the queueing shows before any hardware is bought.
 - **Teaching:** a distributed-systems course where every bug in the textbook is a seed you can replay.
 - **Incident reproduction:** a production `.olt` recording, imported as a node's input, replayed inside a simulated network to ask "what if the disk had been slower?".
 - **Fuzzing protocols:** messages mutated by the seed, coverage-guided.
@@ -162,11 +162,11 @@ Command line: `olang sim FILE [--seeds N] [--seed S] [--jobs J] [--shrink]
 | | milestone | done when |
 |---|---|---|
 | S1 | the clock and the scheduler | a world runs one olang program on virtual time with seeded scheduling of `spawn`, `task` and `chan`; two runs with one seed are identical event for event; a known race in a test program is found by some seed and replayed |
-| S2 | the network | `http.serve` and `http.get/post` between nodes in one world; latency, loss, partitions; an olang-track server and a workload client run together |
-| S3 | the disk and crashes | an in-memory fs per node, SQLite through a fault-injecting VFS, crash and restart with unflushed writes lost; olang-track's durability property checked over 1,000 seeds |
+| S2 | the network | `http.serve` and `http.get/post` between nodes in one world; latency, loss, partitions; an issue tracker app's server and a workload client run together |
+| S3 | the disk and crashes | an in-memory fs per node, SQLite through a fault-injecting VFS, crash and restart with unflushed writes lost; the tracker's durability property checked over 1,000 seeds |
 | S4 | properties, search and shrinking | `always/eventually/never`, the linearizability checker, `olang sim --seeds --jobs`, a shrinker that minimises faults and schedules |
-| S5 | seeing | `olang sim view` (a swimlane timeline drawn with Loom), the trace's events as an `ods` Frame, the bytecode tier through the hook |
-| S6 | in practice | simulation suites for olang-track (server, MCP agents, the desktop app through Loom's driver), Shuttle (drain, outbox) and Studio (the kernel); the bugs found fixed; docs/sim.md; the performance budget (≥ 1 simulated hour per real second for a server and four clients) |
+| S5 | seeing | `olang sim view` (a swimlane timeline drawn with a UI framework built on `gui`), the trace's events as an `ods` Frame, the bytecode tier through the hook |
+| S6 | in practice | simulation suites for the tracker (server, MCP agents, its desktop client through the UI framework's driver), a web framework (drain, outbox) and an IDE (the kernel); the bugs found fixed; docs/sim.md; the performance budget (≥ 1 simulated hour per real second for a server and four clients) |
 
 ## Risks, and how to meet them
 
@@ -175,7 +175,7 @@ Command line: `olang sim FILE [--seeds N] [--seed S] [--jobs J] [--shrink]
   to `sim` refuses inside a world rather than reaching the real world.
 - **Rust-side threads** (the http server's workers, the gui engine).
   A world runs `http.serve` on its own simulated workers, and gui is
-  refused in a world (S6 drives Loom apps through the headless driver
+  refused in a world (S6 drives apps of a UI framework built on `gui` through its headless driver
   instead).
 - **SQLite's own threads and caches.** One connection per node, through
   the custom VFS, with no shared cache.
@@ -185,6 +185,6 @@ Command line: `olang sim FILE [--seeds N] [--seed S] [--jobs J] [--shrink]
 
 ## Done, and polished, when
 - Every milestone's "done when" holds.
-- `olang sim` has run 100,000 seeds of olang-track's suite with every finding fixed or filed.
+- `olang sim` has run 100,000 seeds of an issue tracker app's suite with every finding fixed or filed.
 - The docs teach it with the five examples above.
 - The rc.6 changelog reads as a feature, not an experiment.

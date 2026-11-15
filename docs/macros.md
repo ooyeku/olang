@@ -69,7 +69,7 @@ modules that reach the outside world or the clock (`fs`, `http`, `db`,
 `proc`, `os`, `time`, `random`, `task`, `chan` — including their pure
 helpers, since an effectful module should be entirely absent from
 expansion), every capability-gated call wherever it lives (the `ods`
-file readers and writers), every nondeterministic call the recorder
+file readers and writers), every nondeterministic call a recording
 would have to capture (`dates.now`, `crypto.random_*`), and the parallel
 constructs (`spawn`, `par_map`, `par_filter`, `par for`). The same
 classification drives the capability gate and record and replay.
@@ -138,7 +138,7 @@ naming the loop rather than a hang.
 
 Macro names are a closed set: only names declared `meta fn` — in the
 file itself, in a module imported with `use`, or in a module a package's
-`index.ol` itself imports (so `use shuttle` reaches the `@resource` the
+`index.ol` itself imports (so `use webapp` reaches the `@resource` the
 index brought in with `use lib.decl { resource }`) — are invocable with
 `@`. Any other name, including one that happens to be bound in the
 program (a stdlib module, a builtin, an ordinary function), is refused

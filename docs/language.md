@@ -2621,7 +2621,7 @@ An import never replaces what it was not asked for:
 - **A listed name the program already binds is an error** naming it:
   `let x = 1` then `use lib.m { x }` raises — list it under another name
   (`x as m_x`). A listed stdlib module name binds: listing it is the
-  choice (`use lib.effects { task }` is how Loom wraps `task`).
+  choice (`use lib.effects { task }` is how a library can wrap `task`).
 
 `olang check` says each of these where it can see both sides: a wildcard
 export it skips (a warning) and a listed name that would replace the
@@ -2792,7 +2792,7 @@ not names, so `http.defer()` and `{ "const": 1 }` are untouched.
 `select` is deliberately not reserved: olang's concurrency is threads
 and channels, with no `select` statement planned, and choosing among
 several channels would be a function of `chan`'s, beside
-`chan.recv_timeout`, not a keyword, while Loom's and Heddle's `select`
+`chan.recv_timeout`, not a keyword, while UI frameworks' `select`
 components, the web SDK's `select` element and `term.select` use the
 name.
 

@@ -70,7 +70,7 @@ Running code costs no virtual time, so an instant is the smallest step
 of the world anyone can observe; a state that exists only between two
 tasks' turns within one millisecond is not seen. Checking at every yield
 point would cost a predicate call per scheduler step (millions per run;
-an olang-track seed takes about 30,000 steps a simulated minute, a
+a seed of an issue tracker app takes about 30,000 steps a simulated minute, a
 kv-world hour 80,000), against one per instant (a few thousand). The
 choice is documented in `props.rs` and is the one that keeps a
 property's cost near the run's own.
@@ -326,7 +326,7 @@ forcing in `src/sim/plan.rs`.
   history.
 - **One job and four give the same results**: the sweep digest and every
   failure line are equal for kv_linear (8 seeds), log_bug (8) and
-  sqlite_lies (4), and for olang-track with power cuts (3 seeds, one job
+  sqlite_lies (4), and for an issue tracker app with power cuts (3 seeds, one job
   and three).
 - **A run comes back from its plan**: log_bug, kv_partition_bug and
   sqlite_lies on seed 5, forced by their recorded plans, have the same
@@ -367,33 +367,33 @@ history read from its end) makes the log store's run about 3× as long
 history it was quadratic, 7.3 s for one seed. Checking more coarsely, or
 a predicate on the bytecode tier, are S5's to weigh.
 
-### olang-track, again
+### An issue tracker app, again
 
 **Power cuts now pass: 100 seeds, 100 passed** (`CRASH=power MINUTES=2
 EVERY=20 olang sim track_world.ol --seeds 100 --jobs 4`, 88 s; four or
 five power cuts a seed). S3 found 100 of 100 losing acknowledged issues
-at `synchronous=NORMAL`; olang-track's commit cc4fd13 syncs every commit
+at `synchronous=NORMAL`; the tracker has since been changed to sync every commit
 (`synchronous=FULL`), and the sweep confirms it. The S3 test that held
 the loss is now the test that holds the fix.
 
-Running olang-track seed after seed in one process found two
+Running tracker seed after seed in one process found two
 process-wide counters reaching a run, so a seed rendered differently
 the second time (and one job and four disagreed): a SQLite connection's
-`id` (the db registry's key, printed in values Shuttle sends through
-channels) and a channel's `id` from `chan.stat` (Shuttle's log bus writes
+`id` (the db registry's key, printed in values the web framework it uses sends through
+channels) and a channel's `id` from `chan.stat` (the web framework's log bus writes
 it into the environment). In a world a connection now shows its number
 within the world (`id`; the registry's key moved to its handle, which
 `connection_id` reads first), and `chan.stat` answers the world's number
 for the channel.
 
-**Speed.** One 10-minute olang-track seed with no crash (two agents
+**Speed.** One 10-minute tracker seed with no crash (two agents
 filing issues): 7.9 s real (S3: 7.8 s). A profile: about half the busy
-time is SQLite executing olang-track's own statements (index scans,
+time is SQLite executing the tracker's own statements (index scans,
 record comparisons: the snapshot rebuild and activity rows of each
 `issues.create`), most of the rest the interpreter; the world's own
 machinery (scheduler, baton, disk, sites) does not show. The cheap win
 was event details: `render` printed a whole value and cut it to 120
-characters (about 8% of the time, on Shuttle's large messages); it now
+characters (about 8% of the time, on the web framework's large messages); it now
 writes through a writer that stops at 121 characters. **7.9 s → 7.0 s.**
 That is 0.086 simulated hours per real second for a server and two
 agents, against S6's budget of one hour per second for a server and four
@@ -421,9 +421,9 @@ clients: the gap is the interpreter tier (S5) and the application's SQL.
 
 ## What S5 needs from this
 
-- **Speed.** A world still runs on the interpreter tier: olang-track does
+- **Speed.** A world still runs on the interpreter tier: an issue tracker app does
   10 simulated minutes in 7 s (0.086 h/s; the budget is 1 h/s). About
-  half is olang-track's own SQL; the other half is what the bytecode
+  half is the tracker's own SQL; the other half is what the bytecode
   tier through the hook should cut. Properties are olang too, and a
   predicate on the bytecode tier would make checking at every instant
   nearly free.

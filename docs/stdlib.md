@@ -789,7 +789,7 @@ A path stays inside its package.
 | <a id="asset-path"></a>`asset.path(package, path)` | where the file is (the application's own copy has the path it was built from) |
 
 ```olang no-run
-let font = unwrap(asset.read("loom", "fonts/Inter.ttf.br"))
+let font = unwrap(asset.read("ui", "fonts/Inter.ttf.br"))
 ```
 
 ## Collections, in olang
@@ -1320,8 +1320,8 @@ has failed. On an M-series Mac, the JSON grammar below recognises a
 150 KB document in less time than the built-in `json.parse` takes to
 read it, and builds its tree (52,000 nodes, each a map with its text
 and span) in about 12 times; nearly all of that is making the maps and
-freeing them. olang-track's query bar parses to a tree in about 9 µs a
-query, a sixth of what its hand-written parser takes.
+freeing them. An issue tracker's query bar parses to a tree in about
+9 µs a query, a sixth of what its hand-written parser takes.
 `benchmarks/peg.ol` measures both.
 
 The engine peg had before — the grammar written out as olang functions
@@ -1411,7 +1411,7 @@ println(unwrap(Calc.parse("-2 ^ 2")))        // 4
 println(unwrap(Calc.parse("(1 + 2) * -3")))  // -9
 ```
 
-**A query bar**, like olang-track's: field filters, words, quoted
+**A query bar**, like an issue tracker's: field filters, words, quoted
 phrases; the tree is what the application reads, and an error is where
 to put the red underline:
 
@@ -3116,8 +3116,8 @@ println(str.contains(dash.kpi("open", "12", ""), "open"))
 ## `tty` — the terminal as an interactive device
 
 `term` styles lines; `tty` takes the terminal over. It is the layer a
-full-screen program stands on — the Heddle terminal UI framework's
-runtime is built on it — and it gives four things: raw mode and the
+full-screen program stands on — a terminal UI framework's runtime
+can be built on it — and it gives four things: raw mode and the
 terminal's reporting modes, decoded input as events on a channel,
 unbuffered output and capability queries, and a **restore guarantee**:
 whatever `tty.enter` changes is changed back however the program ends.
@@ -3244,12 +3244,12 @@ tested on macOS; the Linux and Windows builds are unverified
 
 ## `gui` — windows drawn by olang
 
-`gui` is the engine under Loom, olang's desktop framework. A
-program lays its view out itself and sends `gui` **positioned, keyed
+`gui` is olang's window engine, the layer a desktop UI framework is
+built on. A program lays its view out itself and sends `gui` **positioned, keyed
 nodes**; `gui` draws them on the GPU (or with the software reference),
 edits text fields (input methods included), hit-tests, keeps the
 platform's accessibility tree, and sends back events on one channel.
-Loom's components, layout, commands, and tests are olang above it.
+A framework's components, layout, commands, and tests are olang above it.
 Native-only; on in the released binaries (the `gui` cargo feature).
 
 | Function | Description |
@@ -3265,15 +3265,15 @@ Native-only; on in the released binaries (the `gui` cargo feature).
 | <a id="gui-capture"></a>`gui.capture(w, what)` | the window captured as it draws. `what` a map begins it: `dir` (a folder: it gets `frames/NNNNNN.png`, a frame each, and `index.jsonl`, a line `{"t": ms, "f": n}` a frame, `t` from the start), `fps` (at most so many a second: 30), `scale` (the frame against the window's pixels: 0.5), `movie` (`true`: one movie, `movie.mov`, H.264 by the Mac's hardware encoder, written a fragment a second so one cut short still plays, in place of a PNG a frame: 241 frames in 4 s of a 2880 × 1728 frame, none left out, 1.4 MB of changing text; the index is written all the same); answers `true`, and the frame showing is the first. From then each frame the window presents is drawn again at that scale on the GPU and copied to a buffer the render thread does not wait for; a thread of the capture's own writes it (RGB, the Up filter, the fastest deflate), so the window draws as fast as it did (measured, a 1440 × 900 window at 2×, half scale: 60 frames a second, none left out, 250 KB a frame of changing text). A window that draws nothing writes nothing; a writer more than eight frames behind leaves a frame out and counts it. `"stats"` answers what it did so far and `()` ends it (the frames on their way written first) and answers what it did: `#{ frames, bytes, dropped, ms, width, height, error }` (`error`: a frame that could not be written, after which nothing is), `()` when none was on. Only a real window on macOS (one drawn on the render thread) is captured: any other raises, and `gui.read(w, "frame")` is the slow way round |
 | <a id="gui-movie"></a>`gui.movie(what)` | a movie played in a window by the system's player (its hardware decoder, its own clock), its frames a live picture an `image` node shows. `#{ open: path, name }` opens it, paused at its start, its frames published as `("live", name)`; `#{ id, play: true | false, rate, at, close }` asks of it, any of: play (at `rate`, 1) or pause, go to `at` (ms, exactly), let it go; `#{ id }` asks nothing. Each answers where it is: `#{ id, live, ms, length, playing, ended, width, height, frames, error }`. At its end it stops there, and play begins it again. A thread of its own a movie, never the window's. macOS; elsewhere it raises |
 | <a id="gui-input"></a>`gui.input(w, event)` | send input as the platform would: `#{ kind: "key", key, text?, mods? }` (`"mod": true` is the platform's command key), `"text"`, `"pointer"` (`action` down/up/move/leave, `x`, `y`, `button`, `clicks`), `"wheel"` (`dx`, `dy`, and the modifiers held: `mods` or `mod`, `shift`, `alt`, `ctrl`), `"pinch"` (`delta`, `phase`), `"modifiers"` (the modifier keys now held: `mod`, `shift`, `alt`, `ctrl`; a press with ⌘ held), `"compose"` and `"commit"` (an input method), `"resize"`, `"window_focus"`, `"files"` (`action` hover/drop/cancel, `paths`, `x`, `y`: files from another program); and what the platform does around a window: `"close"` (sends `close_requested`), `"menu"` with an `id` (sends `menu`), `"open"` with `paths` (sends `open`), `"open_url"` with `urls` (sends `open_url`), `"new_tab"` (sends `new_tab`), `"quit"` with `why` (sends `quit`, as an external quit `gui.hold_quit` holds), `"clipboard"` with a `text` (the clipboard input through `gui.input` uses, the window's own; no `text` is a clipboard holding none, as a copied picture), `"clock"` with `ms` (a headless window's clock: its animations move only with it), `"appearance"` with `dark`, `contrast`, `reduce_motion`, `reduce_transparency`, `accent` (`"#rrggbb"`) — the window takes them (its pictures stop animating under reduced motion) and sends `appearance`, as a settings change would, `"a11y"` with `key` and `action` (`"click"`, `"focus"`, `"set_value"` with `value`, `"increment"`, `"decrement"`, `"expand"`, `"collapse"`, `"scroll_up"`/`"_down"`/`"_left"`/`"_right"` (a page), `"scroll_into_view"`, `"show_menu"` (VO-⇧M: the node focused, then the Menu key's `key` event), `"custom"` with `index`) — an assistive request, as a screen reader makes it. What tests drive |
-| <a id="gui-prepare"></a>`gui.prepare()` | start the platform's event loop now, without waiting for it: the application's start on the main thread (tens of milliseconds on macOS) then overlaps the program's work before its first window opens, which waits for the loop as before. Nothing when it is started already or cannot be (Loom's `run` asks, for real windows) |
+| <a id="gui-prepare"></a>`gui.prepare()` | start the platform's event loop now, without waiting for it: the application's start on the main thread (tens of milliseconds on macOS) then overlaps the program's work before its first window opens, which waits for the loop as before. Nothing when it is started already or cannot be (a framework's `run` can ask, for real windows) |
 | <a id="gui-wake"></a>`gui.wake()` | a `wake` event on the channel, so a task blocked on `gui.events()` can stop without polling |
 | <a id="gui-context"></a>`gui.context()` | the system's settings now: `#{ dark, contrast, reduce_motion, reduce_transparency, accent }` (`accent` the colour chosen in System Settings, `"#rrggbb"`, or `()`). macOS reads them from AppKit — the application's effective appearance (Auto included) and NSWorkspace's accessibility display options — and keeps them live: a window hears `appearance` the moment one changes (AppKit's notices for the display options and the system's colours, and a window's theme changing), with no restart. Elsewhere they are false and `dark` follows a window's theme |
 | <a id="gui-platform"></a>`gui.platform()` | what this platform's windows can do, to check rather than find out: `#{ os, native_menu, status_item, notifications, clipboard_image, file_drop, drop_position, window_position, system_settings, ime, accessibility, window_tabs, open_documents, context_menu, window_titlebar, terminal, group_hover, visible, scroll_bars, wheel_x, transitions, corner, shadow, vector, material, window_material, wide_color, a11y_depth, flash, quit_hold, spell_guesses, replace_text }` (`transitions`: a style's `transition`; `corner`, `shadow`, `material`: a style's own (see Shapes); `vector`: a canvas path's `d`, `cap`, `join`, `dash`, `rule` and a radial gradient; `wheel_x`: a node's `wheel_x`; `visible`: a style's `visible`; `terminal`: the `pty` and `vt` modules, a node's `input` and `ime_area` and the `text` and `preedit` events, a canvas text's `italic`; `context_menu`: `gui.context_menu` and the `context` event; `window_tabs`: `tabbing`, `tab_of`, `tab` and the `tabs` event; `window_titlebar`: `titlebar: "unified"` and a node's `drag: "window"`; `open_documents`: the `open` and `new_tab` events; `quit_hold`: `gui.hold_quit` and the `quit` event — a program asks before it uses them, as an older engine refuses an option it does not know). On macOS all are `true` (`window_tabs`, `open_documents`, `window_material` and `wide_color` only there); on Windows `native_menu`, `clipboard_image`, `drop_position`, and `system_settings` are `false`; on Linux (Wayland) `file_drop` and `window_position` are `false` too (winit has no Wayland drag and drop, and a Wayland window is never told where it is). `ime` and `accessibility` are `true` everywhere |
 | <a id="gui-compare"></a>`gui.compare(a, b, opts?)` | two PNGs compared as a pixel snapshot is: `#{ same, differing, total, worst, diff }`; a pixel differs past `threshold` (32 of 255), the images are the same while at most `ratio` (0.001) of the pixels differ; `diff` is a PNG with the differing pixels in red |
-| <a id="gui-hold_quit"></a>`gui.hold_quit(on)` | `true`: a quit from outside the program — the Dock's Quit, AppleScript's `quit app`, a logout, a restart or a shutdown (AppKit's `applicationShouldTerminate:`) — is the program's `quit` event, and the application waits for the program to end, then exits with its status; `false` (the default): such a quit ends the process at once. The wait lasts until the program ends; meanwhile the platform runs no window handler, so `gui.open` and `gui.dialog` answer an error and what is sent to the windows waits. Loom's run loop holds quits and sends the message ⌘Q sends. macOS; `gui.platform()` says `quit_hold`. → `()` |
-| <a id="gui-turn"></a>`gui.turn(on)` | a program says a turn begins (`true`) and ends (`false`) — Loom's loop does, around each turn. One that runs past 2 s (`GUI_NOT_RESPONDING_MS`) makes every window show it is waiting (the busy cursor, a veil and a spinner over the frame) until it ends; the engine draws on meanwhile, so scrolls, looks and fields keep the refresh. → `()`. `gui.platform()` says `turn_watch` |
+| <a id="gui-hold_quit"></a>`gui.hold_quit(on)` | `true`: a quit from outside the program — the Dock's Quit, AppleScript's `quit app`, a logout, a restart or a shutdown (AppKit's `applicationShouldTerminate:`) — is the program's `quit` event, and the application waits for the program to end, then exits with its status; `false` (the default): such a quit ends the process at once. The wait lasts until the program ends; meanwhile the platform runs no window handler, so `gui.open` and `gui.dialog` answer an error and what is sent to the windows waits. A framework's run loop holds quits and sends the message ⌘Q sends. macOS; `gui.platform()` says `quit_hold`. → `()` |
+| <a id="gui-turn"></a>`gui.turn(on)` | a program says a turn begins (`true`) and ends (`false`) — a framework's loop does, around each turn. One that runs past 2 s (`GUI_NOT_RESPONDING_MS`) makes every window show it is waiting (the busy cursor, a veil and a spinner over the frame) until it ends; the engine draws on meanwhile, so scrolls, looks and fields keep the refresh. → `()`. `gui.platform()` says `turn_watch` |
 | <a id="gui-set"></a>`gui.set(w, props)` | `title`, `size`, `min`, `at` (where on the screen the window is), `visible`, `cursor`, `focus`, `background`, `zoom` (the text size, 0.5 to 3: the window keeps its pixels and its boxes, reads, and events are in units of `zoom` logical pixels, so a program lays out in less room at a larger size; a `resize` event says the new size), `appearance` (`"light"`, `"dark"`, or `"system"`: the title bar and the platform's own controls in the appearance the program draws in), `scripted` (`true`: a script drives the window through `gui.input`, and a person's keys, pointer, wheel and drops on it are not taken — a test's window is not moved by the mouse passing over it), `tab` (macOS window tabs: `"next"`, `"previous"` tab chosen, `"merge"` every window into this one's tab bar, `"detach"` this tab into a window of its own, `"bar"` the bar shown or hidden; a `tabs` event follows), `corner` (`"continuous"` or `"round"`: the corners of every rounded box whose style says none), `wide` (a map of sRGB colours, `"#rrggbb"`, to the Display P3 ones the GPU draws for them, `"color(display-p3 r g b)"`; `()` none — see Colours), `flash` (`true`: the repaint rainbow — every region a frame draws tinted with that frame's colour, unseen by damage, so a region keeps the tint of the frame that last drew it; `false` draws the window whole again; `gui.platform()` says `flash`), `fullscreen` (`"toggle"`: enters or leaves full screen in its own space, as the green button does; macOS) |
-| <a id="gui-fonts"></a>`gui.fonts(sources, opts?)` | register fonts: paths or Bytes, TTF/OTF/TTC, optionally brotli-compressed → the number of faces added. Registered fonts come before the system's. `{ background: true }`: the sources are read now, then decompressed and registered on a thread of their own while the program goes on — whatever shapes or measures text meanwhile waits until they are in — and it answers the number of sources (Loom's `run` registers its bundled fonts so: they were tens of milliseconds of a window's first frame) |
+| <a id="gui-fonts"></a>`gui.fonts(sources, opts?)` | register fonts: paths or Bytes, TTF/OTF/TTC, optionally brotli-compressed → the number of faces added. Registered fonts come before the system's. `{ background: true }`: the sources are read now, then decompressed and registered on a thread of their own while the program goes on — whatever shapes or measures text meanwhile waits until they are in — and it answers the number of sources (a framework's `run` can register its bundled fonts so: they were tens of milliseconds of a window's first frame) |
 | <a id="gui-clipboard_read"></a><a id="gui-clipboard_write"></a>`gui.clipboard_read()` / `gui.clipboard_write(text)` | the platform clipboard (headless windows' editing uses a private one) |
 | <a id="gui-clipboard_image"></a>`gui.clipboard_image()` | the clipboard's image (a screenshot copied, an image copied in another program) → `Ok(#{ png, width, height })`, `png` its PNG Bytes (a TIFF is turned into one), or `Err` when it holds none. macOS only: elsewhere an `Err` that says so (`gui.platform().clipboard_image`) |
 | <a id="gui-image_info"></a>`gui.image_info(source)` | a picture's size and format from its header, a path or Bytes → `Ok(#{ width, height, format })` (`"png"`, `"jpeg"`, `"webp"`, `"gif"`, `"svg"`; a JPEG's turned as its EXIF orientation says, an SVG's in its own units), or `Err`. It reads the file: call it from a task |
@@ -3282,7 +3282,7 @@ Native-only; on in the released binaries (the `gui` cargo feature).
 | <a id="gui-spelling"></a>`gui.spelling(window, key)` | the misspelled word at a spell-checked field's caret: `#{ key, word, from, to, guesses }` (characters of its value), or `()` |
 | <a id="gui-replace_text"></a>`gui.replace_text(window, key, #{ from, to, text })` | characters `from..to` of field `key`'s value replaced by `text` as one edit (its undo takes it back), sent as `changed` as typing is → `true`; `false` off a field, past its end, or read-only. `gui.platform().replace_text` |
 | <a id="gui-context_menu"></a>`gui.context_menu(window, items, at)` | a native context menu (macOS: NSMenu `popUpMenuPositioningItem:atLocation:inView:`) over `window` at `at` `#{ x, y }` (the content's logical pixels): `items` `[#{ id, label, keys?, enabled?, checked?, submenu? } or "separator"]`, keys shown as the menu bar shows them. `true` when shown — the window then hears `context` with the chosen item's `id` (`()` when dismissed); `false` on a headless window or a platform without one (`gui.platform().context_menu`): the program draws its own. A script arms a choice with `gui.input(w, #{ kind: "context_pick", label })`: the next menu shows, then closes as though that item was chosen (`picked: true`). ⌃-click arrives as the right button |
-| <a id="gui-menu"></a>`gui.menu(spec)` | the macOS menu bar: `[#{ title, items: [#{ id, label, keys?, enabled?, checked? } or "separator"] }]`; an item chosen sends `menu` with its `id`. Elsewhere answers `false` — Loom draws the window's menu |
+| <a id="gui-menu"></a>`gui.menu(spec)` | the macOS menu bar: `[#{ title, items: [#{ id, label, keys?, enabled?, checked? } or "separator"] }]`; an item chosen sends `menu` with its `id`. Elsewhere answers `false` — the program draws the window's menu itself |
 | <a id="gui-status_item"></a>`gui.status_item(opts?)` | **Experimental.** An item in the macOS menu bar's right side → `Ok(item)`, a `StatusItem` handle. `opts`: `icon` (`"symbol:NAME"` an SF Symbol, or an image file's path, PNG or PDF, drawn 18 points high; a template image either way, so it follows the menu bar's light and dark), `title` (text beside the icon, its digits all one width so a live readout such as `"1.2 GB · 4%"` keeps its place), `tooltip`, `dot` (a status dot before the title: `"amber"`, `"red"`, `"green"`, a `"#rrggbb"`, or `()` for none). A click on it sends `status`. Starts the platform's loop. Elsewhere `Err("unsupported")` |
 | <a id="gui-status_set"></a>`gui.status_set(item, opts)` | change what an item shows: any of `status_item`'s `opts`, the others kept; `()` clears one → `Ok(())`, or `Err` for an item removed |
 | <a id="gui-status_set_title"></a><a id="gui-status_set_icon"></a><a id="gui-status_set_tooltip"></a>`gui.status_set_title(item, text)` / `gui.status_set_icon(item, icon)` / `gui.status_set_tooltip(item, text)` | one of them, as `status_set` with that field → `Ok(())` |
@@ -3292,7 +3292,7 @@ Native-only; on in the released binaries (the `gui` cargo feature).
 
 <a id="gui-flatten"></a><a id="gui-flat_emit"></a><a id="gui-flat_join"></a>`gui.flatten`, the `gui.flat_` family (`flat_emit`, `flat_join`,
 <a id="gui-flat_diff"></a><a id="gui-flat_index"></a><a id="gui-flat_arrays"></a><a id="gui-flat_keep"></a><a id="gui-flat_geo"></a><a id="gui-roles"></a>`flat_diff`, `flat_index`, `flat_arrays`, `flat_keep`, `flat_geo`), and `gui.roles`
-are Loom's layout and diff internals; they are not part of the surface
+are layout and diff internals for UI frameworks; they are not part of the surface
 a program uses.
 
 **The patch.** Each operation is a map; `op` defaults to `"node"`:
@@ -3660,9 +3660,9 @@ accessibility tree as NSAccessibility). Linux is Wayland only: with no
 `WAYLAND_DISPLAY`, `gui.open` answers `Err`. Windows builds but is
 unverified ([Platforms](stability.md#platforms)).
 
-## `toad` — the game engine's kernels, swarms and frames
+## `toad` — game kernels, swarms and frames
 
-The engine under the Toad game framework. A game keeps its few things
+`toad` is olang's module for games. A game keeps its few things
 (the player, the score) in its model; the many (sparks, bullets,
 fireflies) live in a **swarm**: columns of numbers the engine owns, moved
 by a **kernel**, a plain olang function compiled for the CPU and the GPU.
@@ -3721,7 +3721,7 @@ toad.frame([{ swarm: s, color: "#ff9a3c", radius: 6.0 }], { size: (1280, 720), l
 | <a id="toad-overlap"></a>`toad.overlap(world, at, radius, opts)` | the bodies within `radius` of `at` |
 | <a id="toad-collide"></a>`toad.collide(swarm, world, opts)` | a swarm against the bodies: pushed out, bounced, killed or marked; `#{ hits, died }` (a show swarm collides on the GPU and answers no counts) |
 | <a id="toad-meet"></a>`toad.meet(a, b, opts)` | two play swarms meeting: killed or marked; `#{ met, died_a, died_b }` |
-| <a id="toad-frame"></a>`toad.frame(layers, view)` | draw swarms, shapes (circle, box, capsule, ring, triangle, line, each with a material) and sprites (pictures or text) in order into an HDR target, lit, bloomed, graded and tone mapped; `"live": name` shows it in a Loom window as the image `("live", name)`; `"png": true` answers its pixels, `"probe": [(x, y)]` the colours there |
+| <a id="toad-frame"></a>`toad.frame(layers, view)` | draw swarms, shapes (circle, box, capsule, ring, triangle, line, each with a material) and sprites (pictures or text) in order into an HDR target, lit, bloomed, graded and tone mapped; `"live": name` shows it in a `gui` window as the image `("live", name)`; `"png": true` answers its pixels, `"probe": [(x, y)]` the colours there |
 
 Colours are sRGB as written, `(r, g, b, a)` or `"#rrggbb"`; `glow` takes
 a shape past white.
@@ -4257,7 +4257,7 @@ does.
 | <a id="testing-assert_ok"></a><a id="testing-assert_err"></a>`testing.assert_ok(r)` / `assert_err(r)` | Result checks |
 | <a id="testing-fail"></a>`testing.fail(msg)` | unconditional `Err` |
 | <a id="testing-snapshot"></a>`testing.snapshot(name, value[, #{ update }])` | the snapshot test: `value` (a String as its text, else its display form) against `__snapshots__/<name>.snap` beside the file under test. The first run writes the file; a later run answers `()` when it matches and raises with both texts when it does not. `OLANG_UPDATE_SNAPSHOTS=1`, `UPDATE_SNAPSHOTS=1`, or the caller's `update: true` rewrites the file instead |
-| <a id="testing-snapshot_dir"></a><a id="testing-snapshot_failed"></a>`testing.snapshot_dir()` / `testing.snapshot_failed(info)` | the `__snapshots__` directory beside the file under test, where a library keeps snapshots of its own kind (Loom's pixels); a library's report that one of its snapshots differs (`info`, a record or a map: `name`, `baseline`, `actual`, `diff`, …), carried by `olang test --format json` and otherwise ignored |
+| <a id="testing-snapshot_dir"></a><a id="testing-snapshot_failed"></a>`testing.snapshot_dir()` / `testing.snapshot_failed(info)` | the `__snapshots__` directory beside the file under test, where a library keeps snapshots of its own kind (a UI framework's pixels); a library's report that one of its snapshots differs (`info`, a record or a map: `name`, `baseline`, `actual`, `diff`, …), carried by `olang test --format json` and otherwise ignored |
 | <a id="testing-test_summary"></a><a id="testing-reset_tests"></a>`testing.test_summary()` / `testing.reset_tests()` | the session's assertion tally: `#{ "passed", "failed", "total" }` over every `assert_*` outcome on this thread; `reset_tests()` zeroes it |
 
 ```olang
@@ -5038,7 +5038,7 @@ colour bar.
 | <a id="gg-facet_grid"></a>`facet_grid(p, rows, cols, scales)` | a grid of panels, rows by columns |
 | <a id="gg-coord_flip"></a><a id="gg-coord_fixed"></a><a id="gg-coord_cartesian"></a>`coord_flip(p, xlim, ylim)` · `coord_fixed(p, ratio)` · `coord_cartesian(p, xlim, ylim)` | the axes swapped; a fixed aspect; a zoom that drops no data |
 | <a id="gg-labs"></a><a id="gg-ggtitle"></a><a id="gg-xlab"></a><a id="gg-ylab"></a>`labs(p, title, subtitle, caption, x, y, color, fill, size, shape, alpha, linetype, linewidth)` · `ggtitle(p, title, subtitle)` · `xlab(p, title)` · `ylab(p, title)` | titles (`""` hides an axis's) |
-| <a id="gg-theme"></a>`theme(p, name, appearance, base_size, legend_position, width, height, grid, font, paper, ink, id)` | the look: `"minimal"` (the default — hairline grid, no ticks, one type scale), `"classic"`, `"bw"`, `"gray"`, `"linedraw"`, `"void"`; `appearance` `"light"`, `"dark"`, `"contrast"` (else the host's: a notebook's follows Studio's); `paper` the background and `ink` every word and line, as CSS colours (`"transparent"` and `"currentColor"` take the page's); `id` the prefix of the SVG's ids |
+| <a id="gg-theme"></a>`theme(p, name, appearance, base_size, legend_position, width, height, grid, font, paper, ink, id)` | the look: `"minimal"` (the default — hairline grid, no ticks, one type scale), `"classic"`, `"bw"`, `"gray"`, `"linedraw"`, `"void"`; `appearance` `"light"`, `"dark"`, `"contrast"` (else the host's: a notebook's follows its editor's); `paper` the background and `ink` every word and line, as CSS colours (`"transparent"` and `"currentColor"` take the page's); `id` the prefix of the SVG's ids |
 
 The vertical axis's title reads across, over its labels; a plot is 720
 pixels wide and as tall as its panels need unless the theme says.
