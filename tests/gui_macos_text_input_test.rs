@@ -21,6 +21,9 @@
 //! The harness is off: AppKit needs the process's first thread.
 
 #[cfg(all(feature = "gui", target_os = "macos"))]
+mod gui_macos_screen;
+
+#[cfg(all(feature = "gui", target_os = "macos"))]
 mod mac {
     use objc2::msg_send;
     use objc2::rc::Retained;
@@ -122,11 +125,15 @@ mod mac {
     }
 
     pub fn main() {
+        if crate::gui_macos_screen::skip_if_unseen("gui_macos_text_input_test") {
+            return;
+        }
         olang::stdio::set_panic_hook();
+        crate::gui_macos_screen::guard("gui_macos_text_input_test");
+        crate::gui_macos_screen::keep_awake();
         std::thread::spawn(|| {
             std::thread::sleep(Duration::from_secs(90));
-            eprintln!("gui_macos_text_input_test: timed out");
-            std::process::exit(2);
+            crate::gui_macos_screen::timed_out("gui_macos_text_input_test");
         });
         static CHECKS: Mutex<Vec<String>> = Mutex::new(Vec::new());
         let code = platform::host(|| {

@@ -14,6 +14,9 @@
 //! `gui::platform::host` takes for winit's loop.
 
 #[cfg(all(feature = "gui", target_os = "macos"))]
+mod gui_macos_screen;
+
+#[cfg(all(feature = "gui", target_os = "macos"))]
 mod mac {
     use objc2::msg_send;
     use objc2::rc::Retained;
@@ -114,11 +117,15 @@ mod mac {
     }
 
     pub fn main() {
+        if crate::gui_macos_screen::skip_if_unseen("gui_macos_teardown_test") {
+            return;
+        }
+        crate::gui_macos_screen::guard("gui_macos_teardown_test");
+        crate::gui_macos_screen::keep_awake();
         // Never hang: a wedged run fails.
         std::thread::spawn(|| {
             std::thread::sleep(Duration::from_secs(60));
-            eprintln!("gui_macos_teardown_test: timed out");
-            std::process::exit(2);
+            crate::gui_macos_screen::timed_out("gui_macos_teardown_test");
         });
         static RESULT: Mutex<Option<String>> = Mutex::new(None);
         static SEEN: Mutex<Option<String>> = Mutex::new(None);

@@ -22,6 +22,9 @@
 //! it was skipped rather than failing (OL-617).
 
 #[cfg(all(feature = "gui", target_os = "macos"))]
+mod gui_macos_screen;
+
+#[cfg(all(feature = "gui", target_os = "macos"))]
 mod mac {
     use objc2::msg_send;
     use objc2::rc::Retained;
@@ -197,17 +200,18 @@ mod mac {
     }
 
     pub fn main() {
+        if crate::gui_macos_screen::skip_if_unseen("gui_macos_latency_test") {
+            return;
+        }
         // SAFETY: set before any thread reads the environment.
         unsafe { std::env::set_var("GUI_LATENCY", "1") };
         olang::stdio::set_panic_hook();
+        crate::gui_macos_screen::guard("gui_macos_latency_test");
         // the display kept awake for as long as this process lives
-        let _awake = std::process::Command::new("/usr/bin/caffeinate")
-            .args(["-d", "-w", &std::process::id().to_string()])
-            .spawn();
+        crate::gui_macos_screen::keep_awake();
         std::thread::spawn(|| {
             std::thread::sleep(Duration::from_secs(120));
-            eprintln!("gui_macos_latency_test: timed out");
-            std::process::exit(2);
+            crate::gui_macos_screen::timed_out("gui_macos_latency_test");
         });
         // a run's name and its samples, as run returns them
         type Run = (String, Vec<(f64, f64)>);
