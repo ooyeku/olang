@@ -1857,7 +1857,7 @@ more.
 |---|---|
 | <a id="weak-new"></a>`weak.new(v)` | a weak reference to `v` |
 | <a id="weak-get"></a>`weak.get(w)` | `v` while something else still holds it, `()` once it has been freed |
-| <a id="weak-alive"></a>`weak.alive(w)` | whether `v` is still held |
+| <a id="weak-is_alive"></a>`weak.is_alive(w)` | whether `v` is still held |
 
 Only a value with memory of its own can be freed: a list, a map, a
 struct, a tuple, a string, a closure, an enum with a payload, a native

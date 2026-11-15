@@ -3191,12 +3191,12 @@ task.watch(service, inbox)   // a dead service is an Err at the next recv, not a
             &[r##"weak.get(w) ?? recompute()"##],
         );
         self.doc_ex(
-            "weak.alive",
-            "weak.alive(w)",
+            "weak.is_alive",
+            "weak.is_alive(w)",
             "Bool",
             "weak",
             "whether the value is still held somewhere",
-            &[r##"weak.alive(w)"##],
+            &[r##"weak.is_alive(w)"##],
         );
 
         // pmap, pvec, psorted — persistent collections (OL-424)

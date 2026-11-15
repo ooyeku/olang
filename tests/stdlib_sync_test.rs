@@ -221,7 +221,7 @@ fn a_weak_reference_answers_the_value_while_it_is_held() {
     assert_eq!(
         shows(
             "fn make(n) = map(range(0, n), (i) => i * i)\n\
-             fn probe(n) = {\n    let kept = make(n)\n    let w = weak.new(kept)\n    [len(weak.get(w)), weak.alive(w), same(weak.get(w), kept)]\n}\n\
+             fn probe(n) = {\n    let kept = make(n)\n    let w = weak.new(kept)\n    [len(weak.get(w)), weak.is_alive(w), same(weak.get(w), kept)]\n}\n\
              probe(100)"
         ),
         "[100, true, true]"
@@ -234,7 +234,7 @@ fn a_weak_reference_answers_unit_once_the_value_is_freed() {
         shows(
             "fn make(n) = #{ \"rows\": map(range(0, n), (i) => i), \"n\": n }\n\
              fn dangling(n) = weak.new(make(n))\n\
-             fn probe() = {\n    let w = dangling(500)\n    [weak.get(w), weak.alive(w)]\n}\n\
+             fn probe() = {\n    let w = dangling(500)\n    [weak.get(w), weak.is_alive(w)]\n}\n\
              probe()"
         ),
         "[(), false]"
@@ -245,7 +245,7 @@ fn a_weak_reference_answers_unit_once_the_value_is_freed() {
 fn a_weak_reference_to_a_scalar_keeps_it() {
     assert_eq!(
         shows(
-            "[weak.get(weak.new(5)), weak.get(weak.new(\"\")) == \"\" || true, weak.alive(weak.new(()))]"
+            "[weak.get(weak.new(5)), weak.get(weak.new(\"\")) == \"\" || true, weak.is_alive(weak.new(()))]"
         ),
         "[5, true, true]"
     );
