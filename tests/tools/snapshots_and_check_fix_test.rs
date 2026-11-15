@@ -210,7 +210,7 @@ fn a_meta_fn_body_may_call_an_imported_share_fn() {
 }
 
 #[test]
-fn a_runtime_error_carries_one_prefix_and_a_compiled_frame_names_its_file() {
+fn a_joined_error_is_bare_and_a_compiled_frame_names_its_file() {
     let ws = workspace("prefix");
     write(
         &ws,
@@ -230,14 +230,14 @@ fn a_runtime_error_carries_one_prefix_and_a_compiled_frame_names_its_file() {
     );
     let (out, err, rc) = olang(&ws, &["run", "p.ol"]);
     assert_ne!(rc, 0, "{out}{err}");
-    // The joined task's error text carries the prefix once.
+    // The joined task's error is the message as raised: no prefix (OL-627).
     let first = out.lines().next().unwrap_or("");
     assert_eq!(
         first
             .matches("Runtime error:")
             .count()
             .max(first.matches("Type error:").count()),
-        1,
+        0,
         "{first}"
     );
     assert!(!err.contains("Runtime error: Runtime error:"), "{err}");

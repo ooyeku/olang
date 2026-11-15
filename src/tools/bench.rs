@@ -415,7 +415,7 @@ fn failure_message(status: &std::process::ExitStatus, stderr: &[u8]) -> String {
     let err = String::from_utf8_lossy(stderr);
     let reason = err
         .lines()
-        .map(|l| crate::repl_commands::strip_ansi(l))
+        .map(|l| strip_ansi(l))
         .filter(|l| !l.trim_start().starts_with('═'))
         .map(|l| {
             l.trim_start_matches(|c: char| !c.is_alphanumeric())
@@ -489,4 +489,25 @@ fn load_baseline(path: &Path) -> Result<BTreeMap<String, f64>, String> {
         return Err(format!("{} contains no benchmark entries", path.display()));
     }
     Ok(out)
+}
+
+/// Text with its ANSI escapes taken out (every other character kept).
+pub fn strip_ansi(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                for c2 in chars.by_ref() {
+                    if c2.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        out.push(ch);
+    }
+    out
 }

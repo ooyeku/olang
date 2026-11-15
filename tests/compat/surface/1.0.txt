@@ -278,7 +278,7 @@ crypto.blake3
 crypto.decrypt_aes
 crypto.decrypt_rsa
 crypto.derive_key
-crypto.ed25519_keypair
+crypto.ed25519_key_pair
 crypto.ed25519_public_key
 crypto.ed25519_sign
 crypto.ed25519_verify
@@ -1310,7 +1310,7 @@ str.encode
 str.ends_with
 str.fixed
 str.fmt
-str.fold
+str.fold_case
 str.from_char_code
 str.fuzzy_score
 str.graphemes
@@ -1427,6 +1427,6 @@ viz.check
 viz.draw
 viz.on_mark
 viz.tooltip
-weak.alive
 weak.get
+weak.is_alive
 weak.new

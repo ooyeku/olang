@@ -667,26 +667,8 @@ pub fn styled_lines(text: &str) -> Vec<Vec<Run>> {
     lines
 }
 
-/// Text with its ANSI escapes taken out (every other character kept).
-pub fn strip_ansi(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\x1b' {
-            if chars.peek() == Some(&'[') {
-                chars.next();
-                for c2 in chars.by_ref() {
-                    if c2.is_ascii_alphabetic() {
-                        break;
-                    }
-                }
-            }
-            continue;
-        }
-        out.push(ch);
-    }
-    out
-}
+// built with every target (the bench tool uses it in the browser build too)
+pub use crate::tools::bench::strip_ansi;
 
 // ── completion ──────────────────────────────────────────────────────
 /// One completion: what is inserted, a word on what it is.

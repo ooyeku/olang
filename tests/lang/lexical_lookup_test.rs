@@ -125,10 +125,8 @@ println(secret())
         undefined("secret"),
         undefined("secret"),
         undefined("secret"),
-        format!(
-            "Runtime error: Unwrap failed on error: \"{}\"",
-            undefined("secret")
-        ),
+        // through task.join: the message as raised, no prefix (OL-627)
+        format!("Unwrap failed on error: \"{}\"", undefined("secret")),
         undefined("bump"),
         undefined("secret"),
         "main's secret".to_string(),

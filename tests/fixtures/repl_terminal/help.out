@@ -48,7 +48,7 @@ See Also: head, tail
     cell_width, char_at, char_code, char_to_byte
     chars, chunks, contains, count
     encode, ends_with, fixed, fmt
-    fold, from_char_code, fuzzy_score, graphemes
+    fold_case, from_char_code, fuzzy_score, graphemes
     hash, index_of, is_ascii, is_empty
     join, last_index_of, length, line_breaks
     line_starts, lines, normalize, pad_end
