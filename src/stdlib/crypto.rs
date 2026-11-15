@@ -159,8 +159,8 @@ pub fn create_crypto_module() -> Value {
     // Ed25519 (RFC 8032): keys and signatures travel as base64, the form
     // Sparkle's appcasts use; each also accepts Bytes.
     module.insert(
-        "ed25519_keypair".to_string(),
-        create_builtin_function("ed25519_keypair", 0),
+        "ed25519_key_pair".to_string(),
+        create_builtin_function("ed25519_key_pair", 0),
     );
     module.insert(
         "ed25519_public_key".to_string(),
@@ -230,7 +230,7 @@ pub fn call_crypto_function(
         #[cfg(feature = "rsa-crypto")]
         "decrypt_rsa" => crypto_decrypt_rsa(args),
         "derive_key" => crypto_derive_key(args),
-        "ed25519_keypair" => crypto_ed25519_keypair(args),
+        "ed25519_key_pair" => crypto_ed25519_key_pair(args),
         "ed25519_public_key" => crypto_ed25519_public_key(args),
         "ed25519_sign" => crypto_ed25519_sign(args),
         "ed25519_verify" => crypto_ed25519_verify(args),
@@ -1287,10 +1287,10 @@ fn fixed_bytes<const N: usize>(v: &Value, fname: &str, what: &str) -> Result<[u8
 
 /// A new Ed25519 key pair: `Ok({private_key, public_key})`, each base64
 /// (the private key is the 32-byte seed, as Sparkle's tools write it).
-/// Usage: crypto.ed25519_keypair()
-fn crypto_ed25519_keypair(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+/// Usage: crypto.ed25519_key_pair()
+fn crypto_ed25519_key_pair(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Err(format!("ed25519_keypair expects 0 arguments, got {}", args.len()).into());
+        return Err(format!("ed25519_key_pair expects 0 arguments, got {}", args.len()).into());
     }
     let mut seed = [0u8; 32];
     fill_random(&mut seed);

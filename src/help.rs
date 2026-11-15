@@ -13698,14 +13698,14 @@ For function-specific syntax, use: {}:help <function_name>{}",
         });
 
         self.add_function(FunctionDoc {
-            name: "crypto.ed25519_keypair".to_string(),
+            name: "crypto.ed25519_key_pair".to_string(),
             description:
                 "A new Ed25519 key pair; each key is base64 (the private key is its 32-byte seed)"
                     .to_string(),
-            syntax: "crypto.ed25519_keypair()".to_string(),
+            syntax: "crypto.ed25519_key_pair()".to_string(),
             parameters: vec![],
             return_type: "Result<{private_key: String, public_key: String}, Error>".to_string(),
-            examples: vec!["let keys = unwrap(crypto.ed25519_keypair())".to_string()],
+            examples: vec!["let keys = unwrap(crypto.ed25519_key_pair())".to_string()],
             category: "Crypto".to_string(),
             see_also: vec![
                 "crypto.ed25519_sign".to_string(),
@@ -13726,7 +13726,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
                     .to_string(),
             ],
             category: "Crypto".to_string(),
-            see_also: vec!["crypto.ed25519_keypair".to_string()],
+            see_also: vec!["crypto.ed25519_key_pair".to_string()],
         });
 
         self.add_function(FunctionDoc {

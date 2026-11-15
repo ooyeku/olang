@@ -231,7 +231,7 @@ fn recorded_of(op: &str) -> bool {
             // seeded-random crypto.
             | "crypto.random_bytes"
             | "crypto.random_hex"
-            | "crypto.ed25519_keypair"
+            | "crypto.ed25519_key_pair"
             | "crypto.generate_key_pair"
             | "crypto.hash_password"
     )
@@ -544,7 +544,7 @@ mod tests {
             "dates.today",
             "crypto.random_bytes",
             "crypto.random_hex",
-            "crypto.ed25519_keypair",
+            "crypto.ed25519_key_pair",
             "crypto.generate_key_pair",
             "crypto.hash_password",
             "ods.read_csv_file",
