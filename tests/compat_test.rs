@@ -7,9 +7,10 @@
 //!   `tests/compat/programs/` covers a Stable area (the core language,
 //!   patterns, functions, types, errors, numbers, modules, macros, the
 //!   stdlib modules, concurrency, the embedded packages, the scope
-//!   rules) and must keep parsing and running with the same stdout and
-//!   exit status on every 1.x release, on both tiers. Its expected
-//!   output is `<name>.out` beside it.
+//!   rules, the reserved forms) and must keep parsing and running with
+//!   the same stdout and exit status on every 1.x release. Its expected
+//!   output is `<name>.out` beside it. One small program per area, all
+//!   in this one test process (tier agreement is tier_agreement_test's).
 //! - `compat_surface_still_stands`: `tests/compat/surface/<x.y>.txt` lists
 //!   every name the stdlib had at that release (the global builtins and
 //!   each module's members, the Experimental modules left out). Every
@@ -123,18 +124,6 @@ fn allowed<'a>(list: &'a [Allowed], what: &str) -> Option<&'a Allowed> {
     list.iter().find(|a| a.what == what)
 }
 
-#[test]
-fn compat_allow_list_is_well_formed() {
-    // parsing checks every field; this names each entry so a review sees
-    // them in the test output
-    for a in allow_list() {
-        println!(
-            "allowed break: {} in {} ({}, {}): {}",
-            a.what, a.version, a.kind, a.issue, a.reason
-        );
-    }
-}
-
 // ── the programs ────────────────────────────────────────────────────
 
 /// A fixture: the program to run, the folder to run it in, its name
@@ -206,11 +195,10 @@ fn header(source: &str) -> Header {
     h
 }
 
-/// Runs `olang [flags] [test] file` in the fixture's folder: stdout and
+/// Runs `olang [test] file` in the fixture's folder: stdout and
 /// the exit status. Error text goes to stderr and is not contract.
-fn run(fx: &Fixture, h: &Header, flags: &[&str]) -> (String, i32) {
+fn run(fx: &Fixture, h: &Header) -> (String, i32) {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_olang"));
-    cmd.args(flags);
     if h.test {
         cmd.arg("test");
     }
@@ -253,7 +241,7 @@ fn compat_programs_keep_their_output() {
     for fx in &all {
         let source = std::fs::read_to_string(&fx.file).unwrap();
         let h = header(&source);
-        let (got, code) = run(fx, &h, &[]);
+        let (got, code) = run(fx, &h);
         if !fx.expected.exists() {
             // A new fixture: write what it prints, for review, only when
             // asked. An existing .out is never rewritten here.
@@ -278,15 +266,6 @@ fn compat_programs_keep_their_output() {
             problems.push(format!(
                 "stdout differs\n--- expected\n{expected}\n--- got\n{got}"
             ));
-        }
-        // the tiers agree: the tree-walker gives the same result
-        if !h.test {
-            let (slow, slow_code) = run(fx, &h, &["--no-ovm"]);
-            if slow != got || slow_code != code {
-                problems.push(format!(
-                    "--no-ovm differs from the default tiers\n--- default\n{got}\n--- --no-ovm\n{slow}"
-                ));
-            }
         }
         if problems.is_empty() {
             continue;

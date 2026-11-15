@@ -398,8 +398,7 @@ published release:
   number semantics, modules, macros, the text, data and system modules,
   concurrency, test blocks, the embedded packages, and the scope rules
   refused before a program runs. Each must keep printing exactly what
-  its `.out` file says and exiting as it says, under `--no-ovm` and the
-  default tiers alike. They print only what is contract: values and
+  its `.out` file says and exiting as it says. They print only what is contract: values and
   `raise` messages, never error text, and a report's fields rather than
   the whole record a later release may add to.
 - **The stdlib surface.** `tests/compat/surface/1.0.txt` names every
