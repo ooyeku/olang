@@ -128,6 +128,114 @@ fn the_window_builtins_raise_as_the_interpreter_does() {
     }
 }
 
+/// Takes lane 8 out of a box, then its list of chunks, then one chunk,
+/// and writes one slot: in place when nothing else holds any of them.
+const BOX: &str = r#"
+fn h1(box, p) = {
+    let mut b = box
+    let mut lane = b[8]
+    b[8] = ()
+    let mut chunks = lane[0]
+    lane[0] = ()
+    let ci = p / 32
+    let mut chunk = chunks[ci]
+    chunks[ci] = ()
+    chunk[p % 32] = p
+    chunks[ci] = chunk
+    lane[0] = chunks
+    b[8] = lane
+    b
+}
+fn mk(nch) = [0, 0, 0, 0, 0, 0, 0, 0, [map(range(0, nch), (c) => map(range(0, 32), (s) => "x")), 0, 7], ()]
+"#;
+
+#[test]
+fn a_nested_read_lets_go_of_the_inner_list_at_its_statement() {
+    // OL-527: `let p = b[8][2]` kept `b[8]` in a temporary, so the next
+    // in-place update of the lane saw it shared and copied its 20,000
+    // chunks: 60 µs a turn, against 0.3 through `fn rd(b) = b[8][2]`.
+    let src = format!(
+        "{BOX}{}",
+        r#"
+fn go(nch, n) = {
+    let mut b = mk(nch)
+    let mut s = 0
+    let t0 = time.monotonic()
+    for k in range(0, n) {
+        let p = b[8][2]
+        s = s + p
+        b = h1(b, k % (nch * 32))
+    }
+    (s, b[8][0][0][5], time.monotonic() - t0)
+}
+fn kept() = {
+    let b = mk(2)
+    let inner = b[8][0]
+    let p = b[8][2]
+    let b2 = h1(b, 3)
+    (p, inner[0][3], b[8][0][0][3], b2[8][0][0][3])
+}
+let (s, slot, ms) = go(20000, 10000)
+println([s, slot, ms < 400.0])
+println(kept())
+"#
+    );
+    for flags in TIERS {
+        // The interpreter has no last-use moves: `h1` copies the chunks
+        // there inline or through a function alike, so it runs small.
+        let src = if flags == ["--no-ovm"] {
+            src.replace("go(20000,", "go(20,")
+        } else {
+            src.clone()
+        };
+        assert_eq!(
+            run(flags, &src),
+            "[70000, 5, true]\n(7, \"x\", \"x\", 3)",
+            "{flags:?}"
+        );
+    }
+}
+
+#[test]
+fn a_value_taken_out_of_a_returned_record_is_left_unshared() {
+    // OL-529: `b = w(b).box` kept the record in a temporary, so `b`'s
+    // lists stayed shared with it and the next update copied the lane's
+    // 20,000 chunks.
+    let src = format!(
+        "{BOX}{}",
+        r#"
+fn w(box, p) = { let mut b = box; b = h1(b, p); { box: b, n: p } }
+fn go(nch, n) = {
+    let mut b = mk(nch)
+    let t0 = time.monotonic()
+    for k in range(0, n) { b = w(b, k % (nch * 32)).box }
+    (b[8][0][0][5], time.monotonic() - t0)
+}
+fn kept() = {
+    let r = w(mk(2), 1)
+    let b = r.box
+    let b2 = h1(b, 2)
+    (r.box[8][0][0][2], b[8][0][0][2], b2[8][0][0][2], b2[8][0][0][1])
+}
+let (slot, ms) = go(20000, 10000)
+println([slot, ms < 400.0])
+println(kept())
+"#
+    );
+    for flags in TIERS {
+        let src = if flags == ["--no-ovm"] {
+            src.replace("go(20000,", "go(20,")
+        } else {
+            src.clone()
+        };
+        assert_eq!(
+            run(flags, &src),
+            "[5, true]\n(\"x\", \"x\", 2, 1)",
+            "{flags:?}"
+        );
+    }
+}
+
 #[test]
 fn typeof_names_every_value_alike_on_every_tier() {
     // OL-521: on the bytecode tier a record or struct crossed to the

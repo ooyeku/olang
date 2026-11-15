@@ -13611,6 +13611,7 @@ impl BytecodeCompiler {
             }
 
             Expr::FieldAccess { object, field } => {
+                let first = self.register_allocator.next_register;
                 let object_reg = self.compile_expression(object)?;
                 let name_const = self
                     .emitter
@@ -13622,10 +13623,12 @@ impl BytecodeCompiler {
                     name_const,
                     cache: FieldCache::default(),
                 });
+                self.release_read_temp(object, object_reg, first);
                 Ok(dst)
             }
 
             Expr::Index { object, index } => {
+                let first = self.register_allocator.next_register;
                 let object_reg = self.compile_expression(object)?;
                 let object_reg = self.shield_operand(object_reg, !Self::assignment_free(index));
                 let index_reg = self.compile_expression(index)?;
@@ -13635,6 +13638,7 @@ impl BytecodeCompiler {
                     object: object_reg,
                     index: index_reg,
                 });
+                self.release_read_temp(object, object_reg, first);
                 Ok(dst)
             }
 
@@ -14960,6 +14964,29 @@ impl BytecodeCompiler {
                 .instructions
                 .push(Instruction::Release { regs });
         }
+    }
+
+    /// After a read out of a value nothing names (`b[8]` in `b[8][2]`, a
+    /// call's record in `f(b).box`): let go of that value, so the part
+    /// read out is held only where it went. Kept until the register was
+    /// next written, the inner list stayed shared and the next in-place
+    /// update of it copied it whole (OL-527, OL-529). Only a register
+    /// the object's own code allocated and that is no variable's home:
+    /// a variable, or anything named outside the expression, is kept.
+    /// Not after a field of a field (`r.pos.x`): that chain is the hot
+    /// read of numeric code over records, where the release cost 7% of
+    /// a loop the JIT does not take, and a record read so is rarely the
+    /// container of what the statement then updates in place.
+    fn release_read_temp(&mut self, object: &Expr, reg: Register, first: u32) {
+        if !matches!(object, Expr::Index { .. } | Expr::Call { .. })
+            || reg.0 < first
+            || self.is_variable_register(reg)
+        {
+            return;
+        }
+        self.emitter
+            .instructions
+            .push(Instruction::Release { regs: vec![reg] });
     }
 
     /// A `for` loop's end: its registers let go, and its variable's name
