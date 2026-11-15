@@ -1,6 +1,7 @@
 //! The sampled heap profile (src/heap_profile.rs): what holds live memory
 //! by the site that allocated it (OL-203), what grew between two
-//! snapshots (OL-610), and allocations by function (OL-324).
+//! snapshots (OL-610), allocations by function (OL-324), and what a
+//! task's allocations still hold wherever they are freed (OL-609).
 //!
 //! The figures are estimates from samples, so each check allows the
 //! sampling error: at one sample per 64 KiB, a site of 8 MB is about 128
@@ -170,6 +171,59 @@ println("early " + to_string(len(early)))
     assert!(out.contains("stop2 Err("), "{out}");
     assert!(out.contains("on false"), "{out}");
     assert_eq!(field(&out, "left"), 0, "{out}");
+}
+
+#[test]
+fn a_task_holds_what_its_allocations_still_hold_wherever_they_are_freed() {
+    // The task builds a list and hands it over; main lets it go. The
+    // task's net figure keeps the list (main freed it); `held` does not.
+    let out = run(
+        "task.ol",
+        r#"
+let out = chan.new()
+let done = chan.new()
+// built on the task itself (a plain loop: `map` over many items runs on
+// pool workers), and no reference to it kept there
+fn build(n) = { let mut xs = []; for i in 0..n { xs = xs + ["row " + to_string(i)] }; xs }
+let t = spawn {
+    chan.send(out, build(100000))
+    chan.recv(done)
+    0
+}
+fn received() = len(unwrap(chan.recv(out)))
+println("n " + to_string(received()))
+let row = first(filter(runtime.memory().tasks, (r) => str.starts_with(r.name, "olang-spawn"))) ?? #{ "bytes": -1, "held": -1 }
+println("net " + to_string(row.bytes))
+println("held " + to_string(row.held ?? -1))
+println("allocated " + to_string(row.allocated))
+chan.send(done, 1)
+task.join(t)
+"#,
+        &[("OLANG_HEAP", "64k")],
+    );
+    let net = field(&out, "net");
+    let held = field(&out, "held");
+    assert!(net > 4 * 1024 * 1024, "the task's net figure kept the list:\n{out}");
+    assert!(held >= 0 && held < net / 4, "held should be what is live:\n{out}");
+    assert!(field(&out, "allocated") >= net, "{out}");
+}
+
+#[test]
+fn held_is_unit_until_the_heap_profile_runs() {
+    let out = run(
+        "noheap.ol",
+        r#"
+let ch = chan.new()
+let t = spawn { chan.recv(ch) }
+time.sleep(30)
+let row = first(filter(runtime.memory().tasks, (r) => str.starts_with(r.name, "olang-spawn")))
+println("held " + show(row.held))
+chan.send(ch, 1)
+task.join(t)
+"#,
+        &[],
+    );
+    assert!(out.contains("held ()"), "{out}");
 }
 
 #[test]

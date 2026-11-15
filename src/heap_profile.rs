@@ -38,6 +38,11 @@
 //! re-enters it. Everything the allocator path reads is a const
 //! thread-local or a static: nothing here is made lazily inside it.
 //!
+//! **Tasks** (OL-609): a sample is charged to the task that made it (its
+//! slot and the slot's generation), and taken off again wherever it is
+//! freed, so `runtime.memory().tasks[i].held` is what that task's
+//! allocations still hold, which the net figure cannot say of a thread
+//! whose results other threads free.
 
 use std::cell::Cell;
 use std::sync::Mutex;
@@ -78,7 +83,7 @@ const EMPTY_BUCKET: Bucket = Bucket {
     keys: [const { AtomicUsize::new(0) }; WAYS],
 };
 static KEYS: [Bucket; BUCKETS] = [EMPTY_BUCKET; BUCKETS];
-/// An entry's site.
+/// An entry's site (bits 40..), slot (32..40) and the slot's generation.
 static META: [AtomicU64; ENTRIES] = [const { AtomicU64::new(0) }; ENTRIES];
 static WEIGHT_B: [AtomicU64; ENTRIES] = [const { AtomicU64::new(0) }; ENTRIES];
 static WEIGHT_N: [AtomicU64; ENTRIES] = [const { AtomicU64::new(0) }; ENTRIES];
@@ -98,6 +103,9 @@ const EMPTY_SITE: SiteStats = SiteStats {
     alloc_n: AtomicU64::new(0),
 };
 static SITE_STATS: [SiteStats; MAX_SITES] = [EMPTY_SITE; MAX_SITES];
+/// What each task slot's live samples hold (named slots only).
+static HELD: [AtomicI64; crate::memory::SLOTS] =
+    [const { AtomicI64::new(0) }; crate::memory::SLOTS];
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct SiteKey {
@@ -191,9 +199,15 @@ fn take(e: usize, p: usize) {
     let wn = WEIGHT_N[e].load(Ordering::Relaxed);
     key.store(0, Ordering::Release);
     SAMPLES.fetch_sub(1, Ordering::Relaxed);
-    if let Some(s) = SITE_STATS.get(meta as usize) {
+    let site = (meta >> 40) as usize;
+    let slot = ((meta >> 32) & 0xff) as usize;
+    let generation = meta as u32;
+    if let Some(s) = SITE_STATS.get(site) {
         s.live_b.fetch_sub(wb as i64, Ordering::Relaxed);
         s.live_n.fetch_sub(wn as i64, Ordering::Relaxed);
+    }
+    if crate::memory::slot_is(slot, generation) {
+        HELD[slot].fetch_sub(wb as i64, Ordering::Relaxed);
     }
 }
 
@@ -261,13 +275,17 @@ fn record(p: usize, size: usize, rate: u64) {
         scope: crate::memory::scope_now(),
     };
     let site = site_index(key);
+    let (slot, generation) = crate::memory::slot_now();
     let b = bucket_of(p);
     for (w, k) in KEYS[b].keys.iter().enumerate() {
         if k.compare_exchange(0, RESERVED, Ordering::Acquire, Ordering::Relaxed)
             .is_ok()
         {
             let e = b * WAYS + w;
-            META[e].store(site as u64, Ordering::Relaxed);
+            META[e].store(
+                (site as u64) << 40 | (slot as u64 & 0xff) << 32 | generation as u64,
+                Ordering::Relaxed,
+            );
             WEIGHT_B[e].store(wb, Ordering::Relaxed);
             WEIGHT_N[e].store(wn, Ordering::Relaxed);
             let st = &SITE_STATS[site as usize];
@@ -275,6 +293,9 @@ fn record(p: usize, size: usize, rate: u64) {
             st.live_n.fetch_add(wn as i64, Ordering::Relaxed);
             st.alloc_b.fetch_add(wb, Ordering::Relaxed);
             st.alloc_n.fetch_add(wn, Ordering::Relaxed);
+            if crate::memory::slot_is(slot, generation) {
+                HELD[slot].fetch_add(wb as i64, Ordering::Relaxed);
+            }
             SAMPLES.fetch_add(1, Ordering::Relaxed);
             k.store(p, Ordering::Release);
             return;
@@ -309,10 +330,26 @@ fn site_index(key: SiteKey) -> u32 {
     i
 }
 
+/// A task claimed `slot`: what it holds starts from nothing.
+pub(crate) fn task_started(slot: usize) {
+    if let Some(h) = HELD.get(slot) {
+        h.store(0, Ordering::Relaxed);
+    }
+}
+
 /// Whether the heap profile has run in this process (its figures mean
 /// something).
 pub fn ran() -> bool {
     STARTED_MS.load(Ordering::Relaxed) != 0
+}
+
+/// What a live task's allocations still hold, by the samples (`None`
+/// when the heap profile has not run).
+pub fn held(slot: usize) -> Option<u64> {
+    if STARTED_MS.load(Ordering::Relaxed) == 0 {
+        return None;
+    }
+    Some(HELD.get(slot)?.load(Ordering::Relaxed).max(0) as u64)
 }
 
 /// Runs `f` with the profile's own allocations unsampled.
@@ -352,6 +389,9 @@ pub fn start(rate: u64) -> Result<(), String> {
             s.live_n.store(0, Ordering::Relaxed);
             s.alloc_b.store(0, Ordering::Relaxed);
             s.alloc_n.store(0, Ordering::Relaxed);
+        }
+        for h in HELD.iter() {
+            h.store(0, Ordering::Relaxed);
         }
         DROPPED.store(0, Ordering::Relaxed);
         RATE.store(rate, Ordering::Relaxed);
@@ -520,6 +560,16 @@ pub struct Site {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TaskRow {
+    pub name: String,
+    pub net: u64,
+    #[serde(default)]
+    pub held: Option<u64>,
+    pub allocated: u64,
+    pub allocations: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Snapshot {
     pub format: u32,
     pub kind: String,
@@ -545,6 +595,8 @@ pub struct Snapshot {
     pub samples: u64,
     pub dropped: u64,
     pub sites: Vec<Site>,
+    #[serde(default)]
+    pub tasks: Vec<TaskRow>,
 }
 
 const SCOPES: [&str; 3] = ["values", "program", "code"];
@@ -636,6 +688,16 @@ fn snapshot_inner() -> Snapshot {
     });
     let (heap, program, code, values) = crate::memory::breakdown();
     let (allocations, allocated) = crate::memory::allocation_stats();
+    let tasks = crate::memory::tasks()
+        .into_iter()
+        .map(|t| TaskRow {
+            held: held(t.slot),
+            name: t.name,
+            net: t.net,
+            allocated: t.allocated,
+            allocations: t.allocations,
+        })
+        .collect();
     Snapshot {
         format: 1,
         kind: "heap".into(),
@@ -655,6 +717,7 @@ fn snapshot_inner() -> Snapshot {
         samples: SAMPLES.load(Ordering::Relaxed) as u64,
         dropped: DROPPED.load(Ordering::Relaxed),
         sites: rows,
+        tasks,
     }
 }
 
@@ -864,6 +927,17 @@ pub fn show_text(s: &Snapshot, top: usize) -> String {
             via(&r.path, &r.function),
             place(&r.file, r.line)
         ));
+    }
+    if !s.tasks.is_empty() {
+        out.push_str("\ntasks: name, held (sampled live), net (allocated less freed by itself)\n");
+        for t in &s.tasks {
+            out.push_str(&format!(
+                "  {:<20} {:>10} {:>10}\n",
+                t.name,
+                t.held.map(|h| mb(h as f64)).unwrap_or_else(|| "-".into()),
+                mb(t.net as f64)
+            ));
+        }
     }
     out
 }

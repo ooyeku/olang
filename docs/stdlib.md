@@ -2642,7 +2642,7 @@ that serves its own routes reads the same bytes.
 | <a id="runtime-features"></a>`runtime.features()` / `runtime.features(profile)` | what a runtime has: `#{ "profile", "modules", "threads", "fs", "net", "processes", "db", "gui", "dom", "jit", "needs" }` — its name, the modules a program can call there (sorted), and whether it can start threads (`spawn`, `task`, `par_map` workers), reach files, the network, processes, SQLite, windows, a page's DOM, and native code. `needs` maps each function of those modules that reaches a power the profile lacks to that power — `#{ "ods.open_csv": "fs", "gg.save": "fs", "spawn": "threads", … }` (`spawn` is the form) — and is empty natively. With no argument, this runtime; any runtime, the browser's included, also answers for `"native"`, `"browser"` and `"full"` |
 | <a id="runtime-version"></a>`runtime.version()` | the olang version string |
 | <a id="runtime-memory"></a>`runtime.memory()` | `#{ "heap", "program", "code", "values", "embedded", "allocated", "allocations", "tasks" }`, in bytes — where the process's memory is (below) |
-| <a id="runtime-heap"></a>`runtime.heap()` | what the heap holds now by the site that allocated it, from the sampled heap profile: `#{ "sites": [#{ "function", "file", "line", "path", "scope", "bytes", "count", "allocated", "allocations", "key" }], "rate", "heap", "values", "sampled", "samples", … }`, largest first ([What holds the heap](#what-holds-the-heap-by-site)) |
+| <a id="runtime-heap"></a>`runtime.heap()` | what the heap holds now by the site that allocated it, from the sampled heap profile: `#{ "sites": [#{ "function", "file", "line", "path", "scope", "bytes", "count", "allocated", "allocations", "key" }], "rate", "heap", "values", "sampled", "samples", "tasks", … }`, largest first ([What holds the heap](#what-holds-the-heap-by-site)) |
 | <a id="runtime-heap_start"></a>`runtime.heap_start()` `runtime.heap_start(#{ "rate" })` | begin the heap profile: one sample per `rate` bytes allocated on average (524,288). `Ok(())`, or `Err` when it runs. `OLANG_HEAP=1` starts it with the program. Only the program itself may call it |
 | <a id="runtime-heap_stop"></a>`runtime.heap_stop()` | end it and forget its samples: `Ok(())`, or `Err` when it is not running |
 | <a id="runtime-heap_diff"></a>`runtime.heap_diff(before, after)` | what changed between two `runtime.heap()` snapshots, by site: `#{ "span_ms", "heap_grew", "values_grew", "code_grew", "program_grew", "sampled_grew", "allocated", "sites": [#{ "function", "file", "line", "path", "scope", "before", "after", "grew", "count_grew", "allocated", "key" }] }`, the most grown first |
@@ -2704,11 +2704,16 @@ allocator, so the figures are exact and the call is cheap enough for a
 | `values` | `heap - program - code`: what the running program holds — its values, tables and buffers, and the engines it drives (a window's surfaces and text, a database connection) — plus the runtime's fixed tables made at start, a few MB |
 | `embedded` | the browser runtime and its compressed forms in the binary's image — file-backed pages, not heap |
 | `allocated`, `allocations` | the bytes asked for and the allocations made since the process began, every thread's (a resize counts as one allocation of its new size): exact, counted in every build. Two readings apart give the rate |
-| `tasks` | `[#{ "name", "bytes" }]`, largest first: each live spawned task (`olang-spawn-N`) and http worker (`olang-http-N`) with the bytes that thread allocated and has not itself freed |
+| `tasks` | `[#{ "name", "bytes", "held", "allocated", "allocations" }]`, largest `bytes` first: each live spawned task (`olang-spawn-N`) and http worker (`olang-http-N`). `bytes` is what that thread allocated less what it freed itself; `held` what its allocations still hold, wherever they are freed, from the heap profile's samples (`()` until it has run); `allocated` and `allocations` what it has asked for |
 
-A task's figure is attributed by the thread that made the allocation: a
-value a task builds and hands to a joiner counts on the task until the
-task ends, when its balance folds into the rest of the heap. Resident
+`bytes` is attributed by the thread that made each call, allocation and
+free alike, so a value a task builds and another thread frees stays on
+the task: a task that hands its results on only grows (a pool's loop
+read 2.5 GB in a 1.2 GB process). That is the right figure for "how much
+has this thread churned", the wrong one for "what does it hold". `held`
+answers the second: each sampled allocation is charged to the task that
+made it and taken off when it is freed, by whichever thread. When a task
+ends its `bytes` fold into the rest of the heap. Resident
 memory as the operating system reports it is larger than `heap` — it
 includes the binary's image, thread stacks, and pages the allocator has
 freed but not yet returned.

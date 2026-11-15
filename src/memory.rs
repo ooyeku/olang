@@ -38,9 +38,9 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU32, AtomicU64, Ordering};
 
-const SLOTS: usize = 192;
+pub(crate) const SLOTS: usize = 192;
 /// Slots `[0, ANONYMOUS)` are handed out round-robin to threads that
 /// claimed nothing; the rest are the named ones.
 const ANONYMOUS: usize = 128;
@@ -54,6 +54,9 @@ struct Slot {
     live: AtomicI64,
     allocs: AtomicU64,
     bytes: AtomicU64,
+    /// Bumped each time a task claims or leaves the slot, so a sampled
+    /// allocation names the task that made it, not a later holder.
+    generation: AtomicU32,
 }
 
 #[allow(clippy::declare_interior_mutable_const)]
@@ -61,6 +64,7 @@ const EMPTY: Slot = Slot {
     live: AtomicI64::new(0),
     allocs: AtomicU64::new(0),
     bytes: AtomicU64::new(0),
+    generation: AtomicU32::new(0),
 };
 static LIVE: [Slot; SLOTS] = [EMPTY; SLOTS];
 /// Names of the claimed slots (the named range only).
@@ -236,6 +240,20 @@ pub(crate) fn scope_now() -> u8 {
     }
 }
 
+/// The running thread's slot and the slot's generation (which task holds
+/// it), for the heap profile to charge a sample to.
+#[inline]
+pub(crate) fn slot_now() -> (usize, u32) {
+    let slot = my_slot();
+    (slot, LIVE[slot].generation.load(Ordering::Relaxed))
+}
+
+/// Whether `slot` still belongs to the task it did at `generation`.
+#[inline]
+pub(crate) fn slot_is(slot: usize, generation: u32) -> bool {
+    slot >= ANONYMOUS && slot < SLOTS && LIVE[slot].generation.load(Ordering::Relaxed) == generation
+}
+
 /// Counts the heap's growth across an outermost load toward `program`.
 /// Nested loads (a module's own `use`s) are inside the outer measure.
 pub struct LoadScope {
@@ -326,6 +344,8 @@ pub fn enter_task(name: &str) -> TaskGuard {
     let slot = match (ANONYMOUS..SLOTS).find(|&i| names[i].is_none()) {
         Some(i) => {
             names[i] = Some(name.to_string());
+            LIVE[i].generation.fetch_add(1, Ordering::Relaxed);
+            crate::heap_profile::task_started(i);
             i
         }
         None => before,
@@ -351,26 +371,42 @@ impl Drop for TaskGuard {
         LIVE[self.before].allocs.fetch_add(allocs, Ordering::Relaxed);
         let bytes = LIVE[self.slot].bytes.swap(0, Ordering::Relaxed);
         LIVE[self.before].bytes.fetch_add(bytes, Ordering::Relaxed);
+        LIVE[self.slot].generation.fetch_add(1, Ordering::Relaxed);
         let mut names = NAMES.lock().unwrap_or_else(|e| e.into_inner());
         names[self.slot] = None;
     }
 }
 
-/// The threads counted apart, with the bytes each holds, largest first.
-pub fn tasks() -> Vec<(String, u64)> {
+/// One thread counted apart, as `runtime.memory().tasks` lists it.
+pub struct TaskMemory {
+    pub name: String,
+    /// What the thread allocated less what it freed itself (`bytes`):
+    /// a value it made and another thread freed stays on it (OL-609).
+    pub net: u64,
+    /// The bytes its allocations asked for, ever, and how many it made.
+    pub allocated: u64,
+    pub allocations: u64,
+    pub(crate) slot: usize,
+}
+
+/// The threads counted apart, largest `net` first.
+pub fn tasks() -> Vec<TaskMemory> {
     let names = NAMES.lock().unwrap_or_else(|e| e.into_inner());
-    let mut out: Vec<(String, u64)> = names
+    let mut out: Vec<TaskMemory> = names
         .iter()
         .enumerate()
         .filter_map(|(i, name)| {
             let name = name.as_ref()?;
-            Some((
-                name.clone(),
-                LIVE[i].live.load(Ordering::Relaxed).max(0) as u64,
-            ))
+            Some(TaskMemory {
+                name: name.clone(),
+                net: LIVE[i].live.load(Ordering::Relaxed).max(0) as u64,
+                allocated: LIVE[i].bytes.load(Ordering::Relaxed),
+                allocations: LIVE[i].allocs.load(Ordering::Relaxed),
+                slot: i,
+            })
         })
         .collect();
-    out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    out.sort_by(|a, b| b.net.cmp(&a.net).then_with(|| a.name.cmp(&b.name)));
     out
 }
 

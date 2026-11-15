@@ -437,10 +437,21 @@ fn runtime_memory(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
     };
     let tasks: Vec<Value> = crate::memory::tasks()
         .into_iter()
-        .map(|(name, bytes)| {
+        .map(|t| {
             let mut row = crate::ast::ValueMap::default();
-            row.insert("name".to_string(), Value::String(Arc::new(name)));
-            row.insert("bytes".to_string(), Value::Integer(bytes as i64));
+            row.insert(
+                "held".to_string(),
+                crate::heap_profile::held(t.slot)
+                    .map(|h| Value::Integer(h as i64))
+                    .unwrap_or(Value::Unit),
+            );
+            row.insert("name".to_string(), Value::String(Arc::new(t.name)));
+            row.insert("bytes".to_string(), Value::Integer(t.net as i64));
+            row.insert("allocated".to_string(), Value::Integer(t.allocated as i64));
+            row.insert(
+                "allocations".to_string(),
+                Value::Integer(t.allocations as i64),
+            );
             Value::Map(Arc::new(row))
         })
         .collect();

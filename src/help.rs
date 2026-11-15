@@ -8926,7 +8926,7 @@ route("GET", "/olang." + map_get(rt, "hash") + ".wasm", (req, p) => { status: 20
             "runtime.memory()",
             "Map",
             "runtime",
-            "Where the process's memory is, in bytes: #{ \"heap\", \"program\", \"code\", \"values\", \"embedded\", \"allocated\", \"allocations\", \"tasks\": [#{ \"name\", \"bytes\" }] } — what is allocated and not freed, the share the loaded program holds (measured across parsing the entry file and each use), the share the runtime's own compiled code holds, the rest, the browser runtime in the binary's image, the bytes asked for and the allocations made since the process began (exact), and each spawned task and http worker with what it allocated and has not itself freed, largest first.",
+            "Where the process's memory is, in bytes: #{ \"heap\", \"program\", \"code\", \"values\", \"embedded\", \"allocated\", \"allocations\", \"tasks\" } — what is allocated and not freed; the share the loaded program holds; the share the runtime's own compiled code holds; the rest (what the program holds); the browser runtime in the binary's image; the bytes and the number of allocations made ever; and each spawned task and http worker as #{ \"name\", \"bytes\", \"held\", \"allocated\", \"allocations\" }: bytes is what that thread allocated less what it freed itself (a value another thread frees stays on it), held what its allocations still hold wherever they are freed (from the heap profile, () when it has not run).",
             &[r##"let m = runtime.memory()
 println("program: " + to_string(map_get(m, "program") / 1048576) + " MB")"##],
         );
@@ -8935,7 +8935,7 @@ println("program: " + to_string(map_get(m, "program") / 1048576) + " MB")"##],
             "runtime.heap()",
             "Map",
             "runtime",
-            "What the heap holds now, by the site that allocated it, from the sampled heap profile (runtime.heap_start, or OLANG_HEAP=1 from the start): #{ \"rate\", \"heap\", \"values\", \"sampled\", \"samples\", \"sites\": [#{ \"function\", \"file\", \"line\", \"path\", \"scope\", \"bytes\", \"count\", \"allocated\", \"allocations\", \"key\" }], … }, largest first. A site is the innermost olang function (path: the innermost frames, builtins included) and its scope: values, program (loading it) or code (the runtime's). bytes and count are live; allocated and allocations are since sampling began. Estimates: one sample per rate bytes allocated (512 KiB).",
+            "What the heap holds now, by the site that allocated it, from the sampled heap profile (runtime.heap_start, or OLANG_HEAP=1 from the start): #{ \"rate\", \"heap\", \"values\", \"sampled\", \"samples\", \"sites\": [#{ \"function\", \"file\", \"line\", \"path\", \"scope\", \"bytes\", \"count\", \"allocated\", \"allocations\", \"key\" }], \"tasks\", … }, largest first. A site is the innermost olang function (path: the innermost frames, builtins included) and its scope: values, program (loading it) or code (the runtime's). bytes and count are live; allocated and allocations are since sampling began. Estimates: one sample per rate bytes allocated (512 KiB).",
             &[r##"runtime.heap_start()
 let xs = map(range(20000), (i) => "item " + to_string(i))
 let top = first(runtime.heap().sites)
