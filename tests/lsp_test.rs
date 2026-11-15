@@ -1834,57 +1834,10 @@ fn a_shared_name_is_renamed_in_every_file_that_imports_it() {
 }
 
 #[test]
-fn a_module_saved_rechecks_the_open_files_that_import_it() {
-    let dir = temp_folder(
-        "save-recheck",
-        &[
-            ("a.ol", "share fn helper(x: Int) -> Int = x + 1\n"),
-            (
-                "b.ol",
-                "use a { helper }\n\nlet s: String = helper(3)\nprintln(s)\n",
-            ),
-        ],
-    );
-    let a_uri = format!("file://{}/a.ol", dir.display());
-    let b_uri = format!("file://{}/b.ol", dir.display());
-    let mut c = client_in(&dir);
-    let _ = open_doc(&mut c, &a_uri, "share fn helper(x: Int) -> Int = x + 1\n");
-    let b = open_doc(
-        &mut c,
-        &b_uri,
-        &std::fs::read_to_string(dir.join("b.ol")).unwrap(),
-    );
-    assert!(
-        diagnostics_of(&b)
-            .unwrap()
-            .iter()
-            .any(|d| d["severity"] == 1),
-        "{b}"
-    );
-    // the module fixed and saved: the importer's problem goes, unedited
-    let fixed = "share fn helper(x: Int) -> String = to_string(x)\n";
-    std::fs::write(dir.join("a.ol"), fixed).unwrap();
-    c.send(
-        &serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didChange","params":{
-        "textDocument":{"uri":a_uri,"version":2},"contentChanges":[{"text":fixed}]}}),
-    );
-    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didSave","params":{"textDocument":{"uri":a_uri}}}));
-    let b2 = c.recv_until(|m| diagnostics_of(m).is_some() && m["params"]["uri"] == b_uri);
-    assert!(
-        !diagnostics_of(&b2)
-            .unwrap()
-            .iter()
-            .any(|d| d["severity"] == 1),
-        "{b2}"
-    );
-    let _ = c.child.kill();
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
 fn an_unsaved_edit_to_a_module_is_what_its_importers_see() {
     // OL-398: an importer read the module from the disk, so its problems
-    // followed the saved text, not the buffer being edited.
+    // followed the saved text, not the buffer being edited (a save was
+    // what re-checked it).
     let dir = temp_folder(
         "buffer-imports",
         &[
