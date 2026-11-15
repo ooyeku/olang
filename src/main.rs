@@ -3897,7 +3897,7 @@ fn inspect_json(
             "bundle": m.format,
             "olang": m.olang_version,
             "ast_format": m.ast_format,
-            "build_commit": m.build_commit,
+            "olang_commit": m.build_commit,
             "runs_here": runtime_mismatch(Some(m)).is_none(),
             "source_path": m.source_path,
             "built_os": m.built_os,
