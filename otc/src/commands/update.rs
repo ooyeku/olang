@@ -138,7 +138,7 @@ pub enum ToolchainCommand {
         #[arg(long, value_name = "FORMAT", default_value = "text")]
         format: String,
     },
-    /// Download and install a specific release (e.g. 0.79.0)
+    /// Download and install a specific release (e.g. 1.0.0)
     Install { version: String },
     /// Make an installed toolchain the default
     Default { version: String },
