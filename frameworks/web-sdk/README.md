@@ -7,7 +7,7 @@ every export (so `:help` and editor hovers answer), `//!` module docs,
 against itself, shelf-distributed, `olang fmt`-clean.
 
 ```bash
-otc lib add frameworks/web-sdk     # once; then from any project:
+otc shelf add frameworks/web-sdk   # once; then from any project:
 otc add web
 ```
 

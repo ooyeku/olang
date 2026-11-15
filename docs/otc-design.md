@@ -45,7 +45,8 @@ otc shelf list [name]              libraries held: versions, sources, size, user
 otc shelf info <name>              one library: versions, users, capabilities, docs
 otc shelf add <path|owner/repo[@ref]> [--rev <commit>]   hold a library without adding it to a project
 otc shelf use <name>@<version|local>   the machine's default for a bare name (rule 3 below)
-otc shelf outdated / upgrade [name…]   newer releases of GitHub libraries; old ones stay
+otc shelf outdated [name…]         newer releases of GitHub libraries
+otc shelf upgrade [name…]          fetch them; old copies stay until pruned
 otc shelf remove <name>[@version] [--yes]   forget it; never deletes a local folder
 otc shelf prune [--yes]            remove copies nothing uses
 otc shelf restore [name]           the starter libraries
@@ -53,7 +54,7 @@ otc shelf restore [name]           the starter libraries
 otc add <path|name[@version]|owner/repo[@ref]>   add a dependency; says which it understood
 otc remove <name>
 otc list                           each dependency, the copy it got, and which rule chose it
-otc install [--frozen|--update]
+otc install [--frozen] [--update]
 otc outdated                       what each dependency has, the newest allowed, the newest there is
 otc upgrade [name…] [--major] [--yes]
 ```

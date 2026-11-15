@@ -121,9 +121,13 @@ consumer ignores fields it does not know. The documents:
 | `olang inspect --format json` | `inspect`; with `--caps`, `caps` |
 | `olang caps --format json` | `caps`: `#{ path, manifest, package, grant, declared, dependencies }`, a grant `#{ fs, net, proc, db, env }` with `fs` `true`, `"read"` or `false` |
 | `--ovm-stats=json` | `ovm-stats` |
+| `otc status --format json` | `status` |
 | `otc list --format json` | `deps` |
-| `otc lib list --format json` | `shelf` |
+| `otc outdated --format json`, `otc shelf outdated --format json` | `outdated` |
+| `otc shelf list --format json` | `shelf` |
+| `otc shelf info NAME --format json` | `library` |
 | `otc toolchain list --format json` | `toolchains` |
+| any otc command that changes something, `--format json` | `change`; a failure `error` ([otc as data](packages.md#otc-as-data)) |
 | `otc bench --save FILE` | `otc-bench-baseline` |
 
 ### Exit codes

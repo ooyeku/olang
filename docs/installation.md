@@ -120,8 +120,9 @@ Run the install command again. It replaces olang in place with the
 newest release. `otc update` does the same from inside olang, and
 checks the release's signature as the installer does. `otc update
 --check` only reports whether a newer release exists. `otc` can also
-keep several releases side by side and switch between them
-with `otc toolchain` ([Packages](packages.md#updating-and-toolchains)).
+keep several releases side by side and switch between them in one
+command, `otc use <version>`; `otc toolchain list --available` lists
+every release ([Packages](packages.md#updating-and-toolchains)).
 
 Homebrew users update with `brew upgrade olang`, and Cargo users by
 running their `cargo install` command again.

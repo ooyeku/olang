@@ -27,6 +27,10 @@ writes.
 - [Starting a package](#starting-a-package)
 - [The manifest](#the-manifest)
 - [Commands](#commands)
+  - [Which copy a dependency gets, and why](#which-copy-a-dependency-gets-and-why)
+  - [Libraries from GitHub](#libraries-from-github)
+  - [Outdated and upgrade](#outdated-and-upgrade)
+  - [otc as data](#otc-as-data)
 - [The library shelf](#the-library-shelf)
   - [The starter libraries](#the-starter-libraries)
   - [Pinning and drift](#pinning-and-drift)
@@ -228,38 +232,64 @@ of its modules.
 
 ## Commands
 
-The project commands:
+otc keeps three things, with the same verbs for each: the olang versions
+on this machine (`otc use`, `otc toolchain …`), the shelf of libraries
+(`otc shelf …`), and each project's dependencies (`otc add`, `list`,
+`upgrade`, …). `list` shows what is here, `add` puts something here,
+`use` makes it what runs, `outdated` and `upgrade` move it forward,
+`remove` and `prune` take it away. [The design note](otc-design.md) has
+the reasoning.
 
 ```bash
-otc new NAME [--lib|--web]   # scaffold a project
-otc add ../my-lib            # add a dependency by path
-otc add my-lib               # add a dependency by name, from your shelf
-otc remove my-lib            # drop a dependency
-otc list                     # what this project depends on, and where each lives
-otc list --format json       # the same as data: #{ format, kind: "deps", package, version, root, dependencies }
-otc install                  # fetch dependencies, honoring olang.lock
+otc status                   # what olang runs here and why, this project, the shelf, what to do next
+otc                          # the same
+
+otc new NAME --lib            # scaffold a project (--web: a web app)
+otc add ../my-lib            # a dependency by folder
+otc add geometry             # a library on your shelf
+otc add geometry@1.2         # a version of one
+otc add ooyeku/geometry      # a library from GitHub: its newest release
+otc add ooyeku/geometry@v1.2.0   # a tag (@main a branch, @9b03e7d a commit)
+otc remove geometry          # drop a dependency (the shelf keeps its copies)
+otc list                     # each dependency, the copy it got, and which rule chose it
+otc install                  # resolve and write olang.lock
 otc install --frozen         # fail if resolution would rewrite the lock (CI)
 otc install --update         # re-resolve everything, rewrite the lock
-otc lib add|list|remove|restore   # your library shelf (next section)
+otc outdated                 # what each has, the newest allowed, the newest there is
+otc upgrade --dry-run        # what upgrade would change
+otc upgrade                  # move the lock to the newest allowed
+otc upgrade geometry --major # past the requirement: edits olang.toml too
 otc bench                    # the project benchmark harness (below)
+```
+
+Every command takes `--format json` and every change `--dry-run` (see
+[otc as data](#otc-as-data)). Every failure ends with a `next:` line
+naming the command that fixes it or shows more:
+
+```text
+error: 'geometry' is not on your shelf (on your shelf: markdown, textkit, validate)
+next: otc shelf add <folder> (or otc add <owner>/geometry from GitHub)
 ```
 
 Every command finds the project root by walking up to the nearest
 `olang.toml`, and `otc add` in a directory with none **creates one**:
-there is no separate init step. `add` takes one argument with two
-readings: anything with a path separator (or a leading `.`) is a
-directory, recorded relative to the project root no matter where the
-command ran; a bare name is looked up on your shelf. Either way the
-dependency is validated at `add` time and resolution runs immediately,
-so the lockfile is never left behind the manifest, and changing an
-existing dependency's source requires `--force`. A path must hold an
+there is no separate init step. `add` takes one argument and says which
+of three readings it took: anything that exists as a folder here (or
+starts with `.` or `/`) is a **folder**, recorded relative to the
+project root; `owner/repo` (or `https://github.com/owner/repo`) is a
+**GitHub repository**; a bare name is a library on your **shelf**,
+`name@1.2` a version of it. It shows the capabilities the library asks
+for before adding it, and nothing of the library runs. The dependency is
+validated at `add` time and resolution runs immediately, so the lockfile
+is never left behind the manifest, and changing an existing
+dependency's source requires `--force`. A folder must hold an
 `olang.toml` or a root module (`index.ol`, `mod.ol`, `<name>.ol` or
 `src/index.ol`), the same test `olang doctor` makes. A failed `add`
 changes nothing: the `olang.toml` it would have started in a fresh
 directory is written only once the dependency checks out, and one it
 edited is put back if resolution fails.
 
-Dependencies that live elsewhere still work — write them into
+Dependencies from anywhere else still work — write them into
 `olang.toml` directly (`{ git = "URL", tag = "v1.0" }`, or a registry
 requirement with `OLANG_REGISTRY` set) and `otc install` resolves them
 with the same lockfile discipline.
@@ -268,29 +298,137 @@ You rarely need `otc install` day to day: **running a file inside a
 package resolves dependencies automatically**. `olang main.ol` reads
 `olang.toml`, installs (replaying the lockfile — see below), and runs.
 
+### Which copy a dependency gets, and why
+
+A library on the shelf can be held in several versions at once, and the
+rule for which one a project gets fits in three lines:
+
+1. **locked** — what the project's `olang.lock` pins, while the manifest
+   still asks for the same thing;
+2. **asked** — what the manifest asks for: a version (`geometry =
+   "1.2"`, `{ shelf = "geometry", version = "^1" }`), or for a GitHub
+   library a version, tag, branch or commit (`{ github =
+   "ooyeku/geometry", tag = "v1.2.0" }`); the newest held copy that
+   matches, fetched from GitHub when none is held;
+3. with nothing asked: this machine's **default** (`otc shelf use
+   geometry@1.2.0`), else the **local** folder when one is registered
+   (your working copy is the most up to date), else the newest **remote**
+   copy held.
+
+`otc list` prints the rule beside each dependency:
+
+```text
+app 0.1.0
+├── geometry 1.2.0 /Users/me/.olang/shelf/geometry/1.2.0 (asked: olang.toml asks for ooyeku/geometry ^1.2.0)
+└── textkit 1.0.0-rc.8 /Users/me/.olang/shelf/textkit/1.0.0-rc.8 (remote: the newest copy the shelf holds)
+```
+
+A version you write is a prefix: `"1.1"` is any 1.1.x, `"1"` any 1.x,
+`"1.1.0"` exactly that. With an operator (`^1.1`, `~1.1.2`, `>=1.0`,
+`=1.1.0`) it is a semver requirement; `otc add owner/repo` writes
+`^<version>`. A version asked of a GitHub library picks among that
+repository's copies; one asked of a plain shelf name counts the local
+folder too. Two projects on two versions never disturb each other, since
+each lock names its own copy. One project needing two versions of one
+name is refused, naming both requirers: one project uses one version of a
+name.
+
+### Libraries from GitHub
+
+`otc add owner/repo` (and `otc shelf add owner/repo`, which shelves it
+without adding it to a project) fetches with your own `git`, so a
+private repository works through your git credentials and otc stores
+none. With no `@`, it takes the newest release tag (a tag that reads as a
+version, a stable one before a prerelease), else the default branch's
+head. What is fetched is checked before anything is kept: the
+repository must be an olang project, holding an `olang.toml` with a
+`[package]` or an `index.ol`; anything else is refused in one line:
+
+```text
+error: ooyeku/notes was refused: it is not an olang library: it has no olang.toml with a [package] and no index.ol; nothing was kept
+next: otc new <name> --lib (an olang library has an olang.toml with [package])
+```
+
+The copy goes onto the shelf, read-only, with its commit and a checksum
+of its sources, and the lockfile records the same commit, checksum and
+repository, so another machine fetches exactly that commit. An install
+from the lockfile needs no network when the shelf holds the commit. A
+tag that later names another commit is noticed when it is next fetched
+(`otc shelf add`, `otc shelf upgrade`, `otc upgrade`) and refused until
+accepted:
+
+```bash
+otc shelf add ooyeku/geometry@v1.2.0 --accept-moved
+```
+
+### Outdated and upgrade
+
+`otc outdated` lists each shelf or GitHub dependency: what it has, the
+newest its requirement allows, and the newest there is (it reads GitHub
+for GitHub libraries; `--offline` uses only what the shelf holds). A
+dependency pinned to a folder at a commit shows the commits since.
+
+`otc upgrade [name…]` moves the lock to the newest each requirement
+allows. It prints each change first — from and to, the tag, the
+library's description — and any capability the new version asks for
+that the old did not; a new capability is not taken without `--yes`.
+`--dry-run` shows the change and writes nothing; `--major` goes past the
+requirement and writes the new one into `olang.toml`. A failed upgrade
+leaves `olang.toml` and `olang.lock` as they were. The shelf keeps the
+old copy, so other projects on it are untouched.
+
+### otc as data
+
+`--format json` answers with one JSON object on stdout (words for a
+person go to stderr), always `#{ format: 1, kind, … }`:
+
+| Command | `kind` | Holds |
+|---|---|---|
+| `otc status` | `status` | `olang` (what runs, the default, a shadowing line and its fix), `project` (root, pin, version, dependencies), `shelf` (file, libraries, size), `next` (at most three commands) |
+| `otc toolchain list` | `toolchains` | `default`, `active`, `shadowed`, `fix`, `project`, `toolchains` (each `#{ version, olang, real, kind, folder, active, default, on_path, linked }`), and with `--available`: `available` (each `#{ version, date, prerelease, installed, default, active, newer }`), `available_age_s`, `available_note` |
+| `otc list` | `deps` | `package`, `version`, `root`, `olang`, `dependencies` (each `#{ name, source, spec, version, dir, rev, rule, dependencies, problem }`) |
+| `otc shelf list` | `shelf` | `shelf`, `home`, `size`, `libraries` (each `#{ name, gives, default, local, copies }`, a copy `#{ version, source, from, ref, commit, checksum, dir, fetched, size, present, users }`) |
+| `otc shelf info NAME` | `library` | one library as in `shelf`, with `capabilities` and `doc` |
+| `otc outdated`, `otc shelf outdated` | `outdated` | `scope` (`project` or `shelf`), one row per dependency or library |
+| any change | `change` | `command`, `dry_run`, `changes` (each `#{ action, what, detail }`), `now` (what is in use after) |
+| any failure | `error` | `command`, `error`, `next` (exit code 1) |
+
+OlangStudio's Packages page reads these shapes.
+
 ## The library shelf
 
 Most of us end up with a few bits of code we reuse everywhere: a date
 helper, a formatting module, a small client for some service. The shelf
-is olang's place for those. It is your personal catalog of libraries,
-kept by name, so any project can say "I use `geometry`" without
-recording where on your disk `geometry` lives. There is no server,
-account or network involved: the shelf is one small TOML file, and the
-libraries are ordinary folders of olang source. A shelvable library
-is a directory with an `index.ol` (the entry point `use` resolves) or an
-`olang.toml` naming it; `otc new <name> --lib` scaffolds that shape.
+is olang's place for those, and for the libraries you take from GitHub.
+It is your catalog of libraries on this machine, kept by name, so any
+project can say "I use `geometry`" without recording where on your disk
+`geometry` lives. A shelvable library is a directory with an `index.ol`
+(the entry point `use` resolves) or an `olang.toml` naming it; `otc new
+<name> --lib` scaffolds that shape.
 
-Register a library once, per user, from anywhere:
+A name on the shelf holds at most one **local folder** — your working
+copy, referenced where it is and never copied — and any number of
+**copies**: read-only trees the shelf owns, one per version, each
+recording where it came from (GitHub with its tag and commit, a folder at
+a commit, or a starter library shipped with olang) and a checksum.
 
 ```bash
-otc lib add ~/code/geometry            # registers under its package name
-otc lib add . --name geo               # the current directory, under a chosen name
-otc lib add ~/code/sdk --rev 4f2a91c   # the library as it stands at that commit
-otc lib list                           # every shelved library, and where it points
-otc lib list --format json             # #{ format, kind: "shelf", shelf, libraries }, each #{ name, dir, rev, starter, status }
-otc lib remove geometry                # take it off the shelf
-otc lib restore textkit                # re-shelve a starter (or refresh it)
-otc lib restore                        # re-shelve every starter
+otc shelf add ~/code/geometry              # a local folder, under its package name
+otc shelf add . --name geo                 # the current directory, under a chosen name
+otc shelf add ~/code/sdk --rev 4f2a91c     # the library as it stands at that commit (a copy)
+otc shelf add ooyeku/geometry@v1.1.0       # a copy from GitHub
+otc shelf list                             # every library: versions, sources, sizes, users
+otc shelf list geometry                    # one library, with every project using each version
+otc shelf info geometry                    # versions, users, the capabilities it asks for, its docs
+otc shelf use geometry@1.1.0               # this machine's default for a bare `geometry`
+otc shelf use geometry                     # back to the rule: the local folder, else the newest
+otc shelf outdated                         # newer releases of GitHub libraries
+otc shelf upgrade                          # fetch them; older copies stay until pruned
+otc shelf remove geometry@1.1.0            # one version (says what uses it first)
+otc shelf remove geometry --yes            # the whole library, although projects use it
+otc shelf prune                            # what nothing uses, and how much (removes nothing)
+otc shelf prune --yes                      # remove it
+otc shelf restore textkit                  # put a starter back (or refresh it)
 ```
 
 Then, from any project:
@@ -302,32 +440,46 @@ otc add geometry       # the manifest gains geometry = { shelf = "geometry" }
 The manifest records only the name, so `olang.toml` stays free of
 machine-specific paths and means the same thing on every machine that
 has a `geometry` on its shelf. The lockfile pins what the name resolved
-to — the directory and a checksum of its contents — so a library that
+to — the copy's commit and a checksum of its contents — so a library that
 moves or disappears is noticed at the next install (see
 [Pinning and drift](#pinning-and-drift)).
 
-`otc lib list` marks each entry: `(starter)` for a shipped library,
-`pinned at <sha>` for one shelved at a commit, and `(missing — directory
-is gone; re-register, remove, or restore)` when a registered directory
-has disappeared.
+`otc shelf list` explains every folder under `~/.olang/shelf`:
 
-Removing a user library forgets the registration only: the source
-directory is untouched, and projects that depend on it keep their
-lockfile pin until their next install. Removing a starter also deletes
-its materialized directory, since the shelf owns that copy; `otc lib
-restore <name>` writes it back. Restoring a starter that is present
-overwrites it with the running toolchain's copy, which is how starters
-pick up a newer toolchain's changes. `otc install` says when a shelved
-starter is behind the toolchain's copy and names the `otc lib restore`
-that refreshes it.
+```text
+geometry  gives the local folder (local)
+  local  1.3.0      /Users/me/code/geometry  (referenced, not copied) · 1 user
+  copy   1.1.0      github ooyeku/geometry v1.1.0 @0c4e9f2a  4.1 KB · 1 user
+  copy   1.2.0      github ooyeku/geometry v1.2.0 @9b03e7d5  4.3 KB · unused
+textkit  gives 1.0.0-rc.8 (remote)
+  copy   1.0.0-rc.8 starter  18.2 KB · 2 users
+```
+
+What uses a copy is known from the projects otc has installed for (a
+small index in `~/.olang/state/projects.json`, which `otc install`, `add`,
+`remove` and `upgrade` keep; a project gone from disk drops out) and from
+the locks of the libraries the shelf holds. A local folder that has gone
+is marked with the three ways out: `otc shelf add <its new place>`,
+`otc shelf remove <name>@local`, or `otc shelf restore <name>` for a
+starter.
+
+Removing never deletes a local folder, only forgets it. Removing a copy
+that known projects use names them first and needs `--yes`; they keep
+their lockfile pin, and their next install says what is missing.
+`otc shelf prune` removes the copies no known project's lock names and
+that are not what their name gives a new project; without `--yes` it
+says what and how much, and `otc clean --shelf` (or `--all`) does the
+same as `prune --yes`. `otc doctor` checks the shelf: a copy changed
+since it was fetched, a folder recorded nowhere, an entry pointing
+nowhere.
 
 | Path or variable | Holds |
 |---|---|
-| `~/.olang/shelf.toml` | the shelf: name → directory. Its first line, `version = 1`, is the format version; every installed toolchain shares the file, and one that finds a newer version refuses it by name rather than rewriting it. |
-| `~/.olang/shelf/<name>/` | the materialized starter libraries |
-| `~/.olang/shelf/pins/<name>-<sha>/` | libraries shelved at a commit |
-| `OLANG_SHELF` | the shelf file's location (starters materialize into `shelf/` beside it) |
+| `~/.olang/shelf.toml` | the shelf's index. Its first line, `version = 2`, is the format version; every installed toolchain shares the file, and one that finds a newer version refuses it by name rather than rewriting it. A library with only a local folder is one line, `greeter = "/path"`. |
+| `~/.olang/shelf/<name>/<version>/` | the copies (a second commit of one version is `<name>/<commit>/`) |
+| `OLANG_SHELF` | the shelf file's location (the copies go in `shelf/` beside it) |
 | `OLANG_HOME` | the whole `~/.olang` root, the shelf included ([the home directory](#the-home-directory)) |
+| `OLANG_GITHUB`, `OLANG_GITHUB_API` | where GitHub is (default `https://github.com`, `https://api.github.com`); the test suite points them at a local fake |
 
 A shelf is seeded with the starter libraries once, when its file is
 first created. Starters removed on purpose are not reseeded.
@@ -469,15 +621,20 @@ shelf resolved and a checksum of its contents. From there:
   at install, never treated as tampering, and the lock re-pins.
 - **`otc install --frozen`** replays the lockfile exactly and fails on
   any drift.
+- **A version asked for keeps its copy.** A dependency that asks for a
+  version, tag, branch or commit keeps the copy its lock pins, whatever
+  the shelf gains, until `otc upgrade` moves it or the manifest asks for
+  something else. A bare name follows the shelf: the next `otc install`
+  re-pins it to what the name gives now, and says so.
 - **A library shelved at a commit** does not follow its checkout. `otc
-  lib add <path> --rev <commit>` writes the repository's tree at that
-  commit into the shelf's own directory (`shelf/pins/<name>-<sha>`),
+  shelf add <path> --rev <commit>` writes the repository's tree at that
+  commit into a copy the shelf owns (`shelf/<name>/<version>/`),
   registers the name there, and records the full commit id and the
   repository it came from. The lock of every project that depends on
   the name then carries `rev`, and the lock is the source of truth: a
   run, `olang test`, `olang check`, the language server and the REPL use
   that commit's snapshot whatever commit the shelf holds the name at
-  now. The shelf keeps every snapshot it made under `pins/`; one that is
+  now. The shelf keeps every copy it made; one that is
   gone is made again from the repository at that commit. The snapshot's
   checksum is verified as a fetched dependency's is, and a mismatch is
   refused. A commit this machine cannot produce fails, naming the
@@ -485,21 +642,21 @@ shelf resolved and a checksum of its contents. From there:
 
   ```text
   the lock pins shelf library 'sdk' at 4f2a91c03e1b, which this machine
-  does not hold (…/pins/sdk-4f2a91c03e1b is not there, and the shelf
-  knows no repository to make it from); the shelf has it at 9b03e7d5a210.
+  does not hold (no copy of that commit, and the shelf knows no
+  repository to make it from); the shelf gives it at 9b03e7d5a210.
   Run `otc install` to move the lock to the shelf's pin, or shelve that
-  commit: `otc lib add <path> --rev 4f2a91c03e1b`
+  commit: `otc shelf add <path> --rev 4f2a91c03e1b`
   ```
 
-  Re-registering the name without `--rev` unpins it. Two machines
+  Registering the name's folder without `--rev` makes the name follow the folder again (the copy stays, for the locks that pin it). Two machines
   resolve the same library this way from checkouts each keeps moving.
 - **A dependency's own lock pins its shelf libraries.** A library that
   depends on another by shelf name, and ships an `olang.lock` pinning
   it, gets the commit its lock names in every project that uses it,
   resolved and verified the same way. The project's lock pins the
   library, and the library's lock pins the rest.
-- **Re-shelving is picked up by `otc install`.** After `otc lib add
-  <path> --rev <new-sha>`, or `otc lib add <path>` to follow the
+- **Re-shelving is picked up by `otc install`.** After `otc shelf add
+  <path> --rev <new-sha>`, or `otc shelf add <path>` to follow the
   directory again, the next `otc install` reports the move (`shelf
   library 'sdk' moved: the lock had it at 4f2a91c…, the shelf has it at
   9b03e7d… — re-pinning`) and re-resolves that entry; `--frozen` refuses
@@ -510,7 +667,7 @@ shelf resolved and a checksum of its contents. From there:
   library that follows its directory has no directory in the lock, so
   re-registering it at another path needs no re-pin.
 
-A lockfile pin on a starter behaves like any other: after `otc lib
+A lockfile pin on a starter behaves like any other: after `otc shelf
 restore`, the next `otc install` in each project re-pins it, visibly.
 
 ## The home directory
@@ -520,12 +677,13 @@ Everything the toolchain writes under the user's home lives in
 
 ```text
 ~/.olang/
-  bin/          shims pointing at the default toolchain
-  toolchains/   <version>/bin/{olang, otc} — managed by `otc update`
-  shelf/        starter libraries and libraries shelved at a commit
-  shelf.toml    the shelf manifest
-  cache/        git dependency clones (prunable)
-  state/        warm hints, REPL history (regenerable)
+  bin/              shims pointing at the default olang
+  toolchains/       <version>/bin/{olang, otc} — the installed releases
+  toolchains.toml   the default, the one before it, linked local builds
+  shelf.toml        the shelf's index
+  shelf/            <name>/<version>/ — the shelf's copies of libraries
+  cache/            git mirrors and checkouts, the releases list (prunable)
+  state/            warm hints, REPL history, known projects (regenerable)
 ```
 
 `OLANG_HOME` relocates the whole tree (tests use this). Three commands
@@ -534,63 +692,140 @@ manage it:
 - **`otc doctor`** audits an installation: every `olang`/`otc` on
   PATH with its version and origin (cargo, Homebrew, olang-home) and
   which copy wins; version agreement between `olang` and `otc`; files
-  and directories the layout does not hold; shelf entries whose paths do
-  not resolve; a project lock (the one the working directory is in)
-  behind the shelf, as a note; and the sizes of the prunable parts. The default
+  and directories the layout does not hold; the shelf (copies changed
+  since they were fetched, folders recorded nowhere, entries pointing
+  nowhere); a project lock (the one the working directory is in) behind
+  the shelf, as a note; and the sizes of the prunable parts. The default
   run is read-only; `otc doctor --fix` applies the safe repairs (stray
-  files removed, the REPL history moved into `state/`) and never touches
-  installations owned by other package managers.
+  files removed, the REPL history moved into `state/`, an old layout
+  moved to this one) and never touches installations owned by other
+  package managers.
 - **`otc clean`** reclaims the prunable parts: the dependency cache by
-  default, `--state` for regenerable runtime state, `--all` for both.
-  Sizes are reported as they are reclaimed. The shelf and the
-  toolchains are never clean's business.
-- **`otc update`** installs the latest release. See the next section.
+  default, `--state` for regenerable runtime state, `--shelf` for the
+  shelf's copies nothing uses, `--all` for all three. Sizes are reported
+  as they are reclaimed; `--dry-run` only says them. The toolchains are
+  never clean's business (`otc toolchain prune`).
+- **`otc use`** and **`otc update`** install releases. See the next
+  section.
+
+**From an older layout.** A home written by an olang before 1.0 kept
+shelf snapshots in `shelf/pins/<name>-<sha>/`, starters in
+`shelf/<name>/`, and linked builds as toolchain folders holding a
+symlink. `otc doctor` reports it and `otc doctor --fix` moves it: each
+snapshot and starter becomes a copy `shelf/<name>/<version>/`, the
+shelf file becomes format 2, and each linked folder becomes a linked
+build named by its checkout's branch. Locks that pinned a snapshot keep
+working: its commit is found among the copies. Until then a shelf in the
+old layout is refused, naming `otc doctor --fix`.
 
 ## Updating and toolchains
 
-`otc update` downloads the latest release for the platform, verifies it
-against the release's `SHA256SUMS` and `SHA256SUMS` against its
+One command switches olang:
+
+```bash
+otc use 1.0.0-rc.8          # install it if needed (verified), make it the default
+otc use rc                  # the newest prerelease; stable the newest stable, latest the newest
+otc use 0.88                # the newest 0.88.x: installed ones answer at once, with no network
+otc use main                # a linked local build, by name
+otc use -                   # the one before
+otc use 0.88 --project      # pin this project instead: [package] olang and olang.lock
+otc update                  # otc use latest
+otc update --check          # only say what the newest is
+```
+
+`otc use` ends by saying what `olang --version` now answers, and from
+where. When something else on PATH runs ahead of the shims (a cargo or
+Homebrew install), it says so and how to fix it:
+
+```text
+installed olang 1.0.0-rc.8: downloaded from GitHub, checksum verified
+switched to olang 1.0.0-rc.8: the shims in ~/.olang/bin point at it
+`olang --version` now answers olang 1.0.0-rc.8 (/Users/me/.olang/bin/olang)
+```
+
+A version argument is an exact version, a series (`1.0` is 1.0.x and
+its prereleases, `1` every 1.x: the newest installed match, else the
+newest release), `latest` (the newest release), `stable` (the newest
+non-prerelease), `rc` (the newest prerelease), a linked build's name, or
+`-`. An installed match is used without the network; anything else reads
+the list of releases.
+
+Everything else about versions is under `otc toolchain`:
+
+```bash
+otc toolchain list                    # every olang here, which one runs and why (also: otc toolchain)
+otc toolchain list --available        # and every release on GitHub, newest first
+otc toolchain list --available --stable   # without prereleases
+otc toolchain list --available --offline  # the releases as last fetched, no network
+otc toolchain add 0.88.0              # install without switching (alias: install)
+otc toolchain remove 0.80.0           # remove one; names the projects that pin it first
+otc toolchain prune                   # what no project pins and is not the default (removes nothing)
+otc toolchain prune --yes             # remove those
+otc toolchain link ../olang           # a checkout's build as a toolchain, named by its branch
+otc toolchain link ../olang --name work   # under another name
+otc toolchain unlink main             # forget it (the checkout is untouched)
+otc toolchain which                   # the olang this project's pin resolves to
+```
+
+`otc toolchain list --available` reads olang's releases from GitHub and
+lists them newest first with their dates, prereleases marked, and each
+release that is installed, the default, active, or newer than the olang
+that runs. It is the only listing that reaches the network; the answer
+is kept for an hour, `--offline` shows it as last fetched with its age,
+and with no network the list says so and shows what it has rather than
+failing.
+
+`otc update` and `otc use` download a release for the platform, verify
+it against the release's `SHA256SUMS` and `SHA256SUMS` against its
 signature (`SHA256SUMS.sig`) by olang's release key, which `otc` carries
-pinned, installs it under `~/.olang/toolchains/<version>/`, and atomically repoints the shims in
-`~/.olang/bin` — the running binaries are never overwritten in place.
+pinned, install it under `~/.olang/toolchains/<version>/`, and atomically
+repoint the shims in `~/.olang/bin` — the running binaries are never
+overwritten in place.
 `otc update` never goes down: when the release the server names is
 older than the olang running it, nothing changes and it says so
-(`otc toolchain install` takes an older release on purpose).
+(`otc use <version>` takes an older release on purpose).
 `otc update --check` reports the current and latest versions without
-installing anything. Nothing contacts the network except these two
-invocations, explicitly.
+installing anything.
 
 A release whose signature does not verify is refused and nothing is
 installed, as is a release without one from the first signed release
 on (`OLANG_ALLOW_UNSIGNED=1` lets an unsigned one through; a bad
 signature never). An older release, from before signing began,
-installs on its checksum with a note. `otc toolchain install` checks
-the same way. Releases are signed from 1.0.0 on
+installs on its checksum with a note. Releases are signed from 1.0.0 on
 ([`dist/signing/README.md`](../dist/signing/README.md)).
 
 olang 1.0 is built, tested and supported on macOS; the installer also runs on Linux and Windows, where olang is an
 unsupported preview ([Stability](stability.md#platforms)).
 
-Multiple releases install side by side:
+**A local build** is a toolchain of its own. `otc toolchain link
+../olang` records the checkout by name (its branch: `main`), and the
+toolchain is always that checkout's current `target/release/olang`,
+never a copy, so a rebuild is in use at once. `list` shows it with its
+commit and how far it is from the last release, and says when the build
+is older than the source:
 
-```bash
-otc toolchain list              # every olang here, which one runs and why (also: otc toolchain)
-otc toolchain list --format json  # #{ format, kind: "toolchains", dir, default, active, shadowed, fix, project, toolchains }
-otc toolchain install 1.0.0     # add a specific release
-otc toolchain default 1.0.0     # switch the shims
-otc toolchain remove 1.0.0      # remove (the default refuses)
-otc toolchain which             # the olang this project's pin resolves to
-otc toolchain link 1.1.0 ../olang    # a local build as a toolchain (a binary, or a checkout's target/release/olang)
+```text
+    1.0.0-rc.8  linked              /Users/me/code/olang/target/release/olang (main)
+      1.0.0-rc.8+39e27324 (main, 41 commits past v1.0.0-rc.8)
+      built 2 days before the last commit: `cargo build --release` in /Users/me/code/olang
 ```
 
-A toolchain is a folder `~/.olang/toolchains/<version>/` holding
-`bin/olang`, named for its version. A project's `[package]
-olang` pin picks among them (the lock's exact version first, while the
-manifest still allows it; else the newest that satisfies the
-requirement; else the olang running when it satisfies it).
+A checkout that has moved, been deleted or has no build is marked
+missing, with the command that relinks or unlinks it. A linked build
+never satisfies a project's version pin; a project picks one only by
+name, and only in its own `olang.lock`, because the name means nothing
+on another machine: `otc use main --project` refuses and names `otc use
+main --project --local`.
+
+A project's olang is chosen in this order: its lock's `olang` (an exact
+version, or a linked build's name) while the manifest's `[package] olang`
+still allows it; else the newest installed release satisfying that
+minimum; else the olang running, when it does; else none, and `otc`
+names the command that installs one. `[package] olang` takes a series
+(`"0.88"`) or a full version (`"1.0.0-rc.8"`).
 
 `otc toolchain list` shows every olang on the machine, one row per
-binary however many ways reach it: the managed toolchains and linked
+binary however many ways reach it: the installed releases and linked
 builds, the shims' default in `~/.olang/bin`, and every `olang` on
 PATH (cargo, Homebrew, a checkout's build). Each version is the
 binary's own answer to `--version`, never a folder's name (a folder
@@ -612,18 +847,12 @@ olang` installs something else; Cargo installs olang from its repository
 (`cargo install --locked --git https://github.com/ooyeku/olang.git olang
 otc`, as [Installing olang](installation.md) says).
 
-Inside a project one more line says what its pin resolves to. In
-`--format json` each row is `#{ version, olang, real, kind, folder,
-active, default, on_path }` (`kind` one of `managed`, `linked`,
-`shims`, `cargo`, `homebrew`, `checkout`, `path`), `active` is the
-active row, `shadowed` and `fix` the line above, and `project` `#{
-root, pin, version, olang, install }`.
-
-Installations from Homebrew or cargo are independent of this
-machinery: the list shows them, and removing them is left to their own
-package managers. `otc doctor` shows how the copies of olang and otc on
-PATH shadow one another, and `olang --version --verbose` reports which
-binary answered and from where.
+Inside a project one more line says what its pin resolves to.
+Installations from Homebrew or cargo are independent of this machinery:
+the list shows them, and removing them is left to their own package
+managers. `otc doctor` shows how the copies of olang and otc on PATH
+shadow one another, and `olang --version --verbose` reports which binary
+answered and from where.
 
 Shell completion scripts for both tools come from the tools
 themselves: `otc completions zsh` and `olang completions zsh` (also
