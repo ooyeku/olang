@@ -549,6 +549,11 @@ struct ParsedRequest {
     body: Vec<u8>,
 }
 
+/// A `tchar` (RFC 9110 §5.6.2): what a method or a header name is made of.
+fn is_tchar(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b)
+}
+
 /// Read and parse one HTTP/1.1 request from the stream. Minimal but honest:
 /// request line, headers (keys lowercased), and a Content-Length body.
 /// Errors carry the status they deserve (400/408/413/431), so abuse is
@@ -596,10 +601,17 @@ fn read_request(
     let mut buf: Vec<u8> = std::mem::take(carry);
     buf.reserve(1024);
     let mut chunk = [0u8; 4096];
+    // Where the search for the blank line resumes: only the bytes a read
+    // added (and the three before them) are looked at again. Searching
+    // the whole buffer after every read let a client sending its head a
+    // byte per packet cost the server time growing with the square of
+    // the head's size, a few seconds of CPU per 64 KB request.
+    let mut scan_from = 0usize;
     let head_end = loop {
-        if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
-            break pos;
+        if let Some(pos) = buf[scan_from..].windows(4).position(|w| w == b"\r\n\r\n") {
+            break scan_from + pos;
         }
+        scan_from = buf.len().saturating_sub(3);
         if buf.len() > max_head {
             return Err((431, "request header block too large".to_string()));
         }
@@ -638,19 +650,52 @@ fn read_request(
         }
     };
 
-    let head = String::from_utf8_lossy(&buf[..head_end]).to_string();
+    // The head is read strictly (RFC 9112 §2.2, §5): wherever this server
+    // and a proxy in front of it could read one head two ways, a request
+    // can be smuggled past the proxy inside another. So a bare CR or LF
+    // (a line end to a lenient proxy, part of a value here: a
+    // `Content-Length` hidden behind `X: a\n` desynchronized the stream),
+    // a NUL, whitespace before a header's colon, a folded line, and a
+    // line with no colon are each a 400, never read one way silently.
+    let head_bytes = &buf[..head_end];
+    for (i, &b) in head_bytes.iter().enumerate() {
+        let bad = match b {
+            b'\n' => i == 0 || head_bytes[i - 1] != b'\r',
+            b'\r' => head_bytes.get(i + 1) != Some(&b'\n'),
+            0 => true,
+            _ => false,
+        };
+        if bad {
+            return Err((
+                400,
+                "a request head has a bare CR, a bare LF or a NUL".to_string(),
+            ));
+        }
+    }
+    let head = String::from_utf8_lossy(head_bytes).to_string();
     let mut lines = head.split("\r\n");
 
-    // Request line: METHOD SP target SP version
+    // Request line: METHOD SP target SP version, one space apart.
     let request_line = lines.next().unwrap_or("");
-    let mut parts = request_line.split_whitespace();
-    let method = parts
-        .next()
-        .ok_or_else(|| (400, "malformed request line".to_string()))?
-        .to_uppercase();
-    let target = parts
-        .next()
-        .ok_or_else(|| (400, "malformed request line".to_string()))?;
+    let malformed = || (400, "malformed request line".to_string());
+    let parts: Vec<&str> = request_line.split(' ').collect();
+    let [method, target, version] = parts.as_slice() else {
+        return Err(malformed());
+    };
+    if method.is_empty() || !method.bytes().all(is_tchar) {
+        return Err(malformed());
+    }
+    if target.is_empty() || target.bytes().any(|b| b.is_ascii_control()) {
+        return Err(malformed());
+    }
+    match *version {
+        "HTTP/1.1" | "HTTP/1.0" => {}
+        v if v.starts_with("HTTP/") => {
+            return Err((505, format!("HTTP version {v:?} is not supported")));
+        }
+        _ => return Err(malformed()),
+    }
+    let method = method.to_uppercase();
 
     let (path, raw_query) = match target.split_once('?') {
         Some((p, q)) => (p.to_string(), q.to_string()),
@@ -662,9 +707,22 @@ fn read_request(
 
     let mut headers = Vec::new();
     for line in lines {
-        if let Some((k, v)) = line.split_once(':') {
-            headers.push((k.trim().to_lowercase(), v.trim().to_string()));
+        if line.starts_with([' ', '\t']) {
+            return Err((
+                400,
+                "a header line is folded (obsolete line folding)".to_string(),
+            ));
         }
+        let Some((k, v)) = line.split_once(':') else {
+            return Err((400, format!("a header line has no colon: {line:?}")));
+        };
+        if k.is_empty() || !k.bytes().all(is_tchar) {
+            return Err((400, format!("invalid header name: {k:?}")));
+        }
+        headers.push((
+            k.to_ascii_lowercase(),
+            v.trim_matches([' ', '\t']).to_string(),
+        ));
     }
 
     // A chunked body (RFC 9112 §7.1), which a streaming upload sends:
@@ -672,7 +730,15 @@ fn read_request(
     // (OL-362). Chunked and a Content-Length together are refused (one
     // would be ignored, the shape a request smuggled past a proxy takes),
     // and a coding this server cannot undo is a 501, never a lost body.
-    if let Some((_, te)) = headers.iter().find(|(k, _)| k == "transfer-encoding") {
+    // Every Transfer-Encoding line counts: the first alone was read, so
+    // `chunked` then `identity` on a second line passed as chunked.
+    let te_lines: Vec<&str> = headers
+        .iter()
+        .filter(|(k, _)| k == "transfer-encoding")
+        .map(|(_, v)| v.as_str())
+        .collect();
+    if !te_lines.is_empty() {
+        let te = te_lines.join(", ");
         let codings: Vec<String> = te
             .split(',')
             .map(|c| c.trim().to_ascii_lowercase())
@@ -729,9 +795,13 @@ fn read_request(
                 more(&mut pending)?;
             };
             let line = String::from_utf8_lossy(&pending[..line_end]).to_string();
-            let hex = line.split(';').next().unwrap_or("").trim();
-            let size = usize::from_str_radix(hex, 16)
-                .map_err(|_| (400, format!("invalid chunk size: {:?}", hex)))?;
+            // Hex digits only: `from_str_radix` also takes a sign (`+5`),
+            // and a size a proxy reads differently is a smuggled body.
+            let hex = line.split(';').next().unwrap_or("").trim_end_matches([' ', '\t']);
+            let size = (!hex.is_empty() && hex.len() <= 16 && hex.bytes().all(|b| b.is_ascii_hexdigit()))
+                .then(|| usize::from_str_radix(hex, 16).ok())
+                .flatten()
+                .ok_or_else(|| (400, format!("invalid chunk size: {:?}", hex)))?;
             pending.drain(..line_end + 2);
             if size == 0 {
                 // the trailer section, to its blank line
@@ -750,7 +820,14 @@ fn read_request(
                 }
                 break;
             }
-            if body_bytes.len() + size > max_body {
+            // Checked: a size near usize::MAX wrapped this sum past the
+            // cap, and the slice below then panicked, which aborts the
+            // whole process (one request ended any olang server).
+            if body_bytes
+                .len()
+                .checked_add(size)
+                .is_none_or(|total| total > max_body)
+            {
                 return Err((413, "request body too large".to_string()));
             }
             while pending.len() < size + 2 {
@@ -785,10 +862,12 @@ fn read_request(
     let mut content_length: Option<usize> = None;
     for (_, v) in headers.iter().filter(|(k, _)| k == "content-length") {
         for one in v.split(',') {
-            let n = one
-                .trim()
-                .parse::<usize>()
-                .map_err(|_| (400, format!("invalid Content-Length: {:?}", v)))?;
+            // digits only: `parse` also takes `+5`, which a proxy may not
+            let one = one.trim_matches([' ', '\t']);
+            let n = (!one.is_empty() && one.bytes().all(|b| b.is_ascii_digit()))
+                .then(|| one.parse::<usize>().ok())
+                .flatten()
+                .ok_or_else(|| (400, format!("invalid Content-Length: {:?}", v)))?;
             if content_length.is_some_and(|was| was != n) {
                 return Err((400, "conflicting Content-Length values".to_string()));
             }
@@ -818,7 +897,9 @@ fn read_request(
             Err(e) => return Err((400, e.to_string())),
         };
         if n == 0 {
-            break;
+            // the client closed before its body was whole: the handler
+            // was given the part that came as if it were all of it
+            return Err((400, "connection closed mid-body".to_string()));
         }
         body_bytes.extend_from_slice(&chunk[..n]);
     }
@@ -1091,6 +1172,35 @@ impl Rendered {
             stream.write_all(bytes)?;
         }
         stream.flush()
+    }
+
+    /// The response as sent to a request that gets no body back: an
+    /// answer to `HEAD`, and every 1xx, 204 and 304, end at their header
+    /// block (RFC 9110 §9.3.2, §15.3.5, §15.4.5). A client or proxy reads
+    /// none there, so a body sent anyway was read as the start of the
+    /// next response on the connection (a handler that answers HEAD as it
+    /// answers GET is the common case). A 1xx or 204 says no
+    /// Content-Length either; a HEAD or 304 keeps the GET's.
+    fn for_request(mut self, method: &str) -> Self {
+        let status = std::str::from_utf8(self.head.get(9..12).unwrap_or_default())
+            .ok()
+            .and_then(|s| s.parse::<u16>().ok())
+            .unwrap_or(200);
+        let no_length = (100..200).contains(&status) || status == 204;
+        if !(method == "HEAD" || no_length || status == 304) {
+            return self;
+        }
+        self.shared_body = None;
+        if let Some(end) = self.head.windows(4).position(|w| w == b"\r\n\r\n") {
+            self.head.truncate(end + 4);
+        }
+        if no_length
+            && let Some(at) = self.head.windows(18).position(|w| w == b"\r\nContent-Length: ")
+            && let Some(len) = self.head[at + 2..].windows(2).position(|w| w == b"\r\n")
+        {
+            self.head.drain(at + 2..at + 2 + len + 2);
+        }
+        self
     }
 }
 
@@ -1433,7 +1543,11 @@ thread_local! {
 }
 static CONN_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 /// Connections a handler deferred, waiting for `http.respond`.
-static DEFERRED: std::sync::Mutex<Option<HashMap<u64, (std::net::TcpStream, crate::caps::FsCap)>>> =
+/// Each with its grant and the request's method (a HEAD's answer has no body).
+#[allow(clippy::type_complexity)]
+static DEFERRED: std::sync::Mutex<
+    Option<HashMap<u64, (std::net::TcpStream, crate::caps::FsCap, String)>>,
+> =
     std::sync::Mutex::new(None);
 
 fn http_defer(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
@@ -1559,7 +1673,7 @@ fn http_respond(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         .map_err(|_| "http.respond: the deferred table is poisoned")?
         .as_mut()
         .and_then(|table| table.remove(&ticket));
-    let Some((mut stream, fs)) = parked else {
+    let Some((mut stream, fs, method)) = parked else {
         return Ok(Value::Err(Box::new(Value::String(Arc::new(
             "http.respond: no deferred request holds this ticket (answered already, or the client left)"
                 .to_string(),
@@ -1575,7 +1689,7 @@ fn http_respond(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         ))))));
     }
     // The deferred connection is done after this answer.
-    let rendered = render_handler_response(response, false, fs);
+    let rendered = render_handler_response(response, false, fs).for_request(&method);
     match rendered.write_to(&mut stream) {
         Ok(()) => Ok(Value::Ok(Box::new(Value::Unit))),
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
@@ -1676,7 +1790,7 @@ fn serve_connection(
                     if let Ok(mut table) = DEFERRED.lock() {
                         table
                             .get_or_insert_with(HashMap::new)
-                            .insert(conn_id, (stream, fs_grant));
+                            .insert(conn_id, (stream, fs_grant, req.method.clone()));
                     }
                     return;
                 }
@@ -1713,7 +1827,8 @@ fn serve_connection(
                             shared_body: None,
                         }
                     }
-                };
+                }
+                .for_request(&req.method);
                 if rendered.write_to(&mut stream).is_err() {
                     break;
                 }
@@ -3019,6 +3134,106 @@ mod chunked_tests {
             .unwrap()
             .unwrap();
         assert_eq!(same.body, b"abc");
+    }
+
+    /// A chunk size near usize::MAX after a first chunk wrapped the
+    /// body-size sum past the cap, and the slice after it panicked,
+    /// which aborts the process: one request ended any olang server.
+    #[test]
+    fn a_huge_chunk_size_is_too_large_not_a_crash() {
+        let err = |raw| parse(raw).err().map(|e| e.0);
+        assert_eq!(
+            err(b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\nffffffffffffffff\r\nxx\r\n"),
+            Some(413)
+        );
+        assert_eq!(
+            err(b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n10000000000000000\r\nxx\r\n"),
+            Some(400)
+        );
+    }
+
+    /// Whatever a lenient proxy could read another way is refused, never
+    /// read one way silently: the ways a request is smuggled past one.
+    #[test]
+    fn a_head_read_two_ways_is_refused() {
+        let err = |raw| parse(raw).err().map(|e| e.0);
+        for raw in [
+            // a bare LF hid this Content-Length inside X's value
+            &b"POST / HTTP/1.1\r\nX: a\nContent-Length: 5\r\n\r\nhello"[..],
+            b"POST / HTTP/1.1\r\nX: a\rContent-Length: 5\r\n\r\nhello",
+            b"GET / HTTP/1.1\r\nX: a\0b\r\n\r\n",
+            b"POST / HTTP/1.1\r\nContent-Length : 5\r\n\r\nhello",
+            b"POST / HTTP/1.1\r\nX: a\r\n Content-Length: 5\r\n\r\nhello",
+            b"POST / HTTP/1.1\r\nno colon here\r\n\r\n",
+            b"POST / HTTP/1.1\r\n: empty name\r\n\r\n",
+            b"POST / HTTP/1.1\r\nContent-Length: +5\r\n\r\nhello",
+            b"POST / HTTP/1.1\r\nContent-Length: 0x5\r\n\r\nhello",
+            b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n+5\r\nhello\r\n0\r\n\r\n",
+            b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n 5\r\nhello\r\n0\r\n\r\n",
+            b"GET  / HTTP/1.1\r\n\r\n",
+            b"GET / HTTP/1.1 x\r\n\r\n",
+            b"GET /\r\n\r\n",
+            b"G(T / HTTP/1.1\r\n\r\n",
+            b"GET / FTP/1.1\r\n\r\n",
+        ] {
+            assert_eq!(err(raw), Some(400), "{}", String::from_utf8_lossy(raw));
+        }
+        assert_eq!(err(b"GET / HTTP/2.0\r\n\r\n"), Some(505));
+        // a second Transfer-Encoding line counts: chunked then identity
+        // is not chunked
+        assert_eq!(
+            err(b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: identity\r\n\r\n5\r\nhello\r\n0\r\n\r\n"),
+            Some(501)
+        );
+        // what is still read: tabs around a value, HTTP/1.0, `5 ;ext`
+        let ok = parse(b"POST / HTTP/1.0\r\nX-Tab:\tv\t\r\nTransfer-Encoding: chunked\r\n\r\n5 ;e=1\r\nhello\r\n0\r\n\r\n")
+            .unwrap()
+            .unwrap();
+        assert_eq!(ok.body, b"hello");
+        assert!(ok.headers.contains(&("x-tab".to_string(), "v".to_string())));
+    }
+
+    /// A client that closes before its body is whole gets a 400: the
+    /// handler was given the part that came as if it were all of it.
+    #[test]
+    fn a_body_cut_short_is_refused() {
+        assert_eq!(
+            parse(b"POST / HTTP/1.1\r\nContent-Length: 100\r\n\r\nabc")
+                .err()
+                .map(|e| e.0),
+            Some(400)
+        );
+    }
+
+    /// A HEAD's answer, and a 1xx, 204 or 304, end at the header block: a
+    /// body sent there was read as the next response on the connection.
+    #[test]
+    fn a_response_that_has_no_body_sends_none() {
+        let text = |r: super::Rendered| String::from_utf8(r.head).unwrap();
+        let plain = || super::Rendered {
+            head: super::response_bytes(200, "hello", &[], true),
+            shared_body: None,
+        };
+        let head = text(plain().for_request("HEAD"));
+        assert!(head.ends_with("\r\n\r\n"), "{head:?}");
+        assert!(head.contains("Content-Length: 5\r\n"), "{head:?}");
+        assert!(text(plain().for_request("GET")).ends_with("hello"));
+        for (status, length) in [(204, false), (304, true), (101, false)] {
+            let r = super::Rendered {
+                head: super::response_bytes(status, "body", &[], true),
+                shared_body: None,
+            };
+            let head = text(r.for_request("GET"));
+            assert!(head.ends_with("\r\n\r\n"), "{status}: {head:?}");
+            assert_eq!(head.contains("Content-Length"), length, "{status}: {head:?}");
+            assert!(head.contains("Connection: keep-alive"), "{status}: {head:?}");
+        }
+        let shared = super::Rendered {
+            head: super::raw_head(200, 3, &[], true),
+            shared_body: Some(crate::stdlib::bytes::to_value(b"abc".to_vec())),
+        }
+        .for_request("HEAD");
+        assert!(shared.shared_body.is_none());
     }
 
     /// A handler's own Content-Length, Transfer-Encoding and Connection
