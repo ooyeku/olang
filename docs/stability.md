@@ -65,7 +65,7 @@ from the frozen core outward:
 |---|---|---|
 | **Stable** | Syntax and behavior are frozen. A documented program keeps parsing and keeps giving the same result, under the semver contract above. | the core language, macros, the listed stdlib modules, `cell`, `testing` |
 | **Stable in behavior, evolving in scope** | Every documented function behaves as written, permanently. The *set* of functions grows additively; nothing existing changes. | concurrency, the execution tiers, the data stack, gradual typing, `runtime`, `asset`, `collections` |
-| **Experimental** | The model is settled and tested, but the surface may still change: a minor release may change or remove an Experimental function, option or field, with a CHANGELOG note saying what to change ([Versioning](#versioning)). Build on it knowing that. | capabilities and `caps`, `http.serve`, `dom`, `gui`, `tty`, `pty`, `vt`, `sim`, `peg` |
+| **Experimental** | The model is settled and tested, but the surface may still change: a minor release may change or remove an Experimental function, option or field, with a CHANGELOG note saying what to change ([Versioning](#versioning)). Build on it knowing that. | capabilities and `caps`, `http.serve`, `dom`, `gui`, `tty`, `pty`, `vt`, `toad`, `sim`, `peg` |
 | **Reserved** | Not accepted at all. Writing one is a parse error, and if it ever gains meaning that will be purely additive. | intersection annotations (`A & B`) |
 
 Every module stdlib.md documents sits in exactly one tier. A name the
@@ -277,6 +277,11 @@ entry saying so; nothing graduates silently.
   family, a window's `panel`, `gui.accessory` and `gui.notify`, and the
   `status`, `dismiss` and `notification` events — are the newest of
   them (macOS only; `Err("unsupported")` elsewhere).
+- **`toad`**: the game engine's kernels, swarms, frames and sound. Like
+  `gui` its surface still grows, so a kernel's, a swarm's or a sound's
+  options and a frame's fields may change in a minor release; the
+  recording calls (`toad.tape`, `toad.mic`, `toad.mics`) are the newest
+  of it.
 - **`sim`** — simulated worlds. A seed decides every run, and the same
   seed on the same olang is the same run; that promise holds. The
   surface around it (a world's and a node's options, a run's fields,
