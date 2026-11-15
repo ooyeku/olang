@@ -219,6 +219,9 @@ pub(crate) fn apply_env(
     for k in removed {
         command.env_remove(k);
     }
+    // what restricted code's child gets: no environment past a few
+    // variables when it is denied `env`, and its grant (OL-623)
+    crate::caps::apply_child_policy(command, crate::caps::child_policy(), set);
 }
 
 /// The `Command` for `program` as a child would find it, looked up on

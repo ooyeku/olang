@@ -8915,10 +8915,10 @@ route("GET", "/olang." + map_get(rt, "hash") + ".wasm", (req, p) => { status: 20
         );
         self.doc_ex(
             "compress.unbrotli",
-            "compress.unbrotli(b)",
+            "compress.unbrotli(b, opts?)",
             "Result",
             "Bytes",
-            "Brotli decoded: Ok(Bytes), or Err for bytes that are not brotli.",
+            "Brotli decoded: Ok(Bytes), or Err for bytes that are not brotli or that decode to more than max_bytes (#{\"max_bytes\": n}; by default the smaller of 1 GiB and 1000 times the input).",
             &[r##"unwrap(compress.unbrotli(compress.brotli("hi")))"##],
         );
         self.doc_ex(
@@ -8970,7 +8970,7 @@ for row in take(map_get(p, "rows"), 5) { println(map_get(row, "function") + " " 
             "runtime.code_layer()",
             "Map",
             "runtime",
-            "How this macOS application booted, when its Info.plist names a code layers folder (OlangLayersDirectory): #{ \"layers\", \"active\", \"running\", \"tries\", \"max_tries\", \"fallback\" }. running is the layer that runs, or () when the bundled program does; fallback says why the active layer is not running (its tries used up, a signature that does not verify, a payload built by another olang). () in any other program. The runtime counts each try in state.json; the program sets tries back to 0 once the layer works.",
+            "How this macOS application booted, when its Info.plist names a code layers folder (OlangLayersDirectory): #{ \"layers\", \"active\", \"running\", \"tries\", \"max_tries\", \"fallback\" }. running is the layer that runs, or () when the bundled program does; fallback says why the active layer is not running (its tries used up, a signature that does not verify as the version its folder names, a version older than the application's CFBundleShortVersionString, a payload built by another olang). () in any other program. The runtime counts each try in state.json; the program sets tries back to 0 once the layer works.",
             &[r##"let boot = runtime.code_layer()
 if boot != () && boot.running != () => println("running layer " + boot.running) else => {}"##],
         );
@@ -8995,8 +8995,8 @@ if boot != () && boot.running != () => println("running layer " + boot.running) 
             "runtime.load_module(path, grant)",
             "Result",
             "runtime",
-            "Load the olang file at `path` into this running program as a module, read afresh (every module cached from its folder forgotten first, so an edited file is read again), its code — everything under the file's folder — held to `grant`: #{ \"name\", \"fs\": false | \"read\" | true, \"fs_roots\": [folders the fs grant holds under], \"proc\": false | true | [programs it may run, by file name or path], \"net\", \"db\", \"env\" }, a key left out denied; and never the host's own builtins (gui, tty, loading modules, the process's profiler). Ok(module) — its shared names as fields — or Err(message), the folder's previous grant kept and the error's frames in runtime.last_error(). How a host (olang Studio) runs plugins in its own VM.",
-            &[r##"match runtime.load_module("plugins/hello/plugin.ol", #{ "name": "hello", "fs": "read", "fs_roots": ["."], "proc": ["olang"] }) { Ok(m) => println(m.greet("you")), Err(e) => println(e) }"##],
+            "Load the olang file at `path` into this running program as a module, read afresh (every module cached from its folder forgotten first, so an edited file is read again), its code — everything under the file's folder — held to `grant`: #{ \"name\", \"fs\": false | \"read\" | true, \"fs_roots\": [folders the fs grant holds under], \"proc\": false | true | [programs it may run, by file name or path], \"net\", \"db\", \"env\" }, a key left out denied; and never the host's own builtins (gui, tty, loading modules, the process's profiler). `proc`, or an interpreter in its list (olang, sh, python, git, env), amounts to every capability: the program it starts is outside the gate. List only programs that do one fixed thing. Ok(module) — its shared names as fields — or Err(message), the folder's previous grant kept and the error's frames in runtime.last_error(). How a host (olang Studio) runs plugins in its own VM.",
+            &[r##"match runtime.load_module("plugins/hello/plugin.ol", #{ "name": "hello", "fs": "read", "fs_roots": ["."], "proc": ["wc"] }) { Ok(m) => println(m.greet("you")), Err(e) => println(e) }"##],
         );
         self.doc_ex(
             "runtime.unload_module",
@@ -9093,10 +9093,10 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
         );
         self.doc_ex(
             "compress.gunzip",
-            "compress.gunzip(b)",
+            "compress.gunzip(b, opts?)",
             "Result",
             "Bytes",
-            "Decode gzip data: Ok(Bytes), or Err(message) when the input is not gzip.",
+            "Decode gzip data: Ok(Bytes), or Err(message) when the input is not gzip or decodes to more than max_bytes. #{\"max_bytes\": n} sets the limit; the default is the smaller of 1 GiB and 1000 times the input (the same for inflate and unbrotli).",
             &[r##"unwrap(bytes.to_string(unwrap(compress.gunzip(packed))))"##],
         );
         self.doc_ex(
@@ -13457,7 +13457,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
                 "asset.read",
                 "asset.read(package, path)",
                 "Result<Bytes, String>",
-                "A file the package ships beside its code (fonts, images, data), by the package's name: from its directory, or from the application built with `olang build --app` (the package lists it under `assets`).",
+                "A file the package ships beside its code (fonts, images, data), by the package's name: from its directory, or from the application built with `olang build --app`. Only files under the package's `assets` (in its olang.toml) are read, from source as in a built application; any other path is an Err naming the `assets` list.",
             ),
             (
                 "asset.exists",
@@ -13478,7 +13478,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
                 syntax: syntax.to_string(),
                 parameters: vec![
                     "package: String - this project's name or a dependency's".to_string(),
-                    "path: String - inside the package".to_string(),
+                    "path: String - under one of the package's `assets`".to_string(),
                 ],
                 return_type: ret.to_string(),
                 examples: vec!["asset.read(\"loom\", \"fonts/Inter.ttf.br\")".to_string()],

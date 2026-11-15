@@ -1044,7 +1044,7 @@ A host can load code it did not write into its own running program — a
 plugin — and hold that code to a grant of its own:
 
 ```olang no-run
-let grant = { name: "tier-map", fs: "read", fs_roots: ["/work/project"], proc: ["olang"] }
+let grant = { name: "tier-map", fs: "read", fs_roots: ["/work/project"], proc: ["wc"] }
 match runtime.load_module("/work/plugins/tier-map/plugin.ol", grant) {
     Ok(m) => {
         let r = runtime.call_budget(m.on, [state, event], 250)
@@ -1064,6 +1064,19 @@ match runtime.load_module("/work/plugins/tier-map/plugin.ol", grant) {
   under those folders only (a path's `..` resolved, its real path
   compared); `proc` may be a list of the programs it may run, matched by
   file name or whole path.
+- **`proc` is every capability.** A program a module may start runs
+  outside the gate, with whatever it can reach. Granting `proc`, or
+  naming an interpreter or a program that runs others in its allow-list
+  (`olang`, `sh`, `python`, `node`, `git` through `-c core.sshCommand`,
+  `env`, `xargs`), amounts to granting everything: the child can read,
+  write, connect and run what it likes. List only programs that do one
+  fixed thing with their arguments (`wc`, `gzip`). olang narrows what it
+  can: a child of code denied `env` starts with only `PATH`, `HOME`,
+  `LANG` and `TMPDIR` from the environment (and what the call's own
+  `env` option sets); a module may not set `DYLD_*` or `LD_*` in a
+  child's `env`; and restricted code's grant goes to its child as
+  `OLANG_DENY`, so an `olang` child (a run or `olang eval`) is held to
+  it. A child that is not olang is held to none of it.
 - **Never the host's.** `gui`, `tty`, loading and unloading modules and
   the process's own profiler are refused a loaded module (capability
   `host`): its code cannot draw, take the terminal, or grant itself more.

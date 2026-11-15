@@ -1278,7 +1278,15 @@ already binds — an import never replaces a program's own name. Alias the impor
             return Ok(path);
         }
 
-        if let Ok(path) = self.discover_module_project_root(module_path) {
+        // A dependency's `use` resolves inside its own package and its
+        // declared dependencies, never the program's project root: a file
+        // found there lives in the app's folder and would run with the
+        // app's grant, so a dependency held to `proc = false` (or one with
+        // `fs` write that drops a module beside the program) would get
+        // every capability back (OL-618).
+        if !self.importing_from_a_dependency()
+            && let Ok(path) = self.discover_module_project_root(module_path)
+        {
             if crate::boot_trace::on() {
                 crate::boot_trace::mark(&format!(
                     "use {}: {} (the project)",
@@ -1564,6 +1572,23 @@ already binds — an import never replaces a program's own name. Alias the impor
         }
     }
 
+    /// Whether the module doing the `use` lives inside a declared
+    /// dependency's package (its real location under a dependency root).
+    fn importing_from_a_dependency(&self) -> bool {
+        let Some(current) = self.current_module_path.as_deref() else {
+            return false;
+        };
+        if current.starts_with("__") {
+            return false;
+        }
+        let start = std::path::Path::new(current);
+        let start = std::fs::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
+        self.dependency_map.values().any(|root| {
+            let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.clone());
+            start.starts_with(&root)
+        })
+    }
+
     /// 2. Check relative to project root
     fn discover_module_project_root(
         &self,
@@ -1721,7 +1746,12 @@ already binds — an import never replaces a program's own name. Alias the impor
             searched_paths.push(format!("Same directory: {}", current_dir.display()));
         }
 
-        if let Ok(project_root) = self.detect_project_root() {
+        if self.importing_from_a_dependency() {
+            searched_paths.push(
+                "The dependency's own package and its dependencies (never the program's project root)"
+                    .to_string(),
+            );
+        } else if let Ok(project_root) = self.detect_project_root() {
             searched_paths.push(format!("Project root: {}", project_root.display()));
         }
 

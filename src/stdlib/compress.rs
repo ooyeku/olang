@@ -81,34 +81,24 @@ pub fn call_compress_function(
         }
         #[cfg(feature = "native")]
         "unbrotli" => {
-            let input = input_bytes(&args, "unbrotli", 1)?;
-            let mut out = Vec::new();
-            Ok(
-                match ::brotli::Decompressor::new(input, 4096).read_to_end(&mut out) {
-                    Ok(_) => Value::Ok(Box::new(bytes::to_value(out))),
-                    Err(e) => err(format!("unbrotli: {}", e)),
-                },
-            )
+            let (input, cap) = decode_args(&args, "unbrotli")?;
+            Ok(capped(
+                ::brotli::Decompressor::new(input, 4096),
+                cap,
+                "unbrotli",
+            ))
         }
         "gunzip" => {
-            let input = input_bytes(&args, "gunzip", 1)?;
-            let mut out = Vec::new();
-            Ok(
-                match flate2::read::GzDecoder::new(input).read_to_end(&mut out) {
-                    Ok(_) => Value::Ok(Box::new(bytes::to_value(out))),
-                    Err(e) => err(format!("gunzip: {}", e)),
-                },
-            )
+            let (input, cap) = decode_args(&args, "gunzip")?;
+            Ok(capped(flate2::read::GzDecoder::new(input), cap, "gunzip"))
         }
         "inflate" => {
-            let input = input_bytes(&args, "inflate", 1)?;
-            let mut out = Vec::new();
-            Ok(
-                match flate2::read::DeflateDecoder::new(input).read_to_end(&mut out) {
-                    Ok(_) => Value::Ok(Box::new(bytes::to_value(out))),
-                    Err(e) => err(format!("inflate: {}", e)),
-                },
-            )
+            let (input, cap) = decode_args(&args, "inflate")?;
+            Ok(capped(
+                flate2::read::DeflateDecoder::new(input),
+                cap,
+                "inflate",
+            ))
         }
         _ => Err(format!("Unknown compress function: {}", name).into()),
     }
@@ -131,6 +121,62 @@ pub fn brotli(input: &[u8], quality: u32) -> Result<Vec<u8>, Box<dyn std::error:
         writer.flush()?;
     }
     Ok(out)
+}
+
+/// The default limit on what one decode may produce: the smaller of
+/// 1 GiB and 1000 times the input, so a decompression bomb (194 KB of
+/// gzip that is 200 MB of zeros, or a 10 MB request body that is 10 GB)
+/// fails fast instead of taking the process's memory (OL-620).
+pub const DEFAULT_MAX_BYTES: u64 = 1 << 30;
+
+fn default_cap(input_len: usize) -> u64 {
+    DEFAULT_MAX_BYTES.min((input_len as u64).saturating_mul(1000))
+}
+
+/// A decoder's arguments: the data, and the limit from an optional
+/// `#{ "max_bytes": n }` (or the default).
+fn decode_args<'a>(args: &'a [Value], name: &str) -> Result<(&'a [u8], u64), String> {
+    let opts = match args.len() {
+        1 => None,
+        2 => match &args[1] {
+            Value::Map(m) => Some(m.as_ref().clone()),
+            Value::Unit => None,
+            r => match r.record_fields() {
+                Some(f) => Some(f.clone()),
+                None => {
+                    return Err(format!(
+                        "compress.{name}(data, opts): opts is a map like #{{ \"max_bytes\": n }}, got {}",
+                        r.type_name()
+                    ));
+                }
+            },
+        },
+        n => return Err(format!("compress.{name} expects 1 or 2 arguments, got {n}")),
+    };
+    let input = input_bytes(&args[..1], name, 1)?;
+    let cap = match opts.as_ref().and_then(|o| o.get("max_bytes")) {
+        None | Some(Value::Unit) => default_cap(input.len()),
+        Some(Value::Integer(n)) if *n >= 0 => *n as u64,
+        Some(_) => {
+            return Err(format!(
+                "compress.{name}: \"max_bytes\" is a whole number of bytes"
+            ));
+        }
+    };
+    Ok((input, cap))
+}
+
+/// Read a decoder to its end, but no further than `cap` bytes: one byte
+/// past it is an Err rather than more memory.
+fn capped(reader: impl Read, cap: u64, name: &str) -> Value {
+    let mut out = Vec::new();
+    match reader.take(cap.saturating_add(1)).read_to_end(&mut out) {
+        Ok(_) if out.len() as u64 > cap => err(format!(
+            "{name}: the decoded data is larger than max_bytes ({cap} bytes)"
+        )),
+        Ok(_) => Value::Ok(Box::new(bytes::to_value(out))),
+        Err(e) => err(format!("{name}: {e}")),
+    }
 }
 
 fn err(message: String) -> Value {
@@ -183,6 +229,42 @@ mod tests {
         assert!(matches!(back, Value::Ok(_)));
         let bad = call_compress_function("gunzip", vec![s("not gzip")]).unwrap();
         assert!(matches!(bad, Value::Err(_)));
+    }
+
+    /// OL-620: a decompression bomb stops at `max_bytes`, and the default
+    /// cap (1000x the input) holds without one.
+    #[test]
+    fn a_decode_past_max_bytes_is_an_err() {
+        let bomb = gzip(&vec![0u8; 2_000_000], 9).unwrap();
+        let opts = |n| {
+            let mut m = crate::ast::ValueMap::default();
+            m.insert("max_bytes".to_string(), Value::Integer(n));
+            Value::Map(Arc::new(m))
+        };
+        let message = |v: Value| match &v {
+            Value::Err(e) => e.to_string(),
+            other => panic!("expected Err, got {:?}", other),
+        };
+        let packed = bytes::to_value(bomb.clone());
+        assert!(
+            message(call_compress_function("gunzip", vec![packed.clone(), opts(1000)]).unwrap())
+                .contains("larger than max_bytes")
+        );
+        assert!(matches!(
+            call_compress_function("gunzip", vec![packed, opts(2_000_000)]).unwrap(),
+            Value::Ok(_)
+        ));
+        // ~2 KB of gzip is 2 MB of zeros: past 1000x its size
+        assert!(bomb.len() * 1000 < 2_000_000);
+        assert!(
+            message(call_compress_function("gunzip", vec![bytes::to_value(bomb)]).unwrap())
+                .contains("larger than max_bytes")
+        );
+        let deflated = call_compress_function("deflate", vec![s(&"a".repeat(5000))]).unwrap();
+        assert!(
+            message(call_compress_function("inflate", vec![deflated, opts(10)]).unwrap())
+                .contains("larger than max_bytes")
+        );
     }
 
     #[cfg(feature = "native")]

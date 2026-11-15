@@ -1,6 +1,7 @@
 //! Code layers (OL-445): an application whose Info.plist names a layers
 //! folder boots the active layer when its Ed25519 signature verifies with
-//! the key in the bundle and it was built for this runtime, counts each
+//! the key in the bundle (as the version its folder names, no older than
+//! the bundle's own) and it was built for this runtime, counts each
 //! try in the state file, and falls back to the bundled program once the
 //! tries are used up, or when any check fails, saying why.
 
@@ -57,7 +58,7 @@ fn app(base: &Path) -> App {
     fs::write(
         bundle.join("Info.plist"),
         format!(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n<key>CFBundleExecutable</key><string>T</string>\n<key>CFBundleIdentifier</key><string>dev.olang.layertest</string>\n<key>CFBundlePackageType</key><string>APPL</string>\n<key>OlangLayersDirectory</key><string>{}</string>\n</dict></plist>\n",
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n<key>CFBundleExecutable</key><string>T</string>\n<key>CFBundleIdentifier</key><string>dev.olang.layertest</string>\n<key>CFBundlePackageType</key><string>APPL</string>\n<key>CFBundleShortVersionString</key><string>1.2.0</string>\n<key>OlangLayersDirectory</key><string>{}</string>\n</dict></plist>\n",
             layers.display()
         ),
     )
@@ -78,9 +79,15 @@ fn put_layer(app: &App, id: &str, program: &[u8], signed_by: &ed25519_dalek::Sig
     let dir = app.layers.join(id);
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("app.olb"), program).unwrap();
+    // the signature covers "olang-layer\0" || version || "\0" || bytes
+    // (OL-621); the layer's folder is its version
+    let mut message = b"olang-layer\0".to_vec();
+    message.extend_from_slice(id.as_bytes());
+    message.push(0);
+    message.extend_from_slice(program);
     fs::write(
         dir.join("app.olb.sig"),
-        b64(&signed_by.sign(program).to_bytes()),
+        b64(&signed_by.sign(&message).to_bytes()),
     )
     .unwrap();
 }
@@ -121,27 +128,27 @@ fn a_signed_layer_boots_counts_its_tries_and_falls_back() {
     assert_eq!(boot(&app), "bundled running=() tries=0 fallback=()");
 
     let layer = payload(&base, "layer", "layer");
-    put_layer(&app, "v2", &layer, &app.key);
-    set_state(&app, "v2", 0, 2);
-    assert_eq!(boot(&app), "layer running=v2 tries=1 fallback=()");
+    put_layer(&app, "1.3.0", &layer, &app.key);
+    set_state(&app, "1.3.0", 0, 2);
+    assert_eq!(boot(&app), "layer running=1.3.0 tries=1 fallback=()");
     assert_eq!(tries(&app), 1);
-    assert_eq!(boot(&app), "layer running=v2 tries=2 fallback=()");
+    assert_eq!(boot(&app), "layer running=1.3.0 tries=2 fallback=()");
     // its tries used up without the program marking it good
     let out = boot(&app);
     assert!(
-        out.starts_with("bundled running=() tries=2 fallback=layer v2 was tried 2 times"),
+        out.starts_with("bundled running=() tries=2 fallback=layer 1.3.0 was tried 2 times"),
         "{out}"
     );
     assert_eq!(tries(&app), 2, "a fallback counts nothing");
 
     // the program marks it good: tries back to 0, and it boots again
-    set_state(&app, "v2", 0, 2);
-    assert!(boot(&app).starts_with("layer running=v2"));
+    set_state(&app, "1.3.0", 0, 2);
+    assert!(boot(&app).starts_with("layer running=1.3.0"));
 
     // signed by another key
     let stranger = ed25519_dalek::SigningKey::from_bytes(&[9u8; 32]);
-    put_layer(&app, "v3", &layer, &stranger);
-    set_state(&app, "v3", 0, 3);
+    put_layer(&app, "1.4.0", &layer, &stranger);
+    set_state(&app, "1.4.0", 0, 3);
     let out = boot(&app);
     assert!(
         out.contains("bundled") && out.contains("signature does not verify"),
@@ -150,12 +157,12 @@ fn a_signed_layer_boots_counts_its_tries_and_falls_back() {
     assert_eq!(tries(&app), 0);
 
     // a changed byte after signing
-    put_layer(&app, "v4", &layer, &app.key);
+    put_layer(&app, "1.5.0", &layer, &app.key);
     let mut bad = layer.clone();
     let at = bad.len() / 2;
     bad[at] ^= 1;
-    fs::write(app.layers.join("v4/app.olb"), &bad).unwrap();
-    set_state(&app, "v4", 0, 3);
+    fs::write(app.layers.join("1.5.0/app.olb"), &bad).unwrap();
+    set_state(&app, "1.5.0", 0, 3);
     assert!(boot(&app).contains("signature does not verify"));
 
     // signed properly, but built by another runtime
@@ -168,21 +175,43 @@ fn a_signed_layer_boots_counts_its_tries_and_falls_back() {
         .expect("the record names its version");
     let mut other = layer.clone();
     other[at..at + to.len()].copy_from_slice(to.as_bytes());
-    put_layer(&app, "v5", &other, &app.key);
-    set_state(&app, "v5", 0, 3);
+    put_layer(&app, "1.6.0", &other, &app.key);
+    set_state(&app, "1.6.0", 0, 3);
     let out = boot(&app);
     assert!(
         out.contains("bundled") && out.contains("built by olang 9"),
         "{out}"
     );
 
+    // OL-621: a rollback. An older layer its publisher signed is refused
+    // below the bundle's own version, and a signed layer copied into a
+    // newer version's folder does not verify as that version.
+    put_layer(&app, "1.0.0", &layer, &app.key);
+    set_state(&app, "1.0.0", 0, 3);
+    let out = boot(&app);
+    assert!(
+        out.contains("bundled") && out.contains("older than the application's own program (1.2.0)"),
+        "{out}"
+    );
+    let renamed = app.layers.join("9.9.9");
+    fs::create_dir_all(&renamed).unwrap();
+    for f in ["app.olb", "app.olb.sig"] {
+        fs::copy(app.layers.join("1.3.0").join(f), renamed.join(f)).unwrap();
+    }
+    set_state(&app, "9.9.9", 0, 3);
+    let out = boot(&app);
+    assert!(
+        out.contains("bundled") && out.contains("signature does not verify"),
+        "{out}"
+    );
+
     // a name that is no folder's
-    set_state(&app, "../v2", 0, 3);
+    set_state(&app, "../1.3.0", 0, 3);
     assert!(boot(&app).contains("is not a folder's name"));
 
     // no key in the bundle: no layer runs
     fs::remove_file(base.join("T.app/Contents/Resources/layers.pub")).unwrap();
-    set_state(&app, "v2", 0, 3);
+    set_state(&app, "1.3.0", 0, 3);
     let out = boot(&app);
     assert!(
         out.contains("bundled") && out.contains("public key"),

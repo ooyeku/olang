@@ -15,6 +15,14 @@
 //! <layers>/1.4.0/app.olb.sig its Ed25519 signature, base64
 //! ```
 //!
+//! The signature covers `"olang-layer\0" || version || "\0" || app.olb`,
+//! where the version is the layer folder's name, so a signed program
+//! cannot be passed off as another version by renaming its folder; and a
+//! layer whose version is lower than the bundle's own
+//! (`CFBundleShortVersionString`) is refused, so whoever can write the
+//! folder cannot roll the program back to an older signed one, a
+//! vulnerability since fixed included (OL-621).
+//!
 //! At start the runtime reads the state, and boots the active layer only
 //! when its signature verifies with the bundle's key, its payload was
 //! built for this runtime (OL-443), and it has been tried fewer than
@@ -134,6 +142,19 @@ fn pick(
             state.tries
         ));
     }
+    let version = semver::Version::parse(&active)
+        .map_err(|_| format!("layer {active}: its name is not a version (like 1.4.0)"))?;
+    let floor = info_string("CFBundleShortVersionString").ok_or_else(|| {
+        format!("layer {active}: the application's Info.plist has no CFBundleShortVersionString to hold layers to")
+    })?;
+    let floor = semver::Version::parse(floor.trim()).map_err(|_| {
+        format!("layer {active}: the application's CFBundleShortVersionString \"{floor}\" is not a version")
+    })?;
+    if version < floor {
+        return Err(format!(
+            "layer {active} is older than the application's own program ({floor})"
+        ));
+    }
     let key = public_key(bundle)?;
     let layer = dir.join(&active);
     let program = std::fs::read(layer.join("app.olb"))
@@ -142,9 +163,9 @@ fn pick(
         .map_err(|e| format!("layer {active}: app.olb.sig: {e}"))?;
     let sig = decode_b64::<64>(sig_text.trim())
         .ok_or_else(|| format!("layer {active}: app.olb.sig is not a base64 Ed25519 signature"))?;
-    if !crate::stdlib::crypto::ed25519_verify_raw(&key, &sig, &program) {
+    if !crate::stdlib::crypto::ed25519_verify_raw(&key, &sig, &signed_message(&active, &program)) {
         return Err(format!(
-            "layer {active}: its signature does not verify with the application's key"
+            "layer {active}: its signature does not verify with the application's key (as version {active})"
         ));
     }
     runtime_ok(&program).map_err(|why| format!("layer {active}: {why}"))?;
@@ -160,6 +181,18 @@ fn pick(
     status.tries = state.tries;
     status.running = Some(active);
     Ok(Some(program))
+}
+
+/// What a layer's signature covers: `"olang-layer\0" || version || "\0"
+/// || program`. The version is signed with the bytes, so a layer cannot
+/// be renamed to a newer version than the one its publisher signed.
+pub fn signed_message(version: &str, program: &[u8]) -> Vec<u8> {
+    let mut m = Vec::with_capacity(13 + version.len() + program.len());
+    m.extend_from_slice(b"olang-layer\0");
+    m.extend_from_slice(version.as_bytes());
+    m.push(0);
+    m.extend_from_slice(program);
+    m
 }
 
 /// Replace the state file whole (a temporary beside it, renamed).
