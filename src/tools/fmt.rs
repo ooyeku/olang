@@ -147,8 +147,12 @@ fn is_keyword(w: &str) -> bool {
     )
 }
 
+// `<<` and `>>` are one token each: split, the shifts came out as `1 < < 4`,
+// which no longer parses, and fmt skipped every file that used one (OL-528).
+// A type's `>>` (`Map<String, List<Int>>`) closes two brackets in
+// `type_angles`.
 const MULTI_OPS: &[&str] = &[
-    "...", "|>", "=>", "->", "==", "!=", "<=", ">=", "&&", "||", "??", "..", "#{",
+    "...", "|>", "=>", "->", "==", "!=", "<=", ">=", "&&", "||", "??", "..", "#{", "<<", ">>",
 ];
 
 /// Tokenize one line known to start in Code mode. Returns the tokens,
@@ -463,6 +467,11 @@ fn type_angles(toks: &[Tok]) -> Vec<bool> {
                 }
                 (TokKind::Op, ">") => {
                     depth -= 1;
+                    marks.push(j);
+                    true
+                }
+                (TokKind::Op, ">>") if depth >= 2 => {
+                    depth -= 2;
                     marks.push(j);
                     true
                 }
@@ -961,6 +970,32 @@ mod tests {
             "if N < M && M > K => 1\n"
         );
         assert_eq!(format_source("let c = x<Y\n"), "let c = x < Y\n");
+    }
+
+    #[test]
+    fn shifts_are_one_operator_and_keep_the_ast() {
+        // OL-528: `<<`/`>>` were split into `< <`, the gate saw a changed
+        // AST, and every file with a shift was skipped.
+        let parser = Parser::new();
+        for (src, want) in [
+            ("let a = 1<<4\n", "let a = 1 << 4\n"),
+            ("let a = (1 << 4)\n", "let a = (1 << 4)\n"),
+            ("let a = x>>2\n", "let a = x >> 2\n"),
+            ("let a = (x<<2)|3\n", "let a = (x << 2) | 3\n"),
+            ("fn f() = 1 << 3\n", "fn f() = 1 << 3\n"),
+            (
+                "let m: Map<String, List<Int>> = #{}\n",
+                "let m: Map<String, List<Int>> = #{}\n",
+            ),
+        ] {
+            let out = format_source(src);
+            assert_eq!(out, want, "from {src:?}");
+            assert_eq!(
+                parser.parse_raw(src).unwrap(),
+                parser.parse_raw(&out).unwrap(),
+                "AST changed for {src:?}"
+            );
+        }
     }
 
     #[test]
