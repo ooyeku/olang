@@ -67,6 +67,52 @@ fn test_runner_green_suite_exits_zero() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `--only` runs no file without a matching block, and a file error is
+/// printed under its own file's heading (OL-349).
+#[test]
+fn test_only_leaves_out_files_without_a_match_and_heads_a_file_error() {
+    let dir = fixture_dir("only_setup");
+    std::fs::write(
+        dir.join("a_test.ol"),
+        "test \"doubling works\" { assert_eq(2 * 2, 4) }\ntest \"after red\" { assert_true(true) }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("b_test.ol"),
+        "let x = 1 / 0\ntest \"never\" { assert_true(true) }\n",
+    )
+    .unwrap();
+    let run = |args: &[&str]| {
+        let out = olang().arg("test").args(args).current_dir(&dir).output().unwrap();
+        (out.status.code(), String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+    let (code, stdout) = run(&["--only", "after"]);
+    assert_eq!(code, Some(0), "{stdout}");
+    assert!(stdout.contains("1 passed, 0 failed"), "{stdout}");
+    assert!(!stdout.contains("b_test"), "{stdout}");
+
+    let (code, stdout) = run(&["--only", "zzz", "--fail-if-none"]);
+    assert_eq!(code, Some(1), "{stdout}");
+    assert!(stdout.contains("0 passed, 0 failed"), "{stdout}");
+
+    // a file that does match: its setup error sits under its own heading
+    let (code, stdout) = run(&["--only", "never"]);
+    assert_eq!(code, Some(1), "{stdout}");
+    let heading = stdout.find("b_test.ol").expect(&stdout);
+    let error = stdout.find("file error").expect(&stdout);
+    assert!(heading < error, "{stdout}");
+
+    let out = olang()
+        .args(["test", "--only", "after", "--format", "json"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains(r#""event":"skipped""#) && text.contains("never"), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn test_runner_ignores_files_without_test_blocks() {
     let dir = fixture_dir("none");
@@ -286,6 +332,43 @@ fn bench_fails_cleanly_on_broken_programs_and_bad_paths() {
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(2));
+}
+
+/// One failing file is reported with the child's own error and the run
+/// goes on to the rest, ending with `finished` and exit 1 (OL-366).
+#[test]
+fn bench_reports_a_failing_file_and_times_the_others() {
+    let dir = fixture_dir("bench_goes_on");
+    std::fs::write(dir.join("bad.ol"), "println(1 / 0)\n").unwrap();
+    std::fs::write(dir.join("good.ol"), "println(1 + 1)\n").unwrap();
+    let out = olang()
+        .args(["bench", "bad.ol", "good.ol", "--runs", "1", "--save", "base.json"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stdout}{stderr}");
+    assert!(stderr.contains("Division by zero"), "the child's reason is lost: {stderr}");
+    assert!(stdout.contains("good"), "the file after the failure was never timed: {stdout}");
+    assert!(stderr.contains("1 of 2 file(s) failed; no baseline saved"), "{stderr}");
+    assert!(!dir.join("base.json").exists(), "a partial baseline was saved");
+
+    let out = olang()
+        .args(["bench", "bad.ol", "good.ol", "--runs", "1", "--format", "json"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let events: Vec<serde_json::Value> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let kinds: Vec<&str> = events.iter().map(|e| e["event"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["start", "error", "result", "finished"], "{events:?}");
+    assert!(events[1]["message"].as_str().unwrap().contains("Division by zero"), "{events:?}");
+    assert_eq!(events[3]["failed"], 1);
+    assert_eq!(events[3]["files"], 1);
 }
 
 /// `olang test` answers for the project's own files: its `lib/` modules'

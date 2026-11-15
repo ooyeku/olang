@@ -32,6 +32,16 @@ struct Entry {
     /// Disconnected once the task's thread ends (it holds the only
     /// sender): what a join waits on.
     done: crossbeam_channel::Receiver<()>,
+    /// The error the task ended with, until a join collects it. A failure
+    /// a join handles is the program's to report, not the runtime's
+    /// (OL-387): it is said on stderr only when no join can come any
+    /// more — the last handle dropped, a deadlock, the program's end.
+    unreported: Option<String>,
+}
+
+/// The line a failure no join collected is said with.
+fn say_unhandled(id: u64, error: &str) {
+    eprintln!("task olang-spawn-{} failed: {}", id, error);
 }
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
@@ -81,15 +91,43 @@ pub(crate) fn watch(id: u64, channel: Value) -> bool {
 }
 
 /// The task's own thread, ending: mark it finished and take the channels
-/// it was watching, in one lock acquisition.
-pub(crate) fn finish(id: u64) -> Vec<Value> {
+/// it was watching, in one lock acquisition. `failure` is the error it
+/// ended with: kept for a join to collect, or said now when no handle
+/// is left to join it (a `spawn` whose handle was dropped).
+pub(crate) fn finish(id: u64, failure: Option<&str>) -> Vec<Value> {
     let mut map = tasks().lock().unwrap_or_else(|e| e.into_inner());
     match map.get_mut(&id) {
         Some(entry) => {
             entry.finished = true;
+            entry.unreported = failure.map(str::to_string);
             std::mem::take(&mut entry.watched)
         }
-        None => Vec::new(),
+        None => {
+            drop(map);
+            if let Some(e) = failure {
+                say_unhandled(id, e);
+            }
+            Vec::new()
+        }
+    }
+}
+
+/// Say every failure no join has collected, once (the program is ending,
+/// or a deadlock report is being written): a task that died unwatched is
+/// never silent.
+pub(crate) fn report_unjoined_failures() {
+    let Some(map) = TASKS.get() else {
+        return;
+    };
+    let mut failed: Vec<(u64, String)> = map
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter_mut()
+        .filter_map(|(id, e)| e.unreported.take().map(|m| (*id, m)))
+        .collect();
+    failed.sort();
+    for (id, e) in failed {
+        say_unhandled(id, &e);
     }
 }
 
@@ -138,6 +176,7 @@ pub(crate) fn register(
             finished: false,
             stop,
             done,
+            unreported: None,
         },
     );
 }
@@ -183,7 +222,11 @@ impl Drop for SpawnGuard {
 /// still join the task, so this never races an in-flight join.
 fn forget(id: u64) {
     if let Some(map) = TASKS.get() {
-        map.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+        let gone = map.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+        // the last handle is gone and no join collected the failure
+        if let Some(e) = gone.and_then(|g| g.unreported) {
+            say_unhandled(id, &e);
+        }
     }
 }
 
@@ -235,6 +278,8 @@ fn collect(id: u64, h: JoinHandle<Result<Value, String>>) -> Result<Value, Strin
         .unwrap_or_else(|_| Err("task thread panicked".to_string()));
     if let Some(entry) = lock_tasks().get_mut(&id) {
         entry.slot = TaskSlot::Done(result.clone());
+        // joined: the failure is in the program's hands now
+        entry.unreported = None;
     }
     result
 }

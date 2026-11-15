@@ -2642,9 +2642,11 @@ pub fn run(target: Target, paths: &[PathBuf], check: bool, dry_run: bool, skip: 
     }
     let total: usize = kinds.iter().map(|(_, n)| n).sum();
     println!(
-        "olang fix {}: {} rewritten in {} file{}{}{}",
+        "olang fix {}: {} {} in {} file{}{}{}",
         target.name(),
         total,
+        // --check and --dry-run write nothing, and say so (OL-421)
+        if write { "rewritten" } else { "would be rewritten" },
         files_changed,
         if files_changed == 1 { "" } else { "s" },
         if kinds.is_empty() {

@@ -311,6 +311,8 @@ fn stall_tick(last_gen: &mut Option<u64>) {
     // The terminal back first, so the report is readable.
     #[cfg(feature = "native")]
     crate::stdlib::tty::restore_terminal();
+    // a task's failure no join took is often why nothing can send
+    crate::interpreter::spawn_registry::report_unjoined_failures();
     let sites = parked().lock().unwrap_or_else(|e| e.into_inner()).clone();
     let mut lines: Vec<String> = sites
         .values()

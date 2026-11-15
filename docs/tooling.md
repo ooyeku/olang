@@ -197,7 +197,10 @@ file, and the modules it imports are not part of the answer.
 
 `--only <text>` runs the blocks whose name contains the text, across
 every file under the path, and names only the files that had one — the
-way to check one test of a suite that takes minutes. `--times` prints
+way to check one test of a suite that takes minutes. A file with no
+matching block is not run at all, so its top-level code (and an error
+in it) has no part in the filtered run; under `--format json` its blocks
+are `skipped` and its `file` event has no error. `--times` prints
 each block's milliseconds beside its name and lists the slowest five at
 the end. Both pass through `--watch`, as `--deps` does.
 
@@ -445,7 +448,10 @@ added only where precedence needs them, and a file whose rewrite would
 read back as a different program is left untouched and reported. Each
 runs to its fixed point, so a second run changes nothing. All five take
 the same flags and exits: `--dry-run` reports and exits 0; `--check`
-reports and exits 1 when something would change, for CI.
+reports and exits 1 when something would change, for CI. Neither writes
+a file, and the summary says so: `would fix f.ol (1)` per file, then
+`olang fix defaults: 1 would be rewritten in 1 file` (`olang fix maps:
+would rewrite …`), where a run that writes says `fixed` and `rewritten`.
 
 ```bash
 olang fix guards --dry-run src/   # what would change, and each form left with why
@@ -1489,7 +1495,12 @@ something else.
 
 Comparisons only call a row changed when it moves more than
 max(5%, 2×CV) against the baseline: below that threshold it's noise,
-not news, and prints as `~`. Add `--fail-on-regress` to turn any red
+not news, and prints as `~`.
+
+A file whose run fails (a runtime error, a non-zero exit) is reported
+with the program's own error and the bench goes on to the other files;
+the run then exits 1 and `--save` writes no baseline, since one missing
+that file's row would read as new next time. Add `--fail-on-regress` to turn any red
 row into exit code 1 — that flag is what makes a saved baseline a
 standing guard for performance work.
 
@@ -1505,14 +1516,15 @@ olang bench fib.ol --format json --against base.json --profile profiles/
 {"event":"result","name":"fib","file":"/…/fib.ol","median_s":0.0392,"min_s":0.039,"max_s":0.0413,"cv_pct":3.1,"runs":7,
  "times_s":[…],"stable_output":true,"baseline_s":0.0371,"delta_pct":5.6,"threshold_pct":6.3,"verdict":"same",
  "profile":"profiles/fib.json"}
-{"event":"finished","regressed":false,"files":1,"saved":null}
+{"event":"finished","regressed":false,"files":1,"failed":0,"saved":null}
 ```
 
 `verdict` is `new` (no baseline row), `same` (within the band
 `threshold_pct`, max(5%, 2×CV)), `faster` or `slower` — the table's
 colours as words; `regressed` is true when any row is `slower`, which
 `--fail-on-regress` turns into exit 1. A failed run is
-`{"event":"error","name","file","message"}`. `--profile DIR` runs each
+`{"event":"error","name","file","message"}`, its `message` carrying the
+program's own error line. `--profile DIR` runs each
 file once more, untimed, under `olang profile --format json`, and leaves
 that profile in `DIR/<name>.json`: the flame graph that explains a
 regression, beside the number that shows it. `--save` writes the

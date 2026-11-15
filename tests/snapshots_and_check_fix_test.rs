@@ -1,7 +1,8 @@
 //! Snapshot tests, `olang test --watch`'s flag, `olang check --fix`, the
 //! `vec` module and `ods.to_matrix`, `ods.date_part`/`split`/`split_at`,
 //! imported functions inside meta fn bodies, one "Runtime error:" prefix,
-//! and a compiled frame's error placed in its own file.
+//! and a compiled frame's error placed in its own file; `olang fix --check`'s
+//! summary.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -125,6 +126,31 @@ fn test_watch_is_a_flag_and_check_fix_rewrites_template_escapes() {
         !(out + &err).contains("backtick template"),
         "warning remains"
     );
+}
+
+/// `olang fix … --check` / `--dry-run` write nothing, and the summary
+/// says what would be rewritten, not what was (OL-421).
+#[test]
+fn fix_check_says_would_be_rewritten() {
+    let ws = workspace("fix_check");
+    let src = "fn f(x) = if x == () => 1 else => x\n";
+    write(&ws, "fx.ol", src);
+    for flag in ["--check", "--dry-run"] {
+        let (out, err, rc) = olang(&ws, &["fix", "defaults", flag, "fx.ol"]);
+        assert!(out.contains("would fix"), "{out}{err}");
+        assert!(out.contains("1 would be rewritten in 1 file"), "{out}{err}");
+        assert!(!out.contains("1 rewritten"), "{out}");
+        if flag == "--check" {
+            assert_eq!(rc, 1, "{out}{err}");
+        }
+        assert_eq!(std::fs::read_to_string(ws.join("fx.ol")).unwrap(), src);
+    }
+    write(&ws, "m.ol", "let m = #{ \"a\": 1 }\nprintln(map_get(m, \"a\"))\n");
+    let (out, err, _) = olang(&ws, &["fix", "maps", "--check", "m.ol"]);
+    assert!(out.contains("olang fix maps: would rewrite 1 map_get"), "{out}{err}");
+    let (out, err, rc) = olang(&ws, &["fix", "defaults", "fx.ol"]);
+    assert_eq!(rc, 0, "{out}{err}");
+    assert!(out.contains("1 rewritten in 1 file"), "{out}{err}");
 }
 
 #[test]

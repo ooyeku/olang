@@ -2349,7 +2349,7 @@ pub fn quote_string(text: &str) -> String {
     out
 }
 
-fn is_identifier(k: &str) -> bool {
+pub(crate) fn is_identifier(k: &str) -> bool {
     k.chars()
         .next()
         .is_some_and(|c| c.is_alphabetic() || c == '_')

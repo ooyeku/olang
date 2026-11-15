@@ -433,9 +433,17 @@ split-debuginfo = "packed"
 # Tests: optimized as release is (budgets and timings stay meaningful),
 # without its whole-program LTO, which re-optimizes all of olang for
 # each of the ~170 test binaries. `cargo test --profile fasttest`.
+#
+# `lto = "off"`, not `false`: `false` still runs rustc's thin *local* LTO
+# across a crate's 16 codegen units, which promotes their internal
+# symbols to `<name>.llvm.<hash>`. Incremental reuse of such an
+# optimized unit after an edit left a test binary naming a promoted
+# symbol the rebuilt units no longer had ("Undefined symbols …
+# drop_glue….llvm.896909144396832209"), until a clean build (OL-414).
+# With it off no symbol is promoted, and incremental stays.
 [profile.fasttest]
 inherits = "release"
-lto = false
+lto = "off"
 codegen-units = 16
 incremental = true
 panic = "unwind"

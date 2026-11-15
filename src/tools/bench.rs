@@ -164,6 +164,9 @@ pub fn run(args: &[String]) -> i32 {
 
     let mut results: BTreeMap<String, f64> = BTreeMap::new();
     let mut regressed = false;
+    // A file that fails is reported and the run goes on to the others
+    // (OL-366): one broken benchmark never hides the rest of the suite.
+    let mut failed = 0usize;
     for file in &files {
         let name = display_name(file);
         let m = match measure(&exe, file, runs, in_task) {
@@ -174,9 +177,10 @@ pub fn run(args: &[String]) -> i32 {
                         serde_json::json!({ "event": "error", "name": name, "file": abs(file), "message": msg }),
                     );
                 } else {
-                    eprintln!("  {} {}", name.red(), msg);
+                    eprintln!("  {:<32} {} {}", name.red(), "failed:".red(), msg);
                 }
-                return 1;
+                failed += 1;
+                continue;
             }
         };
         results.insert(name.clone(), m.median_s);
@@ -263,6 +267,10 @@ pub fn run(args: &[String]) -> i32 {
         println!("{line}");
     }
 
+    // A baseline missing a failed file's row would read as `new` next
+    // time, so a run with a failure saves nothing.
+    let save_wanted = save.is_some();
+    let save = if failed > 0 { None } else { save };
     if let Some(p) = &save {
         match save_baseline(p, &results) {
             Ok(()) if !json => {
@@ -278,11 +286,21 @@ pub fn run(args: &[String]) -> i32 {
     if json {
         event(
             serde_json::json!({ "event": "finished", "regressed": regressed, "files": results.len(),
-            "saved": save.as_deref().map(abs) }),
+            "failed": failed, "saved": save.as_deref().map(abs) }),
+        );
+    } else if failed > 0 {
+        eprintln!(
+            "{}",
+            format!(
+                "{failed} of {} file(s) failed{}",
+                files.len(),
+                if save_wanted { "; no baseline saved" } else { "" }
+            )
+            .red()
         );
     }
 
-    if regressed && fail_on_regress { 1 } else { 0 }
+    if failed > 0 || (regressed && fail_on_regress) { 1 } else { 0 }
 }
 
 /// Files as given; directories contribute their immediate .ol children
@@ -334,12 +352,7 @@ fn measure(exe: &Path, file: &Path, max_runs: usize, in_task: bool) -> Result<Me
             .map_err(|e| format!("failed to run: {e}"))?;
         let dt = t0.elapsed().as_secs_f64();
         if !out.status.success() {
-            let err = String::from_utf8_lossy(&out.stderr);
-            return Err(format!(
-                "exited with {}: {}",
-                out.status,
-                err.lines().next().unwrap_or("").trim()
-            ));
+            return Err(failure_message(&out.status, &out.stderr));
         }
         Ok((dt, out.stdout))
     };
@@ -384,6 +397,28 @@ fn measure(exe: &Path, file: &Path, max_runs: usize, in_task: bool) -> Result<Me
         stable_output,
         times_s,
     })
+}
+
+/// Why a run failed, in the child's own words: the first line of its
+/// stderr that says something, past the report's blank line, colour
+/// codes, `═══ Execution Error ═══` banner and `×` marker, so the
+/// message never ends at `: ` (OL-366).
+fn failure_message(status: &std::process::ExitStatus, stderr: &[u8]) -> String {
+    let err = String::from_utf8_lossy(stderr);
+    let reason = err
+        .lines()
+        .map(|l| crate::repl_commands::strip_ansi(l))
+        .filter(|l| !l.trim_start().starts_with('═'))
+        .map(|l| {
+            l.trim_start_matches(|c: char| !c.is_alphanumeric())
+                .trim_end()
+                .to_string()
+        })
+        .find(|l| !l.is_empty());
+    match reason {
+        Some(r) => format!("exited with {status}: {r}"),
+        None => format!("exited with {status} and wrote nothing to stderr"),
+    }
 }
 
 fn format_secs(s: f64) -> String {

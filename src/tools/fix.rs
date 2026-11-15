@@ -946,7 +946,9 @@ pub fn run_maps(paths: &[PathBuf], check: bool, dry_run: bool, skip: &[PathBuf])
         }
     }
     println!(
-        "olang fix maps: {} map_get → `.`, {} map_get_or → `??` in {} file{}; {} flagged{}",
+        "olang fix maps: {}{} map_get → `.`, {} map_get_or → `??` in {} file{}; {} flagged{}",
+        // --check and --dry-run write nothing, and say so (OL-421)
+        if report_only { "would rewrite " } else { "" },
         total.gets,
         total.get_ors,
         files_changed,

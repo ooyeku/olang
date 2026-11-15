@@ -71,3 +71,34 @@ fn add_and_remove_keep_the_manifests_comments_and_unknown_keys() {
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_dir_all(&home);
 }
+
+/// `otc add` refuses a folder that is no package, in `olang doctor`'s
+/// words, and a failed add leaves no new olang.toml behind (OL-368).
+#[test]
+fn add_refuses_a_folder_with_no_package_and_a_failed_add_writes_nothing() {
+    let home = scratch("refuse-home");
+    let root = scratch("refuse-root");
+    let app = root.join("ad");
+    let empty = root.join("emptylib");
+    std::fs::create_dir_all(&app).unwrap();
+    std::fs::create_dir_all(&empty).unwrap();
+
+    let (ok, out) = otc(&app, &home, &["add", "../emptylib"]);
+    assert!(!ok, "{out}");
+    assert!(out.contains("has no olang.toml or root module"), "{out}");
+    assert!(!app.join("olang.toml").exists(), "a failed add made a manifest: {out}");
+
+    let (ok, out) = otc(&app, &home, &["add", "../nope"]);
+    assert!(!ok, "{out}");
+    assert!(out.contains("is not a directory that exists"), "{out}");
+    assert!(!out.contains("created one"), "{out}");
+    assert!(!app.join("olang.toml").exists(), "{out}");
+
+    // a root module named after the folder is a package
+    std::fs::write(empty.join("emptylib.ol"), "share fn one() = 1\n").unwrap();
+    let (ok, out) = otc(&app, &home, &["add", "../emptylib"]);
+    assert!(ok, "{out}");
+    assert!(out.contains("created one for 'ad'"), "{out}");
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&home);
+}

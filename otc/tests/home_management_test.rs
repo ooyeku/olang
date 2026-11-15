@@ -140,7 +140,7 @@ fn toolchain_bookkeeping_lists_defaults_and_refuses_correctly() {
     for v in ["0.78.0", "0.79.0"] {
         let bin = home.join("toolchains").join(v).join("bin");
         std::fs::create_dir_all(&bin).unwrap();
-        std::fs::write(bin.join("olang"), b"#!/bin/sh\n").unwrap();
+        fake_olang(&bin.join("olang"), v);
         std::fs::write(bin.join("otc"), b"#!/bin/sh\n").unwrap();
     }
     std::fs::create_dir_all(home.join("bin")).unwrap();
@@ -155,7 +155,8 @@ fn toolchain_bookkeeping_lists_defaults_and_refuses_correctly() {
     let (ok, text) = run(&home, &["toolchain", "list"]);
     assert!(ok, "{text}");
     assert!(text.contains("0.78.0"), "{text}");
-    assert!(text.contains("0.79.0 (default)"), "{text}");
+    let row = text.lines().find(|l| l.contains("0.79.0")).expect(&text);
+    assert!(row.contains("managed") && row.contains("default"), "{text}");
 
     // Removing the default refuses; removing the other succeeds.
     let (ok, text) = run(&home, &["toolchain", "remove", "0.79.0"]);
@@ -168,4 +169,71 @@ fn toolchain_bookkeeping_lists_defaults_and_refuses_correctly() {
     let (ok, text) = run(&home, &["toolchain", "default", "0.50.0"]);
     assert!(!ok);
     assert!(text.contains("not installed"), "{text}");
+}
+
+/// An executable that answers `--version` as olang `version` does.
+fn fake_olang(path: &Path, version: &str) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, format!("#!/bin/sh\necho olang {version}\n")).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// `otc toolchain list` (and a bare `otc toolchain`) shows every olang on
+/// the machine with the version its binary gives, which one runs, the
+/// shims' default, that cargo's shadows the shims, and the fix (OL-577).
+#[test]
+fn toolchain_list_shows_every_olang_which_runs_and_why() {
+    let home = fake_home("toolchain_list");
+    // the machine the issue saw: cargo's rc.8 first on PATH, 0.88.0 shims
+    // (a copy, not a link) over a 0.80.0 toolchain folder
+    let cargo = home.join("user/.cargo/bin");
+    fake_olang(&cargo.join("olang"), "1.0.0-rc.8");
+    fake_olang(&home.join("bin/olang"), "0.88.0");
+    fake_olang(&home.join("toolchains/0.80.0/bin/olang"), "0.80.0");
+    let path = std::env::join_paths([cargo.clone(), home.join("bin")]).unwrap();
+    let list = |args: &[&str]| {
+        let out = Command::new(otc())
+            .args(args)
+            .env("PATH", &path)
+            .env("HOME", home.join("user"))
+            .env("OLANG_HOME", &home)
+            .env("OLANG_SHELF", home.join("shelf.toml"))
+            .current_dir(&home)
+            .output()
+            .expect("spawn otc");
+        assert!(out.status.success(), "{out:?}");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    for args in [&["toolchain", "list"][..], &["toolchain"][..]] {
+        let text = list(args);
+        let row = |v: &str| text.lines().find(|l| l.contains(v)).expect(&text).to_string();
+        assert!(row("1.0.0-rc.8").contains("cargo") && row("1.0.0-rc.8").contains("active"), "{text}");
+        assert!(row("1.0.0-rc.8").trim_start().starts_with('→'), "{text}");
+        assert!(row("0.88.0").contains("shims") && row("0.88.0").contains("default"), "{text}");
+        assert!(row("0.80.0").contains("managed"), "{text}");
+        assert!(text.contains("is ahead of the shims on PATH"), "{text}");
+        assert!(text.contains(&format!("export PATH=\"{}:$PATH\"", home.join("bin").display())), "{text}");
+        assert!(text.contains("cargo uninstall olang"), "{text}");
+    }
+    let d: serde_json::Value = serde_json::from_str(list(&["toolchain", "list", "--format", "json"]).trim()).unwrap();
+    assert_eq!(d["kind"], "toolchains");
+    assert_eq!(d["active"]["version"], "1.0.0-rc.8");
+    assert_eq!(d["active"]["kind"], "cargo");
+    let rows = d["toolchains"].as_array().unwrap();
+    assert_eq!(rows.len(), 3, "{d}");
+    let shims = rows.iter().find(|r| r["default"] == true).unwrap();
+    assert_eq!(shims["version"], "0.88.0");
+    assert!(d["shadowed"].as_str().unwrap().contains("ahead of the shims"), "{d}");
+    assert!(d["fix"].as_str().unwrap().starts_with("export PATH="), "{d}");
+
+    // in a project, its pin and what answers it
+    std::fs::write(
+        home.join("olang.toml"),
+        "[package]\nname = \"p\"\nversion = \"0.1.0\"\nolang = \"0.80\"\n",
+    )
+    .unwrap();
+    let text = list(&["toolchain", "list"]);
+    assert!(text.contains("pins olang 0.80: it runs 0.80.0"), "{text}");
+    let _ = std::fs::remove_file(home.join("olang.toml"));
 }

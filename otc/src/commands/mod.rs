@@ -4,6 +4,7 @@ pub mod doctor;
 pub mod lib;
 pub mod new;
 pub mod project;
+pub mod toolchains;
 pub mod update;
 pub mod web;
 

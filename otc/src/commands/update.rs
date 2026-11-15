@@ -128,7 +128,8 @@ fn verify_p256(pem: &str, msg: &[u8], sig: &[u8]) -> Result<()> {
 
 #[derive(Subcommand)]
 pub enum ToolchainCommand {
-    /// List installed toolchains and mark the default
+    /// List every olang on this machine: the toolchains, the shims'
+    /// default, and those on PATH, with the one that runs marked
     List {
         /// `text` (the list) or `json` (the same as data)
         #[arg(long, value_name = "FORMAT", default_value = "text")]
@@ -180,57 +181,8 @@ pub fn toolchain(cmd: ToolchainCommand) -> Result<()> {
     match cmd {
         ToolchainCommand::List { format } => {
             let json = super::json_format("otc toolchain list", &format)?;
-            let dir = toolchains_dir()?;
-            let default = default_toolchain()?;
-            let mut versions: Vec<String> = match std::fs::read_dir(&dir) {
-                Ok(entries) => entries
-                    .flatten()
-                    .filter(|e| e.path().join("bin").join("olang").is_file())
-                    .map(|e| e.file_name().to_string_lossy().into_owned())
-                    .collect(),
-                Err(_) => Vec::new(),
-            };
-            versions.sort();
-            // `#{ format: 1, kind: "toolchains", dir, default, toolchains }`,
-            // each `#{ version, olang, default }` (`olang` the binary's
-            // absolute path)
-            if json {
-                let rows: Vec<serde_json::Value> = versions
-                    .iter()
-                    .map(|v| {
-                        serde_json::json!({
-                            "version": v,
-                            "olang": dir.join(v).join("bin").join("olang").display().to_string(),
-                            "default": Some(v.as_str()) == default.as_deref(),
-                        })
-                    })
-                    .collect();
-                println!(
-                    "{}",
-                    serde_json::json!({
-                        "format": 1,
-                        "kind": "toolchains",
-                        "dir": dir.display().to_string(),
-                        "default": default,
-                        "toolchains": rows,
-                    })
-                );
-                return Ok(());
-            }
-            if versions.is_empty() {
-                println!("no toolchains installed under {}", dir.display());
-                println!("(`otc update` installs the latest release)");
-                return Ok(());
-            }
-            for v in versions {
-                let marker = if Some(v.as_str()) == default.as_deref() {
-                    "(default)"
-                } else {
-                    ""
-                };
-                println!("  {} {}", v, marker);
-            }
-            Ok(())
+            // every olang on the machine, which one runs and why (OL-577)
+            super::toolchains::list(json, default_toolchain()?)
         }
         ToolchainCommand::Install { version } => {
             install_version(&normalize(&version))?;
