@@ -639,6 +639,14 @@ pub fn program_allowed(allow: &[String], prog: &str) -> bool {
     if !prog.contains('/') {
         return allow.iter().any(|a| a == prog);
     }
+    // A relative path is judged here against this process's folder but
+    // run by the child from the `cwd` the call gives it: `bin/olang` (or
+    // `../../…/olang` that lands on the real one from here) with `cwd`
+    // set to the module's own folder ran a file the module shipped. Only
+    // a bare name or an absolute path names one program wherever it runs.
+    if !std::path::Path::new(prog).is_absolute() {
+        return false;
+    }
     if allow.iter().any(|a| a == prog) {
         return true;
     }
@@ -705,8 +713,17 @@ pub fn scope_denial(
     match required(full_name) {
         Some(CapUse::FsRead) | Some(CapUse::FsWrite) => {
             let roots = grant.fs_roots.as_ref()?;
-            let n = if two_paths(full_name) { 2 } else { 1 };
-            for p in strings.iter().take(n).flatten() {
+            // the arguments that are paths: an `ods` writer's comes
+            // second, after the frame (it went unchecked, a write
+            // anywhere from a module held to its roots)
+            let at_args: &[usize] = if two_paths(full_name) {
+                &[0, 1]
+            } else if full_name.starts_with("ods.write_") {
+                &[1]
+            } else {
+                &[0]
+            };
+            for p in at_args.iter().filter_map(|i| strings.get(*i).copied().flatten()) {
                 let at = gate_path(p);
                 if !roots.iter().any(|r| at.starts_with(r)) {
                     return Some(format!(
@@ -723,6 +740,40 @@ pub fn scope_denial(
                 }
             }
             None
+        }
+        // A database is a file: `db.open` from a module held to its
+        // roots opens one inside them (it opened one anywhere). An
+        // in-memory one is no file; a SQLite URI (`file:…`) names its
+        // file in a form the gate does not read, so it is refused.
+        Some(CapUse::Db) if full_name == "db.open" => {
+            let roots = grant.fs_roots.as_ref()?;
+            let p = strings.first().copied().flatten()?;
+            if p.is_empty() || p == ":memory:" {
+                return None;
+            }
+            let roots_list = || {
+                roots
+                    .iter()
+                    .map(|r| r.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            if p.starts_with("file:") {
+                return Some(format!(
+                    "capability 'fs' denied: db.open of a SQLite URI ({p}) from module '{}', which is granted only {}: open the file by its path",
+                    grant.name,
+                    roots_list()
+                ));
+            }
+            let at = gate_path(p);
+            (!roots.iter().any(|r| at.starts_with(r))).then(|| {
+                format!(
+                    "capability 'fs' denied: db.open reaches {}, outside what module '{}' is granted ({})",
+                    at.display(),
+                    grant.name,
+                    roots_list()
+                )
+            })
         }
         Some(CapUse::Proc) => {
             let allow = grant.proc_allow.as_ref()?;

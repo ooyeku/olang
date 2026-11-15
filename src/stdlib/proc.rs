@@ -28,7 +28,6 @@ use crate::ast::Value;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -283,7 +282,20 @@ pub(crate) fn missing_dir(who: &str, cwd: Option<&str>) -> Option<String> {
     })
 }
 
-static NEXT_ID: AtomicI64 = AtomicI64::new(1);
+/// A handle's id: random, not counted. A handle is a struct any code
+/// can write (`Process { id: 1 }`), and the gate lets a call on one
+/// through on the authority its start was granted, so a counted id let a
+/// module held to one program write to the host's own shell (the first
+/// process it started). Only the code a handle was given can name it.
+pub(crate) fn unguessable_id(taken: impl Fn(i64) -> bool) -> i64 {
+    loop {
+        let id = (rand::random::<u64>() >> 11) as i64;
+        if id != 0 && !taken(id) {
+            return id;
+        }
+    }
+}
+
 static PROCS: OnceLock<Mutex<HashMap<i64, Arc<Proc>>>> = OnceLock::new();
 
 fn procs() -> &'static Mutex<HashMap<i64, Arc<Proc>>> {
@@ -624,11 +636,10 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         _live_group: group.then(|| LiveGroup::new(pid)),
         group,
     });
-    let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
-    procs()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(id, proc);
+    let mut table = procs().lock().unwrap_or_else(|e| e.into_inner());
+    let id = unguessable_id(|id| table.contains_key(&id));
+    table.insert(id, proc);
+    drop(table);
     Ok(ok(handle(id)))
 }
 
