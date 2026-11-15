@@ -41,6 +41,12 @@ pub struct Style {
     /// The `hover` look applies while the pointer is over an ancestor too
     /// (a tab's close button shown while the pointer is over its tab).
     pub group_hover: bool,
+    /// `visible: false`: the node and what is in it are neither drawn nor
+    /// under the pointer (they keep their place). Set in a variant, it
+    /// changes with no turn of the program: `visible: false, group_hover:
+    /// true, hover: #{ visible: true }` shows a row's controls while the
+    /// pointer is on the row (OL-269).
+    pub visible: bool,
     /// How the node moves when a frame changes it, comes and goes
     /// (motion.rs).
     pub transition: Option<Arc<super::motion::Transition>>,
@@ -133,6 +139,7 @@ impl Default for Style {
             placeholder: [113, 113, 122, 255],
             focus_ring: Some(DEFAULT_ACCENT),
             group_hover: false,
+            visible: true,
             transition: None,
             corner: None,
             continuous: false,
@@ -167,6 +174,7 @@ const STYLE_KEYS: &[&str] = &[
     "placeholder_color",
     "focus_ring",
     "group_hover",
+    "visible",
     "transition",
     "corner",
     "shadow",
@@ -264,6 +272,9 @@ impl Style {
         }
         if let Some(b) = get_bool(m, "group_hover", what)? {
             self.group_hover = b;
+        }
+        if let Some(b) = get_bool(m, "visible", what)? {
+            self.visible = b;
         }
         if let Some(c) = get_str(m, "corner", what)? {
             self.corner = Some(match c {
@@ -1292,6 +1303,11 @@ impl Scene {
         if node.inert && node.children.is_empty() {
             return None;
         }
+        // hidden (`visible: false`, maybe until hovered): nothing in it is
+        // under the pointer
+        if !self.shown(node) {
+            return None;
+        }
         let rx = ox + node.rect[0];
         let ry = oy + node.rect[1];
         let inside = x >= rx && y >= ry && x < rx + node.rect[2] && y < ry + node.rect[3];
@@ -1322,6 +1338,21 @@ impl Scene {
         } else {
             None
         }
+    }
+
+    /// Whether the node is visible in its current state (`visible`, which
+    /// a variant may change). Its state is looked at only when its style or
+    /// one of its variants says `visible`.
+    pub fn shown(&self, node: &Node) -> bool {
+        let says = node
+            .variants
+            .iter()
+            .flatten()
+            .any(|v| get(v, "visible").is_some());
+        if !says {
+            return node.style.visible;
+        }
+        self.effective_style(node).visible
     }
 
     /// The nearest node at or above `key` whose role activates, or that

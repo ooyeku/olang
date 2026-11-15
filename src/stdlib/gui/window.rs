@@ -928,10 +928,11 @@ impl WinState {
         let node = self.scene.nodes.get(key)?;
         let abs = self.scene.absolute(key)?;
         let st = &node.style;
-        let x = (abs[0] + st.pad[3]) * self.scale;
-        let y = (abs[1] + st.pad[0]) * self.scale;
-        let w = (abs[2] - st.pad[1] - st.pad[3]).max(0.0) * self.scale;
-        let h = (abs[3] - st.pad[0] - st.pad[2]).max(0.0) * self.scale;
+        let pad = field_pad(st, abs[3]);
+        let x = (abs[0] + pad[3]) * self.scale;
+        let y = (abs[1] + pad[0]) * self.scale;
+        let w = (abs[2] - pad[1] - pad[3]).max(0.0) * self.scale;
+        let h = (abs[3] - pad[0] - pad[2]).max(0.0) * self.scale;
         Some((x, y, w, h))
     }
 
@@ -2782,13 +2783,17 @@ impl WinState {
         let Some(node) = self.scene.nodes.get(key) else {
             return;
         };
+        let mut st = st;
+        if node.edit.is_some() {
+            st.pad = field_pad(&st, rect[3]);
+        }
         let s = self.scale;
         let x = (ox + rect[0]) * s;
         let y = (oy + rect[1]) * s;
         let w = rect[2] * s;
         let h = rect[3] * s;
         let opacity = opacity * st.opacity;
-        if opacity <= 0.0 {
+        if opacity <= 0.0 || !st.visible {
             return;
         }
         let fade =
@@ -5727,4 +5732,26 @@ pub fn titlebar_value(bar: Option<(f32, f32, f32, bool)>) -> Value {
         ]),
         None => Value::Unit,
     }
+}
+
+/// A field's padding in a box `h` high (logical pixels): as its style
+/// says, unless that leaves less than a line for the text. Then the
+/// bottom padding gives way first, then the top, so the text and its
+/// caret are shown at any padding (OL-183: a pad of 124 in all, on an
+/// editor laid out shorter than that, drew neither).
+fn field_pad(st: &scene::Style, h: f32) -> [f32; 4] {
+    let mut pad = st.pad;
+    let line = st.font.size
+        * if st.font.line_height > 0.0 {
+            st.font.line_height
+        } else {
+            1.2
+        };
+    let short = line.min(h) - (h - pad[0] - pad[2]);
+    if short > 0.0 {
+        let from_bottom = short.min(pad[2]);
+        pad[2] -= from_bottom;
+        pad[0] = (pad[0] - (short - from_bottom)).max(0.0);
+    }
+    pad
 }

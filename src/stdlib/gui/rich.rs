@@ -1153,12 +1153,16 @@ impl RichEditor {
         l.align(Alignment::Start, AlignmentOptions::default());
         let h = l.height();
         let line_h = self.font.size * self.scale * 1.2;
-        // a paragraph on one line says how wide a character is
-        if l.len() == 1 && !text.is_empty() && self.char_w.1 < 20_000.0 {
+        // a paragraph on one line in the field's own font says how wide a
+        // character is and how tall a line: a styled one (a heading in a
+        // larger size) would make every estimate its size, and the tops
+        // of the paragraphs not laid out jump each time one is (OL-322)
+        let plain = p.spans.is_empty();
+        if plain && l.len() == 1 && !text.is_empty() && self.char_w.1 < 20_000.0 {
             self.char_w.0 += l.width();
             self.char_w.1 += text.chars().count() as f32;
         }
-        if l.len() == 1 && h > 0.0 {
+        if plain && l.len() == 1 && h > 0.0 {
             self.line_seen = h;
         }
         let p = &mut self.paras[i];
@@ -2342,6 +2346,30 @@ impl RichEditor {
             }
         }
         self.scroll_y = snap_scroll(self.scroll_y.clamp(0.0, max), max);
+        self.hold_top(h, ts);
+    }
+
+    /// The paragraphs a view `h` high shows laid out, and the view kept on
+    /// its first paragraph while they are: laying one out may change the
+    /// estimates of those not laid out above it, which moves their tops,
+    /// and a view left where it was drew past the paragraphs it laid out,
+    /// or nothing (OL-322).
+    fn hold_top(&mut self, h: f32, ts: &mut TextSystem) {
+        if !self.placed || h <= 0.0 || self.paras.is_empty() {
+            return;
+        }
+        for _ in 0..8 {
+            let top = self.top_line(ts);
+            let into = self.scroll_y - self.ys[top];
+            let _ = self.visible(self.scroll_y, self.scroll_y + h, ts);
+            self.refresh(ts);
+            let max = self.max_scroll(h, ts);
+            let y = snap_scroll((self.ys[top] + into).clamp(0.0, max), max);
+            if (y - self.scroll_y).abs() < 0.5 {
+                break;
+            }
+            self.scroll_y = y;
+        }
     }
 
     /// The paragraphs a band `y0..y1` (device pixels, no scroll) shows.
@@ -2780,6 +2808,76 @@ mod rebase_tests {
         ed.set_geometry_keeping(400.0, 1.0, &mut ts);
         ed.follow_caret(300.0, &mut ts);
         assert!(ed.scroll_y > 0.0);
+    }
+
+    /// A long styled text (headings in a large size, blank lines, long
+    /// paragraphs, as a markdown preview shows it) scrolled far with
+    /// `scroll_to`: the paragraphs at the new top are laid out and drawn.
+    /// The estimates of the paragraphs not yet laid out came from a heading
+    /// (its height taken for every line, its characters' width for every
+    /// character), so the band laid out shrank under the view, and after
+    /// a few passes the paragraphs drawn all lay above it (OL-322).
+    #[test]
+    fn a_styled_text_scrolled_far_draws_its_new_top() {
+        use crate::ast::Value;
+        use crate::stdlib::gui::values::map;
+        let mut ts = system().lock().unwrap_or_else(|e| e.into_inner());
+        let mut lines: Vec<String> = Vec::new();
+        let mut spans: Vec<Value> = Vec::new();
+        let words = "the layout keeps each paragraph's height as measured ";
+        for k in 0..1000 {
+            let (line, span) = match k % 4 {
+                0 => (
+                    format!("Section {k}"),
+                    vec![Value::Tuple(Arc::new(vec![
+                        Value::Integer(0),
+                        Value::Integer(12),
+                        Value::Integer(0),
+                    ]))],
+                ),
+                2 => (words.repeat(1 + k % 7), vec![]),
+                _ => (String::new(), vec![]),
+            };
+            lines.push(line);
+            spans.push(Value::List(Arc::new(span)));
+        }
+        let text = lines.join("\n");
+        let styles = Value::List(Arc::new(vec![map(vec![
+            ("size", Value::Float(40.0)),
+            ("weight", Value::Integer(700)),
+        ])]));
+        let spans = Value::List(Arc::new(spans));
+        let h = 400.0;
+        for line in [100, 120, 135, 140, 145, 149, 150, 153, 300, 600] {
+            let mut ed = RichEditor::new(&text, &Font::default(), Default::default());
+            ed.set_spans(Some(&styles), Some(&spans));
+            ed.set_geometry_keeping(600.0, 1.0, &mut ts);
+            ed.follow_caret(h, &mut ts);
+            let _ = ed.visible(ed.scroll_y, ed.scroll_y + h, &mut ts);
+            ed.scroll_to_line(line, &mut ts);
+            // a frame: the caret followed (it is not), then the band drawn
+            ed.follow_caret(h, &mut ts);
+            let band = ed.visible(ed.scroll_y, ed.scroll_y + h, &mut ts);
+            ed.refresh(&mut ts);
+            let (y0, y1) = (ed.scroll_y, ed.scroll_y + h);
+            let drawn = band
+                .clone()
+                .filter(|&i| ed.ys[i] < y1 && ed.ys[i] + ed.paras[i].h > y0)
+                .count();
+            assert!(
+                drawn > 0,
+                "scrolled to line {line}: the view {y0}..{y1} draws none of {band:?} \
+                 (they lie at {:?}..{:?})",
+                band.clone().next().map(|i| ed.ys[i]),
+                band.clone().last().map(|i| ed.ys[i] + ed.paras[i].h),
+            );
+            // and they reach the view's bottom, or the text's end
+            let reach = band.clone().last().map(|i| ed.ys[i] + ed.paras[i].h).unwrap_or(0.0);
+            assert!(
+                reach >= y1 - 0.5 || band.end == ed.paras.len(),
+                "scrolled to line {line}: the band {band:?} ends at {reach}, above the view's bottom {y1}"
+            );
+        }
     }
 
     /// Wrapping turned on with the caret in view: the long lines above it

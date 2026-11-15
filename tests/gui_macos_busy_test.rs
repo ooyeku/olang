@@ -27,6 +27,9 @@
 //! `gui::platform::host` takes for winit's loop.
 
 #[cfg(all(feature = "gui", target_os = "macos"))]
+mod gui_macos_screen;
+
+#[cfg(all(feature = "gui", target_os = "macos"))]
 mod mac {
     use objc2::encode::{Encoding, RefEncode};
     use objc2::msg_send;
@@ -321,15 +324,19 @@ mod mac {
     }
 
     pub fn main() {
+        if crate::gui_macos_screen::skip_if_unseen("gui_macos_busy_test") {
+            return;
+        }
         // SAFETY: set before any thread reads the environment.
         unsafe { std::env::set_var("GUI_NOT_RESPONDING_MS", "300") };
         unsafe { std::env::set_var("GUI_LATENCY", "1") };
         unsafe { std::env::set_var("GUI_HOLDS", "1") };
         olang::stdio::set_panic_hook();
+        crate::gui_macos_screen::guard("gui_macos_busy_test");
+        crate::gui_macos_screen::keep_awake();
         std::thread::spawn(|| {
             std::thread::sleep(Duration::from_secs(90));
-            eprintln!("gui_macos_busy_test: timed out");
-            std::process::exit(2);
+            crate::gui_macos_screen::timed_out("gui_macos_busy_test");
         });
         static SAID: Mutex<Vec<String>> = Mutex::new(Vec::new());
         let code = platform::host(|| {
