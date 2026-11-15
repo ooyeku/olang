@@ -411,7 +411,7 @@ published release:
   packages to the `@stable` items they had at 1.0
   ([Stable items across versions](tooling.md#stable-items-across-versions)).
 
-`tests/compat_test.rs` runs the first two with the test suite, and
+`tests/compat_test.rs` runs the first two with the test suite (its opening comment says how to add a program or record a break), and
 `tools/compat-check.sh` runs all three with any olang binary.
 
 **An intended break says so.** What 1.x may change is listed under

@@ -15,14 +15,44 @@
 //!   each module's members, the Experimental modules left out). Every
 //!   name listed must still be there; new names are fine.
 //!
-//! An intended break is never silent: it is listed in
-//! `tests/compat/allow.toml` (a reviewed file, with the release, the
-//! issue and the reason), and `tools/compat-check.sh` refuses a release
-//! whose fixtures' expectations changed without such an entry.
+//! `tests/compat/package/` is a package whose public surface is
+//! `@stable`, which `tools/compat-check.sh` holds to 1.0 with `olang check
+//! --against`.
 //!
-//! `OLANG_COMPAT_SNAPSHOT=1.1 cargo test --test compat_test` writes the
-//! surface of a new minor release, once (it refuses to overwrite one);
-//! `tools/release.sh` does it when it cuts an x.y.0.
+//! A program's first comment lines may carry a header: `// compat: exit 1`
+//! (the exit status it must end with, default 0) and `// compat: test`
+//! (run with `olang test`; the `.out` lines must then appear in order
+//! among the runner's report, which is not contract). A program prints
+//! only what is contract: values and `raise` messages, never error text,
+//! and a report's fields rather than a whole record a later release may
+//! add to.
+//!
+//! Adding a program: write it, run `OLANG_COMPAT_BLESS=1 cargo test
+//! --profile fasttest --test compat_test` to write its `.out` (only a
+//! missing `.out` is ever written), and read the `.out` before
+//! committing it. `OLANG_COMPAT_SNAPSHOT=1.1` writes a new minor's
+//! surface, once (it refuses to overwrite one); `tools/release.sh` does
+//! it when it cuts an x.y.0.
+//!
+//! An intended break is never silent. A 1.x release may change behavior
+//! only as a bug fix, or an Experimental surface in a minor release
+//! (docs/stability.md, Versioning). When such a change alters a
+//! program's output or removes a surface name:
+//!
+//! 1. add a `[[break]]` entry to `tests/compat/allow.toml`: `what` (the
+//!    fixture as this test names it, or `surface:<name>`), `version`,
+//!    `issue`, `kind` (`bug-fix`, `experimental` or `major`) and `reason`;
+//! 2. update the `.out` in the same commit if you like:
+//!    `tools/compat-check.sh` accepts an expectation changed since v1.0.0
+//!    only when an entry names it;
+//! 3. name the issue in the release's CHANGELOG section: `tools/release.sh`
+//!    refuses the release otherwise, refuses a `major` break outside a
+//!    new major version and an `experimental` one in a patch, and prints
+//!    every intended break of the release it cuts.
+//!
+//! Never edit an existing `.out` or snapshot just to make this pass. The
+//! allow-list is reviewed like code: an entry is a decision about what
+//! olang promises.
 
 use olang::ast::Value;
 use olang::{Interpreter, Parser};

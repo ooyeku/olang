@@ -3,9 +3,10 @@
 #
 #   tools/compat-check.sh [--against VERSION] [--olang BIN]
 #
-# The release-time half of the compatibility promise (docs/stability.md,
-# tests/compat/README.md). tests/compat_test.rs is the other half and runs with the
-# test suite. This script checks, against VERSION (default 1.0.0):
+# The release-time half of the compatibility promise (docs/stability.md).
+# tests/compat_test.rs is the other half, runs with the test suite, and
+# says how the fixtures work. This script checks, against VERSION
+# (default 1.0.0):
 #
 #   1. `olang check --against VERSION` over olang's own public packages
 #      (PACKAGES below): no @stable item removed or re-signed.
@@ -142,5 +143,5 @@ if [ $failures -eq 0 ]; then
     echo "compat-check: the 1.x promise holds"
     exit 0
 fi
-echo "compat-check: $failures break$([ $failures -eq 1 ] || echo s) of the 1.x promise (tests/compat/README.md, \"An intended break\")"
+echo "compat-check: $failures break$([ $failures -eq 1 ] || echo s) of the 1.x promise (tests/compat_test.rs explains an intended break)"
 exit 1
