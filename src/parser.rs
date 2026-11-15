@@ -74,6 +74,18 @@ impl PositionInfo {
     }
 }
 
+/// The two-line snippet a positioned error shows: `line`'s text with a
+/// caret under `column`.
+pub(crate) fn snippet_at(line: usize, text: &str, column: usize) -> String {
+    format!(
+        "{:4} | {}\n{:4} | {}^",
+        line,
+        sanitize_snippet(text.trim_end_matches('\r')),
+        "",
+        " ".repeat(column.saturating_sub(1))
+    )
+}
+
 /// Very basic snippet sanitizer to avoid leaking sensitive content in logs.
 /// - Truncates long lines
 /// - Replaces control characters with spaces
