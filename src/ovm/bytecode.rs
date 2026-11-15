@@ -1734,7 +1734,7 @@ impl BytecodeVm {
             "str.line_breaks",
             "str.bidi_runs",
             "str.normalize",
-            "str.fold",
+            "str.fold_case",
             // map builtins — maps round-trip losslessly now, so builders
             // and readers both bridge safely
             "entries",

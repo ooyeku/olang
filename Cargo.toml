@@ -142,7 +142,7 @@ unicode-segmentation = "1.13"
 # carries it too.
 unicode-width = "0.2"
 # `str.line_breaks` (UAX #14), `str.bidi_runs` (UAX #9), `str.normalize`
-# and `str.fold`: pure tables, already in the tree through the GUI's
+# and `str.fold_case`: pure tables, already in the tree through the GUI's
 # text stack and `url`, so the versions match theirs.
 unicode-linebreak = "0.1.5"
 unicode-bidi = "0.3.18"

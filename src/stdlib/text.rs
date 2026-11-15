@@ -34,7 +34,7 @@ pub(crate) const MAX_ARGS: &[(&str, usize)] = &[
     ("line_breaks", 2),
     ("bidi_runs", 2),
     ("normalize", 2),
-    ("fold", 1),
+    ("fold_case", 1),
 ];
 
 /// The fewest arguments each takes (what the module registers, which
@@ -54,7 +54,7 @@ pub(crate) const MIN_ARGS: &[(&str, usize)] = &[
     ("line_breaks", 1),
     ("bidi_runs", 1),
     ("normalize", 2),
-    ("fold", 1),
+    ("fold_case", 1),
 ];
 
 /// Calls one of this file's functions, or `None` when `name` is not one.
@@ -74,7 +74,7 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Option<R> {
         "line_breaks" => line_breaks(args),
         "bidi_runs" => bidi_runs(args),
         "normalize" => normalize(args),
-        "fold" => fold(args),
+        "fold_case" => fold_case(args),
         _ => return None,
     })
 }
@@ -603,10 +603,10 @@ fn normalize(args: &[Value]) -> R {
     })
 }
 
-/// `str.fold(s)`: Unicode full case folding, the form to compare text
+/// `str.fold_case(s)`: Unicode full case folding, the form to compare text
 /// ignoring case in ("Straße" and "STRASSE" fold alike, and "İ" to
 /// "i̇" rather than to_lower's guess). Not for display.
-fn fold(args: &[Value]) -> R {
-    let s = arg_str(args, 0, "fold")?;
+fn fold_case(args: &[Value]) -> R {
+    let s = arg_str(args, 0, "fold_case")?;
     Ok(string(&icu_casemap::CaseMapper::new().fold_string(s)))
 }
