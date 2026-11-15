@@ -415,7 +415,7 @@ fn failure_message(status: &std::process::ExitStatus, stderr: &[u8]) -> String {
     let err = String::from_utf8_lossy(stderr);
     let reason = err
         .lines()
-        .map(|l| strip_ansi(l))
+        .map(strip_ansi)
         .filter(|l| !l.trim_start().starts_with('═'))
         .map(|l| {
             l.trim_start_matches(|c: char| !c.is_alphanumeric())

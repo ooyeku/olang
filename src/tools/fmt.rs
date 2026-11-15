@@ -390,12 +390,14 @@ fn respace(indent: &str, toks: &[Tok], tail: Option<&str>) -> String {
     let angle = type_angles(toks);
     let mut out = String::from(indent);
     for (idx, t) in toks.iter().enumerate() {
-        let space = if idx == 0 || glue_right[idx - 1] {
+        // a type's brackets glue (`List<Int>`, `fn first<T>`), and so does
+        // the call after them (`fn first<T>(xs)`)
+        let glued = idx == 0
+            || glue_right[idx - 1]
+            || angle[idx]
+            || (angle[idx - 1] && (toks[idx - 1].text == "<" || t.text == "("));
+        let space = if glued {
             0
-        } else if angle[idx] || (angle[idx - 1] && toks[idx - 1].text == "<") {
-            0 // a type's brackets glue: `List<Int>`, `fn first<T>`
-        } else if angle[idx - 1] && t.text == "(" {
-            0 // `fn first<T>(xs)`
         } else if (t.text == "=>" || t.kind == TokKind::Comment) && t.gap >= 2 {
             t.gap // preserved alignment
         } else {

@@ -2812,7 +2812,6 @@ impl WinState {
         // a material: what is under the box blurred (the GPU's), its own
         // translucent `bg` over it; opaque where transparency is reduced
         // (and in software: the reference draws the opaque fallback)
-        let mut st = st;
         if let Some(mat) = st.material {
             let solid = st.bg.map(|c| [c[0], c[1], c[2], 255]);
             if mat == scene::Material::Window {

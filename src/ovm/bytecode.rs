@@ -16465,11 +16465,9 @@ impl BytecodeOptimizer {
         let mut blocks = Vec::new();
         let mut block_of = vec![usize::MAX; n + 1];
         let mut first = 0;
-        for pc in 1..=n {
-            if leader[pc] || pc == n {
-                for b in first..pc {
-                    block_of[b] = blocks.len();
-                }
+        for (pc, &lead) in leader.iter().enumerate().take(n + 1).skip(1) {
+            if lead || pc == n {
+                block_of[first..pc].fill(blocks.len());
                 blocks.push((first, pc));
                 first = pc;
             }
@@ -17128,14 +17126,16 @@ fn closure_holds_handle(closure: &im::HashMap<String, crate::ast::Value>) -> boo
     closure.values().any(|v| ast_holds_handle(v, &mut budget))
 }
 
-fn ovm_value_view(
-    v: &OvmValue,
-) -> (
-    &str,
-    Option<(bool, &str)>,
+/// A value's type name, a Result's payload (ok, its type), a function's
+/// (required, total) arity, and a scalar's view: what a field check reads.
+type OvmValueView<'a> = (
+    &'a str,
+    Option<(bool, &'a str)>,
     Option<(usize, usize)>,
-    Option<crate::ast::ScalarView<'_>>,
-) {
+    Option<crate::ast::ScalarView<'a>>,
+);
+
+fn ovm_value_view(v: &OvmValue) -> OvmValueView<'_> {
     use crate::ovm::value::ValueData;
     let payload = match &v.data {
         ValueData::Result(r) => match (&r.ok, &r.err) {
