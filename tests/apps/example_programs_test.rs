@@ -20,7 +20,7 @@ macro_rules! parse_test {
         fn $name() {
             parses(
                 concat!("examples/concurrency/demo/", $file),
-                include_str!(concat!("../examples/concurrency/demo/", $file)),
+                include_str!(concat!("../../examples/concurrency/demo/", $file)),
             );
         }
     };

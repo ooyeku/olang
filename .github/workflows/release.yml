@@ -43,6 +43,7 @@ env:
 jobs:
   macos:
     name: Build (${{ matrix.name }})
+    needs: wasm
     runs-on: macos-latest
     permissions:
       contents: read
@@ -71,16 +72,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master, 2026-10
         with:
           toolchain: stable
-          targets: ${{ matrix.target }},wasm32-unknown-unknown
+          targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ${{ matrix.target }}
 
-      # The browser runtime the olang binary embeds (build.rs reads the
-      # artifact cargo xtask wasm leaves in target/).
-      - name: Build the browser runtime
-        run: cargo xtask wasm
+      # The browser runtime the olang binary embeds (build.rs reads
+      # target/wasm32-unknown-unknown/release/olang_playground.wasm and
+      # target/wasm-full/olang.wasm), built once by the wasm job.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: runtime-wasm
+          path: target
 
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }} -p olang -p otc
@@ -158,6 +162,7 @@ jobs:
 
   linux:
     name: Build (${{ matrix.name }})
+    needs: wasm
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -191,6 +196,14 @@ jobs:
           ref: ${{ env.TAG }}
           persist-credentials: false
 
+      # The browser runtime the olang binary embeds (build.rs reads
+      # target/wasm32-unknown-unknown/release/olang_playground.wasm and
+      # target/wasm-full/olang.wasm), built once by the wasm job.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: runtime-wasm
+          path: target
+
       # The build runs inside the container; checkout and upload stay on
       # the runner, so no action has to run on an old or musl system.
       - name: Build in ${{ matrix.image }}
@@ -212,6 +225,7 @@ jobs:
   # no Windows download.
   windows:
     name: Build (windows-x64)
+    needs: wasm
     runs-on: windows-latest
     permissions:
       contents: read
@@ -239,14 +253,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master, 2026-10
         with:
           toolchain: stable
-          targets: x86_64-pc-windows-msvc,wasm32-unknown-unknown
+          targets: x86_64-pc-windows-msvc
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: x86_64-pc-windows-msvc
 
-      - name: Build the browser runtime
-        run: cargo xtask wasm
+      # The browser runtime the olang binary embeds (build.rs reads
+      # target/wasm32-unknown-unknown/release/olang_playground.wasm and
+      # target/wasm-full/olang.wasm), built once by the wasm job.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: runtime-wasm
+          path: target
 
       - name: Build
         run: cargo build --release --locked --target x86_64-pc-windows-msvc -p olang -p otc
@@ -269,6 +288,9 @@ jobs:
           path: olang-*.zip
           if-no-files-found: error
 
+  # The browser runtime, built once: every platform's olang embeds both
+  # profiles (runtime-wasm, not published), and the browser profile is the
+  # playground wasm the release ships.
   wasm:
     name: Build (playground wasm)
     runs-on: ubuntu-24.04
@@ -285,8 +307,20 @@ jobs:
           toolchain: stable
           targets: wasm32-unknown-unknown
 
-      - name: Build playground wasm
-        run: cargo build -p olang-playground --target wasm32-unknown-unknown --release --locked
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: wasm32-unknown-unknown
+
+      - name: Build the browser runtime (both profiles)
+        run: cargo xtask wasm --locked
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runtime-wasm
+          path: |
+            target/wasm32-unknown-unknown/release/olang_playground.wasm
+            target/wasm-full/olang.wasm
+          if-no-files-found: error
 
       - name: Package
         run: |
