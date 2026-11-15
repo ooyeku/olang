@@ -1,0 +1,29 @@
+Ok(())
+Ok(())
+Ok("one\ntwo\n")
+true
+Ok(8)
+note.txt txt
+Ok(["note.txt", "sub"])
+true
+Ok(())
+Ok([1, 2, 255])
+Ok(())
+false
+Ok("set")
+true
+List
+Ok(2024-02-29)
+true
+28
+Ok("2024-03-28")
+Ok(-365)
+Ok(6)
+Ok("2026-11-14")
+true
+f4c39ecb6cc10903086901afffd30bece7143359399e080ebcaeddadb99f98f0
+3e3f72e2180f6c3e7959700f90f85e93
+6e9ef29b75fffc5b7abae527d58fdadb2fe42e7219011976917343065f58ed4a
+6869
+true
+3

@@ -1,0 +1,50 @@
+42
+-7
+1000000
+255
+3.14
+1e20
+0.0025
+true
+()
+text
+[1, 2, 3]
+(1, "a")
+#{"k": 1, "j": [2]}
+{ name: "olang", year: 2026 }
+quoted
+20 10
+7
+9
+-5
+3
+2
+4.25
+-5
+true
+true
+1
+7
+6
+16
+default
+0
+[1, 2, 3]
+abcd
+false
+true
+12
+interpolated 2 and Hello, World
+line	tab\slash "quote"
+HELLO, WORLD hello, world
+[0, 1, 2, 3, 4]
+0 1 2 
+pos zero neg
+6
+13
+7
+0=a
+1=b
+[1, 9, 25]
+10
+[1, 2, 3]
