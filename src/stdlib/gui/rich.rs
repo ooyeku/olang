@@ -1234,10 +1234,57 @@ impl RichEditor {
     /// The paragraphs' tops, from the heights known (a paragraph not laid
     /// out yet is estimated: only those shown, and the caret's, are laid
     /// out, so a 50,000-line text opens and edits at the cost of a page).
-    pub fn refresh(&mut self, _ts: &mut TextSystem) {
+    ///
+    /// A view scrolled down stays on the paragraph it starts in, as far
+    /// into it: the tops above it move whenever an estimate does (every
+    /// layout let go with the styles, the line's height learned again),
+    /// and a view kept by its pixels started on another line (OL-647).
+    /// The paragraph is found by the tops as they were, and laid out
+    /// first, so its own height is no guess.
+    pub fn refresh(&mut self, ts: &mut TextSystem) {
         if self.ys_ok {
             return;
         }
+        let n = self.paras.len();
+        let held = (self.placed && self.scroll_y > 0.0 && n > 0 && self.ys.len() == n + 1)
+            .then(|| self.view_start());
+        if let Some((i, _)) = held {
+            self.build(i, ts);
+        }
+        self.fill_tops();
+        if let Some((i, into)) = held {
+            let y = snap_scroll(self.ys[i] + into, f32::MAX);
+            if (y - self.scroll_y).abs() > 0.01 {
+                self.scroll_exact += y - self.scroll_y;
+                self.scroll_y = y;
+            }
+        }
+    }
+
+    /// The paragraph the view starts on and how far into it, by the tops
+    /// in `ys` (one a paragraph and the text's end). A view put on a line
+    /// starts within half a pixel of its top (`snap_scroll`): it is on
+    /// that line, not the last sliver of the one before, whose height may
+    /// be a guess.
+    fn view_start(&self) -> (usize, f32) {
+        let n = self.ys.len().saturating_sub(1);
+        let y = self.scroll_y;
+        let i = match self.ys[..n]
+            .binary_search_by(|v| v.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Less))
+        {
+            Ok(i) => i,
+            Err(i) => i.saturating_sub(1),
+        };
+        let i = if i + 1 < n && self.ys[i + 1] - y <= 0.5 {
+            i + 1
+        } else {
+            i
+        };
+        let into = y - self.ys[i];
+        (i, if into.abs() <= 0.5 { 0.0 } else { into })
+    }
+
+    fn fill_tops(&mut self) {
         self.ys.clear();
         self.ys.reserve(self.paras.len() + 1);
         let mut y = 0.0;
@@ -2359,8 +2406,8 @@ impl RichEditor {
             return;
         }
         for _ in 0..8 {
-            let top = self.top_line(ts);
-            let into = self.scroll_y - self.ys[top];
+            self.refresh(ts);
+            let (top, into) = self.view_start();
             let _ = self.visible(self.scroll_y, self.scroll_y + h, ts);
             self.refresh(ts);
             let max = self.max_scroll(h, ts);
@@ -2938,6 +2985,78 @@ mod rebase_tests {
         ed.char_w = (4.0, 1.0);
         ed.follow_caret(18.0, &mut ts);
         assert_eq!(ed.scroll_y, at);
+    }
+
+    /// A code editor scrolled down, then its styles changed (the
+    /// appearance switched: every colour another): the view starts on the
+    /// line it started on, as far into it. The layouts go with the styles,
+    /// the lines above the view are then estimates shorter than a line
+    /// measured, and a view kept by its pixels landed further down the
+    /// text at each change (OL-647).
+    #[test]
+    fn styles_changed_keep_a_scrolled_view_on_its_line() {
+        use crate::ast::Value;
+        use crate::stdlib::gui::text::TextSystem;
+        use crate::stdlib::gui::values::map;
+        let mut ts = system().lock().unwrap_or_else(|e| e.into_inner());
+        let text = (0..200)
+            .map(|i| format!("    t = t + x * {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let span = || {
+            Value::List(Arc::new(vec![Value::Tuple(Arc::new(vec![
+                Value::Integer(4),
+                Value::Integer(5),
+                Value::Integer(0),
+            ]))]))
+        };
+        let spans = Value::List(Arc::new((0..200).map(|_| span()).collect()));
+        let look = |c: &str| {
+            Value::List(Arc::new(vec![map(vec![(
+                "color",
+                Value::String(Arc::new(c.to_string())),
+            )])]))
+        };
+        let font = Font {
+            line_height: 1.45,
+            ..Font::default()
+        };
+        let h = 400.0;
+        let mut ed = RichEditor::new(&text, &font, Default::default());
+        ed.set_nowrap(true, &mut ts);
+        ed.set_spans(Some(&look("#24292f")), Some(&spans));
+        ed.set_geometry_keeping(600.0, 1.0, &mut ts);
+        let frame = |ed: &mut RichEditor, ts: &mut TextSystem| {
+            ed.follow_caret(h, ts);
+            let _ = ed.visible(ed.scroll_y, ed.scroll_y + h, ts);
+        };
+        frame(&mut ed, &mut ts);
+        ed.scroll_to_line(60, &mut ts);
+        frame(&mut ed, &mut ts);
+        // the line nearest the view's start, and how far the view is from
+        // its top
+        let place = |ed: &mut RichEditor, ts: &mut TextSystem| {
+            ed.refresh(ts);
+            let y = ed.scroll_y;
+            let top = (0..ed.paras.len())
+                .min_by(|a, b| (ed.ys[*a] - y).abs().total_cmp(&(ed.ys[*b] - y).abs()))
+                .unwrap_or(0);
+            (top, (y - ed.ys[top]).round())
+        };
+        assert_eq!(place(&mut ed, &mut ts), (60, 0.0));
+        let restyled = |ed: &mut RichEditor, ts: &mut TextSystem, was: (usize, f32)| {
+            for c in ["#e6edf3", "#24292f", "#e6edf3", "#24292f"] {
+                ed.set_spans(Some(&look(c)), Some(&spans));
+                frame(ed, ts);
+                assert_eq!(place(ed, ts), was, "styled {c}");
+            }
+        };
+        restyled(&mut ed, &mut ts, (60, 0.0));
+        // part of a line on, as a wheel leaves it
+        ed.wheel(-7.0, &mut ts);
+        frame(&mut ed, &mut ts);
+        assert_eq!(place(&mut ed, &mut ts), (60, 7.0));
+        restyled(&mut ed, &mut ts, (60, 7.0));
     }
 
     /// Enter continuing a list, and a key typed before the program's

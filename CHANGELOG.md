@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **gui: a styled field scrolled down keeps its place when its styles
+  change** (OL-647). Switching appearance in a code editor let go of
+  every line's layout, the lines above the view became estimates
+  shorter than a real line, and the view, kept by its pixels, started a
+  few lines further down at each switch. A view now stays on the line
+  it starts on whenever the tops above it move. The same slip moved a
+  view put on a line with `scroll_to` by a few pixels or lines once
+  its lines were laid out (since 1.0.0-rc.10).
+
 ## [1.0.0] - 2026-11-15
 
 olang 1.0. What it commits to is docs/stability.md, and every 1.x
