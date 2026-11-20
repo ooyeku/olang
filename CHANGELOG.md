@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   it starts on whenever the tops above it move. The same slip moved a
   view put on a line with `scroll_to` by a few pixels or lines once
   its lines were laid out (since 1.0.0-rc.10).
+- **gui: a styled field scrolled away from its caret still says where
+  the caret is** (OL-648). Only the lines shown are laid out, and a
+  caret on any other line had no place the platform could read, so
+  Zoom centred the field instead of following the caret. The caret's
+  line now reports its box where the line would be, as AppKit's text
+  views do.
 
 ## [1.0.0] - 2026-11-15
 

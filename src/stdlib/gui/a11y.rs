@@ -796,6 +796,10 @@ fn text_runs(
                     run.set_character_widths(ws.clone());
                     run.set_text_direction(accesskit::TextDirection::LeftToRight);
                 }
+                // a paragraph not laid out (scrolled away): its box where
+                // it would be, every character at its start, so a caret
+                // there still has a place (Zoom follows it, as AppKit's
+                // text views say an off-screen caret's)
                 (None, Some(abs), Some((top, h))) => {
                     let y = abs[1] as f64 * s + (top - f.scroll_y) as f64;
                     run.set_bounds(Rect {
@@ -804,6 +808,9 @@ fn text_runs(
                         x1: (abs[0] + abs[2]) as f64 * s,
                         y1: y + h as f64,
                     });
+                    run.set_character_positions(vec![0.0; c1 - c0]);
+                    run.set_character_widths(vec![0.0; c1 - c0]);
+                    run.set_text_direction(accesskit::TextDirection::LeftToRight);
                 }
                 (None, Some(abs), None) => run.set_bounds(Rect {
                     x0: abs[0] as f64 * s,

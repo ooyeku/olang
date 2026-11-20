@@ -347,7 +347,15 @@ fn a_fields_caret_box_is_where_the_caret_is_drawn() {
         gui.input(w, #{ "kind": "key", "key": "right" })
         gui.input(w, #{ "kind": "key", "key": "right" })
         let c = pair("r")
-        [a, b, c]
+        // a field of lines scrolled away from its caret (on the first
+        // line): nothing drawn, yet the platform still has a place for it
+        let lines = join(map(range(0, 200), (i) => "line " + to_string(i)), "\n")
+        gui.apply(w, [#{ "op": "remove", "key": "r" },
+          #{ "key": "z", "parent": "root", "role": "textarea", "box": (150, 50, 200, 100),
+             "edit": #{ "value": lines, "rich": true, "styles": [], "spans": [], "scroll_to": (150, 1) } },
+          #{ "op": "focus", "key": "z" }])
+        let d = pair("z")
+        [a, b, c, d]
     "##);
     let Value::List(all) = &v else { panic!("{v}") };
     let num = |v: &Value| match v {
@@ -361,6 +369,11 @@ fn a_fields_caret_box_is_where_the_caret_is_drawn() {
             _ => panic!("no box: {v}"),
         }
     };
+    let Value::List(away) = &all[3] else { panic!("{v}") };
+    assert!(matches!(away[0], Value::Unit), "a caret scrolled away is not drawn: {v}");
+    let Value::Tuple(said) = &away[1] else { panic!("no caret_box scrolled away: {v}") };
+    assert!(num(&said[1]) < 50.0, "above the field it was scrolled from: {v}");
+    let all = &all[..3];
     for (i, p) in all.iter().enumerate() {
         let Value::List(p) = p else { panic!("{p}") };
         let (drawn, said) = (quad(&p[0]), quad(&p[1]));
