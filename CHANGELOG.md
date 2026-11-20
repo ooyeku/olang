@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   Zoom centred the field instead of following the caret. The caret's
   line now reports its box where the line would be, as AppKit's text
   views do.
+- **gui: Tab passes a control squeezed to nothing** (OL-650). A row
+  laid out with no height in a small window kept its controls in the
+  focus order, so Tab could land on one that can't be seen or
+  clicked. Tab now skips a node with no width or height, and anything
+  a node like that clips. A node scrolled out of view is still reached
+  and scrolled back into view.
 
 ## [1.0.0] - 2026-11-15
 

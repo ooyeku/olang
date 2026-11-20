@@ -487,8 +487,13 @@ fn a_modal_layer_keeps_the_focus_and_hears_a_press_outside() {
           #{ "key": "behind", "parent": "root", "role": "button", "box": (10, 10, 80, 30), "text": "Behind" },
           #{ "key": "dlg", "parent": "root", "role": "dialog", "modal": true, "box": (100, 60, 180, 120), "name": "Confirm" },
           #{ "key": "ok", "parent": "dlg", "role": "button", "box": (10, 70, 70, 30), "text": "OK" },
-          #{ "key": "no", "parent": "dlg", "role": "button", "box": (90, 70, 70, 30), "text": "Cancel" }
+          #{ "key": "no", "parent": "dlg", "role": "button", "box": (90, 70, 70, 30), "text": "Cancel" },
+          // squeezed to nothing: Tab passes them (STU-173)
+          #{ "key": "flat", "parent": "dlg", "role": "button", "box": (170, 70, 10, 0), "text": "Flat" },
+          #{ "key": "shut", "parent": "dlg", "box": (0, 110, 180, 0), "style": #{ "clip": true } },
+          #{ "key": "inside", "parent": "shut", "role": "button", "box": (0, 0, 70, 30), "text": "Inside" }
         ])
+        let keys = gui.read(w, "keys")
         let first = gui.read(w, "focus")
         gui.input(w, #{ "kind": "key", "key": "tab" })
         gui.input(w, #{ "kind": "key", "key": "tab" })
@@ -498,9 +503,9 @@ fn a_modal_layer_keeps_the_focus_and_hears_a_press_outside() {
         let mut kinds = []
         let mut more = true
         while more { match chan.try_recv(ev) { Ok(()) => { more = false }, Ok(e) => { kinds = kinds + [map_get(e, "kind")] }, _ => { more = false } } }
-        [first, after_tabs, gui.read(w, "hit", (20, 20)), contains(kinds, "outside"), contains(kinds, "activate")]
+        [keys, first, after_tabs, gui.read(w, "hit", (20, 20)), contains(kinds, "outside"), contains(kinds, "activate")]
     "##);
-    assert_eq!(text(&v), r#"["ok", "ok", (), true, false]"#);
+    assert_eq!(text(&v), r#"[["ok", "no"], "ok", "ok", (), true, false]"#);
 }
 
 #[test]

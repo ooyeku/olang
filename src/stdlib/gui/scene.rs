@@ -1389,8 +1389,15 @@ impl Scene {
         let Some(n) = self.nodes.get(key) else {
             return;
         };
-        if n.focusable && !n.disabled {
+        // A node laid out with no area (a row squeezed to nothing) cannot
+        // be shown, scrolled to or clicked: Tab passes it, and what it
+        // clips with it.
+        let empty = n.rect[2] <= 0.0 || n.rect[3] <= 0.0;
+        if n.focusable && !n.disabled && !empty {
             out.push(key.to_string());
+        }
+        if empty && n.style.clip && !n.scrollable {
+            return;
         }
         for c in &n.children {
             self.collect_focusable(c, out);
