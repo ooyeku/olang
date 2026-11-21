@@ -78,7 +78,11 @@ pub fn enabled() -> bool {
         if cfg!(target_arch = "wasm32") {
             return false;
         }
-        !matches!(std::env::var("OLANG_COMPILE_CACHE").as_deref(), Ok("0")) && dir().is_some()
+        // OLANG_DUMP_FN prints a function's code as it compiles: an entry
+        // taken from the cache never compiles, so a dump turns it off
+        !matches!(std::env::var("OLANG_COMPILE_CACHE").as_deref(), Ok("0"))
+            && std::env::var_os("OLANG_DUMP_FN").is_none()
+            && dir().is_some()
     })
 }
 
