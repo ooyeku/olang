@@ -293,8 +293,11 @@ fn clients_past_a_full_queue_get_503_not_a_reset() {
         got.len(),
         "every client answered 200 or 503: {got:?}"
     );
+    // At least the queue's four are answered. The two workers may not
+    // have taken their first request before all forty arrive (a loaded
+    // machine), so six is likely but not owed.
     assert!(
-        busy > 0 && ok >= 6,
+        busy > 0 && ok >= 4,
         "{ok} answered, {busy} turned away: {got:?}"
     );
 }
