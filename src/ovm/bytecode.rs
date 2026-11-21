@@ -4687,6 +4687,20 @@ impl BytecodeVm {
         err_pc: &mut usize,
     ) -> Result<OvmValue, BytecodeError> {
         let mut pc = bytecode.entry_point;
+        // The count and the failing pc live in a local the optimizer keeps
+        // in registers, written out once when the loop is left by any
+        // path, an error's `?` included (OL-653): written through the
+        // pointers on every instruction they were two memory writes and
+        // a read per dispatch, since a call that may unwind keeps a store
+        // from being sunk out of the loop. Not on wasm, which has no
+        // unwinding: there the writes through stay, as the flush at every
+        // exit made the loop 8% slower.
+        let mut tally = Tally {
+            executed: 0,
+            pc,
+            out_executed: executed,
+            out_pc: err_pc,
+        };
         // Backward jumps taken by THIS frame; at OSR_BACK_EDGE_THRESHOLD
         // the loop being spun is offered to on-stack replacement, once.
         // When the synthesized region anchors at an enclosing loop's
@@ -4705,8 +4719,16 @@ impl BytecodeVm {
 
         while pc < bytecode.instructions.len() {
             let instruction = &bytecode.instructions[pc];
-            *executed += 1;
-            *err_pc = pc;
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                tally.executed += 1;
+                tally.pc = pc;
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                *tally.out_executed += 1;
+                *tally.out_pc = pc;
+            }
 
             match instruction {
                 Instruction::LoadConst { dst, const_idx } => {
@@ -4746,34 +4768,34 @@ impl BytecodeVm {
                     lhs,
                     rhs,
                     lhs_dead,
-                } if *lhs_dead
-                    && lhs != rhs
-                    && dst != rhs
-                    && matches!(
-                        self.execution_state.register_ref(*lhs)?.data,
-                        crate::ovm::value::ValueData::List(_)
-                            | crate::ovm::value::ValueData::AstList(_)
-                            | crate::ovm::value::ValueData::String(_)
-                            | crate::ovm::value::ValueData::FloatList(_)
-                            | crate::ovm::value::ValueData::IntList(_)
-                    ) =>
-                {
-                    // `lhs` is not read again: move it into `dst` and extend
-                    // it there, in place when nothing else holds it.
-                    let v = self.execution_state.take_register(*lhs)?;
-                    self.execution_state.set_register(*dst, v)?;
-                    self.add_into(*dst, *rhs)?;
-                }
-
-                Instruction::Add { dst, lhs, rhs, .. } => {
+                } => {
+                    // Numbers first: the in-place extension below is for a
+                    // list or a string, which the fast path never takes, and
+                    // testing for it first cost every float sum a read.
                     let (left, right) = self.execution_state.register_pair(*lhs, *rhs)?;
-
-                    let result = match Self::binary_fast(left, right, BinaryOp::Add) {
-                        Some(v) => v,
-                        None => self.execute_binary_op(left, right, BinaryOp::Add)?,
-                    };
-
-                    self.execution_state.set_register(*dst, result)?;
+                    if let Some(v) = Self::binary_fast(left, right, BinaryOp::Add) {
+                        self.execution_state.set_register(*dst, v)?;
+                    } else if *lhs_dead
+                        && lhs != rhs
+                        && dst != rhs
+                        && matches!(
+                            left.data,
+                            crate::ovm::value::ValueData::List(_)
+                                | crate::ovm::value::ValueData::AstList(_)
+                                | crate::ovm::value::ValueData::String(_)
+                                | crate::ovm::value::ValueData::FloatList(_)
+                                | crate::ovm::value::ValueData::IntList(_)
+                        )
+                    {
+                        // `lhs` is not read again: move it into `dst` and
+                        // extend it there, in place when nothing else holds it.
+                        let v = self.execution_state.take_register(*lhs)?;
+                        self.execution_state.set_register(*dst, v)?;
+                        self.add_into(*dst, *rhs)?;
+                    } else {
+                        let result = self.execute_binary_op(left, right, BinaryOp::Add)?;
+                        self.execution_state.set_register(*dst, result)?;
+                    }
                 }
 
                 Instruction::ListSetAssign {
@@ -11950,13 +11972,15 @@ impl ExecutionState {
         }
         self.base = saved.0;
         self.top = saved.1;
+        debug_assert!(self.slot_ok());
     }
 
     #[inline]
     pub fn get_register(&self, reg: Register) -> Result<OvmValue, BytecodeError> {
         let idx = self.base + reg.0 as usize;
         if idx < self.top {
-            Ok(self.stack[idx].clone())
+            // SAFETY: top <= stack.len() (see `slot_ok`)
+            Ok(unsafe { self.stack.get_unchecked(idx) }.clone())
         } else {
             Err(BytecodeError::InvalidRegister(reg))
         }
@@ -11969,7 +11993,8 @@ impl ExecutionState {
     pub fn register_ref(&self, reg: Register) -> Result<&OvmValue, BytecodeError> {
         let idx = self.base + reg.0 as usize;
         if idx < self.top {
-            Ok(&self.stack[idx])
+            // SAFETY: top <= stack.len() (see `slot_ok`)
+            Ok(unsafe { self.stack.get_unchecked(idx) })
         } else {
             Err(BytecodeError::InvalidRegister(reg))
         }
@@ -12007,15 +12032,27 @@ impl ExecutionState {
         }
     }
 
+    /// The register accessors check an index against the window's `top`
+    /// and then read the slab without a second check against its length
+    /// (OL-653: two bounds checks an operand were measurable on the
+    /// wasm build). Sound because the slab never shrinks and every
+    /// `top` is set by a push that first grew the slab to cover it, or
+    /// by a pop restoring an earlier push's: `top <= stack.len()`.
     #[inline]
+    fn slot_ok(&self) -> bool {
+        self.base <= self.top && self.top <= self.stack.len()
+    }
+
     /// Move a value out of a register, leaving Unit. Used by AddAssign
     /// so a uniquely-held string can be appended in place; the register
     /// is rewritten before the instruction completes.
+    #[inline]
     pub fn take_register(&mut self, reg: Register) -> Result<OvmValue, BytecodeError> {
         let idx = self.base + reg.0 as usize;
         if idx < self.top {
+            // SAFETY: top <= stack.len() (see `slot_ok`)
             Ok(std::mem::replace(
-                &mut self.stack[idx],
+                unsafe { self.stack.get_unchecked_mut(idx) },
                 OvmValue::new_unit(),
             ))
         } else {
@@ -12023,10 +12060,12 @@ impl ExecutionState {
         }
     }
 
+    #[inline]
     pub fn set_register(&mut self, reg: Register, value: OvmValue) -> Result<(), BytecodeError> {
         let idx = self.base + reg.0 as usize;
         if idx < self.top {
-            Self::write_slot(&mut self.stack[idx], value);
+            // SAFETY: top <= stack.len() (see `slot_ok`)
+            Self::write_slot(unsafe { self.stack.get_unchecked_mut(idx) }, value);
             Ok(())
         } else {
             Err(BytecodeError::InvalidRegister(reg))
@@ -17383,6 +17422,25 @@ fn ovm_value_view(v: &OvmValue) -> OvmValueView<'_> {
 // looked at), and `getenv` scans the whole environment under a lock.
 static DEBUG_LIVENESS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 static DEBUG_TAKEMOVE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+/// `dispatch_loop`'s instruction count and current pc, flushed to the
+/// caller's counters when the loop is left (see there).
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+struct Tally<'a> {
+    executed: u64,
+    pc: usize,
+    out_executed: &'a mut u64,
+    out_pc: &'a mut usize,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for Tally<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        *self.out_executed += self.executed;
+        *self.out_pc = self.pc;
+    }
+}
+
 static DUMP_FN: std::sync::OnceLock<Option<std::ffi::OsString>> = std::sync::OnceLock::new();
 
 fn debug_flag(cell: &std::sync::OnceLock<bool>, name: &str) -> bool {
