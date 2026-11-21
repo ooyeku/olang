@@ -498,6 +498,34 @@ back. The dispatch loop's performance is a property of its shape, and
 changes to it are judged by measurement, not by instruction
 arithmetic.
 
+What its shape now is, each part measured on the browser build (which
+has no JIT, so the bytecode is all it runs) and natively with the JIT
+off (OL-653):
+
+- **The large, rarely hot instructions run out of line.** The in-place
+  writes, the named and method calls, the constructors and the less
+  common pattern tests are `#[inline(never)]` `op_*` methods. Inline,
+  their bodies made the loop so large that a float multiply's operands
+  and the register window were spilled and reloaded around every
+  instruction: out of line, 13% faster on wasm and 8% natively.
+  Outlining the next tier (the builtin and value calls, the extracts)
+  measured flat and was not kept.
+- **One bounds check a register.** An index is checked against the
+  frame's window and the slab read unchecked: the slab never shrinks and
+  every window lies inside it.
+- **The count stays in a register.** The instructions executed and the
+  current pc are a local flushed when the loop is left (any `?`
+  included), natively; on wasm, which does not unwind, that flush made
+  the loop slower, so there they are written through.
+- **A plain tag on wasm.** `Instruction` is `#[repr(u8)]` on wasm (3%),
+  and keeps the niche the compiler picks natively, where the tag
+  measured slower.
+- **Numbers first.** `Add` tries the two-number fast path before the
+  in-place list or string test.
+
+The site's Julia set at 34 instructions an iteration: about 2.4 ns an
+instruction on wasm (it was 3.4) and 2.2 natively with the JIT off.
+
 ## The JIT
 
 The third tier (`src/ovm/jit.rs`): hot bytecode compiled to native
