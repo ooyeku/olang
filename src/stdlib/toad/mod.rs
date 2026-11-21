@@ -1216,9 +1216,10 @@ fn frame(layers: &Value, view: &Value) -> R {
                     };
                     let (pic, w, h, t, unlit) = if let Some(Value::String(text)) = sm.get("text") {
                         // text in the world: `size` is its font size in world
-                        // units, set at the size it shows
+                        // units, set at the size it shows (the camera's
+                        // scale); on the screen, in points (the screen's)
                         let size = sm.get("size").and_then(num).unwrap_or(24.0).max(0.01);
-                        let px = words::step_px(size * view.scale);
+                        let px = words::step_px(size * if on_screen { view.ui_scale } else { view.scale });
                         let align = match sm.get("align") {
                             Some(Value::String(a)) => crate::stdlib::gui::text::Align::parse(a)
                                 .ok_or_else(|| format!("toad.frame: a text's `align` is start, center or end, not {}", a))?,

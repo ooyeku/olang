@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   Zoom centred the field instead of following the caret. The caret's
   line now reports its box where the line would be, as AppKit's text
   views do.
+- **toad: a game's screen text is sharp at any zoom** (OL-651). Text
+  in a screen layer (a HUD's captions) was set at the camera's scale
+  and stretched to the screen's, so a game zoomed out drew its HUD
+  blurry. It is now set at the screen's scale, as its shapes are.
 - **gui: Tab passes a control squeezed to nothing** (OL-650). A row
   laid out with no height in a small window kept its controls in the
   focus order, so Tab could land on one that can't be seen or
