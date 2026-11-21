@@ -350,15 +350,24 @@ fn http_network_failure_is_still_a_value() {
 }
 
 /// A local listener that answers each connection with `reply` (or
-/// nothing, when it is empty) and then holds it open.
+/// nothing, when it is empty) and then holds it open. It reads the
+/// request's head first: a reply sent before the request is written
+/// reaches the client as an unexpected message, not as a slow answer.
 fn listener(reply: &'static [u8]) -> u16 {
-    use std::io::Write;
+    use std::io::{Read, Write};
     let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = l.local_addr().unwrap().port();
     std::thread::spawn(move || {
         let mut held = Vec::new();
         for mut c in l.incoming().flatten() {
             if !reply.is_empty() {
+                let mut head = Vec::new();
+                let mut byte = [0u8; 1];
+                while !head.ends_with(b"\r\n\r\n")
+                    && c.read(&mut byte).map(|n| n == 1).unwrap_or(false)
+                {
+                    head.push(byte[0]);
+                }
                 let _ = c.write_all(reply);
                 let _ = c.flush();
             }
