@@ -6505,6 +6505,8 @@ impl BytecodeVm {
                         && let Some(r) = Self::str_native(op, &arg_values)
                     {
                         r
+                    } else if let Some(v) = Self::scalar_native(function_name, &arg_values) {
+                        Ok(v)
                     } else if function_name == "map_set"
                         && let Some(r) = Self::map_set_owned(&mut arg_values)
                     {
@@ -10332,6 +10334,10 @@ impl BytecodeVm {
                 "map_get",
                 "map_has_key",
                 "map_set",
+                "abs",
+                "to_int",
+                "to_float",
+                "clamp",
                 // CallNamed's owned fast paths
                 "map_set_in",
                 "map_update",
@@ -10669,6 +10675,51 @@ impl BytecodeVm {
             self.execution_state.set_register(*target, result)?;
         }
         Ok(())
+    }
+
+    /// `to_int`, `to_float` and `clamp` of numbers, answered here rather
+    /// than through the bridge (OL-653): a loop that converts a counter
+    /// or clamps a ratio per element spent most of its time there. The
+    /// arithmetic is the builtin's own (`builtin.rs`); `None` for
+    /// anything else — a string to parse, a Float outside the Int range,
+    /// a wrong count or kind — which the builtin answers or raises on.
+    #[inline]
+    fn scalar_native(name: &str, args: &[OvmValue]) -> Option<OvmValue> {
+        use crate::ovm::value::ValueData as D;
+        match (name, args) {
+            ("to_float", [a]) => match a.data {
+                D::Integer(n) => Some(OvmValue::new_float(n as f64)),
+                D::Float(x) => Some(OvmValue::new_float(x)),
+                _ => None,
+            },
+            ("to_int", [a]) => match a.data {
+                D::Integer(n) => Some(OvmValue::new_integer(n)),
+                D::Float(x) => {
+                    let t = x.trunc();
+                    (x.is_finite()
+                        && (-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0)
+                            .contains(&t))
+                    .then(|| OvmValue::new_integer(t as i64))
+                }
+                _ => None,
+            },
+            ("clamp", [v, lo, hi]) => match (&v.data, &lo.data, &hi.data) {
+                (D::Integer(v), D::Integer(l), D::Integer(h)) => {
+                    Some(OvmValue::new_integer((*v).max(*l).min(*h)))
+                }
+                (D::Float(v), D::Float(l), D::Float(h)) => Some(OvmValue::new_float(
+                    crate::builtin::clamp_f64(*v, *l, *h),
+                )),
+                (D::Integer(v), D::Float(l), D::Float(h)) => Some(OvmValue::new_float(
+                    crate::builtin::clamp_f64(*v as f64, *l, *h),
+                )),
+                (D::Float(v), D::Integer(l), D::Integer(h)) => Some(OvmValue::new_float(
+                    crate::builtin::clamp_f64(*v, *l as f64, *h as f64),
+                )),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     /// `map_set` on a map the call owns (its argument was moved in):

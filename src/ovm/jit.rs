@@ -539,6 +539,12 @@ extern "C" fn olang_jit_math(id: i64, a: f64, b: f64) -> f64 {
     crate::ovm::bytecode::BytecodeVm::eval_float_math(id as usize, a, b)
 }
 
+/// Host helper for `clamp` with a Float among its arguments: the
+/// builtin's own arithmetic, so a NaN or a signed zero answers as it does.
+extern "C" fn olang_jit_clamp(v: f64, lo: f64, hi: f64) -> f64 {
+    crate::builtin::clamp_f64(v, lo, hi)
+}
+
 const EXPECT_STRUCT: u64 = 3;
 
 /// Host helper for `list[i]`: a negative index, any other bounds
@@ -699,7 +705,11 @@ unsafe extern "C" fn olang_jit_str_concat(
         if ctx.str_allocs.len() >= 1_000_000 {
             return 0;
         }
-        let s = Arc::new(format!("{}{}", *a, *b));
+        let (a, b) = (&*a, &*b);
+        let mut joined = String::with_capacity(a.len() + b.len());
+        joined.push_str(a);
+        joined.push_str(b);
+        let s = Arc::new(joined);
         let ptr = Arc::as_ptr(&s) as i64;
         ctx.str_allocs.push(s);
         ptr
@@ -1750,6 +1760,7 @@ impl JitCache {
             builder.memory_provider(super::jit_memory::provider());
             builder.symbol("olang_jit_field", olang_jit_field as *const u8);
             builder.symbol("olang_jit_math", olang_jit_math as *const u8);
+            builder.symbol("olang_jit_clamp", olang_jit_clamp as *const u8);
             builder.symbol("olang_jit_index", olang_jit_index as *const u8);
             builder.symbol("olang_jit_len", olang_jit_len as *const u8);
             builder.symbol("olang_jit_make_struct", olang_jit_make_struct as *const u8);
@@ -2732,7 +2743,14 @@ impl JitCache {
                     Instruction::CallNamed { function_name, .. }
                         if matches!(
                             function_name.as_str(),
-                            "map_get" | "map_has_key" | "map_set" | "len" | "abs"
+                            "map_get"
+                                | "map_has_key"
+                                | "map_set"
+                                | "len"
+                                | "abs"
+                                | "to_int"
+                                | "to_float"
+                                | "clamp"
                         ) =>
                     {
                         baked.insert(function_name.clone());
@@ -2791,6 +2809,16 @@ impl JitCache {
             sig.returns.push(AbiParam::new(types::F64));
             module
                 .declare_function("olang_jit_math", Linkage::Import, &sig)
+                .ok()?
+        };
+        let clamp_helper = {
+            let mut sig = module.make_signature();
+            for _ in 0..3 {
+                sig.params.push(AbiParam::new(types::F64));
+            }
+            sig.returns.push(AbiParam::new(types::F64));
+            module
+                .declare_function("olang_jit_clamp", Linkage::Import, &sig)
                 .ok()?
         };
         let len_helper = {
@@ -3248,6 +3276,7 @@ impl JitCache {
                     Helpers {
                         field: field_helper,
                         math: math_helper,
+                        clamp: clamp_helper,
                         index: index_helper,
                         len: len_helper,
                         index_rawf: index_rawf_helper,
@@ -3623,6 +3652,11 @@ pub(crate) fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
             // a list's length (as IterLen reads it) and a number's
             // magnitude: neither allocates, so both compile in loops
             "len" | "abs" => args.len() == 1,
+            // the scalar conversions and clamp: no allocation, so they
+            // compile in loops; a kind the VM would raise on refuses at
+            // inference, an Int-range miss deopts (OL-653)
+            "to_int" | "to_float" => args.len() == 1,
+            "clamp" => args.len() == 3,
             _ => false,
         },
         Instruction::BinImm { imm, .. } => {
@@ -3680,6 +3714,50 @@ pub(crate) fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
 /// Arc semantics would have diverged them. The one permitted alias is
 /// the exit write-back: a MakeTuple after which only Nops and the
 /// Return remain, so no write can execute once the tuple exists.
+/// True when no instruction of a loop region can put anything in the
+/// call's scratch: scalar arithmetic and tests, moves, jumps, constant
+/// loads, borrowed reads and the builtins that answer a scalar. Anything
+/// else (a constructor, a concatenation, a call) counts as allocating.
+fn region_scalar(region: &[Instruction], reg_kind: &[Option<Kind>]) -> bool {
+    let scalar = |r: &Register| {
+        matches!(
+            reg_kind.get(r.0 as usize).copied().flatten(),
+            Some(Kind::Int | Kind::Float | Kind::Bool)
+        )
+    };
+    region.iter().all(|inst| match inst {
+        Instruction::Add { dst, .. }
+        | Instruction::Sub { dst, .. }
+        | Instruction::Mul { dst, .. }
+        | Instruction::Div { dst, .. }
+        | Instruction::BinImm { dst, .. } => scalar(dst),
+        Instruction::LoadConst { .. }
+        | Instruction::Move { .. }
+        | Instruction::TakeMove { .. }
+        | Instruction::Release { .. }
+        | Instruction::Eq { .. }
+        | Instruction::Ne { .. }
+        | Instruction::Lt { .. }
+        | Instruction::Le { .. }
+        | Instruction::Gt { .. }
+        | Instruction::Ge { .. }
+        | Instruction::And { .. }
+        | Instruction::Or { .. }
+        | Instruction::Not { .. }
+        | Instruction::PatternEq { .. }
+        | Instruction::Jump { .. }
+        | Instruction::JumpIfTrue { .. }
+        | Instruction::JumpIfFalse { .. }
+        | Instruction::Nop
+        | Instruction::CallBuiltin { .. } => true,
+        Instruction::CallNamed { function_name, .. } => matches!(
+            function_name.as_str(),
+            "len" | "abs" | "to_int" | "to_float" | "clamp"
+        ),
+        _ => false,
+    })
+}
+
 /// The function indices the group's code calls directly (`CallFn`), the
 /// only entries of the table its inference and codegen read.
 fn called_indices(plans: &[PlanFn]) -> std::collections::BTreeSet<usize> {
@@ -5548,6 +5626,37 @@ impl PlanFn {
                             let a = self.writes[args[0].0 as usize];
                             grow!(self.writes[dst.0 as usize], a & K_NUM);
                         }
+                        // a number to an Int (a Float truncated, one
+                        // outside the Int range deopts) or to a Float;
+                        // a string's parse stays on bytecode
+                        "to_int" if args.len() == 1 => {
+                            narrow!(args[0].0, K_NUM);
+                            grow!(self.writes[dst.0 as usize], K_INT);
+                        }
+                        "to_float" if args.len() == 1 => {
+                            narrow!(args[0].0, K_NUM);
+                            grow!(self.writes[dst.0 as usize], K_FLOAT);
+                        }
+                        // three Ints answer an Int; a Float among them a
+                        // Float (codegen refuses the mixes the VM raises on)
+                        "clamp" if args.len() == 3 => {
+                            let mut any = 0;
+                            let mut all = K_NUM;
+                            for a in args {
+                                narrow!(a.0, K_NUM);
+                                let w = self.writes[a.0 as usize];
+                                any |= w;
+                                all &= w;
+                            }
+                            let mut out = 0;
+                            if any & K_FLOAT != 0 {
+                                out |= K_FLOAT;
+                            }
+                            if all & K_INT != 0 {
+                                out |= K_INT;
+                            }
+                            grow!(self.writes[dst.0 as usize], out);
+                        }
                         "map_set" if args.len() == 3 => {
                             narrow!(args[0].0, K_MAP);
                             narrow!(args[1].0, K_STR);
@@ -6108,7 +6217,12 @@ impl PlanFn {
                         return None;
                     }
                 }
-                scratch_region = Some((h, e));
+                // The allocation is all outside the loop (a result
+                // formatted after it): an iteration allocates nothing,
+                // so a release per back-edge would only cost (OL-653).
+                if !region_scalar(&self.bytecode.instructions[h..=e], &reg_kind) {
+                    scratch_region = Some((h, e));
+                }
             } else if let Some((h, e)) = self.loop_region {
                 // Nothing newly allowed, but callees may still allocate
                 // into the entry scratch (an int-returning callee's
@@ -6224,6 +6338,7 @@ pub(crate) fn instruction_name(inst: &Instruction) -> &'static str {
 struct Helpers {
     field: cranelift_module::FuncId,
     math: cranelift_module::FuncId,
+    clamp: cranelift_module::FuncId,
     index: cranelift_module::FuncId,
     len: cranelift_module::FuncId,
     index_rawf: cranelift_module::FuncId,
@@ -6303,6 +6418,7 @@ fn translate_body(
     let Helpers {
         field: field_helper,
         math: math_helper,
+        clamp: clamp_helper,
         index: index_helper,
         len: len_helper,
         index_rawf: index_rawf_helper,
@@ -7309,6 +7425,69 @@ fn translate_body(
                             builder.ins().brif(is_min, deopt_block, &[], cont, &[]);
                             builder.switch_to_block(cont);
                             builder.ins().iabs(a)
+                        }
+                        _ => return None,
+                    };
+                    r#gen.write(builder, dst.0, val);
+                }
+                "to_float" => {
+                    let k = r#gen.kind(args[0].0)?;
+                    if !matches!(k, Kind::Int | Kind::Float) {
+                        return None;
+                    }
+                    let a = builder.use_var(Variable::from_u32(args[0].0));
+                    let val = r#gen.to_float(builder, a, k);
+                    r#gen.write(builder, dst.0, val);
+                }
+                "to_int" => {
+                    let a = builder.use_var(Variable::from_u32(args[0].0));
+                    let val = match r#gen.kind(args[0].0)? {
+                        Kind::Int => a,
+                        Kind::Float => {
+                            // truncated toward zero; NaN, an infinity or
+                            // an integer part outside the Int range
+                            // deopts, and the VM raises (math.trunc's rule)
+                            let t = builder.ins().trunc(a);
+                            let lo = builder.ins().f64const(-9_223_372_036_854_775_808.0);
+                            let hi = builder.ins().f64const(9_223_372_036_854_775_808.0);
+                            let in_lo = builder.ins().fcmp(FloatCC::GreaterThanOrEqual, t, lo);
+                            let in_hi = builder.ins().fcmp(FloatCC::LessThan, t, hi);
+                            let fits = builder.ins().band(in_lo, in_hi);
+                            let ok_block = builder.create_block();
+                            builder.ins().brif(fits, ok_block, &[], deopt_block, &[]);
+                            builder.switch_to_block(ok_block);
+                            builder.ins().fcvt_to_sint(types::I64, t)
+                        }
+                        _ => return None,
+                    };
+                    r#gen.write(builder, dst.0, val);
+                }
+                "clamp" => {
+                    let ks = [
+                        r#gen.kind(args[0].0)?,
+                        r#gen.kind(args[1].0)?,
+                        r#gen.kind(args[2].0)?,
+                    ];
+                    let v: Vec<ClifValue> = args
+                        .iter()
+                        .map(|a| builder.use_var(Variable::from_u32(a.0)))
+                        .collect();
+                    let val = match ks {
+                        [Kind::Int, Kind::Int, Kind::Int] => {
+                            let lo = builder.ins().smax(v[0], v[1]);
+                            builder.ins().smin(lo, v[2])
+                        }
+                        // the builtin's own arms: an Int value with Float
+                        // bounds, Float bounds that are Ints, or all
+                        // Floats; any other mix raises on the VM
+                        [Kind::Int | Kind::Float, Kind::Float, Kind::Float]
+                        | [Kind::Float, Kind::Int, Kind::Int] => {
+                            let x = r#gen.to_float(builder, v[0], ks[0]);
+                            let l = r#gen.to_float(builder, v[1], ks[1]);
+                            let h = r#gen.to_float(builder, v[2], ks[2]);
+                            let helper_ref = module.declare_func_in_func(clamp_helper, builder.func);
+                            let call = builder.ins().call(helper_ref, &[x, l, h]);
+                            builder.inst_results(call)[0]
                         }
                         _ => return None,
                     };

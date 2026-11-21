@@ -42,6 +42,13 @@ impl Default for BuiltinFunctions {
     }
 }
 
+/// `clamp` of Floats: one body for the builtin and native code (the
+/// JIT calls it), so both answer a NaN or a signed zero alike.
+#[inline(never)]
+pub(crate) fn clamp_f64(v: f64, lo: f64, hi: f64) -> f64 {
+    v.max(lo).min(hi)
+}
+
 /// `map_set_in`'s write: the value at the end of `keys` set in `at`, each
 /// level written in place when nothing else holds it (`Arc::make_mut`), a
 /// missing level made a new map. Shared with the VM, which writes an
@@ -3409,16 +3416,13 @@ impl BuiltinFunctions {
                 Ok(Value::Integer((*v).max(*l).min(*h)))
             }
             (Value::Float(v), Value::Float(l), Value::Float(h)) => {
-                Ok(Value::Float((*v).max(*l).min(*h)))
+                Ok(Value::Float(clamp_f64(*v, *l, *h)))
             }
             (Value::Integer(v), Value::Float(l), Value::Float(h)) => {
-                let vf = *v as f64;
-                Ok(Value::Float(vf.max(*l).min(*h)))
+                Ok(Value::Float(clamp_f64(*v as f64, *l, *h)))
             }
             (Value::Float(v), Value::Integer(l), Value::Integer(h)) => {
-                let lf = *l as f64;
-                let hf = *h as f64;
-                Ok(Value::Float((*v).max(lf).min(hf)))
+                Ok(Value::Float(clamp_f64(*v, *l as f64, *h as f64)))
             }
             _ => Err(InterpreterError::TypeError {
                 message: "clamp: all arguments must be numeric and comparable".to_string(),

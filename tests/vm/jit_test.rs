@@ -1945,3 +1945,44 @@ out
         )))
     );
 }
+
+// ── to_int, to_float and clamp (OL-653) ─────────────────────────────
+//
+// A float loop that converts and clamps its result after the loop (the
+// site's Julia set) compiles whole; every kind the builtins take agrees
+// with the interpreter, and the edges — a Float outside the Int range,
+// a mix of kinds clamp raises on, a string to parse — leave native code
+// for the canonical answer.
+
+#[test]
+fn conversions_and_clamp_compile_and_agree() {
+    let kernel = r#"
+fn shade(x0, limit) = {
+    let mut x = x0
+    let mut i = 0
+    while i < limit && x < 1000.0 { x = x * x + 0.25; i = i + 1 }
+    let t = clamp(to_float(i) / to_float(limit), 0.0, 1.0)
+    to_int(t * 63.0) + clamp(i, 2, 40) + to_int(clamp(i, 0.5, 9.5)) + to_int(clamp(x, 1, 3))
+}
+"#;
+    let run = format!("{kernel}\nshade(0.1, 50) + shade(1.5, 50) + shade(-0.3, 7)");
+    let (result, stats) = eval_with_stats(&run);
+    assert_eq!(result, eval(&run, None));
+    assert!(stats.jit_native_calls > 0, "shade should run natively");
+    for tail in [
+        // a Float outside the Int range, and one that is not finite
+        "fn big(x) = to_int(x * 1.0e300)\nbig(1.0)",
+        "fn big(x) = to_int(x * 1.0e300 * 1.0e300)\nbig(1.0)",
+        "fn neg(x) = to_int(x)\nneg(-2.9) + neg(2.9)",
+        // the mixes clamp raises on
+        "fn mixed(x) = clamp(x, 0.0, 1)\nmixed(0.5)",
+        "fn mixed(x) = clamp(x, 0, 1.0)\nmixed(2)",
+        // signed zeros pass through clamp as the builtin answers them
+        "fn z(x) = to_string(clamp(x, 0.0, 1.0)) + to_string(clamp(0.0, x, 1.0))\nz(-0.0)",
+        // strings parse on bytecode
+        "fn p(s) = to_int(s) + to_int(to_float(s))\np(\" 42 \")",
+        "fn p(s) = to_int(s)\np(\"4x\")",
+    ] {
+        assert_jit_transparent(&format!("{kernel}\n{tail}"));
+    }
+}
