@@ -4680,6 +4680,1470 @@ impl BytecodeVm {
         self.error_trace_leak = None;
     }
 
+    /// `dispatch_loop`'s `ListSetAssign`, out of line (OL-653).
+    #[inline(never)]
+    fn op_list_set_assign(
+        &mut self,
+        bytecode: &CompiledBytecode,
+        instruction: &Instruction,
+    ) -> Result<(), BytecodeError> {
+        let Instruction::ListSetAssign {
+            target,
+            index,
+            value,
+            subscript,
+        } = instruction else {
+            unreachable!()
+        };
+            use crate::ovm::value::ValueData;
+            let idx_val = self.execution_state.get_register(*index)?;
+            let idx = match &idx_val.data {
+                ValueData::Integer(i) => *i,
+                _ if *subscript => {
+                    let target_val = self.execution_state.get_register(*target)?;
+                    return Err(Self::subscript_error(&target_val, &idx_val));
+                }
+                _ => {
+                    return Err(BytecodeError::TypeError(format!(
+                        "col.set: argument 2 must be an Int, got {}",
+                        idx_val.type_name()
+                    )));
+                }
+            };
+            let v = self.execution_state.get_register(*value)?;
+            // Move the list out of its register so a sole owner is
+            // recognizable; aliased lists copy, exactly like the
+            // interpreter's fusion and AddAssign's extend.
+            let target_val = self.execution_state.take_register(*target)?;
+            // Typed lists write the raw scalar in place when the
+            // element matches the layout; a mismatched element
+            // rebuilds the boxed form (correctness first).
+            if let ValueData::FloatList(_) = target_val.data {
+                let ValueData::FloatList(mut arc) = target_val.into_data() else {
+                    unreachable!()
+                };
+                let at = Self::list_set_position(*subscript, idx, arc.len())?;
+                if let ValueData::Float(f) = v.data {
+                    match std::sync::Arc::get_mut(&mut arc) {
+                        Some(items) => items[at] = f,
+                        None => {
+                            let mut items = (*arc).clone();
+                            items[at] = f;
+                            arc = std::sync::Arc::new(items);
+                        }
+                    }
+                    self.execution_state.set_register(
+                        *target,
+                        OvmValue {
+                            data: ValueData::FloatList(arc),
+                        },
+                    )?;
+                } else {
+                    let mut items: Vec<OvmValue> =
+                        arc.iter().map(|&x| OvmValue::new_float(x)).collect();
+                    items[at] = v;
+                    self.execution_state.set_register(
+                        *target,
+                        OvmValue {
+                            data: ValueData::List(std::sync::Arc::new(items)),
+                        },
+                    )?;
+                }
+                return Ok(());
+            }
+            if let ValueData::IntList(_) = target_val.data {
+                let ValueData::IntList(mut arc) = target_val.into_data() else {
+                    unreachable!()
+                };
+                let at = Self::list_set_position(*subscript, idx, arc.len())?;
+                if let ValueData::Integer(n) = v.data {
+                    match std::sync::Arc::get_mut(&mut arc) {
+                        Some(items) => items[at] = n,
+                        None => {
+                            let mut items = (*arc).clone();
+                            items[at] = n;
+                            arc = std::sync::Arc::new(items);
+                        }
+                    }
+                    self.execution_state.set_register(
+                        *target,
+                        OvmValue {
+                            data: ValueData::IntList(arc),
+                        },
+                    )?;
+                } else {
+                    let mut items: Vec<OvmValue> =
+                        arc.iter().map(|&x| OvmValue::new_integer(x)).collect();
+                    items[at] = v;
+                    self.execution_state.set_register(
+                        *target,
+                        OvmValue {
+                            data: ValueData::List(std::sync::Arc::new(items)),
+                        },
+                    )?;
+                }
+                return Ok(());
+            }
+            // A wrapped interpreter list writes in place too:
+            // one element converts, the arc stays shared with
+            // the interpreter side — the boundary-free write the
+            // collections' handles ride on.
+            if let ValueData::AstList(_) = target_val.data {
+                let ValueData::AstList(mut arc) = target_val.into_data() else {
+                    unreachable!()
+                };
+                if env_on!("OLANG_DEBUG_ASTLIST") && std::sync::Arc::strong_count(&arc) > 1
+                {
+                    let mut holders = Vec::new();
+                    for r in 0..64u32 {
+                        if let Ok(v) = self.execution_state.register_ref(Register(r))
+                            && let ValueData::AstList(other) = &v.data
+                            && std::sync::Arc::ptr_eq(other, &arc)
+                        {
+                            holders.push(r);
+                        }
+                    }
+                    eprintln!(
+                        "[astlist] set copy in {:?}: rc={} len={} frame_holders={:?} stack_holders={:?} base={}",
+                        bytecode.debug_info.function_name.as_deref().unwrap_or("?"),
+                        std::sync::Arc::strong_count(&arc),
+                        arc.len(),
+                        holders,
+                        self.execution_state.debug_slots_holding(&arc),
+                        self.execution_state.debug_base()
+                    );
+                }
+                let at = Self::list_set_position(*subscript, idx, arc.len())?;
+                let ast_v = v
+                    .to_ast()
+                    .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
+                match std::sync::Arc::get_mut(&mut arc) {
+                    Some(items) => items[at] = ast_v,
+                    None => {
+                        let mut items = (*arc).clone();
+                        items[at] = ast_v;
+                        arc = std::sync::Arc::new(items);
+                    }
+                }
+                self.execution_state.set_register(
+                    *target,
+                    OvmValue {
+                        data: ValueData::AstList(arc),
+                    },
+                )?;
+                return Ok(());
+            }
+            if !matches!(target_val.data, ValueData::List(_)) {
+                if *subscript {
+                    let e = Self::subscript_error(&target_val, &OvmValue::new_integer(idx));
+                    self.execution_state.set_register(*target, target_val)?;
+                    return Err(e);
+                }
+                let msg = format!(
+                    "col.set: argument 1 must be a list, got {}",
+                    target_val.type_name()
+                );
+                self.execution_state.set_register(*target, target_val)?;
+                return Err(BytecodeError::TypeError(msg));
+            }
+            let ValueData::List(mut arc) = target_val.into_data() else {
+                unreachable!("matched above");
+            };
+            let at = Self::list_set_position(*subscript, idx, arc.len())?;
+            match std::sync::Arc::get_mut(&mut arc) {
+                Some(items) => items[at] = v,
+                None => {
+                    let mut items = (*arc).clone();
+                    items[at] = v;
+                    arc = std::sync::Arc::new(items);
+                }
+            }
+            self.execution_state.set_register(
+                *target,
+                OvmValue {
+                    data: ValueData::List(arc),
+                },
+            )?;
+        Ok(())
+    }
+
+    /// `dispatch_loop`'s `ListSwapAssign`, out of line (OL-653).
+    #[inline(never)]
+    fn op_list_swap_assign(
+        &mut self,
+        _bytecode: &CompiledBytecode,
+        instruction: &Instruction,
+    ) -> Result<(), BytecodeError> {
+        let Instruction::ListSwapAssign { target, i, j } = instruction else {
+            unreachable!()
+        };
+            use crate::ovm::value::ValueData;
+            let read_idx = |vm: &Self, r: Register| -> Result<i64, BytecodeError> {
+                let v = vm.execution_state.get_register(r)?;
+                match &v.data {
+                    ValueData::Integer(n) => Ok(*n),
+                    _ => Err(BytecodeError::TypeError(format!(
+                        "col.swap: index must be an Int, got {}",
+                        v.type_name()
+                    ))),
+                }
+            };
+            let ia = read_idx(self, *i)?;
+            let ib = read_idx(self, *j)?;
+            let target_val = self.execution_state.take_register(*target)?;
+            // Typed lists swap raw scalars in place.
+            if let ValueData::FloatList(_) = target_val.data {
+                let ValueData::FloatList(mut arc) = target_val.into_data() else {
+                    unreachable!()
+                };
+                let a = crate::stdlib::collections::resolve_index("swap", ia, arc.len())
+                    .map_err(BytecodeError::RuntimeError)?;
+                let b = crate::stdlib::collections::resolve_index("swap", ib, arc.len())
+                    .map_err(BytecodeError::RuntimeError)?;
+                match std::sync::Arc::get_mut(&mut arc) {
+                    Some(items) => items.swap(a, b),
+                    None => {
+                        let mut items = (*arc).clone();
+                        items.swap(a, b);
+                        arc = std::sync::Arc::new(items);
+                    }
+                }
+                self.execution_state.set_register(
+                    *target,
+                    OvmValue {
+                        data: ValueData::FloatList(arc),
+                    },
+                )?;
+                return Ok(());
+            }
+            if let ValueData::IntList(_) = target_val.data {
+                let ValueData::IntList(mut arc) = target_val.into_data() else {
+                    unreachable!()
+                };
+                let a = crate::stdlib::collections::resolve_index("swap", ia, arc.len())
+                    .map_err(BytecodeError::RuntimeError)?;
+                let b = crate::stdlib::collections::resolve_index("swap", ib, arc.len())
+                    .map_err(BytecodeError::RuntimeError)?;
+                match std::sync::Arc::get_mut(&mut arc) {
+                    Some(items) => items.swap(a, b),
+                    None => {
+                        let mut items = (*arc).clone();
+                        items.swap(a, b);
+                        arc = std::sync::Arc::new(items);
+                    }
+                }
+                self.execution_state.set_register(
+                    *target,
+                    OvmValue {
+                        data: ValueData::IntList(arc),
+                    },
+                )?;
+                return Ok(());
+            }
+            if let ValueData::AstList(_) = target_val.data {
+                let ValueData::AstList(mut arc) = target_val.into_data() else {
+                    unreachable!()
+                };
+                if env_on!("OLANG_DEBUG_ASTLIST") && std::sync::Arc::strong_count(&arc) > 1
+                {
+                    let holders = self.execution_state.debug_slots_holding(&arc);
+                    eprintln!(
+                        "[astlist] swap rc={} len={} slab_holders={:?} base={}",
+                        std::sync::Arc::strong_count(&arc),
+                        arc.len(),
+                        holders,
+                        self.execution_state.debug_base()
+                    );
+                }
+                let a = crate::stdlib::collections::resolve_index("swap", ia, arc.len())
+                    .map_err(BytecodeError::RuntimeError)?;
+                let b = crate::stdlib::collections::resolve_index("swap", ib, arc.len())
+                    .map_err(BytecodeError::RuntimeError)?;
+                match std::sync::Arc::get_mut(&mut arc) {
+                    Some(items) => items.swap(a, b),
+                    None => {
+                        let mut items = (*arc).clone();
+                        items.swap(a, b);
+                        arc = std::sync::Arc::new(items);
+                    }
+                }
+                self.execution_state.set_register(
+                    *target,
+                    OvmValue {
+                        data: ValueData::AstList(arc),
+                    },
+                )?;
+                return Ok(());
+            }
+            if !matches!(target_val.data, ValueData::List(_)) {
+                let msg = format!(
+                    "col.swap: argument 1 must be a list, got {}",
+                    target_val.type_name()
+                );
+                self.execution_state.set_register(*target, target_val)?;
+                return Err(BytecodeError::TypeError(msg));
+            }
+            let ValueData::List(mut arc) = target_val.into_data() else {
+                unreachable!("matched above");
+            };
+            let a = crate::stdlib::collections::resolve_index("swap", ia, arc.len())
+                .map_err(BytecodeError::RuntimeError)?;
+            let b = crate::stdlib::collections::resolve_index("swap", ib, arc.len())
+                .map_err(BytecodeError::RuntimeError)?;
+            match std::sync::Arc::get_mut(&mut arc) {
+                Some(items) => items.swap(a, b),
+                None => {
+                    let mut items = (*arc).clone();
+                    items.swap(a, b);
+                    arc = std::sync::Arc::new(items);
+                }
+            }
+            self.execution_state.set_register(
+                *target,
+                OvmValue {
+                    data: ValueData::List(arc),
+                },
+            )?;
+        Ok(())
+    }
+
+    /// `dispatch_loop`'s `ListAppendAssign`, out of line (OL-653).
+    #[inline(never)]
+    fn op_list_append_assign(
+        &mut self,
+        _bytecode: &CompiledBytecode,
+        instruction: &Instruction,
+    ) -> Result<(), BytecodeError> {
+        let Instruction::ListAppendAssign { target, value } = instruction else {
+            unreachable!()
+        };
+            use crate::ovm::value::ValueData;
+            // Semantically `target = target + [value]` — every arm
+            // below must land exactly where AddAssign with a
+            // one-element list rhs would have, minus building the
+            // wrapper list.
+            let v = self.execution_state.get_register(*value)?;
+            let target_val = self.execution_state.take_register(*target)?;
+            let out = match target_val.into_data() {
+                ValueData::FloatList(mut arc) => {
+                    if let ValueData::Float(f) = v.data {
+                        match std::sync::Arc::get_mut(&mut arc) {
+                            Some(items) => items.push(f),
+                            None => {
+                                let mut items = (*arc).clone();
+                                items.push(f);
+                                arc = std::sync::Arc::new(items);
+                            }
+                        }
+                        OvmValue {
+                            data: ValueData::FloatList(arc),
+                        }
+                    } else {
+                        // Mismatched element: rebuild boxed,
+                        // exactly like the mixed typed append.
+                        let mut items: Vec<OvmValue> =
+                            arc.iter().map(|&x| OvmValue::new_float(x)).collect();
+                        items.push(v);
+                        OvmValue {
+                            data: ValueData::List(std::sync::Arc::new(items)),
+                        }
+                    }
+                }
+                ValueData::IntList(mut arc) => {
+                    if let ValueData::Integer(n) = v.data {
+                        match std::sync::Arc::get_mut(&mut arc) {
+                            Some(items) => items.push(n),
+                            None => {
+                                let mut items = (*arc).clone();
+                                items.push(n);
+                                arc = std::sync::Arc::new(items);
+                            }
+                        }
+                        OvmValue {
+                            data: ValueData::IntList(arc),
+                        }
+                    } else {
+                        let mut items: Vec<OvmValue> =
+                            arc.iter().map(|&x| OvmValue::new_integer(x)).collect();
+                        items.push(v);
+                        OvmValue {
+                            data: ValueData::List(std::sync::Arc::new(items)),
+                        }
+                    }
+                }
+                ValueData::AstList(mut arc) => {
+                    let ast_v = v
+                        .to_ast()
+                        .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
+                    match std::sync::Arc::get_mut(&mut arc) {
+                        Some(items) => items.push(ast_v),
+                        None => {
+                            let mut items = (*arc).clone();
+                            items.push(ast_v);
+                            arc = std::sync::Arc::new(items);
+                        }
+                    }
+                    OvmValue {
+                        data: ValueData::AstList(arc),
+                    }
+                }
+                ValueData::List(arc) if arc.is_empty() => {
+                    // The empty-accumulator convention: `[]`
+                    // carries no element type, so the first
+                    // scalar append chooses the typed layout —
+                    // invisible (layouts compare and print
+                    // identically), and the list a loop grows
+                    // from nothing is raw from element one.
+                    match v.data {
+                        ValueData::Float(f) => OvmValue {
+                            data: ValueData::FloatList(std::sync::Arc::new(vec![f])),
+                        },
+                        ValueData::Integer(n) => OvmValue {
+                            data: ValueData::IntList(std::sync::Arc::new(vec![n])),
+                        },
+                        _ => OvmValue {
+                            data: ValueData::List(std::sync::Arc::new(vec![v])),
+                        },
+                    }
+                }
+                ValueData::List(mut arc) => {
+                    match std::sync::Arc::get_mut(&mut arc) {
+                        Some(items) => items.push(v),
+                        None => {
+                            let mut items = (*arc).clone();
+                            items.push(v);
+                            arc = std::sync::Arc::new(items);
+                        }
+                    }
+                    OvmValue {
+                        data: ValueData::List(arc),
+                    }
+                }
+                other => {
+                    // Not a list: reproduce `target + [value]`
+                    // through the ordinary binary path so the
+                    // error is byte-identical.
+                    let target_val = OvmValue { data: other };
+                    let boxed = OvmValue {
+                        data: ValueData::List(std::sync::Arc::new(vec![v])),
+                    };
+                    match Self::binary_fast(&target_val, &boxed, BinaryOp::Add) {
+                        Some(r) => r,
+                        None => {
+                            self.execute_binary_op(&target_val, &boxed, BinaryOp::Add)?
+                        }
+                    }
+                }
+            };
+            self.execution_state.set_register(*target, out)?;
+        Ok(())
+    }
+
+    /// `dispatch_loop`'s `ConcatToString`, out of line (OL-653).
+    #[inline(never)]
+    fn op_concat_to_string(
+        &mut self,
+        _bytecode: &CompiledBytecode,
+        instruction: &Instruction,
+    ) -> Result<(), BytecodeError> {
+        let Instruction::ConcatToString {
+            dst,
+            text,
+            arg,
+            text_first,
+        } = instruction else {
+            unreachable!()
+        };
+            use crate::ovm::value::ValueData;
+            let text_val = self.execution_state.get_register(*text)?;
+            let arg_val = self.execution_state.get_register(*arg)?;
+            let result = match (&text_val.data, &arg_val.data) {
+                (ValueData::String(t), ValueData::Integer(i)) => {
+                    use std::fmt::Write as _;
+                    let mut out = String::with_capacity(t.len() + 20);
+                    if *text_first {
+                        out.push_str(t);
+                        let _ = write!(out, "{}", i);
+                    } else {
+                        let _ = write!(out, "{}", i);
+                        out.push_str(t);
+                    }
+                    OvmValue::new_string(out)
+                }
+                _ => {
+                    let rendered = self.execute_builtin_call(
+                        "to_string",
+                        std::slice::from_ref(&arg_val),
+                        false,
+                    )?;
+                    if *text_first {
+                        self.execute_binary_op(&text_val, &rendered, BinaryOp::Add)?
+                    } else {
+                        self.execute_binary_op(&rendered, &text_val, BinaryOp::Add)?
+                    }
+                }
+            };
+            self.execution_state.set_register(*dst, result)?;
+        Ok(())
+    }
+
+    /// `dispatch_loop`'s `MapSetAssign`, out of line (OL-653).
+    #[inline(never)]
+    fn op_map_set_assign(
+        &mut self,
+        _bytecode: &CompiledBytecode,
+        instruction: &Instruction,
+    ) -> Result<(), BytecodeError> {
+        let Instruction::MapSetAssign {
+            target,
+            key,
+            value,
+            value_dead,
+        } = instruction else {
+            unreachable!()
+        };
+            use crate::ovm::value::ValueData;
+            // A user-defined map_set shadows the builtin: resolve
+            // exactly as CallNamed would and call it.
+            // A shadowed map_set resolves exactly as CallNamed
+            // would: the registered user function, or the
+            // not-found error whose deopt re-runs on the
+            // interpreter (where the user's definition lives).
+            if !self.builtin_names.contains("map_set") {
+                let outcome = if let Some(&func_id) = self.function_registry.get("map_set")
+                {
+                    let arg_values = [
+                        self.execution_state.get_register(*target)?,
+                        self.execution_state.get_register(*key)?,
+                        self.execution_state.get_register(*value)?,
+                    ];
+                    self.execute(func_id, &arg_values)
+                } else {
+                    Err(BytecodeError::NamedFunctionNotFound("map_set".to_string()))
+                };
+                self.execution_state.set_register(*target, outcome?)?;
+                return Ok(());
+            }
+            // Key coercion first, then the receiver — the native
+            // map_set's own order and messages.
+            let key_val = self.execution_state.get_register(*key)?;
+            // Borrow a string key; only a brand-new key is copied
+            // into the map (an update overwrites the slot in place).
+            let key_owned: String;
+            let key_str: &str = match &key_val.data {
+                ValueData::String(st) => st.as_str(),
+                ValueData::Integer(i) => {
+                    key_owned = i.to_string();
+                    &key_owned
+                }
+                ValueData::Float(f) => {
+                    key_owned = crate::ast::float_key_text(*f);
+                    &key_owned
+                }
+                ValueData::Boolean(b) => {
+                    key_owned = b.to_string();
+                    &key_owned
+                }
+                _ => {
+                    return Err(BytecodeError::TypeError(
+                        "map_set: key must be string, integer, float, or boolean"
+                            .to_string(),
+                    ));
+                }
+            };
+            let v = if *value_dead && value != target && value != key {
+                self.execution_state.take_register(*value)?
+            } else {
+                self.execution_state.get_register(*value)?
+            };
+            // Take the map out of its register so a sole owner is
+            // recognizable; aliased maps copy, exactly like the
+            // list writes.
+            let target_val = self.execution_state.take_register(*target)?;
+            match target_val.into_data() {
+                ValueData::Map(mut arc) => {
+                    match std::sync::Arc::get_mut(&mut arc) {
+                        Some(m) => match m.get_mut(key_str) {
+                            Some(slot) => *slot = v,
+                            None => {
+                                m.insert(key_str.to_string(), v);
+                            }
+                        },
+                        None => {
+                            let mut m = (*arc).clone();
+                            m.insert(key_str.to_string(), v);
+                            arc = std::sync::Arc::new(m);
+                        }
+                    }
+                    self.execution_state.set_register(
+                        *target,
+                        OvmValue {
+                            data: ValueData::Map(arc),
+                        },
+                    )?;
+                }
+                // A small wrapped map written a collection the VM
+                // built becomes the VM's own (AST_MAP_PROMOTE).
+                ValueData::AstMap(arc) if v.promotes_wrapper(arc.len()) => {
+                    let mut m = OvmValue::force_ast_map(&arc);
+                    m.insert(key_str.to_string(), v);
+                    self.execution_state
+                        .set_register(*target, OvmValue::new_map(std::sync::Arc::new(m)))?;
+                }
+                // A wrapped interpreter map stays a wrapper: clone
+                // the interpreter map when it is shared (what the
+                // interpreter's own map_set does), write the value
+                // back in its AST form. A value with no AST form
+                // materializes the native layout instead.
+                ValueData::AstMap(mut arc) => match v.to_ast() {
+                    Ok(ast) => {
+                        std::sync::Arc::make_mut(&mut arc).insert(key_str.to_string(), ast);
+                        self.execution_state.set_register(
+                            *target,
+                            OvmValue {
+                                data: ValueData::AstMap(arc),
+                            },
+                        )?;
+                    }
+                    Err(_) => {
+                        let mut m = OvmValue::force_ast_map(&arc);
+                        m.insert(key_str.to_string(), v);
+                        self.execution_state.set_register(
+                            *target,
+                            OvmValue::new_map(std::sync::Arc::new(m)),
+                        )?;
+                    }
+                },
+                // A wrapped record stays a wrapper, as a wrapped map
+                // does.
+                ValueData::AstStruct(mut arc, kind) => match v.to_ast() {
+                    Ok(ast) => {
+                        std::sync::Arc::make_mut(&mut arc).insert(key_str.to_string(), ast);
+                        self.execution_state.set_register(
+                            *target,
+                            OvmValue {
+                                data: ValueData::AstStruct(arc, kind),
+                            },
+                        )?;
+                    }
+                    Err(_) => {
+                        let st = OvmValue::force_ast_struct(&arc, kind);
+                        let mut pairs: Vec<(String, OvmValue)> = st
+                            .iter()
+                            .filter(|(name, _)| name.as_str() != key_str)
+                            .map(|(name, val)| (name.clone(), val.clone()))
+                            .collect();
+                        pairs.push((key_str.to_string(), v));
+                        self.execution_state.set_register(
+                            *target,
+                            OvmValue::new_struct(
+                                crate::ovm::value::StructObject::from_pairs(
+                                    kind.type_name(),
+                                    pairs,
+                                ),
+                            ),
+                        )?;
+                    }
+                },
+                ValueData::Struct(st) => {
+                    let mut pairs: Vec<(String, OvmValue)> = st
+                        .iter()
+                        .filter(|(name, _)| name.as_str() != key_str)
+                        .map(|(name, val)| (name.clone(), val.clone()))
+                        .collect();
+                    pairs.push((key_str.to_string(), v));
+                    let next = OvmValue::new_struct(
+                        crate::ovm::value::StructObject::from_pairs(st.type_name(), pairs),
+                    );
+                    self.check_struct_write("map_set", &next)?;
+                    self.execution_state.set_register(*target, next)?;
+                }
+                _ => {
+                    return Err(BytecodeError::TypeError(
+                        "map_set: first argument must be a map or object".to_string(),
+                    ));
+                }
+            }
+        Ok(())
+    }
+
+    /// `dispatch_loop`'s `Bitwise`, out of line (OL-653).
+    #[inline(never)]
+    fn op_bitwise(
+        &mut self,
+        _bytecode: &CompiledBytecode,
+        instruction: &Instruction,
+    ) -> Result<(), BytecodeError> {
+        let Instruction::Bitwise { dst, lhs, rhs, op } = instruction else {
+            unreachable!()
+        };
+            use crate::ovm::value::ValueData;
+            let (left, right) = self.execution_state.register_pair(*lhs, *rhs)?;
+            // Masks: a native operand's module first, as the
+            // interpreter asks it.
+            if matches!(left.data, ValueData::Native(_))
+                || matches!(right.data, ValueData::Native(_))
+            {
+                let l = left
+                    .to_ast()
+                    .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
+                let r = right
+                    .to_ast()
+                    .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
+                if let Some(result) = crate::native::bitwise_op_hook(op, &l, &r) {
+                    let value = result.map_err(BytecodeError::RuntimeError)?;
+                    self.execution_state
+                        .set_register(*dst, OvmValue::from_ast(value))?;
+                    return Ok(());
+                }
+            }
+            let result = match (&left.data, &right.data) {
+                (ValueData::Integer(l), ValueData::Integer(r)) => {
+                    let (l, r) = (*l, *r);
+                    let shift = |r: i64| {
+                        u32::try_from(r).ok().filter(|s| *s < 64).ok_or_else(|| {
+                            BytecodeError::RuntimeError(format!(
+                                "Shift amount {} out of range (must be 0..64)",
+                                r
+                            ))
+                        })
+                    };
+                    OvmValue::new_integer(match op {
+                        crate::ast::BitwiseOp::And => l & r,
+                        crate::ast::BitwiseOp::Or => l | r,
+                        crate::ast::BitwiseOp::Xor => l ^ r,
+                        crate::ast::BitwiseOp::Shl => {
+                            let n = shift(r)?;
+                            let shifted = l.wrapping_shl(n);
+                            if shifted.wrapping_shr(n) != l {
+                                return Err(BytecodeError::RuntimeError(
+                                    "Integer overflow in shift (bigint.of gives arbitrary precision)"
+                                        .to_string(),
+                                ));
+                            }
+                            shifted
+                        }
+                        crate::ast::BitwiseOp::Shr => l.wrapping_shr(shift(r)?),
+                    })
+                }
+                _ => {
+                    return Err(BytecodeError::TypeError(
+                        "integer operands required for bitwise operation".to_string(),
+                    ));
+                }
+            };
+            self.execution_state.set_register(*dst, result)?;
+        Ok(())
+    }
+
+    /// `dispatch_loop`'s `MakeStruct`, out of line (OL-653).
+    #[inline(never)]
+    fn op_make_struct(
+        &mut self,
+        _bytecode: &CompiledBytecode,
+        instruction: &Instruction,
+    ) -> Result<(), BytecodeError> {
+        let Instruction::MakeStruct {
+            dst,
+            shape,
+            field_regs,
+            field_types,
+        } = instruction else {
+            unreachable!()
+        };
+            // Enforce declared field types where the runtime can check
+            // them — the same rule and the same message the
+            // interpreter raises. `field_types` is in shape order, so
+            // it aligns with `field_regs` and `shape.field_names`.
+            for (i, check) in field_types.iter().enumerate() {
+                if let Some(check) = check {
+                    let value = self.execution_state.register_ref(field_regs[i])?;
+                    let (actual, payload, fn_arity, scalar) = ovm_value_view(value);
+                    if let Some((expected, got)) =
+                        check.check_value(actual, payload, fn_arity, scalar)
+                    {
+                        return Err(BytecodeError::TypeError(self.annotation_error(
+                            &format!(
+                                "field '{}' of {}",
+                                shape.field_names[i], shape.type_name
+                            ),
+                            check,
+                            &expected,
+                            &got,
+                        )));
+                    }
+                }
+            }
+            // Each field written straight into the struct's one
+            // allocation (OL-431): no vector of values between.
+            for reg in field_regs {
+                self.execution_state.register_ref(*reg)?;
+            }
+            let state = &self.execution_state;
+            let obj = crate::ovm::value::StructObject::from_fn(
+                shape.clone(),
+                field_regs.len(),
+                |i| {
+                    state
+                        .register_ref(field_regs[i])
+                        .cloned()
+                        .unwrap_or_else(|_| OvmValue::new_unit())
+                },
+            );
+            self.execution_state
+                .set_register(*dst, OvmValue::new_struct(obj))?;
+        Ok(())
+    }
+
+    /// `dispatch_loop`'s `MakeMap`, out of line (OL-653).
+    #[inline(never)]
+    fn op_make_map(
+        &mut self,
+        _bytecode: &CompiledBytecode,
+        instruction: &Instruction,
+    ) -> Result<(), BytecodeError> {
+        let Instruction::MakeMap { dst, entries } = instruction else {
+            unreachable!()
+        };
+            use crate::ovm::value::ValueData;
+            let mut map = crate::ovm::value::OvmMap::with_capacity_and_hasher(
+                entries.len(),
+                Default::default(),
+            );
+            for (key_reg, value_reg) in entries {
+                let key = match &self.execution_state.register_ref(*key_reg)?.data {
+                    ValueData::String(s) => s.as_ref().clone(),
+                    ValueData::Integer(i) => i.to_string(),
+                    ValueData::Float(f) => crate::ast::float_key_text(*f),
+                    ValueData::Boolean(b) => b.to_string(),
+                    _ => {
+                        return Err(BytecodeError::TypeError(
+                            "Map keys must be strings, integers, floats, or booleans"
+                                .to_string(),
+                        ));
+                    }
+                };
+                let value = self.execution_state.get_register(*value_reg)?;
+                map.insert(key, value);
+            }
+            self.execution_state
+                .set_register(*dst, OvmValue::new_map(Arc::new(map)))?;
+        Ok(())
+    }
+
+    /// `dispatch_loop`'s `MakeTemplate`, out of line (OL-653).
+    #[inline(never)]
+    fn op_make_template(
+        &mut self,
+        _bytecode: &CompiledBytecode,
+        instruction: &Instruction,
+    ) -> Result<(), BytecodeError> {
+        let Instruction::MakeTemplate { dst, parts } = instruction else {
+            unreachable!()
+        };
+            use crate::ovm::value::ValueData;
+            let mut out = String::new();
+            for part in parts {
+                match part {
+                    TplPart::Literal(text) => out.push_str(text),
+                    TplPart::Reg(reg) => {
+                        let value = self.execution_state.register_ref(*reg)?;
+                        match &value.data {
+                            ValueData::String(s) => out.push_str(s),
+                            ValueData::Integer(n) => out.push_str(&n.to_string()),
+                            ValueData::Float(f) => {
+                                out.push_str(&crate::ast::format_float(*f))
+                            }
+                            ValueData::Boolean(b) => out.push_str(&b.to_string()),
+                            _ => {
+                                // The interpreter formats everything
+                                // else through Value's Display; go
+                                // through the same impl.
+                                let ast = value.to_ast().map_err(|e| {
+                                    BytecodeError::RuntimeError(format!("{:?}", e))
+                                })?;
+                                out.push_str(&format!("{}", ast));
+                            }
+                        }
+                    }
+                }
+            }
+            self.execution_state
+                .set_register(*dst, OvmValue::new_string(out))?;
+        Ok(())
+    }
+
+    /// `dispatch_loop`'s `CallMethod`, out of line (OL-653).
+    #[inline(never)]
+    fn op_call_method(
+        &mut self,
+        _bytecode: &CompiledBytecode,
+        instruction: &Instruction,
+    ) -> Result<(), BytecodeError> {
+        let Instruction::CallMethod {
+            dst,
+            object,
+            method,
+            args,
+            names,
+            arg_moves,
+            cache,
+        } = instruction else {
+            unreachable!()
+        };
+            // A function in a struct's field whose compiled id is
+            // known (`r.f(x)`, a contract record's part): the
+            // direct call's own entry, as CallValue (OL-520). A
+            // struct's field wins over a method, so this is the
+            // call the general path below would make.
+            let known = match &self.execution_state.register_ref(*object)?.data {
+                crate::ovm::value::ValueData::Struct(st) if names.is_empty() => {
+                    let (shape, at) = cache.load();
+                    let at = at as usize;
+                    let index = if shape == st.shape.id
+                        && at < st.len()
+                        && st.shape.field_names.get(at).is_some_and(|n| n == method)
+                    {
+                        Some(at)
+                    } else {
+                        st.shape
+                            .field_index(method)
+                            .map(|i| i as usize)
+                            .filter(|&i| i < st.len())
+                            .inspect(|&i| cache.store(st.shape.id, i as u32))
+                    };
+                    index.and_then(|i| match &st.peek(i).data {
+                        crate::ovm::value::ValueData::AstFunction(f) => self
+                            .fn_value_ids
+                            .get(&(Arc::as_ptr(f) as usize))
+                            .filter(|(weak, epoch, _)| {
+                                *epoch == self.hof_epoch
+                                    && std::ptr::eq(weak.as_ptr(), Arc::as_ptr(f))
+                                    && f.parameters.len() == args.len()
+                            })
+                            .map(|(_, _, id)| *id),
+                        _ => None,
+                    })
+                }
+                _ => None,
+            };
+            if let Some(func_id) = known {
+                let result = self.execute_from_regs(func_id, args, *arg_moves)?;
+                self.execution_state.set_register(*dst, result)?;
+                return Ok(());
+            }
+            let receiver = self.execution_state.get_register(*object)?;
+            // Struct fields take precedence over methods, exactly as
+            // interpreted: field access that happens to hold a
+            // callable stays field access.
+            // A fit's method wins over its entry of the same name
+            // (`fit.importance()` calls, `fit.importance` reads).
+            let fit_method = matches!(
+                receiver.data,
+                crate::ovm::value::ValueData::Map(_)
+                    | crate::ovm::value::ValueData::AstMap(_)
+            ) && Self::native_method_receiver(&receiver)
+                .and_then(|(h, t)| crate::native_sig::method_target(h, t, method))
+                .is_some();
+            let field_callee = match &receiver.data {
+                _ if fit_method => None,
+                crate::ovm::value::ValueData::Struct(st) => st.field(method),
+                crate::ovm::value::ValueData::AstStruct(m, _)
+                | crate::ovm::value::ValueData::AstMap(m) => m
+                    .get(method.as_str())
+                    .map(|v| OvmValue::from_ast(v.clone())),
+                // A map's key wins over a method, as a field does.
+                crate::ovm::value::ValueData::Map(m) => m.get(method.as_str()).cloned(),
+                _ => None,
+            };
+            let result = if let Some(callee) = field_callee {
+                let mut arg_values = self.arg_pool.pop().unwrap_or_default();
+                arg_values.reserve(args.len());
+                let take = names.is_empty();
+                for (i, arg_reg) in args.iter().enumerate() {
+                    arg_values.push(if take && i < 64 && arg_moves & (1 << i) != 0 {
+                        self.execution_state.take_register(*arg_reg)?
+                    } else {
+                        self.execution_state.get_register(*arg_reg)?
+                    });
+                }
+                let r = if take {
+                    // by move into the callee's frame, as CallValue
+                    self.call_function_value_taking(&callee, &mut arg_values)
+                } else {
+                    self.bridge_call(&callee, &arg_values, names)
+                };
+                arg_values.clear();
+                if self.arg_pool.len() < 64 {
+                    self.arg_pool.push(arg_values);
+                }
+                r?
+            } else if let Some(m) =
+                self.lookup_method(Self::ovm_type_name(&receiver), method)
+            {
+                let m = OvmValue::new_ast_function(std::sync::Arc::new(m.clone()));
+                let mut arg_values = self.arg_pool.pop().unwrap_or_default();
+                arg_values.reserve(args.len() + 1);
+                arg_values.push(receiver);
+                for arg_reg in args {
+                    arg_values.push(self.execution_state.get_register(*arg_reg)?);
+                }
+                let r = self.call_function_value(&m, &arg_values);
+                arg_values.clear();
+                if self.arg_pool.len() < 64 {
+                    self.arg_pool.push(arg_values);
+                }
+                r?
+            } else if let Some((home, type_name)) = Self::native_method_receiver(&receiver)
+            {
+                // A native value's method (L2): `s.exp()` is
+                // `ods.exp(s)` — the interpreter's resolution.
+                let Some(full) = crate::native_sig::method_target(home, type_name, method)
+                else {
+                    return Err(BytecodeError::TypeError(
+                        if matches!(receiver.data, crate::ovm::value::ValueData::Native(_))
+                        {
+                            crate::native_sig::no_method(type_name, method)
+                        } else {
+                            crate::ast::no_key_or_method("Map", method)
+                        },
+                    ));
+                };
+                let mut arg_values = self.arg_pool.pop().unwrap_or_default();
+                arg_values.reserve(args.len() + 1);
+                arg_values.push(receiver);
+                for arg_reg in args {
+                    arg_values.push(self.execution_state.get_register(*arg_reg)?);
+                }
+                let r = if names.is_empty() {
+                    self.execute_builtin_call(full, &arg_values, false)
+                } else {
+                    // Names bound by the signature, as the
+                    // interpreter binds them.
+                    let n_pos = arg_values.len() - names.len();
+                    match crate::native_sig::bind_values(
+                        full,
+                        std::mem::take(&mut arg_values),
+                        n_pos,
+                        &|j| names[j].as_str(),
+                    ) {
+                        Ok(vals) => self.execute_builtin_call(full, &vals, false),
+                        Err(e) => Err(BytecodeError::RuntimeError(e)),
+                    }
+                };
+                arg_values.clear();
+                if self.arg_pool.len() < 64 {
+                    self.arg_pool.push(arg_values);
+                }
+                r?
+            } else {
+                // No field, no method: the interpreter's generic path
+                // evaluates the field access, which raises the
+                // missing-field / non-struct error.
+                // No field, no method: a map (or a parsed JSON
+                // object) names the missing key; anything else
+                // raises the field access's own error.
+                use crate::ovm::value::ValueData;
+                // `()`'s field is `()`, and calling it raises as
+                // the interpreter's call of the read does.
+                if let ValueData::Unit = receiver.data {
+                    let mut arg_values = Vec::with_capacity(args.len());
+                    for arg_reg in args {
+                        arg_values.push(self.execution_state.get_register(*arg_reg)?);
+                    }
+                    let r = self.bridge_call(&receiver, &arg_values, names)?;
+                    self.execution_state.set_register(*dst, r)?;
+                    return Ok(());
+                }
+                let keyed = match &receiver.data {
+                    ValueData::Map(_) | ValueData::AstMap(_) => Some("Map"),
+                    ValueData::AstStruct(_, kind) => Some(kind.type_name()),
+                    ValueData::Struct(st)
+                        if matches!(st.type_name(), "JsonObject" | "Object") =>
+                    {
+                        Some(st.type_name())
+                    }
+                    _ => None,
+                };
+                return Err(match keyed {
+                    Some(type_name) => BytecodeError::TypeError(
+                        crate::ast::no_key_or_method(type_name, method),
+                    ),
+                    None if matches!(&receiver.data, ValueData::Struct(st) if st.type_name() == "Module") =>
+                    {
+                        let ValueData::Struct(st) = &receiver.data else {
+                            unreachable!()
+                        };
+                        BytecodeError::TypeError(vm_module_miss(st, method))
+                    }
+                    None => match self.execute_get_field(&receiver, method) {
+                        Err(e) => e,
+                        Ok(_) => BytecodeError::RuntimeError(
+                            "method dispatch reached an impossible state".to_string(),
+                        ),
+                    },
+                });
+            };
+            self.execution_state.set_register(*dst, result)?;
+        Ok(())
+    }
+
+    /// `dispatch_loop`'s `PatternTestEnum`, out of line (OL-653).
+    #[inline(never)]
+    fn op_pattern_test_enum(
+        &mut self,
+        _bytecode: &CompiledBytecode,
+        instruction: &Instruction,
+    ) -> Result<(), BytecodeError> {
+        let Instruction::PatternTestEnum {
+            dst,
+            value,
+            variant_name,
+            pattern_count,
+        } = instruction else {
+            unreachable!()
+        };
+            use crate::ovm::value::{EnumData, ValueData};
+            let matches = match &self.execution_state.register_ref(*value)?.data {
+                ValueData::Enum(e) => {
+                    e.variant_name == *variant_name
+                        && match &e.data {
+                            EnumData::Unit => *pattern_count == 0,
+                            EnumData::Tuple(vs) => vs.len() == *pattern_count,
+                            EnumData::Struct(fs) => fs.len() == *pattern_count,
+                        }
+                }
+                // Legacy: an enum pattern matches a plain tuple of the
+                // same length, variant name ignored (interpreter parity)
+                ValueData::Tuple(vs) => vs.len() == *pattern_count,
+                _ => false,
+            };
+            self.execution_state
+                .set_register(*dst, OvmValue::new_boolean(matches))?;
+        Ok(())
+    }
+
+    /// `dispatch_loop`'s `MakeClosure`, out of line (OL-653).
+    #[inline(never)]
+    fn op_make_closure(
+        &mut self,
+        bytecode: &CompiledBytecode,
+        instruction: &Instruction,
+    ) -> Result<(), BytecodeError> {
+        let Instruction::MakeClosure {
+            dst,
+            template_const,
+            captures,
+        } = instruction else {
+            unreachable!()
+        };
+            let template = match bytecode
+                .constants
+                .get(*template_const as usize)
+                .map(|c| &c.data)
+            {
+                Some(crate::ovm::value::ValueData::Closure(t)) => t.clone(),
+                _ => {
+                    return Err(BytecodeError::RuntimeError(
+                        "MakeClosure: template constant is not a closure".to_string(),
+                    ));
+                }
+            };
+            let mut captured = Vec::with_capacity(captures.len());
+            for reg in captures {
+                captured.push(self.execution_state.get_register(*reg)?);
+            }
+            let closure = crate::ovm::value::ClosureObject {
+                template: template.template.clone(),
+                capture_names: template.capture_names.clone(),
+                captured,
+                func_id: template.func_id,
+                ast_closure: Default::default(),
+            };
+            self.execution_state
+                .set_register(*dst, OvmValue::new_closure(Arc::new(closure)))?;
+        Ok(())
+    }
+
+    /// `dispatch_loop`'s `CallNamed`, out of line (OL-653).
+    #[inline(never)]
+    fn op_call_named(
+        &mut self,
+        bytecode: &CompiledBytecode,
+        instruction: &Instruction,
+    ) -> Result<(), BytecodeError> {
+        let Instruction::CallNamed {
+            dst,
+            function_name,
+            args,
+            arg_moves,
+            pregranted,
+        } = instruction else {
+            unreachable!()
+        };
+            // Pool the argument buffer: a hot loop calling a builtin
+            // per element (`map(recs, r => map_get(r, k))`) would
+            // otherwise heap-allocate a fresh Vec on every call.
+            let mut arg_values = self.arg_pool.pop().unwrap_or_default();
+            arg_values.clear();
+            arg_values.reserve(args.len());
+            for (i, arg_reg) in args.iter().enumerate() {
+                // A register dead after the call is taken, so the
+                // builtin holds the value's only reference.
+                arg_values.push(if i < 64 && arg_moves & (1 << i) != 0 {
+                    self.execution_state.take_register(*arg_reg)?
+                } else {
+                    self.execution_state.get_register(*arg_reg)?
+                });
+            }
+
+            // User functions first: a user definition shadows a
+            // builtin of the same name, as it does in the
+            // interpreter — a definition of this code's own file.
+            // Another module's function of the name (declared
+            // after this code compiled) leaves it the builtin.
+            let user = self
+                .function_registry
+                .get(function_name)
+                .copied()
+                .filter(|_| self.home_function(function_name, bytecode));
+            let outcome = if let Some(func_id) = user {
+                self.execute(func_id, &arg_values)
+            } else if let Some(op) = function_name.strip_prefix("str.")
+                && let Some(r) = Self::str_native(op, &arg_values)
+            {
+                r
+            } else if let Some(v) = Self::scalar_native(function_name, &arg_values) {
+                Ok(v)
+            } else if function_name == "map_set"
+                && let Some(r) = Self::map_set_owned(&mut arg_values)
+            {
+                r
+            } else if function_name == "col.set"
+                && let Some(r) = Self::col_set_owned(&mut arg_values)
+            {
+                r
+            } else if function_name == "map_remove"
+                && let Some(r) = Self::map_remove_owned(&mut arg_values)
+            {
+                r
+            } else if function_name == "map_set_in"
+                && let Some(r) = Self::map_set_in_owned(&mut arg_values)
+            {
+                r
+            } else if function_name == "map_update"
+                && let Some(r) = self.map_update_owned(&mut arg_values)
+            {
+                r
+            } else if function_name == "map_merge"
+                && let Some(r) = Self::map_merge_owned(&mut arg_values)
+            {
+                r
+            } else if function_name == crate::parser::SPREAD_BUILTIN
+                && let Some(r) = Self::spread_native(&arg_values)
+            {
+                r
+            } else if let Some(op) = function_name.strip_prefix("cell.")
+                && let Some(r) =
+                    crate::stdlib::cell::vm_call(op, &mut arg_values, self.cell_owner)
+            {
+                // the VM's own values kept in the cell as they are
+                r.map_err(BytecodeError::RuntimeError)
+            } else if let Some(op) = function_name.strip_prefix("chan.")
+                && let Some(r) = crate::stdlib::chan::vm_call(op, &arg_values)
+            {
+                // a message between compiled code, carried in the
+                // VM's form: no conversion either way (OL-430)
+                r.map_err(BytecodeError::RuntimeError)
+            } else if let Some(op) = function_name.strip_prefix("weak.")
+                && let Some(r) = crate::stdlib::weak::vm_call(op, &arg_values)
+            {
+                // a weak reference to the VM's own value, not to a
+                // converted copy that dies at once
+                r.map_err(BytecodeError::RuntimeError)
+            } else if self.builtin_names.contains(function_name)
+                || function_name.contains('.')
+                || (self.known_function_values.contains_key(function_name)
+                    && !self.home_function(function_name, bytecode))
+            {
+                // Module-prefixed names ("db.execute") were validated
+                // at compile time against the module's own field set;
+                // the bridge dispatches them by prefix exactly as the
+                // interpreter does.
+                self.execute_builtin_call(function_name, &arg_values, *pregranted)
+            } else {
+                Err(BytecodeError::NamedFunctionNotFound(function_name.clone()))
+            };
+            arg_values.clear();
+            if self.arg_pool.len() < 64 {
+                self.arg_pool.push(arg_values);
+            }
+            let outcome = outcome?;
+            if user.is_none()
+                && matches!(
+                    function_name.as_str(),
+                    "map_set" | "map_merge" | "map_set_in" | "map_update"
+                )
+            {
+                self.check_struct_write(function_name, &outcome)?;
+            }
+            self.execution_state.set_register(*dst, outcome)?;
+        Ok(())
+    }
+
+    /// `dispatch_loop`'s `MakeRange`, out of line (OL-653).
+    #[inline(never)]
+    fn op_make_range(
+        &mut self,
+        _bytecode: &CompiledBytecode,
+        instruction: &Instruction,
+    ) -> Result<(), BytecodeError> {
+        let Instruction::MakeRange {
+            dst,
+            start,
+            end,
+            inclusive,
+        } = instruction else {
+            unreachable!()
+        };
+            let start_val = self.execution_state.get_register(*start)?;
+            let end_val = self.execution_state.get_register(*end)?;
+
+            // Extract integer values for the range
+            let start_int = match &start_val.data {
+                crate::ovm::value::ValueData::Integer(i) => *i,
+                _ => {
+                    return Err(BytecodeError::TypeError(
+                        "Range start must be an integer".to_string(),
+                    ));
+                }
+            };
+
+            let end_int = match &end_val.data {
+                crate::ovm::value::ValueData::Integer(i) => *i,
+                _ => {
+                    return Err(BytecodeError::TypeError(
+                        "Range end must be an integer".to_string(),
+                    ));
+                }
+            };
+
+            let range_value = Value::Range {
+                start: start_int,
+                end: end_int,
+                inclusive: *inclusive,
+            };
+            self.execution_state
+                .set_register(*dst, OvmValue::from_ast(range_value))?;
+        Ok(())
+    }
+
+    /// `dispatch_loop`'s `PatternTestList`, out of line (OL-653).
+    #[inline(never)]
+    fn op_pattern_test_list(
+        &mut self,
+        _bytecode: &CompiledBytecode,
+        instruction: &Instruction,
+    ) -> Result<(), BytecodeError> {
+        let Instruction::PatternTestList {
+            dst,
+            value,
+            min_len,
+            exact,
+        } = instruction else {
+            unreachable!()
+        };
+            use crate::ovm::value::ValueData;
+            let matches = match &self.execution_state.register_ref(*value)?.data {
+                ValueData::AstList(items) => {
+                    if *exact {
+                        items.len() == *min_len
+                    } else {
+                        items.len() >= *min_len
+                    }
+                }
+                ValueData::List(items) => {
+                    if *exact {
+                        items.len() == *min_len
+                    } else {
+                        items.len() >= *min_len
+                    }
+                }
+                ValueData::FloatList(items) => {
+                    if *exact {
+                        items.len() == *min_len
+                    } else {
+                        items.len() >= *min_len
+                    }
+                }
+                ValueData::IntList(items) => {
+                    if *exact {
+                        items.len() == *min_len
+                    } else {
+                        items.len() >= *min_len
+                    }
+                }
+                _ => false,
+            };
+            self.execution_state
+                .set_register(*dst, OvmValue::new_boolean(matches))?;
+        Ok(())
+    }
+
+    /// `dispatch_loop`'s `ExtractRest`, out of line (OL-653).
+    #[inline(never)]
+    fn op_extract_rest(
+        &mut self,
+        _bytecode: &CompiledBytecode,
+        instruction: &Instruction,
+    ) -> Result<(), BytecodeError> {
+        let Instruction::ExtractRest { dst, value, from } = instruction else {
+            unreachable!()
+        };
+            use crate::ovm::value::ValueData;
+            // Typed lists slice in their own layout — the rest of
+            // an IntList is an IntList.
+            match &self.execution_state.register_ref(*value)?.data {
+                ValueData::FloatList(items) => {
+                    let rest: Vec<f64> = items.iter().skip(*from).copied().collect();
+                    self.execution_state
+                        .set_register(*dst, OvmValue::new_float_list(rest))?;
+                    return Ok(());
+                }
+                ValueData::IntList(items) => {
+                    let rest: Vec<i64> = items.iter().skip(*from).copied().collect();
+                    self.execution_state
+                        .set_register(*dst, OvmValue::new_int_list(rest))?;
+                    return Ok(());
+                }
+                _ => {}
+            }
+            let rest = match &self.execution_state.register_ref(*value)?.data {
+                ValueData::List(items) => {
+                    Some(items.iter().skip(*from).cloned().collect::<Vec<_>>())
+                }
+                ValueData::AstList(items) => Some(
+                    items
+                        .iter()
+                        .skip(*from)
+                        .map(|v| OvmValue::from_ast(v.clone()))
+                        .collect::<Vec<_>>(),
+                ),
+                _ => None,
+            };
+            match rest {
+                Some(values) => self
+                    .execution_state
+                    .set_register(*dst, OvmValue::new_list(values))?,
+                None => {
+                    return Err(BytecodeError::RuntimeError(
+                        "Rest binding on a non-list value".to_string(),
+                    ));
+                }
+            }
+        Ok(())
+    }
+
     fn dispatch_loop(
         &mut self,
         bytecode: &CompiledBytecode,
@@ -4695,6 +6159,7 @@ impl BytecodeVm {
         // from being sunk out of the loop. Not on wasm, which has no
         // unwinding: there the writes through stay, as the flush at every
         // exit made the loop 8% slower.
+        #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
         let mut tally = Tally {
             executed: 0,
             pc,
@@ -4717,6 +6182,12 @@ impl BytecodeVm {
         #[cfg(feature = "native")]
         let mut osr_ready: Vec<usize> = Vec::new();
 
+        // The large, rarely hot instructions (the in-place writes, the
+        // named and method calls, the constructors and the less common
+        // pattern tests) run in `op_*` methods out of line: inline, their
+        // bodies made this function so large that the arithmetic's
+        // operands were spilled and reloaded around every instruction
+        // (OL-653: 13% on wasm, 8% natively).
         while pc < bytecode.instructions.len() {
             let instruction = &bytecode.instructions[pc];
             #[cfg(not(target_arch = "wasm32"))]
@@ -4798,438 +6269,9 @@ impl BytecodeVm {
                     }
                 }
 
-                Instruction::ListSetAssign {
-                    target,
-                    index,
-                    value,
-                    subscript,
-                } => {
-                    use crate::ovm::value::ValueData;
-                    let idx_val = self.execution_state.get_register(*index)?;
-                    let idx = match &idx_val.data {
-                        ValueData::Integer(i) => *i,
-                        _ if *subscript => {
-                            let target_val = self.execution_state.get_register(*target)?;
-                            return Err(Self::subscript_error(&target_val, &idx_val));
-                        }
-                        _ => {
-                            return Err(BytecodeError::TypeError(format!(
-                                "col.set: argument 2 must be an Int, got {}",
-                                idx_val.type_name()
-                            )));
-                        }
-                    };
-                    let v = self.execution_state.get_register(*value)?;
-                    // Move the list out of its register so a sole owner is
-                    // recognizable; aliased lists copy, exactly like the
-                    // interpreter's fusion and AddAssign's extend.
-                    let target_val = self.execution_state.take_register(*target)?;
-                    // Typed lists write the raw scalar in place when the
-                    // element matches the layout; a mismatched element
-                    // rebuilds the boxed form (correctness first).
-                    if let ValueData::FloatList(_) = target_val.data {
-                        let ValueData::FloatList(mut arc) = target_val.into_data() else {
-                            unreachable!()
-                        };
-                        let at = Self::list_set_position(*subscript, idx, arc.len())?;
-                        if let ValueData::Float(f) = v.data {
-                            match std::sync::Arc::get_mut(&mut arc) {
-                                Some(items) => items[at] = f,
-                                None => {
-                                    let mut items = (*arc).clone();
-                                    items[at] = f;
-                                    arc = std::sync::Arc::new(items);
-                                }
-                            }
-                            self.execution_state.set_register(
-                                *target,
-                                OvmValue {
-                                    data: ValueData::FloatList(arc),
-                                },
-                            )?;
-                        } else {
-                            let mut items: Vec<OvmValue> =
-                                arc.iter().map(|&x| OvmValue::new_float(x)).collect();
-                            items[at] = v;
-                            self.execution_state.set_register(
-                                *target,
-                                OvmValue {
-                                    data: ValueData::List(std::sync::Arc::new(items)),
-                                },
-                            )?;
-                        }
-                        pc += 1;
-                        continue;
-                    }
-                    if let ValueData::IntList(_) = target_val.data {
-                        let ValueData::IntList(mut arc) = target_val.into_data() else {
-                            unreachable!()
-                        };
-                        let at = Self::list_set_position(*subscript, idx, arc.len())?;
-                        if let ValueData::Integer(n) = v.data {
-                            match std::sync::Arc::get_mut(&mut arc) {
-                                Some(items) => items[at] = n,
-                                None => {
-                                    let mut items = (*arc).clone();
-                                    items[at] = n;
-                                    arc = std::sync::Arc::new(items);
-                                }
-                            }
-                            self.execution_state.set_register(
-                                *target,
-                                OvmValue {
-                                    data: ValueData::IntList(arc),
-                                },
-                            )?;
-                        } else {
-                            let mut items: Vec<OvmValue> =
-                                arc.iter().map(|&x| OvmValue::new_integer(x)).collect();
-                            items[at] = v;
-                            self.execution_state.set_register(
-                                *target,
-                                OvmValue {
-                                    data: ValueData::List(std::sync::Arc::new(items)),
-                                },
-                            )?;
-                        }
-                        pc += 1;
-                        continue;
-                    }
-                    // A wrapped interpreter list writes in place too:
-                    // one element converts, the arc stays shared with
-                    // the interpreter side — the boundary-free write the
-                    // collections' handles ride on.
-                    if let ValueData::AstList(_) = target_val.data {
-                        let ValueData::AstList(mut arc) = target_val.into_data() else {
-                            unreachable!()
-                        };
-                        if env_on!("OLANG_DEBUG_ASTLIST") && std::sync::Arc::strong_count(&arc) > 1
-                        {
-                            let mut holders = Vec::new();
-                            for r in 0..64u32 {
-                                if let Ok(v) = self.execution_state.register_ref(Register(r))
-                                    && let ValueData::AstList(other) = &v.data
-                                    && std::sync::Arc::ptr_eq(other, &arc)
-                                {
-                                    holders.push(r);
-                                }
-                            }
-                            eprintln!(
-                                "[astlist] set copy in {:?}: rc={} len={} frame_holders={:?} stack_holders={:?} base={}",
-                                bytecode.debug_info.function_name.as_deref().unwrap_or("?"),
-                                std::sync::Arc::strong_count(&arc),
-                                arc.len(),
-                                holders,
-                                self.execution_state.debug_slots_holding(&arc),
-                                self.execution_state.debug_base()
-                            );
-                        }
-                        let at = Self::list_set_position(*subscript, idx, arc.len())?;
-                        let ast_v = v
-                            .to_ast()
-                            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-                        match std::sync::Arc::get_mut(&mut arc) {
-                            Some(items) => items[at] = ast_v,
-                            None => {
-                                let mut items = (*arc).clone();
-                                items[at] = ast_v;
-                                arc = std::sync::Arc::new(items);
-                            }
-                        }
-                        self.execution_state.set_register(
-                            *target,
-                            OvmValue {
-                                data: ValueData::AstList(arc),
-                            },
-                        )?;
-                        pc += 1;
-                        continue;
-                    }
-                    if !matches!(target_val.data, ValueData::List(_)) {
-                        if *subscript {
-                            let e = Self::subscript_error(&target_val, &OvmValue::new_integer(idx));
-                            self.execution_state.set_register(*target, target_val)?;
-                            return Err(e);
-                        }
-                        let msg = format!(
-                            "col.set: argument 1 must be a list, got {}",
-                            target_val.type_name()
-                        );
-                        self.execution_state.set_register(*target, target_val)?;
-                        return Err(BytecodeError::TypeError(msg));
-                    }
-                    let ValueData::List(mut arc) = target_val.into_data() else {
-                        unreachable!("matched above");
-                    };
-                    let at = Self::list_set_position(*subscript, idx, arc.len())?;
-                    match std::sync::Arc::get_mut(&mut arc) {
-                        Some(items) => items[at] = v,
-                        None => {
-                            let mut items = (*arc).clone();
-                            items[at] = v;
-                            arc = std::sync::Arc::new(items);
-                        }
-                    }
-                    self.execution_state.set_register(
-                        *target,
-                        OvmValue {
-                            data: ValueData::List(arc),
-                        },
-                    )?;
-                }
-                Instruction::ListSwapAssign { target, i, j } => {
-                    use crate::ovm::value::ValueData;
-                    let read_idx = |vm: &Self, r: Register| -> Result<i64, BytecodeError> {
-                        let v = vm.execution_state.get_register(r)?;
-                        match &v.data {
-                            ValueData::Integer(n) => Ok(*n),
-                            _ => Err(BytecodeError::TypeError(format!(
-                                "col.swap: index must be an Int, got {}",
-                                v.type_name()
-                            ))),
-                        }
-                    };
-                    let ia = read_idx(self, *i)?;
-                    let ib = read_idx(self, *j)?;
-                    let target_val = self.execution_state.take_register(*target)?;
-                    // Typed lists swap raw scalars in place.
-                    if let ValueData::FloatList(_) = target_val.data {
-                        let ValueData::FloatList(mut arc) = target_val.into_data() else {
-                            unreachable!()
-                        };
-                        let a = crate::stdlib::collections::resolve_index("swap", ia, arc.len())
-                            .map_err(BytecodeError::RuntimeError)?;
-                        let b = crate::stdlib::collections::resolve_index("swap", ib, arc.len())
-                            .map_err(BytecodeError::RuntimeError)?;
-                        match std::sync::Arc::get_mut(&mut arc) {
-                            Some(items) => items.swap(a, b),
-                            None => {
-                                let mut items = (*arc).clone();
-                                items.swap(a, b);
-                                arc = std::sync::Arc::new(items);
-                            }
-                        }
-                        self.execution_state.set_register(
-                            *target,
-                            OvmValue {
-                                data: ValueData::FloatList(arc),
-                            },
-                        )?;
-                        pc += 1;
-                        continue;
-                    }
-                    if let ValueData::IntList(_) = target_val.data {
-                        let ValueData::IntList(mut arc) = target_val.into_data() else {
-                            unreachable!()
-                        };
-                        let a = crate::stdlib::collections::resolve_index("swap", ia, arc.len())
-                            .map_err(BytecodeError::RuntimeError)?;
-                        let b = crate::stdlib::collections::resolve_index("swap", ib, arc.len())
-                            .map_err(BytecodeError::RuntimeError)?;
-                        match std::sync::Arc::get_mut(&mut arc) {
-                            Some(items) => items.swap(a, b),
-                            None => {
-                                let mut items = (*arc).clone();
-                                items.swap(a, b);
-                                arc = std::sync::Arc::new(items);
-                            }
-                        }
-                        self.execution_state.set_register(
-                            *target,
-                            OvmValue {
-                                data: ValueData::IntList(arc),
-                            },
-                        )?;
-                        pc += 1;
-                        continue;
-                    }
-                    if let ValueData::AstList(_) = target_val.data {
-                        let ValueData::AstList(mut arc) = target_val.into_data() else {
-                            unreachable!()
-                        };
-                        if env_on!("OLANG_DEBUG_ASTLIST") && std::sync::Arc::strong_count(&arc) > 1
-                        {
-                            let holders = self.execution_state.debug_slots_holding(&arc);
-                            eprintln!(
-                                "[astlist] swap rc={} len={} slab_holders={:?} base={}",
-                                std::sync::Arc::strong_count(&arc),
-                                arc.len(),
-                                holders,
-                                self.execution_state.debug_base()
-                            );
-                        }
-                        let a = crate::stdlib::collections::resolve_index("swap", ia, arc.len())
-                            .map_err(BytecodeError::RuntimeError)?;
-                        let b = crate::stdlib::collections::resolve_index("swap", ib, arc.len())
-                            .map_err(BytecodeError::RuntimeError)?;
-                        match std::sync::Arc::get_mut(&mut arc) {
-                            Some(items) => items.swap(a, b),
-                            None => {
-                                let mut items = (*arc).clone();
-                                items.swap(a, b);
-                                arc = std::sync::Arc::new(items);
-                            }
-                        }
-                        self.execution_state.set_register(
-                            *target,
-                            OvmValue {
-                                data: ValueData::AstList(arc),
-                            },
-                        )?;
-                        pc += 1;
-                        continue;
-                    }
-                    if !matches!(target_val.data, ValueData::List(_)) {
-                        let msg = format!(
-                            "col.swap: argument 1 must be a list, got {}",
-                            target_val.type_name()
-                        );
-                        self.execution_state.set_register(*target, target_val)?;
-                        return Err(BytecodeError::TypeError(msg));
-                    }
-                    let ValueData::List(mut arc) = target_val.into_data() else {
-                        unreachable!("matched above");
-                    };
-                    let a = crate::stdlib::collections::resolve_index("swap", ia, arc.len())
-                        .map_err(BytecodeError::RuntimeError)?;
-                    let b = crate::stdlib::collections::resolve_index("swap", ib, arc.len())
-                        .map_err(BytecodeError::RuntimeError)?;
-                    match std::sync::Arc::get_mut(&mut arc) {
-                        Some(items) => items.swap(a, b),
-                        None => {
-                            let mut items = (*arc).clone();
-                            items.swap(a, b);
-                            arc = std::sync::Arc::new(items);
-                        }
-                    }
-                    self.execution_state.set_register(
-                        *target,
-                        OvmValue {
-                            data: ValueData::List(arc),
-                        },
-                    )?;
-                }
-                Instruction::ListAppendAssign { target, value } => {
-                    use crate::ovm::value::ValueData;
-                    // Semantically `target = target + [value]` — every arm
-                    // below must land exactly where AddAssign with a
-                    // one-element list rhs would have, minus building the
-                    // wrapper list.
-                    let v = self.execution_state.get_register(*value)?;
-                    let target_val = self.execution_state.take_register(*target)?;
-                    let out = match target_val.into_data() {
-                        ValueData::FloatList(mut arc) => {
-                            if let ValueData::Float(f) = v.data {
-                                match std::sync::Arc::get_mut(&mut arc) {
-                                    Some(items) => items.push(f),
-                                    None => {
-                                        let mut items = (*arc).clone();
-                                        items.push(f);
-                                        arc = std::sync::Arc::new(items);
-                                    }
-                                }
-                                OvmValue {
-                                    data: ValueData::FloatList(arc),
-                                }
-                            } else {
-                                // Mismatched element: rebuild boxed,
-                                // exactly like the mixed typed append.
-                                let mut items: Vec<OvmValue> =
-                                    arc.iter().map(|&x| OvmValue::new_float(x)).collect();
-                                items.push(v);
-                                OvmValue {
-                                    data: ValueData::List(std::sync::Arc::new(items)),
-                                }
-                            }
-                        }
-                        ValueData::IntList(mut arc) => {
-                            if let ValueData::Integer(n) = v.data {
-                                match std::sync::Arc::get_mut(&mut arc) {
-                                    Some(items) => items.push(n),
-                                    None => {
-                                        let mut items = (*arc).clone();
-                                        items.push(n);
-                                        arc = std::sync::Arc::new(items);
-                                    }
-                                }
-                                OvmValue {
-                                    data: ValueData::IntList(arc),
-                                }
-                            } else {
-                                let mut items: Vec<OvmValue> =
-                                    arc.iter().map(|&x| OvmValue::new_integer(x)).collect();
-                                items.push(v);
-                                OvmValue {
-                                    data: ValueData::List(std::sync::Arc::new(items)),
-                                }
-                            }
-                        }
-                        ValueData::AstList(mut arc) => {
-                            let ast_v = v
-                                .to_ast()
-                                .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-                            match std::sync::Arc::get_mut(&mut arc) {
-                                Some(items) => items.push(ast_v),
-                                None => {
-                                    let mut items = (*arc).clone();
-                                    items.push(ast_v);
-                                    arc = std::sync::Arc::new(items);
-                                }
-                            }
-                            OvmValue {
-                                data: ValueData::AstList(arc),
-                            }
-                        }
-                        ValueData::List(arc) if arc.is_empty() => {
-                            // The empty-accumulator convention: `[]`
-                            // carries no element type, so the first
-                            // scalar append chooses the typed layout —
-                            // invisible (layouts compare and print
-                            // identically), and the list a loop grows
-                            // from nothing is raw from element one.
-                            match v.data {
-                                ValueData::Float(f) => OvmValue {
-                                    data: ValueData::FloatList(std::sync::Arc::new(vec![f])),
-                                },
-                                ValueData::Integer(n) => OvmValue {
-                                    data: ValueData::IntList(std::sync::Arc::new(vec![n])),
-                                },
-                                _ => OvmValue {
-                                    data: ValueData::List(std::sync::Arc::new(vec![v])),
-                                },
-                            }
-                        }
-                        ValueData::List(mut arc) => {
-                            match std::sync::Arc::get_mut(&mut arc) {
-                                Some(items) => items.push(v),
-                                None => {
-                                    let mut items = (*arc).clone();
-                                    items.push(v);
-                                    arc = std::sync::Arc::new(items);
-                                }
-                            }
-                            OvmValue {
-                                data: ValueData::List(arc),
-                            }
-                        }
-                        other => {
-                            // Not a list: reproduce `target + [value]`
-                            // through the ordinary binary path so the
-                            // error is byte-identical.
-                            let target_val = OvmValue { data: other };
-                            let boxed = OvmValue {
-                                data: ValueData::List(std::sync::Arc::new(vec![v])),
-                            };
-                            match Self::binary_fast(&target_val, &boxed, BinaryOp::Add) {
-                                Some(r) => r,
-                                None => {
-                                    self.execute_binary_op(&target_val, &boxed, BinaryOp::Add)?
-                                }
-                            }
-                        }
-                    };
-                    self.execution_state.set_register(*target, out)?;
-                }
+                Instruction::ListSetAssign { .. } => self.op_list_set_assign(bytecode, instruction)?,
+                Instruction::ListSwapAssign { .. } => self.op_list_swap_assign(bytecode, instruction)?,
+                Instruction::ListAppendAssign { .. } => self.op_list_append_assign(bytecode, instruction)?,
                 Instruction::CheckLet {
                     value,
                     check,
@@ -5248,214 +6290,9 @@ impl BytecodeVm {
                         )));
                     }
                 }
-                Instruction::ConcatToString {
-                    dst,
-                    text,
-                    arg,
-                    text_first,
-                } => {
-                    use crate::ovm::value::ValueData;
-                    let text_val = self.execution_state.get_register(*text)?;
-                    let arg_val = self.execution_state.get_register(*arg)?;
-                    let result = match (&text_val.data, &arg_val.data) {
-                        (ValueData::String(t), ValueData::Integer(i)) => {
-                            use std::fmt::Write as _;
-                            let mut out = String::with_capacity(t.len() + 20);
-                            if *text_first {
-                                out.push_str(t);
-                                let _ = write!(out, "{}", i);
-                            } else {
-                                let _ = write!(out, "{}", i);
-                                out.push_str(t);
-                            }
-                            OvmValue::new_string(out)
-                        }
-                        _ => {
-                            let rendered = self.execute_builtin_call(
-                                "to_string",
-                                std::slice::from_ref(&arg_val),
-                                false,
-                            )?;
-                            if *text_first {
-                                self.execute_binary_op(&text_val, &rendered, BinaryOp::Add)?
-                            } else {
-                                self.execute_binary_op(&rendered, &text_val, BinaryOp::Add)?
-                            }
-                        }
-                    };
-                    self.execution_state.set_register(*dst, result)?;
-                }
+                Instruction::ConcatToString { .. } => self.op_concat_to_string(bytecode, instruction)?,
 
-                Instruction::MapSetAssign {
-                    target,
-                    key,
-                    value,
-                    value_dead,
-                } => {
-                    use crate::ovm::value::ValueData;
-                    // A user-defined map_set shadows the builtin: resolve
-                    // exactly as CallNamed would and call it.
-                    // A shadowed map_set resolves exactly as CallNamed
-                    // would: the registered user function, or the
-                    // not-found error whose deopt re-runs on the
-                    // interpreter (where the user's definition lives).
-                    if !self.builtin_names.contains("map_set") {
-                        let outcome = if let Some(&func_id) = self.function_registry.get("map_set")
-                        {
-                            let arg_values = [
-                                self.execution_state.get_register(*target)?,
-                                self.execution_state.get_register(*key)?,
-                                self.execution_state.get_register(*value)?,
-                            ];
-                            self.execute(func_id, &arg_values)
-                        } else {
-                            Err(BytecodeError::NamedFunctionNotFound("map_set".to_string()))
-                        };
-                        self.execution_state.set_register(*target, outcome?)?;
-                        pc += 1;
-                        continue;
-                    }
-                    // Key coercion first, then the receiver — the native
-                    // map_set's own order and messages.
-                    let key_val = self.execution_state.get_register(*key)?;
-                    // Borrow a string key; only a brand-new key is copied
-                    // into the map (an update overwrites the slot in place).
-                    let key_owned: String;
-                    let key_str: &str = match &key_val.data {
-                        ValueData::String(st) => st.as_str(),
-                        ValueData::Integer(i) => {
-                            key_owned = i.to_string();
-                            &key_owned
-                        }
-                        ValueData::Float(f) => {
-                            key_owned = crate::ast::float_key_text(*f);
-                            &key_owned
-                        }
-                        ValueData::Boolean(b) => {
-                            key_owned = b.to_string();
-                            &key_owned
-                        }
-                        _ => {
-                            return Err(BytecodeError::TypeError(
-                                "map_set: key must be string, integer, float, or boolean"
-                                    .to_string(),
-                            ));
-                        }
-                    };
-                    let v = if *value_dead && value != target && value != key {
-                        self.execution_state.take_register(*value)?
-                    } else {
-                        self.execution_state.get_register(*value)?
-                    };
-                    // Take the map out of its register so a sole owner is
-                    // recognizable; aliased maps copy, exactly like the
-                    // list writes.
-                    let target_val = self.execution_state.take_register(*target)?;
-                    match target_val.into_data() {
-                        ValueData::Map(mut arc) => {
-                            match std::sync::Arc::get_mut(&mut arc) {
-                                Some(m) => match m.get_mut(key_str) {
-                                    Some(slot) => *slot = v,
-                                    None => {
-                                        m.insert(key_str.to_string(), v);
-                                    }
-                                },
-                                None => {
-                                    let mut m = (*arc).clone();
-                                    m.insert(key_str.to_string(), v);
-                                    arc = std::sync::Arc::new(m);
-                                }
-                            }
-                            self.execution_state.set_register(
-                                *target,
-                                OvmValue {
-                                    data: ValueData::Map(arc),
-                                },
-                            )?;
-                        }
-                        // A small wrapped map written a collection the VM
-                        // built becomes the VM's own (AST_MAP_PROMOTE).
-                        ValueData::AstMap(arc) if v.promotes_wrapper(arc.len()) => {
-                            let mut m = OvmValue::force_ast_map(&arc);
-                            m.insert(key_str.to_string(), v);
-                            self.execution_state
-                                .set_register(*target, OvmValue::new_map(std::sync::Arc::new(m)))?;
-                        }
-                        // A wrapped interpreter map stays a wrapper: clone
-                        // the interpreter map when it is shared (what the
-                        // interpreter's own map_set does), write the value
-                        // back in its AST form. A value with no AST form
-                        // materializes the native layout instead.
-                        ValueData::AstMap(mut arc) => match v.to_ast() {
-                            Ok(ast) => {
-                                std::sync::Arc::make_mut(&mut arc).insert(key_str.to_string(), ast);
-                                self.execution_state.set_register(
-                                    *target,
-                                    OvmValue {
-                                        data: ValueData::AstMap(arc),
-                                    },
-                                )?;
-                            }
-                            Err(_) => {
-                                let mut m = OvmValue::force_ast_map(&arc);
-                                m.insert(key_str.to_string(), v);
-                                self.execution_state.set_register(
-                                    *target,
-                                    OvmValue::new_map(std::sync::Arc::new(m)),
-                                )?;
-                            }
-                        },
-                        // A wrapped record stays a wrapper, as a wrapped map
-                        // does.
-                        ValueData::AstStruct(mut arc, kind) => match v.to_ast() {
-                            Ok(ast) => {
-                                std::sync::Arc::make_mut(&mut arc).insert(key_str.to_string(), ast);
-                                self.execution_state.set_register(
-                                    *target,
-                                    OvmValue {
-                                        data: ValueData::AstStruct(arc, kind),
-                                    },
-                                )?;
-                            }
-                            Err(_) => {
-                                let st = OvmValue::force_ast_struct(&arc, kind);
-                                let mut pairs: Vec<(String, OvmValue)> = st
-                                    .iter()
-                                    .filter(|(name, _)| name.as_str() != key_str)
-                                    .map(|(name, val)| (name.clone(), val.clone()))
-                                    .collect();
-                                pairs.push((key_str.to_string(), v));
-                                self.execution_state.set_register(
-                                    *target,
-                                    OvmValue::new_struct(
-                                        crate::ovm::value::StructObject::from_pairs(
-                                            kind.type_name(),
-                                            pairs,
-                                        ),
-                                    ),
-                                )?;
-                            }
-                        },
-                        ValueData::Struct(st) => {
-                            let mut pairs: Vec<(String, OvmValue)> = st
-                                .iter()
-                                .filter(|(name, _)| name.as_str() != key_str)
-                                .map(|(name, val)| (name.clone(), val.clone()))
-                                .collect();
-                            pairs.push((key_str.to_string(), v));
-                            let next = OvmValue::new_struct(
-                                crate::ovm::value::StructObject::from_pairs(st.type_name(), pairs),
-                            );
-                            self.check_struct_write("map_set", &next)?;
-                            self.execution_state.set_register(*target, next)?;
-                        }
-                        _ => {
-                            return Err(BytecodeError::TypeError(
-                                "map_set: first argument must be a map or object".to_string(),
-                            ));
-                        }
-                    }
-                }
+                Instruction::MapSetAssign { .. } => self.op_map_set_assign(bytecode, instruction)?,
 
                 Instruction::AddAssign { target, rhs } => {
                     self.add_into(*target, *rhs)?;
@@ -5505,65 +6342,7 @@ impl BytecodeVm {
                     self.execution_state.set_register(*dst, result)?;
                 }
 
-                Instruction::Bitwise { dst, lhs, rhs, op } => {
-                    use crate::ovm::value::ValueData;
-                    let (left, right) = self.execution_state.register_pair(*lhs, *rhs)?;
-                    // Masks: a native operand's module first, as the
-                    // interpreter asks it.
-                    if matches!(left.data, ValueData::Native(_))
-                        || matches!(right.data, ValueData::Native(_))
-                    {
-                        let l = left
-                            .to_ast()
-                            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-                        let r = right
-                            .to_ast()
-                            .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
-                        if let Some(result) = crate::native::bitwise_op_hook(op, &l, &r) {
-                            let value = result.map_err(BytecodeError::RuntimeError)?;
-                            self.execution_state
-                                .set_register(*dst, OvmValue::from_ast(value))?;
-                            pc += 1;
-                            continue;
-                        }
-                    }
-                    let result = match (&left.data, &right.data) {
-                        (ValueData::Integer(l), ValueData::Integer(r)) => {
-                            let (l, r) = (*l, *r);
-                            let shift = |r: i64| {
-                                u32::try_from(r).ok().filter(|s| *s < 64).ok_or_else(|| {
-                                    BytecodeError::RuntimeError(format!(
-                                        "Shift amount {} out of range (must be 0..64)",
-                                        r
-                                    ))
-                                })
-                            };
-                            OvmValue::new_integer(match op {
-                                crate::ast::BitwiseOp::And => l & r,
-                                crate::ast::BitwiseOp::Or => l | r,
-                                crate::ast::BitwiseOp::Xor => l ^ r,
-                                crate::ast::BitwiseOp::Shl => {
-                                    let n = shift(r)?;
-                                    let shifted = l.wrapping_shl(n);
-                                    if shifted.wrapping_shr(n) != l {
-                                        return Err(BytecodeError::RuntimeError(
-                                            "Integer overflow in shift (bigint.of gives arbitrary precision)"
-                                                .to_string(),
-                                        ));
-                                    }
-                                    shifted
-                                }
-                                crate::ast::BitwiseOp::Shr => l.wrapping_shr(shift(r)?),
-                            })
-                        }
-                        _ => {
-                            return Err(BytecodeError::TypeError(
-                                "integer operands required for bitwise operation".to_string(),
-                            ));
-                        }
-                    };
-                    self.execution_state.set_register(*dst, result)?;
-                }
+                Instruction::Bitwise { .. } => self.op_bitwise(bytecode, instruction)?,
 
                 Instruction::Neg { dst, src } => {
                     let result = self.execute_unary_op(
@@ -5944,319 +6723,13 @@ impl BytecodeVm {
                     self.execution_state.set_register(*dst, result)?;
                 }
 
-                Instruction::MakeStruct {
-                    dst,
-                    shape,
-                    field_regs,
-                    field_types,
-                } => {
-                    // Enforce declared field types where the runtime can check
-                    // them — the same rule and the same message the
-                    // interpreter raises. `field_types` is in shape order, so
-                    // it aligns with `field_regs` and `shape.field_names`.
-                    for (i, check) in field_types.iter().enumerate() {
-                        if let Some(check) = check {
-                            let value = self.execution_state.register_ref(field_regs[i])?;
-                            let (actual, payload, fn_arity, scalar) = ovm_value_view(value);
-                            if let Some((expected, got)) =
-                                check.check_value(actual, payload, fn_arity, scalar)
-                            {
-                                return Err(BytecodeError::TypeError(self.annotation_error(
-                                    &format!(
-                                        "field '{}' of {}",
-                                        shape.field_names[i], shape.type_name
-                                    ),
-                                    check,
-                                    &expected,
-                                    &got,
-                                )));
-                            }
-                        }
-                    }
-                    // Each field written straight into the struct's one
-                    // allocation (OL-431): no vector of values between.
-                    for reg in field_regs {
-                        self.execution_state.register_ref(*reg)?;
-                    }
-                    let state = &self.execution_state;
-                    let obj = crate::ovm::value::StructObject::from_fn(
-                        shape.clone(),
-                        field_regs.len(),
-                        |i| {
-                            state
-                                .register_ref(field_regs[i])
-                                .cloned()
-                                .unwrap_or_else(|_| OvmValue::new_unit())
-                        },
-                    );
-                    self.execution_state
-                        .set_register(*dst, OvmValue::new_struct(obj))?;
-                }
+                Instruction::MakeStruct { .. } => self.op_make_struct(bytecode, instruction)?,
 
-                Instruction::MakeMap { dst, entries } => {
-                    use crate::ovm::value::ValueData;
-                    let mut map = crate::ovm::value::OvmMap::with_capacity_and_hasher(
-                        entries.len(),
-                        Default::default(),
-                    );
-                    for (key_reg, value_reg) in entries {
-                        let key = match &self.execution_state.register_ref(*key_reg)?.data {
-                            ValueData::String(s) => s.as_ref().clone(),
-                            ValueData::Integer(i) => i.to_string(),
-                            ValueData::Float(f) => crate::ast::float_key_text(*f),
-                            ValueData::Boolean(b) => b.to_string(),
-                            _ => {
-                                return Err(BytecodeError::TypeError(
-                                    "Map keys must be strings, integers, floats, or booleans"
-                                        .to_string(),
-                                ));
-                            }
-                        };
-                        let value = self.execution_state.get_register(*value_reg)?;
-                        map.insert(key, value);
-                    }
-                    self.execution_state
-                        .set_register(*dst, OvmValue::new_map(Arc::new(map)))?;
-                }
+                Instruction::MakeMap { .. } => self.op_make_map(bytecode, instruction)?,
 
-                Instruction::MakeTemplate { dst, parts } => {
-                    use crate::ovm::value::ValueData;
-                    let mut out = String::new();
-                    for part in parts {
-                        match part {
-                            TplPart::Literal(text) => out.push_str(text),
-                            TplPart::Reg(reg) => {
-                                let value = self.execution_state.register_ref(*reg)?;
-                                match &value.data {
-                                    ValueData::String(s) => out.push_str(s),
-                                    ValueData::Integer(n) => out.push_str(&n.to_string()),
-                                    ValueData::Float(f) => {
-                                        out.push_str(&crate::ast::format_float(*f))
-                                    }
-                                    ValueData::Boolean(b) => out.push_str(&b.to_string()),
-                                    _ => {
-                                        // The interpreter formats everything
-                                        // else through Value's Display; go
-                                        // through the same impl.
-                                        let ast = value.to_ast().map_err(|e| {
-                                            BytecodeError::RuntimeError(format!("{:?}", e))
-                                        })?;
-                                        out.push_str(&format!("{}", ast));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    self.execution_state
-                        .set_register(*dst, OvmValue::new_string(out))?;
-                }
+                Instruction::MakeTemplate { .. } => self.op_make_template(bytecode, instruction)?,
 
-                Instruction::CallMethod {
-                    dst,
-                    object,
-                    method,
-                    args,
-                    names,
-                    arg_moves,
-                    cache,
-                } => {
-                    // A function in a struct's field whose compiled id is
-                    // known (`r.f(x)`, a contract record's part): the
-                    // direct call's own entry, as CallValue (OL-520). A
-                    // struct's field wins over a method, so this is the
-                    // call the general path below would make.
-                    let known = match &self.execution_state.register_ref(*object)?.data {
-                        crate::ovm::value::ValueData::Struct(st) if names.is_empty() => {
-                            let (shape, at) = cache.load();
-                            let at = at as usize;
-                            let index = if shape == st.shape.id
-                                && at < st.len()
-                                && st.shape.field_names.get(at).is_some_and(|n| n == method)
-                            {
-                                Some(at)
-                            } else {
-                                st.shape
-                                    .field_index(method)
-                                    .map(|i| i as usize)
-                                    .filter(|&i| i < st.len())
-                                    .inspect(|&i| cache.store(st.shape.id, i as u32))
-                            };
-                            index.and_then(|i| match &st.peek(i).data {
-                                crate::ovm::value::ValueData::AstFunction(f) => self
-                                    .fn_value_ids
-                                    .get(&(Arc::as_ptr(f) as usize))
-                                    .filter(|(weak, epoch, _)| {
-                                        *epoch == self.hof_epoch
-                                            && std::ptr::eq(weak.as_ptr(), Arc::as_ptr(f))
-                                            && f.parameters.len() == args.len()
-                                    })
-                                    .map(|(_, _, id)| *id),
-                                _ => None,
-                            })
-                        }
-                        _ => None,
-                    };
-                    if let Some(func_id) = known {
-                        let result = self.execute_from_regs(func_id, args, *arg_moves)?;
-                        self.execution_state.set_register(*dst, result)?;
-                        pc += 1;
-                        continue;
-                    }
-                    let receiver = self.execution_state.get_register(*object)?;
-                    // Struct fields take precedence over methods, exactly as
-                    // interpreted: field access that happens to hold a
-                    // callable stays field access.
-                    // A fit's method wins over its entry of the same name
-                    // (`fit.importance()` calls, `fit.importance` reads).
-                    let fit_method = matches!(
-                        receiver.data,
-                        crate::ovm::value::ValueData::Map(_)
-                            | crate::ovm::value::ValueData::AstMap(_)
-                    ) && Self::native_method_receiver(&receiver)
-                        .and_then(|(h, t)| crate::native_sig::method_target(h, t, method))
-                        .is_some();
-                    let field_callee = match &receiver.data {
-                        _ if fit_method => None,
-                        crate::ovm::value::ValueData::Struct(st) => st.field(method),
-                        crate::ovm::value::ValueData::AstStruct(m, _)
-                        | crate::ovm::value::ValueData::AstMap(m) => m
-                            .get(method.as_str())
-                            .map(|v| OvmValue::from_ast(v.clone())),
-                        // A map's key wins over a method, as a field does.
-                        crate::ovm::value::ValueData::Map(m) => m.get(method.as_str()).cloned(),
-                        _ => None,
-                    };
-                    let result = if let Some(callee) = field_callee {
-                        let mut arg_values = self.arg_pool.pop().unwrap_or_default();
-                        arg_values.reserve(args.len());
-                        let take = names.is_empty();
-                        for (i, arg_reg) in args.iter().enumerate() {
-                            arg_values.push(if take && i < 64 && arg_moves & (1 << i) != 0 {
-                                self.execution_state.take_register(*arg_reg)?
-                            } else {
-                                self.execution_state.get_register(*arg_reg)?
-                            });
-                        }
-                        let r = if take {
-                            // by move into the callee's frame, as CallValue
-                            self.call_function_value_taking(&callee, &mut arg_values)
-                        } else {
-                            self.bridge_call(&callee, &arg_values, names)
-                        };
-                        arg_values.clear();
-                        if self.arg_pool.len() < 64 {
-                            self.arg_pool.push(arg_values);
-                        }
-                        r?
-                    } else if let Some(m) =
-                        self.lookup_method(Self::ovm_type_name(&receiver), method)
-                    {
-                        let m = OvmValue::new_ast_function(std::sync::Arc::new(m.clone()));
-                        let mut arg_values = self.arg_pool.pop().unwrap_or_default();
-                        arg_values.reserve(args.len() + 1);
-                        arg_values.push(receiver);
-                        for arg_reg in args {
-                            arg_values.push(self.execution_state.get_register(*arg_reg)?);
-                        }
-                        let r = self.call_function_value(&m, &arg_values);
-                        arg_values.clear();
-                        if self.arg_pool.len() < 64 {
-                            self.arg_pool.push(arg_values);
-                        }
-                        r?
-                    } else if let Some((home, type_name)) = Self::native_method_receiver(&receiver)
-                    {
-                        // A native value's method (L2): `s.exp()` is
-                        // `ods.exp(s)` — the interpreter's resolution.
-                        let Some(full) = crate::native_sig::method_target(home, type_name, method)
-                        else {
-                            return Err(BytecodeError::TypeError(
-                                if matches!(receiver.data, crate::ovm::value::ValueData::Native(_))
-                                {
-                                    crate::native_sig::no_method(type_name, method)
-                                } else {
-                                    crate::ast::no_key_or_method("Map", method)
-                                },
-                            ));
-                        };
-                        let mut arg_values = self.arg_pool.pop().unwrap_or_default();
-                        arg_values.reserve(args.len() + 1);
-                        arg_values.push(receiver);
-                        for arg_reg in args {
-                            arg_values.push(self.execution_state.get_register(*arg_reg)?);
-                        }
-                        let r = if names.is_empty() {
-                            self.execute_builtin_call(full, &arg_values, false)
-                        } else {
-                            // Names bound by the signature, as the
-                            // interpreter binds them.
-                            let n_pos = arg_values.len() - names.len();
-                            match crate::native_sig::bind_values(
-                                full,
-                                std::mem::take(&mut arg_values),
-                                n_pos,
-                                &|j| names[j].as_str(),
-                            ) {
-                                Ok(vals) => self.execute_builtin_call(full, &vals, false),
-                                Err(e) => Err(BytecodeError::RuntimeError(e)),
-                            }
-                        };
-                        arg_values.clear();
-                        if self.arg_pool.len() < 64 {
-                            self.arg_pool.push(arg_values);
-                        }
-                        r?
-                    } else {
-                        // No field, no method: the interpreter's generic path
-                        // evaluates the field access, which raises the
-                        // missing-field / non-struct error.
-                        // No field, no method: a map (or a parsed JSON
-                        // object) names the missing key; anything else
-                        // raises the field access's own error.
-                        use crate::ovm::value::ValueData;
-                        // `()`'s field is `()`, and calling it raises as
-                        // the interpreter's call of the read does.
-                        if let ValueData::Unit = receiver.data {
-                            let mut arg_values = Vec::with_capacity(args.len());
-                            for arg_reg in args {
-                                arg_values.push(self.execution_state.get_register(*arg_reg)?);
-                            }
-                            let r = self.bridge_call(&receiver, &arg_values, names)?;
-                            self.execution_state.set_register(*dst, r)?;
-                            pc += 1;
-                            continue;
-                        }
-                        let keyed = match &receiver.data {
-                            ValueData::Map(_) | ValueData::AstMap(_) => Some("Map"),
-                            ValueData::AstStruct(_, kind) => Some(kind.type_name()),
-                            ValueData::Struct(st)
-                                if matches!(st.type_name(), "JsonObject" | "Object") =>
-                            {
-                                Some(st.type_name())
-                            }
-                            _ => None,
-                        };
-                        return Err(match keyed {
-                            Some(type_name) => BytecodeError::TypeError(
-                                crate::ast::no_key_or_method(type_name, method),
-                            ),
-                            None if matches!(&receiver.data, ValueData::Struct(st) if st.type_name() == "Module") =>
-                            {
-                                let ValueData::Struct(st) = &receiver.data else {
-                                    unreachable!()
-                                };
-                                BytecodeError::TypeError(vm_module_miss(st, method))
-                            }
-                            None => match self.execute_get_field(&receiver, method) {
-                                Err(e) => e,
-                                Ok(_) => BytecodeError::RuntimeError(
-                                    "method dispatch reached an impossible state".to_string(),
-                                ),
-                            },
-                        });
-                    };
-                    self.execution_state.set_register(*dst, result)?;
-                }
+                Instruction::CallMethod { .. } => self.op_call_method(bytecode, instruction)?,
 
                 Instruction::CallValue {
                     dst,
@@ -6365,30 +6838,7 @@ impl BytecodeVm {
                         .set_register(*dst, OvmValue::new_enum(Arc::new(obj)))?;
                 }
 
-                Instruction::PatternTestEnum {
-                    dst,
-                    value,
-                    variant_name,
-                    pattern_count,
-                } => {
-                    use crate::ovm::value::{EnumData, ValueData};
-                    let matches = match &self.execution_state.register_ref(*value)?.data {
-                        ValueData::Enum(e) => {
-                            e.variant_name == *variant_name
-                                && match &e.data {
-                                    EnumData::Unit => *pattern_count == 0,
-                                    EnumData::Tuple(vs) => vs.len() == *pattern_count,
-                                    EnumData::Struct(fs) => fs.len() == *pattern_count,
-                                }
-                        }
-                        // Legacy: an enum pattern matches a plain tuple of the
-                        // same length, variant name ignored (interpreter parity)
-                        ValueData::Tuple(vs) => vs.len() == *pattern_count,
-                        _ => false,
-                    };
-                    self.execution_state
-                        .set_register(*dst, OvmValue::new_boolean(matches))?;
-                }
+                Instruction::PatternTestEnum { .. } => self.op_pattern_test_enum(bytecode, instruction)?,
 
                 Instruction::ExtractEnumPayload { dst, value, index } => {
                     use crate::ovm::value::{EnumData, ValueData};
@@ -6446,37 +6896,7 @@ impl BytecodeVm {
                         .set_register(*dst, OvmValue::new_boolean(record))?;
                 }
 
-                Instruction::MakeClosure {
-                    dst,
-                    template_const,
-                    captures,
-                } => {
-                    let template = match bytecode
-                        .constants
-                        .get(*template_const as usize)
-                        .map(|c| &c.data)
-                    {
-                        Some(crate::ovm::value::ValueData::Closure(t)) => t.clone(),
-                        _ => {
-                            return Err(BytecodeError::RuntimeError(
-                                "MakeClosure: template constant is not a closure".to_string(),
-                            ));
-                        }
-                    };
-                    let mut captured = Vec::with_capacity(captures.len());
-                    for reg in captures {
-                        captured.push(self.execution_state.get_register(*reg)?);
-                    }
-                    let closure = crate::ovm::value::ClosureObject {
-                        template: template.template.clone(),
-                        capture_names: template.capture_names.clone(),
-                        captured,
-                        func_id: template.func_id,
-                        ast_closure: Default::default(),
-                    };
-                    self.execution_state
-                        .set_register(*dst, OvmValue::new_closure(Arc::new(closure)))?;
-                }
+                Instruction::MakeClosure { .. } => self.op_make_closure(bytecode, instruction)?,
 
                 Instruction::CallFn {
                     dst,
@@ -6488,121 +6908,7 @@ impl BytecodeVm {
                     self.execution_state.set_register(*dst, result)?;
                 }
 
-                Instruction::CallNamed {
-                    dst,
-                    function_name,
-                    args,
-                    arg_moves,
-                    pregranted,
-                } => {
-                    // Pool the argument buffer: a hot loop calling a builtin
-                    // per element (`map(recs, r => map_get(r, k))`) would
-                    // otherwise heap-allocate a fresh Vec on every call.
-                    let mut arg_values = self.arg_pool.pop().unwrap_or_default();
-                    arg_values.clear();
-                    arg_values.reserve(args.len());
-                    for (i, arg_reg) in args.iter().enumerate() {
-                        // A register dead after the call is taken, so the
-                        // builtin holds the value's only reference.
-                        arg_values.push(if i < 64 && arg_moves & (1 << i) != 0 {
-                            self.execution_state.take_register(*arg_reg)?
-                        } else {
-                            self.execution_state.get_register(*arg_reg)?
-                        });
-                    }
-
-                    // User functions first: a user definition shadows a
-                    // builtin of the same name, as it does in the
-                    // interpreter — a definition of this code's own file.
-                    // Another module's function of the name (declared
-                    // after this code compiled) leaves it the builtin.
-                    let user = self
-                        .function_registry
-                        .get(function_name)
-                        .copied()
-                        .filter(|_| self.home_function(function_name, bytecode));
-                    let outcome = if let Some(func_id) = user {
-                        self.execute(func_id, &arg_values)
-                    } else if let Some(op) = function_name.strip_prefix("str.")
-                        && let Some(r) = Self::str_native(op, &arg_values)
-                    {
-                        r
-                    } else if let Some(v) = Self::scalar_native(function_name, &arg_values) {
-                        Ok(v)
-                    } else if function_name == "map_set"
-                        && let Some(r) = Self::map_set_owned(&mut arg_values)
-                    {
-                        r
-                    } else if function_name == "col.set"
-                        && let Some(r) = Self::col_set_owned(&mut arg_values)
-                    {
-                        r
-                    } else if function_name == "map_remove"
-                        && let Some(r) = Self::map_remove_owned(&mut arg_values)
-                    {
-                        r
-                    } else if function_name == "map_set_in"
-                        && let Some(r) = Self::map_set_in_owned(&mut arg_values)
-                    {
-                        r
-                    } else if function_name == "map_update"
-                        && let Some(r) = self.map_update_owned(&mut arg_values)
-                    {
-                        r
-                    } else if function_name == "map_merge"
-                        && let Some(r) = Self::map_merge_owned(&mut arg_values)
-                    {
-                        r
-                    } else if function_name == crate::parser::SPREAD_BUILTIN
-                        && let Some(r) = Self::spread_native(&arg_values)
-                    {
-                        r
-                    } else if let Some(op) = function_name.strip_prefix("cell.")
-                        && let Some(r) =
-                            crate::stdlib::cell::vm_call(op, &mut arg_values, self.cell_owner)
-                    {
-                        // the VM's own values kept in the cell as they are
-                        r.map_err(BytecodeError::RuntimeError)
-                    } else if let Some(op) = function_name.strip_prefix("chan.")
-                        && let Some(r) = crate::stdlib::chan::vm_call(op, &arg_values)
-                    {
-                        // a message between compiled code, carried in the
-                        // VM's form: no conversion either way (OL-430)
-                        r.map_err(BytecodeError::RuntimeError)
-                    } else if let Some(op) = function_name.strip_prefix("weak.")
-                        && let Some(r) = crate::stdlib::weak::vm_call(op, &arg_values)
-                    {
-                        // a weak reference to the VM's own value, not to a
-                        // converted copy that dies at once
-                        r.map_err(BytecodeError::RuntimeError)
-                    } else if self.builtin_names.contains(function_name)
-                        || function_name.contains('.')
-                        || (self.known_function_values.contains_key(function_name)
-                            && !self.home_function(function_name, bytecode))
-                    {
-                        // Module-prefixed names ("db.execute") were validated
-                        // at compile time against the module's own field set;
-                        // the bridge dispatches them by prefix exactly as the
-                        // interpreter does.
-                        self.execute_builtin_call(function_name, &arg_values, *pregranted)
-                    } else {
-                        Err(BytecodeError::NamedFunctionNotFound(function_name.clone()))
-                    };
-                    arg_values.clear();
-                    if self.arg_pool.len() < 64 {
-                        self.arg_pool.push(arg_values);
-                    }
-                    let outcome = outcome?;
-                    if user.is_none()
-                        && matches!(
-                            function_name.as_str(),
-                            "map_set" | "map_merge" | "map_set_in" | "map_update"
-                        )
-                    {
-                        self.check_struct_write(function_name, &outcome)?;
-                    }
-                    self.execution_state.set_register(*dst, outcome)?;
-                }
+                Instruction::CallNamed { .. } => self.op_call_named(bytecode, instruction)?,
 
                 // Collection operations
                 Instruction::MakeList { dst, elements } => {
@@ -6634,42 +6940,7 @@ impl BytecodeVm {
                     }
                 }
 
-                Instruction::MakeRange {
-                    dst,
-                    start,
-                    end,
-                    inclusive,
-                } => {
-                    let start_val = self.execution_state.get_register(*start)?;
-                    let end_val = self.execution_state.get_register(*end)?;
-
-                    // Extract integer values for the range
-                    let start_int = match &start_val.data {
-                        crate::ovm::value::ValueData::Integer(i) => *i,
-                        _ => {
-                            return Err(BytecodeError::TypeError(
-                                "Range start must be an integer".to_string(),
-                            ));
-                        }
-                    };
-
-                    let end_int = match &end_val.data {
-                        crate::ovm::value::ValueData::Integer(i) => *i,
-                        _ => {
-                            return Err(BytecodeError::TypeError(
-                                "Range end must be an integer".to_string(),
-                            ));
-                        }
-                    };
-
-                    let range_value = Value::Range {
-                        start: start_int,
-                        end: end_int,
-                        inclusive: *inclusive,
-                    };
-                    self.execution_state
-                        .set_register(*dst, OvmValue::from_ast(range_value))?;
-                }
+                Instruction::MakeRange { .. } => self.op_make_range(bytecode, instruction)?,
 
                 Instruction::IterLen { dst, src } => {
                     let source = self.execution_state.register_ref(*src)?;
@@ -6761,47 +7032,7 @@ impl BytecodeVm {
                     }
                 }
 
-                Instruction::PatternTestList {
-                    dst,
-                    value,
-                    min_len,
-                    exact,
-                } => {
-                    use crate::ovm::value::ValueData;
-                    let matches = match &self.execution_state.register_ref(*value)?.data {
-                        ValueData::AstList(items) => {
-                            if *exact {
-                                items.len() == *min_len
-                            } else {
-                                items.len() >= *min_len
-                            }
-                        }
-                        ValueData::List(items) => {
-                            if *exact {
-                                items.len() == *min_len
-                            } else {
-                                items.len() >= *min_len
-                            }
-                        }
-                        ValueData::FloatList(items) => {
-                            if *exact {
-                                items.len() == *min_len
-                            } else {
-                                items.len() >= *min_len
-                            }
-                        }
-                        ValueData::IntList(items) => {
-                            if *exact {
-                                items.len() == *min_len
-                            } else {
-                                items.len() >= *min_len
-                            }
-                        }
-                        _ => false,
-                    };
-                    self.execution_state
-                        .set_register(*dst, OvmValue::new_boolean(matches))?;
-                }
+                Instruction::PatternTestList { .. } => self.op_pattern_test_list(bytecode, instruction)?,
 
                 Instruction::PatternTestTuple { dst, value, len } => {
                     use crate::ovm::value::ValueData;
@@ -6845,51 +7076,7 @@ impl BytecodeVm {
                     }
                 }
 
-                Instruction::ExtractRest { dst, value, from } => {
-                    use crate::ovm::value::ValueData;
-                    // Typed lists slice in their own layout — the rest of
-                    // an IntList is an IntList.
-                    match &self.execution_state.register_ref(*value)?.data {
-                        ValueData::FloatList(items) => {
-                            let rest: Vec<f64> = items.iter().skip(*from).copied().collect();
-                            self.execution_state
-                                .set_register(*dst, OvmValue::new_float_list(rest))?;
-                            pc += 1;
-                            continue;
-                        }
-                        ValueData::IntList(items) => {
-                            let rest: Vec<i64> = items.iter().skip(*from).copied().collect();
-                            self.execution_state
-                                .set_register(*dst, OvmValue::new_int_list(rest))?;
-                            pc += 1;
-                            continue;
-                        }
-                        _ => {}
-                    }
-                    let rest = match &self.execution_state.register_ref(*value)?.data {
-                        ValueData::List(items) => {
-                            Some(items.iter().skip(*from).cloned().collect::<Vec<_>>())
-                        }
-                        ValueData::AstList(items) => Some(
-                            items
-                                .iter()
-                                .skip(*from)
-                                .map(|v| OvmValue::from_ast(v.clone()))
-                                .collect::<Vec<_>>(),
-                        ),
-                        _ => None,
-                    };
-                    match rest {
-                        Some(values) => self
-                            .execution_state
-                            .set_register(*dst, OvmValue::new_list(values))?,
-                        None => {
-                            return Err(BytecodeError::RuntimeError(
-                                "Rest binding on a non-list value".to_string(),
-                            ));
-                        }
-                    }
-                }
+                Instruction::ExtractRest { .. } => self.op_extract_rest(bytecode, instruction)?,
 
                 Instruction::MakeResult { dst, value, ok } => {
                     let inner = self.execution_state.get_register(*value)?;
