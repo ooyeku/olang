@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **A float loop runs faster on every tier** (OL-653). olang.dev's
+  Julia set (650×430, up to 320 steps a point) ran in 3.7 s natively
+  and 3.9 s in the browser build, against 69 ms in Node. A function
+  that calls `to_int`, `to_float` or `clamp` now compiles natively (it
+  stayed on bytecode), those three answer numbers without crossing to
+  the interpreter, and the bytecode does less around every `let` and
+  assignment: the loop's body is 34 instructions, not 47. The picture
+  now takes 0.19 s natively and 2.9 s in the browser build, the same
+  bytes as before. `OLANG_DUMP_FN` also prints a function the compile
+  cache already held.
+
 ### Fixed
 
 - **gui: a styled field scrolled down keeps its place when its styles

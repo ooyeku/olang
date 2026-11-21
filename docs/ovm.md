@@ -478,15 +478,25 @@ A register machine. Key design points:
   type error. Falling past every arm emits `MatchFail`, the interpreter's
   pattern-match failure.
 
-Optimizations land as compile-time instruction *selection* (immediate
-operands, resolved call targets, interned shapes), not as passes over
-emitted bytecode. Instruction-count reduction is not pursued for its own
-sake, on recorded evidence: fusing compare+branch pairs retired 3.5% of
-executed instructions and ran 3–4% *slower*, because growing the
-instruction set perturbs the dispatch loop's code layout more than the
-saved dispatches earn back. The dispatch loop's performance is a property
-of its shape, and changes to it are judged by measurement, not by
-instruction arithmetic.
+Optimizations land mostly as compile-time instruction *selection*
+(immediate operands, resolved call targets, interned shapes). A few
+passes over the emitted stream take out what does nothing, without a
+new instruction: a computed value is written straight into the
+variable a `let` or an assignment names (`X t ← …; TakeMove v ← t`
+becomes `X v ← …` when nothing else reads `t`), a constant load
+nobody reads goes, and then every `Nop` and every jump to the next
+instruction is taken out, the jump targets, the span table and the
+callee names moved with the code. `a && b` tests its left side against
+the result it presets (one load, and the right side falls through),
+and `i = i + 1` is one `BinImm` rather than a load and an `AddAssign`.
+Together they took a float loop's body from 47 instructions to 34
+(OL-653). Growing the instruction set is another matter, on recorded
+evidence: fusing compare+branch pairs retired 3.5% of executed
+instructions and ran 3–4% *slower*, because a new instruction perturbs
+the dispatch loop's code layout more than the saved dispatches earn
+back. The dispatch loop's performance is a property of its shape, and
+changes to it are judged by measurement, not by instruction
+arithmetic.
 
 ## The JIT
 
@@ -498,7 +508,8 @@ machine code via Cranelift, extending the correctness ladder unchanged.
 A function prequalifies at promotion time when every instruction falls
 in a **pure whitelist**: arithmetic, comparisons, logic (`&&` and `||`
 included, on Booleans), branches, calls to other olang functions,
-return, the float `math.*` builtins, `len` of a list and `abs`,
+return, the float `math.*` builtins, `len` of a list, `abs`,
+`to_int` and `to_float` of a number, `clamp`,
 struct field reads and construction, list indexing and `for` iteration,
 tuple returns, and strings — including template strings, whose scalar
 interpolations stringify natively with the interpreter's exact rules
@@ -572,7 +583,10 @@ lifts that: when liveness analysis proves that no heap value built in
 the loop body survives into the next iteration, the compiled loop
 records the scratch depth at entry and truncates back to it at every
 taken back-edge — per-iteration values die per iteration, exactly as
-they would on bytecode. Loops whose allocations *do* cross iterations
+they would on bytecode. A loop that allocates nothing itself — the
+allocation is a result formatted after it — takes no release at its
+back-edge (a call truncating five empty lists per iteration was a
+fifth of the site's Julia set natively). Loops whose allocations *do* cross iterations
 (accumulators that grow a list, say) still refuse and drive the native
 constructors call by call. One refusal rule remains: mixed
 string/number `+` (formatting) stays on bytecode.
@@ -638,6 +652,14 @@ natively on every pass. Entry is offered periodically and re-offered
 cheaply for loops that have already run native in the frame. Backward
 liveness with a total instruction model keeps the marshaled state to
 the loop's true live registers.
+
+The back-edge counter is the frame's own, so a short loop in a
+function called many times (a per-pixel orbit loop of a few hundred
+iterations) never reaches the threshold: such a function runs native
+only when the whole-function JIT takes it. A counter that carries
+across calls was considered for OL-653 and left out, as it would change
+when OSR fires for every program; the whole-function route covered the
+case that prompted it.
 
 Soundness rests on the same purity rule as deoptimization: every
 instruction a region may contain is pure with respect to
@@ -751,7 +773,12 @@ The VM mostly does not reimplement builtins — it calls the interpreter's
 own implementations through `BuiltinFunctions::call`. Reimplementation
 would be a second source of truth that could drift from the semantics the
 differential tests hold the VM to; delegating makes them identical by
-construction. The measured exception: the collection builtins (`len`,
+construction. `to_int`, `to_float` and `clamp` of numbers answer in the
+VM (a string to parse, a Float outside the Int range or a mix `clamp`
+raises on still bridges; Float `clamp` is one Rust function the builtin,
+the VM and native code all call): a loop converting a counter per
+element spent most of its time crossing the bridge (OL-653). The
+measured exception: the collection builtins (`len`,
 `head`, `tail`, `cons`, `concat`, `skip`, `map_get`, `map_set`,
 `map_has_key`, `map_keys`, `map_values`, `map_len`, `entries`,
 `contains` of a scalar) run natively on the VM value model with zero

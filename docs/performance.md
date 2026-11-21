@@ -151,7 +151,8 @@ practice:
   multi-element list on every pass stays on bytecode by design; hoist
   construction out of the loop, or accumulate with the rebind forms.
 - **Bridged builtins in the hot path.** The native set covers the
-  collection core, the higher-order loops, `math`, and `str`; other
+  collection core, the higher-order loops, `math`, `str`, and `to_int`,
+  `to_float` and `clamp` of numbers (which compile natively too); other
   builtins convert their arguments at the tier boundary per call. Maps
   and long lists cross as wrappers in O(1), and so does a struct that
   compiled code built; a short list of records, or a struct the
