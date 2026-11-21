@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-11-21
+
 ### Changed
 
 - **A float loop runs faster on every tier** (OL-653). olang.dev's
@@ -11451,7 +11453,8 @@ opt-in bytecode tier (`--ovm-tier`) is now honest, tested, and fast.
 - `crypto.decrypt_aes` accepts the output of `crypto.encrypt_aes` directly
   (the embedded nonce is parsed rather than requiring manual hex slicing).
 
-[Unreleased]: https://github.com/ooyeku/olang/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/ooyeku/olang/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/ooyeku/olang/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/ooyeku/olang/compare/v1.0.0-rc.10...v1.0.0
 [1.0.0-rc.10]: https://github.com/ooyeku/olang/compare/v1.0.0-rc.9...v1.0.0-rc.10
 [0.77.0]: https://github.com/ooyeku/olang/compare/v0.76.0...v0.77.0
