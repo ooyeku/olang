@@ -523,8 +523,9 @@ off (OL-653):
 - **Numbers first.** `Add` tries the two-number fast path before the
   in-place list or string test.
 
-The site's Julia set at 34 instructions an iteration: about 2.4 ns an
-instruction on wasm (it was 3.4) and 2.2 natively with the JIT off.
+The site's Julia set at 34 instructions an iteration: about 2.8 ns an
+instruction on wasm (it was 3.4) and 2.2 natively with the JIT off
+(2.8), everything the run does counted against the instructions.
 
 ## The JIT
 

@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   the interpreter, and the bytecode does less around every `let` and
   assignment: the loop's body is 34 instructions, not 47. The bytecode
   VM's dispatch is also cheaper — its large, rarely hot instructions run
-  out of line, a register is bounds-checked once — at about 2.4 ns an
+  out of line, a register is bounds-checked once — at about 2.8 ns an
   instruction in the browser build, from 3.4. The picture now takes
   0.19 s natively and 2.3 s in the browser build, the same bytes as
   before; the cross-language benchmarks run 10–46% faster in the
