@@ -369,10 +369,20 @@ fn a_fields_caret_box_is_where_the_caret_is_drawn() {
             _ => panic!("no box: {v}"),
         }
     };
-    let Value::List(away) = &all[3] else { panic!("{v}") };
-    assert!(matches!(away[0], Value::Unit), "a caret scrolled away is not drawn: {v}");
-    let Value::Tuple(said) = &away[1] else { panic!("no caret_box scrolled away: {v}") };
-    assert!(num(&said[1]) < 50.0, "above the field it was scrolled from: {v}");
+    let Value::List(away) = &all[3] else {
+        panic!("{v}")
+    };
+    assert!(
+        matches!(away[0], Value::Unit),
+        "a caret scrolled away is not drawn: {v}"
+    );
+    let Value::Tuple(said) = &away[1] else {
+        panic!("no caret_box scrolled away: {v}")
+    };
+    assert!(
+        num(&said[1]) < 50.0,
+        "above the field it was scrolled from: {v}"
+    );
     let all = &all[..3];
     for (i, p) in all.iter().enumerate() {
         let Value::List(p) = p else { panic!("{p}") };

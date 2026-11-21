@@ -7485,7 +7485,8 @@ fn translate_body(
                             let x = r#gen.to_float(builder, v[0], ks[0]);
                             let l = r#gen.to_float(builder, v[1], ks[1]);
                             let h = r#gen.to_float(builder, v[2], ks[2]);
-                            let helper_ref = module.declare_func_in_func(clamp_helper, builder.func);
+                            let helper_ref =
+                                module.declare_func_in_func(clamp_helper, builder.func);
                             let call = builder.ins().call(helper_ref, &[x, l, h]);
                             builder.inst_results(call)[0]
                         }

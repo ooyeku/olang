@@ -1200,7 +1200,14 @@ fn logic(a, b) = (a && b) || (!a && !b)
 fn ends_in_let(n) = { let m = n * 3 }
 "#;
     for n in [0, 1, 5, 40] {
-        assert_same(src, "kernel", &[Value::Integer(n), Value::String(std::sync::Arc::new("ab".to_string()))]);
+        assert_same(
+            src,
+            "kernel",
+            &[
+                Value::Integer(n),
+                Value::String(std::sync::Arc::new("ab".to_string())),
+            ],
+        );
     }
     for (a, b) in [(true, true), (true, false), (false, true), (false, false)] {
         assert_same(src, "logic", &[Value::Boolean(a), Value::Boolean(b)]);
