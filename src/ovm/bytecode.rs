@@ -640,6 +640,9 @@ impl PartialEq for FieldCache {
 /// type and fields, interned again; an inline cache not at all (a read
 /// one starts cold, as a cloned one does).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+// A plain tag byte on wasm, where it made dispatch 3% faster than the
+// niche the compiler picks (OL-653); natively the niche measured faster.
+#[cfg_attr(target_arch = "wasm32", repr(u8))]
 pub enum Instruction {
     // Load/Store operations
     LoadConst {
