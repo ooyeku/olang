@@ -12312,6 +12312,15 @@ impl BytecodeCompiler {
         // never-written register fails finalize, silently keeping every
         // tail-recursive function off native. Sweep again, after TCE.
         instructions = BytecodeOptimizer::sweep_unreachable(instructions);
+        // What does nothing goes: a computed value written straight into
+        // its variable, then the Nops and the jumps to the next
+        // instruction taken out (OL-653: a quarter of a float loop's
+        // instructions). The span table and the callee names move with
+        // the code.
+        instructions = BytecodeOptimizer::fold_temp_moves(instructions);
+        let (compacted, map) = BytecodeOptimizer::compact(instructions);
+        instructions = compacted;
+        self.emitter.remap_pcs(&map);
 
         // OLANG_DUMP_FN=<name> prints the final instruction stream for one
         // function — the register-level view the JIT debug summary elides.
@@ -12635,27 +12644,27 @@ impl BytecodeCompiler {
                     let settle_const = self
                         .emitter
                         .add_constant(OvmValue::new_boolean(settle_value));
-                    let settle_reg = self.register_allocator.allocate_register();
-                    self.emitter.emit_load_const(settle_reg, settle_const);
+                    // Preset the result to the settling value; overwritten on
+                    // the right-hand path. It is also what the left side is
+                    // tested against (one load, not two), and a left side
+                    // that settles jumps past the right (OL-653: the right
+                    // path, a loop's usual one, falls through).
+                    let dst_reg = self.register_allocator.allocate_register();
+                    self.emitter.emit_load_const(dst_reg, settle_const);
 
                     let settles = self.register_allocator.allocate_register();
                     self.emitter.instructions.push(Instruction::PatternEq {
                         dst: settles,
                         value: left_reg,
-                        other: settle_reg,
+                        other: dst_reg,
                     });
 
-                    // Preset the result to the settling value; overwritten on
-                    // the right-hand path.
-                    let dst_reg = self.register_allocator.allocate_register();
-                    self.emitter.emit_load_const(dst_reg, settle_const);
-
-                    let rhs_label = self.emitter.create_label();
                     let end_label = self.emitter.create_label();
-                    self.emitter.emit_branch_if_false(settles, rhs_label);
-                    self.emitter.emit_jump(end_label);
+                    self.emitter.instructions.push(Instruction::JumpIfTrue {
+                        condition: settles,
+                        target: end_label,
+                    });
 
-                    self.emitter.place_label(rhs_label);
                     let right_reg = self.compile_expression(right)?;
                     let combine = match op {
                         BinaryOp::And => Instruction::And {
@@ -15118,6 +15127,10 @@ impl BytecodeCompiler {
                 || matches!(left.as_ref(),
                     Expr::LocalRef { name, .. } if name == target))
             && Self::assignment_free(right)
+            // a counter's `i = i + 1` is one BinImm written straight back
+            // (OL-653), not a constant load and an AddAssign: a number
+            // added to a string or a list was never extended in place
+            && !matches!(right.as_ref(), Expr::Integer(_) | Expr::Float(_))
         {
             let rhs_reg = self.compile_expression(right)?;
             self.emitter.instructions.push(Instruction::AddAssign {
@@ -16229,6 +16242,26 @@ impl InstructionEmitter {
             .push((self.instructions.len() as u32, name.to_string()));
     }
 
+    /// Move the span table and the callee names with the code when
+    /// `BytecodeOptimizer::compact` took instructions out: `map[pc]` is
+    /// where `pc` went. Spans that now start at one place keep the last,
+    /// the one whose statement the instruction there belongs to.
+    pub fn remap_pcs(&mut self, map: &[u32]) {
+        let at = |pc: u32| map.get(pc as usize).copied().unwrap_or(pc);
+        let mut spans: Vec<(u32, u32, u32)> = Vec::with_capacity(self.span_table.len());
+        for &(start, line, column) in &self.span_table {
+            let start = at(start);
+            match spans.last_mut() {
+                Some(last) if last.0 == start => *last = (start, line, column),
+                _ => spans.push((start, line, column)),
+            }
+        }
+        self.span_table = spans;
+        for (pc, _) in &mut self.callee_names {
+            *pc = at(*pc);
+        }
+    }
+
     pub fn take_callee_names(&mut self) -> Vec<(u32, String)> {
         std::mem::take(&mut self.callee_names)
     }
@@ -16418,6 +16451,129 @@ impl BytecodeOptimizer {
             };
         }
         instructions
+    }
+
+    /// `X t ← …; TakeMove v ← t` where `t` is read by nothing else and
+    /// nothing jumps between the two: X writes `v` itself (OL-653). This
+    /// is a `let` of a computed value and an assignment of one, inside
+    /// every loop body. X is arithmetic, a test or a constant load: each
+    /// reads its operands before it writes, so `x = x * 2.0` reads the
+    /// old `x` as it did, and a raise leaves `v` unwritten as it did.
+    pub(crate) fn fold_temp_moves(mut instructions: Vec<Instruction>) -> Vec<Instruction> {
+        use Instruction as I;
+        let n = instructions.len();
+        if n < 2 {
+            return instructions;
+        }
+        let mut target = vec![false; n + 1];
+        let mut reads: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+        let (mut uses, mut defs) = (Vec::new(), Vec::new());
+        for inst in &instructions {
+            match inst {
+                I::Jump { target: t }
+                | I::JumpIfTrue { target: t, .. }
+                | I::JumpIfFalse { target: t, .. } => target[(t.0 as usize).min(n)] = true,
+                _ => {}
+            }
+            if matches!(inst, I::Release { .. }) {
+                continue;
+            }
+            uses.clear();
+            defs.clear();
+            Self::uses_defs_into(inst, &mut uses, &mut defs);
+            for u in &uses {
+                *reads.entry(*u).or_insert(0) += 1;
+            }
+        }
+        target[0] = true;
+        for pc in 0..n - 1 {
+            let I::TakeMove { dst: v, src: t } = instructions[pc + 1] else {
+                continue;
+            };
+            if target[pc + 1] || v == t || reads.get(&t.0).copied() != Some(1) {
+                continue;
+            }
+            let slot = match &mut instructions[pc] {
+                I::LoadConst { dst, .. }
+                | I::Add { dst, .. }
+                | I::Sub { dst, .. }
+                | I::Mul { dst, .. }
+                | I::Div { dst, .. }
+                | I::Mod { dst, .. }
+                | I::BinImm { dst, .. }
+                | I::Neg { dst, .. }
+                | I::Not { dst, .. }
+                | I::Eq { dst, .. }
+                | I::Ne { dst, .. }
+                | I::Lt { dst, .. }
+                | I::Le { dst, .. }
+                | I::Gt { dst, .. }
+                | I::Ge { dst, .. } => dst,
+                _ => continue,
+            };
+            if *slot != t {
+                continue;
+            }
+            *slot = v;
+            instructions[pc + 1] = I::Nop;
+        }
+        instructions
+    }
+
+    /// Take out what does nothing: every `Nop` (what the passes above
+    /// left of swept code, dead loads and folded moves) and every `Jump`
+    /// to the next instruction left (a `let`'s jump past its pattern's
+    /// swept failure). Jump targets move with the code; `map[pc]` is
+    /// where the instruction at `pc` went, or the next one kept (and
+    /// `map[n]` the new length), for the span table and the callee names.
+    /// Only the three jumps hold an offset; a self tail call goes to 0,
+    /// which stays 0.
+    pub(crate) fn compact(instructions: Vec<Instruction>) -> (Vec<Instruction>, Vec<u32>) {
+        use Instruction as I;
+        let n = instructions.len();
+        let mut gone: Vec<bool> = instructions.iter().map(|i| matches!(i, I::Nop)).collect();
+        for pc in (0..n).rev() {
+            if let I::Jump { target } = &instructions[pc] {
+                let t = target.0 as usize;
+                if t > pc && t <= n && gone[pc + 1..t].iter().all(|g| *g) {
+                    gone[pc] = true;
+                }
+            }
+        }
+        if !gone.iter().any(|g| *g) {
+            let map = (0..=n as u32).collect();
+            return (instructions, map);
+        }
+        let mut map = Vec::with_capacity(n + 1);
+        let mut kept = 0u32;
+        for g in &gone {
+            map.push(kept);
+            if !*g {
+                kept += 1;
+            }
+        }
+        map.push(kept);
+        let mut out = Vec::with_capacity(kept as usize);
+        for (inst, g) in instructions.into_iter().zip(gone) {
+            if g {
+                continue;
+            }
+            out.push(match inst {
+                I::Jump { target } => I::Jump {
+                    target: Label(map[(target.0 as usize).min(n)]),
+                },
+                I::JumpIfTrue { condition, target } => I::JumpIfTrue {
+                    condition,
+                    target: Label(map[(target.0 as usize).min(n)]),
+                },
+                I::JumpIfFalse { condition, target } => I::JumpIfFalse {
+                    condition,
+                    target: Label(map[(target.0 as usize).min(n)]),
+                },
+                other => other,
+            });
+        }
+        (out, map)
     }
 
     /// Replace instructions no path from the entry can reach with Nop.
@@ -16765,6 +16921,11 @@ impl BytecodeOptimizer {
                             None
                         }
                     }
+                    // A constant nobody reads — the Unit an `if` statement or
+                    // an assignment answers, unused: the register is let go
+                    // as the load would have (OL-653; `trim_releases` makes
+                    // a numeric one nothing at all).
+                    I::LoadConst { dst, .. } if !live(dst.0) => Some(I::Release { regs: vec![*dst] }),
                     _ => None,
                 };
                 if let Some(inst) = rewrite {

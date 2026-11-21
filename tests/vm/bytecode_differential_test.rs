@@ -1175,3 +1175,37 @@ fn a_small_wrapped_map_written_a_collection_becomes_the_vms_own() {
         assert_same(src, "f", std::slice::from_ref(&store));
     }
 }
+
+/// The peephole passes (OL-653): a computed value written straight into
+/// its variable, a counter's BinImm, a dead constant load gone, the
+/// Nops and the jumps to the next instruction taken out, and `&&`/`||`
+/// testing their left side against the preset result.
+#[test]
+fn folded_lets_assignments_and_logic_agree() {
+    let src = r#"
+fn kernel(n, s) = {
+    let mut x = 1.5
+    let mut i = 0
+    let mut t = s
+    while i < n && x < 1.0e6 || i == 0 {
+        let y = x * 2.0
+        x = x * 1.5 + y / 4.0
+        if x > 10.0 => t = t + 1
+        i = i + 1
+    }
+    let last = i * 10
+    last + len(t) + to_int(x)
+}
+fn logic(a, b) = (a && b) || (!a && !b)
+fn ends_in_let(n) = { let m = n * 3 }
+"#;
+    for n in [0, 1, 5, 40] {
+        assert_same(src, "kernel", &[Value::Integer(n), Value::String(std::sync::Arc::new("ab".to_string()))]);
+    }
+    for (a, b) in [(true, true), (true, false), (false, true), (false, false)] {
+        assert_same(src, "logic", &[Value::Boolean(a), Value::Boolean(b)]);
+    }
+    // a left side that is no Boolean raises on both
+    assert_same(src, "logic", &[Value::Integer(1), Value::Boolean(true)]);
+    assert_same(src, "ends_in_let", &ints(&[7]));
+}
