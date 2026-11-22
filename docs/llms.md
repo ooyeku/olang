@@ -7,8 +7,8 @@ to, and a short working program for each everyday task: printing and
 files, a type with methods, walking collections, handling errors, and
 tests. Every olang block here runs exactly as shown.
 
-olang is a programming language for small tools, data work and web
-apps. It is expression-based and functional: values never change, a
+olang is a general-purpose programming language with a large standard
+library. It is expression-based and functional: values never change, a
 block's last expression is its value, and failures that can be expected
 are `Result` values rather than exceptions.
 

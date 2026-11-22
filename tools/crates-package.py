@@ -47,7 +47,7 @@ t = re.sub(r'^members = \[.*\]', 'members = [".", "olang-ods", "vendor/im"]', t,
 assert 'im = { version = "15.1", features = ["serde"] }' in t and 'im = { path = "vendor/im" }\n' in t
 t = t.replace('im = { version = "15.1", features = ["serde"] }', f'im = {{ package = "olangc-im", version = "={ver}", path = "vendor/im", features = ["serde"] }}', 1)
 t = t.replace('im = { path = "vendor/im" }\n', '', 1)
-t = re.sub(r'^description = .*$', 'description = "olang is a programming language for small tools, data work and web apps. Installs the `olang` command."', t, count=1, flags=re.M)
+t = re.sub(r'^description = .*$', 'description = "olang is a general-purpose programming language with a large standard library. Installs the `olang` command."', t, count=1, flags=re.M)
 t = t.replace('repository = "https://github.com/ooyeku/olang"', 'repository = "https://github.com/ooyeku/olang"\nhomepage = "https://olang.dev"\ndocumentation = "https://olang.dev/book/"\ninclude = ["src/**/*", "build.rs", "grammar.pest", "README.md", "LICENSE", "Cargo.toml"]', 1)
 t = t.replace('olang-ods = { path = "olang-ods",', f'olang-ods = {{ package = "olangc-ods", version = "={ver}", path = "olang-ods",', 1)
 # the binary and the library keep their names

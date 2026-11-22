@@ -4,9 +4,9 @@
 
 # olang
 
-olang is a programming language for small tools, data work and web apps.
-You write short, readable programs, and olang runs them quickly. It also
-keeps an exact record of what a program did, and lets you decide what
+olang is a general-purpose programming language with a large standard
+library. Programs are easy to read and run quickly. olang also keeps an
+exact record of what a program did, and lets you decide what
 each program is allowed to touch on your computer.
 
 Here is a complete program. It takes four sales, adds them up by region
