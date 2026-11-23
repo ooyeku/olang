@@ -2414,7 +2414,7 @@ nothing should depend on them.
 | `OLANG_HOME` | yes | Relocate the whole `~/.olang` tree ([the home directory](packages.md#the-home-directory)). |
 | `OLANG_SHELF` | yes | Location of the shelf manifest (default `~/.olang/shelf.toml`). |
 | `OLANG_CACHE` | yes | Location of the git dependency cache (default `~/.olang/cache`). |
-| `OLANG_REGISTRY` | yes | The registry registry-version dependencies resolve against ([packages.md](packages.md)). |
+| `OLANG_REGISTRY` | yes | The registry that version dependencies resolve against: an index's folder or its git address ([packages.md](packages.md#the-registry)). |
 | `OLANG_LOCK_READONLY` | yes | `1`: resolve as usual but never write `olang.lock`. |
 | `OLANG_DENY` | yes | Deny capabilities for the run, as `--deny`: a comma list of `fs`, `fs-write`, `net`, `proc`, `db`, `env`. |
 | `OLANG_PARALLELISM` | yes | Thread count for `par_map`/`par for` and other parallel work (also `--ovm-parallelism N`). A program can set its own cap with [`task.set_parallelism`](stdlib.md#task--background-threads), which, unlike this variable, its child processes do not inherit. |

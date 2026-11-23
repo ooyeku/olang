@@ -136,10 +136,10 @@ pub fn install(root: &Path, options: &InstallOptions) -> Result<DependencyMap, P
     let resolution = if registry_roots.is_empty() {
         Default::default()
     } else {
-        let reg_root = options.registry.clone().ok_or_else(|| {
-            PkgError::Registry("registry dependencies present but no registry configured".into())
-        })?;
-        let reg = registry::Registry::at(reg_root);
+        let reg = open_registry(
+            options,
+            "registry dependencies present but no registry configured",
+        )?;
         resolver::resolve(&registry_roots, &reg).map_err(|e| PkgError::Resolve(e.to_string()))?
     };
 
@@ -208,16 +208,9 @@ pub fn install(root: &Path, options: &InstallOptions) -> Result<DependencyMap, P
         if lock.package.contains_key(name) {
             continue;
         }
-        let reg_root = options.registry.clone().unwrap();
-        let reg = registry::Registry::at(&reg_root);
-        let release = reg
-            .release(name, version)
-            .map_err(|e| PkgError::Registry(e.to_string()))?;
-        let git_ref = cache::GitRef::Rev(release.rev.clone());
-        let fetched = cache::fetch_git(&release.git, &git_ref, options.offline)
-            .map_err(|e| PkgError::Fetch(e.to_string()))?;
-        verify_checksum(name, release.checksum.as_deref(), &fetched.dir)?;
-        dep_map.insert(name.clone(), fetched.dir.clone());
+        let reg = open_registry(options, "no registry configured")?;
+        let (dir, release) = fetch_release(&reg, name, version, options, true)?;
+        dep_map.insert(name.clone(), dir);
         lock.package.insert(
             name.clone(),
             LockedPackage {
@@ -405,6 +398,9 @@ pub fn install_lenient(
                     Ok((dir, _)) => {
                         map.insert(name.clone(), dir);
                     }
+                    // a registry dependency has no version here (nothing
+                    // was resolved): the reason is the install's own
+                    Err(_) if dep.is_registry() => missing.push((name.clone(), first.to_string())),
                     Err(e) => missing.push((name.clone(), e.to_string())),
                 }
             }
@@ -706,23 +702,10 @@ fn resolve_dependency_with(
             let version = resolution.get(name).ok_or_else(|| {
                 PkgError::Resolve(format!("registry dependency '{}' was not resolved", name))
             })?;
-            let reg_root = options
-                .registry
-                .clone()
-                .ok_or_else(|| PkgError::Registry("no registry configured".into()))?;
-            let reg = registry::Registry::at(&reg_root);
-            let release = reg
-                .release(name, version)
-                .map_err(|e| PkgError::Registry(e.to_string()))?;
-            let fetched = cache::fetch_git(
-                &release.git,
-                &cache::GitRef::Rev(release.rev.clone()),
-                options.offline,
-            )
-            .map_err(|e| PkgError::Fetch(e.to_string()))?;
-            verify_checksum(name, release.checksum.as_deref(), &fetched.dir)?;
+            let reg = open_registry(options, "no registry configured")?;
+            let (dir, release) = fetch_release(&reg, name, version, options, true)?;
             Ok((
-                fetched.dir.clone(),
+                dir,
                 LockedPackage {
                     version: Some(version.to_string()),
                     source: LockedSource::Registry {
@@ -1083,22 +1066,11 @@ fn locked_dir(
             })?;
             let version =
                 semver::Version::parse(version).map_err(|e| PkgError::Lock(e.to_string()))?;
-            let reg_root = options.registry.clone().ok_or_else(|| {
-                PkgError::Registry(
-                    "lockfile pins registry packages but no registry is configured".into(),
-                )
-            })?;
-            let reg = registry::Registry::at(&reg_root);
-            let release = reg
-                .release(name, &version)
-                .map_err(|e| PkgError::Registry(e.to_string()))?;
-            Ok(cache::fetch_git(
-                &release.git,
-                &cache::GitRef::Rev(release.rev.clone()),
-                options.offline,
-            )
-            .map_err(|e| PkgError::Fetch(e.to_string()))?
-            .dir)
+            let reg = open_registry(
+                options,
+                "lockfile pins registry packages but no registry is configured",
+            )?;
+            Ok(fetch_release(&reg, name, &version, options, false)?.0)
         }
     }
 }
@@ -1197,6 +1169,99 @@ fn pinned_shelf_dir(
 /// Compare a directory's content checksum against an expected value. A
 /// missing expectation passes (old lockfiles and path deps have none); a
 /// mismatch is an error naming both sums.
+/// The registry an install uses: the one its options name, else
+/// `OLANG_REGISTRY`, else the default; `missing` is said when there is none.
+fn open_registry(options: &InstallOptions, missing: &str) -> Result<registry::Registry, PkgError> {
+    let spec = registry::configured(options.registry.as_deref()).ok_or_else(|| {
+        PkgError::Registry(format!(
+            "{missing} (set OLANG_REGISTRY to an index's folder or its git address)"
+        ))
+    })?;
+    registry::Registry::open(&spec, options.offline, options.refresh)
+        .map_err(|e| PkgError::Registry(e.to_string()))
+}
+
+/// Fetch one registry release and answer the folder that holds the
+/// package (the release's `subdir` inside the checkout, when it names one).
+///
+/// With `verify`, as a resolution does, the index is checked against
+/// what was fetched: the release must carry a checksum and the source
+/// match it, the package's olang.toml must say the entry's name and
+/// version, and every registry dependency that olang.toml names must be
+/// in the entry, since resolution reads the entry alone. A lock's replay
+/// passes false: its own checksum is checked after.
+fn fetch_release(
+    reg: &registry::Registry,
+    name: &str,
+    version: &semver::Version,
+    options: &InstallOptions,
+    verify: bool,
+) -> Result<(PathBuf, registry::Release), PkgError> {
+    let release = reg
+        .release(name, version)
+        .map_err(|e| PkgError::Registry(e.to_string()))?;
+    let fetched = cache::fetch_git(
+        &release.git,
+        &cache::GitRef::Rev(release.rev.clone()),
+        options.offline,
+    )
+    .map_err(|e| PkgError::Fetch(e.to_string()))?;
+    let dir = match release.subdir.as_deref() {
+        None | Some("") | Some(".") => fetched.dir,
+        Some(sub) => {
+            let inside = Path::new(sub)
+                .components()
+                .all(|c| matches!(c, std::path::Component::Normal(_)));
+            let dir = fetched.dir.join(sub);
+            if !inside || !dir.is_dir() {
+                return Err(PkgError::Registry(format!(
+                    "the index entry for {name} {version} names the folder '{sub}', which is not in {} at {}",
+                    release.git, release.rev
+                )));
+            }
+            dir
+        }
+    };
+    if !verify {
+        return Ok((dir, release));
+    }
+    if release.checksum.is_none() {
+        return Err(PkgError::Registry(format!(
+            "the index entry for {name} {version} has no checksum: a release without one is not installed (`otc publish` writes it)"
+        )));
+    }
+    verify_checksum(name, release.checksum.as_deref(), &dir)?;
+    let manifest = Manifest::load(&dir).map_err(|e| {
+        PkgError::Registry(format!(
+            "{name} {version} from the registry has no readable olang.toml: {e}"
+        ))
+    })?;
+    if manifest.package.name != name || &manifest.package.version != version {
+        return Err(PkgError::Registry(format!(
+            "the index entry says {name} {version}, but the source it points at is {} {}",
+            manifest.package.name, manifest.package.version
+        )));
+    }
+    for (dep, source) in &manifest.dependencies {
+        if source.is_registry() && !release.dependencies.contains_key(dep) {
+            return Err(PkgError::Registry(format!(
+                "the index entry for {name} {version} leaves out '{dep}', which its olang.toml depends on: the entry is wrong, and {name} would not find '{dep}' when it runs"
+            )));
+        }
+    }
+    if release.withdrawn && options.explicit {
+        eprintln!(
+            "note: {name} {version} was withdrawn from the registry{}",
+            release
+                .reason
+                .as_deref()
+                .map(|r| format!(": {r}"))
+                .unwrap_or_default()
+        );
+    }
+    Ok((dir, release))
+}
+
 fn verify_checksum(name: &str, expected: Option<&str>, dir: &Path) -> Result<(), PkgError> {
     let Some(expected) = expected else {
         return Ok(());

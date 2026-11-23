@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **A registry can be published to and installed from by address**
+  (OL-658). `OLANG_REGISTRY` takes an index's git address as well as a
+  folder: it is cloned into the cache and refreshed when a name or a
+  version is missing from the copy held. `otc add name` looks in the
+  registry after the shelf, and `otc add name@1.2` asks for a
+  requirement; `otc search` lists what the registry holds. `otc publish`
+  checks a library (description, license, README, registry-only
+  dependencies, a commit its address serves, `olang check` and `olang
+  test`) and writes its release into a checkout of the index; `otc
+  withdraw name@version` marks a release that no new install should
+  choose. An index entry can name a folder inside a repository
+  (`subdir`). There is still no public registry.
+
+### Changed
+
+- **An install checks a registry entry against the source it names**
+  (OL-658). A release with no checksum is refused, and so is one whose
+  `olang.toml` says another name or version, or depends on a registry
+  library the entry leaves out; before, the first installed unchecked
+  and the last failed when the program ran. The registry protocol is
+  Experimental.
+- `olang check` on a project whose registry dependency is not installed
+  says why (the registry is not on this machine, the version is not
+  published), not "was not resolved".
+
 ## [1.0.1] - 2026-11-21
 
 ### Changed

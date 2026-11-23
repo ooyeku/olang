@@ -3,6 +3,7 @@ pub mod clean;
 pub mod doctor;
 pub mod new;
 pub mod project;
+pub mod registry;
 pub mod releases;
 pub mod shelf;
 pub mod status;

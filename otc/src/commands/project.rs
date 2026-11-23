@@ -110,6 +110,29 @@ impl Saved {
     }
 }
 
+/// The registry's answer for a name the shelf does not settle: `name`
+/// when the shelf has no such library, `name@1.2` when it holds none that
+/// version allows. None with no registry configured, or when the shelf
+/// answers: a library on this machine comes first.
+fn from_registry(spec: &str) -> anyhow::Result<Option<(String, Dependency)>> {
+    if olang::pkg::registry::configured(None).is_none() {
+        return Ok(None);
+    }
+    let (name, version) = match spec.split_once('@') {
+        Some((n, v)) => (n, Some(v)),
+        None => (spec, None),
+    };
+    let shelf = super::shelf::load()?;
+    let shelved = shelf.library(name).is_some_and(|lib| match version {
+        Some(v) => lib.select(v, None).is_some(),
+        None => lib.pick().is_some(),
+    });
+    if shelved {
+        return Ok(None);
+    }
+    super::registry::dependency_for(spec)
+}
+
 /// `otc add <spec>`: one argument, three readings, said as understood:
 ///
 ///   otc add ../my-lib            a folder (anything that exists here, or `.`/`/`-led)
@@ -284,10 +307,12 @@ pub fn add(spec: &str, path_flag: Option<&str>, force: bool) -> anyhow::Result<(
             }
         };
         (f.name, dep)
+    } else if let Some(found) = from_registry(spec)? {
+        found
     } else {
-        // A bare name, perhaps with a version, is a shelf lookup. Failing
-        // here with the fix named beats recording a dependency that can
-        // never resolve.
+        // A bare name, perhaps with a version, is a shelf lookup, then the
+        // registry's (above). Failing here with the fix named beats
+        // recording a dependency that can never resolve.
         let (lib_name, version) = match spec.split_once('@') {
             Some((n, v)) => (n.to_string(), Some(v.to_string())),
             None => (spec.to_string(), None),
@@ -308,7 +333,12 @@ pub fn add(spec: &str, path_flag: Option<&str>, force: bool) -> anyhow::Result<(
                 )
             };
             return Err(fail(
-                format!("'{}' is not on your shelf ({})", lib_name, hint),
+                format!(
+                    "'{}' is not on your shelf ({}){}",
+                    lib_name,
+                    hint,
+                    super::registry::not_found_hint(&lib_name)
+                ),
                 format!("otc shelf add <folder> (or otc add <owner>/{lib_name} from GitHub)"),
             ));
         };

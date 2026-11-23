@@ -103,14 +103,14 @@ enum Commands {
         #[arg(long = "web-bare")]
         web_bare: bool,
     },
-    /// Add a dependency: a folder (../my-lib), a library on your shelf
-    /// (geometry, geometry@1.2), or a GitHub repository
+    /// Add a dependency: a folder (../my-lib), a library on your shelf or
+    /// in the registry (geometry, geometry@1.2), or a GitHub repository
     /// (owner/repo[@tag|@branch|@commit]). Says which it understood, shows
     /// the capabilities it asks for, and creates olang.toml if there is none.
     ///
     /// Example: otc add ooyeku/geometry@v1.2.0
     Add {
-        /// A folder, a shelf name[@version], or owner/repo[@ref]
+        /// A folder, a name[@version] from the shelf or the registry, or owner/repo[@ref]
         spec: String,
         /// Treat the argument as a folder even if it looks like a name
         #[arg(long)]
@@ -194,6 +194,46 @@ enum Commands {
     Shelf {
         #[command(subcommand)]
         cmd: Option<commands::shelf::ShelfCommand>,
+    },
+    /// List the registry's libraries whose name or description holds
+    /// every word (all of them with no words)
+    Search {
+        /// Words to look for
+        words: Vec<String>,
+    },
+    /// Check the library in this folder and write its release into a
+    /// checkout of the registry's index (--dry-run: check everything, show
+    /// the entry, write nothing). Commits and sends nothing
+    Publish {
+        /// The checkout of the index to write into (default: the folder
+        /// OLANG_REGISTRY names)
+        #[arg(long, value_name = "FOLDER")]
+        index: Option<String>,
+        /// Where the release is fetched from (default: the repository's origin)
+        #[arg(long, value_name = "ADDRESS")]
+        git: Option<String>,
+        /// Rewrite a version that is already in the index
+        #[arg(long)]
+        force: bool,
+        /// Skip `olang check` and `olang test`
+        #[arg(long)]
+        no_test: bool,
+    },
+    /// Withdraw a published release (name@version): no new install
+    /// chooses it, and a lock that names it still installs
+    Withdraw {
+        /// The release, as name@version
+        release: String,
+        /// Why, shown to whoever still installs it
+        #[arg(long)]
+        reason: Option<String>,
+        /// Put a withdrawn release back
+        #[arg(long)]
+        restore: bool,
+        /// The checkout of the index to write into (default: the folder
+        /// OLANG_REGISTRY names)
+        #[arg(long, value_name = "FOLDER")]
+        index: Option<String>,
     },
     /// Run the project's benches (bench/*.ol): scaling curves, verified
     /// answers, peak memory, baselines.
@@ -336,6 +376,25 @@ fn main() {
         Commands::Shelf { cmd } => cmd
             .unwrap_or(commands::shelf::ShelfCommand::List { name: None })
             .execute(),
+        Commands::Search { words } => commands::registry::search(&words),
+        Commands::Publish {
+            index,
+            git,
+            force,
+            no_test,
+        } => commands::registry::publish(commands::registry::PublishArgs {
+            index,
+            git,
+            dry_run: commands::ctx().dry_run,
+            force,
+            no_test,
+        }),
+        Commands::Withdraw {
+            release,
+            reason,
+            restore,
+            index,
+        } => commands::registry::withdraw(&release, reason, restore, index.as_deref()),
         Commands::Doctor { fix } => commands::doctor::run(fix),
         Commands::Clean {
             cache,

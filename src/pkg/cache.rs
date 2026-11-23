@@ -299,7 +299,7 @@ pub fn forget(url: &str, rev: Option<&str>) {
 }
 
 /// sha256 of a URL, for stable per-repo cache directory names.
-fn url_hash(url: &str) -> String {
+pub(crate) fn url_hash(url: &str) -> String {
     let mut h = Sha256::new();
     h.update(url.as_bytes());
     hex::encode(h.finalize())[..16].to_string()

@@ -260,3 +260,159 @@ println(money(-150))
     unsafe { std::env::remove_var("OLANG_SHELF") };
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// The registry, end to end with the real binary: `publish` writes a
+/// library's release into a checkout of the index, and a project on an
+/// empty home, given the index by its git address, finds the library
+/// with `search` and takes it with `add <name>`.
+#[test]
+fn a_published_library_is_added_by_name_from_the_registry() {
+    let ws = std::env::temp_dir().join(format!("otc_registry_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&ws);
+    std::fs::create_dir_all(&ws).unwrap();
+    let git = |dir: &Path, args: &[&str]| {
+        let out = Command::new("git")
+            .current_dir(dir)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {:?}: {:?}", args, out);
+    };
+    let otc_in = |dir: &Path, registry: &str, args: &[&str]| {
+        let out = Command::new(otc())
+            .args(args)
+            .current_dir(dir)
+            .env("OLANG_HOME", ws.join("home"))
+            .env("OLANG_REGISTRY", registry)
+            .env_remove("OLANG_SHELF")
+            .env_remove("OLANG_CACHE")
+            .env_remove("OLANG_LOCK_READONLY")
+            .output()
+            .expect("spawn otc");
+        Run {
+            ok: out.status.success(),
+            output: format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        }
+    };
+    // the index: a bare repository (its address) and a checkout to write into
+    let (bare, index) = (ws.join("index.git"), ws.join("index"));
+    git(
+        &ws,
+        &[
+            "init",
+            "--quiet",
+            "--bare",
+            "--initial-branch=main",
+            "index.git",
+        ],
+    );
+    git(&ws, &["clone", "--quiet", "index.git", "index"]);
+    let address = format!("file://{}", bare.display());
+
+    // a library, not yet fit to publish
+    let lib = ws.join("measure");
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(
+        lib.join("olang.toml"),
+        "[package]\nname = \"measure\"\nversion = \"0.4.0\"\n",
+    )
+    .unwrap();
+    std::fs::write(lib.join("index.ol"), "share fn inches(cm) = cm / 2.54\n").unwrap();
+    git(&lib, &["init", "--quiet", "--initial-branch=main"]);
+    git(&lib, &["add", "."]);
+    git(&lib, &["commit", "--quiet", "-m", "one"]);
+    let index_arg = index.to_string_lossy().into_owned();
+    let r = otc_in(
+        &lib,
+        &address,
+        &["publish", "--no-test", "--index", &index_arg],
+    );
+    assert!(!r.ok, "{}", r.output);
+    for missing in [
+        "no description",
+        "no license",
+        "no LICENSE",
+        "no README",
+        "no `origin`",
+    ] {
+        assert!(
+            r.output.contains(missing),
+            "{missing:?} not said: {}",
+            r.output
+        );
+    }
+    assert!(
+        !index.join("measure.toml").exists(),
+        "a refused publish writes nothing"
+    );
+
+    // made fit, and published from its own address
+    std::fs::write(
+        lib.join("olang.toml"),
+        "[package]\nname = \"measure\"\nversion = \"0.4.0\"\ndescription = \"lengths between units\"\nlicense = \"MIT\"\n",
+    )
+    .unwrap();
+    std::fs::write(lib.join("LICENSE"), "MIT\n").unwrap();
+    std::fs::write(lib.join("README.md"), "# measure\n").unwrap();
+    git(&lib, &["add", "."]);
+    git(&lib, &["commit", "--quiet", "-m", "two"]);
+    let lib_arg = lib.to_string_lossy().into_owned();
+    let publish = [
+        "publish",
+        "--no-test",
+        "--index",
+        &index_arg,
+        "--git",
+        &lib_arg,
+    ];
+    let r = otc_in(&lib, &address, &publish);
+    assert!(r.ok, "{}", r.output);
+    let entry = std::fs::read_to_string(index.join("measure.toml")).unwrap();
+    assert!(
+        entry.contains("version = \"0.4.0\"") && entry.contains("checksum = "),
+        "{entry}"
+    );
+    let r = otc_in(&lib, &address, &publish);
+    assert!(
+        !r.ok && r.output.contains("already in the index"),
+        "{}",
+        r.output
+    );
+    git(&index, &["add", "."]);
+    git(&index, &["commit", "--quiet", "-m", "measure 0.4.0"]);
+    git(&index, &["push", "--quiet", "origin", "HEAD"]);
+
+    // a stranger's project: nothing on this home but the index's address
+    let app = ws.join("app");
+    std::fs::create_dir_all(&app).unwrap();
+    let r = otc_in(&app, &address, &["search", "units"]);
+    assert!(
+        r.ok && r.output.contains("measure") && r.output.contains("0.4.0"),
+        "{}",
+        r.output
+    );
+    let r = otc_in(&app, &address, &["add", "measure"]);
+    assert!(r.ok, "{}", r.output);
+    let manifest = std::fs::read_to_string(app.join("olang.toml")).unwrap();
+    assert!(manifest.contains("measure = \"^0.4.0\""), "{manifest}");
+    let lock = std::fs::read_to_string(app.join("olang.lock")).unwrap();
+    assert!(
+        lock.contains("kind = \"registry\"") && lock.contains("checksum = "),
+        "{lock}"
+    );
+    let r = otc_in(&app, &address, &["add", "nothing-published"]);
+    assert!(
+        !r.ok && r.output.contains("has no 'nothing-published' either"),
+        "{}",
+        r.output
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}

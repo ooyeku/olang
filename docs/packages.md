@@ -245,7 +245,7 @@ otc                          # the same
 
 otc new NAME --lib            # scaffold a project (--web: a web app)
 otc add ../my-lib            # a dependency by folder
-otc add geometry             # a library on your shelf
+otc add geometry             # a library on your shelf, or in the registry
 otc add geometry@1.2         # a version of one
 otc add ooyeku/geometry      # a library from GitHub: its newest release
 otc add ooyeku/geometry@v1.2.0   # a tag (@main a branch, @9b03e7d a commit)
@@ -258,6 +258,9 @@ otc outdated                 # what each has, the newest allowed, the newest the
 otc upgrade --dry-run        # what upgrade would change
 otc upgrade                  # move the lock to the newest allowed
 otc upgrade geometry --major # past the requirement: edits olang.toml too
+otc search [words]           # what the registry holds
+otc publish                  # write this library's release into the registry's index
+otc withdraw NAME@VERSION    # mark a published release as not to be chosen
 otc bench                    # the project benchmark harness (below)
 ```
 
@@ -277,7 +280,9 @@ of three readings it took: anything that exists as a folder here (or
 starts with `.` or `/`) is a **folder**, recorded relative to the
 project root; `owner/repo` (or `https://github.com/owner/repo`) is a
 **GitHub repository**; a bare name is a library on your **shelf**,
-`name@1.2` a version of it. It shows the capabilities the library asks
+`name@1.2` a version of it. A name the shelf does not have, or a
+version it holds none of, is asked of [the registry](#the-registry) when
+one is configured. It shows the capabilities the library asks
 for before adding it, and nothing of the library runs. The dependency is
 validated at `add` time and resolution runs immediately, so the lockfile
 is never left behind the manifest, and changing an existing
@@ -288,10 +293,9 @@ changes nothing: the `olang.toml` it would have started in a fresh
 directory is written only once the dependency checks out, and one it
 edited is put back if resolution fails.
 
-Dependencies from anywhere else still work — write them into
-`olang.toml` directly (`{ git = "URL", tag = "v1.0" }`, or a registry
-requirement with `OLANG_REGISTRY` set) and `otc install` resolves them
-with the same lockfile discipline.
+A dependency in a git repository that is not on GitHub is written into
+`olang.toml` directly (`{ git = "URL", tag = "v1.0" }`), and `otc
+install` resolves it with the same lockfile discipline.
 
 You rarely need `otc install` day to day: **running a file inside a
 package resolves dependencies automatically**. `olang main.ol` reads
@@ -1076,18 +1080,101 @@ constraint; there is no silent duplication of incompatible versions.
 
 ## The registry
 
-There is no public registry, and `otc` has no publish command; the
-local workflow (paths and the shelf) and git sources cover distribution.
-Registry resolution works against any index you point it at.
-
 A registry is a git repository of TOML index files: one `<name>.toml`
-per package, listing each published version with its git source, commit
-and checksum. An entry records the release's *registry* dependencies so
-MVS can resolve through it, so a library meant for a registry depends on
-registry versions itself, not on paths or git branches.
+per package, listing each published version with the repository its
+source is in, the commit and a checksum. The source stays in the
+library's own repository; the index points at it. There is no public
+registry yet: you name the one to use.
 
-Point installs at a registry with the `OLANG_REGISTRY` environment
-variable (a local directory or a checkout of the index repository).
+```bash
+export OLANG_REGISTRY=https://github.com/you/index    # a git address
+export OLANG_REGISTRY=~/code/index                     # or a folder
+```
+
+A git address (`https://…`, `git@…`, `file://…`) is cloned into
+`~/.olang/cache/registry/` and brought up to date by `otc add`, `otc
+search` and `otc install --update`, and whenever a name or a version is
+not in the copy held. A folder is read in place. The registry protocol
+is Experimental ([stability.md](stability.md)).
+
+```bash
+otc search                 # every library in the registry: name, newest version, description
+otc search json parse      # those whose name or description holds every word
+otc add textkit            # the newest release, written as textkit = "^1.0.0"
+otc add textkit@1.2        # a requirement of your own
+```
+
+An entry looks like this:
+
+```toml
+description = "lengths between units"
+license = "MIT"
+
+[[release]]
+version = "0.4.0"
+git = "https://github.com/you/measure"
+rev = "43936177fca4e9493b62af43a519bdcd89ab1b51"
+subdir = "libs/measure"       # only when the package is not at the repository's root
+checksum = "e060398860d9242f1009585e403cae68d0d59a6230e26bd5c1e1103542822587"
+
+[release.dependencies]
+units = "^1.0"
+```
+
+An entry records the release's *registry* dependencies so MVS can
+resolve through it without fetching first. An install then checks the
+entry against what it fetched, and refuses a release that has no
+checksum, whose source does not match the checksum, whose `olang.toml`
+says another name or version, or whose `olang.toml` depends on a
+registry library the entry leaves out.
+
+### Publishing
+
+`otc publish`, run in a library's folder, checks the library and writes
+its release into a checkout of the index:
+
+```bash
+git clone https://github.com/you/index ~/code/index
+cd ~/code/measure
+otc publish --index ~/code/index
+```
+
+It says everything that is not ready together, and writes nothing until
+all of it passes:
+
+- `olang.toml` has a `description` and a `license`, and the folder has a
+  README and a LICENSE file;
+- every dependency is a registry version that the index already holds
+  (a path, a git address or a library on your shelf is nothing another
+  machine can install; the three starter libraries are on every shelf
+  and are allowed);
+- the tracked files are committed, and the commit can be fetched from
+  the repository's `origin` (or `--git <address>`);
+- the library's own dependencies install, and `olang check .` and
+  `olang test` pass (`--no-test` skips those two);
+- the version is not in the index already. A release is never rewritten
+  (`--force` does it deliberately).
+
+The checksum is taken from the commit as fetched from that address, so
+it is of what an install receives. `--dry-run` does all of this and
+writes nothing.
+
+`otc publish` commits nothing and sends nothing. The release is
+published once the entry's file is in the index's repository: commit it
+in the checkout and push it, or open a pull request for an index that is
+not yours.
+
+### Withdrawing a release
+
+```bash
+otc withdraw measure@0.4.0 --reason "wrong answers below zero" --index ~/code/index
+otc withdraw measure@0.4.0 --restore --index ~/code/index
+```
+
+A withdrawn release stays in the index. No new resolution chooses it,
+and `otc add` passes over it; a project whose lockfile already names it
+still installs it, and `otc install` says it was withdrawn and why. Like
+`publish`, it writes the entry's file and leaves the commit to you.
 
 ## Trust model
 

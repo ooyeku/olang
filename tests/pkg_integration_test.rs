@@ -467,7 +467,10 @@ fn publishing_the_same_version_twice_is_rejected() {
         version: semver::Version::new(1, 0, 0),
         git: "somewhere".into(),
         rev: rev.into(),
+        subdir: None,
         checksum: None,
+        withdrawn: false,
+        reason: None,
         dependencies: Default::default(),
     };
     reg.publish("thing", rel("aaaa"), false)
@@ -506,7 +509,10 @@ fn install_rejects_a_tampered_registry_release() {
         version: semver::Version::new(1, 0, 0),
         git: repo.display().to_string(),
         rev: rev.clone(),
+        subdir: None,
         checksum,
+        withdrawn: false,
+        reason: None,
         dependencies: Default::default(),
     };
     // The index claims a checksum the source does not have.
@@ -532,6 +538,111 @@ fn install_rejects_a_tampered_registry_release() {
     let real = olang::pkg::cache::checksum_dir(&repo).unwrap();
     reg.publish("gitlib", release(Some(real)), true).unwrap();
     install(&app, &opts).expect("install with the correct checksum");
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// A release in a folder of its repository installs from that folder,
+/// and an index entry that does not describe its source is refused:
+/// resolution reads the entry alone, so a wrong one must not install.
+#[test]
+fn a_registry_entry_is_checked_against_the_source_it_names() {
+    use olang::pkg::registry::{Registry, Release};
+    let ws = workspace("registry_entry");
+    // gitlib 1.0.0 at the repository's root, and beside it `libs/sub`,
+    // a second package that depends on it.
+    write(
+        &ws.join("gitlib/libs/sub/olang.toml"),
+        "[package]\nname = \"sub\"\nversion = \"0.2.0\"\n\n[dependencies]\ngitlib = \"^1.0\"\n",
+    );
+    write(
+        &ws.join("gitlib/libs/sub/index.ol"),
+        "use gitlib { answer }\nshare fn twice() = answer() * 2\n",
+    );
+    let repo = git_lib(&ws, "share fn answer() = 21\n");
+    let out = std::process::Command::new("git")
+        .current_dir(&repo)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let rev = String::from_utf8(out.stdout).unwrap().trim().to_string();
+    let sum = |dir: &std::path::Path| olang::pkg::cache::checksum_dir(dir).unwrap();
+    let release = |version: &str,
+                   subdir: Option<&str>,
+                   checksum: Option<String>,
+                   deps: &[(&str, &str)]| Release {
+        version: semver::Version::parse(version).unwrap(),
+        git: repo.display().to_string(),
+        rev: rev.clone(),
+        subdir: subdir.map(str::to_string),
+        checksum,
+        withdrawn: false,
+        reason: None,
+        dependencies: deps
+            .iter()
+            .map(|(n, r)| (n.to_string(), r.to_string()))
+            .collect(),
+    };
+    let reg_dir = ws.join("registry");
+    let reg = Registry::at(&reg_dir);
+    reg.publish(
+        "gitlib",
+        release("1.0.0", None, Some(sum(&repo)), &[]),
+        false,
+    )
+    .unwrap();
+    let sub_sum = sum(&repo.join("libs/sub"));
+    let sub = |checksum: Option<String>, deps: &[(&str, &str)]| {
+        reg.publish(
+            "sub",
+            release("0.2.0", Some("libs/sub"), checksum, deps),
+            true,
+        )
+        .unwrap()
+    };
+    let app = ws.join("app");
+    write(
+        &app.join("olang.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nsub = \"^0.2\"\n",
+    );
+    let opts = InstallOptions {
+        registry: Some(reg_dir.clone()),
+        ..Default::default()
+    };
+    let refused = |why: &str| {
+        let err = install(&app, &opts).expect_err(why).to_string();
+        assert!(err.contains(why), "expected {why:?} in: {err}");
+    };
+
+    sub(None, &[("gitlib", "^1.0")]);
+    refused("has no checksum");
+    sub(Some(sub_sum.clone()), &[]);
+    refused("leaves out 'gitlib'");
+    reg.publish(
+        "sub",
+        release("0.2.0", None, Some(sum(&repo)), &[("gitlib", "^1.0")]),
+        true,
+    )
+    .unwrap();
+    refused("the source it points at is gitlib 1.0.0");
+
+    // The true entry: the folder is the package, and its dependency comes too.
+    sub(Some(sub_sum), &[("gitlib", "^1.0")]);
+    let map = install(&app, &opts).expect("the true entry installs");
+    assert!(map.get("sub").unwrap().ends_with("libs/sub"), "{map:?}");
+    assert!(map.contains_key("gitlib"), "{map:?}");
+
+    // Withdrawn: the lock that names it still installs; a fresh
+    // resolution does not choose it.
+    reg.set_withdrawn(
+        "sub",
+        &semver::Version::new(0, 2, 0),
+        true,
+        Some("broken".into()),
+    )
+    .unwrap();
+    install(&app, &opts).expect("a lock that names a withdrawn release replays");
+    fs::remove_file(app.join("olang.lock")).unwrap();
+    refused("no published version of 'sub'");
     let _ = fs::remove_dir_all(&ws);
 }
 
