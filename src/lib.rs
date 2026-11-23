@@ -34,6 +34,7 @@ pub mod diag_source; // A printed diagnostic's source: columns in characters (OL
 pub mod effects;
 pub mod errtrace; // Where a caught error went: its frames, file and line each
 pub mod expand;
+pub mod heap_profile; // What holds the heap, by site: `runtime.heap()`, `olang memory`
 pub mod help;
 pub mod home;
 pub mod interpreter;
@@ -41,7 +42,6 @@ pub mod interrupt; // Stopping a running evaluation (`olang repl --serve`)
 pub mod layers; // Code layers: an application booting a signed program from outside its bundle
 pub mod log;
 pub mod memory; // The accounting behind `runtime.memory()`
-pub mod heap_profile; // What holds the heap, by site: `runtime.heap()`, `olang memory`
 pub mod native;
 pub mod native_sig; // Native builtins' parameter names, defaults and methods (L1, L2)
 pub mod notebook; // A `.olmd` file read as a program

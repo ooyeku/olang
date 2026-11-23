@@ -215,8 +215,8 @@ fn take(e: usize, p: usize) {
 fn seed() -> u64 {
     static N: AtomicU64 = AtomicU64::new(0x2545_F491_4F6C_DD1D);
     let local = 0u8;
-    let mut z = (&local as *const u8 as u64)
-        ^ N.fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed);
+    let mut z =
+        (&local as *const u8 as u64) ^ N.fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed);
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     (z ^ (z >> 31)) | 1
@@ -428,7 +428,9 @@ pub fn start_from_env() {
         n => match parse_bytes(n) {
             Some(r) => r,
             None => {
-                eprintln!("olang: OLANG_HEAP={n} is not a rate in bytes (512k, 1m, 65536); using 512k");
+                eprintln!(
+                    "olang: OLANG_HEAP={n} is not a rate in bytes (512k, 1m, 65536); using 512k"
+                );
                 DEFAULT_RATE
             }
         },
@@ -457,9 +459,17 @@ pub fn start_from_env() {
 /// `512k`, `1m`, `65536`.
 pub fn parse_bytes(s: &str) -> Option<u64> {
     let s = s.trim().to_ascii_lowercase();
-    let (n, mul) = if let Some(n) = s.strip_suffix("kib").or(s.strip_suffix("kb")).or(s.strip_suffix('k')) {
+    let (n, mul) = if let Some(n) = s
+        .strip_suffix("kib")
+        .or(s.strip_suffix("kb"))
+        .or(s.strip_suffix('k'))
+    {
         (n, 1024)
-    } else if let Some(n) = s.strip_suffix("mib").or(s.strip_suffix("mb")).or(s.strip_suffix('m')) {
+    } else if let Some(n) = s
+        .strip_suffix("mib")
+        .or(s.strip_suffix("mb"))
+        .or(s.strip_suffix('m'))
+    {
         (n, 1024 * 1024)
     } else {
         (s.as_str(), 1)
@@ -647,7 +657,11 @@ fn snapshot_inner() -> Snapshot {
                 let line = file.as_deref().and_then(|f| lines.line_of(&name, f));
                 (name, file, line)
             }
-            None if i == 0 => ("(more sites than the profile keeps)".to_string(), None, None),
+            None if i == 0 => (
+                "(more sites than the profile keeps)".to_string(),
+                None,
+                None,
+            ),
             None => match path.first() {
                 Some(b) => (b.clone(), None, None),
                 None => ("(top level, or no olang frame)".to_string(), None, None),
@@ -656,7 +670,11 @@ fn snapshot_inner() -> Snapshot {
         let key_text = format!(
             "{scope}|{}|{}",
             file.as_deref().unwrap_or(""),
-            if path.is_empty() { function.clone() } else { path.join(";") }
+            if path.is_empty() {
+                function.clone()
+            } else {
+                path.join(";")
+            }
         );
         if let Some(&j) = by_key.get(&key_text) {
             let r: &mut Site = &mut rows[j];
@@ -778,7 +796,9 @@ pub fn diff(a: &Snapshot, b: &Snapshot) -> Diff {
     for s in &b.sites {
         seen.insert(s.key.as_str());
         let old = before.get(s.key.as_str());
-        let (ob, oc, oa) = old.map(|o| (o.bytes, o.count, o.allocated)).unwrap_or((0, 0, 0));
+        let (ob, oc, oa) = old
+            .map(|o| (o.bytes, o.count, o.allocated))
+            .unwrap_or((0, 0, 0));
         let allocated = if same_run || old.is_some() {
             s.allocated.saturating_sub(oa)
         } else {
@@ -855,7 +875,9 @@ pub fn by_innermost_frame() -> std::collections::HashMap<u32, (u64, u64)> {
             let st = &SITE_STATS[i];
             let b = st.alloc_b.load(Ordering::Relaxed);
             let n = (st.alloc_n.load(Ordering::Relaxed) as f64 / ONE).round() as u64;
-            let e = out.entry(key.frames[0] & !crate::profile::PEEK_BUILTIN).or_insert((0, 0));
+            let e = out
+                .entry(key.frames[0] & !crate::profile::PEEK_BUILTIN)
+                .or_insert((0, 0));
             e.0 += b;
             e.1 += n;
         }
@@ -913,9 +935,16 @@ pub fn show_text(s: &Snapshot, top: usize) -> String {
         mb(s.sampled as f64),
         s.samples,
         mb(s.rate as f64),
-        if s.dropped > 0 { format!(", {} dropped", s.dropped) } else { String::new() }
+        if s.dropped > 0 {
+            format!(", {} dropped", s.dropped)
+        } else {
+            String::new()
+        }
     ));
-    out.push_str(&format!("{:>10} {:>9} {:>10}  {:<7} site\n", "live", "blocks", "allocated", "scope"));
+    out.push_str(&format!(
+        "{:>10} {:>9} {:>10}  {:<7} site\n",
+        "live", "blocks", "allocated", "scope"
+    ));
     for r in s.sites.iter().take(top) {
         out.push_str(&format!(
             "{:>10} {:>9} {:>10}  {:<7} {}{}  {}\n",
@@ -966,7 +995,10 @@ pub fn diff_text(d: &Diff, top: usize) -> String {
         mb(d.allocated as f64)
     ));
     out.push_str(&format!("sampled live: {}\n\n", signed(d.sampled_grew)));
-    out.push_str(&format!("{:>10} {:>10} {:>9} {:>10}  {:<7} site\n", "grew", "now", "blocks", "allocated", "scope"));
+    out.push_str(&format!(
+        "{:>10} {:>10} {:>9} {:>10}  {:<7} site\n",
+        "grew", "now", "blocks", "allocated", "scope"
+    ));
     let grown: Vec<&Growth> = d.sites.iter().filter(|g| g.grew > 0).take(top).collect();
     for g in &grown {
         out.push_str(&format!(
@@ -981,7 +1013,13 @@ pub fn diff_text(d: &Diff, top: usize) -> String {
             place(&g.file, g.line)
         ));
     }
-    let shrunk: Vec<&Growth> = d.sites.iter().rev().filter(|g| g.grew < 0).take(5).collect();
+    let shrunk: Vec<&Growth> = d
+        .sites
+        .iter()
+        .rev()
+        .filter(|g| g.grew < 0)
+        .take(5)
+        .collect();
     if !shrunk.is_empty() {
         out.push_str("\nshrank most:\n");
         for g in shrunk {
@@ -1002,7 +1040,9 @@ pub fn diff_text(d: &Diff, top: usize) -> String {
 // ── `olang memory show` and `olang memory diff` ─────────────────────
 
 /// A folder's snapshots of its newest process: (first, newest).
-fn first_and_newest(dir: &std::path::Path) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
+fn first_and_newest(
+    dir: &std::path::Path,
+) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
     let rd = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     // heap-<pid>-<t_ms>.json
     let mut found: Vec<(u64, u32, std::path::PathBuf)> = rd
@@ -1016,7 +1056,10 @@ fn first_and_newest(dir: &std::path::Path) -> Result<(std::path::PathBuf, std::p
         .collect();
     found.sort();
     let Some((_, pid, newest)) = found.last().cloned() else {
-        return Err(format!("{}: no heap-<pid>-<time>.json snapshots", dir.display()));
+        return Err(format!(
+            "{}: no heap-<pid>-<time>.json snapshots",
+            dir.display()
+        ));
     };
     let first = found
         .iter()

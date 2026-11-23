@@ -464,7 +464,10 @@ fn runtime_memory(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
     out.insert("embedded".to_string(), Value::Integer(embedded as i64));
     out.insert("tasks".to_string(), Value::List(Arc::new(tasks)));
     out.insert("allocated".to_string(), Value::Integer(allocated as i64));
-    out.insert("allocations".to_string(), Value::Integer(allocations as i64));
+    out.insert(
+        "allocations".to_string(),
+        Value::Integer(allocations as i64),
+    );
     Ok(Value::Map(Arc::new(out)))
 }
 

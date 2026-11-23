@@ -187,10 +187,7 @@ pub(crate) fn migrate_shelf() -> Result<usize> {
         let rev = revs.get(&name).cloned();
         if !path.starts_with(&home) {
             // a local folder: referenced, as before
-            let lib = shelf
-                .libraries
-                .entry(name.clone())
-                .or_default();
+            let lib = shelf.libraries.entry(name.clone()).or_default();
             lib.local = Some(path.clone());
             moved += 1;
             continue;

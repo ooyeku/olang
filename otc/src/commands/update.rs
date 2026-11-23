@@ -527,8 +527,8 @@ pub fn projects_using(name: &str) -> Vec<PathBuf> {
 fn remove(spec: &str, yes: bool) -> Result<()> {
     // one folder's name under the toolchains folder: `..` named its
     // parent, `~/.olang`, whole
-    let v = releases::toolchain_name(spec)
-        .map_err(|e| fail(format!("{e:#}"), "otc toolchain list"))?;
+    let v =
+        releases::toolchain_name(spec).map_err(|e| fail(format!("{e:#}"), "otc toolchain list"))?;
     if Toolchains::load().linked.contains_key(&v) {
         return Err(fail(
             format!("'{v}' is a linked build"),

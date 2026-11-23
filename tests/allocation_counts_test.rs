@@ -15,7 +15,11 @@ fn olang(args: &[&str], source: &str, name: &str) -> String {
         .env("OLANG_COMPILE_CACHE", "0")
         .output()
         .expect("run olang");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).to_string()
 }
 
@@ -54,8 +58,16 @@ fn a_json_profile_counts_the_run_s_allocations() {
     );
     let doc: serde_json::Value =
         serde_json::from_str(out.lines().rfind(|l| l.starts_with('{')).unwrap()).unwrap();
-    assert!(doc["allocs_n"].as_u64().unwrap() >= 60_000, "{}", doc["allocs_n"]);
-    assert!(doc["alloc_b"].as_u64().unwrap() > 1_000_000, "{}", doc["alloc_b"]);
+    assert!(
+        doc["allocs_n"].as_u64().unwrap() >= 60_000,
+        "{}",
+        doc["allocs_n"]
+    );
+    assert!(
+        doc["alloc_b"].as_u64().unwrap() > 1_000_000,
+        "{}",
+        doc["alloc_b"]
+    );
     // each point of the series carries the count as it stood then: the
     // last one is taken before the run's end, so it is not held to the total
     let series = doc["series"].as_array().unwrap();

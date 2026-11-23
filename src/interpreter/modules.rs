@@ -719,10 +719,8 @@ already binds — an import never replaces a program's own name. Alias the impor
         // What this load leaves on the heap is the program's, not its
         // values' (`runtime.memory()`).
         let _load = crate::memory::load_scope();
-        let _frame = crate::profile::frame_guard(
-            || format!("use {module_path}"),
-            Some(&file_path_str),
-        );
+        let _frame =
+            crate::profile::frame_guard(|| format!("use {module_path}"), Some(&file_path_str));
         Arc::make_mut(&mut self.module_name_index)
             .entry(module_path.to_string())
             .or_insert_with(|| file_path.clone());
@@ -914,8 +912,7 @@ already binds — an import never replaces a program's own name. Alias the impor
             cache_generation: 0,
             memory_size: 0,
         };
-        Arc::make_mut(&mut self.module_cache)
-            .insert(file_path_str.clone(), placeholder_entry);
+        Arc::make_mut(&mut self.module_cache).insert(file_path_str.clone(), placeholder_entry);
 
         // Execute the module and collect exports. A closure, not a block: a
         // `?` or `return` inside stops the module, not this function, so

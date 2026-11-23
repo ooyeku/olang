@@ -201,14 +201,18 @@ enum Commands {
         cmd: Option<commands::shelf::ShelfCommand>,
     },
     /// List the registry's libraries whose name or description holds
-    /// every word (all of them with no words)
+    /// every word (all of them with no words).
+    ///
+    /// Example: otc search markdown
     Search {
         /// Words to look for
         words: Vec<String>,
     },
     /// Check the library in this folder and write its release into a
     /// checkout of the registry's index (--dry-run: check everything, show
-    /// the entry, write nothing). Commits and sends nothing
+    /// the entry, write nothing). Commits and sends nothing.
+    ///
+    /// Example: otc publish --dry-run
     Publish {
         /// The checkout of the index to write into (default: the folder
         /// OLANG_REGISTRY names)
@@ -225,7 +229,9 @@ enum Commands {
         no_test: bool,
     },
     /// Withdraw a published release (name@version): no new install
-    /// chooses it, and a lock that names it still installs
+    /// chooses it, and a lock that names it still installs.
+    ///
+    /// Example: otc withdraw geometry@1.2.0
     Withdraw {
         /// The release, as name@version
         release: String,

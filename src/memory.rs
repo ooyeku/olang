@@ -368,7 +368,9 @@ impl Drop for TaskGuard {
         let left = LIVE[self.slot].live.swap(0, Ordering::Relaxed);
         LIVE[self.before].live.fetch_add(left, Ordering::Relaxed);
         let allocs = LIVE[self.slot].allocs.swap(0, Ordering::Relaxed);
-        LIVE[self.before].allocs.fetch_add(allocs, Ordering::Relaxed);
+        LIVE[self.before]
+            .allocs
+            .fetch_add(allocs, Ordering::Relaxed);
         let bytes = LIVE[self.slot].bytes.swap(0, Ordering::Relaxed);
         LIVE[self.before].bytes.fetch_add(bytes, Ordering::Relaxed);
         LIVE[self.slot].generation.fetch_add(1, Ordering::Relaxed);

@@ -271,7 +271,9 @@ enum Commands {
 
     /// What holds the heap, by allocation site: show a snapshot, diff two,
     /// or run a program with the heap profile on
-    #[command(after_help = "Snapshots come from runtime.heap_write(path), or from OLANG_HEAP=1 with OLANG_HEAP_DIR=dir (one every OLANG_HEAP_EVERY seconds).\n\n  olang memory run app.ol          run it, then show what it holds by site\n  olang memory show snap.json      what one snapshot holds\n  olang memory diff a.json b.json  what grew from a to b\n  olang memory diff DIR            what grew from a folder's first snapshot to its newest")]
+    #[command(
+        after_help = "Snapshots come from runtime.heap_write(path), or from OLANG_HEAP=1 with OLANG_HEAP_DIR=dir (one every OLANG_HEAP_EVERY seconds).\n\n  olang memory run app.ol          run it, then show what it holds by site\n  olang memory show snap.json      what one snapshot holds\n  olang memory diff a.json b.json  what grew from a to b\n  olang memory diff DIR            what grew from a folder's first snapshot to its newest"
+    )]
     Memory {
         /// `run`, `show` or `diff`
         #[arg(value_name = "ACTION")]
@@ -1174,7 +1176,9 @@ fn run() -> i32 {
                     None => olang::heap_profile::DEFAULT_RATE,
                     Some(Some(r)) => r,
                     Some(None) => {
-                        eprintln!("olang memory: --rate is bytes between samples (512k, 64k, 4096)");
+                        eprintln!(
+                            "olang memory: --rate is bytes between samples (512k, 64k, 4096)"
+                        );
                         return 2;
                     }
                 };
@@ -1187,7 +1191,8 @@ fn run() -> i32 {
                     let snap = olang::heap_profile::snapshot();
                     let mut so = std::io::stdout().lock();
                     if json {
-                        let _ = writeln!(so, "{}", serde_json::to_string(&snap).unwrap_or_default());
+                        let _ =
+                            writeln!(so, "{}", serde_json::to_string(&snap).unwrap_or_default());
                     } else {
                         let _ = write!(so, "\n{}", olang::heap_profile::show_text(&snap, top));
                     }

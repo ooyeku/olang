@@ -43,7 +43,9 @@ fn field(out: &str, key: &str) -> i64 {
         .lines()
         .find_map(|l| l.strip_prefix(&format!("{key} ")))
         .unwrap_or_else(|| panic!("no `{key}` line in:\n{out}"));
-    line.trim().parse().unwrap_or_else(|_| panic!("`{key}` is not a number: {line}"))
+    line.trim()
+        .parse()
+        .unwrap_or_else(|_| panic!("`{key}` is not a number: {line}"))
 }
 
 fn near(estimate: i64, actual: i64, what: &str) {
@@ -101,7 +103,10 @@ fn live_bytes_are_named_by_the_function_that_allocated_them() {
         near(field(&out, "keep_bytes"), grew, "keep's live bytes");
         // 100,000 strings and the list: at least that many blocks
         let count = field(&out, "keep_count");
-        assert!(count > 60_000 && count < 400_000, "keep's blocks: {count}\n{out}");
+        assert!(
+            count > 60_000 && count < 400_000,
+            "keep's blocks: {count}\n{out}"
+        );
         // churn made ~80,000 strings and kept none of them
         assert!(
             field(&out, "churn_allocated") > 2 * 1024 * 1024,
@@ -203,8 +208,14 @@ task.join(t)
     );
     let net = field(&out, "net");
     let held = field(&out, "held");
-    assert!(net > 4 * 1024 * 1024, "the task's net figure kept the list:\n{out}");
-    assert!(held >= 0 && held < net / 4, "held should be what is live:\n{out}");
+    assert!(
+        net > 4 * 1024 * 1024,
+        "the task's net figure kept the list:\n{out}"
+    );
+    assert!(
+        held >= 0 && held < net / 4,
+        "held should be what is live:\n{out}"
+    );
     assert!(field(&out, "allocated") >= net, "{out}");
 }
 
@@ -243,7 +254,14 @@ println(len(idx))
     .unwrap();
     let dirs = d.to_str().unwrap();
     let (out, err, ok) = olang(
-        &["memory", "run", "--rate", "64k", src.to_str().unwrap(), dirs],
+        &[
+            "memory",
+            "run",
+            "--rate",
+            "64k",
+            src.to_str().unwrap(),
+            dirs,
+        ],
         &[],
     );
     assert!(ok, "{out}\n{err}");
@@ -251,7 +269,12 @@ println(len(idx))
     assert!(out.contains("cli.ol:2"), "the site's place:\n{out}");
 
     let (out, err, ok) = olang(
-        &["memory", "diff", &format!("{dirs}/a.json"), &format!("{dirs}/b.json")],
+        &[
+            "memory",
+            "diff",
+            &format!("{dirs}/a.json"),
+            &format!("{dirs}/b.json"),
+        ],
         &[],
     );
     assert!(ok, "{out}\n{err}");
@@ -266,15 +289,28 @@ println(len(idx))
     assert!(ok && out.contains("build_index"), "{out}");
     // flags after the files are still flags
     let (out, err, ok) = olang(
-        &["memory", "show", &format!("{dirs}/b.json"), "--top", "1", "--format=json"],
+        &[
+            "memory",
+            "show",
+            &format!("{dirs}/b.json"),
+            "--top",
+            "1",
+            "--format=json",
+        ],
         &[],
     );
     assert!(ok, "{err}");
     let doc: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
-    assert!(doc["sites"].as_array().is_some_and(|s| !s.is_empty()), "{out}");
+    assert!(
+        doc["sites"].as_array().is_some_and(|s| !s.is_empty()),
+        "{out}"
+    );
 
     let (out, err, ok) = olang(&["memory", "diff", &format!("{dirs}/a.json")], &[]);
-    assert!(!ok && (out + &err).contains("olang memory"), "a lone file is not a folder");
+    assert!(
+        !ok && (out + &err).contains("olang memory"),
+        "a lone file is not a folder"
+    );
 }
 
 #[test]
@@ -332,14 +368,15 @@ println(t)
 "#,
     )
     .unwrap();
-    let (out, err, ok) = olang(
-        &["profile", "--format", "json", src.to_str().unwrap()],
-        &[],
-    );
+    let (out, err, ok) = olang(&["profile", "--format", "json", src.to_str().unwrap()], &[]);
     assert!(ok, "{err}");
     let json_line = out.lines().rfind(|l| l.starts_with('{')).unwrap();
     let doc: serde_json::Value = serde_json::from_str(json_line).unwrap();
-    assert!(doc["alloc_b"].as_u64().unwrap() > 10 * 1024 * 1024, "{}", doc["alloc_b"]);
+    assert!(
+        doc["alloc_b"].as_u64().unwrap() > 10 * 1024 * 1024,
+        "{}",
+        doc["alloc_b"]
+    );
     assert!(doc["allocs_n"].as_u64().unwrap() > 600_000);
     let frames = doc["frames"].as_array().unwrap();
     let row = |name: &str| {
@@ -355,7 +392,9 @@ println(t)
     let lam = row("<lambda in allocates>")
         .and_then(|r| r["alloc_b"].as_u64())
         .unwrap_or(0);
-    let own = row("allocates").and_then(|r| r["alloc_b"].as_u64()).unwrap_or(0);
+    let own = row("allocates")
+        .and_then(|r| r["alloc_b"].as_u64())
+        .unwrap_or(0);
     let map_b = row("map").and_then(|r| r["alloc_b"].as_u64()).unwrap_or(0);
     assert!(lam + own + map_b > 5 * 1024 * 1024, "{}", doc["functions"]);
     if let Some(c) = row("computes") {

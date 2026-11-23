@@ -918,7 +918,13 @@ pub fn outdated(offline: bool) -> anyhow::Result<()> {
 }
 
 /// One planned upgrade: name, from, to, the tag, the GitHub repository.
-type Planned = (String, Option<String>, String, Option<String>, Option<String>);
+type Planned = (
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+    Option<String>,
+);
 
 /// `otc upgrade [name…] [--major] [--yes]`: move the lock (and with
 /// --major the manifest) to the newest allowed, saying each change before

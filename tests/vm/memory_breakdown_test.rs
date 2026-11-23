@@ -8,9 +8,9 @@
 //! 130 MB of an editor's "values" was compiled code, which sent two
 //! investigations looking in the wrong place.
 
-use std::process::Command;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::process::{Child, Stdio};
 
 fn run(source: &str, args: &[&str]) -> String {
@@ -415,7 +415,11 @@ fn one_request_at_a_time_warms_one_http_worker() {
     });
     let get = |path: &str| -> String {
         let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
-        write!(s, "GET {path} HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n").unwrap();
+        write!(
+            s,
+            "GET {path} HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n"
+        )
+        .unwrap();
         let mut out = String::new();
         s.read_to_string(&mut out).unwrap();
         out.split("\r\n\r\n").nth(1).unwrap_or("").to_string()

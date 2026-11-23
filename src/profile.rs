@@ -403,7 +403,12 @@ pub fn peek_frames(out: &mut [u32]) -> usize {
                 if n > 0 && out[n - 1] & !PEEK_BUILTIN == id {
                     continue;
                 }
-                out[n] = id | if bits & BUILTIN_BIT != 0 { PEEK_BUILTIN } else { 0 };
+                out[n] = id
+                    | if bits & BUILTIN_BIT != 0 {
+                        PEEK_BUILTIN
+                    } else {
+                        0
+                    };
                 n += 1;
             }
             n
@@ -496,7 +501,9 @@ impl Drop for InheritGuard {
         let n = self.0;
         let _ = LOCAL.try_with(|stack| {
             let depth = stack.depth.load(Ordering::Relaxed);
-            stack.depth.store(depth.saturating_sub(n), Ordering::Relaxed);
+            stack
+                .depth
+                .store(depth.saturating_sub(n), Ordering::Relaxed);
         });
     }
 }

@@ -2146,10 +2146,7 @@ impl Target {
         } else {
             self.unmoved = 0;
         }
-        if mw > 0
-            && mh > 0
-            && !matches!(self.scratch, Some((_, w, h)) if w >= mw && h >= mh)
-        {
+        if mw > 0 && mh > 0 && !matches!(self.scratch, Some((_, w, h)) if w >= mw && h >= mh) {
             // grown to hold this move and any it held before
             let (sw, sh) = match &self.scratch {
                 Some((_, w, h)) => ((*w).max(mw), (*h).max(mh)),
