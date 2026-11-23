@@ -125,7 +125,9 @@ command, `otc use <version>`; `otc toolchain list --available` lists
 every release ([Packages](packages.md#updating-and-toolchains)).
 
 Homebrew users update with `brew upgrade olang`, and Cargo users by
-running their `cargo install` command again.
+running their `cargo install` command again. If Homebrew refuses the
+formula as untrusted, the one line under [Homebrew](#homebrew) below
+fixes it.
 
 ## Uninstalling
 
@@ -152,12 +154,20 @@ brew install ooyeku/olang/olang
 ```
 
 Use the full name. It adds olang's tap, the small GitHub repository that
-holds the formula, and tells Homebrew to trust it. Recent Homebrew
-refuses a formula from a tap it has not been told to trust, so `brew tap
-ooyeku/olang` followed by a plain `brew install olang` stops with
-*Refusing to load formula ... from untrusted tap*. (`brew trust
-ooyeku/olang` allows it.) The formula pins each download's checksum, and
-Homebrew checks it.
+holds the formula, and tells Homebrew to trust that formula. Homebrew 6
+and later refuses a formula from a tap it has not been told to trust, so
+`brew tap ooyeku/olang` followed by a plain `brew install olang` stops
+with *Refusing to load formula ... from untrusted tap*. If you see that
+message, or a warning that the tap `ooyeku/olang` is not trusted, trust
+the formula once:
+
+```bash
+brew trust --formula ooyeku/olang/olang
+```
+
+`brew trust ooyeku/olang` trusts the whole tap instead: everything it
+holds now and whatever is added to it later. The formula pins each
+download's checksum, and Homebrew checks it.
 
 ### Downloading a release by hand
 

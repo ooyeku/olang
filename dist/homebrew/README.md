@@ -21,11 +21,12 @@ Users then install with:
 brew install ooyeku/olang/olang     # installs both `olang` and `otc`
 ```
 
-Use the full name: recent Homebrew refuses to load a formula from a tap
-it has not been told to trust, and `brew install <tap>/<formula>` is
-what records that trust (`brew tap ooyeku/olang && brew install olang`
-stops with "Refusing to load formula ... from untrusted tap" until
-`brew trust ooyeku/olang`).
+Use the full name: Homebrew 6 and later refuses to load a formula from a
+tap it has not been told to trust, and `brew install <tap>/<formula>` is
+what records that trust, for that formula (`brew tap ooyeku/olang &&
+brew install olang` stops with "Refusing to load formula ... from
+untrusted tap" until `brew trust --formula ooyeku/olang/olang`, or
+`brew trust ooyeku/olang` for the whole tap).
 
 ## Per-release update (automated)
 
