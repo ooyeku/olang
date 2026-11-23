@@ -23,9 +23,10 @@ they part, this chapter says so.
 7. [One idea a line](#one-idea-a-line)
 8. [Errors: let them travel](#errors-let-them-travel)
 9. [Names, and modules instead of prefixes](#names-and-modules-instead-of-prefixes)
-10. [Functions, comments and files](#functions-comments-and-files)
-11. [Letting the tools hold you to it](#letting-the-tools-hold-you-to-it)
-12. [What 1.0 cannot say yet](#what-10-cannot-say-yet)
+10. [Fixed values get a name at the top of the file](#fixed-values-get-a-name-at-the-top-of-the-file)
+11. [Functions, comments and files](#functions-comments-and-files)
+12. [Letting the tools hold you to it](#letting-the-tools-hold-you-to-it)
+13. [What 1.0 cannot say yet](#what-10-cannot-say-yet)
 
 ## Records for fixed fields, maps for data
 
@@ -293,6 +294,47 @@ A function is named for what it does (a verb), a value for what it is
 missing one defaults with `??`: `p.big_ok ?? false`, not
 `p.big_ok == true`.
 
+**A name says what the function does and what it does it to.** A
+reader should know what a call does without opening the function.
+`set_input` and `remove_input` say it. `set` and `unset` leave the
+object to be guessed, and `hset` leaves all of it. Write the words out:
+`get_query_values_in_parallel`, not `get_par`.
+
+A few shapes cover most functions:
+
+| The function | Its name | Examples |
+|---|---|---|
+| makes a new thing | `new_` and the thing | `new_database`, `new_cancel_token` |
+| changes or fetches something | a verb and its object | `set_input`, `read_input`, `drop_unread_entries` |
+| answers yes or no | a question | `is_cancelled`, `has_dependency` |
+| converts | both ends | `database_to_text`, `database_from_text` |
+| answers a copy with something changed | what the copy has | `entry_with_mark`, `marks_without_counters` |
+| works something out with no side to it | a noun | `query_key`, `memo_size` |
+
+**Parameters and locals are words too.** `database`, `query`, `entry`
+and `cancel_token` can be read where they stand; `d`, `q`, `e` and
+`tok` have to be remembered from the signature. When a lambda takes a
+pair, say what the pair is (`key_and_entry`), or destructure it on the
+first line. One letter is fine for the argument of a one-line lambda
+(`(x) => x * 2`) and for the counter of a short loop.
+
+```olang
+// before
+fn rdeps(d, k) = fold(map_values(d.memo), [], (acc, e) => if contains(e[3], k) => acc + [e[4]] else => acc)
+
+// after
+let ENTRY_DEPENDENCIES = 3
+let ENTRY_QUERY_NAME = 4
+
+fn queries_reading(database, input_key) = fold(map_values(database.memo), [], (readers, entry) =>
+    if contains(entry[ENTRY_DEPENDENCIES], input_key) => readers + [entry[ENTRY_QUERY_NAME]]
+    else => readers)
+
+let database = { memo: #{ "a": (1, 1, 0, ["i.x"], "count"), "b": (2, 1, 0, ["i.y"], "lines") } }
+println(show(queries_reading(database, "i.x")))      // ["count"]
+println(show(rdeps(database, "i.x")))                // ["count"]
+```
+
 A run of numbered rebinds (`m0`, `m1`, `m2`) tells the reader nothing.
 A fresh `let m = …` is allowed and usually clearer, and so is naming
 what each step made.
@@ -323,6 +365,57 @@ Named arguments make a call say what a flag means:
 `read_diff(page, root, big_ok: true)`. On the compiled tiers a named
 call costs more than a positional one, so in a loop that runs per node
 or per element, pass by position.
+
+## Fixed values get a name at the top of the file
+
+A number, a string or a table that means something gets a name, in a
+top-level `let` above the functions that use it. `mark / 64` makes the
+reader work out what 64 is. `mark / MARK_REVISION_UNIT` says it, and
+the comment on the constant explains the layout once for every line
+that uses it.
+
+```olang
+// before: what are 3, 86400 and "i"?
+fn is_stale_before(row, now) = now - row[3] > 86400
+fn input_key_before(name) = "i" + name
+
+// after
+let ROW_SAVED_AT = 3
+let SECONDS_A_DAY = 86400
+let INPUT_PREFIX = "i"
+
+fn is_stale(row, now) = now - row[ROW_SAVED_AT] > SECONDS_A_DAY
+fn input_key(name) = INPUT_PREFIX + name
+
+let row = ("notes.md", 12, "text", 1000)
+println(show(is_stale(row, 90000)))           // true
+println(input_key("notes.md"))                // inotes.md
+```
+
+Lift these:
+
+- a number with a meaning: a limit, a unit, a position in a tuple, a
+  width in a packed integer;
+- a string the program compares against or builds with: a prefix, a
+  tag, a format's name, an error message raised in more than one place;
+- a list or table that does not change: the names of a set of states,
+  the types a function accepts;
+- a fixed record used as a starting value, such as a row of counters
+  all at zero.
+
+Leave a value inline when it is used once and its meaning is plain
+where it sits: the `1` in `count + 1`, an empty string, `pair[0]` on
+the line after the pair was made.
+
+A number or string constant read inside a hot function cost nothing
+measurable when timed against the same code with literals. One kind of
+value is the exception:
+**an empty container that callers go on to fill.** If `new_store()`
+answers one top-level `{ rows: #{}, index: #{} }`, every store made
+from it shares those two maps, and a map that is shared is copied the
+first time it is written. Measured on a memo table built that way, a
+lookup was a third slower and each stored entry 200 bytes larger. Build
+that value inside the function that hands it out.
 
 ## Functions, comments and files
 
