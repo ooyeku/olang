@@ -33,7 +33,7 @@ Olang versions:
 
 This project:
   new          Create a project                                e.g. otc new app
-  add          Add a dependency: a folder, a shelf name, owner/repo   e.g. otc add ooyeku/geometry
+  add          Add a dependency: a folder, a name, owner/repo   e.g. otc add ooyeku/geometry
   remove       Remove a dependency                             e.g. otc remove geometry
   list         Each dependency, the copy it got and why        e.g. otc list
   install      Resolve dependencies and write olang.lock       e.g. otc install --frozen
@@ -43,6 +43,11 @@ This project:
 
 The shelf (libraries on this machine):
   shelf        List, add, use, upgrade, remove, prune libraries   e.g. otc shelf list
+
+The registry (published libraries):
+  search       What the registry holds, by name or description   e.g. otc search markdown
+  publish      Write this library's release into the index      e.g. otc publish --dry-run
+  withdraw     Mark a published release as not to be chosen     e.g. otc withdraw geometry@1.2.0
 
 This machine:
   doctor       Check the installation and ~/.olang; --fix repairs   e.g. otc doctor --fix
@@ -319,6 +324,9 @@ impl Commands {
             Commands::Use { .. } => "use",
             Commands::Toolchain { .. } => "toolchain",
             Commands::Shelf { .. } => "shelf",
+            Commands::Search { .. } => "search",
+            Commands::Publish { .. } => "publish",
+            Commands::Withdraw { .. } => "withdraw",
             Commands::Bench { .. } => "bench",
             Commands::Doctor { .. } => "doctor",
             Commands::Clean { .. } => "clean",
@@ -513,10 +521,15 @@ mod tests {
                     .split(" #")
                     .next()
                     .unwrap_or(l);
+                // words as a shell would split them: a quoted run is one
+                let mut quoted = false;
                 let words: Vec<String> = cmd
-                    .split_whitespace()
+                    .split(|c: char| {
+                        quoted ^= c == '"';
+                        c.is_whitespace() && !quoted
+                    })
                     .map(|w| {
-                        w.replace(['<', '>', '[', ']'], "")
+                        w.replace(['<', '>', '[', ']', '"'], "")
                             .replace('|', "-")
                             .replace("…", "")
                     })

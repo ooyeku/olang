@@ -1,7 +1,7 @@
 # Test-only release signing fixtures
 
 These files test `otc update`'s check of a release's signature
-(otc/src/commands/update.rs). They are **not** olang's release key.
+(otc/src/commands/releases.rs). They are **not** olang's release key.
 
 - `test-release.pub`: the public half of a throwaway ECDSA P-256 key,
   made for these tests only. Its private half was deleted once the two

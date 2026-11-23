@@ -140,7 +140,7 @@ pub fn execute(name: String, lib: bool, web: bool, web_bare: bool, verbose: bool
         println!();
         println!("Use it from another package:");
         println!(
-            "   otc add ../{}  # or: otc lib add ../{} then otc add by name",
+            "   otc add ../{}  # or: otc shelf add ../{} then otc add by name",
             name, name
         );
         println!("   use {} {{ hello }}", ident);
@@ -313,7 +313,7 @@ olang fmt              # format the source
 
 ```bash
 otc add ../somelib        # by path
-otc lib add ~/code/somelib   # register once on your shelf, then anywhere:
+otc shelf add ~/code/somelib   # register once on your shelf, then anywhere:
 otc add somelib           # by name
 ```
 
@@ -353,7 +353,7 @@ From the depending package:
 
 ```bash
 otc add ../{name}       # by path — or register it once:
-otc lib add ../{name}
+otc shelf add ../{name}
 otc add {name}          # then by name, from any project
 ```
 

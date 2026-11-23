@@ -145,7 +145,7 @@ fn installers_agree_on_the_signing_key() {
         "install.ps1 $SignedFrom vs install.sh"
     );
     // otc update checks the same signature with the same key (OL-491)
-    let otc = read("otc/src/commands/update.rs");
+    let otc = read("otc/src/commands/releases.rs");
     assert_eq!(
         rust_const(&otc, "RELEASE_SIGNING_KEY"),
         key,

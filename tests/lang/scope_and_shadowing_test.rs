@@ -31,6 +31,11 @@ fn olang(dir: &Path, args: &[&str]) -> (String, String, i32) {
     let out = Command::new(env!("CARGO_BIN_EXE_olang"))
         .args(args)
         .current_dir(dir)
+        // a home of the tests' own: this machine's shelf is not theirs to read
+        .env(
+            "OLANG_HOME",
+            std::env::temp_dir().join(format!("olang_scope_home_{}", std::process::id())),
+        )
         .output()
         .expect("run olang");
     (

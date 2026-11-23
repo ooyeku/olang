@@ -56,6 +56,10 @@ fn a_json_profile_counts_the_run_s_allocations() {
         serde_json::from_str(out.lines().rfind(|l| l.starts_with('{')).unwrap()).unwrap();
     assert!(doc["allocs_n"].as_u64().unwrap() >= 60_000, "{}", doc["allocs_n"]);
     assert!(doc["alloc_b"].as_u64().unwrap() > 1_000_000, "{}", doc["alloc_b"]);
-    let last = doc["series"].as_array().unwrap().last().unwrap().clone();
-    assert!(last["allocations"].as_u64().unwrap() >= doc["allocs_n"].as_u64().unwrap());
+    // each point of the series carries the count as it stood then: the
+    // last one is taken before the run's end, so it is not held to the total
+    let series = doc["series"].as_array().unwrap();
+    let at = |p: &serde_json::Value| p["allocations"].as_u64().unwrap();
+    assert!(at(series.last().unwrap()) > 0);
+    assert!(at(series.last().unwrap()) >= at(&series[0]));
 }

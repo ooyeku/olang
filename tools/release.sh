@@ -176,7 +176,7 @@ pem() {
 }
 key_sh=$(pem install.sh 'SIGNING_KEY')
 key_ps=$(pem install.ps1 '\$SigningKey')
-key_rs=$(pem otc/src/commands/update.rs 'RELEASE_SIGNING_KEY: &str')
+key_rs=$(pem otc/src/commands/releases.rs 'RELEASE_SIGNING_KEY: &str')
 key_file=$( [ -f dist/signing/olang-release.pub ] && tr -d '\r' <dist/signing/olang-release.pub || true)
 signed_from=$(sed -n 's/^SIGNED_FROM="\(.*\)"$/\1/p' install.sh)
 if [ -z "$key_sh" ]; then
@@ -190,7 +190,7 @@ if [ -z "$key_sh" ]; then
 else
     [ "$key_sh" = "$key_file" ] || refuse "dist/signing/olang-release.pub is missing or is not install.sh's SIGNING_KEY."
     [ "$key_sh" = "$key_ps" ] || refuse "install.ps1's \$SigningKey is not install.sh's SIGNING_KEY."
-    [ "$key_sh" = "$key_rs" ] || refuse "otc's RELEASE_SIGNING_KEY (otc/src/commands/update.rs) is not install.sh's SIGNING_KEY."
+    [ "$key_sh" = "$key_rs" ] || refuse "otc's RELEASE_SIGNING_KEY (otc/src/commands/releases.rs) is not install.sh's SIGNING_KEY."
     [ -n "$signed_from" ] || refuse "install.sh has a SIGNING_KEY but no SIGNED_FROM." "Set SIGNED_FROM (and \$SignedFrom, otc's SIGNED_FROM) to the first signed release."
     openssl pkey -pubin -noout -in <(printf '%s\n' "$key_sh") 2>/dev/null || refuse "install.sh's SIGNING_KEY is not a public key openssl can read."
     ok "the release signing key is pinned in install.sh, install.ps1, otc and dist/signing (signed from $signed_from)"

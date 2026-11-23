@@ -42,10 +42,10 @@ Then, in one commit, before the first signed release was tagged:
 2. Paste its contents into `install.sh` as `SIGNING_KEY` (the whole PEM,
    `-----BEGIN PUBLIC KEY-----` through `-----END PUBLIC KEY-----`,
    inside the double quotes), into `install.ps1` as `$SigningKey`, and
-   into `otc/src/commands/update.rs` as `RELEASE_SIGNING_KEY`, so `otc
+   into `otc/src/commands/releases.rs` as `RELEASE_SIGNING_KEY`, so `otc
    update` checks the same signature.
 3. Set `SIGNED_FROM` in `install.sh`, `$SignedFrom` in `install.ps1` and
-   `SIGNED_FROM` in `otc/src/commands/update.rs` to the tag of that
+   `SIGNED_FROM` in `otc/src/commands/releases.rs` to the tag of that
    first signed release, `v1.0.0`.
    Releases older than it install with a note that only their checksum
    was checked; releases from it on must carry a good signature.

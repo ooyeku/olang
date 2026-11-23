@@ -262,9 +262,9 @@ pub fn publish(args: PublishArgs) -> anyhow::Result<()> {
             Dependency::Registry(req) | Dependency::RegistryExplicit { version: req, .. } => {
                 dependencies.insert(dep.clone(), req.clone());
             }
-            Dependency::Shelf { shelf }
+            Dependency::Shelf { shelf, .. }
                 if olang::pkg::starter::get(shelf).is_some() || *shelf == name => {}
-            Dependency::Shelf { shelf } => problems.push(format!(
+            Dependency::Shelf { shelf, .. } => problems.push(format!(
                 "'{dep}' comes from your shelf ('{shelf}'), which only this machine has: publish it and depend on a version ({dep} = \"^1.0\")"
             )),
             Dependency::Path { path } => problems.push(format!(
@@ -272,6 +272,9 @@ pub fn publish(args: PublishArgs) -> anyhow::Result<()> {
             )),
             Dependency::Git { git, .. } => problems.push(format!(
                 "'{dep}' is a git dependency ({git}): publish it and depend on a version ({dep} = \"^1.0\")"
+            )),
+            Dependency::GitHub { github, .. } => problems.push(format!(
+                "'{dep}' is a GitHub dependency ({github}): publish it and depend on a version ({dep} = \"^1.0\")"
             )),
         }
     }

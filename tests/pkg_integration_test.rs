@@ -138,6 +138,7 @@ fn frozen_install_rejects_a_stale_lock() {
         repin_shelf: false,
         explicit: false,
         offline: false,
+        ..Default::default()
     };
     assert!(
         install(&app, &frozen).is_err(),
