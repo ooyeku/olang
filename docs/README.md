@@ -24,6 +24,7 @@ examples do what the text says they do.
 | [A tour of olang](tour.md) | Learn the language by building one program, from a few lines of text to a small statistical report. |
 | [Common pitfalls](pitfalls.md) | The things that tend to catch people out, and what to write instead. |
 | [Writing idiomatic olang](idioms.md) | The habits that make olang read well: records, spreads, `match`, pipes, errors that travel, and modules instead of name prefixes. |
+| [Coming from object-oriented languages](coming-from-oop.md) | Where a class goes: records and functions, modules, enums, records of functions, spreads and closures, each beside what it replaces. |
 | [olang for LLMs](llms.md) | The rules that differ from Rust, Go and Python, the usual mistakes, and a working program for each everyday task, for a model or a person writing olang from the docs alone. |
 | [Stability and compatibility](stability.md) | What 1.0 promises: which parts are stable, which are still experimental, which platforms are covered, and what a version number means. |
 

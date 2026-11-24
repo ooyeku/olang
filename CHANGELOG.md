@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   a fresh Debian is.
 ### Added
 
+- **A chapter for people coming from object-oriented languages**
+  (OL-667). `docs/coming-from-oop.md` says where a class goes: a record
+  and the functions that take it, a module, an enum and a `match`, a
+  record of functions, a spread, a closure over a `cell`. Every example
+  runs.
 - **A registry can be published to and installed from by address**
   (OL-658). `OLANG_REGISTRY` takes an index's git address as well as a
   folder: it is cloned into the cache and refreshed when a name or a

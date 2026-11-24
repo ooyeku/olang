@@ -132,6 +132,14 @@ fn tour_examples_work() {
 }
 
 #[test]
+fn coming_from_oop_examples_work() {
+    run_doc_file(
+        "docs/coming-from-oop.md",
+        include_str!("../docs/coming-from-oop.md"),
+    );
+}
+
+#[test]
 fn types_chapter_examples_work() {
     run_doc_file("docs/types.md", include_str!("../docs/types.md"));
 }
