@@ -22,6 +22,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   choose. An index entry can name a folder inside a repository
   (`subdir`). There is still no public registry.
 
+- **Linux: `fs.watch` watches, windows open under X11, and a package
+  carries the runtime once.** Compiled and tested on Linux without a
+  display; no window has been tried on one yet.
+  - `fs.watch` answered an `Err` everywhere but macOS. On Linux it now
+    uses inotify, and when the watch limit is reached it says so once and
+    reads the tree once a second; other systems read the tree once a
+    second.
+  - The gui was Wayland only. It is built with X11 too and opens there
+    when there is no Wayland display.
+  - A Linux window says an application id (`OLANG_APP_ID`, else the
+    program's file name), so a desktop ties it to its launcher (OL-663).
+  - Started through a link under another name, the runtime runs the
+    program `<Name>.olb` beside it (`olang build --payload`). A package
+    installs `olang` once with a link per application where it carried
+    the runtime twice (OL-664). Started as `olang` it is a plain olang,
+    whatever lies beside it.
+
 ### Changed
 
 - **A commit no longer rebuilds olang in the development profiles.**

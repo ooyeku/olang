@@ -271,8 +271,10 @@ static build on Alpine or an old Linux. A 32-bit system (a Raspberry Pi
 running the 32-bit Raspberry Pi OS, say) has no download; install the
 64-bit OS instead.
 
-On Linux, olang draws windows under Wayland only; under X11
-`gui.available()` is false. A server or minimal install without
+On Linux, olang draws windows under Wayland, and under X11 where there
+is no Wayland display (an X session, `ssh -X`, a remote desktop); with
+neither `WAYLAND_DISPLAY` nor `DISPLAY` set, `gui.available()` is false.
+A server or minimal install without
 fontconfig still runs olang, and its windows then use olang's bundled
 fonts.
 

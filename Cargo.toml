@@ -250,14 +250,16 @@ cranelift-module = { version = "0.134.3", optional = true }
 # playground has no signals.
 ctrlc = { version = "3.4", features = ["termination"], optional = true }
 
-# `gui` (src/stdlib/gui/). Linux is Wayland only (no X11): winit, the
-# software presenter, and AccessKit's adapter are built without it.
-winit = { version = "0.30", default-features = false, features = ["rwh_06", "wayland", "wayland-dlopen", "wayland-csd-adwaita"], optional = true }
+# `gui` (src/stdlib/gui/). Linux is Wayland first, X11 where there is no
+# Wayland display (an X session, ssh -X, a remote desktop): winit and the
+# software presenter are built with both, each loaded when it is used
+# (`-dlopen`), so the binary starts on a system that has neither.
+winit = { version = "0.30", default-features = false, features = ["rwh_06", "wayland", "wayland-dlopen", "wayland-csd-adwaita", "x11"], optional = true }
 wgpu = { version = "30", optional = true }
 pollster = { version = "0.4", optional = true }
 bytemuck = { version = "1", features = ["derive"], optional = true }
 tiny-skia = { version = "0.12", optional = true }
-softbuffer = { version = "0.4", default-features = false, features = ["wayland", "wayland-dlopen"], optional = true }
+softbuffer = { version = "0.4", default-features = false, features = ["wayland", "wayland-dlopen", "x11", "x11-dlopen"], optional = true }
 # complex-scripts: dictionary word and line breaks for Chinese, Japanese,
 # Thai, Lao, Khmer, and Burmese (a field that cannot move by word in
 # Japanese is a broken field).

@@ -2330,9 +2330,13 @@ names nothing is not listed.
 
 `fs.watch(root, opts)` follows a folder's whole tree as it changes — a
 file made in the Finder, a `git checkout`, a build's output — with the
-operating system's own notices (FSEvents on macOS: one stream for the
-tree, on a thread of its own, nothing polled; elsewhere it answers an
-`Err`, and a caller keeps polling). It answers `Ok(Watch)`, a handle a
+operating system's own notices. On macOS it is FSEvents: one stream for
+the tree, on a thread of its own, nothing polled. On Linux it is
+inotify: a watch a folder, each folder of the tree added (ignored ones
+left out) and a new one as it is made; when the system's watch limit
+(`fs.inotify.max_user_watches`) is reached, the reason is said once on
+standard error and the tree is read once a second instead. Other
+systems read the tree once a second. It answers `Ok(Watch)`, a handle a
 reader task holds. `fs.watch_next(w, opts)` waits up to `timeout_ms` for
 a change, then keeps taking more while they come within `settle_ms`
 (never past a second), so a burst of thousands of writes is one batch:
@@ -3740,8 +3744,13 @@ the least recently drawn emptied), pictures' textures, kept frames and
 the glyph and shape caches hold.
 
 **Platforms.** Run on macOS (the GPU renderer, the menu bar, the
-accessibility tree as NSAccessibility). Linux is Wayland only: with no
-`WAYLAND_DISPLAY`, `gui.open` answers `Err`. Windows builds but is
+accessibility tree as NSAccessibility). Linux is Wayland, and X11 where
+there is no Wayland display: with neither `WAYLAND_DISPLAY` nor `DISPLAY`
+set, `gui.open` answers `Err`. A Linux window says an application id
+(`OLANG_APP_ID`, else the running program's file name), which a desktop
+entry names as its `StartupWMClass`. The Linux build compiles and its
+windowless parts are tested; no window has been tried on a Linux display
+with these changes. Windows builds but is
 unverified ([Platforms](stability.md#platforms)).
 
 ## `toad` — game kernels, swarms and frames

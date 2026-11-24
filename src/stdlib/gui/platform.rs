@@ -239,7 +239,7 @@ pub fn available() -> bool {
         return false;
     }
     if cfg!(target_os = "linux") {
-        return std::env::var_os("WAYLAND_DISPLAY").is_some();
+        return linux_has_display();
     }
     true
 }
@@ -402,8 +402,8 @@ fn run_loop(reply: crossbeam_channel::Sender<Result<(), String>>) -> Option<i32>
     // this thread paints: it shapes with a text system of its own, never
     // waiting for the program's measuring
     super::text::paint_thread();
-    if cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_none() {
-        let msg = "no Wayland display (Loom runs on Wayland only; X11 is not supported — try --terminal, or LOOM_FACE=terminal)".to_string();
+    if cfg!(target_os = "linux") && !linux_has_display() {
+        let msg = "no display (neither WAYLAND_DISPLAY nor DISPLAY is set): try --terminal, or LOOM_FACE=terminal".to_string();
         *LOOP.lock().unwrap_or_else(|e| e.into_inner()) = LoopState::Failed(msg.clone());
         let _ = reply.send(Err(msg));
         return None;
@@ -784,6 +784,35 @@ impl Clipboard for PlatformClipboard<'_> {
     }
 }
 
+/// Whether a Linux session has a display a window can open on: Wayland's,
+/// else X11's (an X session, `ssh -X`, a remote desktop). The values are
+/// the system's own: an empty one is no display.
+fn linux_has_display() -> bool {
+    ["WAYLAND_DISPLAY", "DISPLAY"]
+        .iter()
+        .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
+}
+
+/// The application id a Linux window says: `OLANG_APP_ID` when set, else
+/// the running program's file name (`OlangStudio` for
+/// `/usr/lib/olangstudio/OlangStudio`), which a launcher names as its
+/// `StartupWMClass`; `olang` when neither can be read.
+#[cfg(target_os = "linux")]
+fn linux_application_id() -> String {
+    if let Some(given) = std::env::var_os("OLANG_APP_ID")
+        && !given.is_empty()
+    {
+        return given.to_string_lossy().into_owned();
+    }
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| "olang".to_string())
+}
+
 impl App {
     fn open(&mut self, el: &ActiveEventLoop, id: u64, opts: OpenOpts) -> Result<(), String> {
         let mut attrs = Window::default_attributes()
@@ -822,6 +851,25 @@ impl App {
                 .with_titlebar_transparent(true)
                 .with_fullsize_content_view(true)
                 .with_title_hidden(true);
+        }
+        // Linux: the window's application id (Wayland's app_id), by which
+        // a desktop ties the window to its launcher: the dock's icon, the
+        // overview's grouping (OL-663)
+        #[cfg(target_os = "linux")]
+        {
+            // (Wayland's app_id and X11's WM_CLASS are set by traits of the same
+            // method name, so each is called by its trait)
+            let application_id = linux_application_id();
+            attrs = winit::platform::wayland::WindowAttributesExtWayland::with_name(
+                attrs,
+                application_id.clone(),
+                "",
+            );
+            attrs = winit::platform::x11::WindowAttributesExtX11::with_name(
+                attrs,
+                application_id.clone(),
+                application_id,
+            );
         }
         let win = Arc::new(
             el.create_window(attrs)
