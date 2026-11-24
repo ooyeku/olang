@@ -24,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **A commit no longer rebuilds olang in the development profiles.**
+  `build.rs` watched `.git`, so a commit, a checkout or a branch switch
+  ran it again and sent the library, its test build and every test
+  binary through the compiler: over a minute after a commit that touched
+  only the docs. The `debug` and `fasttest` profiles now leave `.git`
+  unwatched, and a build after such a commit is fresh in half a second.
+  There `runtime.build().commit` is the commit the sources were last
+  compiled at. A release build watches `.git` as before.
 - **An install checks a registry entry against the source it names**
   (OL-658). A release with no checksum is refused, and so is one whose
   `olang.toml` says another name or version, or depends on a registry
