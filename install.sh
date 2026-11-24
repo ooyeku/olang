@@ -4,7 +4,11 @@
 #   curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh
 #
 # (https://raw.githubusercontent.com/ooyeku/olang/main/install.sh is the
-# same file.) It downloads the ready-made olang for this computer from
+# same file.) On a Linux with no curl, such as a fresh Debian:
+#
+#   wget -qO- https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh
+#
+# It downloads the ready-made olang for this computer from
 # the newest GitHub release, checks the release's signature and the
 # download's checksum, installs `olang` and `otc` into ~/.olang/bin, and
 # adds that folder to your PATH. Where no ready-made download fits, it
@@ -16,9 +20,9 @@
 #   curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh -s -- --version v1.0.0
 #
 # What it touches: the install folder (~/.olang/bin unless you choose
-# another), one line in your shell's startup file (unless you say not
-# to), and a temporary folder it deletes when it ends. It never runs sudo
-# without asking first.
+# another), one line in your shell's startup file (on Linux also in the
+# file a login reads; unless you say not to), and a temporary folder it
+# deletes when it ends. It never runs sudo without asking first.
 #
 # POSIX sh, tested under sh, dash and bash. The whole script is one
 # function called on the last line, so a download cut short runs nothing.
@@ -176,11 +180,93 @@ pick_downloader() {
             WGET_SAFE=""
         fi
     else
-        fail "this computer has neither 'curl' nor 'wget', and the installer needs one to download olang." \
-            "On Debian or Ubuntu:  sudo apt install curl" \
-            "On Fedora:            sudo dnf install curl" \
-            "On Alpine:            apk add curl" \
-            "Then run the install command again."
+        # (a script saved to a file and run: piped, one of the two fetched it)
+        add_tools "olang's installer needs 'curl' or 'wget' to download olang, and this computer has neither." curl
+        DL=curl
+    fi
+}
+
+# ── the system's package manager ───────────────────────────────────
+# Sets PM to the package manager this Linux has (apt, dnf, yum, pacman,
+# zypper, apk), or to nothing.
+detect_pm() {
+    PM=""
+    [ "$(uname -s)" = Linux ] || return 0
+    if have apt-get; then PM=apt
+    elif have dnf; then PM=dnf
+    elif have yum; then PM=yum
+    elif have pacman; then PM=pacman
+    elif have zypper; then PM=zypper
+    elif have apk; then PM=apk
+    else PM=""; fi
+}
+
+# pm_command PACKAGES: sets CMD to the command that installs them with
+# PM, with sudo in front unless this is root. AS_ROOT is set when this
+# is not root and the computer has no sudo (a Debian set up with a root
+# password): then the installer cannot run CMD, only say it.
+pm_command() {
+    AS_ROOT=""
+    case "$PM" in
+        apt)    CMD="apt-get install -y$1" ;;
+        dnf)    CMD="dnf install -y$1" ;;
+        yum)    CMD="yum install -y$1" ;;
+        pacman) CMD="pacman -S --needed --noconfirm$1" ;;
+        zypper) CMD="zypper install -y$1" ;;
+        apk)    CMD="apk add$1" ;;
+        *)      CMD="" ;;
+    esac
+    if [ -n "$CMD" ] && [ "$(id -u)" != 0 ]; then
+        if have sudo; then CMD="sudo $CMD"; else AS_ROOT=1; fi
+    fi
+}
+
+# needs_root WHY: stops, saying the command to run as root, when the
+# installer cannot run CMD itself (no sudo here).
+needs_root() {
+    [ -n "$AS_ROOT" ] || return 0
+    fail "$1" "This computer has no 'sudo', so the installer cannot do it for you." \
+        "Become root (run:  su -), run this, then run the install command again as yourself:" "  $CMD"
+}
+
+# run_pm_command: runs CMD. stdin is the terminal when there is one
+# (sudo's password): under `curl ... | sh` stdin is this script.
+run_pm_command() {
+    if (: </dev/tty) 2>/dev/null; then sh -c "$CMD" </dev/tty; else sh -c "$CMD" </dev/null; fi
+}
+
+# add_tools WHY TOOL...: the installer itself lacks a tool (tar, gzip,
+# curl, sha256sum). Names the packages for this system, offers to install
+# them, and goes on once they are there; else it stops with the exact
+# command for this system.
+add_tools() {
+    why=$1; shift
+    detect_pm
+    pkgs=""
+    for tool in "$@"; do
+        case "$tool" in
+            sha256sum|mktemp|uname) pkg=coreutils ;;
+            curl) pkg=curl; [ "$PM" = apt ] && pkg="curl ca-certificates" ;;
+            *) pkg=$tool ;;
+        esac
+        case " $pkgs " in *" $pkg "*) ;; *) pkgs="$pkgs $pkg" ;; esac
+    done
+    pm_command "$pkgs"
+    [ -n "$CMD" ] || fail "$why" \
+        "Install$pkgs with your system's package manager, then run the install command again."
+    needs_root "$why"
+    say ""
+    say "  $why"
+    if ask "Install$pkgs now? This runs: $CMD"; then
+        run_pm_command || fail "installing$pkgs did not finish." \
+            "Run this yourself, then run the install command again:" "  $CMD"
+        for tool in "$@"; do
+            have "$tool" || fail "'$tool' is still missing after installing$pkgs." \
+                "Please report this at $GITHUB/$REPO/issues, saying which Linux this is."
+        done
+        done_ "Installed$pkgs"
+    else
+        fail "$why" "Run this, then run the install command again:" "  $CMD"
     fi
 }
 
@@ -208,8 +294,9 @@ final_url() {
     if [ "$DL" = curl ]; then
         curl --proto '=https' --tlsv1.2 -sL -o /dev/null -w '%{url_effective}' --connect-timeout 15 "$1"
     else
+        # GNU wget says "Location: URL [following]": the address is the first word
         # shellcheck disable=SC2086
-        wget -S --spider $WGET_SAFE -T 15 "$1" 2>&1 | sed -n 's/^ *[Ll]ocation: *//p' | tail -n 1 | tr -d '\r'
+        wget -S --spider $WGET_SAFE -T 15 "$1" 2>&1 | tr -d '\r' | sed -n 's/^ *[Ll]ocation: *\([^ ]*\).*/\1/p' | tail -n 1
     fi
 }
 
@@ -443,10 +530,11 @@ main() {
     elif have shasum; then sha() { shasum -a 256 "$1" | cut -d' ' -f1; }
     elif have openssl; then sha() { openssl dgst -sha256 -r "$1" | cut -d' ' -f1; }
     else missing="$missing sha256sum"; fi
-    [ -z "$missing" ] || fail "this computer is missing tools the installer needs:$missing." \
-        "On Debian or Ubuntu:  sudo apt install coreutils tar gzip" \
-        "On Alpine:            apk add coreutils tar gzip" \
-        "Then run the install command again."
+    # shellcheck disable=SC2086 # missing is a list of tool names
+    if [ -n "$missing" ]; then
+        add_tools "The installer needs tools this computer does not have yet:$missing." $missing
+        have sha256sum && sha() { sha256sum "$1" | cut -d' ' -f1; }
+    fi
 
     workdir=$(mktemp -d 2>/dev/null || mktemp -d -t olang) ||
         fail "it could not create a temporary folder." "Check that your disk is not full, then try again."
@@ -617,13 +705,8 @@ check_signature() {
 add_system_libs() {
     libs=$(ldd "$1" 2>/dev/null | awk '/not found/ { print $1 }')
     [ -n "$libs" ] || libs=$(printf '%s\n' "$2" | sed -n 's/.*shared libraries: \([^:]*\):.*/\1/p')
-    if have apt-get; then pm=apt
-    elif have dnf; then pm=dnf
-    elif have yum; then pm=yum
-    elif have pacman; then pm=pacman
-    elif have zypper; then pm=zypper
-    elif have apk; then pm=apk
-    else pm=""; fi
+    detect_pm
+    pm=$PM
     pkgs=""
     unknown=""
     for lib in $libs; do
@@ -644,21 +727,13 @@ add_system_libs() {
             "then run the install command again. If you are not sure which one, report it at" \
             "$GITHUB/$REPO/issues with this message:" "$2"
     fi
-    case "$pm" in
-        apt)    cmd="apt-get install -y$pkgs" ;;
-        dnf)    cmd="dnf install -y$pkgs" ;;
-        yum)    cmd="yum install -y$pkgs" ;;
-        pacman) cmd="pacman -S --needed --noconfirm$pkgs" ;;
-        zypper) cmd="zypper install -y$pkgs" ;;
-        apk)    cmd="apk add$pkgs" ;;
-    esac
-    [ "$(id -u)" = 0 ] || cmd="sudo $cmd"
+    pm_command "$pkgs"
+    cmd=$CMD
+    needs_root "olang needs$pkgs, which is not installed."
     say ""
     say "  olang needs a small system package this computer does not have yet:$pkgs"
     if ask "Install it now? This runs: $cmd"; then
-        # stdin from the terminal when there is one (sudo's password):
-        # under `curl ... | sh` stdin is this script
-        if (: </dev/tty) 2>/dev/null; then sh -c "$cmd" </dev/tty; else sh -c "$cmd" </dev/null; fi ||
+        run_pm_command ||
             fail "installing$pkgs did not finish." \
                 "Run this yourself, then run the install command again:" "  $cmd"
         out=$("$1" --version 2>&1) || fail "olang still would not start after installing$pkgs." \
@@ -783,6 +858,35 @@ shell_rc() {
         fish) RC="$HOME/.config/fish/conf.d/olang.fish"; LINE="fish_add_path \"$DIR_TEXT\"" ;;
         *)    RC="$HOME/.profile" ;;
     esac
+    # Linux: a terminal window starts a shell that reads RC, but the
+    # desktop session, an ssh command and a login shell read the login
+    # file instead (on Debian and Ubuntu ~/.bashrc returns at once for a
+    # shell that is not interactive). So the line goes in both. bash reads
+    # the first of ~/.bash_profile, ~/.bash_login and ~/.profile it finds.
+    LOGIN_RC=""
+    if [ "$(uname -s)" = Linux ]; then
+        LOGIN_RC="$HOME/.profile"
+        if [ "$shell_name" = bash ]; then
+            if [ -f "$HOME/.bash_profile" ]; then LOGIN_RC="$HOME/.bash_profile"
+            elif [ -f "$HOME/.bash_login" ]; then LOGIN_RC="$HOME/.bash_login"; fi
+        fi
+        [ "$LOGIN_RC" = "$RC" ] && LOGIN_RC=""
+        # written so that a shell which reads both files adds the folder once
+        [ "$shell_name" = fish ] || LINE="case \":\$PATH:\" in *\":$DIR_TEXT:\"*) ;; *) export PATH=\"$DIR_TEXT:\$PATH\" ;; esac"
+        LOGIN_LINE="case \":\$PATH:\" in *\":$DIR_TEXT:\"*) ;; *) export PATH=\"$DIR_TEXT:\$PATH\" ;; esac"
+    fi
+}
+
+# add_path_line FILE LINE: appends the marker and LINE to FILE unless
+# FILE already names the install folder. Returns 0 when FILE has it
+# (added now or there before), 1 when FILE could not be written. Sets
+# ADDED=1 when it wrote.
+add_path_line() {
+    ADDED=""
+    if [ -f "$1" ] && { grep -qF "$DIR_TEXT" "$1" || grep -qF "$INSTALL_DIR" "$1"; } 2>/dev/null; then return 0; fi
+    mkdir -p "$(dirname "$1")" 2>/dev/null
+    printf '\n%s\n%s\n' "$MARK" "$2" >>"$1" 2>/dev/null || return 1
+    ADDED=1
 }
 
 MARK="# olang (added by the olang installer)"
@@ -800,15 +904,18 @@ put_on_path() {
         PATH_HINT="To use olang in new terminals, add this line to $(tilde "$RC"):"
         return
     fi
-    if [ -f "$RC" ] && { grep -qF "$DIR_TEXT" "$RC" || grep -qF "$INSTALL_DIR" "$RC"; } 2>/dev/null; then
-        PATH_CHANGED="$(tilde "$RC") already adds $(tilde "$INSTALL_DIR") to your PATH"
-        return
-    fi
-    mkdir -p "$(dirname "$RC")" 2>/dev/null
-    if printf '\n%s\n%s\n' "$MARK" "$LINE" >>"$RC" 2>/dev/null; then
-        PATH_CHANGED="Added $(tilde "$INSTALL_DIR") to your PATH in $(tilde "$RC")"
+    rc_added=""
+    if add_path_line "$RC" "$LINE"; then
+        rc_added=$ADDED
+        if [ -n "$ADDED" ]; then PATH_CHANGED="Added $(tilde "$INSTALL_DIR") to your PATH in $(tilde "$RC")"
+        else PATH_CHANGED="$(tilde "$RC") already adds $(tilde "$INSTALL_DIR") to your PATH"; fi
     else
         PATH_HINT="Could not write to $(tilde "$RC"). To use olang in new terminals, add this line to it:"
+    fi
+    # the login file (Linux): for the desktop session, ssh commands and login shells
+    if [ -n "$LOGIN_RC" ] && add_path_line "$LOGIN_RC" "$LOGIN_LINE" && [ -n "$ADDED" ]; then
+        if [ -n "$rc_added" ]; then PATH_CHANGED="$PATH_CHANGED and $(tilde "$LOGIN_RC")"
+        else PATH_CHANGED="Added $(tilde "$INSTALL_DIR") to your PATH in $(tilde "$LOGIN_RC")"; fi
     fi
 }
 

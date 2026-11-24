@@ -34,6 +34,13 @@ Linux:
 curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh
 ```
 
+A fresh Debian has `wget` and no `curl`. There, and on any Linux
+without `curl`, use this line instead; it runs the same installer:
+
+```bash
+wget -qO- https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh
+```
+
 On Windows, open PowerShell and run:
 
 ```powershell
@@ -271,6 +278,26 @@ static build on Alpine or an old Linux. A 32-bit system (a Raspberry Pi
 running the 32-bit Raspberry Pi OS, say) has no download; install the
 64-bit OS instead.
 
+The installer is tried on each of these from a bare system, as an
+ordinary user: Debian 12 and 13, Ubuntu 20.04, 22.04 and 24.04, Fedora
+42, Rocky Linux 9, AlmaLinux 8, Amazon Linux 2023, openSUSE Tumbleweed
+and Leap 15.6, Arch Linux, and Alpine 3.20.
+
+On Linux the installer adds `~/.olang/bin` to your `PATH` in two files:
+the one a new terminal window reads (`~/.bashrc` for bash, `~/.zshrc`
+for zsh) and the one a login reads (`~/.profile`, or `~/.bash_profile`
+when you have one). The second is what the desktop session, an `ssh`
+command and programs started from the desktop see; log out and in once
+for those. The line is written so that a shell which reads both files
+adds the folder once.
+
+If the system lacks a tool the installer needs (`tar` or `gzip` on a
+minimal openSUSE or Amazon Linux, say), it names the package, shows the
+command for your package manager (`apt-get`, `dnf`, `yum`, `zypper`,
+`pacman` or `apk`) and runs it only after you say yes. On a computer
+with no `sudo`, such as a Debian set up with a root password, it shows
+the command to run as root instead.
+
 On Linux, olang draws windows under Wayland only; under X11
 `gui.available()` is false. A server or minimal install without
 fontconfig still runs olang, and its windows then use olang's bundled
@@ -315,8 +342,10 @@ step. These are the ones people meet most.
 
 **`command not found: olang` right after installing.** The terminal
 window that ran the installer still has the old `PATH`. Open a new
-window. If a new window still cannot find it, add this line to
-`~/.zshrc` (or `~/.bashrc` for bash), then open a new window:
+window. On Linux, a program started from the desktop (an editor, say)
+sees the new `PATH` after you log out and in. If a new window still
+cannot find it, add this line to `~/.zshrc` (or `~/.bashrc` for bash),
+then open a new window:
 
 ```bash
 export PATH="$HOME/.olang/bin:$PATH"

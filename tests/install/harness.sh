@@ -166,6 +166,7 @@ cat >"$STUBS/apt-get" <<'EOF'
 #!/bin/sh
 echo "apt-get $*" >>"$FAKE_LOG"
 touch "$FAKE_STATE/lib-installed"
+case " $* " in *" tar "*) [ -n "${FAKE_TAR:-}" ] && ln -s "$FAKE_TAR" "$FAKE_TOOLS/tar" ;; esac
 EOF
 cat >"$STUBS/sudo" <<'EOF'
 #!/bin/sh
@@ -253,7 +254,8 @@ locate() { printf '%s/%s' "$FAKE_SERVER" "${1#https://}" | sed 's/?/_q_/'; }
 path=$(locate "$url")
 while [ -f "$path.redirect" ]; do
     url=$(cat "$path.redirect")
-    [ -n "$headers" ] && echo "  Location: $url" >&2
+    # as GNU wget says a redirect it follows
+    [ -n "$headers" ] && echo "Location: $url [following]" >&2
     path=$(locate "$url")
 done
 [ -f "$path" ] || exit 8
@@ -292,6 +294,11 @@ run() {
     path="$STUBS:$SYS"
     case "$vars" in *NO_CURL=1*) mkdir -p "$STATE/bin"; for f in "$STUBS"/*; do case "${f##*/}" in curl|wget) ;; *) ln -s "$f" "$STATE/bin/";; esac; done
         case "$vars" in *NO_WGET=1*) ;; *) ln -s "$STUBS/wget" "$STATE/bin/" ;; esac; path="$STATE/bin:$SYS" ;; esac
+    # no tar: the real tools without it; the stub apt-get puts it back (FAKE_TAR) when asked to install it
+    case "$vars" in *NO_TAR=1*) mkdir -p "$STATE/sys"; for f in "$SYS"/*; do [ "${f##*/}" = tar ] || ln -s "$f" "$STATE/sys/"; done; path="${path%"$SYS"}$STATE/sys"
+        vars="$vars FAKE_TAR=$SYS/tar FAKE_TOOLS=$STATE/sys" ;; esac
+    # no sudo: the stubs without it
+    case "$vars" in *NO_SUDO=1*) mkdir -p "$STATE/nosudo"; for f in "$STUBS"/*; do [ "${f##*/}" = sudo ] || ln -s "$f" "$STATE/nosudo/"; done; path="$STATE/nosudo:${path#"$STUBS":}" ;; esac
     case "$vars" in *NO_OPENSSL=1*) mkdir -p "$STATE/sys"; for f in "$SYS"/*; do [ "${f##*/}" = openssl ] || ln -s "$f" "$STATE/sys/"; done; path="${path%"$SYS"}$STATE/sys" ;; esac
     case "$vars" in *WITH_CARGO=1*) mkdir -p "$STATE/cargo"; ln -s "$STUBS/cargo.real" "$STATE/cargo/cargo"; ln -s "$STUBS/rustc.real" "$STATE/cargo/rustc"; path="$STATE/cargo:$path" ;; esac
     case "$vars" in *ON_PATH=1*) path="$H/.olang/bin:$path" ;; esac
@@ -358,7 +365,34 @@ code 0; installed 1.0.0
 # ── Linux ──────────────────────────────────────────────────────────
 run linux-x64 FAKE_OS=Linux FAKE_ARCH=x86_64 FAKE_GLIBC=2.35 SHELL=/bin/bash --
 code 0; installed 1.1.0; fetched 1.1.0 linux-x64; has "Linux, x86_64"; lacks "gui.available"
-file "$H/.bashrc"; nofile "$H/.zshrc"; has "in ~/.bashrc"
+file "$H/.bashrc"; nofile "$H/.zshrc"; has "in ~/.bashrc and ~/.profile"
+# Linux: the line is in the window's file and the login's, written so a shell that reads both adds the folder once
+LINUX_LINE='case ":$PATH:" in *":$HOME/.olang/bin:"*) ;; *) export PATH="$HOME/.olang/bin:$PATH" ;; esac'
+grep -qxF "$LINUX_LINE" "$H/.bashrc" && grep -qxF "$LINUX_LINE" "$H/.profile" && ok_ || bad "the PATH line in ~/.bashrc and ~/.profile: $(cat "$H/.bashrc" "$H/.profile")"
+[ "$(env -i HOME="$H" PATH=/usr/bin:/bin sh -c '. "$HOME/.profile"; . "$HOME/.bashrc"; printf %s "$PATH"')" = "$H/.olang/bin:/usr/bin:/bin" ] && ok_ || bad "both files read add the folder once"
+# again: nothing is added twice
+again linux-x64-again FAKE_OS=Linux FAKE_ARCH=x86_64 FAKE_GLIBC=2.35 SHELL=/bin/bash -- --force
+code 0; [ "$(grep -c "olang (added by" "$H/.bashrc")" = 1 ] && [ "$(grep -c "olang (added by" "$H/.profile")" = 1 ] && ok_ || bad "the line was added twice"
+# uninstall takes it out of both
+again linux-x64-uninstall FAKE_OS=Linux FAKE_ARCH=x86_64 SHELL=/bin/bash -- --uninstall
+code 0; has "Removed the PATH line from ~/.bashrc"; has "Removed the PATH line from ~/.profile"
+grep -q olang "$H/.bashrc" "$H/.profile" && bad "uninstall left a PATH line" || ok_
+
+# bash reads ~/.bash_profile in place of ~/.profile when it is there (Fedora, Arch): the login line goes there
+H="$T/home/linux-bash-profile"; rm -rf "$H"; mkdir -p "$H"; printf '# mine\n' >"$H/.bash_profile"
+again linux-bash-profile FAKE_OS=Linux FAKE_ARCH=x86_64 SHELL=/bin/bash --
+code 0; has "in ~/.bashrc and ~/.bash_profile"; nofile "$H/.profile"; grep -qF '.olang/bin' "$H/.bash_profile" && ok_ || bad "the login line in ~/.bash_profile"
+
+# an install made before the login line existed: ~/.bashrc has its line, the login file gets its own
+H="$T/home/linux-upgrade"; rm -rf "$H"; mkdir -p "$H"; printf 'export PATH="$HOME/.olang/bin:$PATH"\n' >"$H/.bashrc"
+again linux-upgrade FAKE_OS=Linux FAKE_ARCH=x86_64 SHELL=/bin/bash --
+code 0; has "Added ~/.olang/bin to your PATH in ~/.profile"; [ "$(grep -c olang "$H/.bashrc")" = 1 ] && ok_ || bad "~/.bashrc was changed"
+
+# zsh and sh on Linux: the window's file, and ~/.profile for the session (sh has the one file)
+run linux-zsh FAKE_OS=Linux FAKE_ARCH=x86_64 SHELL=/usr/bin/zsh --
+code 0; has "in ~/.zshrc and ~/.profile"
+run linux-sh FAKE_OS=Linux FAKE_ARCH=x86_64 SHELL=/bin/sh --
+code 0; has "in ~/.profile"; lacks " and ~/"; nofile "$H/.bashrc"
 
 run linux-arm64 FAKE_OS=Linux FAKE_ARCH=aarch64 --
 code 0; fetched 1.1.0 linux-arm64
@@ -465,8 +499,24 @@ run wget-gnu NO_CURL=1 FAKE_WGET_GNU=1 FAKE_OS=Linux FAKE_ARCH=x86_64 -- --versi
 code 0; installed 1.0.0; secure
 run wget-missing-version NO_CURL=1 -- --version v9.9.9
 code 1; has "there is no olang release called v9.9.9"
+# neither curl nor wget (the script run from a file): on a Mac nothing can
+# install one, so it says what is missing; on Linux it names the command
+# for this system's package manager and runs it only after a yes
 run no-downloader NO_CURL=1 NO_WGET=1 --
-code 1; has "neither 'curl' nor 'wget'"
+code 1; has "needs 'curl' or 'wget'"; has "Install curl with your system's package manager"
+run no-downloader-linux NO_CURL=1 NO_WGET=1 FAKE_OS=Linux FAKE_ARCH=x86_64 FAKE_UID=1000 --
+code 1; has "needs 'curl' or 'wget'"; has "sudo apt-get install -y curl ca-certificates"; unlogged "apt-get install"
+
+# a Linux with no tar (openSUSE Leap's and Amazon Linux's smallest
+# images): asked for, installed with the system's package manager, and
+# the install goes on; declined, the exact command is said
+run linux-no-tar-yes NO_TAR=1 FAKE_OS=Linux FAKE_ARCH=x86_64 FAKE_UID=1000 OLANG_YES=1 --
+code 0; installed 1.1.0; logged "sudo apt-get install -y tar"; has "Installed tar"
+# no sudo on this computer (a Debian set up with a root password): the installer says the command to run as root, and runs nothing
+run linux-no-tar-no-sudo NO_TAR=1 NO_SUDO=1 FAKE_OS=Linux FAKE_ARCH=x86_64 FAKE_UID=1000 OLANG_YES=1 --
+code 1; has "This computer has no 'sudo'"; has "su -"; has "  apt-get install -y tar"; lacks "sudo apt-get"; unlogged "apt-get install"
+run linux-no-tar-no NO_TAR=1 FAKE_OS=Linux FAKE_ARCH=x86_64 FAKE_UID=1000 --
+code 1; has "tools this computer does not have yet: tar"; has "sudo apt-get install -y tar"; unlogged "apt-get install"; nofile "$H/.olang/bin/olang"
 
 # ── signatures ─────────────────────────────────────────────────────
 if [ -n "$SIGNING" ]; then
