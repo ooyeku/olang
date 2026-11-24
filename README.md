@@ -125,6 +125,7 @@ On a Mac (or Linux), open a terminal, paste this line and press Return:
 curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh
 ```
 
+On a Linux without `curl` (a fresh Debian), use `wget -qO- https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh`.
 On Windows, run `irm https://raw.githubusercontent.com/ooyeku/olang/main/install.ps1 | iex` in PowerShell.
 The installer picks the right download for your computer, checks the
 release's signature and the download's checksum, and needs no Rust and
