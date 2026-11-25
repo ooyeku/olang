@@ -1057,7 +1057,8 @@ fn cursor_of<'a>(func: &str, value: &'a Value) -> Result<&'a CursorObject, Value
 /// statement). A `schema_version` table records the applied version;
 /// version N runs only when the recorded version is below N, inside its
 /// own transaction, so a failed step leaves the database at the version
-/// before it. Returns the version now recorded.
+/// before it. Returns the version now recorded. A database whose recorded
+/// version is past the head is refused with an `Err` and left as it is.
 fn db_migrate(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if let Err(e) = connection_id(args.first().unwrap_or(&UNIT)) {
         return Err(raised(e));
@@ -1130,6 +1131,15 @@ fn db_migrate(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
                 0
             }
         };
+        // A database past the head was written by a program with more
+        // steps than these: its schema is not one this caller knows.
+        if version > steps.len() as i64 {
+            return Err(Failure::plain(format!(
+                "the database is at schema v{}, newer than these steps' v{}",
+                version,
+                steps.len()
+            )));
+        }
         while (version as usize) < steps.len() {
             let next = version + 1;
             conn.execute_batch("BEGIN").map_err(|e| fail("begin", e))?;

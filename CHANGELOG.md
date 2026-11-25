@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`db.migrate` refuses a database newer than its steps** (OL-626).
+  Given one step on a database a program with two had migrated, it
+  answered `Ok(2)` and the caller went on reading and writing a schema
+  it does not know: the case after a downgrade, a restore, or a source
+  checkout run on an installed app's data. It now answers
+  `Err("db.migrate: the database is at schema v2, newer than these
+  steps' v1")` and leaves the database as it is. A program that ignores
+  `db.migrate`'s answer behaves as before; one that unwraps it stops
+  there.
+
 ## [1.0.2] - 2026-11-24
 
 ### Fixed

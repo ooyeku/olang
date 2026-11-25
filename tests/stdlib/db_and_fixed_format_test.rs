@@ -148,6 +148,35 @@ fn migrate_applies_each_version_once_and_names_a_failing_statement() {
     assert!(out.ends_with("\n2\n0\nOk(3)\n"), "{out}");
 }
 
+/// OL-626: a database whose recorded version is past the steps answered
+/// `Ok(recorded)`, and the caller went on writing into a schema it does
+/// not know.
+#[test]
+fn migrate_refuses_a_database_newer_than_its_steps() {
+    let (out, rc) = agree(
+        "let c = unwrap(db.open(\":memory:\"))\n\
+         let two = [[\"CREATE TABLE a (x)\"], [\"CREATE TABLE b (x)\"]]\n\
+         println(show(db.migrate(c, two)))\n\
+         // One step against a database at v2: an Err naming both versions.\n\
+         println(show(db.migrate(c, [[\"CREATE TABLE a (x)\"]])))\n\
+         println(show(db.migrate(c, [])))\n\
+         // Nothing changed: the version, the tables, and the full steps still agree.\n\
+         println(show(unwrap(db.query(c, \"SELECT version FROM schema_version\"))))\n\
+         println(show(unwrap(db.query(c, \"SELECT name FROM sqlite_master ORDER BY name\")) |> map((r) => r.name)))\n\
+         println(show(db.migrate(c, two)))",
+    );
+    assert_eq!(rc, 0, "{out}");
+    assert_eq!(
+        out,
+        "Ok(2)\n\
+         Err(\"db.migrate: the database is at schema v2, newer than these steps' v1\")\n\
+         Err(\"db.migrate: the database is at schema v2, newer than these steps' v0\")\n\
+         [#{\"version\": 2}]\n\
+         [\"a\", \"b\", \"schema_version\"]\n\
+         Ok(2)\n"
+    );
+}
+
 #[test]
 fn query_one_absent_is_unit_and_a_row_is_a_map() {
     let (out, rc) = agree(
