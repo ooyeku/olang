@@ -7,27 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [1.0.2] - 2026-11-24
-
-### Fixed
-
-- **The installer on Debian, Ubuntu and the other Linux distributions.**
-  Run through `wget`, which is what a fresh Debian has in place of
-  `curl`, it read the newest release's name with GNU wget's
-  "[following]" on the end and stopped with "has no SHA256SUMS file";
-  it now installs with GNU wget, wget2 and BusyBox's.
-  On Linux it now adds `~/.olang/bin` to the file a login reads
-  (`~/.profile`, or `~/.bash_profile` when there is one) as well as the
-  one a terminal window reads. Before, a login shell, an `ssh` command
-  and programs started from the desktop on Debian, Ubuntu and Arch did
-  not find `olang`, because `~/.bashrc` returns at once for a shell that
-  is not interactive. Where the system lacks `tar`, `gzip` or `curl`
-  (minimal openSUSE Leap and Amazon Linux), the installer names the
-  package, shows the command for the system's package manager and runs
-  it after a yes; before, it stopped with advice for Debian and Alpine
-  only. On a computer with no `sudo` it shows the command to run as
-  root. The book gives the `wget` line for a Linux without `curl`, which
-  a fresh Debian is.
 ### Added
 
 - **A chapter for people coming from object-oriented languages**
@@ -59,6 +38,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `olang check` on a project whose registry dependency is not installed
   says why (the registry is not on this machine, the version is not
   published), not "was not resolved".
+
+## [1.0.2] - 2026-11-24
+
+### Fixed
+
+- **The installer on Debian, Ubuntu and the other Linux distributions.**
+  Run through `wget`, which is what a fresh Debian has in place of
+  `curl`, it read the newest release's name with GNU wget's
+  "[following]" on the end and stopped with "has no SHA256SUMS file";
+  it now installs with GNU wget, wget2 and BusyBox's.
+  On Linux it now adds `~/.olang/bin` to the file a login reads
+  (`~/.profile`, or `~/.bash_profile` when there is one) as well as the
+  one a terminal window reads. Before, a login shell, an `ssh` command
+  and programs started from the desktop on Debian, Ubuntu and Arch did
+  not find `olang`, because `~/.bashrc` returns at once for a shell that
+  is not interactive. Where the system lacks `tar`, `gzip` or `curl`
+  (minimal openSUSE Leap and Amazon Linux), the installer names the
+  package, shows the command for the system's package manager and runs
+  it after a yes; before, it stopped with advice for Debian and Alpine
+  only. On a computer with no `sudo` it shows the command to run as
+  root. The book gives the `wget` line for a Linux without `curl`, which
+  a fresh Debian is.
 
 ## [1.0.1] - 2026-11-21
 
