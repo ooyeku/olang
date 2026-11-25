@@ -278,7 +278,7 @@ println(`${same(xs, ys)} ${same(xs, [1, 2] + [3])} ${xs == [1, 2] + [3]}`)  // t
 | <a id="head"></a><a id="tail"></a>`head(xs)` / `tail(xs)` | first element / all but the first |
 | <a id="first"></a><a id="last"></a>`first(xs)` / `last(xs)` | the first / last element, or `()` when the list is empty (also of a tuple, and the first / last character of a string) |
 | <a id="take"></a><a id="skip"></a><a id="drop"></a>`take(xs, n)` / `skip(xs, n)` | first `n` / all but the first `n` (`drop` is `skip` under the name most languages pair with `take`) |
-| <a id="reverse"></a><a id="sort"></a>`reverse(xs)` / `sort(xs)` | reversed / ascending copy (numbers, strings, tuples or lists, which order lexicographically, as `<` orders them); the sort is stable: elements that compare equal keep their order |
+| <a id="reverse"></a><a id="sort"></a>`reverse(xs)` / `sort(xs)` | reversed / ascending copy (numbers, strings, dates, and tuples or lists, which order lexicographically, as `<` orders them); the sort is stable: elements that compare equal keep their order |
 | <a id="contains"></a>`contains(xs, v)` | membership test |
 | <a id="concat"></a>`concat(a, b)` | join two lists (or use `a + b`) |
 | <a id="cons"></a>`cons(v, xs)` | prepend an element |
@@ -314,7 +314,7 @@ println(`${col.index_of(xs, 30)} ${col.slice(xs, 1, 3)} ${drop(xs, 3)}`)
 
 | Function | Description |
 |---|---|
-| <a id="sum"></a><a id="min"></a><a id="max"></a>`sum(xs)` / `min(xs)` / `max(xs)` | aggregates over a list — `min` and `max` also take two or more scalars (`max(0, n - 1)`, the clamp idiom). `sum` takes numbers and raises on overflow, an Int's or a Float's, as `+` does; `min` and `max` order as `<` does (numbers, strings, tuples, lists; Bools among Bools) and raise on two values it cannot order (`min([3, "a"])`), as `sort` does |
+| <a id="sum"></a><a id="min"></a><a id="max"></a>`sum(xs)` / `min(xs)` / `max(xs)` | aggregates over a list — `min` and `max` also take two or more scalars (`max(0, n - 1)`, the clamp idiom). `sum` takes numbers and raises on overflow, an Int's or a Float's, as `+` does; `min` and `max` order as `<` does (numbers, strings, dates, tuples, lists; Bools among Bools) and raise on two values it cannot order (`min([3, "a"])`), as `sort` does |
 | <a id="average"></a>`average(xs)` | mean of a numeric list (a Float); raises on a Float overflow, as `sum` does |
 | <a id="clamp"></a>`clamp(v, lo, hi)` | bound a number to a range |
 | <a id="abs"></a>`abs(x)` | absolute value, an Int for an Int (`math.abs`) |

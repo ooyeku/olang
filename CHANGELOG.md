@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   steps' v1")` and leaves the database as it is. A program that ignores
   `db.migrate`'s answer behaves as before; one that unwraps it stops
   there.
+- **`min`, `max` and `sort` order Dates** (OL-654). `a < b` ordered two
+  Dates, but `max(a, b)` raised "cannot order Date and Date", and so
+  did `min`, `fold(days, start, max)` and `sort(days)` ("cannot compare
+  values of type Date"). They now order Dates chronologically, as `<`
+  does, alone or inside a tuple or a list: `sort([(due, name), ...])`
+  sorts by day. `(a, 1) < (b, 0)` on two Dates raised too and now
+  answers. The error for a pair `<` cannot order lists dates among what
+  it orders.
 
 ## [1.0.2] - 2026-11-24
 

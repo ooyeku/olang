@@ -81,6 +81,13 @@ fn as_date_object(v: &Value) -> Option<NaiveDate> {
     }
 }
 
+/// Two Dates in chronological order, as `<` orders them; `None` when
+/// either value is not a Date. `sort`, `min` and `max` order Dates by it
+/// through `ops::value_ordering`.
+pub(crate) fn date_ordering(x: &Value, y: &Value) -> Option<std::cmp::Ordering> {
+    Some(as_date_object(x)?.cmp(&as_date_object(y)?))
+}
+
 /// The operator surface for Date values, shared by both tiers through
 /// `native::binary_op_hook`. Comparisons order chronologically;
 /// `date - date` is the signed day difference; `date ± int` shifts by

@@ -683,9 +683,9 @@ fn inside(message: &str, kind: &str) -> String {
 }
 
 /// `<`'s order of two values it can order: numbers (an Int and a Float
-/// exactly, `int_float_cmp`), strings, and tuples and lists element by
-/// element. Anything else is the error `<` raises for the pair. `sort`,
-/// `min` and `max` order by it too.
+/// exactly, `int_float_cmp`), strings, Dates (chronologically), and
+/// tuples and lists element by element. Anything else is the error `<`
+/// raises for the pair. `sort`, `min` and `max` order by it too.
 pub fn value_ordering(x: &Value, y: &Value) -> Result<std::cmp::Ordering, InterpreterError> {
     use std::cmp::Ordering;
     let ord = match (x, y) {
@@ -696,11 +696,12 @@ pub fn value_ordering(x: &Value, y: &Value) -> Result<std::cmp::Ordering, Interp
         (Value::String(a), Value::String(b)) => Some(a.cmp(b)),
         (Value::Tuple(a), Value::Tuple(b)) => return tuple_ordering(a, b),
         (Value::List(a), Value::List(b)) => return list_ordering(a, b),
+        (Value::Native(_), Value::Native(_)) => crate::stdlib::dates::date_ordering(x, y),
         _ => None,
     };
     ord.ok_or_else(|| InterpreterError::TypeError {
         message: format!(
-            "cannot order {} and {}: `<` orders numbers, strings, tuples and lists",
+            "cannot order {} and {}: `<` orders numbers, strings, dates, tuples and lists",
             x.type_name(),
             y.type_name()
         ),

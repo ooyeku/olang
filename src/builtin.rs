@@ -2914,6 +2914,7 @@ impl BuiltinFunctions {
             Str,
             Tuple,
             List,
+            Date,
             Other,
         }
         fn class_of(v: &Value) -> SortClass {
@@ -2922,6 +2923,7 @@ impl BuiltinFunctions {
                 Value::String(_) => SortClass::Str,
                 Value::Tuple(_) => SortClass::Tuple,
                 Value::List(_) => SortClass::List,
+                v if crate::stdlib::dates::date_ordering(v, v).is_some() => SortClass::Date,
                 _ => SortClass::Other,
             }
         }
@@ -2935,7 +2937,7 @@ impl BuiltinFunctions {
             for item in list.iter() {
                 if class_of(item) != cls {
                     return Err(InterpreterError::TypeError {
-                        message: "sort: cannot compare values of different types (a list of numbers, of strings, of tuples or of lists)".to_string(),
+                        message: "sort: cannot compare values of different types (a list of numbers, of strings, of dates, of tuples or of lists)".to_string(),
                     });
                 }
             }
@@ -2944,11 +2946,14 @@ impl BuiltinFunctions {
         let mut result: Vec<Value> = list.to_vec();
 
         // Tuples and lists order lexicographically, as `<` orders them
-        // (OL-487); a pair `<` cannot order is its error.
-        if list
-            .first()
-            .is_some_and(|v| matches!(v, Value::Tuple(_) | Value::List(_)))
-        {
+        // (OL-487); a pair `<` cannot order is its error. Dates order
+        // chronologically by the same rule (OL-654).
+        if list.first().is_some_and(|v| {
+            matches!(
+                class_of(v),
+                SortClass::Tuple | SortClass::List | SortClass::Date
+            )
+        }) {
             let mut failure = None;
             result.sort_by(|a, b| match crate::interpreter::ops::value_ordering(a, b) {
                 Ok(o) => o,
@@ -5082,7 +5087,8 @@ pub fn index_key(key: &Value) -> Option<std::borrow::Cow<'_, str>> {
 
 /// The least (`keep` Less) or greatest (Greater) of `items`, the first of
 /// equal ones winning, by `<`'s order (`ops::value_ordering`: numbers, an
-/// Int and a Float exactly; strings; tuples and lists element by element),
+/// Int and a Float exactly; strings; Dates; tuples and lists element by
+/// element),
 /// Bools among Bools too. Two values `<` cannot order raise, as `sort`
 /// does (OL-338, OL-391): `min([3, "a"])` has no answer, whatever the
 /// order of the list.

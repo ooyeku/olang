@@ -70,8 +70,8 @@ fn on_vm(source: &str) -> Result<Value, String> {
 
 /// The interpreter's answer, which the tiered run gives too (message for
 /// message) and the VM gives too (an error as an error). A program that
-/// calls a `col.` function needs the interpreter's modules to compile, so
-/// it is checked tiered only.
+/// calls a `col.` or `dates.` function needs the interpreter's modules to
+/// compile, so it is checked tiered only.
 fn agree(source: &str) -> Result<Value, String> {
     let interpreted = eval(source, None);
     let tiered = eval(source, Some(1));
@@ -79,7 +79,7 @@ fn agree(source: &str) -> Result<Value, String> {
         tiered, interpreted,
         "tiered diverged from the interpreter\n{source}"
     );
-    if source.contains("col.") {
+    if source.contains("col.") || source.contains("dates.") {
         return interpreted;
     }
     let vm = on_vm(source);
@@ -305,4 +305,55 @@ fn an_unequal_list_pair_without_an_order_raises() {
     // A list and a tuple are different kinds: no order between them.
     let src = "fn main() = [1, 2] < (1, 2)\nmain()";
     agree(src).expect_err("a list and a tuple");
+}
+
+// ── OL-654: Dates order in min, max and sort as `<` orders them ─────
+#[test]
+fn min_max_and_sort_order_dates_as_less_than_does() {
+    let days = "let a = unwrap(dates.date(2026, 1, 2))\n    let b = a + 3\n    let c = a + 40\n";
+    for (call, want) in [
+        ("show(a < b)", "true"),
+        ("show(max(a, b))", "2026-01-05"),
+        ("show(min(b, a))", "2026-01-02"),
+        ("show(max([b, c, a]))", "2026-02-11"),
+        ("show(min([b, c, a]))", "2026-01-02"),
+        // the usual way to find the latest of a list of days
+        ("show(fold([b, c, a], a, max))", "2026-02-11"),
+        (
+            "show(sort([c, a, b]))",
+            "[2026-01-02, 2026-01-05, 2026-02-11]",
+        ),
+        // inside a tuple or a list a Date orders by the same rule
+        ("show((a, 2) < (b, 1))", "true"),
+        (
+            "show(sort([(b, 1), (a, 2)]))",
+            "[(2026-01-02, 2), (2026-01-05, 1)]",
+        ),
+        ("show(max([[a], [b]]))", "[2026-01-05]"),
+    ] {
+        let src = format!("fn main() = {{\n    {days}    {call}\n}}\nmain()");
+        assert_eq!(
+            agree(&src),
+            Ok(Value::String(Arc::new(want.to_string()))),
+            "{call}"
+        );
+    }
+}
+
+#[test]
+fn a_date_and_another_kind_have_no_order_and_the_error_names_dates() {
+    let day = "let a = unwrap(dates.date(2026, 1, 2))";
+    let src = format!("fn main() = {{\n    {day}\n    max(a, 3)\n}}\nmain()");
+    let err = agree(&src).expect_err("a Date and an Int");
+    assert!(
+        err.contains("max: cannot order Int and Date")
+            && err.contains("`<` orders numbers, strings, dates, tuples and lists"),
+        "{err}"
+    );
+    let src = format!("fn main() = {{\n    {day}\n    sort([a, 3])\n}}\nmain()");
+    let err = agree(&src).expect_err("a Date and an Int");
+    assert!(
+        err.contains("sort: cannot compare values of different types") && err.contains("of dates"),
+        "{err}"
+    );
 }
