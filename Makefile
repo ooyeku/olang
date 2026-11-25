@@ -1,7 +1,10 @@
 .PHONY: all build install remove clean test test-slow wasm dist prepush
 
 WASM_TARGET := wasm32-unknown-unknown
-WASM_ARTIFACT := target/$(WASM_TARGET)/release/olang_playground.wasm
+# Cargo's target folder: CARGO_TARGET_DIR when it is set, as cargo, `cargo
+# xtask wasm` and build.rs read it.
+TARGET_DIR := $(or $(CARGO_TARGET_DIR),target)
+WASM_ARTIFACT := $(TARGET_DIR)/$(WASM_TARGET)/release/olang_playground.wasm
 
 all: build
 
@@ -54,11 +57,15 @@ wasm:
 
 # Stage everything a release ships into dist/out/ (gitignored), with a
 # SHA256SUMS to compare against CI's: the release binaries, the playground
-# wasm, and the VS Code .vsix.
-dist: build wasm
+# wasm, and the VS Code .vsix. The browser runtime is built before the
+# binaries, which embed it (build.rs): built after, olang carried the
+# runtime of the build before this one.
+dist:
+	cargo xtask wasm
+	cargo build --release -p olang -p otc
 	rm -rf dist/out
 	mkdir -p dist/out
-	cp target/release/olang target/release/otc dist/out/
+	cp $(TARGET_DIR)/release/olang $(TARGET_DIR)/release/otc dist/out/
 	cp $(WASM_ARTIFACT) dist/out/olang_playground.wasm
 	cd editors/vscode && ([ -x node_modules/.bin/vsce ] || npm ci --silent) \
 		&& node_modules/.bin/vsce package --out ../../dist/out/

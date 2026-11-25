@@ -60,6 +60,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   install script, or `cargo install --path .` in a checkout) and that
   `cargo install olang` is not olang. In `--format json` the `fix`
   field carries the same text.
+- **Building olang with `CARGO_TARGET_DIR` set embeds the browser
+  runtime just built** (OL-640). Cargo built the runtime into
+  `$CARGO_TARGET_DIR`, but `cargo xtask wasm` checked and staged
+  whatever sat in `<repo>/target`, said it had succeeded, and
+  `build.rs` embedded that one: a local 1.0.0-rc.10 build carried
+  rc.9's runtime, and a browser app stopped with "program image written
+  by olang 1.0.0-rc.10 cannot be loaded by olang 1.0.0-rc.9". Both now
+  read the target folder by one rule, `CARGO_TARGET_DIR` when it is
+  set, else `<repo>/target`, and the task builds into that folder by
+  name. `make dist` builds the runtime before the binaries that embed
+  it (it built them first, so a dist olang carried the runtime of the
+  build before) and copies from the same folder. A build without
+  `CARGO_TARGET_DIR`, CI's included, is unchanged.
 
 ## [1.0.2] - 2026-11-24
 
