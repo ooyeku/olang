@@ -26,6 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   sorts by day. `(a, 1) < (b, 0)` on two Dates raised too and now
   answers. The error for a pair `<` cannot order lists dates among what
   it orders.
+- **A loop whose header ends in a capitalized name takes an empty
+  body** (OL-665). `while time.monotonic() - t0 < SPIN_MS {}` did not
+  parse ("expected an operator or lead add op" at the next line):
+  `SPIN_MS {}` was read as an empty literal of a type named `SPIN_MS`,
+  and the loop had no body. `for x in ITEMS {}` and
+  `for i in 0..LIMIT {}` failed the same way. All three parse now, so
+  a wait loop can name its duration at the top of the file. An empty
+  literal (`Empty {}`) reads as before everywhere it parsed, a loop's
+  header included.
 
 ## [1.0.2] - 2026-11-24
 

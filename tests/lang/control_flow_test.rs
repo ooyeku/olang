@@ -163,3 +163,59 @@ match 42 { x => x }
 "#;
     assert_eq!(eval(src), Value::Integer(42));
 }
+
+// ── OL-665: a capitalized name before an empty loop body ────────────
+#[test]
+fn a_loop_header_ending_in_a_constant_takes_an_empty_body() {
+    // The issue's program: `SPIN_MS {}` was read as an empty literal of a
+    // type named SPIN_MS, and the loop then had no body.
+    let src = r#"
+let SPIN_MS = 5.0
+fn spin() = {
+    let t0 = time.monotonic()
+    while time.monotonic() - t0 < SPIN_MS {}
+    1
+}
+show(spin())
+"#;
+    assert_eq!(s(eval(src)), "1");
+    let src = r#"
+let LIMIT = 3
+let ITEMS = [1, 2, 3]
+fn walk() = {
+    for x in ITEMS {}
+    for i in 0..LIMIT {}
+    par for x in ITEMS {}
+    let mut n = 0
+    while n < LIMIT { n = n + 1 }
+    let DONE = true
+    while !DONE {}
+    n
+}
+show(walk())
+"#;
+    assert_eq!(s(eval(src)), "3");
+}
+
+#[test]
+fn an_empty_literal_still_reads_as_one_where_it_did() {
+    let src = r#"
+type Empty = struct {}
+fn never(v) = false
+fn run() = {
+    let e = Empty {}
+    let mut seen = []
+    // in a header with a body after it, `Empty {}` is the literal
+    while never(Empty {}) { seen = seen + ["while"] }
+    for x in [Empty {}] { seen = seen + [show(x)] }
+    seen + [show(e), show(e == Empty {})]
+}
+show(run())
+"#;
+    assert_eq!(s(eval(src)), r#"["Empty {}", "Empty {}", "true"]"#);
+    // A header with no body after it is still refused.
+    for src in ["let LIMIT = 3\nwhile 1 < LIMIT\n1", "for x in ITEMS\n1"] {
+        let err = eval_res(src).expect_err(src);
+        assert!(err.contains("expected"), "{src}: {err}");
+    }
+}
