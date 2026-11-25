@@ -182,6 +182,8 @@ fn fake_olang(path: &Path, version: &str) {
 /// `otc toolchain list` (and a bare `otc toolchain`) shows every olang on
 /// the machine with the version its binary gives, which one runs, the
 /// shims' default, that cargo's shadows the shims, and the fix (OL-577).
+/// Cargo's is the newer here, so the fix brings the default up; it does
+/// not remove the newest olang on the machine (OL-638).
 #[test]
 fn toolchain_list_shows_every_olang_which_runs_and_why() {
     let home = fake_home("toolchain_list");
@@ -225,13 +227,12 @@ fn toolchain_list_shows_every_olang_which_runs_and_why() {
         assert!(row("0.80.0").contains("managed"), "{text}");
         assert!(text.contains("is ahead of the shims on PATH"), "{text}");
         assert!(
-            text.contains(&format!(
-                "export PATH=\"{}:$PATH\"",
-                home.join("bin").display()
-            )),
+            text.contains("not the default 0.88.0: otc update"),
             "{text}"
         );
-        assert!(text.contains("cargo uninstall olang"), "{text}");
+        assert!(text.contains("keep it"), "{text}");
+        assert!(!text.contains("uninstall"), "{text}");
+        assert!(!text.contains("cargo install olang"), "{text}");
     }
     let d: serde_json::Value =
         serde_json::from_str(list(&["toolchain", "list", "--format", "json"]).trim()).unwrap();
@@ -249,10 +250,7 @@ fn toolchain_list_shows_every_olang_which_runs_and_why() {
             .contains("ahead of the shims"),
         "{d}"
     );
-    assert!(
-        d["fix"].as_str().unwrap().starts_with("export PATH="),
-        "{d}"
-    );
+    assert!(d["fix"].as_str().unwrap().starts_with("otc update"), "{d}");
 
     // in a project, its pin and what answers it
     std::fs::write(
@@ -263,4 +261,81 @@ fn toolchain_list_shows_every_olang_which_runs_and_why() {
     let text = list(&["toolchain", "list"]);
     assert!(text.contains("pins olang 0.80: it runs 0.80.0"), "{text}");
     let _ = std::fs::remove_file(home.join("olang.toml"));
+}
+
+/// What `otc toolchain list` advises when another olang shadows the
+/// default (OL-638). `uninstall` appears only when the shadowing olang is
+/// not the newer one and the default would run once it is gone, and then
+/// with how to put a Cargo build back; `cargo install olang` is named
+/// only as what not to run (on crates.io that name is another project's).
+#[test]
+fn toolchain_list_never_advises_removing_the_only_or_the_newest_olang() {
+    // (the outside olang's folder, its version, the shims', shims on PATH)
+    let cases = [
+        ("user/.cargo/bin", "1.0.0-rc.10", "0.88.0", false),
+        ("user/.cargo/bin", "1.0.0-rc.10", "0.88.0", true),
+        ("user/.cargo/bin", "0.88.0", "1.0.0", true),
+        ("user/.cargo/bin", "0.88.0", "1.0.0", false),
+        ("user/.cargo/bin", "1.0.0", "1.0.0", true),
+        ("opt/homebrew/bin", "1.0.2", "1.0.0", true),
+        ("opt/homebrew/bin", "0.88.0", "1.0.0", true),
+    ];
+    for (i, (outside, theirs, ours, shims_on_path)) in cases.into_iter().enumerate() {
+        let home = fake_home(&format!("toolchain_advice_{i}"));
+        let outside = home.join(outside);
+        fake_olang(&outside.join("olang"), theirs);
+        fake_olang(&home.join("bin/olang"), ours);
+        let mut dirs = vec![outside.clone()];
+        if shims_on_path {
+            dirs.push(home.join("bin"));
+        }
+        let out = Command::new(otc())
+            .args(["toolchain", "list"])
+            .env("PATH", std::env::join_paths(dirs).unwrap())
+            .env("HOME", home.join("user"))
+            .env("OLANG_HOME", &home)
+            .env("OLANG_SHELF", home.join("shelf.toml"))
+            .current_dir(&home)
+            .output()
+            .expect("spawn otc");
+        assert!(out.status.success(), "{out:?}");
+        let text = String::from_utf8_lossy(&out.stdout).into_owned();
+        let case = format!("{theirs} over {ours}, shims on PATH: {shims_on_path}\n{text}");
+        assert!(text.contains("is ahead of the shims on PATH"), "{case}");
+        let export = format!("export PATH=\"{}:$PATH\"", home.join("bin").display());
+        let newer = semver_newer(theirs, ours);
+        if newer {
+            // bring the default up; the newer olang stays
+            assert!(text.contains(": otc update"), "{case}");
+            assert!(!text.contains("uninstall"), "{case}");
+            assert!(!text.contains(&export), "{case}");
+        } else {
+            assert!(text.contains(&export), "{case}");
+            assert!(!text.contains("otc update"), "{case}");
+            // removing it is offered only when the default then runs
+            assert_eq!(text.contains("uninstall olang"), shims_on_path, "{case}");
+        }
+        if text.contains("cargo uninstall olang") {
+            assert!(
+                text.contains(&format!("the default {ours} then runs")),
+                "{case}"
+            );
+            assert!(text.contains("the install script"), "{case}");
+            assert!(
+                text.contains("`cargo install olang` is not olang"),
+                "{case}"
+            );
+        } else {
+            assert!(!text.contains("cargo install olang"), "{case}");
+        }
+    }
+}
+
+fn semver_newer(a: &str, b: &str) -> bool {
+    let key = |v: &str| {
+        let (core, pre) = v.split_once('-').unwrap_or((v, ""));
+        let n: Vec<u64> = core.split('.').map(|p| p.parse().unwrap()).collect();
+        (n, pre.is_empty())
+    };
+    key(a) > key(b)
 }

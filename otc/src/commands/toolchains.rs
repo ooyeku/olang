@@ -8,8 +8,9 @@
 //! it, and its version is the binary's own answer to `--version`, never a
 //! folder's name. The **active** olang is the first on PATH, the one a
 //! bare `olang` runs; the **default** is the shims'. When they differ,
-//! one line says which shadows which and the command that fixes it; in a
-//! project, one more says what its pin resolves to.
+//! one line says which shadows which and the command that fixes it (the
+//! newer of the two is never the one to remove, OL-638); in a project,
+//! one more says what its pin resolves to.
 
 use super::doctor::path_dirs;
 use anyhow::{Context, Result};
@@ -153,28 +154,58 @@ fn rows(home_bin: &Path, toolchains: &Path) -> Vec<Row> {
     rows
 }
 
+/// Whether version `a` is newer than `b`, as two binaries gave them
+/// (semver; false when either does not read as one).
+fn is_newer(a: Option<&str>, b: Option<&str>) -> bool {
+    let read = |v: Option<&str>| semver::Version::parse(v?.trim_start_matches('v')).ok();
+    matches!((read(a), read(b)), (Some(a), Some(b)) if a > b)
+}
+
 /// The line that says the active olang shadows the default, and the fix.
+///
+/// The fix never costs the machine its newest olang (OL-638). When the
+/// shadowing one is the newer, the fix brings the default up to it.
+/// Otherwise the fix puts the shims first, and removing the shadowing
+/// one is offered only when the default would then run (the shims are
+/// on PATH), with how to get olang back: `cargo install olang` installs
+/// another project's crate of that name from crates.io.
 fn shadow_note(rows: &[Row], home_bin: &Path) -> Option<(String, String)> {
     let default = rows.iter().find(|r| r.default)?;
     let fix = format!("export PATH=\"{}:$PATH\"", home_bin.display());
     let shown = |r: &Row| r.version.clone().unwrap_or_else(|| "?".to_string());
     match rows.iter().find(|r| r.active) {
         Some(active) if !active.default => {
+            let why = format!(
+                "{} ({}, {}) is ahead of the shims on PATH, so `olang` runs it, not the default {}",
+                active.path.display(),
+                active.kind,
+                shown(active),
+                shown(default)
+            );
+            if is_newer(active.version.as_deref(), default.version.as_deref()) {
+                return Some((
+                    why,
+                    "otc update (it is the newer olang, so keep it: this installs the latest \
+                     release and makes it the default)"
+                        .to_string(),
+                ));
+            }
             let remove = match active.kind {
-                "cargo" => " — or remove it: cargo uninstall olang",
-                "homebrew" => " — or remove it: brew uninstall olang",
-                _ => "",
-            };
-            Some((
-                format!(
-                    "{} ({}, {}) is ahead of the shims on PATH, so `olang` runs it, not the default {}",
-                    active.path.display(),
-                    active.kind,
-                    shown(active),
+                _ if !default.on_path => String::new(),
+                "cargo" => format!(
+                    " (or remove it: cargo uninstall olang; the default {} then runs. To get \
+                     olang back later use the install script, or `cargo install --path .` in a \
+                     checkout. `cargo install olang` is not olang: on crates.io the name is \
+                     another project's)",
                     shown(default)
                 ),
-                format!("{fix}{remove}"),
-            ))
+                "homebrew" => format!(
+                    " (or remove it: brew uninstall olang; the default {} then runs)",
+                    shown(default)
+                ),
+                _ => String::new(),
+            };
+            Some((why, format!("{fix}{remove}")))
         }
         Some(_) => None,
         None => Some((

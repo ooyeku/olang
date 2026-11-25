@@ -47,6 +47,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   the caller's to read afterwards, as with worker threads. A program
   that relied on the one-item case needs what the many-item case
   already needed: a value per item (`sum(par_map(...))`) or a channel.
+- **`otc toolchain list` no longer advises removing the newest olang**
+  (OL-638). With Cargo's olang at 1.0.0-rc.10 ahead of a 0.88.0 default
+  on PATH, the line ended "or remove it: cargo uninstall olang". That
+  removed the newest olang on the machine, and `cargo install olang`
+  then installed another project's crate of that name from crates.io.
+  When the olang ahead on PATH is the newer one, the line now says to
+  keep it and gives `otc update`, which installs the latest release and
+  makes it the default. Removing the one ahead is offered only when it
+  is not the newer and `~/.olang/bin` is on PATH, so the default runs
+  once it is gone, and the line then says how to get olang back (the
+  install script, or `cargo install --path .` in a checkout) and that
+  `cargo install olang` is not olang. In `--format json` the `fix`
+  field carries the same text.
 
 ## [1.0.2] - 2026-11-24
 

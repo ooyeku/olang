@@ -602,15 +602,24 @@ they differ, one line says which shadows which and the fix:
   → 0.88.0  cargo     active          /Users/me/.cargo/bin/olang
     1.0.0   shims     default         /Users/me/.olang/bin/olang
     0.80.0  managed                   /Users/me/.olang/toolchains/0.80.0/bin/olang
-/Users/me/.cargo/bin/olang (cargo, 0.88.0) is ahead of the shims on PATH, so `olang` runs it, not the default 1.0.0: export PATH="/Users/me/.olang/bin:$PATH" — or remove it: cargo uninstall olang
+/Users/me/.cargo/bin/olang (cargo, 0.88.0) is ahead of the shims on PATH, so `olang` runs it, not the default 1.0.0: export PATH="/Users/me/.olang/bin:$PATH" (or remove it: cargo uninstall olang; the default 1.0.0 then runs. To get olang back later use the install script, or `cargo install --path .` in a checkout. `cargo install olang` is not olang: on crates.io the name is another project's)
 ```
 
-Read the versions before taking the fix: when the shadowing olang is
-the newer one, keep it and remove the old toolchains instead. On
-crates.io the name `olang` belongs to another project, so `cargo install
-olang` installs something else; Cargo installs olang from its repository
-(`cargo install --locked --git https://github.com/ooyeku/olang.git olang
-otc`, as [Installing olang](installation.md) says).
+The fix depends on which of the two is newer. When the shadowing olang
+is the newer one, the line says to keep it and gives `otc update`, which
+installs the latest release and makes it the default:
+
+```
+/Users/me/.cargo/bin/olang (cargo, 1.0.2) is ahead of the shims on PATH, so `olang` runs it, not the default 0.88.0: otc update (it is the newer olang, so keep it: this installs the latest release and makes it the default)
+```
+
+Removing the shadowing olang is offered only when it is not the newer
+one and `~/.olang/bin` is on PATH, so that the default runs once it is
+gone. On crates.io the name `olang` belongs to another project, so
+`cargo install olang` installs something else; Cargo installs olang from
+its repository (`cargo install --locked --git
+https://github.com/ooyeku/olang.git olang otc`, as
+[Installing olang](installation.md) says).
 
 Inside a project one more line says what its pin resolves to. In
 `--format json` each row is `#{ version, olang, real, kind, folder,
