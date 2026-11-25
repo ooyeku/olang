@@ -35,6 +35,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   a wait loop can name its duration at the top of the file. An empty
   literal (`Empty {}`) reads as before everywhere it parsed, a loop's
   header included.
+- **`par_map` refuses a cell from the calling thread however many
+  workers it has** (OL-637). `par_map(xs, (x) => cell.update(hits,
+  ...))` on a cell made outside the call was refused ("cell escaped its
+  thread") only when worker threads ran the items. With one worker, the
+  body ran on the calling thread and the update went through: a list of
+  one item, `set_parallel(false)`, `task.set_parallelism(1)`, a
+  simulated world, the browser build. The same program was refused or
+  not by the length of its list. It is now refused in every case, in
+  `par_filter` and `par for` as well, and a cell the body makes is not
+  the caller's to read afterwards, as with worker threads. A program
+  that relied on the one-item case needs what the many-item case
+  already needed: a value per item (`sum(par_map(...))`) or a channel.
 
 ## [1.0.2] - 2026-11-24
 

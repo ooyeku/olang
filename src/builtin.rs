@@ -2287,7 +2287,9 @@ impl BuiltinFunctions {
         }
 
         // One core, or the playground (no threads): same snapshot
-        // semantics on a single clone.
+        // semantics on a single clone, and a worker's standing towards
+        // the caller's cells.
+        let _worker = crate::stdlib::cell::stand_in_worker();
         let mut worker = interpreter.thread_safe_clone();
         let mut out = Vec::with_capacity(items.len());
         for item in items {
