@@ -92,6 +92,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
     the runtime twice (OL-664). Started as `olang` it is a plain olang,
     whatever lies beside it.
 
+- **What holds a program's memory, by the site that allocated it**
+  (OL-203, OL-610). A sampled heap profile in the counting allocator,
+  cheap enough to leave on in a program that runs all day: one sample
+  per 512 KiB allocated on average, each with its site and the olang
+  frames that made it, and whether it is the program's values, its load
+  or the runtime's code. `runtime.heap()` answers the sites by live
+  bytes, `runtime.heap_diff(a, b)` what grew, and `runtime.heap_start`,
+  `heap_stop` and `heap_write` control it. `OLANG_HEAP=1` starts it with
+  the program, and with `OLANG_HEAP_DIR` a snapshot is written every
+  `OLANG_HEAP_EVERY` seconds. `olang memory run`, `show` and `diff`
+  read and compare them. A module's load is a frame of its own
+  (`use <module>`), so load-time memory says which module holds it.
+- **Allocations counted in every build** (OL-324). `runtime.memory()`
+  answers `allocated` and `allocations`, a JSON profile carries
+  `alloc_b` and `allocs_n`, and `OLANG_ALLOC_STATS` works in any build.
+- **What a task's allocations still hold** (OL-609). Each row of
+  `runtime.memory().tasks` has `held`, what that task allocated and is
+  still live wherever it is freed, beside `bytes` (what it allocated
+  less what it freed itself, which only grows for a task that hands
+  its results on). `held` is `()` until the heap profile has run.
+- **`otc` around versions, the shelf and libraries from GitHub**
+  (OL-576). `otc toolchain list --available` lists every release;
+  `otc use <version|series|latest|stable|rc|name>` installs if needed
+  and switches; `otc toolchain link <checkout>` records a local build.
+  `otc shelf` replaces `otc lib`: a name holds a local folder and
+  read-only copies by version. `otc add owner/repo[@ref]` fetches a
+  library with git, shows the capabilities it asks for and locks its
+  commit and checksum. `otc outdated`, `otc upgrade`, `otc status`, and
+  `otc doctor --fix` for an older home.
+
 ### Changed
 
 - **A commit no longer rebuilds olang in the development profiles.**
@@ -111,6 +141,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `olang check` on a project whose registry dependency is not installed
   says why (the registry is not on this machine, the version is not
   published), not "was not resolved".
+- **A loaded program is smaller** (OL-607). A scope map's node keeps
+  only the entries present, where it kept a slot for each of 32, and a
+  compile-cache pack is mapped from its file instead of read onto the
+  heap. Loading OlangStudio's window module holds 42 MB of program,
+  where 1.0.3 holds 71 MB with its compile cache off and 125 to 138 MB
+  with it on.
+- **A task shares the module tables until it changes one** (OL-510).
+  A spawned task or an http worker copied the module cache and the
+  imported names when it started. An idle task that loaded Shuttle
+  holds 69 KB where it held 200 KB.
+- **http: the next connection goes to the worker that went idle last**
+  (OL-172), so one request at a time keeps one worker's code warm and
+  the others are not each compiled. Eight workers serving 300 requests
+  one at a time: heap 13.5 MB to 6.4, compiled code 9.7 MB to 3.1.
+  Concurrency is unchanged.
+- **gui: a scroll's scratch texture is the size of the move, and is let
+  go when nothing moves** (OL-204). It was the whole frame and kept for
+  the window's life: 28 MB in a large window on a Retina display.
+
+### Security
+
+- **File readers outside `fs` answer to the `fs` capability** (OL-624).
+  `gui.image_info` needs `fs` read, and `gui.capture` and
+  `testing.snapshot` need `fs` write; `gui.fonts`, `gui.movie` and
+  `toad.sound` ask for `fs` read only when given a path. A database a
+  module held to its `fs_roots` opens cannot `ATTACH` a file outside
+  them. http's deferred tickets, database connections, `fs.watch`
+  handles and terminal screens get random ids, as process handles do.
 
 ## [1.0.2] - 2026-11-24
 
