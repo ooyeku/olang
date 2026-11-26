@@ -29,6 +29,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`fs.trash` on Linux.** It was an `Err` everywhere but macOS. On
+  Linux it now follows the freedesktop.org Trash specification 1.0,
+  which the desktops' file managers and `gio trash` share, so an item
+  olang trashes shows in the desktop's Trash and is restored from
+  there. The item moves to `$XDG_DATA_HOME/Trash/files`
+  (`~/.local/share/Trash/files` when that is unset) and
+  `info/<name>.trashinfo` records its old path and the time. A second
+  item of the same name is `notes.2.txt`, as GLib names it. An item on
+  another mount goes to that mount's `.Trash/$uid` or `.Trash-$uid`,
+  and is an `Err` when neither can be used. A symbolic link is moved as
+  a link. Nothing was added to olang's dependencies for it.
 - **A registry can be published to and installed from by address**
   (OL-658). `OLANG_REGISTRY` takes an index's git address as well as a
   folder: it is cloned into the cache and refreshed when a name or a

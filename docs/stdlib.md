@@ -2264,10 +2264,21 @@ while more {
 }
 ```
 
-<a id="fs-trash"></a>`fs.trash(path)` moves a file or a folder to the Trash as the Finder's
-Move to Trash does (macOS's NSFileManager) — never a permanent delete —
-and answers `Ok(path in the Trash)`; moving it back from there with
-<a id="fs-move_file"></a>`fs.move_file` puts it back. Elsewhere it is an `Err` that says so.
+<a id="fs-trash"></a>`fs.trash(path)` moves a file or a folder to the Trash and answers
+`Ok(path in the Trash)`. It is never a permanent delete: moving the item
+back from there with <a id="fs-move_file"></a>`fs.move_file` puts it back.
+Trashing a symbolic link moves the link and leaves what it points to.
+On macOS it is the Finder's Move to Trash (NSFileManager). On Linux it
+follows the freedesktop.org Trash specification, which the desktops'
+file managers and `gio trash` share, so the item shows in the desktop's
+Trash and is restored from there. It goes to `$XDG_DATA_HOME/Trash/files`
+(`~/.local/share/Trash/files` when that is unset), and
+`info/<name>.trashinfo` beside it holds its old path and the time. A
+second item of the same name gets a number (`notes.2.txt`). An item on
+another mount than the home trash goes to that mount's own trash,
+`.Trash/$uid` or `.Trash-$uid` in its top folder, and is an `Err` when
+neither can be used: it is never copied across. On other platforms
+`fs.trash` is an `Err` that says so.
 
 <a id="fs-sync"></a>`fs.sync(path)` makes what was written durable: a file's bytes, or, for
 a folder, the files created, removed or renamed in it. Until then a

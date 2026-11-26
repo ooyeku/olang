@@ -1123,11 +1123,20 @@ fn move_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     }
 }
 
-/// Move a file or a folder to the Trash, as the Finder's Move to Trash
-/// does (NSFileManager `trashItemAtURL:resultingItemURL:error:`): never a
-/// permanent delete, and put back by moving the item from where it went.
+/// Move a file or a folder to the Trash: never a permanent delete, and
+/// put back by moving the item from where it went. A link is trashed
+/// itself, not what it points to.
 /// Usage: fs.trash(path) -> Result<String, Error> (the item's path in the
-/// Trash). An Err where there is no Trash (only macOS has one here).
+/// Trash).
+///
+/// On macOS this is the Finder's Move to Trash (NSFileManager
+/// `trashItemAtURL:resultingItemURL:error:`). On Linux it is the
+/// freedesktop.org Trash specification 1.0, which the desktops' file
+/// managers and `gio trash` share (src/stdlib/fs_trash.rs): the item goes
+/// to `$XDG_DATA_HOME/Trash/files` with its old path and the time in
+/// `info/<name>.trashinfo`, or to its own mount's `.Trash/$uid` or
+/// `.Trash-$uid` when it is on another one. An Err on other platforms,
+/// which have no Trash here.
 fn trash(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
         return Err(format!("trash expects 1 argument, got {}", args.len()).into());
@@ -1195,9 +1204,30 @@ fn trash_item(path: &str) -> Result<String, String> {
     }
 }
 
-#[cfg(not(all(target_os = "macos", feature = "gui")))]
+#[cfg(target_os = "linux")]
+fn trash_item(path: &str) -> Result<String, String> {
+    use crate::stdlib::fs_trash;
+    let home_trash =
+        fs_trash::home_trash_dir(std::env::var_os("XDG_DATA_HOME"), std::env::var_os("HOME"))?;
+    // SAFETY: geteuid reads the process's user id and cannot fail.
+    let uid = unsafe { libc::geteuid() };
+    let env = fs_trash::TrashEnv {
+        home_trash: &home_trash,
+        uid,
+        now: &|| chrono::Local::now().naive_local(),
+        device: &fs_trash::lstat_device,
+    };
+    fs_trash::trash(std::path::Path::new(path), &env).map(|to| to.to_string_lossy().into_owned())
+}
+
+#[cfg(not(any(all(target_os = "macos", feature = "gui"), target_os = "linux")))]
 fn trash_item(_path: &str) -> Result<String, String> {
-    Err("this platform has no Trash olang can use (macOS only)".to_string())
+    Err(if cfg!(target_os = "macos") {
+        "this olang was built without its gui feature, which the Trash on macOS needs"
+    } else {
+        "olang has no Trash it can use on this platform (macOS and Linux have one)"
+    }
+    .to_string())
 }
 
 /// Make what was written durable: a file's bytes (fsync), or a folder's
@@ -2048,5 +2078,24 @@ mod tests {
             "got: {}",
             copy_err
         );
+    }
+
+    // What `fs.trash` does with an item is tested where the Trash is a
+    // folder of the test's own (src/stdlib/fs_trash.rs); here only what
+    // never reaches the real Trash.
+    #[test]
+    fn test_trash_refuses_what_is_not_there() {
+        let dir = tempdir().unwrap();
+        let missing = dir.path().join("never-was.txt");
+        let missing = missing.to_str().unwrap();
+
+        let result = trash(vec![string_val(missing)]).unwrap();
+
+        assert_eq!(
+            extract_string(assert_err(&result)),
+            format!("Failed to move '{missing}' to the Trash: no such file or folder")
+        );
+        assert!(trash(vec![int_val(1)]).is_err());
+        assert!(trash(vec![]).is_err());
     }
 }
