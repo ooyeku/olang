@@ -252,15 +252,17 @@ pub fn available() -> bool {
 ///
 /// - `native_menu`: `gui.menu` sets the system's menu bar (macOS);
 ///   elsewhere it answers `false` and a UI framework draws the window's menu.
-/// - `clipboard_image`: `gui.clipboard_image` reads a picture (macOS).
+/// - `clipboard_image`: `gui.clipboard_image` reads a picture and
+///   `gui.clipboard_write_image` puts one there (macOS, Linux).
 /// - `file_drop`: files dragged in from another program arrive as
-///   `files` events (macOS, Windows; winit has no Wayland drag and drop).
+///   `files` events (macOS, Windows, X11; winit has no Wayland drag and
+///   drop).
 /// - `drop_position`: a `files` event's `x`/`y` is where the pointer is
 ///   as they arrive (macOS); elsewhere the pointer's last place in the
 ///   window.
 /// - `window_position`: a window learns where it is on the screen, so
 ///   pointer events carry `sx`/`sy` and a drag follows into another
-///   window (macOS, Windows); on Wayland a drag stays in its window.
+///   window (macOS, Windows, X11); on Wayland a drag stays in its window.
 /// - `system_settings`: `gui.context` reads the dark appearance (Auto
 ///   included), increased contrast, reduced motion, reduced transparency,
 ///   and the accent colour from the system, and a window hears
@@ -269,6 +271,8 @@ pub fn available() -> bool {
 ///   caret) — everywhere winit has them (Wayland's text-input-v3).
 /// - `accessibility`: the platform's accessibility API through AccessKit
 ///   (NSAccessibility, UI Automation, AT-SPI).
+/// - `primary_selection`: `gui.primary_read` and `gui.primary_write`, the
+///   selection a middle click pastes (Linux).
 /// - `window_tabs`: `gui.open` takes `tabbing` and `tab_of`, `gui.set`
 ///   takes `tab`, and windows say their `tabs` (macOS window tabs).
 /// - `open_documents`: the application hears `open` with the files the
@@ -292,6 +296,10 @@ pub fn available() -> bool {
 ///   (macOS).
 /// - `turn_watch`: `gui.turn(true|false)` around a program's turn; one
 ///   that runs past 2 s is shown in its windows while it runs.
+/// - `modifier_keys`: a modifier key's own press and release arrive as
+///   `modifier` events (`alone` on a release with nothing between);
+///   `alt_chords`: Alt with a letter in a focused field is a `key` event
+///   (`alt+f`), never typed text (Linux; Option types a character on macOS).
 ///
 /// - `a11y_depth`: a node takes `pos` ((index, count): its place in its
 ///   set, for a virtualized list's rows) and `live: "off"`; the roles
@@ -310,7 +318,9 @@ pub fn available() -> bool {
 pub fn capabilities() -> Value {
     let mac = cfg!(target_os = "macos");
     let windows = cfg!(target_os = "windows");
+    let linux = cfg!(target_os = "linux");
     let b = Value::Boolean;
+    let x11 = linux_x11();
     map(vec![
         ("os", s(std::env::consts::OS)),
         ("native_menu", b(mac)),
@@ -318,11 +328,14 @@ pub fn capabilities() -> Value {
         // application, the system's notifications (`tray`)
         ("status_item", b(mac)),
         ("notifications", b(mac)),
-        ("clipboard_image", b(mac)),
-        ("file_drop", b(mac || windows)),
+        ("clipboard_image", b(mac || linux)),
+        ("file_drop", b(mac || windows || x11)),
         ("drop_position", b(mac)),
-        ("window_position", b(mac || windows)),
+        ("window_position", b(mac || windows || x11)),
         ("system_settings", b(mac)),
+        // `gui.primary_read` and `gui.primary_write`: the selection a
+        // middle click pastes (Linux)
+        ("primary_selection", b(cfg!(target_os = "linux"))),
         ("ime", b(true)),
         ("accessibility", b(true)),
         ("window_tabs", b(mac)),
@@ -341,6 +354,10 @@ pub fn capabilities() -> Value {
         // `gui.turn`: a program's turn that runs long is shown in its
         // windows while it runs (the busy cursor, a spinner)
         ("turn_watch", b(true)),
+        // a modifier key's own press and release (`modifier` events), and
+        // Alt with a letter in a field a chord rather than text (Linux)
+        ("modifier_keys", b(true)),
+        ("alt_chords", b(super::window::ALT_IS_A_CHORD)),
         // `gui.menu` takes the standard Edit items (`standard`, with the
         // `contexts` the program's commands bind their chords in) and
         // submenus (`submenu`); the window's view answers Services
@@ -427,6 +444,11 @@ fn run_loop(reply: crossbeam_channel::Sender<Result<(), String>>) -> Option<i32>
             return None;
         }
     };
+    #[cfg(target_os = "linux")]
+    {
+        use winit::platform::x11::EventLoopExtX11;
+        let _ = LINUX_X11.set(event_loop.is_x11());
+    }
     let proxy = event_loop.create_proxy();
     {
         let mut state = LOOP.lock().unwrap_or_else(|e| e.into_inner());
@@ -793,6 +815,30 @@ fn linux_has_display() -> bool {
         .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
 }
 
+/// Whether this process's windows are X11's (Linux): what the event loop
+/// opened once it runs, and before then what winit will open, Wayland's
+/// display first (`WAYLAND_DISPLAY` or `WAYLAND_SOCKET`), else X11's
+/// (`DISPLAY`). An X11 window is told where it is and takes a drop;
+/// a Wayland window is never told where it is.
+fn linux_x11() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(x11) = LINUX_X11.get() {
+            return *x11;
+        }
+        let set = |name: &str| std::env::var_os(name).is_some_and(|value| !value.is_empty());
+        !(set("WAYLAND_DISPLAY") || set("WAYLAND_SOCKET")) && set("DISPLAY")
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+/// The event loop's own word on it, once it is built.
+#[cfg(target_os = "linux")]
+static LINUX_X11: OnceLock<bool> = OnceLock::new();
+
 /// The application id a Linux window says: `OLANG_APP_ID` when set, else
 /// the running program's file name (`OlangStudio` for
 /// `/usr/lib/olangstudio/OlangStudio`), which a launcher names as its
@@ -1106,6 +1152,7 @@ impl App {
                         | Input::ImePreedit(..)
                         | Input::ImeCommit(_)
                         | Input::Modifiers(_)
+                        | Input::Modifier { .. }
                         | Input::Files { .. }
                 )
             {
@@ -1567,6 +1614,28 @@ fn key_name(key: &Key) -> Option<String> {
             }
         }
         _ => return None,
+    })
+}
+
+/// A modifier key's own press or release, named as chords spell it
+/// (`ctrl`, `alt`, `shift`, `super`): `None` for every other key. AltGr
+/// (X11's ISO_Level3_Shift, which European layouts type `@` and `{`
+/// with) is not Alt: it is a level of the keyboard and says nothing.
+fn modifier_input(event: &KeyEvent, is_synthetic: bool) -> Option<Input> {
+    if event.repeat {
+        return None;
+    }
+    let key = match &event.logical_key {
+        Key::Named(NamedKey::Control) => "ctrl",
+        Key::Named(NamedKey::Alt) => "alt",
+        Key::Named(NamedKey::Shift) => "shift",
+        Key::Named(NamedKey::Super | NamedKey::Meta) => "super",
+        _ => return None,
+    };
+    Some(Input::Modifier {
+        key: key.to_string(),
+        down: event.state == ElementState::Pressed,
+        synthetic: is_synthetic,
     })
 }
 
@@ -2706,7 +2775,14 @@ impl App {
                     }),
                 );
             }
-            WindowEvent::KeyboardInput { event: ke, .. } => {
+            WindowEvent::KeyboardInput {
+                event: ke,
+                is_synthetic,
+                ..
+            } => {
+                if let Some(i) = modifier_input(&ke, is_synthetic) {
+                    self.input(id, i);
+                }
                 if ke.state == ElementState::Pressed
                     && ke.logical_key == Key::Named(NamedKey::Escape)
                     && self.dismiss_panel(id, "escape")
@@ -3011,7 +3087,8 @@ pub fn clipboard_get() -> Option<String> {
 
 /// The clipboard's image as PNG bytes: a PNG put there as one (a
 /// screenshot), or a TIFF (what most macOS programs copy) turned into a
-/// PNG. macOS only so far; elsewhere an `Err` that says so.
+/// PNG. On Linux the clipboard's image/png (X11's, or Wayland's through
+/// the data-control protocol). Elsewhere an `Err` that says so.
 pub fn clipboard_image() -> Result<Vec<u8>, String> {
     #[cfg(target_os = "macos")]
     {
@@ -3038,16 +3115,132 @@ pub fn clipboard_image() -> Result<Vec<u8>, String> {
         }
         Err("the clipboard holds no image".into())
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     {
-        Err("an image is read from the clipboard on macOS only so far".into())
+        use image::ImageEncoder;
+        let pixels = held_clipboard(|c| c.get_image()).map_err(|e| match e {
+            arboard::Error::ContentNotAvailable => "the clipboard holds no image".to_string(),
+            other => format!("the clipboard's image could not be read: {other}"),
+        })?;
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(
+                &pixels.bytes,
+                pixels.width as u32,
+                pixels.height as u32,
+                image::ExtendedColorType::Rgba8,
+            )
+            .map_err(|e| format!("the clipboard's image could not be turned into a PNG: {e}"))?;
+        Ok(png)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        Err("an image is read from the clipboard on macOS and Linux only so far".into())
     }
 }
 
+/// Put a PNG on the clipboard as an image, for another program to paste:
+/// macOS's pasteboard as PNG, Linux's clipboard as image/png. Elsewhere
+/// an `Err` that says so.
+pub fn clipboard_image_set(png: Vec<u8>) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_app_kit::{NSPasteboard, NSPasteboardTypePNG};
+        let pb = NSPasteboard::generalPasteboard();
+        let data = objc2_foundation::NSData::with_bytes(&png);
+        pb.clearContents();
+        // SAFETY: AppKit's constant pasteboard type, read only.
+        let png_t = unsafe { NSPasteboardTypePNG };
+        if pb.setData_forType(Some(&data), png_t) {
+            Ok(())
+        } else {
+            Err("the pasteboard did not take the image".into())
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let pixels = image::load_from_memory_with_format(&png, image::ImageFormat::Png)
+            .map_err(|e| format!("not a PNG: {e}"))?
+            .into_rgba8();
+        let (width, height) = pixels.dimensions();
+        let data = arboard::ImageData {
+            width: width as usize,
+            height: height as usize,
+            bytes: std::borrow::Cow::Owned(pixels.into_raw()),
+        };
+        held_clipboard(|c| c.set_image(data)).map_err(|e| e.to_string())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = png;
+        Err("an image is written to the clipboard on macOS and Linux only so far".into())
+    }
+}
+
+/// The clipboard handle the program's own image and selection calls use
+/// on Linux, kept for the life of the process. On X11 what a program puts
+/// on a selection is served by the program itself, and arboard stops
+/// serving when its last handle goes: a handle made and dropped for each
+/// write would leave nothing to paste where no clipboard manager takes it
+/// over (and none takes the PRIMARY selection).
+#[cfg(target_os = "linux")]
+fn held_clipboard<T>(
+    f: impl FnOnce(&mut arboard::Clipboard) -> Result<T, arboard::Error>,
+) -> Result<T, arboard::Error> {
+    static HELD: Mutex<Option<arboard::Clipboard>> = Mutex::new(None);
+    let mut held = HELD.lock().unwrap_or_else(|e| e.into_inner());
+    if held.is_none() {
+        *held = Some(arboard::Clipboard::new()?);
+    }
+    f(held.as_mut().expect("made above"))
+}
+
 pub fn clipboard_set(t: String) -> Result<(), String> {
-    arboard::Clipboard::new()
-        .and_then(|mut c| c.set_text(t))
-        .map_err(|e| format!("gui.clipboard_write: {e}"))
+    // Linux: through the kept handle, so the text is still there to
+    // paste once the call returns (X11 with no clipboard manager)
+    #[cfg(target_os = "linux")]
+    let set = held_clipboard(|c| c.set_text(t));
+    #[cfg(not(target_os = "linux"))]
+    let set = arboard::Clipboard::new().and_then(|mut c| c.set_text(t));
+    set.map_err(|e| format!("gui.clipboard_write: {e}"))
+}
+
+/// The PRIMARY selection's text: what was last selected in any program,
+/// which a middle click pastes (X11's, or Wayland's through the
+/// data-control protocol). Linux only; elsewhere an `Err` that says so.
+pub fn primary_get() -> Result<String, String> {
+    #[cfg(target_os = "linux")]
+    {
+        use arboard::{GetExtLinux, LinuxClipboardKind};
+        held_clipboard(|c| c.get().clipboard(LinuxClipboardKind::Primary).text()).map_err(|e| {
+            match e {
+                arboard::Error::ContentNotAvailable => {
+                    "the primary selection holds no text".to_string()
+                }
+                other => other.to_string(),
+            }
+        })
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Err("there is a primary selection on Linux only".into())
+    }
+}
+
+/// Make `t` the PRIMARY selection (text selected in the program), for a
+/// middle click in another program to paste. Linux only.
+pub fn primary_set(t: String) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        use arboard::{LinuxClipboardKind, SetExtLinux};
+        held_clipboard(|c| c.set().clipboard(LinuxClipboardKind::Primary).text(t))
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = t;
+        Err("there is a primary selection on Linux only".into())
+    }
 }
 
 pub fn dialog(kind: &str, opts: &Value) -> Result<Value, String> {

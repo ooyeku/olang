@@ -59,6 +59,7 @@ gui = [
     "dep:softbuffer",
     "dep:parley",
     "dep:fontique",
+    "dep:image",
     "dep:swash",
     "dep:accesskit",
     "dep:accesskit_winit",
@@ -332,6 +333,13 @@ signal-hook = { version = "0.4", default-features = false }
 # draws with the bundled fonts).
 [target.'cfg(target_os = "linux")'.dependencies]
 fontique = { version = "0.11", features = ["fontconfig-dlopen"], optional = true }
+# Linux: the clipboard's images (`gui.clipboard_image`,
+# `gui.clipboard_write_image`): arboard's image-data reads and writes
+# image/png on X11 and Wayland, and `image` (the crate and version it
+# brings, PNG only) turns its pixels into PNG bytes and back. macOS reads
+# the pasteboard itself and builds neither.
+arboard = { version = "3.6", default-features = false, features = ["wayland-data-control", "image-data"], optional = true }
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 
 # The `tty` module on Windows: console raw mode and the console input
 # records (keys, mouse, resize, focus). On Unix the module decodes the
