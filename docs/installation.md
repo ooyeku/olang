@@ -298,8 +298,10 @@ command for your package manager (`apt-get`, `dnf`, `yum`, `zypper`,
 with no `sudo`, such as a Debian set up with a root password, it shows
 the command to run as root instead.
 
-On Linux, olang draws windows under Wayland only; under X11
-`gui.available()` is false. A server or minimal install without
+On Linux, olang draws windows under Wayland, and under X11 where there
+is no Wayland display (an X session, `ssh -X`, a remote desktop); with
+neither `WAYLAND_DISPLAY` nor `DISPLAY` set, `gui.available()` is false.
+A server or minimal install without
 fontconfig still runs olang, and its windows then use olang's bundled
 fonts.
 

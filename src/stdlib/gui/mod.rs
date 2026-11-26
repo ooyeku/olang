@@ -91,7 +91,10 @@ const FUNCTIONS: &[(&str, usize)] = &[
     ("clipboard_read", 0),
     ("clipboard_write", 1),
     ("clipboard_image", 0),
+    ("clipboard_write_image", 1),
     ("image_info", 1),
+    ("primary_read", 0),
+    ("primary_write", 1),
     ("dialog", 2),
     ("menu", 1),
     ("context_menu", 3),
@@ -176,7 +179,10 @@ pub fn call_gui_function(name: &str, args: Vec<Value>) -> DynRes {
                     | "clipboard_read"
                     | "clipboard_write"
                     | "clipboard_image"
+                    | "clipboard_write_image"
                     | "image_info"
+                    | "primary_read"
+                    | "primary_write"
                     | "status_item"
                     | "status_set"
                     | "status_set_title"
@@ -267,7 +273,10 @@ fn gui_function(name: &str, args: Vec<Value>) -> DynRes {
         "clipboard_read" => gui_clipboard_read(args),
         "clipboard_write" => gui_clipboard_write(args),
         "clipboard_image" => gui_clipboard_image(args),
+        "clipboard_write_image" => gui_clipboard_write_image(args),
         "image_info" => gui_image_info(args),
+        "primary_read" => gui_primary_read(args),
+        "primary_write" => gui_primary_write(args),
         "dialog" => gui_dialog(args),
         "menu" => gui_menu(args),
         "context_menu" => gui_context_menu(args),
@@ -1232,6 +1241,30 @@ fn input_of(v: &Value) -> Res<Input> {
         }
         // The modifier keys held (a press with ⌘ held, as a test sends it).
         "modifiers" => Input::Modifiers(mods_of(v)?),
+        // A modifier key's own press or release (Alt pressed alone).
+        "modifier" => {
+            let key = get_str(v, "key", what)?
+                .ok_or("gui.input: a modifier event needs a \"key\" (ctrl, alt, shift, super)")?;
+            if !["ctrl", "alt", "shift", "super"].contains(&key) {
+                return Err(format!(
+                    "gui.input: unknown modifier \"{key}\" (ctrl, alt, shift, super)"
+                ));
+            }
+            let down = match get_str(v, "action", what)?.unwrap_or("down") {
+                "down" => true,
+                "up" => false,
+                other => {
+                    return Err(format!(
+                        "gui.input: unknown modifier action \"{other}\" (down, up)"
+                    ));
+                }
+            };
+            Input::Modifier {
+                key: key.to_string(),
+                down,
+                synthetic: false,
+            }
+        }
         "pointer" => {
             let action = match get_str(v, "action", what)?.unwrap_or("move") {
                 "down" => PointerAction::Down,
@@ -1334,7 +1367,7 @@ fn input_of(v: &Value) -> Res<Input> {
         }
         other => {
             return Err(format!(
-                "gui.input: unknown kind \"{other}\" (key, text, pointer, wheel, pinch, compose, commit, resize, window_focus, files, close, menu, open, new_tab, quit, clipboard, appearance, place, a11y)"
+                "gui.input: unknown kind \"{other}\" (key, modifier, text, pointer, wheel, pinch, compose, commit, resize, window_focus, files, close, menu, open, new_tab, quit, clipboard, appearance, place, a11y)"
             ));
         }
     })
@@ -1836,6 +1869,22 @@ fn gui_clipboard_image(args: Vec<Value>) -> Res<Value> {
     })
 }
 
+/// Put an image on the clipboard for another program to paste: `png` its
+/// PNG Bytes (a `.png` file's, or `gui.clipboard_image`'s `png`). `Ok(())`,
+/// or `Err` when the platform cannot take it. Callable from any thread.
+fn gui_clipboard_write_image(args: Vec<Value>) -> Res<Value> {
+    arity("gui.clipboard_write_image", &args, 1, 1)?;
+    let png = crate::stdlib::bytes::bytes_of(&args[0])
+        .map_err(|e| format!("gui.clipboard_write_image: {e}"))?;
+    if picture::sniff(png) != Some(picture::Format::Png) {
+        return Ok(err("gui.clipboard_write_image: not a PNG"));
+    }
+    Ok(match platform::clipboard_image_set(png.to_vec()) {
+        Ok(()) => ok(Value::Unit),
+        Err(e) => err(format!("gui.clipboard_write_image: {e}")),
+    })
+}
+
 /// A picture's size and format from its header: `Ok(#{ width, height,
 /// format })` (`"png"`, `"jpeg"`, `"webp"`, `"gif"`, `"svg"`; an SVG's
 /// size in its own units), or `Err` when it cannot be read. For a task:
@@ -1849,6 +1898,37 @@ fn gui_image_info(args: Vec<Value>) -> Res<Value> {
             ("format", s(i.format.name())),
         ])),
         Err(e) => err(e),
+    })
+}
+
+/// The PRIMARY selection's text (Linux: what was last selected in any
+/// program, which a middle click pastes): `Ok(text)`, or `Err` when it
+/// holds none or the platform has none. Callable from any thread.
+fn gui_primary_read(args: Vec<Value>) -> Res<Value> {
+    arity("gui.primary_read", &args, 0, 0)?;
+    Ok(match platform::primary_get() {
+        Ok(t) => ok(s(&t)),
+        Err(e) => err(format!("gui.primary_read: {e}")),
+    })
+}
+
+/// Make `text` the PRIMARY selection (Linux: what the program has
+/// selected, for a middle click elsewhere to paste). Callable from any
+/// thread.
+fn gui_primary_write(args: Vec<Value>) -> Res<Value> {
+    arity("gui.primary_write", &args, 1, 1)?;
+    let t = match &args[0] {
+        Value::String(t) => t.to_string(),
+        other => {
+            return Err(format!(
+                "gui.primary_write: expected a String, got {}",
+                other.type_name()
+            ));
+        }
+    };
+    Ok(match platform::primary_set(t) {
+        Ok(()) => ok(Value::Unit),
+        Err(e) => err(format!("gui.primary_write: {e}")),
     })
 }
 

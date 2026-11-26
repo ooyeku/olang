@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The installer on Debian, Ubuntu and the other Linux distributions.**
+  Run through `wget`, which is what a fresh Debian has in place of
+  `curl`, it read the newest release's name with GNU wget's
+  "[following]" on the end and stopped with "has no SHA256SUMS file";
+  it now installs with GNU wget, wget2 and BusyBox's.
+  On Linux it now adds `~/.olang/bin` to the file a login reads
+  (`~/.profile`, or `~/.bash_profile` when there is one) as well as the
+  one a terminal window reads. Before, a login shell, an `ssh` command
+  and programs started from the desktop on Debian, Ubuntu and Arch did
+  not find `olang`, because `~/.bashrc` returns at once for a shell that
+  is not interactive. Where the system lacks `tar`, `gzip` or `curl`
+  (minimal openSUSE Leap and Amazon Linux), the installer names the
+  package, shows the command for the system's package manager and runs
+  it after a yes; before, it stopped with advice for Debian and Alpine
+  only. On a computer with no `sudo` it shows the command to run as
+  root. The book gives the `wget` line for a Linux without `curl`, which
+  a fresh Debian is.
+
 ### Added
 
 - **A chapter for people coming from object-oriented languages**
@@ -14,6 +34,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   and the functions that take it, a module, an enum and a `match`, a
   record of functions, a spread, a closure over a `cell`. Every example
   runs.
+- **gui: a modifier key's own press and release, and Alt with a letter
+  as a chord on Linux.** A `modifier` event says the `key` (`ctrl`,
+  `alt`, `shift`, `super`), the `action` (`down`, `up`) and, on `up`,
+  `alone`: true when no other key, press or change of focus came while
+  it was held, which is how a drawn menu bar takes Alt pressed alone.
+  AltGr sends none. `gui.input` sends one as
+  `#{ kind: "modifier", key, action }`. On Linux Alt with a letter in a
+  focused field is now a `key` event (`chord` `"alt+f"`) and no longer
+  types the letter, as GTK and Qt fields do, so a menu's mnemonic
+  reaches the program; what AltGr types (`@` and `{` on a German
+  layout) is typed as before. macOS is unchanged: Option with a letter
+  types a character there. `gui.platform()` says `modifier_keys` and
+  `alt_chords`.
+- **`fs.trash` on Linux.** It was an `Err` everywhere but macOS. On
+  Linux it now follows the freedesktop.org Trash specification 1.0,
+  which the desktops' file managers and `gio trash` share, so an item
+  olang trashes shows in the desktop's Trash and is restored from
+  there. The item moves to `$XDG_DATA_HOME/Trash/files`
+  (`~/.local/share/Trash/files` when that is unset) and
+  `info/<name>.trashinfo` records its old path and the time. A second
+  item of the same name is `notes.2.txt`, as GLib names it. An item on
+  another mount goes to that mount's `.Trash/$uid` or `.Trash-$uid`,
+  and is an `Err` when neither can be used. A symbolic link is moved as
+  a link. Nothing was added to olang's dependencies for it.
+- **gui: images on the clipboard on Linux.** `gui.clipboard_image` read
+  an image on macOS only; on Linux it now reads the clipboard's
+  image/png under X11 and Wayland. `gui.clipboard_write_image(png)` is
+  new: it puts PNG Bytes on the clipboard for another program to paste,
+  on macOS and Linux. `gui.platform().clipboard_image` is true on
+  Linux. The Linux build turns on arboard's `image-data` feature, which
+  brings the `image` crate (PNG only) with `moxcms` and `pxfm`; the
+  macOS and Windows builds compile nothing new.
 - **A registry can be published to and installed from by address**
   (OL-658). `OLANG_REGISTRY` takes an index's git address as well as a
   folder: it is cloned into the cache and refreshed when a name or a
@@ -26,6 +78,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   withdraw name@version` marks a release that no new install should
   choose. An index entry can name a folder inside a repository
   (`subdir`). There is still no public registry.
+- **gui: the primary selection on Linux.** `gui.primary_read()` reads
+  the PRIMARY selection, the text last selected in any program, and
+  `gui.primary_write(text)` sets it, so a program can paste it on a
+  middle click and offer its own selection to a middle click elsewhere.
+  It is X11's, or Wayland's through the data-control protocol, and an
+  `Err` on other systems; `gui.platform().primary_selection` says which.
+  A middle press already arrived as a `pointer` event with
+  `button: "middle"`.
+
+- **Linux: `fs.watch` watches, windows open under X11, and a package
+  carries the runtime once.** Compiled and tested on Linux without a
+  display; no window has been tried on one yet.
+  - `fs.watch` answered an `Err` everywhere but macOS. On Linux it now
+    uses inotify, and when the watch limit is reached it says so once and
+    reads the tree once a second; other systems read the tree once a
+    second.
+  - The gui was Wayland only. It is built with X11 too and opens there
+    when there is no Wayland display.
+  - Under X11 files dropped on a window from a file manager (XDND)
+    arrive as `files` events, and `gui.platform().file_drop` is true
+    there. Under Wayland it stays false: winit 0.30 has no Wayland drag
+    and drop.
+  - A Linux window says an application id (`OLANG_APP_ID`, else the
+    program's file name), so a desktop ties it to its launcher (OL-663).
+  - Under X11 a window is told where it is: `moved` events come, pointer
+    events carry `sx` and `sy`, and `gui.platform().window_position` is
+    true there. A Wayland window is never told where it is, and there it
+    stays false.
+  - Started through a link under another name, the runtime runs the
+    program `<Name>.olb` beside it (`olang build --payload`). A package
+    installs `olang` once with a link per application where it carried
+    the runtime twice (OL-664). Started as `olang` it is a plain olang,
+    whatever lies beside it.
 
 ### Changed
 

@@ -3314,12 +3314,44 @@ fn bundle_record_from<R: std::io::Read + std::io::Seek>(
     Some(BundleRecord::Ast(Some(meta)))
 }
 
+/// The name a plain runtime is installed under: started by this name it
+/// is olang itself, whatever lies beside it.
+#[cfg(all(unix, not(target_os = "macos")))]
+const PLAIN_RUNTIME_NAME: &str = "olang";
+
+/// Linux (and other Unix that is not macOS): an application's program
+/// beside the runtime, found by the name the runtime was started under.
+/// A package installs the runtime once as `olang`, the program as
+/// `<Name>.olb` (`olang build --payload`) and a link `<Name>` to `olang`
+/// in the same folder; started as `<Name>`, olang runs `<Name>.olb`
+/// (OL-664: a package no longer carries the runtime twice). The running
+/// file itself is found through the link (`/proc/self/exe`), so the
+/// folder is the runtime's, not one a caller names. Started as `olang`
+/// it is a plain olang: a stray `.olb` beside it never runs in its place.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn named_sidecar(exe: &std::path::Path) -> Option<PathBuf> {
+    let started_as = std::env::args_os().next()?;
+    let name = std::path::Path::new(&started_as)
+        .file_name()?
+        .to_str()?
+        .to_string();
+    if name == PLAIN_RUNTIME_NAME || name.is_empty() {
+        return None;
+    }
+    let sidecar = exe.parent()?.join(format!("{name}.olb"));
+    sidecar.is_file().then_some(sidecar)
+}
+
 /// A macOS application's program, beside its executable: a signed
 /// executable must end where its Mach-O ends, so an app bundler puts the
 /// plain runtime in `Contents/MacOS/` and the program (`olang build
 /// --payload`) in `Contents/Resources/app.olb`. Only that layout: a
 /// stray file beside an ordinary `olang` never runs in its place.
 fn app_sidecar(exe: &std::path::Path) -> Option<PathBuf> {
+    #[cfg(all(unix, not(target_os = "macos")))]
+    if let Some(sidecar) = named_sidecar(exe) {
+        return Some(sidecar);
+    }
     let macos = exe.parent()?;
     let contents = macos.parent()?;
     let bundle = contents.parent()?;

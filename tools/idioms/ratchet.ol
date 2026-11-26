@@ -19,7 +19,7 @@ let RULE_NAMES = ["rule_map_set_chain", "rule_record_as_map", "rule_kind_chain",
 
 // Code no one maintains by hand: fixtures are wrong on purpose, and the
 // rest is built or copied in.
-let SKIP = ["/fixtures/", "/.build/", "/target/", "/dist/", "/shelf/", "/node_modules/"]
+let SKIP = ["/fixtures/", "/.build/", "/target/", "/dist/", "/shelf/", "/node_modules/", "/vendor/"]
 
 fn olang_bin() = unwrap_or(os.get_env("OLANG"), "olang")
 

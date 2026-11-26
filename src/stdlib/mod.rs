@@ -26,6 +26,11 @@ pub mod features;
 pub mod fs;
 #[cfg(feature = "native")]
 pub mod fs_scan;
+// The freedesktop.org Trash, which `fs.trash` uses on Linux. Compiled on
+// every Unix so its tests run on a Mac; only Linux calls it.
+#[cfg(all(feature = "native", unix))]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) mod fs_trash;
 #[cfg(feature = "native")]
 pub mod fs_watch;
 #[cfg(feature = "gui")]

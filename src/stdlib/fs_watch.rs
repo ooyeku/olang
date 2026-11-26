@@ -23,8 +23,13 @@
 //! `max`, the folder to read again is in `rescan` instead.
 //!
 //! Handles are `Watch { id }` structs into a registry, as `pty`'s are, so
-//! a reader task may hold one. Elsewhere than macOS `fs.watch` answers an
-//! `Err` (a caller keeps polling).
+//! a reader task may hold one.
+//!
+//! On Linux inotify does the watching: a watch a folder, each folder of
+//! the tree added (ignored ones left out) and a new one as it is made.
+//! When the system's watch limit is reached, the reason is said once on
+//! standard error and the tree is read once a second instead, as it is
+//! on every other system.
 
 use crate::ast::{Value, ValueMap};
 use std::collections::HashMap;
@@ -117,13 +122,11 @@ fn strings_opt(
 /// and paths under them reported all the same (`.git/HEAD` under an
 /// ignored `.git`).
 #[derive(Clone, Default)]
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 struct Filter {
     ignore: Vec<String>,
     keep: Vec<String>,
 }
 
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 impl Filter {
     /// Whether `rel` (relative to the root, `/`-separated) is passed on.
     fn passes(&self, rel: &str) -> bool {
@@ -158,7 +161,6 @@ struct Raw {
 }
 
 /// The queue's room: past it, the root is read again instead.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const QUEUE_MAX: usize = 65_536;
 
 struct Watch {
@@ -716,11 +718,402 @@ mod imp {
     }
 }
 
+// ── elsewhere: the tree read again and again ───────────────────────
+/// A watch with no help from the system: the tree is read every
+/// `POLL_INTERVAL` and what differs from the last reading is queued. It
+/// costs a `stat` a file each time, so Linux uses it only when inotify
+/// cannot watch the tree (its watch limit reached); other systems have
+/// nothing else yet.
+#[cfg(not(target_os = "macos"))]
+mod poll {
+    use super::*;
+    use std::time::SystemTime;
+
+    const POLL_INTERVAL: Duration = Duration::from_millis(1000);
+    /// How often a waiting poller looks whether it was closed.
+    const STOP_CHECK: Duration = Duration::from_millis(100);
+
+    /// What a reading keeps of a path: when it changed, its size, whether
+    /// it is a folder.
+    type Reading = HashMap<String, (Option<SystemTime>, u64, bool)>;
+
+    /// Whether the folder `rel` is read: one that passes, or an ignored
+    /// one a kept path may lie under (`.git` for `.git/HEAD`).
+    pub(super) fn folder_is_read(filter: &Filter, rel: &str) -> bool {
+        if filter.passes(rel) {
+            return true;
+        }
+        let mut at = 0usize;
+        for seg in rel.split('/') {
+            if filter.ignore.iter().any(|i| i == seg) {
+                let rest = &rel[at..];
+                return filter.keep.iter().any(|k| {
+                    k == rest
+                        || (k.starts_with(rest) && k.as_bytes().get(rest.len()) == Some(&b'/'))
+                        || (rest.starts_with(k.as_str())
+                            && rest.as_bytes().get(k.len()) == Some(&b'/'))
+                });
+            }
+            at += seg.len() + 1;
+        }
+        true
+    }
+
+    fn read_tree(root: &str, filter: &Filter) -> Reading {
+        let mut reading = Reading::new();
+        let mut folders = vec![String::new()];
+        while let Some(rel_folder) = folders.pop() {
+            let folder = if rel_folder.is_empty() {
+                root.to_string()
+            } else {
+                format!("{root}/{rel_folder}")
+            };
+            let Ok(entries) = std::fs::read_dir(&folder) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let rel = if rel_folder.is_empty() {
+                    name
+                } else {
+                    format!("{rel_folder}/{name}")
+                };
+                let Ok(meta) = entry.metadata() else {
+                    continue;
+                };
+                // a link is the link itself: never followed out of the tree
+                let is_dir = meta.is_dir() && !meta.file_type().is_symlink();
+                if is_dir && folder_is_read(filter, &rel) {
+                    folders.push(rel.clone());
+                }
+                if filter.passes(&rel) {
+                    reading.insert(
+                        format!("{root}/{rel}"),
+                        (meta.modified().ok(), meta.len(), is_dir),
+                    );
+                }
+            }
+        }
+        reading
+    }
+
+    pub(super) fn start(root: &str, filter: Filter) -> Result<Watch, String> {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let overflow = Arc::new(AtomicBool::new(false));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (stop2, overflow2, root2) = (stop.clone(), overflow.clone(), root.to_string());
+        std::thread::Builder::new()
+            .name("fs.watch".into())
+            .spawn(move || {
+                let mut last = read_tree(&root2, &filter);
+                let mut waited = Duration::ZERO;
+                while !stop2.load(Ordering::Acquire) {
+                    std::thread::sleep(STOP_CHECK);
+                    waited += STOP_CHECK;
+                    if waited < POLL_INTERVAL {
+                        continue;
+                    }
+                    waited = Duration::ZERO;
+                    let now = read_tree(&root2, &filter);
+                    let mut changed: Vec<Raw> = Vec::new();
+                    for (path, seen) in &now {
+                        match last.get(path) {
+                            Some(before) if before == seen => {}
+                            Some(_) => changed.push(Raw {
+                                path: path.clone(),
+                                created: false,
+                                renamed: false,
+                                is_dir: seen.2,
+                                rescan: false,
+                            }),
+                            None => changed.push(Raw {
+                                path: path.clone(),
+                                created: true,
+                                renamed: false,
+                                is_dir: seen.2,
+                                rescan: false,
+                            }),
+                        }
+                    }
+                    for (path, seen) in &last {
+                        if !now.contains_key(path) {
+                            changed.push(Raw {
+                                path: path.clone(),
+                                created: false,
+                                renamed: false,
+                                is_dir: seen.2,
+                                rescan: false,
+                            });
+                        }
+                    }
+                    for raw in changed {
+                        if tx.len() >= QUEUE_MAX {
+                            overflow2.store(true, Ordering::Release);
+                        } else if tx.send(raw).is_err() {
+                            return;
+                        }
+                    }
+                    last = now;
+                }
+            })
+            .map_err(|e| e.to_string())?;
+        Ok(Watch {
+            root: root.to_string(),
+            rx,
+            overflow,
+            stop,
+            closed: AtomicBool::new(false),
+        })
+    }
+}
+
+// ── Linux: inotify ─────────────────────────────────────────────────
+/// inotify watches one folder a watch, so the tree's folders are each
+/// added (ignored ones left out, as the filter says) and a folder made
+/// later is added when it is seen. The system allows a person a fixed
+/// number of watches (`fs.inotify.max_user_watches`): past it, `start`
+/// says so and the caller polls instead.
+#[cfg(target_os = "linux")]
+mod inotify {
+    use super::*;
+    use std::ffi::CString;
+
+    const MASK: u32 = libc::IN_CREATE
+        | libc::IN_CLOSE_WRITE
+        | libc::IN_MODIFY
+        | libc::IN_ATTRIB
+        | libc::IN_DELETE
+        | libc::IN_MOVED_FROM
+        | libc::IN_MOVED_TO
+        | libc::IN_DELETE_SELF;
+    /// How long a read waits before it looks whether the watch was closed.
+    const WAIT_MS: i32 = 250;
+
+    struct Watches {
+        fd: i32,
+        /// A watch's number → its folder, relative to the root (`""` the root).
+        folders: HashMap<i32, String>,
+    }
+
+    impl Watches {
+        /// Watch `rel` (a folder under `root`): `Err` with the system's
+        /// error number when it refuses.
+        fn add(&mut self, root: &str, rel: &str) -> Result<(), i32> {
+            let path = if rel.is_empty() {
+                root.to_string()
+            } else {
+                format!("{root}/{rel}")
+            };
+            let Ok(c_path) = CString::new(path) else {
+                return Ok(());
+            };
+            // SAFETY: fd is this inotify instance, c_path a C string that outlives the call.
+            let wd = unsafe { libc::inotify_add_watch(self.fd, c_path.as_ptr(), MASK) };
+            if wd < 0 {
+                return Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(0));
+            }
+            self.folders.insert(wd, rel.to_string());
+            Ok(())
+        }
+
+        /// Watch `rel` and every folder under it that the filter reads.
+        /// A folder that vanished meanwhile is skipped; the watch limit ends it.
+        fn add_tree(&mut self, root: &str, rel: &str, filter: &Filter) -> Result<(), i32> {
+            let mut folders = vec![rel.to_string()];
+            while let Some(rel_folder) = folders.pop() {
+                match self.add(root, &rel_folder) {
+                    Ok(()) => {}
+                    Err(code) if code == libc::ENOSPC || code == libc::EMFILE => return Err(code),
+                    Err(_) => continue,
+                }
+                let folder = if rel_folder.is_empty() {
+                    root.to_string()
+                } else {
+                    format!("{root}/{rel_folder}")
+                };
+                let Ok(entries) = std::fs::read_dir(&folder) else {
+                    continue;
+                };
+                for entry in entries.flatten() {
+                    let Ok(kind) = entry.file_type() else {
+                        continue;
+                    };
+                    if !kind.is_dir() {
+                        continue;
+                    }
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    let rel_child = if rel_folder.is_empty() {
+                        name
+                    } else {
+                        format!("{rel_folder}/{name}")
+                    };
+                    if super::poll::folder_is_read(filter, &rel_child) {
+                        folders.push(rel_child);
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
+
+    pub(super) fn start(root: &str, filter: Filter) -> Result<Watch, String> {
+        // SAFETY: a plain system call; the descriptor is closed by the thread below, or here.
+        let fd = unsafe { libc::inotify_init1(libc::IN_CLOEXEC | libc::IN_NONBLOCK) };
+        if fd < 0 {
+            return Err(format!(
+                "inotify could not start ({})",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let mut watches = Watches {
+            fd,
+            folders: HashMap::new(),
+        };
+        if let Err(code) = watches.add_tree(root, "", &filter) {
+            let held = watches.folders.len();
+            // SAFETY: fd is ours and nothing else holds it yet.
+            unsafe { libc::close(fd) };
+            return Err(format!(
+                "inotify's watch limit was reached after {held} folders ({}): raise fs.inotify.max_user_watches to watch this tree without polling",
+                std::io::Error::from_raw_os_error(code)
+            ));
+        }
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let overflow = Arc::new(AtomicBool::new(false));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (stop2, overflow2, root2) = (stop.clone(), overflow.clone(), root.to_string());
+        let spawned = std::thread::Builder::new()
+            .name("fs.watch".into())
+            .spawn(move || {
+                let push = |raw: Raw| {
+                    if tx.len() >= QUEUE_MAX {
+                        overflow2.store(true, Ordering::Release);
+                    } else {
+                        let _ = tx.send(raw);
+                    }
+                };
+                let mut buffer = vec![0u8; 64 * 1024];
+                let header = std::mem::size_of::<libc::inotify_event>();
+                while !stop2.load(Ordering::Acquire) {
+                    let mut waiting = libc::pollfd {
+                        fd,
+                        events: libc::POLLIN,
+                        revents: 0,
+                    };
+                    // SAFETY: one pollfd of ours, for WAIT_MS.
+                    let ready = unsafe { libc::poll(&mut waiting, 1, WAIT_MS) };
+                    if ready <= 0 {
+                        continue;
+                    }
+                    // SAFETY: the buffer is ours and as long as the length given.
+                    let got = unsafe {
+                        libc::read(fd, buffer.as_mut_ptr() as *mut libc::c_void, buffer.len())
+                    };
+                    if got <= 0 {
+                        continue;
+                    }
+                    let got = got as usize;
+                    let mut at = 0usize;
+                    while at + header <= got {
+                        // SAFETY: the kernel wrote a whole event at `at` (checked against `got`);
+                        // read unaligned, since the buffer is bytes.
+                        let event: libc::inotify_event = unsafe {
+                            std::ptr::read_unaligned(
+                                buffer.as_ptr().add(at) as *const libc::inotify_event
+                            )
+                        };
+                        let name_len = event.len as usize;
+                        let name_bytes = &buffer[at + header..(at + header + name_len).min(got)];
+                        at += header + name_len;
+                        if event.mask & libc::IN_Q_OVERFLOW != 0 {
+                            overflow2.store(true, Ordering::Release);
+                            continue;
+                        }
+                        if event.mask & libc::IN_IGNORED != 0 {
+                            watches.folders.remove(&event.wd);
+                            continue;
+                        }
+                        let Some(rel_folder) = watches.folders.get(&event.wd).cloned() else {
+                            continue;
+                        };
+                        let name_end = name_bytes
+                            .iter()
+                            .position(|b| *b == 0)
+                            .unwrap_or(name_bytes.len());
+                        let name = String::from_utf8_lossy(&name_bytes[..name_end]).into_owned();
+                        if name.is_empty() {
+                            // the folder itself (deleted, its attributes): its parent says it
+                            continue;
+                        }
+                        let rel = if rel_folder.is_empty() {
+                            name
+                        } else {
+                            format!("{rel_folder}/{name}")
+                        };
+                        let is_dir = event.mask & libc::IN_ISDIR != 0;
+                        let made = event.mask & (libc::IN_CREATE | libc::IN_MOVED_TO) != 0;
+                        if is_dir && made && super::poll::folder_is_read(&filter, &rel) {
+                            // a folder made (or moved in): watched from now on, and read
+                            // again, since what was put in it before the watch was not seen
+                            if watches.add_tree(&root2, &rel, &filter).is_err() {
+                                overflow2.store(true, Ordering::Release);
+                            }
+                            if filter.passes(&rel) {
+                                push(Raw {
+                                    path: format!("{root2}/{rel}"),
+                                    created: false,
+                                    renamed: false,
+                                    is_dir: true,
+                                    rescan: true,
+                                });
+                            }
+                        }
+                        if !filter.passes(&rel) {
+                            continue;
+                        }
+                        push(Raw {
+                            path: format!("{root2}/{rel}"),
+                            created: made,
+                            renamed: event.mask & (libc::IN_MOVED_FROM | libc::IN_MOVED_TO) != 0,
+                            is_dir,
+                            rescan: false,
+                        });
+                    }
+                }
+                // SAFETY: the thread owns the descriptor; closing it ends every watch.
+                unsafe { libc::close(fd) };
+            });
+        if let Err(e) = spawned {
+            // SAFETY: the thread never ran, so the descriptor is still ours.
+            unsafe { libc::close(fd) };
+            return Err(e.to_string());
+        }
+        Ok(Watch {
+            root: root.to_string(),
+            rx,
+            overflow,
+            stop,
+            closed: AtomicBool::new(false),
+        })
+    }
+}
+
 #[cfg(not(target_os = "macos"))]
 mod imp {
     use super::*;
-    pub(super) fn start(_root: &str, _filter: Filter, _latency_ms: i64) -> Result<Watch, String> {
-        Err("watching a folder needs macOS (FSEvents) for now".into())
+
+    /// Linux: inotify, and when it cannot watch the tree (its watch limit)
+    /// the reason is said once on standard error and the tree is polled.
+    /// Other systems poll.
+    pub(super) fn start(root: &str, filter: Filter, _latency_ms: i64) -> Result<Watch, String> {
+        #[cfg(target_os = "linux")]
+        match inotify::start(root, filter.clone()) {
+            Ok(watch) => return Ok(watch),
+            Err(why) => {
+                eprintln!("fs.watch: {root}: {why}; reading the tree once a second instead")
+            }
+        }
+        poll::start(root, filter)
     }
 }
 
@@ -743,6 +1136,47 @@ mod tests {
         assert!(f.passes(".git/refs/heads/main"));
         assert!(!f.passes(".git/refsx"));
         assert!(f.passes("targets/x"));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn an_ignored_folder_is_read_only_toward_what_is_kept() {
+        let f = Filter {
+            ignore: vec![".git".into(), "target".into()],
+            keep: vec![".git/HEAD".into(), ".git/refs".into()],
+        };
+        assert!(poll::folder_is_read(&f, "src"));
+        assert!(poll::folder_is_read(&f, ".git"));
+        assert!(poll::folder_is_read(&f, ".git/refs"));
+        assert!(poll::folder_is_read(&f, ".git/refs/heads"));
+        assert!(!poll::folder_is_read(&f, ".git/objects"));
+        assert!(!poll::folder_is_read(&f, "target"));
+        assert!(!poll::folder_is_read(&f, "a/target/debug"));
+    }
+
+    /// A watch on a real folder hears a file made, changed and removed
+    /// (inotify on Linux, the poller elsewhere).
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn a_watch_hears_a_file_made_and_removed() {
+        let root = std::env::temp_dir().join(format!("olang-fs-watch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        let root_text = root.to_string_lossy().into_owned();
+        let watch = imp::start(&root_text, Filter::default(), 50).unwrap();
+        let made = root.join("sub/new.txt");
+        std::fs::write(&made, "x").unwrap();
+        let made_text = made.to_string_lossy().into_owned();
+        let mut heard = false;
+        let until = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < until && !heard {
+            if let Ok(raw) = watch.rx.recv_timeout(Duration::from_millis(200)) {
+                heard = raw.path == made_text;
+            }
+        }
+        watch.stop.store(true, Ordering::Release);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(heard, "the file made under a subfolder was not reported");
     }
 
     #[test]

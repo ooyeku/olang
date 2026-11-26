@@ -2473,7 +2473,7 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "gui.events()",
             "Channel",
             "gui",
-            "The channel every window's events arrive on: maps with kind and window (resize, close_requested, key, activate, focus, changed, submit, pointer, scrolled, a11y, window_focus, appearance, menu, files_dropped).",
+            "The channel every window's events arrive on: maps with kind and window (resize, close_requested, key, modifier, activate, focus, changed, submit, pointer, scrolled, a11y, window_focus, appearance, menu, files_dropped).",
             &[r##"let e = unwrap(chan.recv(gui.events()))"##],
         );
         self.doc_ex(
@@ -2505,7 +2505,7 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "gui.input(w, event)",
             "Unit",
             "gui",
-            "Send input as the platform would: key, text, pointer, wheel, compose, commit (an input method), resize, window_focus.",
+            "Send input as the platform would: key, modifier, text, pointer, wheel, compose, commit (an input method), resize, window_focus.",
             &[r##"gui.input(w, #{ "kind": "key", "key": "tab" })"##],
         );
         self.doc_ex(
@@ -2549,12 +2549,36 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             &[r##"gui.clipboard_image()"##],
         );
         self.doc_ex(
+            "gui.clipboard_write_image",
+            "gui.clipboard_write_image(png)",
+            "Result",
+            "gui",
+            "Put an image on the platform clipboard for another program to paste: png is PNG Bytes (a .png file's, or gui.clipboard_image's png). Ok(()), or Err for Bytes that are not a PNG. macOS and Linux.",
+            &[r##"gui.clipboard_write_image(unwrap(fs.read_bytes("shot.png")))"##],
+        );
+        self.doc_ex(
             "gui.image_info",
             "gui.image_info(source)",
             "Result",
             "gui",
             "A picture's size and format from its header (a path or Bytes; PNG, JPEG, WebP, GIF, SVG): #{ width, height, format }.",
             &[r##"gui.image_info("shot.png")"##],
+        );
+        self.doc_ex(
+            "gui.primary_read",
+            "gui.primary_read()",
+            "Result",
+            "gui",
+            "The PRIMARY selection's text (Linux): what was last selected in any program, which a middle click pastes. Err when it holds none, and on other systems.",
+            &[r##"gui.primary_read()"##],
+        );
+        self.doc_ex(
+            "gui.primary_write",
+            "gui.primary_write(text)",
+            "Result",
+            "gui",
+            "Make text the PRIMARY selection (Linux): what the program has selected, for a middle click in another program to paste. Err on other systems.",
+            &[r##"gui.primary_write("selected words")"##],
         );
         self.doc_ex(
             "gui.dialog",
@@ -9400,11 +9424,14 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
 
         self.add_function(FunctionDoc {
             name: "fs.trash".to_string(),
-            description: "Move a file or folder to the Trash (macOS's NSFileManager), never a permanent delete; answers its path in the Trash, from where moving it back puts it back".to_string(),
+            description: "Move a file or folder to the Trash, never a permanent delete; answers its path in the Trash, from where moving it back puts it back. On macOS the Finder's Trash (NSFileManager); on Linux the freedesktop.org Trash the desktop's file manager shows ($XDG_DATA_HOME/Trash, or the item's own mount's .Trash-$uid); an Err on other platforms".to_string(),
             syntax: "fs.trash(path)".to_string(),
             parameters: vec!["path: String - The file or folder to move to the Trash".to_string()],
             return_type: "Result<String, Error>".to_string(),
-            examples: vec!["fs.trash(\"old_notes.txt\")  // Ok(\"/Users/me/.Trash/old_notes.txt\")".to_string()],
+            examples: vec![
+                "fs.trash(\"old_notes.txt\")  // macOS: Ok(\"/Users/me/.Trash/old_notes.txt\")".to_string(),
+                "fs.trash(\"old_notes.txt\")  // Linux: Ok(\"/home/me/.local/share/Trash/files/old_notes.txt\")".to_string(),
+            ],
             category: "Filesystem".to_string(),
             see_also: vec!["fs.move_file".to_string(), "fs.remove_file".to_string()],
         });

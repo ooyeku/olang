@@ -17,6 +17,12 @@ use crate::ast::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// Alt with a letter is a chord, not text, in a field (Linux and the
+/// other systems winit reaches through X11 and Wayland): the key goes on
+/// to the program. On macOS Option types a character (⌥E, ⌥U are the
+/// accents), and Windows is left as it was.
+pub const ALT_IS_A_CHORD: bool = cfg!(not(any(target_os = "macos", target_os = "windows")));
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Mods {
     pub ctrl: bool,
@@ -118,6 +124,15 @@ pub enum Input {
     },
     Focused(bool),
     Modifiers(Mods),
+    /// A modifier key's own press or release (`key` `ctrl`, `alt`,
+    /// `shift` or `super`). `synthetic` when the platform made it up (the
+    /// keys held as the window gained or lost the focus), which is never
+    /// a modifier pressed alone.
+    Modifier {
+        key: String,
+        down: bool,
+        synthetic: bool,
+    },
     /// Files from another program (a file manager): hovering over the
     /// window (`"hover"`), dropped on it (`"drop"`), or the hover gone
     /// (`"cancel"`); `at` the place, in logical pixels, when known (else
@@ -193,6 +208,12 @@ pub struct WinState {
     /// boxes are drawn where they are, not on whole pixels, so they glide
     /// with their text rather than step.
     gliding: bool,
+    /// The modifier keys down by their own presses (`modifier` events),
+    /// and the one pressed with nothing else held and nothing pressed
+    /// since: let go, it was pressed alone (Alt alone takes a drawn menu
+    /// bar on Linux and Windows).
+    held_modifiers: Vec<String>,
+    lone_modifier: Option<String>,
     /// Where the window's content sits on the screen, in the platform's
     /// logical pixels: a pointer event carries its place on the screen
     /// too (`sx`, `sy`), so a drag can be followed into another window.
@@ -410,6 +431,8 @@ impl WinState {
             zoom: 1.0,
             platform_scale: scale,
             gliding: false,
+            held_modifiers: Vec::new(),
+            lone_modifier: None,
             // a headless window sits at the screen's corner until a test
             // places it; a real one waits for the platform
             origin: if headless { Some((0.0, 0.0)) } else { None },
@@ -1095,6 +1118,19 @@ impl WinState {
             },
             other => other,
         };
+        // a key or a press between a modifier's press and its release:
+        // the modifier was not pressed alone
+        if matches!(
+            input,
+            Input::Key { .. }
+                | Input::Pointer {
+                    action: PointerAction::Down,
+                    ..
+                }
+                | Input::Focused(_)
+        ) {
+            self.lone_modifier = None;
+        }
         match input {
             Input::Resize {
                 width,
@@ -1119,10 +1155,18 @@ impl WinState {
             }
             Input::Focused(on) => {
                 self.focused_window = on;
+                if !on {
+                    self.held_modifiers.clear();
+                }
                 self.dirty = true;
                 out.push(self.ev("window_focus", vec![("on", Value::Boolean(on))]));
             }
             Input::Modifiers(m) => self.mods = m,
+            Input::Modifier {
+                key,
+                down,
+                synthetic,
+            } => self.modifier(key, down, synthetic, out),
             Input::Files { action, paths, at } => {
                 let (x, y) = at.unwrap_or(self.pointer);
                 let target = if action == "cancel" {
@@ -1246,6 +1290,35 @@ impl WinState {
             Outcome::Pass => {}
         }
         self.dirty = true;
+    }
+
+    /// A modifier key's own press or release: a `modifier` event with the
+    /// key (`ctrl`, `alt`, `shift`, `super`), `action` `"down"` or `"up"`,
+    /// and on `"up"` whether it was pressed `alone` (nothing else held as
+    /// it went down, and no key, press or change of focus before it came
+    /// up). A key the platform made up as the focus moved is never alone.
+    fn modifier(&mut self, key: String, down: bool, synthetic: bool, out: &mut Vec<Value>) {
+        let alone = if down {
+            self.lone_modifier =
+                (self.held_modifiers.is_empty() && !synthetic).then(|| key.clone());
+            if !self.held_modifiers.contains(&key) {
+                self.held_modifiers.push(key.clone());
+            }
+            false
+        } else {
+            self.held_modifiers.retain(|k| *k != key);
+            !synthetic && self.lone_modifier.take().is_some_and(|k| k == key)
+        };
+        let focus = self.scene.focus.clone();
+        out.push(self.ev(
+            "modifier",
+            vec![
+                ("key", s(&key)),
+                ("action", s(if down { "down" } else { "up" })),
+                ("alone", Value::Boolean(alone)),
+                ("target", opt_str(focus.as_deref())),
+            ],
+        ));
     }
 
     fn chord(key: &str, mods: Mods) -> String {
@@ -1524,10 +1597,13 @@ impl WinState {
             return Some(outcome);
         }
         // Printable text: no ctrl or command (option makes characters on
-        // macOS, so it is allowed).
+        // macOS, so it is allowed). On Linux Alt+letter is a chord, the
+        // program's (a drawn menu bar's mnemonic), never typed, as GTK
+        // and Qt fields do; AltGr is no Alt there, so `@` and `{` still type.
         if let Some(t) = text
             && !mods.ctrl
             && !mods.super_
+            && !(mods.alt && ALT_IS_A_CHORD)
             && !t.chars().any(|c| c.is_control())
             && !t.is_empty()
         {

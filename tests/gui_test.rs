@@ -874,6 +874,63 @@ fn a_paste_the_field_cannot_take_goes_on_to_the_program() {
     assert_eq!(text(&v), r#"[["mod+v@f"], [], "words"]"#);
 }
 
+/// A modifier key's own press and release are `modifier` events, and a
+/// release says whether it was pressed alone (what takes a drawn menu
+/// bar). On Linux Alt with a letter in a field is the program's chord,
+/// not text; on macOS Option types the character. What AltGr types (no
+/// Alt held) is typed everywhere.
+#[test]
+fn a_modifier_key_says_its_press_and_alt_with_a_letter_is_a_chord_on_linux() {
+    let _turn = events_turn();
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (300, 100) })
+        let ev = gui.events()
+        gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 300, 100) },
+          #{ "key": "f", "parent": "root", "role": "input", "box": (10, 10, 200, 30), "edit": #{ "value": "" } },
+          #{ "op": "focus", "key": "f" }
+        ])
+        fn said(e) = if map_get(e, "kind") == "modifier" => [map_get(e, "key") + ":" + map_get(e, "action") + (if map_get(e, "alone") == true => ":alone" else => "")]
+            else if map_get(e, "kind") == "key" => [map_get(e, "chord") + "@" + map_get(e, "target")]
+            else => []
+        fn heard() = {
+            let mut got = []
+            let mut more = true
+            while more { match chan.try_recv(ev) { Ok(()) => { more = false }, Ok(e) => { got = got + said(e) }, _ => { more = false } } }
+            got
+        }
+        heard()
+        gui.input(w, #{ "kind": "modifier", "key": "alt", "action": "down" })
+        gui.input(w, #{ "kind": "modifier", "key": "alt", "action": "up" })
+        let alone = heard()
+        gui.input(w, #{ "kind": "modifier", "key": "alt", "action": "down" })
+        gui.input(w, #{ "kind": "key", "key": "f", "text": "f", "alt": true })
+        gui.input(w, #{ "kind": "modifier", "key": "alt", "action": "up" })
+        let chord = heard()
+        let typed = gui.read(w, "value", "f")
+        gui.input(w, #{ "kind": "modifier", "key": "ctrl", "action": "down" })
+        gui.input(w, #{ "kind": "modifier", "key": "alt", "action": "down" })
+        gui.input(w, #{ "kind": "modifier", "key": "alt", "action": "up" })
+        gui.input(w, #{ "kind": "modifier", "key": "ctrl", "action": "up" })
+        let both = heard()
+        gui.input(w, #{ "kind": "key", "key": "q", "text": "@" })
+        let level3 = gui.read(w, "value", "f")
+        gui.close(w)
+        [alone, chord, typed, both, level3, map_get(gui.platform(), "modifier_keys"), map_get(gui.platform(), "alt_chords")]
+    "##);
+    let both = r#"["ctrl:down", "alt:down", "alt:up", "ctrl:up"]"#;
+    let want = if cfg!(any(target_os = "macos", target_os = "windows")) {
+        format!(
+            r#"[["alt:down", "alt:up:alone"], ["alt:down", "alt:up"], "f", {both}, "f@", true, false]"#
+        )
+    } else {
+        format!(
+            r#"[["alt:down", "alt:up:alone"], ["alt:down", "alt+f@f", "alt:up"], "", {both}, "@", true, true]"#
+        )
+    };
+    assert_eq!(text(&v), want);
+}
+
 #[test]
 fn the_application_hears_what_it_is_asked_to_open_and_the_tab_bar() {
     // what the Finder asks (Open With, a drop on the Dock icon) and the
@@ -2237,20 +2294,40 @@ fn the_platform_says_what_its_windows_can_do() {
          map_get(p, "ime"), map_get(p, "accessibility"), map_get(p, "context_menu")]
     "#);
     let want = if cfg!(target_os = "macos") {
-        r#"["macos", true, true, true, true, true, true, true, true, true]"#
+        r#"["macos", true, true, true, true, true, true, true, true, true]"#.to_string()
     } else if cfg!(target_os = "windows") {
-        r#"["windows", false, false, true, false, true, false, true, true, false]"#
+        r#"["windows", false, false, true, false, true, false, true, true, false]"#.to_string()
     } else {
-        r#"["linux", false, false, false, false, false, false, true, true, false]"#
+        // a drop and the window's place: X11's, never Wayland's (as winit
+        // chooses: Wayland's display first)
+        let set = |n: &str| std::env::var_os(n).is_some_and(|v| !v.is_empty());
+        let x11 = !(set("WAYLAND_DISPLAY") || set("WAYLAND_SOCKET")) && set("DISPLAY");
+        format!(r#"["linux", false, true, {x11}, false, {x11}, false, true, true, false]"#)
     };
     assert_eq!(text(&v), want);
     // and what is missing says so when asked for
-    if !cfg!(target_os = "macos") {
+    if cfg!(target_os = "windows") {
         let v = run(r#"match gui.clipboard_image() { Ok(x) => "ok", Err(e) => e }"#);
-        assert!(text(&v).contains("macOS only"), "{}", text(&v));
+        assert!(text(&v).contains("macOS and Linux only"), "{}", text(&v));
+    }
+    if !cfg!(target_os = "macos") {
         let v = run(r#"gui.menu([])"#);
         assert_eq!(text(&v), "false");
     }
+}
+
+/// `gui.clipboard_write_image` takes a PNG and nothing else: what is not
+/// one is an `Err` before the clipboard is touched.
+#[test]
+fn an_image_put_on_the_clipboard_is_a_png() {
+    let v = run(r#"
+        [match gui.clipboard_write_image(bytes.from_string("not a picture")) { Ok(x) => "ok", Err(e) => e },
+         match attempt(() => gui.clipboard_write_image("shot.png")) { Ok(x) => "ok", Err(e) => "raised" }]
+    "#);
+    assert_eq!(
+        text(&v),
+        r#"["gui.clipboard_write_image: not a PNG", "raised"]"#
+    );
 }
 
 /// `gui.context_menu`: its items read and checked on the program's
@@ -2280,6 +2357,39 @@ fn a_context_menu_is_checked_and_headless_windows_leave_it_to_the_program() {
     assert!(t.contains(r#"\"A\" needs an \"id\""#), "{t}");
     assert!(t.contains(r#"keys \"mod+zz+q\""#), "{t}");
     assert!(t.contains("a submenu is a list"), "{t}");
+}
+
+/// The primary selection is Linux's (`gui.primary_read`,
+/// `gui.primary_write`), an `Err` that says so elsewhere; the middle
+/// press that pastes it reaches the program as a `pointer` event.
+#[test]
+fn the_primary_selection_is_linuxs_and_a_middle_press_reaches_the_program() {
+    let _turn = events_turn();
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (300, 100) })
+        let ev = gui.events()
+        gui.apply(w, [#{ "key": "root", "box": (0, 0, 300, 100) }])
+        gui.input(w, #{ "kind": "pointer", "action": "down", "x": 20, "y": 20, "button": "middle" })
+        gui.input(w, #{ "kind": "pointer", "action": "up", "x": 20, "y": 20, "button": "middle" })
+        let mut got = []
+        let mut more = true
+        while more { match chan.try_recv(ev) { Ok(()) => { more = false }, Ok(e) => { if map_get(e, "kind") == "pointer" => { got = got + [map_get(e, "action") + ":" + map_get(e, "button")] } }, _ => { more = false } } }
+        gui.close(w)
+        let flag = map_get(gui.platform(), "primary_selection")
+        let read = match gui.primary_read() { Ok(t) => "text", Err(e) => e }
+        let write = match gui.primary_write("words") { Ok(x) => "ok", Err(e) => e }
+        [got, flag, read, write]
+    "##);
+    let t = text(&v);
+    assert!(t.starts_with(r#"[["down:middle", "up:middle"], "#), "{t}");
+    if cfg!(target_os = "linux") {
+        assert!(t.contains(", true, "), "{t}");
+    } else {
+        assert_eq!(
+            t,
+            r#"[["down:middle", "up:middle"], false, "gui.primary_read: there is a primary selection on Linux only", "gui.primary_write: there is a primary selection on Linux only"]"#
+        );
+    }
 }
 
 /// Where a native context menu's top left goes (AppKit's screen points,
