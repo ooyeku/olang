@@ -10,6 +10,9 @@ pub const fn current() -> &'static str {
 }
 
 /// The commit the binary was built from (build.rs; empty outside a checkout).
+/// In a development build (`debug`, `fasttest`) it is the commit the sources
+/// were last compiled at: a later commit that changed neither `src/` nor
+/// `Cargo.lock` is not picked up.
 pub const BUILD_COMMIT: &str = env!("OLANG_BUILD_COMMIT");
 /// The shape of the AST a built program's payload carries: a hash of
 /// src/ast.rs, so it changes whenever the types the payload serialises do.
@@ -20,7 +23,7 @@ pub const BUILD_BRANCH: &str = env!("OLANG_BUILD_BRANCH");
 /// `false` when it had none, empty when git could not say.
 pub const BUILD_DIRTY: &str = env!("OLANG_BUILD_DIRTY");
 /// When the build script last ran (UTC, RFC 3339): the last change to the
-/// sources, the lock or the commit.
+/// sources or the lock, and in a release build to the commit too.
 pub const BUILD_DATE: &str = env!("OLANG_BUILD_DATE");
 /// `release` or `debug`.
 pub const BUILD_PROFILE: &str = env!("OLANG_BUILD_PROFILE");

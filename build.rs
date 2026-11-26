@@ -86,7 +86,7 @@ fn main() {
         hash_dest.display()
     );
     embed_full(&manifest_dir, &out_dir, !target_is_wasm && native);
-    build_info(&manifest_dir);
+    build_info(&manifest_dir, &out_dir);
 }
 
 /// The full profile (the whole stdlib, `cargo xtask wasm` stages it at
@@ -142,10 +142,12 @@ fn embed_full(manifest_dir: &std::path::Path, out_dir: &std::path::Path, embed: 
 /// was built from (and whether the checkout had uncommitted changes then),
 /// when, the profile and target, the compiler, and the versions of the
 /// crates that matter to a bug report (the gui engine's and a few of the
-/// stdlib's), read from Cargo.lock. Built again when the sources, the lock
-/// or the checkout's commit change — so the date is the last time any of
-/// them did, and the commit is the one the sources were built at.
-fn build_info(manifest_dir: &std::path::Path) {
+/// stdlib's), read from Cargo.lock. Built again when the sources or the
+/// lock change, so the date is the last time either did and the commit is
+/// the one the sources were built at. A release build is also built again
+/// when the checkout's commit changes; a development build is not
+/// (`watches_commit`).
+fn build_info(manifest_dir: &std::path::Path, out_dir: &std::path::Path) {
     let git = |args: &[&str]| -> Option<String> {
         let out = std::process::Command::new("git")
             .args(args)
@@ -158,7 +160,7 @@ fn build_info(manifest_dir: &std::path::Path) {
         Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
     };
     let git_dir = manifest_dir.join(".git");
-    if git_dir.is_dir() {
+    if git_dir.is_dir() && watches_commit(out_dir) {
         println!("cargo:rerun-if-changed={}", git_dir.join("HEAD").display());
         if let Ok(head) = fs::read_to_string(git_dir.join("HEAD"))
             && let Some(r) = head.trim().strip_prefix("ref: ")
@@ -290,6 +292,37 @@ fn build_info(manifest_dir: &std::path::Path) {
     );
     println!("cargo:rustc-env=OLANG_BUILD_RUSTC={rustc_v}");
     println!("cargo:rustc-env=OLANG_BUILD_CRATES={}", crates.join(";"));
+}
+
+/// The profiles built over and over while working on olang: `dev` and
+/// `test` (Cargo puts both in `debug`) and `fasttest`.
+const DEVELOPMENT_PROFILES: &[&str] = &["debug", "fasttest"];
+
+/// Whether a commit, a checkout or a branch switch runs this script again.
+/// Each of them moves `.git` and nothing else, and a script that runs again
+/// sends the whole package through the compiler: the library, its test
+/// build and every test binary, over a minute for a commit that touched
+/// only the docs. The development profiles leave `.git` unwatched, so
+/// their stamp is the commit the sources were last compiled at, and a
+/// commit that changes neither `src/` nor `Cargo.lock` does not refresh
+/// it. Every other profile watches, `release` among them, and so does a
+/// build whose `OUT_DIR` is not where Cargo is known to put it.
+fn watches_commit(out_dir: &std::path::Path) -> bool {
+    match profile_dir(out_dir) {
+        Some(profile) => !DEVELOPMENT_PROFILES.contains(&profile.as_str()),
+        None => true,
+    }
+}
+
+/// The profile's folder in the target directory, read from `OUT_DIR`:
+/// `<target>[/<triple>]/<profile>/build/<package>-<hash>/out`. `None` when
+/// the path is laid out another way.
+fn profile_dir(out_dir: &std::path::Path) -> Option<String> {
+    let build = out_dir.parent()?.parent()?;
+    if build.file_name()? != "build" {
+        return None;
+    }
+    Some(build.parent()?.file_name()?.to_str()?.to_string())
 }
 
 /// Seconds since the epoch as `YYYY-MM-DDTHH:MM:SSZ` (UTC; the civil date
