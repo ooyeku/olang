@@ -51,7 +51,6 @@ release and the date stays.
 
 | Release | Planned | What it is for |
 |---|---|---|
-| 1.0.3 | 1 December 2026 | Wrong results and a valid program refused: `min` and `max` on two dates, a `while` before an upper-case name, `db.migrate` on a newer database, `otc`'s uninstall advice |
 | 1.0.4 | 1 January 2027 | `olang check` passing code that then fails to load, rename in the language server, tight integer loops back to their earlier times |
 | 1.1.0 | 15 January 2027 | What holds a program's memory (`runtime.heap`, `olang memory`) and a smaller footprint; `otc` rebuilt around versions, the shelf and libraries from GitHub; a registry read by address; file access outside `fs` held to the `fs` capability; `fs.watch` and X11 windows on Linux |
 | 1.1.1 | 1 February 2027 | Cancellation and timing; `olang test` over many files |
