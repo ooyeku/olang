@@ -48,11 +48,16 @@ runs on Linux and Windows, where olang is an unsupported preview.
 macOS is the platform every release is tested and verified on (Apple
 silicon; the Intel build is made from the same source), and every
 guarantee in this chapter is made for it. On Linux and Windows a program
-may run, but no behaviour there is promised: Linux binaries are released
-and its headless tests pass, and Windows compiles and is unverified. The
-desktop engine's windows on Windows and Wayland, the terminal layer on
-Windows, and the capabilities `gui.platform()` reports false are untried
-or incomplete. A difference between macOS and a preview platform is not
+may run, but no behaviour there is promised. Linux binaries are released
+and its tests pass in a Debian container. Its windows open under Wayland
+and X11, and under X11 they have been driven in a virtual display:
+keys, Alt as a menu's chord, the clipboard's text and images, the
+primary selection, files dropped on a window, a window's place, and the
+Trash. No desktop session on real hardware, no GPU and no screen reader
+has been tried. Windows compiles and is unverified. The desktop engine's
+windows on Windows, the terminal layer on Windows, and the capabilities
+`gui.platform()` reports false are untried or incomplete. A difference
+between macOS and a preview platform is not
 a break of this contract. When a platform is supported, this section
 will say so, and that is an addition.
 

@@ -112,8 +112,8 @@ Kept, not scheduled, while the work is macOS-only.
 
 | Item | Evidence | Done when |
 |---|---|---|
-| `[gui]` Windows and Linux windows run | Windows compiles (a `cargo check` and a MinGW link) and has never run; Linux builds and its headless tests pass in an arm64 container with no compositor and no GPU. Narrator, NVDA and Orca untried; input methods off macOS untried | the L0 window works by keyboard, pointer, screen reader and input method on Windows and on a Wayland compositor |
-| `[gui]` The capabilities `gui.platform()` reports false | no file drops on Wayland (winit); a Windows drop lands at the pointer's last place; the clipboard's picture is read on macOS only (arboard without `image-data`); contrast, motion, transparency and the accent are not read off macOS | each flag true where the platform allows it |
+| `[gui]` Windows and Linux windows run | Windows compiles (a `cargo check` and a MinGW link) and has never run. Linux windows open under Wayland (weston's headless backend) and X11, and under X11 in a virtual display (Xvfb and openbox) they take keys, Alt chords, the clipboard, the primary selection and dropped files; no desktop session on real hardware, no GPU, Orca or input method has been tried. Narrator and NVDA untried | the L0 window works by keyboard, pointer, screen reader and input method on Windows and on a Wayland compositor |
+| `[gui]` The capabilities `gui.platform()` reports false | no file drops on Wayland (winit 0.30 has no data device there); a Windows drop lands at the pointer's last place; a window's place is unknown on Wayland by design; contrast, motion, transparency and the accent are not read off macOS (on Linux the portal's `org.freedesktop.appearance` has them) | each flag true where the platform allows it |
 | `[stdlib]` The terminal on Windows | `tty.query` and suspend are not implemented on Windows; the H0 criterion names Windows Terminal | both on Windows Terminal |
 
 ## Stdlib naming audit
