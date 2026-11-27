@@ -170,6 +170,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   them. http's deferred tickets, database connections, `fs.watch`
   handles and terminal screens get random ids, as process handles do.
 
+## [1.0.3] - 2026-11-26
+
+### Fixed
+
+- **`db.migrate` refuses a database newer than its steps** (OL-626).
+  Given one step on a database a program with two had migrated, it
+  answered `Ok(2)` and the caller went on reading and writing a schema
+  it does not know: the case after a downgrade, a restore, or a source
+  checkout run on an installed app's data. It now answers
+  `Err("db.migrate: the database is at schema v2, newer than these
+  steps' v1")` and leaves the database as it is. A program that ignores
+  `db.migrate`'s answer behaves as before; one that unwraps it stops
+  there.
+- **`min`, `max` and `sort` order Dates** (OL-654). `a < b` ordered two
+  Dates, but `max(a, b)` raised "cannot order Date and Date", and so
+  did `min`, `fold(days, start, max)` and `sort(days)` ("cannot compare
+  values of type Date"). They now order Dates chronologically, as `<`
+  does, alone or inside a tuple or a list: `sort([(due, name), ...])`
+  sorts by day. `(a, 1) < (b, 0)` on two Dates raised too and now
+  answers. The error for a pair `<` cannot order lists dates among what
+  it orders.
+- **A loop whose header ends in a capitalized name takes an empty
+  body** (OL-665). `while time.monotonic() - t0 < SPIN_MS {}` did not
+  parse ("expected an operator or lead add op" at the next line):
+  `SPIN_MS {}` was read as an empty literal of a type named `SPIN_MS`,
+  and the loop had no body. `for x in ITEMS {}` and
+  `for i in 0..LIMIT {}` failed the same way. All three parse now, so
+  a wait loop can name its duration at the top of the file. An empty
+  literal (`Empty {}`) reads as before everywhere it parsed, a loop's
+  header included.
+- **`par_map` refuses a cell from the calling thread however many
+  workers it has** (OL-637). `par_map(xs, (x) => cell.update(hits,
+  ...))` on a cell made outside the call was refused ("cell escaped its
+  thread") only when worker threads ran the items. With one worker, the
+  body ran on the calling thread and the update went through: a list of
+  one item, `set_parallel(false)`, `task.set_parallelism(1)`, a
+  simulated world, the browser build. The same program was refused or
+  not by the length of its list. It is now refused in every case, in
+  `par_filter` and `par for` as well, and a cell the body makes is not
+  the caller's to read afterwards, as with worker threads. A program
+  that relied on the one-item case needs what the many-item case
+  already needed: a value per item (`sum(par_map(...))`) or a channel.
+- **`otc toolchain list` no longer advises removing the newest olang**
+  (OL-638). With Cargo's olang at 1.0.0-rc.10 ahead of a 0.88.0 default
+  on PATH, the line ended "or remove it: cargo uninstall olang". That
+  removed the newest olang on the machine, and `cargo install olang`
+  then installed another project's crate of that name from crates.io.
+  When the olang ahead on PATH is the newer one, the line now says to
+  keep it and gives `otc update`, which installs the latest release and
+  makes it the default. Removing the one ahead is offered only when it
+  is not the newer and `~/.olang/bin` is on PATH, so the default runs
+  once it is gone, and the line then says how to get olang back (the
+  install script, or `cargo install --path .` in a checkout) and that
+  `cargo install olang` is not olang. In `--format json` the `fix`
+  field carries the same text.
+- **Building olang with `CARGO_TARGET_DIR` set embeds the browser
+  runtime just built** (OL-640). Cargo built the runtime into
+  `$CARGO_TARGET_DIR`, but `cargo xtask wasm` checked and staged
+  whatever sat in `<repo>/target`, said it had succeeded, and
+  `build.rs` embedded that one: a local 1.0.0-rc.10 build carried
+  rc.9's runtime, and a browser app stopped with "program image written
+  by olang 1.0.0-rc.10 cannot be loaded by olang 1.0.0-rc.9". Both now
+  read the target folder by one rule, `CARGO_TARGET_DIR` when it is
+  set, else `<repo>/target`, and the task builds into that folder by
+  name. `make dist` builds the runtime before the binaries that embed
+  it (it built them first, so a dist olang carried the runtime of the
+  build before) and copies from the same folder. A build without
+  `CARGO_TARGET_DIR`, CI's included, is unchanged.
+
 ## [1.0.2] - 2026-11-24
 
 ### Fixed
@@ -816,7 +885,6 @@ fixes land. `sim` and `peg` ship as Experimental (docs/stability.md).
   Series or list as long as the Matrix is wide is a row: `X @ W + b`);
   `-X`; every `ods` math function, `clip`, `pow` and `round` over a
   Matrix (`ods.tanh(X)`, `X.clip(lo: 0.0)`); `mat.sum(x, axis)`.
-
 
 - **`sim`, deterministic simulation: the clock and the scheduler (S1).**
   `sim.world(#{ seed, start })` makes a world; `w.run_fn(f, #{ for })`
@@ -2671,7 +2739,6 @@ is tagged final.
 - **`first(xs)` and `last(xs)`**: the first or last element of a list
   (or tuple, or character of a string), `()` when it is empty.
 
-
 ### Changed
 
 - `find(xs, pred)` answers the element, or `()` when none matches (it
@@ -2844,7 +2911,6 @@ is tagged final.
   the public environment variables, the bundle format and the caches.
   `olang fmt`'s output changes only in a minor release, recorded in the
   CHANGELOG.
-
 
 ### Fixed
 
@@ -4834,7 +4900,6 @@ check` where it can be (the full guide is docs/migrating.md):
   runtime's panic message (kept by the panic hook, read through
   `olang_last_panic`) when a call into the wasm traps and prints it
   before the bare `RuntimeError: unreachable` propagates.
-
 
 - **The content-addressed wasm URL now serves someone.** The shim read
   its `data-src`/`data-wasm` attributes off `document.currentScript`,
@@ -7321,7 +7386,6 @@ check` where it can be (the full guide is docs/migrating.md):
   `unique`, `median`, `cast`, `sample`), and the original list held until
   a real workload asks for it.
 
-
 ## [0.66.0] - 2026-08-17
 
 ### Added
@@ -8527,7 +8591,6 @@ release and checks clean.
   reclaimable — `leaks` clean, malloc heap flat — and is a macOS
   thread-VM characteristic best addressed by pooling worker threads,
   tracked with the runtime's memory work.
-
 
 ## [0.58.0] - 2026-08-15
 
@@ -10077,7 +10140,6 @@ documented.
   par_map worker threads as shared Arcs, and coexist with the JIT in
   the same program.
 
-
 - **The `plot` namespace — ods Phase 4, charts as SVG text**
   (`docs/design/ods.md`). `plot.line`, `plot.scatter`, `plot.lines`
   (multi-series with legend), `plot.bar`, and `plot.hist` render
@@ -11296,7 +11358,6 @@ by item (the plan lives in `docs/roadmap.md`).
   (Newton's method converges to within ~1 ulp of the correctly-rounded
   native sqrt). `:help mathx` lists it and points at `:help math.<fn>`.
 
-
 - **Embedded olang-source stdlib modules ("builtin packages").** A stdlib
   module can now be written in olang and compiled into the binary via
   `include_str!`, resolving like a package (`use colx { ... }`) with no file
@@ -11308,7 +11369,6 @@ by item (the plan lives in `docs/roadmap.md`).
   test immediately caught a bug: `take_while` relied on mutating a
   closure-captured flag, which olang closures don't propagate; it now
   threads state through the fold accumulator purely.)
-
 
 - **Package manager.** olang projects are now packages: an `olang.toml`
   manifest plus a directory of `.ol` files. Dependencies come as source in
@@ -11437,7 +11497,6 @@ by item (the plan lives in `docs/roadmap.md`).
   and truncation cases), and a parity test asserts the mirror stays
   complete.
 
-
 - **Stdlib return-type convention unified**: total operations (which cannot
   fail for correctly-typed input) return bare values; fallible operations
   return an olang `Result`. Concretely: `crypto` hashes/HMAC/`secure_compare`
@@ -11498,7 +11557,6 @@ by item (the plan lives in `docs/roadmap.md`).
   Trailing commas in list literals are now allowed too, consistent with
   maps/structs/enums.
 
-
 - **Unit-variant patterns dispatch correctly.** A bare name in a `match`
   arm that resolves to a unit enum variant is now matched as a variant, not
   bound as a catch-all — previously the first such arm (`North => ...`)
@@ -11517,7 +11575,6 @@ by item (the plan lives in `docs/roadmap.md`).
   types, union type declarations, or error-variant payloads — none of
   which parse. `Promise.delay`'s documented argument order was backwards
   (it is `Promise.delay(value, ms)`).
-
 
 - Lambda capture no longer depends on `im::HashMap::union`, whose collision
   bias depends on which map is larger — a captured variable could resolve to
@@ -11638,7 +11695,8 @@ opt-in bytecode tier (`--ovm-tier`) is now honest, tested, and fast.
 - `crypto.decrypt_aes` accepts the output of `crypto.encrypt_aes` directly
   (the embedded nonce is parsed rather than requiring manual hex slicing).
 
-[Unreleased]: https://github.com/ooyeku/olang/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/ooyeku/olang/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/ooyeku/olang/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/ooyeku/olang/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/ooyeku/olang/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/ooyeku/olang/compare/v1.0.0-rc.10...v1.0.0

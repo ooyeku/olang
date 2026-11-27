@@ -6070,7 +6070,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             }
         }
 
-        // Single worker (or the playground): sequential, same semantics.
+        // Single worker (or the playground): sequential, same semantics,
+        // a worker's standing towards the caller's cells included.
+        let _worker = crate::stdlib::cell::stand_in_worker();
         for item in items {
             run_one(self, item)?;
         }

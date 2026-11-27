@@ -9,6 +9,8 @@
 //! `target/wasm32-unknown-unknown/release/olang_playground.wasm`. The
 //! next `cargo build` or `cargo install --path .` of `olang` carries both
 //! (`runtime.wasm()`, `runtime.wasm("full")`). `-j N` is passed to cargo.
+//! `target` is cargo's target folder: `CARGO_TARGET_DIR` when it is set
+//! (`target_dir.rs`, the rule `build.rs` reads by too).
 //!
 //! Each artifact is checked for std's unsupported-platform panics (the
 //! clock, sleep, the environment, paths, pipes, processes): their panic
@@ -20,6 +22,8 @@
 //! native build and fight the outer build for the target directory; a
 //! task the developer (and `make wasm`, `make install`, CI) runs first is
 //! the cleaner shape.
+
+mod target_dir;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -112,9 +116,15 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
-fn cargo(root: &Path, args: &[&str]) -> bool {
+/// Run cargo in `root`; with `target`, building into that folder.
+fn cargo(root: &Path, args: &[&str], target: Option<&Path>) -> bool {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    match Command::new(cargo).args(args).current_dir(root).status() {
+    let mut command = Command::new(cargo);
+    command.args(args).current_dir(root);
+    if let Some(dir) = target {
+        command.arg("--target-dir").arg(dir);
+    }
+    match command.status() {
         Ok(status) => status.success(),
         Err(e) => {
             eprintln!("cannot run cargo: {e}");
@@ -136,6 +146,7 @@ fn install() -> ExitCode {
             &[
                 "install", "--path", path, "--bin", bin, "--locked", "--force",
             ],
+            None,
         ) {
             return ExitCode::FAILURE;
         }
@@ -187,8 +198,10 @@ fn wasm(jobs: &[String]) -> ExitCode {
         return ExitCode::FAILURE;
     }
     let root = repo_root();
-    let artifact = root
-        .join("target")
+    // The folder is said to the build too, so it writes where this task
+    // and build.rs read, whatever a cargo config file names.
+    let target = target_dir::target_dir(&root, std::env::var_os("CARGO_TARGET_DIR"));
+    let artifact = target
         .join(WASM_TARGET)
         .join("release")
         .join("olang_playground.wasm");
@@ -203,7 +216,7 @@ fn wasm(jobs: &[String]) -> ExitCode {
         ];
         args.extend_from_slice(features);
         args.extend(jobs.iter().map(String::as_str));
-        cargo(&root, &args)
+        cargo(&root, &args, Some(&target))
     };
     // The full profile: the whole stdlib, for a playground.
     if !build(&["--features", "full"]) {
@@ -213,7 +226,7 @@ fn wasm(jobs: &[String]) -> ExitCode {
         eprintln!("{e}");
         return ExitCode::FAILURE;
     }
-    let dest = root.join("target/wasm-full/olang.wasm");
+    let dest = target.join("wasm-full").join("olang.wasm");
     if let Some(dir) = dest.parent() {
         let _ = std::fs::create_dir_all(dir);
     }

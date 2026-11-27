@@ -203,6 +203,71 @@ fn par_map_workers_cannot_reach_a_cell_in_the_calling_thread() {
     assert!(e.contains("cell escaped its thread"), "{e}");
 }
 
+#[test]
+fn a_callers_cell_is_refused_when_the_items_run_on_the_calling_thread() {
+    // OL-637: with one worker (one item here; also `set_parallel(false)`,
+    // a cap of one thread, a simulated world, the browser build) the body
+    // runs on the calling thread, where the cell's owner is the thread
+    // asking. The update went through, so the same program was refused or
+    // not by the list's length and the machine's settings.
+    for (call, what) in [
+        (
+            "par_map([1], (x) => cell.update(hits, (n) => n + 1))",
+            "update",
+        ),
+        ("par_map([1], (x) => cell.get(hits))", "get"),
+        ("par_map([1], (x) => cell.set(hits, x))", "set"),
+        ("par_filter([1], (x) => cell.get(hits) == 0)", "par_filter"),
+        // through a function the body calls, which no look at the body's
+        // own captures would find
+        ("par_map([1], (x) => bump())", "a helper"),
+        (
+            "par for x in [1] { cell.update(hits, (n) => n + 1) }",
+            "par for",
+        ),
+    ] {
+        let src =
+            format!("let hits = cell(0)\nfn bump() = cell.update(hits, (n) => n + 1)\n{call}\n");
+        for threshold in [None, Some(1)] {
+            let e = eval(&src, threshold).expect_err(what);
+            assert!(e.contains("cell escaped its thread"), "{what}: {e}");
+        }
+    }
+    // The cell is as it was, and still the caller's to use afterwards.
+    let src = "let hits = cell(0)\n\
+               let r = attempt(() => par_map([1], (x) => cell.update(hits, (n) => n + 1)))\n\
+               cell.update(hits, (n) => n + 10)\n\
+               show(cell.get(hits))\n";
+    assert_eq!(
+        eval(src, None),
+        Ok(Value::String(std::sync::Arc::new("10".to_string())))
+    );
+}
+
+#[test]
+fn a_cell_made_in_the_body_is_the_bodys_and_does_not_come_back() {
+    // What a worker thread allows, the calling thread standing in for one
+    // allows too: a cell the body makes is the body's to use.
+    for items in ["[1]", "[1, 2, 3]"] {
+        let src = format!(
+            "show(par_map({items}, (x) => {{\n    let c = cell(x)\n    cell.update(c, (n) => n * 2)\n    cell.get(c)\n}}))\n"
+        );
+        let want = if items == "[1]" { "[2]" } else { "[2, 4, 6]" };
+        for threshold in [None, Some(1)] {
+            assert_eq!(
+                eval(&src, threshold),
+                Ok(Value::String(std::sync::Arc::new(want.to_string()))),
+                "{items}"
+            );
+        }
+        // Handed back to the caller it is another thread's cell, however
+        // many items there were.
+        let src = format!("let cs = par_map({items}, (x) => cell(x))\ncell.get(cs[0])\n");
+        let e = eval(&src, None).expect_err("a worker's cell in the caller");
+        assert!(e.contains("cell escaped its thread"), "{items}: {e}");
+    }
+}
+
 // ── `par for`: the loop form of the same boundary ───────────────────
 #[test]
 fn par_for_cannot_write_a_binding_from_the_enclosing_scope() {

@@ -35,6 +35,7 @@ mod ods_series_test;
 mod ods_stats_test;
 mod openness_hardening_test;
 mod os_exec_test;
+mod par_map_test;
 mod payload_runtime_test;
 mod persistent_test;
 mod proc_test;

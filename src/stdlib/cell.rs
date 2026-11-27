@@ -123,8 +123,43 @@ pub fn next_vm_owner() -> u64 {
     NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
+thread_local! {
+    /// 0 while this thread runs its own work; another number while it
+    /// runs a parallel body in a worker's place ([`stand_in_worker`]).
+    static STAND_IN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Held while `par_map`, `par_filter` or `par for` runs its body on the
+/// calling thread because there is one worker (one item, parallelism off
+/// or capped at one thread, a simulated world, a build without threads).
+/// For as long as it lives this thread counts as a worker of its own: a
+/// cell made outside is another thread's, and a cell made inside is not
+/// the caller's afterwards. So a cell is refused or not by where it was
+/// made, never by how many workers the call happened to get (OL-637).
+pub struct StandInWorker {
+    outer: u64,
+}
+
+/// Start running a parallel body on this thread in a worker's place.
+pub fn stand_in_worker() -> StandInWorker {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    StandInWorker {
+        outer: STAND_IN.replace(id),
+    }
+}
+
+impl Drop for StandInWorker {
+    fn drop(&mut self) {
+        STAND_IN.set(self.outer);
+    }
+}
+
 struct CellObject {
     owner: ThreadId,
+    /// The stand-in worker ([`STAND_IN`]) the owning thread was when it
+    /// made the cell; 0 for the thread itself.
+    stand_in: u64,
     /// The owning thread's name, captured at creation for the error
     /// message. `spawn` names its threads `olang-spawn-N`; the main
     /// thread is `main`.
@@ -135,6 +170,9 @@ struct CellObject {
 
 /// How a thread names itself in an escape error.
 fn thread_label() -> String {
+    if STAND_IN.get() != 0 {
+        return "a parallel worker".to_string();
+    }
     match std::thread::current().name() {
         Some("main") => "the main thread".to_string(),
         Some(name) => format!("thread '{}'", name),
@@ -163,7 +201,7 @@ impl CellObject {
     }
 
     fn own_thread(&self) -> Result<(), String> {
-        if std::thread::current().id() == self.owner {
+        if std::thread::current().id() == self.owner && STAND_IN.get() == self.stand_in {
             Ok(())
         } else {
             Err(self.escaped())
@@ -384,6 +422,7 @@ fn cell_new(mut args: Vec<Value>) -> Result<Value, String> {
     let value = args.pop().expect("len checked");
     Ok(Value::Native(tracked(CellObject {
         owner: std::thread::current().id(),
+        stand_in: STAND_IN.get(),
         owner_label: thread_label(),
         state: Mutex::new(CellState {
             value,
@@ -451,6 +490,7 @@ pub fn vm_call(op: &str, args: &mut [OvmValue], vm: u64) -> Option<Result<OvmVal
         let v = std::mem::replace(&mut args[0], OvmValue::new_unit());
         let cell = CellObject {
             owner: std::thread::current().id(),
+            stand_in: STAND_IN.get(),
             owner_label: thread_label(),
             state: Mutex::new(CellState {
                 value: Value::Unit,

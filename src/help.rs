@@ -7570,7 +7570,7 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
         });
         self.add_function(FunctionDoc {
             name: "db.migrate".to_string(),
-            description: "Bring the database to the head of `steps` — a list of versions, each a list of SQL statements (or one statement). A schema_version table records the applied version; version N runs only when the recorded version is below N, inside its own transaction, so a failed statement leaves the database at the version before it and the Err names the statement. Returns Ok(version). Appending a version is how a schema grows; editing one never is.".to_string(),
+            description: "Bring the database to the head of `steps` — a list of versions, each a list of SQL statements (or one statement). A schema_version table records the applied version; version N runs only when the recorded version is below N, inside its own transaction, so a failed statement leaves the database at the version before it and the Err names the statement. Returns Ok(version). A database whose recorded version is past the head of `steps` (a newer program wrote it) is an Err naming both versions, and is left as it is. Appending a version is how a schema grows; editing one never is.".to_string(),
             syntax: "db.migrate(conn, steps)".to_string(),
             parameters: vec!["conn: Connection".to_string(), "steps: List of versions, each a List of SQL strings".to_string()],
             return_type: "Result<Int, String>".to_string(),

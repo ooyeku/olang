@@ -3,7 +3,9 @@
 //! The runtime is the playground wasm — olang itself compiled for
 //! `wasm32-unknown-unknown`, which `cargo xtask wasm` (or `make wasm`)
 //! builds first and leaves at `target/wasm32-unknown-unknown/release/
-//! olang_playground.wasm`. This script copies those bytes into
+//! olang_playground.wasm`, `target` being cargo's target folder
+//! (`CARGO_TARGET_DIR` when it is set: the task and this script read it
+//! by one rule, `xtask/src/target_dir.rs`). This script copies those bytes into
 //! `OUT_DIR` and hands the path to `include_bytes!` through the
 //! `OLANG_RUNTIME_WASM` environment variable (`src/runtime_wasm.rs`).
 //! When the artifact is absent — a fresh checkout that has not built
@@ -21,6 +23,10 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
+mod target_dir {
+    include!("xtask/src/target_dir.rs");
+}
+
 fn main() {
     // The executable's pointers are fixed up by chained fixups, not by
     // the rebase and bind opcodes a macOS 11 minimum otherwise selects:
@@ -36,12 +42,15 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
     let dest = out_dir.join("olang_runtime.wasm");
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    // Where `cargo xtask wasm` left the runtimes: cargo's target folder,
+    // which is not `<repo>/target` when CARGO_TARGET_DIR says otherwise.
+    println!("cargo:rerun-if-env-changed=CARGO_TARGET_DIR");
+    let target = target_dir::target_dir(&manifest_dir, env::var_os("CARGO_TARGET_DIR"));
     println!("cargo:rerun-if-env-changed=OLANG_WASM");
     let artifact = env::var("OLANG_WASM")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
-            manifest_dir
-                .join("target")
+            target
                 .join("wasm32-unknown-unknown")
                 .join("release")
                 .join("olang_playground.wasm")
@@ -85,7 +94,7 @@ fn main() {
         "cargo:rustc-env=OLANG_RUNTIME_WASM_HASH={}",
         hash_dest.display()
     );
-    embed_full(&manifest_dir, &out_dir, !target_is_wasm && native);
+    embed_full(&target, &out_dir, !target_is_wasm && native);
     build_info(&manifest_dir, &out_dir);
 }
 
@@ -94,16 +103,11 @@ fn main() {
 /// its gzip and brotli forms and its hash are embedded, the forms a page
 /// is served. `runtime.wasm("full")` decodes the brotli form for the raw
 /// bytes when a program asks for them.
-fn embed_full(manifest_dir: &std::path::Path, out_dir: &std::path::Path, embed: bool) {
+fn embed_full(target: &std::path::Path, out_dir: &std::path::Path, embed: bool) {
     println!("cargo:rerun-if-env-changed=OLANG_WASM_FULL");
     let artifact = env::var("OLANG_WASM_FULL")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            manifest_dir
-                .join("target")
-                .join("wasm-full")
-                .join("olang.wasm")
-        });
+        .unwrap_or_else(|_| target.join("wasm-full").join("olang.wasm"));
     println!("cargo:rerun-if-changed={}", artifact.display());
     let bytes = if embed {
         fs::read(&artifact).unwrap_or_default()

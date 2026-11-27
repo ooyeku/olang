@@ -315,10 +315,13 @@ fn a_shared_reference_refuses_a_cell() {
 /// A cancel lands while `http.get` waits (OL-534): on a server that
 /// takes the connection and never answers, and on one that sends its
 /// headers and a few bytes of the body, then stalls. Both are local
-/// listeners; each call was held until its own timeout.
+/// listeners; each call was held until its own timeout. The second
+/// reads the request's head before it answers: a reply sent before the
+/// request is written reaches the client as an unexpected message, and
+/// the call ends with that failure before the cancel is set.
 #[test]
 fn a_cancel_stops_an_http_request_that_waits() {
-    use std::io::Write;
+    use std::io::{Read, Write};
     let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let stalls = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let silent_port = silent.local_addr().unwrap().port();
@@ -340,6 +343,12 @@ fn a_cancel_stops_an_http_request_that_waits() {
     std::thread::spawn(move || {
         let mut held = Vec::new();
         for mut c in stalls.incoming().flatten() {
+            let mut head = Vec::new();
+            let mut byte = [0u8; 1];
+            while !head.ends_with(b"\r\n\r\n") && c.read(&mut byte).map(|n| n == 1).unwrap_or(false)
+            {
+                head.push(byte[0]);
+            }
             let _ = c.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\nabc");
             let _ = c.flush();
             held.push(c);

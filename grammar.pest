@@ -408,7 +408,9 @@ literal_type = { string | integer | boolean }
 // Struct expressions
 // An empty literal `T {}` takes a capitalized name: `for x in xs {}` and
 // `while ok {}` are a loop over an empty body, not a literal of type `xs`.
-struct_literal = { (identifier ~ "{" ~ field_value_list ~ "}") | (type_name_upper ~ "{" ~ NL* ~ "}") }
+// A loop's header read a second time (`loop_rest`) has no empty literal
+// at all, so the capitalized name before the body stays a name.
+struct_literal = { (identifier ~ "{" ~ field_value_list ~ "}") | (!in_bare_head ~ type_name_upper ~ "{" ~ NL* ~ "}") }
 type_name_upper = ${ &ASCII_ALPHA_UPPER ~ identifier }
 anonymous_object = { "{" ~ field_value_list? ~ "}" }
 field_value_list = { NL* ~ field_value ~ (NL* ~ "," ~ NL* ~ field_value)* ~ NL* ~ ","? ~ NL* }
@@ -429,7 +431,7 @@ map_entry = { spread | (expr ~ ":" ~ expr) }
 
 // Loop constructs. The loop binding is a name or a tuple of names —
 // `for (i, x) in enumerate(xs)` destructures each element.
-for_loop    = { for_kw ~ (for_binding_tuple | discard | identifier) ~ in_kw ~ expr ~ block }
+for_loop    = { for_kw ~ (for_binding_tuple | discard | identifier) ~ in_kw ~ loop_rest }
 // `_` is a binding that discards. It is not an identifier — identifiers
 // must start with a letter — so a loop that ignores its item needed a
 // throwaway name until this existed.
@@ -437,9 +439,19 @@ discard     = @{ "_" ~ !(ASCII_ALPHANUMERIC | "_") }
 // `par for` fans iterations across worker threads: spawn-style snapshot
 // semantics, an implicit barrier at the end, Unit result. `par` is not a
 // reserved word — it only means something directly before `for`.
-par_for_loop = { par_kw ~ for_kw ~ (for_binding_tuple | discard | identifier) ~ in_kw ~ expr ~ block }
+par_for_loop = { par_kw ~ for_kw ~ (for_binding_tuple | discard | identifier) ~ in_kw ~ loop_rest }
 for_binding_tuple = { "(" ~ identifier ~ ("," ~ identifier)+ ~ ")" }
-while_loop  = { while_kw ~ expr ~ block }
+while_loop  = { while_kw ~ loop_rest }
+// A loop's header and body. Read the first way, a header that ends in a
+// capitalized name before an empty body (`while t < SPIN_MS {}`,
+// `for x in ITEMS {}`) takes `SPIN_MS {}` as an empty literal and finds
+// no body (OL-665). Only then is the header read again with empty
+// literals off: the name stays a name and `{}` is the body. A program
+// the first reading accepts is read as it always was. The mark is an
+// empty entry on pest's stack, which nothing else in this grammar uses:
+// `in_bare_head` holds while there is one, whatever the input.
+loop_rest   = _{ (expr ~ block) | (PUSH("") ~ expr ~ DROP ~ block) }
+in_bare_head = _{ PEEK[0..1] }
 loop_expr   = { loop_kw ~ block }
 break_expr  = { break_kw ~ expr? }
 continue_expr = { continue_kw }
