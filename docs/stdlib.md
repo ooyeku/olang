@@ -2345,7 +2345,7 @@ operating system's own notices. On macOS it is FSEvents: one stream for
 the tree, on a thread of its own, nothing polled. On Linux it is
 inotify: a watch a folder, each folder of the tree added (ignored ones
 left out) and a new one as it is made; when the system's watch limit
-(`fs.inotify.max_user_watches`) is reached, the reason is said once on
+(the kernel's `max_user_watches`, under `/proc/sys/fs/inotify/`) is reached, the reason is said once on
 standard error and the tree is read once a second instead. Other
 systems read the tree once a second. It answers `Ok(Watch)`, a handle a
 reader task holds. `fs.watch_next(w, opts)` waits up to `timeout_ms` for
