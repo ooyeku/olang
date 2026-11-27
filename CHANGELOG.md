@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [1.1.0] - 2026-11-26
 
+Upgrading from 1.0: the shelf (`~/.olang/shelf.toml`) has a new layout,
+and 1.1.0 does not read the old one. Until `otc doctor --fix` moves it,
+a project that takes a library from the shelf (`shelf = "name"` in its
+olang.toml) does not find it: `otc status` says the library is
+unresolved, and a program that uses one of its macros stops with "no
+meta fn named ...". Run `otc doctor --fix` once after installing 1.1.0.
+The shelf is shared by every installed olang, and 1.0.x refuses the new
+layout, so after the move use 1.1.0 for projects that take libraries
+from the shelf.
+
 ### Added
 
 - **A chapter for people coming from object-oriented languages**

@@ -22,9 +22,9 @@ Part of [the olang book](README.md).
 
 ## Install olang
 
-The current release is olang 1.0.0. It is built, tested and supported
-on macOS; the installer also runs on Linux and Windows, where olang is
-an unsupported preview. See [Platforms](#platforms) for the details.
+olang is built, tested and supported on macOS; the installer also runs
+on Linux and Windows, where olang is an unsupported preview. See
+[Platforms](#platforms) for the details.
 
 On a Mac, open a terminal (the Terminal app is in Applications, then
 Utilities), paste this line and press Return. The same line works on
