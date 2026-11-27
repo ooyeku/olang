@@ -251,7 +251,8 @@ pub(crate) fn slot_now() -> (usize, u32) {
 /// Whether `slot` still belongs to the task it did at `generation`.
 #[inline]
 pub(crate) fn slot_is(slot: usize, generation: u32) -> bool {
-    slot >= ANONYMOUS && slot < SLOTS && LIVE[slot].generation.load(Ordering::Relaxed) == generation
+    (ANONYMOUS..SLOTS).contains(&slot)
+        && LIVE[slot].generation.load(Ordering::Relaxed) == generation
 }
 
 /// Counts the heap's growth across an outermost load toward `program`.

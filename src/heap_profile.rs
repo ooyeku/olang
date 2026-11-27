@@ -167,7 +167,8 @@ pub fn on_alloc(p: *mut u8, size: usize) {
 
 #[inline]
 fn bucket_of(p: usize) -> usize {
-    ((p >> 4).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> (64 - BUCKET_BITS)) as usize
+    // in 64 bits whatever the pointer's width: the browser runtime's usize is 32
+    (((p as u64) >> 4).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> (64 - BUCKET_BITS)) as usize
 }
 
 /// The allocator's hook for a block about to be freed (or moved by a
