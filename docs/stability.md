@@ -48,8 +48,10 @@ runs on Linux and Windows, where olang is an unsupported preview.
 macOS is the platform every release is tested and verified on (Apple
 silicon; the Intel build is made from the same source), and every
 guarantee in this chapter is made for it. On Linux and Windows a program
-may run, but no behaviour there is promised. Linux binaries are released
-and its tests pass in a Debian container. Its windows open under Wayland
+may run, but no behaviour there is promised. Linux binaries are released,
+and in a Debian container on arm64 its tests pass but five, which depend
+on the fonts installed, pixel layout or timing (3,687 passed for 1.1.0).
+Its windows open under Wayland
 and X11, and under X11 they have been driven in a virtual display:
 keys, Alt as a menu's chord, the clipboard's text and images, the
 primary selection, files dropped on a window, a window's place, and the
