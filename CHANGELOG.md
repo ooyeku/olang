@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-11-26
+
 ### Fixed
 
 - **`db.migrate` refuses a database newer than its steps** (OL-626).
@@ -11542,7 +11544,8 @@ opt-in bytecode tier (`--ovm-tier`) is now honest, tested, and fast.
 - `crypto.decrypt_aes` accepts the output of `crypto.encrypt_aes` directly
   (the embedded nonce is parsed rather than requiring manual hex slicing).
 
-[Unreleased]: https://github.com/ooyeku/olang/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/ooyeku/olang/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/ooyeku/olang/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/ooyeku/olang/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/ooyeku/olang/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/ooyeku/olang/compare/v1.0.0-rc.10...v1.0.0
