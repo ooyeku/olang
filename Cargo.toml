@@ -1,6 +1,6 @@
 [package]
 name = "olang"
-version = "1.0.3"
+version = "1.1.0"
 edition = "2024"
 authors = ["Ola Yeku <ooyeku@gmail.com>"]
 description = "olang is a general-purpose programming language with a large standard library."
